@@ -15,7 +15,7 @@ Window
   minimumWidth: 213
   minimumHeight: 120
   visible: true
-  color: "#000000"
+  color: PlatformInfo.isWaylandMpv ? "transparent" : "#000000"
 
   // Properties previously from KonvergoWindow
   property bool webDesktopMode: true
@@ -185,23 +185,27 @@ Window
     when: !components.settings.allowBrowserZoom()
   }
 
-  MpvVideoItem
-  {
-    id: video
-    objectName: "video"
-    enabled: true
+  // MpvVideoItem is only used for non-Wayland platforms
+  // On Wayland with USE_WAYLAND_SUBSURFACE, mpv renders to a subsurface below this window
+  Loader {
+    active: !PlatformInfo.isWaylandMpv
+    sourceComponent: MpvVideoItem {
+      id: video
+      objectName: "video"
+      enabled: true
 
-    width: mainWindow.contentItem.width
-    height: mainWindow.contentItem.height
-    anchors.left: mainWindow.contentItem.left
-    anchors.right: mainWindow.contentItem.right
-    anchors.top: mainWindow.contentItem.top
+      width: mainWindow.contentItem.width
+      height: mainWindow.contentItem.height
+      anchors.left: mainWindow.contentItem.left
+      anchors.right: mainWindow.contentItem.right
+      anchors.top: mainWindow.contentItem.top
 
-    Component.onCompleted: {
-      console.log("MpvVideoItem size:", width, "x", height, "visible:", visible)
+      Component.onCompleted: {
+        console.log("MpvVideoItem size:", width, "x", height, "visible:", visible)
+      }
+      onWidthChanged: console.log("MpvVideoItem width changed:", width)
+      onHeightChanged: console.log("MpvVideoItem height changed:", height)
     }
-    onWidthChanged: console.log("MpvVideoItem width changed:", width)
-    onHeightChanged: console.log("MpvVideoItem height changed:", height)
   }
 
   WebEngineView

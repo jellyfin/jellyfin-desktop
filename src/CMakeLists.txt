@@ -51,7 +51,7 @@ foreach(sfile in ${ALL_SRCS})
 endforeach(sfile in ${ALL_SRCS})
 
 # Build core sources as static library for reuse by tests
-add_library(jmp_core STATIC ${ALL_SRCS})
+add_library(jmp_core STATIC ${ALL_SRCS} ${WAYLAND_MPV_SOURCES})
 
 file(GLOB_RECURSE RESOURCE_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/resources/*)
 file(GLOB_RECURSE NATIVE_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/native/*)
@@ -170,6 +170,7 @@ target_link_libraries(jmp_core
   shared
   ${MPV_LIBRARY}
   ${OPENGL_LIBS}
+  ${WAYLAND_MPV_LIBS}
   ${QT6_LIBRARIES}
   ${OS_LIBS}
   ${EXTRA_LIBS}

@@ -1,5 +1,6 @@
 #include <QGuiApplication>
 #include <QApplication>
+#include <memory>
 #include <QDateTime>
 #include <QFileInfo>
 #include <QIcon>
@@ -10,6 +11,9 @@
 #include <QtQml>
 #include <Qt>
 #include <QtWebEngineQuick>
+#ifdef USE_WAYLAND_SUBSURFACE
+#include <QVulkanInstance>
+#endif
 #include <qtwebenginecoreglobal.h>
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QErrorMessage>
@@ -95,12 +99,6 @@ void ShowLicenseInfo()
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
-QStringList g_qtFlags = {
-  "--enable-gpu-rasterization",
-  "--disable-features=MediaSessionService"
-};
-
-/////////////////////////////////////////////////////////////////////////////////////////
 int main(int argc, char *argv[])
 {
   try
@@ -160,13 +158,40 @@ int main(int argc, char *argv[])
     parser.addOption(deleteProfileOption);
     parser.addOption(createProfileOption);
 
+#ifdef USE_WAYLAND_SUBSURFACE
+    // Check if we'll use Wayland Vulkan mode - needs to be early for Qt flags
+    static bool isWayland = qEnvironmentVariable("XDG_SESSION_TYPE") == "wayland" ||
+                            qEnvironmentVariable("QT_QPA_PLATFORM").contains("wayland");
+#endif
+
+    // Qt flags for WebEngine - skip on Wayland Vulkan to avoid conflicts
+    QStringList g_qtFlags;
+#ifdef USE_WAYLAND_SUBSURFACE
+    if (!isWayland) {
+      g_qtFlags << "--enable-gpu-rasterization" << "--disable-features=MediaSessionService";
+    }
+#else
+    g_qtFlags << "--enable-gpu-rasterization" << "--disable-features=MediaSessionService";
+#endif
+
     char **newArgv = appendCommandLineArguments(argc, argv, g_qtFlags);
     int newArgc = argc + g_qtFlags.size();
 
     preinitQt();
+
+#ifdef USE_WAYLAND_SUBSURFACE
+    if (isWayland) {
+      // Vulkan mode - no OpenGL detection needed
+    } else {
+      detectOpenGLEarly();
+      QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+      QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    }
+#else
     detectOpenGLEarly();
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+#endif
 
     QStringList arguments;
     for (int i = 0; i < argc; i++)
@@ -479,9 +504,17 @@ int main(int argc, char *argv[])
 #endif
 
     QStringList chromiumFlags;
+#ifdef USE_WAYLAND_SUBSURFACE
+    if (isWayland) {
+      // Disable GPU compositing in Chromium - jellyfin-web triggers Vulkan crash with radeon
+      chromiumFlags << "--disable-gpu-compositing";
+    } else {
+#endif
 #ifdef Q_OS_LINUX
-    // Disable QtWebEngine's automatic MPRIS registration - we handle it ourselves
-    chromiumFlags << "--disable-features=MediaSessionService,HardwareMediaKeyHandling";
+      chromiumFlags << "--disable-features=MediaSessionService,HardwareMediaKeyHandling";
+#endif
+#ifdef USE_WAYLAND_SUBSURFACE
+    }
 #endif
     // Disable pinch-to-zoom if browser zoom is not allowed
     QVariant allowZoom = SettingsComponent::readPreinitValue(SETTINGS_SECTION_MAIN, "allowBrowserZoom");
@@ -497,28 +530,66 @@ int main(int argc, char *argv[])
     if (parser.isSet("remote-debugging-port"))
       qputenv("QTWEBENGINE_REMOTE_DEBUGGING", parser.value("remote-debugging-port").toUtf8());
 
+    // Must initialize QtWebEngine before QGuiApplication (per Qt docs)
     QtWebEngineQuick::initialize();
-    QApplication app(newArgc, newArgv);
 
-#if defined(Q_OS_WIN) 
+#ifdef USE_WAYLAND_SUBSURFACE
+    // Set Vulkan graphics API for Wayland (must be after QtWebEngineQuick::initialize, before QApplication)
+    if (isWayland) {
+      QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+    }
+#endif
+
+#ifdef USE_WAYLAND_SUBSURFACE
+    // Use QGuiApplication for Vulkan (QApplication's widget stuff conflicts with Vulkan)
+    std::unique_ptr<QCoreApplication> appPtr;
+    if (isWayland) {
+      appPtr.reset(new QGuiApplication(newArgc, newArgv));
+    } else {
+      appPtr.reset(new QApplication(newArgc, newArgv));
+    }
+    auto& app = *appPtr;
+#else
+    QApplication app(newArgc, newArgv);
+#endif
+
+#ifdef USE_WAYLAND_SUBSURFACE
+    // Create Vulkan instance for Qt (must be after QApplication, before QML engine)
+    static QVulkanInstance vulkanInstance;
+    if (isWayland) {
+      vulkanInstance.setApiVersion(QVersionNumber(1, 2));
+      if (!vulkanInstance.create()) {
+        qCritical() << "Failed to create Qt Vulkan instance";
+        return EXIT_FAILURE;
+      }
+    }
+#endif
+
+#if defined(Q_OS_WIN)
     // Setting window icon on OSX will break user ability to change it
-    app.setWindowIcon(QIcon(":/images/icon.png"));
+    qobject_cast<QGuiApplication*>(&app)->setWindowIcon(QIcon(":/images/icon.png"));
 #endif
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
   	// Set window icon on Linux using system icon theme
-  	app.setWindowIcon(QIcon::fromTheme("org.jellyfin.JellyfinDesktop", QIcon(":/images/icon.png")));
+  	qobject_cast<QGuiApplication*>(&app)->setWindowIcon(QIcon::fromTheme("org.jellyfin.JellyfinDesktop", QIcon(":/images/icon.png")));
     // Set app id for Wayland compositor window icon
-    app.setDesktopFileName("org.jellyfin.JellyfinDesktop");
+    qobject_cast<QGuiApplication*>(&app)->setDesktopFileName("org.jellyfin.JellyfinDesktop");
 #endif
 
     // Configure default WebEngineProfile paths early (profile is already set)
-    {
+    // Skip early access on Wayland Vulkan - accessing defaultProfile() here triggers
+    // Chromium GPU init which crashes. Will be set later after QML engine loads.
+#ifdef USE_WAYLAND_SUBSURFACE
+    if (!isWayland) {
+#endif
       QString webEngineDir = Paths::dataDir("QtWebEngine");
       QWebEngineProfile* defaultProfile = QWebEngineProfile::defaultProfile();
       defaultProfile->setCachePath(webEngineDir);
       defaultProfile->setPersistentStoragePath(webEngineDir);
+#ifdef USE_WAYLAND_SUBSURFACE
     }
+#endif
 
 #if defined(Q_OS_MAC) && defined(NDEBUG)
     PFMoveToApplicationsFolderIfNecessary();
@@ -533,7 +604,7 @@ int main(int argc, char *argv[])
 
 #ifdef Q_OS_UNIX
     // install signals handlers for proper app closing.
-    SignalManager signalManager(&app);
+    SignalManager signalManager(qobject_cast<QGuiApplication*>(&app));
     Q_UNUSED(signalManager);
 #endif
 
@@ -556,7 +627,14 @@ int main(int argc, char *argv[])
     SettingsComponent::Get().setCommandLineValues(parser.optionNames());
 
     // Set user agent now that SystemComponent is available
-    QWebEngineProfile::defaultProfile()->setHttpUserAgent(SystemComponent::Get().getUserAgent());
+    // Skip early access on Wayland Vulkan - will be set in objectCreated callback
+#ifdef USE_WAYLAND_SUBSURFACE
+    if (!isWayland) {
+#endif
+      QWebEngineProfile::defaultProfile()->setHttpUserAgent(SystemComponent::Get().getUserAgent());
+#ifdef USE_WAYLAND_SUBSURFACE
+    }
+#endif
 
     // load QtWebChannel so that we can register our components with it.
     QQmlApplicationEngine *engine = Globals::Engine();
@@ -575,6 +653,21 @@ int main(int argc, char *argv[])
         throw FatalException(QObject::tr("Failed to parse application engine script."));
 
       QQuickWindow* window = Globals::MainWindow();
+
+#ifdef USE_WAYLAND_SUBSURFACE
+      // Set Vulkan instance on window when using Vulkan
+      if (isWayland && vulkanInstance.isValid()) {
+        window->setVulkanInstance(&vulkanInstance);
+      }
+      // Deferred WebEngineProfile setup for Wayland Vulkan
+      if (isWayland) {
+        QString webEngineDir = Paths::dataDir("QtWebEngine");
+        QWebEngineProfile* defaultProfile = QWebEngineProfile::defaultProfile();
+        defaultProfile->setCachePath(webEngineDir);
+        defaultProfile->setPersistentStoragePath(webEngineDir);
+        defaultProfile->setHttpUserAgent(SystemComponent::Get().getUserAgent());
+      }
+#endif
 
       // Set window flags for proper popup handling (e.g., WebEngineView dropdowns)
       window->setFlags(window->flags() | Qt::WindowFullscreenButtonHint);

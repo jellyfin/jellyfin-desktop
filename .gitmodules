@@ -1,3 +1,6 @@
 [submodule "external/mpvqt"]
 	path = external/mpvqt
 	url = https://invent.kde.org/libraries/mpvqt.git
+[submodule "external/mpv"]
+	path = external/mpv
+	url = https://github.com/andrewrabert/mpv

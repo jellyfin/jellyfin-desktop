@@ -17,10 +17,17 @@
 #include "input/InputComponent.h"
 #include <MpvController>
 
+#ifdef USE_WAYLAND_SUBSURFACE
+#include "WaylandMpvPlayer.h"
+#endif
+
+#include "utils/PlatformInfo.h"
+
 #include <math.h>
 #include <string.h>
 #include <shared/Paths.h>
 #include <QRegularExpression>
+#include <QTimer>
 
 #if !defined(Q_OS_WIN)
 #include <unistd.h>
@@ -53,6 +60,8 @@ PlayerComponent::PlayerComponent(QObject* parent)
   qmlRegisterType<MpvVideoItem>("Konvergo", 1, 0, "MpvVideo"); // deprecated name
   qmlRegisterType<MpvVideoItem>("Konvergo", 1, 0, "KonvergoVideo");
   qmlRegisterType<MpvVideoItem>("Konvergo", 1, 0, "MpvVideoItem");
+  qmlRegisterSingletonType<PlatformInfo>("Konvergo", 1, 0, "PlatformInfo",
+    [](QQmlEngine *, QJSEngine *) -> QObject * { return new PlatformInfo(); });
 
   m_restoreDisplayTimer.setSingleShot(true);
   connect(&m_restoreDisplayTimer, &QTimer::timeout, this, &PlayerComponent::onRestoreDisplay);
@@ -276,6 +285,67 @@ void PlayerComponent::setWindow(QQuickWindow* window)
   if (!window)
     return;
 
+#ifdef USE_WAYLAND_SUBSURFACE
+  // Use Wayland subsurface player if running on Wayland
+  qInfo() << "Platform name:" << QGuiApplication::platformName();
+  if (QGuiApplication::platformName() == "wayland") {
+    qInfo() << "Using Wayland subsurface player for HDR support";
+    m_waylandPlayer = new WaylandMpvPlayer(this);
+    m_useWaylandPlayer = true;
+
+    // Connect signals from Wayland player
+    connect(m_waylandPlayer, &WaylandMpvPlayer::fileStarted, this, [this]() {
+      m_inPlayback = true;
+      updatePlaybackState();
+    });
+    connect(m_waylandPlayer, &WaylandMpvPlayer::endOfFile, this, [this]() {
+      m_inPlayback = false;
+      updatePlaybackState();
+    });
+    connect(m_waylandPlayer, &WaylandMpvPlayer::positionChanged, this, &PlayerComponent::positionUpdate);
+    connect(m_waylandPlayer, &WaylandMpvPlayer::durationChanged, this, &PlayerComponent::updateDuration);
+    connect(m_waylandPlayer, &WaylandMpvPlayer::playbackStateChanged, this, [this](bool playing) {
+      m_paused = !playing;
+      updatePlaybackState();
+    });
+    connect(m_waylandPlayer, &WaylandMpvPlayer::coreIdleChanged, this, [this](bool idle) {
+      m_playbackActive = !idle;
+      updatePlaybackState();
+    });
+    connect(m_waylandPlayer, &WaylandMpvPlayer::bufferingChanged, this, [this](int percent) {
+      m_bufferingPercentage = percent;
+      updatePlaybackState();
+    });
+    connect(m_waylandPlayer, &WaylandMpvPlayer::windowVisibleChanged, this, [this](bool visible) {
+      m_windowVisible = visible;
+      emit windowVisible(m_windowVisible);
+      updatePlaybackState();
+    });
+
+    // Attach to window - either now if visible, or when it becomes visible
+    auto attachPlayer = [this, window]() {
+      if (m_waylandPlayer && !m_waylandPlayer->attachToWindow(window)) {
+        qCritical() << "Failed to attach Wayland mpv player to window";
+        delete m_waylandPlayer;
+        m_waylandPlayer = nullptr;
+        m_useWaylandPlayer = false;
+      }
+    };
+
+    if (window->isVisible()) {
+      // Window already visible, attach now
+      QTimer::singleShot(0, this, attachPlayer);
+    } else {
+      // Wait for window to become visible
+      QObject::connect(window, &QQuickWindow::visibleChanged, this, [attachPlayer](bool visible) {
+        if (visible) attachPlayer();
+      }, Qt::SingleShotConnection);
+    }
+
+    return;
+  }
+#endif
+
   QString forceVo = SettingsComponent::Get().value(SETTINGS_SECTION_VIDEO, "debug.force_vo").toString();
   if (forceVo.size())
     vo = forceVo;
@@ -298,6 +368,23 @@ bool PlayerComponent::load(const QString& url, const QVariantMap& options, const
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::queueMedia(const QString& url, const QVariantMap& options, const QVariantMap &metadata, const QVariant& audioStream, const QVariant& subtitleStream)
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    InputComponent::Get().cancelAutoRepeat();
+
+    m_inPlayback = true;
+    m_mediaFrameRate = metadata["frameRate"].toFloat();
+    m_serverMediaInfo = metadata["media"].toMap();
+
+    updateVideoConfiguration();
+
+    m_waylandPlayer->loadFile(url);
+
+    emit onMetaData(metadata["metadata"].toMap(), QUrl(url).adjusted(QUrl::RemovePath | QUrl::RemoveQuery));
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::queueMedia: mpv not initialized yet";
     return;
@@ -730,6 +817,13 @@ void PlayerComponent::setVideoOnlyMode(bool enable)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::play()
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    m_waylandPlayer->setProperty("pause", false);
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::play: mpv not initialized yet";
     return;
@@ -813,6 +907,15 @@ void PlayerComponent::notifyVolumeChange(double volume)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::stop()
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    m_waylandPlayer->command(QVariantList{"stop"});
+    m_inPlayback = false;
+    updatePlaybackState();
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::stop: mpv not initialized yet";
     return;
@@ -835,6 +938,13 @@ void PlayerComponent::clearQueue()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::pause()
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    m_waylandPlayer->setProperty("pause", true);
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::pause: mpv not initialized yet";
     return;
@@ -846,6 +956,14 @@ void PlayerComponent::pause()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::seekTo(qint64 ms)
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    double timeSecs = ms / 1000.0;
+    m_waylandPlayer->command(QVariantList{"seek", timeSecs, "absolute+exact"});
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::seekTo: mpv not initialized yet";
     return;
@@ -878,6 +996,13 @@ void PlayerComponent::setAudioDevice(const QString& name)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::setVolume(int volume)
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    m_waylandPlayer->setProperty("volume", volume);
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::setVolume: mpv not initialized yet";
     return;
@@ -889,6 +1014,13 @@ void PlayerComponent::setVolume(int volume)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 int PlayerComponent::volume()
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    QVariant vol = m_waylandPlayer->getProperty("volume");
+    return vol.isValid() ? vol.toInt() : 0;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::volume: mpv not initialized yet";
     return 0;
@@ -902,6 +1034,13 @@ int PlayerComponent::volume()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::setMuted(bool muted)
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    m_waylandPlayer->setProperty("mute", muted);
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::setMuted: mpv not initialized yet";
     return;
@@ -913,6 +1052,13 @@ void PlayerComponent::setMuted(bool muted)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 bool PlayerComponent::muted()
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    QVariant mute = m_waylandPlayer->getProperty("mute");
+    return mute.isValid() ? mute.toBool() : false;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::muted: mpv not initialized yet";
     return false;
@@ -1089,6 +1235,13 @@ void PlayerComponent::setAudioDelay(qint64 milliseconds)
 /////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::setSubtitleDelay(qint64 milliseconds)
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    m_waylandPlayer->setProperty("sub-delay", milliseconds / 1000.0);
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::setSubtitleDelay: mpv not initialized yet";
     return;
@@ -1099,6 +1252,15 @@ void PlayerComponent::setSubtitleDelay(qint64 milliseconds)
 /////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::setPlaybackRate(int rate)
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    double speed = rate / 1000.0;
+    m_waylandPlayer->setProperty("speed", speed);
+    emit playbackRateChanged(speed);
+    return;
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::setPlaybackRate: mpv not initialized yet";
     return;
@@ -1111,6 +1273,12 @@ void PlayerComponent::setPlaybackRate(int rate)
 /////////////////////////////////////////////////////////////////////////////////////////
 qint64 PlayerComponent::getPosition()
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    return m_waylandPlayer->position();
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::getPosition: mpv not initialized yet";
     return 0;
@@ -1124,6 +1292,12 @@ qint64 PlayerComponent::getPosition()
 /////////////////////////////////////////////////////////////////////////////////////////
 qint64 PlayerComponent::getDuration()
 {
+#ifdef USE_WAYLAND_SUBSURFACE
+  if (m_useWaylandPlayer && m_waylandPlayer) {
+    return m_waylandPlayer->duration();
+  }
+#endif
+
   if (!m_mpv) {
     qWarning() << "PlayerComponent::getDuration: mpv not initialized yet";
     return 0;

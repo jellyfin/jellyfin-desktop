@@ -19,6 +19,10 @@
 
 class MpvController;
 
+#ifdef USE_WAYLAND_SUBSURFACE
+class WaylandMpvPlayer;
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 class PlayerComponent : public ComponentBase
 {
@@ -263,6 +267,11 @@ private:
   void reselectStream(const QVariant &streamSelection, MediaType target);
 
   MpvController* m_mpv = nullptr;
+
+#ifdef USE_WAYLAND_SUBSURFACE
+  WaylandMpvPlayer* m_waylandPlayer = nullptr;
+  bool m_useWaylandPlayer = false;
+#endif
 
   State m_state;
   bool m_paused;
