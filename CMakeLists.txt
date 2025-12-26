@@ -14,6 +14,7 @@ option(CHECK_FOR_UPDATES "Enable checking for new versions of Jellyfin" OFF)
 option(OPENELEC "Make an OpenELEC build" OFF)
 option(LINUX_X11POWER "Enable non D-Bus screensaver management" OFF)
 option(USE_STATIC_MPVQT "Build MpvQt from bundled submodule instead of using system library" OFF)
+option(USE_WAYLAND_SUBSURFACE "Use Wayland subsurface for mpv rendering (Wayland-only, enables HDR)" OFF)
 
 if (NOT CHECK_FOR_UPDATES)
     add_definitions(-DDISABLE_UPDATE_CHECK)
