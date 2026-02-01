@@ -5,6 +5,7 @@ Experimental rewrite of [Jellyfin Desktop](https://github.com/jellyfin/jellyfin-
 ## Downloads
 ### Linux (X11 and Wayland)
 - Arch Linux (AUR): [jellyfin-desktop-cef-git](https://aur.archlinux.org/packages/jellyfin-desktop-cef-git)
+- [Flatpak (non-Flathub bundle)](https://nightly.link/jellyfin-labs/jellyfin-desktop-cef/workflows/build-linux-flatpak/main/linux-flatpak.zip)
 
 ### macOS
 - [Apple Silicon](https://nightly.link/jellyfin-labs/jellyfin-desktop-cef/workflows/build-macos/main/macos-arm64.zip)
