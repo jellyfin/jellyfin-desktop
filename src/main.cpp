@@ -553,7 +553,7 @@ int main(int argc, char* argv[]) {
 #endif
 #endif
 
-    // Cache path
+    // Cache path (canonicalize to resolve symlinks like /home -> /var/home on Fedora Kinoite)
     std::filesystem::path cache_path;
 #ifdef _WIN32
     if (const char* appdata = std::getenv("LOCALAPPDATA")) {
@@ -572,6 +572,10 @@ int main(int argc, char* argv[]) {
 #endif
     if (!cache_path.empty()) {
         std::filesystem::create_directories(cache_path);
+        // Canonicalize after creating to resolve symlinks (CEF compares paths strictly)
+        std::error_code ec;
+        auto canonical_path = std::filesystem::canonical(cache_path, ec);
+        if (!ec) cache_path = canonical_path;
         CefString(&settings.root_cache_path).FromString(cache_path.string());
         CefString(&settings.cache_path).FromString((cache_path / "cache").string());
     }
