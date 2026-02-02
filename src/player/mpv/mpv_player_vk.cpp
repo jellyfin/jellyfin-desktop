@@ -67,7 +67,6 @@ void MpvPlayerVk::handleMpvEvent(mpv_event* event) {
             } else if (strcmp(prop->name, "seeking") == 0 && prop->format == MPV_FORMAT_FLAG) {
                 bool seeking = *static_cast<int*>(prop->data) != 0;
                 if (seeking_ && !seeking) {
-                    // Seek completed - report position
                     if (on_seeked_) on_seeked_(last_position_ * 1000.0);
                 }
                 seeking_ = seeking;
@@ -289,22 +288,32 @@ bool MpvPlayerVk::init(VulkanContext* vk, VideoSurface* subsurface) {
 }
 
 bool MpvPlayerVk::loadFile(const std::string& path, double startSeconds) {
-    // Set start position before loading (mpv uses this for the next file)
-    if (startSeconds > 0.0) {
-        std::string startStr = std::to_string(startSeconds);
-        mpv_set_option_string(mpv_, "start", startStr.c_str());
-    } else {
-        mpv_set_option_string(mpv_, "start", "0");
-    }
-
-    // Clear pause state before loading - ensures playback starts
-    // (pause may persist from previous track)
+    // Clear pause state before loading
     int pause = 0;
     mpv_set_property_async(mpv_, 0, "pause", MPV_FORMAT_FLAG, &pause);
 
-    // Use async command to avoid blocking main thread on load failures
-    const char* cmd[] = {"loadfile", path.c_str(), nullptr};
-    int ret = mpv_command_async(mpv_, 0, cmd);
+    // Build command node: {"name": "loadfile", "url": path, "options": {"start": time}}
+    std::string startStr = std::to_string(startSeconds);
+
+    // Options map: {"start": "123.45"}
+    mpv_node optKeys[1];
+    optKeys[0] = {.u = {.string = const_cast<char*>("start")}, .format = MPV_FORMAT_STRING};
+    mpv_node optVals[1];
+    optVals[0] = {.u = {.string = const_cast<char*>(startStr.c_str())}, .format = MPV_FORMAT_STRING};
+    char* optKeyStrs[1] = {const_cast<char*>("start")};
+    mpv_node_list optList = {.num = 1, .values = optVals, .keys = optKeyStrs};
+    mpv_node optNode = {.u = {.list = &optList}, .format = MPV_FORMAT_NODE_MAP};
+
+    // Command map: {"name": "loadfile", "url": path, "options": {...}}
+    mpv_node cmdVals[3];
+    cmdVals[0] = {.u = {.string = const_cast<char*>("loadfile")}, .format = MPV_FORMAT_STRING};
+    cmdVals[1] = {.u = {.string = const_cast<char*>(path.c_str())}, .format = MPV_FORMAT_STRING};
+    cmdVals[2] = optNode;
+    char* cmdKeys[3] = {const_cast<char*>("name"), const_cast<char*>("url"), const_cast<char*>("options")};
+    mpv_node_list cmdList = {.num = 3, .values = cmdVals, .keys = cmdKeys};
+    mpv_node cmdNode = {.u = {.list = &cmdList}, .format = MPV_FORMAT_NODE_MAP};
+
+    int ret = mpv_command_node_async(mpv_, 0, &cmdNode);
     if (ret >= 0) {
         playing_ = true;
     } else {
