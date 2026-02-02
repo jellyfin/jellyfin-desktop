@@ -250,20 +250,27 @@ bool MpvPlayerGL::loadFile(const std::string& path, double startSeconds) {
     std::string startStr = std::to_string(startSeconds);
 
     // Options map: {"start": "123.45"}
-    mpv_node optVals[1];
-    optVals[0] = {.u = {.string = const_cast<char*>(startStr.c_str())}, .format = MPV_FORMAT_STRING};
+    mpv_node optVals[1] = {};
+    optVals[0].u.string = const_cast<char*>(startStr.c_str());
+    optVals[0].format = MPV_FORMAT_STRING;
     char* optKeyStrs[1] = {const_cast<char*>("start")};
-    mpv_node_list optList = {.num = 1, .values = optVals, .keys = optKeyStrs};
-    mpv_node optNode = {.u = {.list = &optList}, .format = MPV_FORMAT_NODE_MAP};
+    mpv_node_list optList = {1, optVals, optKeyStrs};
+    mpv_node optNode = {};
+    optNode.u.list = &optList;
+    optNode.format = MPV_FORMAT_NODE_MAP;
 
     // Command map: {"name": "loadfile", "url": path, "options": {...}}
-    mpv_node cmdVals[3];
-    cmdVals[0] = {.u = {.string = const_cast<char*>("loadfile")}, .format = MPV_FORMAT_STRING};
-    cmdVals[1] = {.u = {.string = const_cast<char*>(path.c_str())}, .format = MPV_FORMAT_STRING};
+    mpv_node cmdVals[3] = {};
+    cmdVals[0].u.string = const_cast<char*>("loadfile");
+    cmdVals[0].format = MPV_FORMAT_STRING;
+    cmdVals[1].u.string = const_cast<char*>(path.c_str());
+    cmdVals[1].format = MPV_FORMAT_STRING;
     cmdVals[2] = optNode;
     char* cmdKeys[3] = {const_cast<char*>("name"), const_cast<char*>("url"), const_cast<char*>("options")};
-    mpv_node_list cmdList = {.num = 3, .values = cmdVals, .keys = cmdKeys};
-    mpv_node cmdNode = {.u = {.list = &cmdList}, .format = MPV_FORMAT_NODE_MAP};
+    mpv_node_list cmdList = {3, cmdVals, cmdKeys};
+    mpv_node cmdNode = {};
+    cmdNode.u.list = &cmdList;
+    cmdNode.format = MPV_FORMAT_NODE_MAP;
 
     int ret = mpv_command_node_async(mpv_, 0, &cmdNode);
     if (ret >= 0) {

@@ -43,6 +43,12 @@ if ($Configure -or -not (Test-Path (Join-Path $BuildDir "build.ninja"))) {
         $CmakeArgs += "-DEXTERNAL_MPV_DIR=$MpvDir"
     }
 
+    # Add SDL3 paths if present
+    $SdlDir = Join-Path $RepoRoot "third_party\SDL"
+    if (Test-Path (Join-Path $SdlDir "cmake")) {
+        $CmakeArgs += "-DSDL3_DIR=$SdlDir\cmake"
+    }
+
     Push-Location $RepoRoot
     & cmake @CmakeArgs
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
