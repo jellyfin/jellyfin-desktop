@@ -24,6 +24,7 @@ include_directories("${CMAKE_BINARY_DIR}/src")
 # Use static runtime on Windows to match CEF wrapper (which uses /MT)
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    add_compile_definitions(NOMINMAX)
 endif()
 
 # Match CEF's compile flags for ABI compatibility
