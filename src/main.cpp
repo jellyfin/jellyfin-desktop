@@ -1037,6 +1037,17 @@ int main(int argc, char* argv[]) {
                 client->updateDuration(ev.value);
                 break;
             case MpvEvent::Type::Playing:
+                // Restore video state - loadfile replacement fires END_FILE(STOP)
+                // for the old file which triggers Canceled, resetting has_video.
+                // FILE_LOADED (Playing event) follows, so re-enable video here.
+                if (!has_video) {
+                    has_video = true;
+                    videoRenderer.setVisible(true);
+                    LOG_INFO(LOG_MAIN, "Video restored after file transition");
+#ifndef __APPLE__
+                    videoController.setActive(true);
+#endif
+                }
                 client->emitPlaying();
                 mediaSessionThread.setPlaybackState(PlaybackState::Playing);
                 break;
