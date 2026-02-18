@@ -357,7 +357,9 @@ bool WaylandSubsurface::createSwapchain(int width, int height) {
 
     swapchain_extent_ = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
 
-    // Create swapchain
+    // Create swapchain (retire old one atomically if it exists)
+    VkSwapchainKHR oldSwapchain = swapchain_;
+
     VkSwapchainCreateInfoKHR swapInfo{};
     swapInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     swapInfo.surface = vk_surface_;
@@ -371,10 +373,15 @@ bool WaylandSubsurface::createSwapchain(int width, int height) {
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     swapInfo.clipped = VK_TRUE;
+    swapInfo.oldSwapchain = oldSwapchain;
 
     if (vkCreateSwapchainKHR(device_, &swapInfo, nullptr, &swapchain_) != VK_SUCCESS) {
         LOG_ERROR(LOG_PLATFORM, "Failed to create swapchain");
         return false;
+    }
+
+    if (oldSwapchain != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device_, oldSwapchain, nullptr);
     }
 
     // Get swapchain images
@@ -522,7 +529,27 @@ void WaylandSubsurface::submitFrame() {
 }
 
 bool WaylandSubsurface::recreateSwapchain(int width, int height) {
-    destroySwapchain();
+    if (device_) {
+        vkDeviceWaitIdle(device_);
+    }
+
+    // Destroy views and sync objects, but NOT the swapchain itself.
+    // createSwapchain() will retire it atomically via oldSwapchain.
+    if (acquire_fence_) {
+        vkDestroyFence(device_, acquire_fence_, nullptr);
+        acquire_fence_ = VK_NULL_HANDLE;
+    }
+    if (image_available_) {
+        vkDestroySemaphore(device_, image_available_, nullptr);
+        image_available_ = VK_NULL_HANDLE;
+    }
+    for (auto view : swapchain_views_) {
+        vkDestroyImageView(device_, view, nullptr);
+    }
+    swapchain_views_.clear();
+    swapchain_images_.clear();
+    frame_active_ = false;
+
     return createSwapchain(width, height);
 }
 

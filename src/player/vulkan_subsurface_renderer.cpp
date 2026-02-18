@@ -31,9 +31,8 @@ void VulkanSubsurfaceRenderer::setVisible(bool visible) {
 }
 
 void VulkanSubsurfaceRenderer::resize(int width, int height) {
-    vkDeviceWaitIdle(surface_->vkDevice());
 #ifdef __APPLE__
-    surface_->createSwapchain(width, height);
+    surface_->resize(width, height);
 #else
     surface_->recreateSwapchain(width, height);
 #endif

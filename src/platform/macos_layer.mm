@@ -389,7 +389,6 @@ bool MacOSVideoLayer::startFrame(VkImage* outImage, VkImageView* outView, VkForm
     // Recreate swapchain if size changed
     if (needs_swapchain_recreate_ || swapchain_ == VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device_);
-        destroySwapchain();
         createSwapchain(width_, height_);
         needs_swapchain_recreate_ = false;
     }
@@ -438,13 +437,8 @@ void MacOSVideoLayer::resize(uint32_t width, uint32_t height) {
         return;
     }
 
-    // Just update layer drawable size - swapchain will be recreated
-    // when vkAcquireNextImageKHR returns VK_ERROR_OUT_OF_DATE_KHR
-    metal_layer_.drawableSize = CGSizeMake(width, height);
     width_ = width;
     height_ = height;
-
-    // Mark swapchain as needing recreation (startFrame will handle it)
     needs_swapchain_recreate_ = true;
 }
 
