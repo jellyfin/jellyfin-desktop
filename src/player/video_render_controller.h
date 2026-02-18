@@ -34,6 +34,10 @@ public:
     // Request colorspace setup (executed on render thread, or immediately in sync mode)
     void requestSetColorspace();
 
+    // Request visibility change (executed on render thread to avoid cross-thread
+    // Wayland API calls on the same wl_surface)
+    void requestSetVisible(bool visible);
+
     // Enable/disable rendering
     void setActive(bool active) {
         active_.store(active);
@@ -62,6 +66,8 @@ private:
     std::atomic<bool> active_{false};
     std::atomic<bool> video_ready_{false};
     std::atomic<bool> colorspace_pending_{false};
+    std::atomic<bool> visible_pending_{false};
+    std::atomic<bool> visible_value_{false};
     std::atomic<bool> frame_notified_{false};
 
     // Dimensions - updated atomically by main thread, read by video thread

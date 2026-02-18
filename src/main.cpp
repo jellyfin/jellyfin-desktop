@@ -1042,10 +1042,12 @@ int main(int argc, char* argv[]) {
                 // FILE_LOADED (Playing event) follows, so re-enable video here.
                 if (!has_video) {
                     has_video = true;
-                    videoRenderer.setVisible(true);
                     LOG_INFO(LOG_MAIN, "Video restored after file transition");
-#ifndef __APPLE__
+#ifdef __APPLE__
+                    videoRenderer.setVisible(true);
+#else
                     videoController.setActive(true);
+                    videoController.requestSetVisible(true);
 #endif
                 }
                 client->emitPlaying();
@@ -1066,11 +1068,13 @@ int main(int argc, char* argv[]) {
                 LOG_INFO(LOG_MAIN, "Track finished naturally (EOF)");
                 has_video = false;
                 video_ready = false;
-#ifndef __APPLE__
+#ifdef __APPLE__
+                videoRenderer.setVisible(false);
+#else
                 videoController.setActive(false);
                 videoController.resetVideoReady();
+                videoController.requestSetVisible(false);
 #endif
-                videoRenderer.setVisible(false);
                 client->emitFinished();
                 mediaSessionThread.setPlaybackState(PlaybackState::Stopped);
                 break;
@@ -1078,11 +1082,13 @@ int main(int argc, char* argv[]) {
                 LOG_DEBUG(LOG_MAIN, "Track canceled (user stop)");
                 has_video = false;
                 video_ready = false;
-#ifndef __APPLE__
+#ifdef __APPLE__
+                videoRenderer.setVisible(false);
+#else
                 videoController.setActive(false);
                 videoController.resetVideoReady();
+                videoController.requestSetVisible(false);
 #endif
-                videoRenderer.setVisible(false);
                 client->emitCanceled();
                 mediaSessionThread.setPlaybackState(PlaybackState::Stopped);
                 break;
@@ -1114,11 +1120,13 @@ int main(int argc, char* argv[]) {
                 LOG_ERROR(LOG_MAIN, "Playback error: %s", ev.error.c_str());
                 has_video = false;
                 video_ready = false;
-#ifndef __APPLE__
+#ifdef __APPLE__
+                videoRenderer.setVisible(false);
+#else
                 videoController.setActive(false);
                 videoController.resetVideoReady();
+                videoController.requestSetVisible(false);
 #endif
-                videoRenderer.setVisible(false);
                 client->emitError(ev.error);
                 mediaSessionThread.setPlaybackState(PlaybackState::Stopped);
                 break;
@@ -1341,16 +1349,17 @@ int main(int argc, char* argv[]) {
                     }
                     if (mpv->loadFile(cmd.url, startSec)) {
                         has_video = true;
-                        videoRenderer.setVisible(true);
                         LOG_INFO(LOG_MAIN, "Video loaded, has_video=true");
-#ifndef __APPLE__
-                        videoController.setActive(true);
-                        if (videoRenderer.isHdr()) {
-                            videoController.requestSetColorspace();
-                        }
-#else
+#ifdef __APPLE__
+                        videoRenderer.setVisible(true);
                         if (videoRenderer.isHdr()) {
                             videoRenderer.setColorspace();
+                        }
+#else
+                        videoController.setActive(true);
+                        videoController.requestSetVisible(true);
+                        if (videoRenderer.isHdr()) {
+                            videoController.requestSetColorspace();
                         }
 #endif
                         // Apply initial subtitle track if specified
@@ -1371,11 +1380,13 @@ int main(int argc, char* argv[]) {
                     mpv->stop();
                     has_video = false;
                     video_ready = false;
-#ifndef __APPLE__
+#ifdef __APPLE__
+                    videoRenderer.setVisible(false);
+#else
                     videoController.setActive(false);
                     videoController.resetVideoReady();
+                    videoController.requestSetVisible(false);
 #endif
-                    videoRenderer.setVisible(false);
                     // mpv END_FILE event will trigger finished callback
                 } else if (cmd.cmd == "pause") {
                     mpv->pause();

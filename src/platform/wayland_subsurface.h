@@ -6,6 +6,7 @@
 #include "wayland-protocols/color-management-v1-client.h"
 #include "wayland-protocols/viewporter-client.h"
 #include "video_surface.h"
+#include <atomic>
 #include <vector>
 
 struct SDL_Window;
@@ -51,6 +52,10 @@ public:
     void setColorspace() override;
     void setVisible(bool visible) override;
     void setDestinationSize(int width, int height) override;
+
+    // Apply viewport destination immediately. Only call during init before
+    // the render thread starts (no thread-safety guarantees).
+    void initDestinationSize(int width, int height);
 
     // Wayland registry callbacks (public for C callback struct)
     static void registryGlobal(void* data, wl_registry* registry,
@@ -105,4 +110,9 @@ private:
     uint32_t current_image_idx_ = 0;
     bool frame_active_ = false;
     bool visible_ = false;
+
+    // Pending viewport destination (written by main thread, applied in recreateSwapchain)
+    std::atomic<int> pending_dest_width_{0};
+    std::atomic<int> pending_dest_height_{0};
+    std::atomic<bool> dest_pending_{false};
 };

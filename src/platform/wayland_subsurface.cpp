@@ -550,7 +550,19 @@ bool WaylandSubsurface::recreateSwapchain(int width, int height) {
     swapchain_images_.clear();
     frame_active_ = false;
 
-    return createSwapchain(width, height);
+    if (!createSwapchain(width, height))
+        return false;
+
+    // Apply any pending viewport destination now that the swapchain matches.
+    // This is pending Wayland state that takes effect on the next
+    // wl_surface_commit (in submitFrame), keeping viewport and buffer atomic.
+    if (viewport_ && dest_pending_.exchange(false, std::memory_order_acquire)) {
+        int w = pending_dest_width_.load(std::memory_order_relaxed);
+        int h = pending_dest_height_.load(std::memory_order_relaxed);
+        wp_viewport_set_destination(viewport_, w, h);
+    }
+
+    return true;
 }
 
 void WaylandSubsurface::destroySwapchain() {
@@ -596,11 +608,21 @@ void WaylandSubsurface::setVisible(bool visible) {
     }
 }
 
-void WaylandSubsurface::setDestinationSize(int width, int height) {
+void WaylandSubsurface::initDestinationSize(int width, int height) {
     if (viewport_ && width > 0 && height > 0) {
         wp_viewport_set_destination(viewport_, width, height);
-        wl_surface_commit(mpv_surface_);
-        wl_display_flush(wl_display_);
+        // No commit: takes effect on the first submitFrame() commit.
+    }
+}
+
+void WaylandSubsurface::setDestinationSize(int width, int height) {
+    if (viewport_ && width > 0 && height > 0) {
+        // Store pending destination; applied in recreateSwapchain() so viewport
+        // and buffer dimensions change together (prevents aspect ratio warp
+        // when the compositor stretches an old buffer to a new destination).
+        pending_dest_width_.store(width, std::memory_order_relaxed);
+        pending_dest_height_.store(height, std::memory_order_relaxed);
+        dest_pending_.store(true, std::memory_order_release);
     }
 }
 

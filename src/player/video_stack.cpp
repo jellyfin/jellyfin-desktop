@@ -132,7 +132,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
             LOG_ERROR(LOG_PLATFORM, "Fatal: Wayland subsurface swapchain failed");
             return stack;
         }
-        g_wayland_subsurface->setDestinationSize(width, height);
+        g_wayland_subsurface->initDestinationSize(width, height);
         LOG_INFO(LOG_PLATFORM, "Using Wayland subsurface for video (HDR: %s)",
                  g_wayland_subsurface->isHdr() ? "yes" : "no");
 
