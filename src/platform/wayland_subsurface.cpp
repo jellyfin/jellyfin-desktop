@@ -524,7 +524,6 @@ void WaylandSubsurface::submitFrame() {
     wl_surface_commit(mpv_surface_);
     wl_display_flush(wl_display_);
 
-    visible_ = true;
     frame_active_ = false;
 }
 
@@ -596,16 +595,6 @@ void WaylandSubsurface::destroySwapchain() {
 void WaylandSubsurface::commit() {
     wl_surface_commit(mpv_surface_);
     wl_display_flush(wl_display_);
-}
-
-void WaylandSubsurface::setVisible(bool visible) {
-    if (visible_ == visible || !mpv_surface_) return;
-    visible_ = visible;
-    if (!visible) {
-        wl_surface_attach(mpv_surface_, nullptr, 0, 0);
-        wl_surface_commit(mpv_surface_);
-        wl_display_flush(wl_display_);
-    }
 }
 
 void WaylandSubsurface::initDestinationSize(int width, int height) {

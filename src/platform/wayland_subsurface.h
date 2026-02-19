@@ -50,7 +50,6 @@ public:
 
     void commit();
     void setColorspace() override;
-    void setVisible(bool visible) override;
     void setDestinationSize(int width, int height) override;
 
     // Apply viewport destination immediately. Only call during init before
@@ -109,7 +108,6 @@ private:
     VkFence acquire_fence_ = VK_NULL_HANDLE;
     uint32_t current_image_idx_ = 0;
     bool frame_active_ = false;
-    bool visible_ = false;
 
     // Pending viewport destination (written by main thread, applied in recreateSwapchain)
     std::atomic<int> pending_dest_width_{0};

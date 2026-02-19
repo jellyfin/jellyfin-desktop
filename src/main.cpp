@@ -1047,7 +1047,6 @@ int main(int argc, char* argv[]) {
                     videoRenderer.setVisible(true);
 #else
                     videoController.setActive(true);
-                    videoController.requestSetVisible(true);
 #endif
                 }
                 client->emitPlaying();
@@ -1073,7 +1072,6 @@ int main(int argc, char* argv[]) {
 #else
                 videoController.setActive(false);
                 videoController.resetVideoReady();
-                videoController.requestSetVisible(false);
 #endif
                 client->emitFinished();
                 mediaSessionThread.setPlaybackState(PlaybackState::Stopped);
@@ -1087,7 +1085,6 @@ int main(int argc, char* argv[]) {
 #else
                 videoController.setActive(false);
                 videoController.resetVideoReady();
-                videoController.requestSetVisible(false);
 #endif
                 client->emitCanceled();
                 mediaSessionThread.setPlaybackState(PlaybackState::Stopped);
@@ -1125,7 +1122,6 @@ int main(int argc, char* argv[]) {
 #else
                 videoController.setActive(false);
                 videoController.resetVideoReady();
-                videoController.requestSetVisible(false);
 #endif
                 client->emitError(ev.error);
                 mediaSessionThread.setPlaybackState(PlaybackState::Stopped);
@@ -1357,7 +1353,6 @@ int main(int argc, char* argv[]) {
                         }
 #else
                         videoController.setActive(true);
-                        videoController.requestSetVisible(true);
                         if (videoRenderer.isHdr()) {
                             videoController.requestSetColorspace();
                         }
@@ -1385,7 +1380,6 @@ int main(int argc, char* argv[]) {
 #else
                     videoController.setActive(false);
                     videoController.resetVideoReady();
-                    videoController.requestSetVisible(false);
 #endif
                     // mpv END_FILE event will trigger finished callback
                 } else if (cmd.cmd == "pause") {

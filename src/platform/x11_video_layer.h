@@ -46,7 +46,6 @@ public:
     int deviceExtensionCount() const override;
 
     void resize(int width, int height);
-    void setVisible(bool visible) override;
 
 private:
     bool initX11(SDL_Window* window);
@@ -80,7 +79,6 @@ private:
     VkFence acquire_fence_ = VK_NULL_HANDLE;
     uint32_t current_image_idx_ = 0;
     bool frame_active_ = false;
-    bool visible_ = false;
 };
 
 #endif // __linux__

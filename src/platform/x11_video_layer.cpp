@@ -247,17 +247,6 @@ void X11VideoLayer::resize(int width, int height) {
     }
 }
 
-void X11VideoLayer::setVisible(bool visible) {
-    if (visible_ == visible || !video_window_ || !display_) return;
-    visible_ = visible;
-    if (visible) {
-        XMapWindow(display_, video_window_);
-    } else {
-        XUnmapWindow(display_, video_window_);
-    }
-    XFlush(display_);
-}
-
 void X11VideoLayer::cleanup() {
     destroySwapchain();
 
@@ -396,7 +385,6 @@ void X11VideoLayer::submitFrame() {
 
     vkQueuePresentKHR(queue_, &presentInfo);
 
-    visible_ = true;
     frame_active_ = false;
 }
 

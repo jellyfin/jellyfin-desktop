@@ -78,16 +78,6 @@ void VideoRenderController::requestSetColorspace() {
     }
 }
 
-void VideoRenderController::requestSetVisible(bool visible) {
-    if (threaded_) {
-        visible_value_.store(visible);
-        visible_pending_.store(true);
-        cv_.notify_one();
-    } else {
-        renderer_->setVisible(visible);
-    }
-}
-
 void VideoRenderController::threadFunc() {
     while (running_.load()) {
         // Handle resize first
@@ -99,11 +89,6 @@ void VideoRenderController::threadFunc() {
         // Handle colorspace setup
         if (colorspace_pending_.exchange(false)) {
             renderer_->setColorspace();
-        }
-
-        // Handle visibility change
-        if (visible_pending_.exchange(false)) {
-            renderer_->setVisible(visible_value_.load());
         }
 
         // Clear frame notification (we're about to check for frames)
@@ -125,8 +110,7 @@ void VideoRenderController::threadFunc() {
         std::unique_lock lock(cv_mutex_);
         cv_.wait_for(lock, std::chrono::milliseconds(100), [this] {
             return !running_.load() || resize_pending_.load() ||
-                   colorspace_pending_.load() || visible_pending_.load() ||
-                   frame_notified_.load();
+                   colorspace_pending_.load() || frame_notified_.load();
         });
     }
 }

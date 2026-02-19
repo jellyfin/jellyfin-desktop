@@ -26,9 +26,7 @@ bool VulkanSubsurfaceRenderer::render(int width, int height) {
     return false;
 }
 
-void VulkanSubsurfaceRenderer::setVisible(bool visible) {
-    surface_->setVisible(visible);
-}
+void VulkanSubsurfaceRenderer::setVisible(bool) {}
 
 void VulkanSubsurfaceRenderer::resize(int width, int height) {
 #ifdef __APPLE__
