@@ -444,6 +444,11 @@ bool MpvPlayerVk::hasFrame() const {
     return (flags & MPV_RENDER_UPDATE_FRAME) != 0;
 }
 
+void MpvPlayerVk::reportSwap() {
+    if (render_ctx_)
+        mpv_render_context_report_swap(render_ctx_);
+}
+
 void MpvPlayerVk::render(VkImage image, VkImageView view, uint32_t width, uint32_t height, VkFormat format) {
     if (!render_ctx_) return;
 

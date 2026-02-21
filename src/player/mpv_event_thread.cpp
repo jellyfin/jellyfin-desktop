@@ -99,17 +99,19 @@ std::vector<MpvEvent> MpvEventThread::drain() {
 }
 
 void MpvEventThread::wake() {
+    woken_.store(true);
     cv_.notify_one();
 }
 
 void MpvEventThread::threadFunc() {
     while (running_.load()) {
+        woken_.store(false);
         player_->processEvents();
 
         // Wait for mpv wakeup callback or shutdown
         std::unique_lock lock(cv_mutex_);
         cv_.wait_for(lock, std::chrono::milliseconds(100), [this] {
-            return !running_.load();
+            return !running_.load() || woken_.load();
         });
     }
 }

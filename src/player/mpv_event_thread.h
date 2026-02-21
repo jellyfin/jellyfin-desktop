@@ -55,6 +55,7 @@ private:
     MpvPlayer* player_ = nullptr;
     std::thread thread_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> woken_{false};
 
     std::mutex mutex_;
     std::vector<MpvEvent> pending_;

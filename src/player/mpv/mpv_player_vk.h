@@ -57,6 +57,7 @@ public:
     bool isPlaying() const override { return playing_; }
     bool needsRedraw() const override { return needs_redraw_.load(); }
     void clearRedrawFlag() override { needs_redraw_ = false; }
+    void reportSwap() override;
 
     void setRedrawCallback(RedrawCallback cb) override { redraw_callback_ = cb; }
 

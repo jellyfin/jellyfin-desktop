@@ -46,6 +46,7 @@ public:
     virtual bool isHdr() const = 0;
     virtual bool needsRedraw() const = 0;
     virtual void clearRedrawFlag() = 0;
+    virtual void reportSwap() = 0;
 
     // Events
     virtual void processEvents() = 0;

@@ -21,6 +21,7 @@ bool VulkanSubsurfaceRenderer::render(int width, int height) {
     if (surface_->startFrame(&image, &view, &format)) {
         player_->render(image, view, surface_->width(), surface_->height(), format);
         surface_->submitFrame();
+        player_->reportSwap();
         return true;
     }
     return false;

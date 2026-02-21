@@ -394,6 +394,11 @@ bool MpvPlayerGL::hasFrame() const {
     return (mpv_render_context_update(render_ctx_) & MPV_RENDER_UPDATE_FRAME) != 0;
 }
 
+void MpvPlayerGL::reportSwap() {
+    if (render_ctx_)
+        mpv_render_context_report_swap(render_ctx_);
+}
+
 void MpvPlayerGL::render(int width, int height, int fbo, bool flip) {
     if (!render_ctx_) return;
 
