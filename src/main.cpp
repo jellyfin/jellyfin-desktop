@@ -239,6 +239,35 @@ MediaMetadata parseMetadataJson(const std::string& json) {
     return meta;
 }
 
+static SDL_HitTestResult SDLCALL windowHitTest(SDL_Window* win, const SDL_Point* area, void* data) {
+    constexpr int EDGE = 5;  // pixels
+    int w, h;
+    SDL_GetWindowSize(win, &w, &h);
+
+    bool left   = area->x < EDGE;
+    bool right  = area->x >= w - EDGE;
+    bool top    = area->y < EDGE;
+    bool bottom = area->y >= h - EDGE;
+
+    SDL_HitTestResult result = SDL_HITTEST_NORMAL;
+    if (top && left)          result = SDL_HITTEST_RESIZE_TOPLEFT;
+    else if (top && right)    result = SDL_HITTEST_RESIZE_TOPRIGHT;
+    else if (bottom && left)  result = SDL_HITTEST_RESIZE_BOTTOMLEFT;
+    else if (bottom && right) result = SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+    else if (top)             result = SDL_HITTEST_RESIZE_TOP;
+    else if (bottom)          result = SDL_HITTEST_RESIZE_BOTTOM;
+    else if (left)            result = SDL_HITTEST_RESIZE_LEFT;
+    else if (right)           result = SDL_HITTEST_RESIZE_RIGHT;
+
+    // Signal main loop to stay in poll mode while cursor is at a resize edge.
+    // This ensures configure events during interactive resize are processed
+    // without blocking, since SDL_WaitEvent processes them one-at-a-time.
+    auto* at_edge = static_cast<std::atomic<bool>*>(data);
+    at_edge->store(result != SDL_HITTEST_NORMAL, std::memory_order_relaxed);
+
+    return result;
+}
+
 int main(int argc, char* argv[]) {
     // CEF subprocesses inherit this env var - skip our arg parsing entirely
     bool is_cef_subprocess = (getenv("JELLYFIN_CEF_SUBPROCESS") != nullptr);
@@ -424,6 +453,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    std::atomic<bool> cursor_at_resize_edge{false};
+    SDL_SetWindowHitTest(window, windowHitTest, &cursor_at_resize_edge);
     SDL_StartTextInput(window);
 
 #ifdef __APPLE__
@@ -1143,7 +1174,8 @@ int main(int argc, char* argv[]) {
         }
         SDL_Event event;
         bool have_event;
-        if (needs_render || has_video || has_pending || has_pending_cmds || !paint_size_matched) {
+        bool at_resize_edge = cursor_at_resize_edge.load(std::memory_order_relaxed);
+        if (needs_render || has_video || has_pending || has_pending_cmds || !paint_size_matched || at_resize_edge) {
             have_event = SDL_PollEvent(&event);
         } else {
 #ifdef __APPLE__
@@ -1254,13 +1286,20 @@ int main(int argc, char* argv[]) {
                 break;
 
             case SDL_EVENT_WINDOW_RESIZED: {
-                paint_size_matched = false;  // Keep rendering until paint matches new size
                 current_width = event.window.data1;
                 current_height = event.window.data2;
 
                 // Get physical dimensions for compositor resize
                 int physical_w, physical_h;
                 SDL_GetWindowSizeInPixels(window, &physical_w, &physical_h);
+
+                // Only invalidate paint match when size actually changed,
+                // otherwise a duplicate configure event resets the flag after
+                // CEF already painted at the correct size (causing stale black border)
+                if (physical_w != static_cast<int>(main_ptr->compositor->width()) ||
+                    physical_h != static_cast<int>(main_ptr->compositor->height())) {
+                    paint_size_matched = false;
+                }
 
                 // Resize all browsers and compositors via BrowserStack
                 browsers.resizeAll(current_width, current_height, physical_w, physical_h);
