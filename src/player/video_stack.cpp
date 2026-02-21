@@ -24,7 +24,7 @@ namespace {
     }
 }
 
-VideoStack VideoStack::create(SDL_Window* window, int width, int height) {
+VideoStack VideoStack::create(SDL_Window* window, int width, int height, const char* hwdec) {
     VideoStack stack;
 
     // Register atexit handler to clean up before static destructors
@@ -54,7 +54,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height) {
 
     // Create player
     auto player = std::make_unique<MpvPlayerVk>();
-    if (!player->init(nullptr, g_macos_layer.get())) {
+    if (!player->init(nullptr, g_macos_layer.get(), hwdec)) {
         LOG_ERROR(LOG_MPV, "MpvPlayerVk init failed");
         return stack;
     }
@@ -71,12 +71,12 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height) {
 #include "mpv/mpv_player_gl.h"
 #include "opengl_renderer.h"
 
-VideoStack VideoStack::create(SDL_Window* window, int width, int height, WGLContext* wgl) {
+VideoStack VideoStack::create(SDL_Window* window, int width, int height, WGLContext* wgl, const char* hwdec) {
     (void)window; (void)width; (void)height;
     VideoStack stack;
 
     auto player = std::make_unique<MpvPlayerGL>();
-    if (!player->init(wgl)) {
+    if (!player->init(wgl, hwdec)) {
         LOG_ERROR(LOG_MPV, "MpvPlayerGL init failed");
         return stack;
     }
@@ -108,7 +108,7 @@ namespace {
     std::unique_ptr<WaylandSubsurface> g_wayland_subsurface;
 }
 
-VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLContext_* egl) {
+VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLContext_* egl, const char* hwdec) {
     VideoStack stack;
 
     // Detect Wayland vs X11 at runtime
@@ -137,7 +137,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
                  g_wayland_subsurface->isHdr() ? "yes" : "no");
 
         auto player = std::make_unique<MpvPlayerVk>();
-        if (!player->init(nullptr, g_wayland_subsurface.get())) {
+        if (!player->init(nullptr, g_wayland_subsurface.get(), hwdec)) {
             LOG_ERROR(LOG_MPV, "MpvPlayerVk init failed");
             return stack;
         }
@@ -147,7 +147,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
     } else {
         // X11: OpenGL composition with threaded rendering
         auto player = std::make_unique<MpvPlayerGL>();
-        if (!player->init(egl)) {
+        if (!player->init(egl, hwdec)) {
             LOG_ERROR(LOG_MPV, "MpvPlayerGL init failed");
             return stack;
         }

@@ -158,7 +158,7 @@ void MpvPlayerVk::handleMpvEvent(mpv_event* event) {
     }
 }
 
-bool MpvPlayerVk::init(VulkanContext* vk, VideoSurface* subsurface) {
+bool MpvPlayerVk::init(VulkanContext* vk, VideoSurface* subsurface, const char* hwdec) {
     vk_ = vk;
     subsurface_ = subsurface;
 
@@ -171,7 +171,7 @@ bool MpvPlayerVk::init(VulkanContext* vk, VideoSurface* subsurface) {
     }
 
     mpv_set_option_string(mpv_, "vo", "libmpv");
-    mpv_set_option_string(mpv_, "hwdec", "no");  // Force software decode for yuv420p10
+    mpv_set_option_string(mpv_, "hwdec", hwdec);
     mpv_set_option_string(mpv_, "keep-open", "yes");  // Keep video layer alive, detect EOF via eof-reached property
     mpv_set_option_string(mpv_, "terminal", "no");
     mpv_set_option_string(mpv_, "video-sync", "audio");  // Simple audio sync, no frame interpolation

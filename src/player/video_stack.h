@@ -19,11 +19,11 @@ struct VideoStack {
 
     // Factory - creates platform-appropriate video stack
 #ifdef __APPLE__
-    static VideoStack create(SDL_Window* window, int width, int height);
+    static VideoStack create(SDL_Window* window, int width, int height, const char* hwdec = "auto-safe");
 #elif defined(_WIN32)
-    static VideoStack create(SDL_Window* window, int width, int height, WGLContext* wgl);
+    static VideoStack create(SDL_Window* window, int width, int height, WGLContext* wgl, const char* hwdec = "auto-safe");
 #else
-    static VideoStack create(SDL_Window* window, int width, int height, EGLContext_* egl);
+    static VideoStack create(SDL_Window* window, int width, int height, EGLContext_* egl, const char* hwdec = "auto-safe");
 #endif
 
     // Cleanup static resources (call before program exit to avoid static destructor issues)

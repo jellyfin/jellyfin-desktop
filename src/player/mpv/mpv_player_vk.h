@@ -23,7 +23,7 @@ public:
     MpvPlayerVk();
     ~MpvPlayerVk() override;
 
-    bool init(VulkanContext* vk, VideoSurface* subsurface = nullptr);
+    bool init(VulkanContext* vk, VideoSurface* subsurface = nullptr, const char* hwdec = "auto-safe");
     void cleanup() override;
     bool loadFile(const std::string& path, double startSeconds = 0.0) override;
 

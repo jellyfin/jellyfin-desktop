@@ -22,7 +22,7 @@ public:
     MpvPlayerGL();
     ~MpvPlayerGL() override;
 
-    bool init(GLContext* gl);
+    bool init(GLContext* gl, const char* hwdec = "auto-safe");
     void cleanup() override;
     bool loadFile(const std::string& path, double startSeconds = 0.0) override;
 

@@ -169,7 +169,7 @@ static void* gl_get_proc_address(void* ctx, const char* name) {
 #endif
 }
 
-bool MpvPlayerGL::init(GLContext* gl) {
+bool MpvPlayerGL::init(GLContext* gl, const char* hwdec) {
     gl_ = gl;
 
     std::setlocale(LC_NUMERIC, "C");
@@ -181,7 +181,7 @@ bool MpvPlayerGL::init(GLContext* gl) {
     }
 
     mpv_set_option_string(mpv_, "vo", "libmpv");
-    mpv_set_option_string(mpv_, "hwdec", "auto-safe");  // Allow hardware decoding
+    mpv_set_option_string(mpv_, "hwdec", hwdec);
     mpv_set_option_string(mpv_, "keep-open", "yes");
     mpv_set_option_string(mpv_, "terminal", "no");
     mpv_set_option_string(mpv_, "video-sync", "audio");

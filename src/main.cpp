@@ -275,6 +275,7 @@ int main(int argc, char* argv[]) {
     // Parse arguments (main process only)
     SDL_LogPriority log_level = SDL_LOG_PRIORITY_INFO;
     bool use_dmabuf = false;  // Disable DMA-BUF by default (can cause system freezes)
+    const char* hwdec = "auto-safe";
     if (!is_cef_subprocess) {
         const char* log_level_str = nullptr;
         const char* log_file_path = nullptr;
@@ -289,6 +290,7 @@ int main(int argc, char* argv[]) {
 #if !defined(__APPLE__) && !defined(_WIN32)
                        "  --dmabuf                Enable DMA-BUF zero-copy CEF rendering (experimental)\n"
 #endif
+                       "  --hwdec <mode>          Set mpv hardware decoding mode (default: auto-safe)\n"
                        );
                 return 0;
             } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -306,6 +308,10 @@ int main(int argc, char* argv[]) {
                 log_file_path = argv[i] + 11;
             } else if (strcmp(argv[i], "--dmabuf") == 0) {
                 use_dmabuf = true;
+            } else if (strcmp(argv[i], "--hwdec") == 0) {
+                hwdec = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "auto-safe";
+            } else if (strncmp(argv[i], "--hwdec=", 8) == 0) {
+                hwdec = argv[i] + 8;
             } else if (argv[i][0] == '-') {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
                 return 1;
@@ -464,7 +470,7 @@ int main(int argc, char* argv[]) {
 
 #ifdef __APPLE__
     // Create video stack
-    VideoStack videoStack = VideoStack::create(window, width, height);
+    VideoStack videoStack = VideoStack::create(window, width, height, hwdec);
     if (!videoStack.player || !videoStack.renderer) {
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -497,7 +503,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Create video stack
-    VideoStack videoStack = VideoStack::create(window, width, height, &wgl);
+    VideoStack videoStack = VideoStack::create(window, width, height, &wgl, hwdec);
     if (!videoStack.player || !videoStack.renderer) {
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -527,7 +533,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Create video stack (detects Wayland vs X11 internally)
-    VideoStack videoStack = VideoStack::create(window, width, height, &egl);
+    VideoStack videoStack = VideoStack::create(window, width, height, &egl, hwdec);
     if (!videoStack.player || !videoStack.renderer) {
         SDL_DestroyWindow(window);
         SDL_Quit();
