@@ -1,0 +1,22 @@
+#!/bin/bash
+HERE="$(dirname "$(readlink -f "$0")")"
+
+export APPDIR="${HERE}"
+
+# PipeWire/SPA plugin discovery
+export SPA_PLUGIN_DIR="${HERE}/usr/lib/spa-0.2"
+export PIPEWIRE_MODULE_DIR="${HERE}/usr/lib/pipewire-0.3"
+
+# LD_LIBRARY_PATH for library resolution (bundled first, host fallback for GPU).
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# Set up the dynamic linker symlink. The binary's ELF interpreter is patched
+# (via patchelf) to this fixed path so the kernel loads our bundled ld-linux
+# instead of the host's. Unlike the "exec ld-linux ... binary" approach, this
+# preserves /proc/self/exe pointing to the actual binary — critical for CEF,
+# which re-executes /proc/self/exe for renderer/GPU/utility subprocesses.
+INTERP_DIR="/tmp/.jf-cef-interp"
+mkdir -p "$INTERP_DIR"
+ln -sf "${HERE}/usr/lib/ld-linux-x86-64.so.2" "$INTERP_DIR/ld-linux-x86-64.so.2"
+
+exec "${HERE}/usr/bin/jellyfin-desktop-cef" "$@"
