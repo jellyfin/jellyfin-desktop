@@ -8,6 +8,7 @@ Experimental rewrite of [Jellyfin Desktop](https://github.com/jellyfin/jellyfin-
 
 ## Downloads
 ### Linux (X11 and Wayland)
+- [AppImage](https://nightly.link/jellyfin-labs/jellyfin-desktop-cef/workflows/build-linux-appimage/main/linux-appimage-x86_64.zip)
 - Arch Linux (AUR): [jellyfin-desktop-cef-git](https://aur.archlinux.org/packages/jellyfin-desktop-cef-git)
 - [Flatpak (non-Flathub bundle)](https://nightly.link/jellyfin-labs/jellyfin-desktop-cef/workflows/build-linux-flatpak/main/linux-flatpak.zip)
 
