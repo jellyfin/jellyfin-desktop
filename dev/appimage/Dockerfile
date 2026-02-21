@@ -136,7 +136,6 @@ RUN rm -rf /AppDir/usr/lib/dri \
           /AppDir/usr/lib/libOpenGL.so* \
           /AppDir/usr/lib/libgbm.so* \
           /AppDir/usr/lib/libvulkan.so* \
-          /AppDir/usr/lib/libvdpau.so* \
           /AppDir/usr/lib/libdrm.so* \
           /AppDir/usr/lib/libdrm_*.so* \
           /AppDir/usr/lib/libxshmfence.so* \
@@ -177,9 +176,15 @@ RUN cp /AppDir/usr/share/applications/org.jellyfin.JellyfinDesktopCEF.desktop /A
 COPY dev/appimage/AppRun /AppDir/AppRun
 RUN chmod +x /AppDir/AppRun
 
+# Download the type2 runtime separately (appimagetool's built-in download is
+# flaky and frequently returns 502). Pin to a known-good release.
+RUN wget -q -O /opt/tools/runtime-x86_64 \
+    "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
+
 # Build the AppImage
 RUN mkdir -p /output && \
     ARCH=x86_64 /opt/tools/appimagetool/AppRun --no-appstream \
+    --runtime-file /opt/tools/runtime-x86_64 \
     /AppDir /output/JellyfinDesktopCEF-x86_64.AppImage
 
 CMD ["cp", "/output/JellyfinDesktopCEF-x86_64.AppImage", "/host-output/"]
