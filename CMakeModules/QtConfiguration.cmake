@@ -5,6 +5,18 @@ if(WIN32)
   set(WINARCHSTR ARCHSTR windows-x86_64)
 endif(WIN32)
 
+# Derive QTROOT from CMAKE_PREFIX_PATH if not explicitly set (e.g. when Qt Creator
+# configures the project via its Kit rather than a CMake preset).
+if("${QTROOT}" STREQUAL "")
+  foreach(_prefix ${CMAKE_PREFIX_PATH})
+    if(EXISTS "${_prefix}/lib/cmake/Qt6/Qt6Config.cmake")
+      set(QTROOT "${_prefix}")
+      message(STATUS "QTROOT not set, derived from CMAKE_PREFIX_PATH: ${QTROOT}")
+      break()
+    endif()
+  endforeach()
+endif()
+
 if((NOT IS_DIRECTORY ${QTROOT}) AND (NOT "${QTROOT}" STREQUAL ""))
   # Write qt.conf in the Qt depends directory so that the Qt tools can find QML files
   set(QTCONFCONTENT "[Paths]

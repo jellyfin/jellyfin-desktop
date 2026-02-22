@@ -1,5 +1,10 @@
 # Development
 
+After cloning this repo, you will need to initialize and update its submodules:
+```bash
+git submodule update --init --recursive
+```
+
 Platform-specific build instructions:
 - [macOS](macos/README.md)
 - [Windows](windows/README.md)

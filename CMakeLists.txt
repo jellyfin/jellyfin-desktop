@@ -13,7 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)
 option(CHECK_FOR_UPDATES "Enable checking for new versions of Jellyfin" OFF)
 option(OPENELEC "Make an OpenELEC build" OFF)
 option(LINUX_X11POWER "Enable non D-Bus screensaver management" OFF)
-option(USE_STATIC_MPVQT "Build MpvQt from bundled submodule instead of using system library" OFF)
+option(USE_STATIC_MPVQT "Build MpvQt from bundled submodule instead of using system library" ON)
 
 if (NOT CHECK_FOR_UPDATES)
     add_definitions(-DDISABLE_UPDATE_CHECK)
@@ -36,6 +36,16 @@ endif(BUILD_TARGET STREQUAL "RPI")
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/CMakeModules/")
+
+# Auto-detect Homebrew on macOS so that dependencies (mpv, SDL2, etc.)
+# are found regardless of the IDE or build environment.
+if(APPLE)
+  if(IS_DIRECTORY "/opt/homebrew")          # Apple Silicon
+    list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew")
+  elseif(IS_DIRECTORY "/usr/local/Homebrew") # Intel
+    list(APPEND CMAKE_PREFIX_PATH "/usr/local")
+  endif()
+endif()
 set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME Core)
 
 macro(set_policy _POLICY _VALUE)

@@ -91,12 +91,6 @@ if(APPLE)
     PROPERTIES COMPILE_FLAGS -fno-objc-arc
   )
 
-  # copy the qt.conf so that when running PMP from a debugger it finds the plugins and QML files
-  if(EXISTS ${QTROOT}/bin/qt.conf)
-    add_resources(TARGET ${MAIN_TARGET} SOURCES ${QTROOT}/bin/qt.conf DEST ${INSTALL_RESOURCE_DIR})
-  endif()
-
-
   set(ICON_FILE ${CMAKE_SOURCE_DIR}/bundle/osx/${MACOSX_BUNDLE_ICON_FILE})
   list(APPEND RESOURCE_FILES ${ICON_FILE})
   set_source_files_properties(${ICON_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
@@ -104,6 +98,13 @@ endif()
 
 if(WIN32)
   list(APPEND RESOURCE_FILES ${CMAKE_SOURCE_DIR}/bundle/win/iconres.rc)
+endif()
+
+# Generate qt.conf so that dev builds find Qt plugins and QML files
+# without needing DYLD_FRAMEWORK_PATH / QT_PLUGIN_PATH / PATH env vars.
+if(NOT "${QTROOT}" STREQUAL "")
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/qt.conf "[Paths]\nPrefix=${QTROOT}\n")
+  add_resources(TARGET ${MAIN_TARGET} SOURCES ${CMAKE_CURRENT_BINARY_DIR}/qt.conf DEST ${INSTALL_RESOURCE_DIR})
 endif()
 
 set(RESOURCE_ROOT .)
@@ -128,7 +129,7 @@ add_executable(${MAIN_TARGET} WIN32 MACOSX_BUNDLE ${MAIN_SRCS} ${BUNDLED_FILES} 
 add_dependencies(${MAIN_TARGET} generate_resources)
 std_target_properties(${MAIN_TARGET})
 if(APPLE)
-  set(_install_rpath "@executable_path/../Frameworks")
+  set(_install_rpath "@executable_path/../Frameworks;${QTROOT}/lib")
 else()
   set(_install_rpath "${QTROOT}/lib")
 endif()
@@ -139,6 +140,19 @@ set_target_properties(${MAIN_TARGET} PROPERTIES
 )
 copy_resources(${MAIN_TARGET})
 clang_tidy(${MAIN_TARGET})
+
+# Wrap the macOS binary in a launch script so that Qt Creator's 'disclaim'
+# tool cannot inject DYLD_FRAMEWORK_PATH (which causes wrong frameworks to
+# load when Homebrew or other system frameworks are present).  The app already
+# uses qt.conf and absolute framework paths, so DYLD_FRAMEWORK_PATH is not needed.
+if(APPLE AND NOT "${QTROOT}" STREQUAL "")
+  add_custom_command(TARGET ${MAIN_TARGET} POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+      -DBINARY=$<TARGET_FILE:${MAIN_TARGET}>
+      -P ${CMAKE_SOURCE_DIR}/CMakeModules/CreateLaunchWrapper.cmake
+    COMMENT "Creating macOS launch wrapper"
+  )
+endif()
 
 # QML module for AOT compilation (eliminates runtime qmlcache)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/ui/webview.qml

@@ -7,6 +7,8 @@ deps/*
 dev/windows/deps/
 dev/macos/deps/
 .idea
+.cache/
+.qtcreator/
 *.pyc
 .DS_Store
 .*libreelec*
