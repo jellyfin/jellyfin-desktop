@@ -2,6 +2,8 @@
   "permissions": {
     "allow": [
       "Skill(investigate-jellyfin-repos)",
+      "Skill(investigate-cef)",
+      "Skill(investigate-sdl)",
       "Read",
       "Glob",
       "Grep",
