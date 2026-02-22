@@ -37,7 +37,17 @@ public:
     // Enable/disable rendering
     void setActive(bool active) {
         active_.store(active);
-        if (active) notify();
+        if (active) {
+            // Resize on reactivation only if a resize was skipped while inactive
+            if (resized_while_inactive_.exchange(false)) {
+                resize_on_activate_.store(true);
+            }
+            notify();
+        } else if (threaded_) {
+            // Hide subsurface on stop so the stale buffer doesn't block window resize
+            hide_pending_.store(true);
+            cv_.notify_one();
+        }
     }
 
     // Wake thread to check for new frames (called from mpv redraw callback)
@@ -73,6 +83,12 @@ private:
     std::atomic<bool> resize_pending_{false};
     int resize_width_ = 0;
     int resize_height_ = 0;
+
+    // Resize on next activation (window may have been resized while inactive)
+    std::atomic<bool> resize_on_activate_{false};
+    std::atomic<bool> resized_while_inactive_{false};
+    // Hide subsurface on deactivation (detach stale buffer)
+    std::atomic<bool> hide_pending_{false};
 
     // Frame ready notification (threaded mode only)
     std::mutex cv_mutex_;

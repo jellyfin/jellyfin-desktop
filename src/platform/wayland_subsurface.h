@@ -49,6 +49,7 @@ public:
     int deviceExtensionCount() const override;
 
     void commit();
+    void hide() override;
     void setColorspace() override;
     void setDestinationSize(int width, int height) override;
 

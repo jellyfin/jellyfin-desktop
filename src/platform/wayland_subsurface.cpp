@@ -597,6 +597,13 @@ void WaylandSubsurface::commit() {
     wl_display_flush(wl_display_);
 }
 
+void WaylandSubsurface::hide() {
+    if (!mpv_surface_) return;
+    wl_surface_attach(mpv_surface_, nullptr, 0, 0);
+    wl_surface_commit(mpv_surface_);
+    wl_display_flush(wl_display_);
+}
+
 void WaylandSubsurface::initDestinationSize(int width, int height) {
     if (viewport_ && width > 0 && height > 0) {
         wp_viewport_set_destination(viewport_, width, height);

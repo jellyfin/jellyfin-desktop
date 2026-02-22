@@ -1,7 +1,6 @@
 #include "video_render_controller.h"
 #include "video_renderer.h"
 #include "logging.h"
-#include <chrono>
 
 VideoRenderController::~VideoRenderController() {
     stop();
@@ -80,10 +79,57 @@ void VideoRenderController::requestSetColorspace() {
 
 void VideoRenderController::threadFunc() {
     while (running_.load()) {
-        // Handle resize first
+        // Hide subsurface on stop — detach the stale buffer so it doesn't
+        // interfere with window resize on Wayland.  The next submitFrame()
+        // on a new video load will naturally re-attach a buffer.
+        if (hide_pending_.exchange(false)) {
+            renderer_->setVisible(false);
+        }
+
+        // Handle resize — skip when inactive (no point recreating the
+        // swapchain for a surface nobody is rendering to, and the Vulkan WSI
+        // Wayland roundtrips can block the main thread via resize_mutex_).
+        // Dimensions are still stored so we can apply them on reactivation.
+        bool did_resize = false;
         if (resize_pending_.exchange(false)) {
-            std::lock_guard<std::mutex> lock(resize_mutex_);
-            renderer_->resize(resize_width_, resize_height_);
+            if (active_.load()) {
+                int rw, rh;
+                {
+                    std::lock_guard<std::mutex> lock(resize_mutex_);
+                    rw = resize_width_;
+                    rh = resize_height_;
+                }
+                renderer_->resize(rw, rh);
+                did_resize = true;
+            } else {
+                resized_while_inactive_.store(true);
+            }
+        }
+
+        // Handle resize on reactivation (window may have been resized while inactive)
+        if (resize_on_activate_.exchange(false)) {
+            int rw, rh;
+            {
+                std::lock_guard<std::mutex> lock(resize_mutex_);
+                rw = resize_width_;
+                rh = resize_height_;
+            }
+            if (rw > 0 && rh > 0) {
+                renderer_->resize(rw, rh);
+                did_resize = true;
+            }
+        }
+
+        // After resize, force one render pass to commit a buffer at the new
+        // size. During pause hasFrame() returns false (mpv has no *new* frame),
+        // but mpv_render_context_render still paints the current frame, so
+        // this commits the viewport destination change to the compositor.
+        if (did_resize && active_.load()) {
+            int w = width_.load();
+            int h = height_.load();
+            if (w > 0 && h > 0) {
+                renderer_->render(w, h);
+            }
         }
 
         // Handle colorspace setup
@@ -105,12 +151,12 @@ void VideoRenderController::threadFunc() {
             }
         }
 
-        // Wait for work: frame ready, resize, colorspace, or shutdown
-        // 100ms timeout as fallback for shutdown check
+        // Wait for work: frame ready, resize, colorspace, hide, or shutdown
         std::unique_lock lock(cv_mutex_);
-        cv_.wait_for(lock, std::chrono::milliseconds(100), [this] {
+        cv_.wait(lock, [this] {
             return !running_.load() || resize_pending_.load() ||
-                   colorspace_pending_.load() || frame_notified_.load();
+                   colorspace_pending_.load() || frame_notified_.load() ||
+                   resize_on_activate_.load() || hide_pending_.load();
         });
     }
 }
