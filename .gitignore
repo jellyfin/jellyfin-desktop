@@ -9,6 +9,7 @@ dev/macos/deps/
 .idea
 .cache/
 .qtcreator/
+CMakePresets.json
 *.pyc
 .DS_Store
 .*libreelec*

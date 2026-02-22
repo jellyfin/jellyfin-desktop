@@ -141,15 +141,13 @@ set_target_properties(${MAIN_TARGET} PROPERTIES
 copy_resources(${MAIN_TARGET})
 clang_tidy(${MAIN_TARGET})
 
-# Wrap the macOS binary in a launch script so that Qt Creator's 'disclaim'
-# tool cannot inject DYLD_FRAMEWORK_PATH (which causes wrong frameworks to
-# load when Homebrew or other system frameworks are present).  The app already
-# uses qt.conf and absolute framework paths, so DYLD_FRAMEWORK_PATH is not needed.
-if(APPLE AND NOT "${QTROOT}" STREQUAL "")
+# Workaround for Qt Creator locating incorrect Qt version via DYLD_FRAMEWORK_PATH.
+# This forces the build to load qt.conf's paths instead, which should be correct.
+if(APPLE AND MACOS_LAUNCH_WRAPPER)
   add_custom_command(TARGET ${MAIN_TARGET} POST_BUILD
     COMMAND ${CMAKE_COMMAND}
       -DBINARY=$<TARGET_FILE:${MAIN_TARGET}>
-      -P ${CMAKE_SOURCE_DIR}/CMakeModules/CreateLaunchWrapper.cmake
+      -P ${CMAKE_SOURCE_DIR}/CMakeModules/MacOSLaunchWrapper.cmake
     COMMENT "Creating macOS launch wrapper"
   )
 endif()
