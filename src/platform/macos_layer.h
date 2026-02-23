@@ -50,6 +50,7 @@ public:
 
     void resize(uint32_t width, uint32_t height);
     void setVisible(bool visible);
+    void hide() { setVisible(false); }
     void setPosition(int x, int y);
 
     bool isHdr() const { return is_hdr_; }
