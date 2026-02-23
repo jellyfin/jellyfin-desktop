@@ -1,0 +1,31 @@
+name: build-appimage
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Build AppImage
+      env:
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        docker build \
+          -t jellyfin-desktop-appimage \
+          -f dev/appimage/Dockerfile \
+          .
+        mkdir -p output
+        docker run --rm \
+          -v "${WORKSPACE}/output:/host-output" \
+          jellyfin-desktop-appimage
+    - name: Archive production artifacts
+      uses: actions/upload-artifact@v6
+      with:
+        name: linux-appimage-x86_64
+        path: ${{ github.workspace }}/output/JellyfinDesktop-*.AppImage

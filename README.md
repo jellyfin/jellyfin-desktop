@@ -9,6 +9,20 @@ Jellyfin desktop client built with Qt WebEngine and [libmpv](https://github.com/
   - Note for Mac users: builds for Intel require macOS 12+ and Apple Silicon builds requires macOS 14+
 - [Flathub (Linux)](https://flathub.org/apps/details/org.jellyfin.JellyfinDesktop)
 
+### Development Builds
+Built from the latest commit on `master`.
+
+#### macOS
+- [Apple Silicon](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-macos/master/macos-arm64.zip)
+- [Intel](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-macos/master/macos-x86_64.zip)
+
+#### Windows
+- [x64 Installer](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-windows/master/windows-x64-installer.zip)
+- [x64 Portable](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-windows/master/windows-x64-portable.zip)
+
+#### Linux
+- [AppImage (x86_64)](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-appimage/master/linux-appimage-x86_64.zip)
+
 ## Building
 See [dev/](dev/) for platform-specific build instructions.
 

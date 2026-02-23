@@ -1,0 +1,16 @@
+#!/bin/bash
+SELF="$(readlink -f "$0")"
+
+# Derive APPDIR from script location if not inherited from AppRun.
+# The script is always under $APPDIR/usr/lib/..., so stripping from
+# /usr/lib/ onward gives us the AppDir root.
+: "${APPDIR:="${SELF%%/usr/lib/*}"}"
+
+LIBRARY_PATH="${APPDIR}/usr/lib"
+LIBRARY_PATH="${LIBRARY_PATH}:/usr/lib64:/usr/lib:/lib64:/lib"
+LIBRARY_PATH="${LIBRARY_PATH}:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu"
+
+exec "$APPDIR/usr/lib/ld-linux-x86-64.so.2" \
+    --inhibit-cache \
+    --library-path "${LIBRARY_PATH}" \
+    "${SELF}.real" "$@"

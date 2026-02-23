@@ -6,6 +6,13 @@ setlocal EnableDelayedExpansion
 call "%~dp0common.bat"
 
 set "7ZIP=C:\Program Files\7-Zip\7z.exe"
+if not exist "%7ZIP%" (
+    for /f "delims=" %%i in ('where 7z.exe 2^>nul') do (
+        set "7ZIP=%%i"
+        goto :found7zip
+    )
+)
+:found7zip
 
 if not exist "%DEPS_DIR%" mkdir "%DEPS_DIR%"
 
@@ -33,7 +40,11 @@ if errorlevel 1 echo Warning: VS Build Tools may already be installed
 
 echo [6/14] Installing MinGW (for gendef)...
 winget install --id mingw.mingw-w64-ucrt --accept-package-agreements --accept-source-agreements --silent
-if errorlevel 1 echo Warning: MinGW may already be installed
+if errorlevel 1 (
+    echo Warning: mingw.mingw-w64-ucrt not available, trying msys2.msys2...
+    winget install --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements --silent
+    if errorlevel 1 echo Warning: MinGW/MSYS2 install skipped. gendef fallback may run during build.
+)
 
 echo [7/14] Installing Inno Setup...
 winget install --id JRSoftware.InnoSetup --accept-package-agreements --accept-source-agreements --silent
@@ -52,18 +63,38 @@ echo [9/14] Downloading libmpv AVX2...
 if not exist "%DEPS_DIR%\mpv\libmpv-2.dll" (
     echo Downloading libmpv...
     if exist "%DEPS_DIR%\mpv" rmdir /s /q "%DEPS_DIR%\mpv"
+    if exist "%DEPS_DIR%\mpv_tmp" rmdir /s /q "%DEPS_DIR%\mpv_tmp"
     curl -L "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/%MPV_RELEASE%/mpv-dev-x86_64-v3-%MPV_VERSION%.7z" -o "%DEPS_DIR%\mpv.7z"
     if errorlevel 1 (
         echo ERROR: Failed to download libmpv
     ) else (
-        %7ZIP% x "%DEPS_DIR%\mpv.7z" -o"%DEPS_DIR%\mpv_tmp" -y
+        if not exist "%7ZIP%" (
+            echo ERROR: 7-Zip not found. Please install 7-Zip and re-run setup.
+        ) else (
+        "%7ZIP%" x "%DEPS_DIR%\mpv.7z" -o"%DEPS_DIR%\mpv_tmp" -y
+        if errorlevel 1 (
+            echo ERROR: Failed to extract libmpv archive
+        ) else (
+        set "MPV_SRC=%DEPS_DIR%\mpv_tmp"
+        if not exist "%MPV_SRC%\libmpv-2.dll" (
+            for /d %%D in ("%DEPS_DIR%\mpv_tmp\*") do (
+                if exist "%%~fD\libmpv-2.dll" set "MPV_SRC=%%~fD"
+            )
+        )
+        if exist "%MPV_SRC%\libmpv-2.dll" (
         mkdir "%DEPS_DIR%\mpv"
-        move "%DEPS_DIR%\mpv_tmp\include" "%DEPS_DIR%\mpv\"
-        move "%DEPS_DIR%\mpv_tmp\libmpv-2.dll" "%DEPS_DIR%\mpv\"
-        if exist "%DEPS_DIR%\mpv_tmp\libmpv.dll.a" move "%DEPS_DIR%\mpv_tmp\libmpv.dll.a" "%DEPS_DIR%\mpv\"
+        if exist "%MPV_SRC%\include" xcopy /e /i /y "%MPV_SRC%\include" "%DEPS_DIR%\mpv\include\" >nul
+        move /y "%MPV_SRC%\libmpv-2.dll" "%DEPS_DIR%\mpv\" >nul
+        if exist "%MPV_SRC%\libmpv.dll.a" move /y "%MPV_SRC%\libmpv.dll.a" "%DEPS_DIR%\mpv\" >nul
+        if exist "%MPV_SRC%\libmpv-2.dll.lib" move /y "%MPV_SRC%\libmpv-2.dll.lib" "%DEPS_DIR%\mpv\" >nul
+        ) else (
+            echo ERROR: libmpv-2.dll not found in extracted archive
+        )
         rmdir /s /q "%DEPS_DIR%\mpv_tmp"
         del "%DEPS_DIR%\mpv.7z"
         echo libmpv extracted to %DEPS_DIR%\mpv
+        )
+        )
     )
 ) else (
     echo libmpv already installed, skipping
@@ -71,16 +102,36 @@ if not exist "%DEPS_DIR%\mpv\libmpv-2.dll" (
 
 echo [10/14] Downloading libmpv fallback (non-AVX2)...
 if not exist "%DEPS_DIR%\mpv-fallback\libmpv-2.dll" (
+    if exist "%DEPS_DIR%\mpv-fallback-tmp" rmdir /s /q "%DEPS_DIR%\mpv-fallback-tmp"
     curl -L "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/%MPV_RELEASE%/mpv-dev-x86_64-%MPV_VERSION%.7z" -o "%DEPS_DIR%\mpv-fallback.7z"
     if errorlevel 1 (
         echo ERROR: Failed to download libmpv fallback
     ) else (
-        %7ZIP% x "%DEPS_DIR%\mpv-fallback.7z" -o"%DEPS_DIR%\mpv-fallback-tmp" -y
+        if not exist "%7ZIP%" (
+            echo ERROR: 7-Zip not found. Please install 7-Zip and re-run setup.
+        ) else (
+        "%7ZIP%" x "%DEPS_DIR%\mpv-fallback.7z" -o"%DEPS_DIR%\mpv-fallback-tmp" -y
+        if errorlevel 1 (
+            echo ERROR: Failed to extract libmpv fallback archive
+        ) else (
+        set "MPV_FALLBACK_SRC=%DEPS_DIR%\mpv-fallback-tmp"
+        if not exist "%MPV_FALLBACK_SRC%\libmpv-2.dll" (
+            for /d %%D in ("%DEPS_DIR%\mpv-fallback-tmp\*") do (
+                if exist "%%~fD\libmpv-2.dll" set "MPV_FALLBACK_SRC=%%~fD"
+            )
+        )
         mkdir "%DEPS_DIR%\mpv-fallback"
-        move "%DEPS_DIR%\mpv-fallback-tmp\libmpv-2.dll" "%DEPS_DIR%\mpv-fallback\"
+        if exist "%MPV_FALLBACK_SRC%\libmpv-2.dll" (
+            move /y "%MPV_FALLBACK_SRC%\libmpv-2.dll" "%DEPS_DIR%\mpv-fallback\" >nul
+            if exist "%MPV_FALLBACK_SRC%\libmpv.dll.a" move /y "%MPV_FALLBACK_SRC%\libmpv.dll.a" "%DEPS_DIR%\mpv-fallback\" >nul
+        ) else (
+            echo ERROR: libmpv-2.dll not found in fallback archive
+        )
         rmdir /s /q "%DEPS_DIR%\mpv-fallback-tmp"
         del "%DEPS_DIR%\mpv-fallback.7z"
         echo libmpv fallback extracted to %DEPS_DIR%\mpv-fallback
+        )
+        )
     )
 ) else (
     echo libmpv fallback already installed, skipping

@@ -266,7 +266,7 @@ void AlbumArtProvider::cleanup()
   if (m_pendingReply)
   {
     m_pendingReply->abort();
-    m_pendingReply->deleteLater();
+    QMetaObject::invokeMethod(m_pendingReply, "deleteLater", Qt::QueuedConnection);
     m_pendingReply = nullptr;
     m_pendingUrl.clear();
   }

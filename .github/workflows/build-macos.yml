@@ -3,6 +3,9 @@ name: build-macos
 on:
   workflow_call:
   workflow_dispatch:
+  push:
+    branches:
+      - master
 
 jobs:
   build:

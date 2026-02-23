@@ -50,7 +50,7 @@ jobs:
         strip_components: 2
         target: "/srv/incoming/client/jellyfin-desktop/ubuntu/${{ matrix.tag }}"
     - name: Import artifactsinto reprepro
-      uses: appleboy/ssh-action@823bd89e131d8d508129f9443cad5855e9ba96f0 # v1.2.4
+      uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: "${{ secrets.REPO_HOST }}"
         username: "${{ secrets.REPO_USER }}"
@@ -63,7 +63,7 @@ jobs:
           sudo reprepro --waitforlock 30 --basedir /srv/ubuntu --component ${COMPONENT} includedeb ${{ matrix.tag }} /srv/incoming/client/jellyfin-desktop/ubuntu/${{ matrix.tag }}/*.deb || exit 1
           sudo reprepro --waitforlock 30 --basedir /srv/ubuntu --component ${COMPONENT} includedsc ${{ matrix.tag }} /srv/incoming/client/jellyfin-desktop/ubuntu/${{ matrix.tag }}/*.dsc || exit 1
     - name: Move artifacts into repository
-      uses: appleboy/ssh-action@823bd89e131d8d508129f9443cad5855e9ba96f0 # v1.2.4
+      uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: "${{ secrets.REPO_HOST }}"
         username: "${{ secrets.REPO_USER }}"
@@ -123,7 +123,7 @@ jobs:
         strip_components: 2
         target: "/srv/incoming/client/jellyfin-desktop/debian/${{ matrix.tag }}"
     - name: Import artifactsinto reprepro
-      uses: appleboy/ssh-action@823bd89e131d8d508129f9443cad5855e9ba96f0 # v1.2.4
+      uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: "${{ secrets.REPO_HOST }}"
         username: "${{ secrets.REPO_USER }}"
@@ -136,7 +136,7 @@ jobs:
           sudo reprepro --waitforlock 30 --basedir /srv/debian --component ${COMPONENT} includedeb ${{ matrix.tag }} /srv/incoming/client/jellyfin-desktop/debian/${{ matrix.tag }}/*.deb || exit 1
           sudo reprepro --waitforlock 30 --basedir /srv/debian --component ${COMPONENT} includedsc ${{ matrix.tag }} /srv/incoming/client/jellyfin-desktop/debian/${{ matrix.tag }}/*.dsc || exit 1
     - name: Move artifacts into repository
-      uses: appleboy/ssh-action@823bd89e131d8d508129f9443cad5855e9ba96f0 # v1.2.4
+      uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: "${{ secrets.REPO_HOST }}"
         username: "${{ secrets.REPO_USER }}"

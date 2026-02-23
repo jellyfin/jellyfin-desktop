@@ -17,3 +17,6 @@ jobs:
 
   linux:
     uses: ./.github/workflows/build-linux.yml
+
+  appimage:
+    uses: ./.github/workflows/build-appimage.yml

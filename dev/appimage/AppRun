@@ -1,0 +1,33 @@
+#!/bin/bash
+HERE="$(dirname "$(readlink -f "$0")")"
+
+# Export APPDIR so child process wrappers (QtWebEngineProcess) can find
+# the bundled ld-linux without fragile directory-level counting.
+export APPDIR="${HERE}"
+export QTWEBENGINE_DISABLE_SANDBOX=1
+export QT_PLUGIN_PATH="${HERE}/usr/lib/qt6/plugins"
+export QML_IMPORT_PATH="${HERE}/usr/lib/qt6/qml"
+export XDG_DATA_DIRS="${HERE}/usr/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+
+# PipeWire/SPA plugin discovery
+export SPA_PLUGIN_DIR="${HERE}/usr/lib/spa-0.2"
+export PIPEWIRE_MODULE_DIR="${HERE}/usr/lib/pipewire-0.3"
+
+# LD_LIBRARY_PATH for child processes that inherit the environment.
+export LD_LIBRARY_PATH="${HERE}/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# Library search path: AppDir first for most libs, then host paths as fallback
+# for GPU/graphics libraries (Mesa, DRI, EGL, GL) which must match the host's
+# kernel driver and are deliberately excluded from the AppDir.
+LIBRARY_PATH="${HERE}/usr/lib"
+LIBRARY_PATH="${LIBRARY_PATH}:/usr/lib64:/usr/lib:/lib64:/lib"
+LIBRARY_PATH="${LIBRARY_PATH}:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu"
+
+# Work around Qt bug: xdg_positioner.set_size(0,0) during popup reposition
+# violates xdg-shell protocol and crashes on Mutter (GNOME).
+export LD_PRELOAD="${HERE}/usr/lib/libpositioner-fix.so${LD_PRELOAD:+:$LD_PRELOAD}"
+
+exec "${HERE}/usr/lib/ld-linux-x86-64.so.2" \
+    --inhibit-cache \
+    --library-path "${LIBRARY_PATH}" \
+    "${HERE}/usr/bin/jellyfin-desktop" "$@"
