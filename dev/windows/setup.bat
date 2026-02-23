@@ -200,65 +200,7 @@ if exist "%DEPS_DIR%\mpv\libmpv-2.dll" (
 )
 
 echo [14/14] Generating CMakePresets.json...
-(
-echo {
-echo   "version": 6,
-echo   "configurePresets": [
-echo     {
-echo       "name": "macos-dev",
-echo       "displayName": "macOS Development",
-echo       "description": "Debug build using deps from dev/macos/setup.sh",
-echo       "generator": "Ninja",
-echo       "binaryDir": "${sourceDir}/build",
-echo       "condition": {
-echo         "type": "equals",
-echo         "lhs": "${hostSystemName}",
-echo         "rhs": "Darwin"
-echo       },
-echo       "cacheVariables": {
-echo         "CMAKE_BUILD_TYPE": "Debug",
-echo         "QTROOT": "${sourceDir}/dev/macos/deps/qt/%QT_VERSION%/macos",
-echo         "USE_STATIC_MPVQT": "ON"
-echo       }
-echo     },
-echo     {
-echo       "name": "windows-dev",
-echo       "displayName": "Windows Development",
-echo       "description": "Debug build using deps from dev/windows/setup.bat",
-echo       "generator": "Ninja",
-echo       "binaryDir": "${sourceDir}/build",
-echo       "condition": {
-echo         "type": "equals",
-echo         "lhs": "${hostSystemName}",
-echo         "rhs": "Windows"
-echo       },
-echo       "cacheVariables": {
-echo         "CMAKE_BUILD_TYPE": "Debug",
-echo         "QTROOT": "${sourceDir}/dev/windows/deps/qt/%QT_VERSION%/msvc2022_64",
-echo         "MPV_INCLUDE_DIR": "${sourceDir}/dev/windows/deps/mpv/include",
-echo         "MPV_LIBRARY": "${sourceDir}/dev/windows/deps/mpv/libmpv-2.dll.lib",
-echo         "USE_STATIC_MPVQT": "ON"
-echo       }
-echo     },
-echo     {
-echo       "name": "linux-dev",
-echo       "displayName": "Linux Development",
-echo       "description": "Debug build using system Qt and libraries",
-echo       "generator": "Ninja",
-echo       "binaryDir": "${sourceDir}/build",
-echo       "condition": {
-echo         "type": "equals",
-echo         "lhs": "${hostSystemName}",
-echo         "rhs": "Linux"
-echo       },
-echo       "cacheVariables": {
-echo         "CMAKE_BUILD_TYPE": "Debug",
-echo         "USE_STATIC_MPVQT": "ON"
-echo       }
-echo     }
-echo   ]
-echo }
-) > "%PROJECT_ROOT%\CMakePresets.json"
+powershell -Command "(Get-Content '%SCRIPT_DIR%..\CMakePresets.json.in' -Raw) -replace '@QT_VERSION@','%QT_VERSION%' -replace '@BREW_PREFIX@','' | Set-Content '%PROJECT_ROOT%\CMakePresets.json' -NoNewline"
 
 echo.
 echo Setup complete. Restart terminal to refresh PATH, then run build.bat
