@@ -39,6 +39,7 @@ public:
     virtual const char* const* deviceExtensions() const = 0;
     virtual int deviceExtensionCount() const = 0;
 
+    virtual void show() {}  // Re-show surface (default no-op; Wayland re-attaches on present)
     virtual void hide() {}  // Detach buffer to hide surface (default no-op)
     virtual void setColorspace() {}  // Platform-specific colorspace setup (default no-op)
     virtual void setDestinationSize(int, int) {}  // HiDPI logical size (default no-op)

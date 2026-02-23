@@ -28,7 +28,9 @@ bool VulkanSubsurfaceRenderer::render(int width, int height) {
 }
 
 void VulkanSubsurfaceRenderer::setVisible(bool visible) {
-    if (!visible) {
+    if (visible) {
+        surface_->show();
+    } else {
         surface_->hide();
     }
 }
