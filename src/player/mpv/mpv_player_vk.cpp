@@ -172,6 +172,7 @@ bool MpvPlayerVk::init(VulkanContext* vk, VideoSurface* subsurface, const char* 
 
     mpv_set_option_string(mpv_, "vo", "libmpv");
     mpv_set_option_string(mpv_, "hwdec", hwdec);
+    mpv_set_option_string(mpv_, "hwdec-codecs", "h264,vc1,hevc,vp8,vp9,av1,prores,prores_raw,ffv1,dpx");
     mpv_set_option_string(mpv_, "keep-open", "yes");  // Keep video layer alive, detect EOF via eof-reached property
     mpv_set_option_string(mpv_, "terminal", "no");
     mpv_set_option_string(mpv_, "video-sync", "audio");  // Simple audio sync, no frame interpolation
