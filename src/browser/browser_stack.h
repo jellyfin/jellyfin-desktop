@@ -55,7 +55,7 @@ struct BrowserEntry {
     std::string name;
     CefRefPtr<CefClient> client;
     std::function<CefRefPtr<CefBrowser>()> getBrowser;  // set at creation, returns browser when available
-    std::function<void(int, int)> resizeBrowser;  // set at creation, resizes the CEF browser
+    std::function<void(int, int, int, int)> resizeBrowser;  // set at creation, resizes the CEF browser (logical_w, logical_h, physical_w, physical_h)
     std::function<InputReceiver*()> getInputReceiver;  // set at creation, returns input receiver
     std::function<bool()> isClosed;  // set at creation, returns true when browser is closed
     std::unique_ptr<BrowserLayer> input_layer;

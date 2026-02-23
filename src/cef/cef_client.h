@@ -138,7 +138,7 @@ public:
     void selectAll() override;
     void undo() override;
     void redo() override;
-    void resize(int width, int height);
+    void resize(int width, int height, int physical_w, int physical_h);
     void forceRepaint();
     void loadUrl(const std::string& url);
 
@@ -175,6 +175,8 @@ private:
     FullscreenChangeCallback on_fullscreen_change_;
     PhysicalSizeCallback physical_size_cb_;
     float scale_override_ = 0.0f;  // 0 = use physical/logical ratio
+    int physical_w_ = 0;  // Stored physical dimensions (set during resize)
+    int physical_h_ = 0;
     std::atomic<bool> is_closed_ = false;
     CefRefPtr<CefBrowser> browser_;
 
@@ -233,7 +235,7 @@ public:
 
     bool isClosed() const { return is_closed_; }
     CefRefPtr<CefBrowser> browser() const { return browser_; }
-    void resize(int width, int height);
+    void resize(int width, int height, int physical_w, int physical_h);
     void setScaleOverride(float scale) { scale_override_ = scale; }
     void sendFocus(bool focused) override;
     void sendMouseMove(int x, int y, int modifiers) override;
@@ -261,6 +263,8 @@ private:
     IOSurfacePaintCallback on_iosurface_paint_;
 #endif
     float scale_override_ = 0.0f;
+    int physical_w_ = 0;  // Stored physical dimensions (set during resize)
+    int physical_h_ = 0;
     std::atomic<bool> is_closed_ = false;
     CefRefPtr<CefBrowser> browser_;
 

@@ -378,8 +378,10 @@ void Client::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) {
 
 bool Client::GetScreenInfo(CefRefPtr<CefBrowser> browser, CefScreenInfo& screen_info) {
     // Compute scale from physical/logical - CEF paints at logical * scale = physical
-    int physical_w = 0, physical_h = 0;
-    if (physical_size_cb_) {
+    // Prefer stored physical dimensions (set during resize) to avoid stale SDL queries
+    int physical_w = physical_w_;
+    int physical_h = physical_h_;
+    if (physical_w <= 0 && physical_size_cb_) {
         physical_size_cb_(physical_w, physical_h);
     }
     float scale = (physical_w > 0 && width_ > 0) ? static_cast<float>(physical_w) / width_ : 1.0f;
@@ -683,10 +685,18 @@ void Client::redo() {
     if (browser_) browser_->GetMainFrame()->Redo();
 }
 
-void Client::resize(int width, int height) {
+void Client::resize(int width, int height, int physical_w, int physical_h) {
     width_ = width;
     height_ = height;
+    physical_w_ = physical_w;
+    physical_h_ = physical_h;
     if (browser_) {
+        // NotifyScreenInfoChanged first so CEF re-queries GetScreenInfo and
+        // caches the correct device_scale_factor BEFORE WasResized triggers a
+        // paint.  Without this, CEF uses a stale scale from the previous size,
+        // producing a paint buffer that is a few pixels off from the actual
+        // physical dimensions (visible as a gap at the window edges).
+        browser_->GetHost()->NotifyScreenInfoChanged();
         browser_->GetHost()->WasResized();
         browser_->GetHost()->Invalidate(PET_VIEW);
     }
@@ -886,8 +896,10 @@ void OverlayClient::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) {
 
 bool OverlayClient::GetScreenInfo(CefRefPtr<CefBrowser> browser, CefScreenInfo& screen_info) {
     // Compute scale from physical/logical - CEF paints at logical * scale = physical
-    int physical_w = 0, physical_h = 0;
-    if (physical_size_cb_) {
+    // Prefer stored physical dimensions (set during resize) to avoid stale SDL queries
+    int physical_w = physical_w_;
+    int physical_h = physical_h_;
+    if (physical_w <= 0 && physical_size_cb_) {
         physical_size_cb_(physical_w, physical_h);
     }
     float scale = (physical_w > 0 && width_ > 0) ? static_cast<float>(physical_w) / width_ : 1.0f;
@@ -966,10 +978,13 @@ void OverlayClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     is_closed_ = true;
 }
 
-void OverlayClient::resize(int width, int height) {
+void OverlayClient::resize(int width, int height, int physical_w, int physical_h) {
     width_ = width;
     height_ = height;
+    physical_w_ = physical_w;
+    physical_h_ = physical_h;
     if (browser_) {
+        browser_->GetHost()->NotifyScreenInfoChanged();
         browser_->GetHost()->WasResized();
         browser_->GetHost()->Invalidate(PET_VIEW);
     }

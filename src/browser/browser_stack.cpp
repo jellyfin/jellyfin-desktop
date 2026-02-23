@@ -29,7 +29,7 @@ void BrowserEntry::resize(int logical_w, int logical_h, int physical_w, int phys
     }
 
     if (resizeBrowser) {
-        resizeBrowser(logical_w, logical_h);
+        resizeBrowser(logical_w, logical_h, physical_w, physical_h);
     }
 
     compositor->resize(physical_w, physical_h);
@@ -41,7 +41,8 @@ void BrowserEntry::resize(int width, int height) {
     }
 
     if (resizeBrowser) {
-        resizeBrowser(width, height);
+        // Pass 0 for physical dimensions - client falls back to SDL query
+        resizeBrowser(width, height, 0, 0);
     }
 }
 

@@ -787,7 +787,7 @@ int main(int argc, char* argv[]) {
     ));
     overlay_ptr->client = overlay_client;
     overlay_ptr->getBrowser = [overlay_client]() { return overlay_client->browser(); };
-    overlay_ptr->resizeBrowser = [overlay_client](int w, int h) { overlay_client->resize(w, h); };
+    overlay_ptr->resizeBrowser = [overlay_client](int w, int h, int pw, int ph) { overlay_client->resize(w, h, pw, ph); };
     overlay_ptr->getInputReceiver = [overlay_client]() -> InputReceiver* { return overlay_client.get(); };
     overlay_ptr->isClosed = [overlay_client]() { return overlay_client->isClosed(); };
     overlay_ptr->input_layer = std::make_unique<BrowserLayer>(overlay_client.get());
@@ -879,7 +879,7 @@ int main(int argc, char* argv[]) {
     ));
     main_ptr->client = client;
     main_ptr->getBrowser = [client]() { return client->browser(); };
-    main_ptr->resizeBrowser = [client](int w, int h) { client->resize(w, h); };
+    main_ptr->resizeBrowser = [client](int w, int h, int pw, int ph) { client->resize(w, h, pw, ph); };
     main_ptr->getInputReceiver = [client]() -> InputReceiver* { return client.get(); };
     main_ptr->isClosed = [client]() { return client->isClosed(); };
     main_ptr->input_layer = std::make_unique<BrowserLayer>(client.get());
@@ -1608,9 +1608,11 @@ int main(int argc, char* argv[]) {
         frameContext.endFrame();
 #else
         // Linux: Get physical dimensions for viewport (HiDPI)
-        float frame_scale = SDL_GetWindowDisplayScale(window);
-        int viewport_w = static_cast<int>(current_width * frame_scale);
-        int viewport_h = static_cast<int>(current_height * frame_scale);
+        // Use SDL_GetWindowSizeInPixels instead of int(logical * scale) to avoid
+        // truncation rounding mismatch — the EGL surface uses ceil() internally,
+        // so truncating can leave a 1px unrendered strip at the right/bottom edge.
+        int viewport_w, viewport_h;
+        SDL_GetWindowSizeInPixels(window, &viewport_w, &viewport_h);
         glViewport(0, 0, viewport_w, viewport_h);
 
         frameContext.beginFrame(clear_color, videoController.getClearAlpha());
@@ -1624,6 +1626,17 @@ int main(int argc, char* argv[]) {
 
         frameContext.endFrame();
 #endif
+        // If CEF painted at stale size during resize, re-request repaint.
+        // During rapid resize, WasResized()+Invalidate() from the resize handler
+        // can get consumed by an already in-flight paint at the old size.
+        // CEF then considers itself up-to-date and never repaints at the new size.
+        if (!paint_size_matched) {
+            if (auto browser = client->browser()) {
+                browser->GetHost()->WasResized();
+                browser->GetHost()->Invalidate(PET_VIEW);
+            }
+        }
+
         // Log slow frames
         auto frame_end = Clock::now();
         auto frame_ms = std::chrono::duration<double, std::milli>(frame_end - frame_start).count();
