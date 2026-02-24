@@ -31,6 +31,7 @@ class SettingsSection;
 class SettingsComponent : public ComponentBase
 {
   Q_OBJECT
+  Q_PROPERTY(bool windowsTrayIcon READ enableWindowsTrayIcon NOTIFY windowsTrayIconChanged)
   DEFINE_SINGLETON(SettingsComponent);
 
 public:
@@ -67,6 +68,7 @@ public:
   Q_INVOKABLE bool autodetectCertBundle();
   Q_INVOKABLE QString detectCertBundlePath();
   Q_INVOKABLE bool allowBrowserZoom();
+  bool enableWindowsTrayIcon();
 
   // host commands
   Q_SLOT Q_INVOKABLE void cycleSettingCommand(const QString& args);
@@ -86,6 +88,9 @@ public:
   // map values. Settings which are part of the section, but did not change, are not
   // part of the map.
   Q_SIGNAL void sectionValueUpdate(const QString& section, const QVariantMap& values);
+
+  // Windows system tray icon enabled/disabled.
+  Q_SIGNAL void windowsTrayIconChanged();
 
   // A hack to load a value from the config file at very early init time, before
   // the SettingsComponent is created.

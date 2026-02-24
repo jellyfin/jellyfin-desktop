@@ -4,6 +4,7 @@ import QtWebEngine
 import QtWebChannel
 import QtQuick.Window
 import QtQuick.Controls
+import Qt.labs.platform as Labs
 
 Window
 {
@@ -24,11 +25,22 @@ Window
   property string videoInfo: ""
   property string webUrl: ""
 
+  property bool showSystemTrayIcon: webDesktopMode && components.system.isWindows &&
+                                    components.settings.windowsTrayIcon
+
   signal reloadWebClient()
 
   Component.onCompleted: {
     if (components && components.settings) {
       webUrl = components.settings.getWebClientUrl(webDesktopMode)
+    }
+  }
+
+  onClosing: function(close) {
+    if (showSystemTrayIcon) {
+      // Minimize to tray on close.
+      close.accepted = false
+      mainWindow.hide()
     }
   }
 
@@ -47,6 +59,12 @@ Window
   function minimizeWindow() {
     if (visibility !== Window.FullScreen)
       visibility = Window.Minimized
+  }
+
+  function restoreWindow() {
+    mainWindow.show()
+    mainWindow.raise()
+    mainWindow.requestActivate()
   }
 
   function runWebAction(action)
@@ -98,8 +116,8 @@ Window
   Action
   {
     enabled: mainWindow.webDesktopMode
-    shortcut: StandardKey.Quit
-    onTriggered: mainWindow.close()
+    shortcut: components.system.isWindows ? "Ctrl+Q" : StandardKey.Quit
+    onTriggered: Qt.quit()
   }
 
   Action
@@ -400,4 +418,34 @@ Window
   }
 
   property QtObject webChannel: web.webChannel
+
+  Labs.SystemTrayIcon {
+    visible: showSystemTrayIcon
+    icon.source: "qrc:/images/icon.png"
+    tooltip: "Jellyfin Desktop"
+
+    onActivated: function(reason) {
+      if (reason === Labs.SystemTrayIcon.Context) {
+        // Right click: open context menu
+        contextMenu.open()
+        components.window.setCursorVisibility(true)
+      } else {
+        // All other clicks: restore window
+        restoreWindow()
+      }
+    }
+
+    menu: Labs.Menu {
+      id: contextMenu
+      Labs.MenuItem {
+        text: qsTr("Restore")
+        onTriggered: restoreWindow()
+      }
+      Labs.MenuSeparator {}
+      Labs.MenuItem {
+        text: qsTr("Quit")
+        onTriggered: Qt.quit()
+      }
+    }
+  }
 }

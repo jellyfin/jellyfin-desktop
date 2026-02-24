@@ -21,6 +21,11 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 SettingsComponent::SettingsComponent(QObject *parent) : ComponentBase(parent), m_settingsVersion(-1)
 {
+  connect(this, &SettingsComponent::sectionValueUpdate, this, [this](const QString& section, const QVariantMap& values)
+  {
+    if (section == SETTINGS_SECTION_MAIN && values.contains("enableWindowsTrayIcon"))
+      emit windowsTrayIconChanged();
+  });
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -788,6 +793,12 @@ bool SettingsComponent::autodetectCertBundle()
 bool SettingsComponent::allowBrowserZoom()
 {
   return SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "allowBrowserZoom").toBool();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+bool SettingsComponent::enableWindowsTrayIcon()
+{
+  return SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "enableWindowsTrayIcon").toBool();
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
