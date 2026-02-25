@@ -353,5 +353,14 @@
     window.initCompleted = Promise.resolve();
     window.apiPromise = Promise.resolve(window.api);
 
+    // Inject CSS to hide cursor when jellyfin-web signals mouse idle.
+    // jellyfin-web adds 'mouseIdle' to body after inactivity during video playback.
+    // This CSS makes CEF report CT_NONE so the native side can hide the OS cursor.
+    document.addEventListener('DOMContentLoaded', () => {
+        const style = document.createElement('style');
+        style.textContent = 'body.mouseIdle, body.mouseIdle * { cursor: none !important; }';
+        document.head.appendChild(style);
+    });
+
     console.log('[Media] Native shim installed');
 })();

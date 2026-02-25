@@ -734,6 +734,13 @@ int main(int argc, char* argv[]) {
 
     // Cursor state
     SDL_Cursor* current_cursor = nullptr;
+    // Blank cursor for hiding (1x1 transparent) - used when CEF reports CT_NONE
+    SDL_Cursor* blank_cursor = nullptr;
+    if (SDL_Surface* s = SDL_CreateSurface(1, 1, SDL_PIXELFORMAT_ARGB8888)) {
+        SDL_memset(s->pixels, 0, s->pitch * s->h);
+        blank_cursor = SDL_CreateColorCursor(s, 0, 0);
+        SDL_DestroySurface(s);
+    }
 
     // Physical pixel size callback for HiDPI support
     // Use SDL_GetWindowSizeInPixels - reliable after first frame
@@ -849,12 +856,21 @@ int main(int argc, char* argv[]) {
 #endif
         &menu,
         [&](cef_cursor_type_t type) {
-            SDL_SystemCursor sdl_type = cefCursorToSDL(type);
-            if (current_cursor) {
-                SDL_DestroyCursor(current_cursor);
+            if (type == CT_NONE && blank_cursor) {
+                // Web content set cursor: none (e.g. mouseIdle during video playback)
+                if (current_cursor) {
+                    SDL_DestroyCursor(current_cursor);
+                    current_cursor = nullptr;
+                }
+                SDL_SetCursor(blank_cursor);
+            } else if (type != CT_NONE) {
+                SDL_SystemCursor sdl_type = cefCursorToSDL(type);
+                if (current_cursor) {
+                    SDL_DestroyCursor(current_cursor);
+                }
+                current_cursor = SDL_CreateSystemCursor(sdl_type);
+                SDL_SetCursor(current_cursor);
             }
-            current_cursor = SDL_CreateSystemCursor(sdl_type);
-            SDL_SetCursor(current_cursor);
         },
         [&](bool fullscreen) {
             // Web content requested fullscreen change via JS Fullscreen API
@@ -1690,6 +1706,9 @@ int main(int argc, char* argv[]) {
     shutdownLogging();
     if (current_cursor) {
         SDL_DestroyCursor(current_cursor);
+    }
+    if (blank_cursor) {
+        SDL_DestroyCursor(blank_cursor);
     }
     SDL_DestroyWindow(window);
     SDL_Quit();
