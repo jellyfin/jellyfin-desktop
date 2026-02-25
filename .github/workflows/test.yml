@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
     - uses: actions/checkout@v6
       with:
@@ -17,11 +19,11 @@ jobs:
     - name: Install build dependencies from debian/control
       run: |
         sudo apt-get update
-        sudo apt-get install --yes devscripts equivs ninja-build
+        sudo apt-get install --yes devscripts equivs ninja-build lcov
         sudo mk-build-deps -i -r -t "apt-get --yes" debian/control
 
     - name: Configure
-      run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DUSE_STATIC_MPVQT=ON
+      run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DUSE_STATIC_MPVQT=ON -DCOVERAGE=ON
 
     - name: Build
       run: cmake --build build
@@ -30,3 +32,27 @@ jobs:
       run: |
         cd build
         ctest --output-on-failure
+
+    - name: Collect coverage
+      run: |
+        lcov --capture --directory build --output-file coverage.info \
+          --ignore-errors mismatch
+        lcov --remove coverage.info \
+          '/usr/*' '*/external/*' '*/tests/*' '*/build/*' \
+          --output-file coverage.info \
+          --ignore-errors unused
+        lcov --summary coverage.info 2>&1 | grep -v 'no data found' > coverage_summary.txt
+
+    - name: Comment coverage on PR
+      if: github.event_name == 'pull_request'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        {
+          echo "## Test Coverage"
+          echo ""
+          echo '```'
+          cat coverage_summary.txt
+          echo '```'
+        } > comment_body.md
+        gh pr comment "${{ github.event.pull_request.number }}" --body-file comment_body.md
