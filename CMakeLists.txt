@@ -99,11 +99,14 @@ elseif(WIN32)
         src/platform/windows_video_layer.cpp
         src/compositor/opengl_compositor.cpp
         src/player/media_session.cpp
-        src/player/opengl_renderer.cpp
+        src/player/dcomp_renderer.cpp
     )
     set(PLATFORM_LIBRARIES
         OpenGL::GL
         dwmapi
+        d3d11
+        dxgi
+        dcomp
     )
     set(PLATFORM_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/third_party")
 else()

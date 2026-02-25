@@ -69,11 +69,30 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
 #elif defined(_WIN32)
 #include "context/wgl_context.h"
 #include "mpv/mpv_player_gl.h"
-#include "opengl_renderer.h"
+#include "dcomp_renderer.h"
+#include "platform/windows_video_layer.h"
+
+namespace {
+    std::unique_ptr<WindowsVideoLayer> g_windows_video_layer;
+}
 
 VideoStack VideoStack::create(SDL_Window* window, int width, int height, WGLContext* wgl, const char* hwdec) {
-    (void)window; (void)width; (void)height;
     VideoStack stack;
+
+    // Create DComp video layer
+    g_windows_video_layer = std::make_unique<WindowsVideoLayer>();
+    if (!g_windows_video_layer->init(window)) {
+        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video layer init failed");
+        return stack;
+    }
+    if (!g_windows_video_layer->createSwapchain(width, height)) {
+        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video layer swap chain failed");
+        return stack;
+    }
+    if (!g_windows_video_layer->initInterop(wgl)) {
+        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows GL-DXGI interop init failed");
+        return stack;
+    }
 
     auto player = std::make_unique<MpvPlayerGL>();
     if (!player->init(wgl, hwdec)) {
@@ -81,16 +100,16 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, WGLCont
         return stack;
     }
 
-    auto renderer = std::make_unique<OpenGLRenderer>(player.get());
+    auto renderer = std::make_unique<DCompRenderer>(player.get(), g_windows_video_layer.get());
     if (!renderer->initThreaded(wgl)) {
-        LOG_ERROR(LOG_VIDEO, "OpenGLRenderer threaded init failed");
+        LOG_ERROR(LOG_VIDEO, "DCompRenderer threaded init failed");
         return stack;
     }
 
     stack.renderer = std::move(renderer);
     stack.player = std::move(player);
 
-    LOG_INFO(LOG_PLATFORM, "Using OpenGL composition for video (Windows, threaded)");
+    LOG_INFO(LOG_PLATFORM, "Using DirectComposition for video (Windows, threaded)");
     return stack;
 }
 
@@ -175,7 +194,12 @@ void VideoStack::cleanupStatics() {
         g_macos_layer->cleanup();
         g_macos_layer.reset();
     }
-#elif !defined(_WIN32)
+#elif defined(_WIN32)
+    if (g_windows_video_layer) {
+        g_windows_video_layer->cleanup();
+        g_windows_video_layer.reset();
+    }
+#else
     if (g_wayland_subsurface) {
         g_wayland_subsurface->cleanup();
         g_wayland_subsurface.reset();

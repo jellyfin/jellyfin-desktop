@@ -5,12 +5,9 @@
 #ifdef __APPLE__
 #include "platform/macos_layer.h"
 using VideoSurface = MacOSVideoLayer;
-#elif defined(_WIN32)
-#include "platform/windows_video_layer.h"
-using VideoSurface = WindowsVideoLayer;
 #else
 #include "platform/video_surface.h"
-// VideoSurface is now an abstract base class on Linux
+// VideoSurface is the abstract base class on Linux/Windows
 #endif
 #include <atomic>
 
