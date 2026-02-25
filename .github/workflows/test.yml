@@ -9,8 +9,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     steps:
     - uses: actions/checkout@v6
       with:
@@ -43,16 +41,15 @@ jobs:
           --ignore-errors unused
         lcov --summary coverage.info 2>&1 | grep -v 'no data found' > coverage_summary.txt
 
-    - name: Comment coverage on PR
+    - name: Save PR number
       if: github.event_name == 'pull_request'
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        {
-          echo "## Test Coverage"
-          echo ""
-          echo '```'
-          cat coverage_summary.txt
-          echo '```'
-        } > comment_body.md
-        gh pr comment "${{ github.event.pull_request.number }}" --body-file comment_body.md
+      run: echo "${{ github.event.pull_request.number }}" > pr_number.txt
+
+    - name: Upload coverage artifact
+      if: github.event_name == 'pull_request'
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage
+        path: |
+          coverage_summary.txt
+          pr_number.txt

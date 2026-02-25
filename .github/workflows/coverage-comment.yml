@@ -1,0 +1,37 @@
+name: coverage-comment
+
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+
+jobs:
+  comment:
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+    - name: Download coverage artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage
+        run-id: ${{ github.event.workflow_run.id }}
+        github-token: ${{ github.token }}
+
+    - name: Post coverage comment
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        PR=$(cat pr_number.txt)
+        {
+          echo "## Test Coverage"
+          echo ""
+          echo '```'
+          cat coverage_summary.txt
+          echo '```'
+        } > comment_body.md
+        gh pr comment "$PR" --body-file comment_body.md
