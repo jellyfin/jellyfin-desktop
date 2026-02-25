@@ -87,7 +87,6 @@ struct BrowserEntry {
 
     // Platform-specific compositor operations
     void importQueued();   // importQueuedIOSurface (macOS) / importQueuedDmabuf (Linux)
-    void flushOverlay();   // OpenGL texture upload (Windows/Linux only)
 
     // Notify browser of screen info change (HiDPI scale change)
     void notifyScreenInfoChanged();

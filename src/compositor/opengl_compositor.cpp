@@ -1,7 +1,4 @@
 #include "compositor/opengl_compositor.h"
-#include <algorithm>
-#include <cstring>
-#include <vector>
 #include "logging.h"
 
 #if !defined(__APPLE__) && !defined(_WIN32)
@@ -82,9 +79,6 @@ static void loadWGLExtensions() {
     s_wglExtensionsLoaded = true;
 }
 #endif
-
-static auto _log_start = std::chrono::steady_clock::now();
-static long _comp_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - _log_start).count(); }
 
 #ifdef __APPLE__
 // macOS: Desktop OpenGL 3.2 Core with GL_TEXTURE_2D (software path)
@@ -209,73 +203,10 @@ bool OpenGLCompositor::init(GLContext* ctx, uint32_t width, uint32_t height) {
     }
 #endif
 
-    if (!createTexture()) return false;
     if (!createShader()) return false;
 
     // Create VAO (required for GLES 3.0 / OpenGL core)
     glGenVertexArrays(1, &vao_);
-
-    return true;
-}
-
-bool OpenGLCompositor::createTexture() {
-    glGenTextures(1, &texture_);
-    glBindTexture(GL_TEXTURE_2D, texture_);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-#ifdef __APPLE__
-    // Software path: allocate texture storage and PBOs
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width_, height_, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, nullptr);
-#elif defined(_WIN32)
-    // Windows: Software path only
-    // Use GL_RGBA (universally supported) - shader swizzles BGRA->RGBA
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width_, height_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    GLenum texErr = glGetError();
-    if (texErr != GL_NO_ERROR) {
-        LOG_ERROR(LOG_COMPOSITOR, "glTexImage2D failed: %d", texErr);
-        return false;
-    }
-#else
-    // Software path: allocate texture storage and PBOs
-    // Use GL_RGBA (universally supported) - shader swizzles BGRA->RGBA
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width_, height_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    GLenum texErr = glGetError();
-    if (texErr != GL_NO_ERROR) {
-        LOG_ERROR(LOG_COMPOSITOR, "glTexImage2D failed: %d", texErr);
-        return false;
-    }
-#endif
-
-    // Create double-buffered PBOs for async upload
-    size_t pbo_size = width_ * height_ * 4;
-    glGenBuffers(2, pbos_);
-    for (int i = 0; i < 2; i++) {
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos_[i]);
-        glBufferData(GL_PIXEL_UNPACK_BUFFER, pbo_size, nullptr, GL_STREAM_DRAW);
-    }
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-
-    GLenum pboErr = glGetError();
-    if (pboErr != GL_NO_ERROR) {
-        LOG_ERROR(LOG_COMPOSITOR, "PBO creation failed: %d", pboErr);
-        return false;
-    }
-
-    // Map the first PBO for writing
-    current_pbo_ = 0;
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos_[current_pbo_]);
-    pbo_mapped_ = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, pbo_size,
-                                    GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        LOG_ERROR(LOG_COMPOSITOR, "glMapBufferRange failed: %d", err);
-        return false;
-    }
 
     return true;
 }
@@ -342,25 +273,6 @@ bool OpenGLCompositor::createShader() {
     return true;
 }
 
-void OpenGLCompositor::updateOverlay(const void* data, int width, int height) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (width != static_cast<int>(width_) || height != static_cast<int>(height_)) {
-        return;
-    }
-
-    if (pbo_mapped_) {
-        std::memcpy(pbo_mapped_, data, width * height * 4);
-        staging_pending_ = true;
-    }
-}
-
-void* OpenGLCompositor::getStagingBuffer(int width, int height) {
-    // Accept any size - caller will use updateOverlayPartial for mismatched sizes
-    (void)width; (void)height;
-    return pbo_mapped_;
-}
-
 void OpenGLCompositor::updateOverlayPartial(const void* data, int src_width, int src_height) {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -407,38 +319,6 @@ void OpenGLCompositor::updateOverlayPartial(const void* data, int src_width, int
     // Without this, driver may still be reading from 'data' when caller
     // releases buffer, causing heap corruption if buffer is resized.
     glFinish();
-}
-
-bool OpenGLCompositor::flushOverlay() {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (!staging_pending_ || !texture_) {
-        return false;
-    }
-
-    LOG_DEBUG(LOG_COMPOSITOR, "flushOverlay: uploading %ux%u", width_, height_);
-
-    size_t pbo_size = width_ * height_ * 4;
-
-    // Unmap current PBO and start async DMA transfer to texture
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos_[current_pbo_]);
-    glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-
-    glBindTexture(GL_TEXTURE_2D, texture_);
-    // With PBO bound, last arg is offset into PBO, not pointer
-    // Upload as RGBA - shader swizzles BGRA->RGBA
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width_, height_, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-    // Swap to next PBO and map it for next frame's writes
-    current_pbo_ = 1 - current_pbo_;
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos_[current_pbo_]);
-    pbo_mapped_ = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, pbo_size,
-                                    GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-
-    staging_pending_ = false;
-    has_content_ = true;
-    return true;
 }
 
 void OpenGLCompositor::queueDmabuf(int fd, uint32_t stride, uint64_t modifier, int w, int h) {
@@ -607,7 +487,6 @@ void OpenGLCompositor::composite(uint32_t width, uint32_t height, float alpha) {
     // Bind texture and get dimensions under lock to prevent race with updateOverlayPartial
     GLuint tex_to_use = 0;
     int tex_w = 0, tex_h = 0;
-    bool use_cef = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (use_dmabuf_ && dmabuf_texture_) {
@@ -621,28 +500,19 @@ void OpenGLCompositor::composite(uint32_t width, uint32_t height, float alpha) {
             tex_to_use = cef_texture_;
             tex_w = cef_texture_width_;
             tex_h = cef_texture_height_;
-            use_cef = true;
             glBindTexture(GL_TEXTURE_2D, tex_to_use);
             if (swizzle_loc_ >= 0) glUniform1f(swizzle_loc_, 1.0f);
-        } else {
-            tex_to_use = texture_;
-            tex_w = width_;
-            tex_h = height_;
-            glBindTexture(GL_TEXTURE_2D, tex_to_use);
-            if (swizzle_loc_ >= 0) glUniform1f(swizzle_loc_, 1.0f);
-            if (log_count_++ < 3) LOG_INFO(LOG_COMPOSITOR, "composite: LEGACY tex=%u size=%dx%d view=%ux%u", tex_to_use, tex_w, tex_h, width, height);
         }
     }
+    if (!tex_to_use) return;
     if (tex_size_loc_ >= 0) glUniform2f(tex_size_loc_, static_cast<float>(tex_w), static_cast<float>(tex_h));
 #else
-    // Windows/macOS: prefer cef_texture_ (from updateOverlayPartial) over legacy texture_
     if (cef_texture_) {
         glBindTexture(GL_TEXTURE_2D, cef_texture_);
         if (tex_size_loc_ >= 0) glUniform2f(tex_size_loc_, static_cast<float>(cef_texture_width_), static_cast<float>(cef_texture_height_));
         if (swizzle_loc_ >= 0) glUniform1f(swizzle_loc_, 1.0f);  // BGRA swizzle for CEF
     } else {
-        glBindTexture(GL_TEXTURE_2D, texture_);
-        if (tex_size_loc_ >= 0) glUniform2f(tex_size_loc_, static_cast<float>(width_), static_cast<float>(height_));
+        return;
     }
 #endif
 
@@ -654,47 +524,21 @@ void OpenGLCompositor::composite(uint32_t width, uint32_t height, float alpha) {
 }
 
 void OpenGLCompositor::resize(uint32_t width, uint32_t height) {
-    LOG_DEBUG(LOG_COMPOSITOR, "[%ldms] resize: viewport %ux%u -> %ux%u (CEF texture %dx%d)",
-              _comp_ms(), width_, height_, width, height, cef_texture_width_, cef_texture_height_);
-
     if (width == 0 || height == 0 || (width == width_ && height == height_)) {
         return;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Just update viewport dimensions - CEF texture is independent
     width_ = width;
     height_ = height;
-
-    // Recreate legacy texture/PBOs at new size (needed for flushOverlay compatibility)
-    destroyTexture();
-    if (!createTexture()) {
-        LOG_ERROR(LOG_COMPOSITOR, "createTexture failed during resize");
-    }
 }
 
-void OpenGLCompositor::destroyTexture() {
-    // Unmap and delete PBOs
-    if (pbo_mapped_) {
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos_[current_pbo_]);
-        glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-        pbo_mapped_ = nullptr;
-    }
-    if (pbos_[0]) {
-        glDeleteBuffers(2, pbos_);
-        pbos_[0] = pbos_[1] = 0;
-    }
-    current_pbo_ = 0;
-
-    if (texture_) {
-        glDeleteTextures(1, &texture_);
-        texture_ = 0;
-    }
+void OpenGLCompositor::cleanup() {
+    if (!ctx_) return;
 
 #if !defined(__APPLE__) && !defined(_WIN32)
     // Clean up dmabuf resources
-    if (egl_image_ && ctx_ && eglDestroyImageKHR) {
+    if (egl_image_ && eglDestroyImageKHR) {
         eglDestroyImageKHR(ctx_->display(), static_cast<EGLImageKHR>(egl_image_));
         egl_image_ = nullptr;
     }
@@ -706,12 +550,6 @@ void OpenGLCompositor::destroyTexture() {
     dmabuf_width_ = 0;
     dmabuf_height_ = 0;
 #endif
-}
-
-void OpenGLCompositor::cleanup() {
-    if (!ctx_) return;
-
-    destroyTexture();
 
     // Clean up CEF texture
     if (cef_texture_) {

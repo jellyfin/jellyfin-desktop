@@ -93,14 +93,6 @@ void BrowserEntry::importQueued() {
     // Windows: no-op (no GPU texture import path)
 }
 
-void BrowserEntry::flushOverlay() {
-#ifndef __APPLE__
-    // OpenGL compositors need explicit texture upload
-    compositor->flushOverlay();
-#endif
-    // macOS Metal: no-op (handled in composite)
-}
-
 void BrowserEntry::notifyScreenInfoChanged() {
     if (getBrowser) {
         if (auto browser = getBrowser()) {
@@ -251,18 +243,12 @@ void BrowserStack::renderAll(int width, int height) {
     for (auto& entry : browsers_) {
         entry->flushPaintBuffer();
         entry->importQueued();
-        entry->flushOverlay();
-        if (entry->compositor->hasValidOverlay() || entry->compositor->hasPendingContent()) {
+        if (entry->compositor->hasValidOverlay()) {
             entry->compositor->composite(width, height, entry->alpha);
         }
     }
 }
 
 bool BrowserStack::anyHasPendingContent() const {
-    for (const auto& entry : browsers_) {
-        if (entry->compositor->hasPendingContent()) {
-            return true;
-        }
-    }
     return false;
 }

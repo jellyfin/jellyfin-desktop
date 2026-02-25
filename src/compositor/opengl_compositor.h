@@ -17,7 +17,6 @@ typedef EGLContext_ GLContext;
 #include <mutex>
 #include <cstdint>
 #include <atomic>
-#include <vector>
 
 class OpenGLCompositor {
 public:
@@ -27,23 +26,12 @@ public:
     bool init(GLContext* ctx, uint32_t width, uint32_t height);
     void cleanup();
 
-    // Update overlay texture from CEF buffer (BGRA) - software path
-    void updateOverlay(const void* data, int width, int height);
-
-    // Get direct pointer to staging buffer for zero-copy writes
-    void* getStagingBuffer(int width, int height);
-    void markStagingDirty() { staging_pending_ = true; has_content_ = true; }
-    bool hasPendingContent() const { return staging_pending_; }
-
     // Update with partial/mismatched size data (copies overlapping region)
     void updateOverlayPartial(const void* data, int src_width, int src_height);
 
     // Get current compositor dimensions
     uint32_t width() const { return width_; }
     uint32_t height() const { return height_; }
-
-    // Flush pending overlay data to GPU
-    bool flushOverlay();
 
     // Composite overlay to screen with alpha blending
     void composite(uint32_t width, uint32_t height, float alpha);
@@ -64,9 +52,7 @@ public:
     bool hasValidOverlay() const { return has_content_ && texture_valid_; }
 
 private:
-    bool createTexture();
     bool createShader();
-    void destroyTexture();
 
     GLContext* ctx_ = nullptr;
     uint32_t width_ = 0;
@@ -78,13 +64,6 @@ private:
     int cef_texture_height_ = 0;
     bool has_content_ = false;
     bool texture_valid_ = false;  // Set false on RECREATE, true when we get non-black frame
-
-    // Legacy texture/PBO for compatibility (will be removed)
-    GLuint texture_ = 0;
-    GLuint pbos_[2] = {0, 0};
-    int current_pbo_ = 0;
-    void* pbo_mapped_ = nullptr;
-    bool staging_pending_ = false;
 
     // Thread safety
     std::mutex mutex_;
