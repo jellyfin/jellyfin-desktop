@@ -45,7 +45,7 @@ if (-not (Test-Path $VsWhere)) {
     exit 1
 }
 
-$VsPath = & $VsWhere -latest -property installationPath
+$VsPath = & $VsWhere -latest -products * -property installationPath
 if (-not $VsPath) {
     Write-Host "Visual Studio installation not found." -ForegroundColor Red
     exit 1
@@ -73,16 +73,36 @@ if (-not $SkipMpv) {
     & (Join-Path $PSScriptRoot "download_mpv.ps1")
 }
 
-# SDL3 setup
+# SDL3 setup - download prebuilt VC package
 if (-not $SkipSdl) {
     Write-Host ""
     Write-Host "=== SDL3 ===" -ForegroundColor Cyan
     $SdlDir = Join-Path $RepoRoot "third_party\SDL"
-    if (Test-Path $SdlDir) {
-        Write-Host "SDL3 submodule present at $SdlDir"
-        Write-Host "SDL3 will be built as part of the main build process"
+    if ((Test-Path (Join-Path $SdlDir "cmake")) -and (Test-Path (Join-Path $SdlDir "lib"))) {
+        Write-Host "SDL3 already set up at $SdlDir" -ForegroundColor Green
     } else {
-        Write-Host "SDL3 submodule not found. Run: git submodule update --init --recursive" -ForegroundColor Yellow
+        $SdlVersion = "3.4.0"
+        $SdlUrl = "https://github.com/libsdl-org/SDL/releases/download/release-$SdlVersion/SDL3-devel-$SdlVersion-VC.zip"
+        $SdlZip = Join-Path $RepoRoot "third_party\SDL3-VC.zip"
+        $SdlExtracted = Join-Path $RepoRoot "third_party\SDL3-$SdlVersion"
+
+        Write-Host "Downloading SDL3 $SdlVersion..."
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $SdlUrl -OutFile $SdlZip -UseBasicParsing
+        $ProgressPreference = 'Continue'
+
+        Write-Host "Extracting..."
+        & 7z x $SdlZip -o"$(Join-Path $RepoRoot "third_party")" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "SDL3 extraction failed" }
+
+        # Rename to third_party/SDL
+        if (Test-Path $SdlDir) { Remove-Item -Recurse -Force $SdlDir }
+        Rename-Item $SdlExtracted $SdlDir
+
+        # Clean up zip
+        Remove-Item $SdlZip -ErrorAction SilentlyContinue
+
+        Write-Host "SDL3 installed to $SdlDir" -ForegroundColor Green
     }
 }
 

@@ -15,10 +15,39 @@ $BuildDir = Join-Path $RepoRoot "build"
 # Check for MSVC environment
 if (-not $env:VSINSTALLDIR) {
     Write-Host "MSVC environment not detected." -ForegroundColor Yellow
-    Write-Host "Run this script from 'x64 Native Tools Command Prompt for VS 2022'"
-    Write-Host "Or run: "
-    Write-Host '  & "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"'
-    exit 1
+    Write-Host "Attempting to load vcvars64.bat..."
+
+    $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $VsWhere) {
+        $VsPath = & $VsWhere -latest -products * -property installationPath
+        $VcVars = Join-Path $VsPath "VC\Auxiliary\Build\vcvars64.bat"
+        if (Test-Path $VcVars) {
+            cmd /c "`"$VcVars`" && set" | ForEach-Object {
+                if ($_ -match "^([^=]+)=(.*)$") {
+                    [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+                }
+            }
+            Write-Host "Loaded Visual Studio environment" -ForegroundColor Green
+        }
+    }
+
+    if (-not $env:VSINSTALLDIR) {
+        Write-Host "Could not load MSVC environment." -ForegroundColor Red
+        Write-Host "Run from 'x64 Native Tools Command Prompt for VS 2022'"
+        exit 1
+    }
+}
+
+# Auto-detect Vulkan SDK if not set
+if (-not $env:VULKAN_SDK) {
+    $VulkanBase = "C:\VulkanSDK"
+    if (Test-Path $VulkanBase) {
+        $Latest = Get-ChildItem $VulkanBase -Directory | Sort-Object Name -Descending | Select-Object -First 1
+        if ($Latest) {
+            $env:VULKAN_SDK = $Latest.FullName
+            Write-Host "Detected Vulkan SDK: $($env:VULKAN_SDK)" -ForegroundColor Green
+        }
+    }
 }
 
 # Clean if requested
@@ -31,15 +60,18 @@ if ($Clean -and (Test-Path $BuildDir)) {
 if ($Configure -or -not (Test-Path (Join-Path $BuildDir "build.ninja"))) {
     Write-Host "Configuring with CMake..."
 
-    $MpvDir = Join-Path $RepoRoot "third_party\mpv"
     $CmakeArgs = @(
         "-B", $BuildDir,
         "-G", "Ninja",
         "-DCMAKE_BUILD_TYPE=$BuildType"
     )
 
-    # Add mpv paths if downloaded
-    if (Test-Path (Join-Path $MpvDir "include")) {
+    # Add mpv paths (prefer mpv-install from download_mpv.ps1)
+    $MpvInstallDir = Join-Path $RepoRoot "third_party\mpv-install"
+    $MpvDir = Join-Path $RepoRoot "third_party\mpv"
+    if (Test-Path (Join-Path $MpvInstallDir "lib\mpv.lib")) {
+        $CmakeArgs += "-DEXTERNAL_MPV_DIR=$MpvInstallDir"
+    } elseif (Test-Path (Join-Path $MpvDir "lib\mpv.lib")) {
         $CmakeArgs += "-DEXTERNAL_MPV_DIR=$MpvDir"
     }
 

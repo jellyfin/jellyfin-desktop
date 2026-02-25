@@ -162,12 +162,21 @@ def extract_tarball(tarball_path, extract_dir):
 
 
 def create_symlink(target_dir, link_path):
-    """Create or update symlink."""
-    if link_path.is_symlink():
+    """Create or update symlink (uses directory junction on Windows)."""
+    if link_path.is_symlink() or link_path.is_junction():
         link_path.unlink()
     elif link_path.exists():
         shutil.rmtree(link_path)
-    link_path.symlink_to(target_dir.name)
+    if platform.system() == "Windows":
+        # Use directory junction (no special permissions needed)
+        import subprocess
+        target_abs = (link_path.parent / target_dir.name).resolve()
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link_path), str(target_abs)],
+            check=True,
+        )
+    else:
+        link_path.symlink_to(target_dir.name)
 
 
 def find_existing_tarball(output_dir, platform_id):
@@ -272,7 +281,7 @@ def main():
     versioned_dir = args.output_dir / versioned_dir_name
 
     # Check if already at correct version
-    if cef_link.is_symlink():
+    if cef_link.is_symlink() or cef_link.is_junction():
         current_target = os.readlink(cef_link)
         if current_target == versioned_dir_name and versioned_dir.exists():
             log.info("Skipping, already set up")

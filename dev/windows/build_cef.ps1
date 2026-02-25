@@ -25,7 +25,7 @@ if (-not $env:VSINSTALLDIR) {
 
     $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $VsWhere) {
-        $VsPath = & $VsWhere -latest -property installationPath
+        $VsPath = & $VsWhere -latest -products * -property installationPath
         $VcVars = Join-Path $VsPath "VC\Auxiliary\Build\vcvars64.bat"
         if (Test-Path $VcVars) {
             # Load VS environment

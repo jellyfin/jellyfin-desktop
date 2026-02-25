@@ -24,7 +24,7 @@ if ($env:VSINSTALLDIR -and (Get-Command lib.exe -ErrorAction SilentlyContinue)) 
     # Try to load VS environment
     $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $VsWhere) {
-        $VsPath = & $VsWhere -latest -property installationPath
+        $VsPath = & $VsWhere -latest -products * -property installationPath
         $VcVars = Join-Path $VsPath "VC\Auxiliary\Build\vcvars64.bat"
         if (Test-Path $VcVars) {
             cmd /c "`"$VcVars`" && set" | ForEach-Object {
@@ -58,19 +58,34 @@ if ($UseMsys -or (Test-Path (Join-Path $MsysPath "bin\libmpv-2.dll"))) {
     }
     Write-Host "Using MSYS2 mpv from $MsysPath" -ForegroundColor Cyan
 } else {
-    # Check for downloaded mpv
+    # Check for mpv-install from download_mpv.ps1
+    $MpvInstall = Join-Path $RepoRoot "third_party\mpv-install"
+    $MpvInstallDll = Join-Path $MpvInstall "lib\libmpv-2.dll"
+    # Also check legacy third_party/mpv/lib path
     $DownloadedMpv = Join-Path $RepoRoot "third_party\mpv"
-    $MpvDll = Join-Path $DownloadedMpv "lib\libmpv-2.dll"
-    $MpvInclude = Join-Path $DownloadedMpv "include\mpv"
+    $DownloadedDll = Join-Path $DownloadedMpv "lib\libmpv-2.dll"
 
-    if (-not (Test-Path $MpvDll)) {
+    if (Test-Path $MpvInstallDll) {
+        $MpvDll = $MpvInstallDll
+        # Prefer fork headers for gpu-next support
+        $ForkHeaders = Join-Path $DownloadedMpv "include\mpv"
+        if (Test-Path $ForkHeaders) {
+            $MpvInclude = $ForkHeaders
+        } else {
+            $MpvInclude = Join-Path $MpvInstall "include\mpv"
+        }
+        Write-Host "Using downloaded mpv from mpv-install" -ForegroundColor Cyan
+    } elseif (Test-Path $DownloadedDll) {
+        $MpvDll = $DownloadedDll
+        $MpvInclude = Join-Path $DownloadedMpv "include\mpv"
+        Write-Host "Using downloaded mpv" -ForegroundColor Cyan
+    } else {
         Write-Host "mpv not found. Options:" -ForegroundColor Yellow
         Write-Host "  1. Run download_mpv.ps1 to download prebuilt libmpv"
         Write-Host "  2. Use -UseMsys to use MSYS2-installed mpv"
         Write-Host "     (install with: pacman -S mingw-w64-clang-x86_64-mpv)"
         exit 1
     }
-    Write-Host "Using downloaded mpv" -ForegroundColor Cyan
 }
 
 # Check if already setup

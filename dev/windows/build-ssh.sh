@@ -2,6 +2,7 @@
 set -eu
 
 REMOTE_DIR='C:/jellyfin-desktop-cef'
+REMOTE_TMP='C:/Users/user/AppData/Local/Temp'
 LOCAL_OUT='dist'
 ARCHIVE='/tmp/jellyfin-desktop-cef.tar'
 
@@ -10,6 +11,7 @@ show_help() {
 Usage: $(basename "$0") <ssh-host>
 
 Sync, build, and package jellyfin-desktop-cef on a Windows VM via SSH.
+Uses incremental tar sync (only changed files after first full sync).
 
 Arguments:
     ssh-host    SSH host
@@ -29,33 +31,54 @@ case "$1" in
 esac
 
 REMOTE="$1"
+SYNC_MARKER=".build-ssh-sync"
 
 # --- Sync ---
-# Create git archive of HEAD plus any uncommitted changes
-git archive --format=tar HEAD > "$ARCHIVE"
+# Check if remote has the repo (first sync = full archive)
+REMOTE_MARKER="$(echo "$REMOTE_DIR/$SYNC_MARKER" | tr '/' '\\')"
+if ! ssh "$REMOTE" "dir $REMOTE_MARKER" >/dev/null 2>&1; then
+    echo "First sync: sending full source tree..."
+    git archive --format=tar HEAD > "$ARCHIVE"
 
-# Add uncommitted tracked changes to the archive
-git diff --name-only HEAD | while read -r file; do
-    [ -f "$file" ] && tar --update -f "$ARCHIVE" "$file"
-done
+    # Overlay uncommitted tracked changes
+    git diff --name-only HEAD | while read -r file; do
+        [ -f "$file" ] && tar --update -f "$ARCHIVE" "$file"
+    done
 
-# Add untracked files (excluding gitignored)
-git ls-files --others --exclude-standard | while read -r file; do
-    [ -f "$file" ] && tar --update -f "$ARCHIVE" "$file"
-done
+    # Add untracked files (excluding gitignored)
+    git ls-files --others --exclude-standard | while read -r file; do
+        [ -f "$file" ] && tar --update -f "$ARCHIVE" "$file"
+    done
+else
+    echo "Incremental sync: sending changed files..."
+    # Collect all files that differ from what's on the remote
+    # This includes: staged, unstaged, and untracked (non-ignored)
+    {
+        git diff --name-only HEAD
+        git diff --name-only --cached
+        git ls-files --others --exclude-standard
+    } | sort -u > /tmp/changed-files.txt
 
-# Copy to VM
-scp "$ARCHIVE" "$REMOTE:/tmp/jellyfin-desktop-cef.tar"
+    if [ -s /tmp/changed-files.txt ]; then
+        # Create tar of just the changed files
+        tar -cf "$ARCHIVE" -T /tmp/changed-files.txt 2>/dev/null || true
+    else
+        echo "No changes to sync."
+        # Still run build in case remote needs it
+        tar -cf "$ARCHIVE" --files-from=/dev/null
+    fi
+    rm -f /tmp/changed-files.txt
+fi
 
-# Extract on VM (overwrite existing files, preserve .git)
-ssh "$REMOTE" "cd $REMOTE_DIR && tar -xf /tmp/jellyfin-desktop-cef.tar"
+REMOTE_ARCHIVE="$REMOTE_TMP/jellyfin-desktop-cef.tar"
+scp "$ARCHIVE" "$REMOTE:$REMOTE_ARCHIVE"
 
-# Reset git state to match extracted files
-ssh "$REMOTE" "cd $REMOTE_DIR && git reset HEAD"
+# Extract on VM (overwrite existing files)
+ssh "$REMOTE" "cd $REMOTE_DIR && tar -xf $REMOTE_ARCHIVE && echo synced > $REMOTE_MARKER"
 
-# Clean up local archive
+# Clean up
 rm -f "$ARCHIVE"
-ssh "$REMOTE" "del /tmp/jellyfin-desktop-cef.tar" 2>/dev/null || true
+ssh "$REMOTE" "del \"$(echo "$REMOTE_ARCHIVE" | tr '/' '\\')\"" 2>/dev/null || true
 
 echo "Synced to $REMOTE:$REMOTE_DIR"
 
