@@ -46,6 +46,10 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     // Force X11 mode on Linux - Wayland OSR has scaling issues
     command_line->AppendSwitchWithValue("ozone-platform", "x11");
 #endif
+
+    if (disable_gpu_compositing_) {
+        command_line->AppendSwitch("disable-gpu-compositing");
+    }
 }
 
 void App::OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) {

@@ -15,6 +15,7 @@ public:
 
     // Set device scale factor before CefInitialize
     void SetDeviceScaleFactor(float scale) { device_scale_factor_ = scale; }
+    void SetDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
 
     // Set wake callback for external_message_pump mode (macOS)
     // Must be called before CefInitialize
@@ -53,6 +54,7 @@ private:
     static Uint32 TimerCallback(void* userdata, SDL_TimerID id, Uint32 interval);
 
     float device_scale_factor_ = 1.0f;
+    bool disable_gpu_compositing_ = false;
 
     IMPLEMENT_REFCOUNTING(App);
     DISALLOW_COPY_AND_ASSIGN(App);

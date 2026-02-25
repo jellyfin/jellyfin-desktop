@@ -275,6 +275,7 @@ int main(int argc, char* argv[]) {
     // Parse arguments (main process only)
     SDL_LogPriority log_level = SDL_LOG_PRIORITY_INFO;
     bool use_dmabuf = false;  // Disable DMA-BUF by default (can cause system freezes)
+    bool disable_gpu_compositing = false;
     const char* hwdec = "auto-safe";
     if (!is_cef_subprocess) {
         const char* log_level_str = nullptr;
@@ -290,6 +291,7 @@ int main(int argc, char* argv[]) {
 #if !defined(__APPLE__) && !defined(_WIN32)
                        "  --dmabuf                Enable DMA-BUF zero-copy CEF rendering (experimental)\n"
 #endif
+                       "  --disable-gpu-compositing  Disable Chromium GPU compositing\n"
                        "  --hwdec <mode>          Set mpv hardware decoding mode (default: auto-safe)\n"
                        );
                 return 0;
@@ -306,6 +308,8 @@ int main(int argc, char* argv[]) {
                 log_file_path = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
             } else if (strncmp(argv[i], "--log-file=", 11) == 0) {
                 log_file_path = argv[i] + 11;
+            } else if (strcmp(argv[i], "--disable-gpu-compositing") == 0) {
+                disable_gpu_compositing = true;
             } else if (strcmp(argv[i], "--dmabuf") == 0) {
                 use_dmabuf = true;
             } else if (strcmp(argv[i], "--hwdec") == 0) {
@@ -403,6 +407,7 @@ int main(int argc, char* argv[]) {
     CefMainArgs main_args(argc, argv);
 #endif
     CefRefPtr<App> app(new App());
+    app->SetDisableGpuCompositing(disable_gpu_compositing);
 
     LOG_DEBUG(LOG_CEF, "Calling CefExecuteProcess...");
     int exit_code = CefExecuteProcess(main_args, app, nullptr);
