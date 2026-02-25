@@ -22,9 +22,6 @@ public:
     bool init(SDL_Window* window, uint32_t width, uint32_t height);
     void cleanup();
 
-    // Update overlay from CEF paint callback
-    void updateOverlay(const void* data, int width, int height);
-
     // Update overlay with arbitrary size (recreates texture if needed)
     void updateOverlayPartial(const void* data, int src_width, int src_height);
 
@@ -33,10 +30,6 @@ public:
 
     // Import queued IOSurface (called from main thread)
     bool importQueuedIOSurface();
-
-    // Get staging buffer for direct copy
-    void* getStagingBuffer(int width, int height);
-    void markStagingDirty();
 
     // Render frame
     void composite(uint32_t width, uint32_t height, float alpha);
@@ -48,7 +41,6 @@ public:
     void setVisible(bool visible);
 
     bool hasValidOverlay() const { return has_content_; }
-    bool hasPendingContent() const;
 
     uint32_t width() const { return width_; }
     uint32_t height() const { return height_; }

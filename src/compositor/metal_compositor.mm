@@ -239,17 +239,6 @@ void MetalCompositor::cleanup() {
     }
 }
 
-void MetalCompositor::updateOverlay(const void* data, int width, int height) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (!staging_buffer_ || width != (int)width_ || height != (int)height_) {
-        return;
-    }
-
-    memcpy(staging_buffer_, data, width * height * 4);
-    staging_dirty_ = true;
-}
-
 void MetalCompositor::updateOverlayPartial(const void* data, int src_width, int src_height) {
     if (!data || src_width <= 0 || src_height <= 0) {
         return;
@@ -378,32 +367,6 @@ bool MetalCompositor::importQueuedIOSurface() {
     }
 
     return true;
-}
-
-bool MetalCompositor::hasPendingContent() const {
-    return staging_dirty_ || iosurface_pending_.load(std::memory_order_acquire);
-}
-
-void* MetalCompositor::getStagingBuffer(int width, int height) {
-    static bool first_call = true;
-    if (first_call) {
-        NSLog(@"MetalCompositor: getStagingBuffer first call - requested %dx%d, have %dx%d",
-              width, height, width_, height_);
-        first_call = false;
-    }
-    // Auto-resize if dimensions don't match (handles HiDPI scale mismatches)
-    if (width > 0 && height > 0 && (width != (int)width_ || height != (int)height_)) {
-        NSLog(@"MetalCompositor: auto-resizing from %dx%d to %dx%d", width_, height_, width, height);
-        resize(width, height);
-    }
-    if (!staging_buffer_ || width != (int)width_ || height != (int)height_) {
-        return nullptr;
-    }
-    return staging_buffer_;
-}
-
-void MetalCompositor::markStagingDirty() {
-    staging_dirty_ = true;
 }
 
 void MetalCompositor::composite(uint32_t width, uint32_t height, float alpha) {
