@@ -314,11 +314,6 @@ void OpenGLCompositor::updateOverlayPartial(const void* data, int src_width, int
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, src_width, src_height, GL_RGBA, GL_UNSIGNED_BYTE, data);
     texture_valid_ = true;
     has_content_ = true;
-
-    // Ensure GPU finishes reading source data before returning.
-    // Without this, driver may still be reading from 'data' when caller
-    // releases buffer, causing heap corruption if buffer is resized.
-    glFinish();
 }
 
 void OpenGLCompositor::queueDmabuf(int fd, uint32_t stride, uint64_t modifier, int w, int h) {
