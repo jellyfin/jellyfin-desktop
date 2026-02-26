@@ -126,6 +126,10 @@ public:
   Q_INVOKABLE QString getCurrentWebPlaylistItemId() const;
   Q_INVOKABLE void setWebPlaylist(const QVariantList& playlist, const QString& currentItemId);
 
+  // Buffer display API - returns JSON strings to avoid WebChannel serialization issues
+  Q_INVOKABLE QString getBufferedRangesJson() const;
+  Q_INVOKABLE QString getBufferStatsJson() const;
+
   QRect videoRectangle() { return m_videoRectangle; }
 
   AlbumArtProvider* albumArtProvider() const { return m_albumArtProvider; }
@@ -274,6 +278,11 @@ private:
   QVariantList m_queuedItems;
 
   AlbumArtProvider* m_albumArtProvider;
+
+  // Buffer display state
+  QVariantList m_bufferedRanges;  // List of {start, end} in milliseconds
+  qint64 m_currentPosition;       // Cached position for buffer calculations
+  qint64 m_duration;              // Cached duration for max forward buffer
 };
 
 #endif // PLAYERCOMPONENT_H

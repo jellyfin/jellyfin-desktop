@@ -131,6 +131,13 @@
                 }
 
                 this._currentTime = time;
+                
+                // Update buffered ranges cache periodically (every ~1 second)
+                if (!this._lastBufferUpdate || (time - this._lastBufferUpdate) > 1000) {
+                    this._lastBufferUpdate = time;
+                    this._updateBufferedRangesCache();
+                }
+                
                 this.events.trigger(this, 'timeupdate');
             };
 
@@ -600,6 +607,31 @@
     static getSupportedFeatures() {
         return ['PlaybackRate', 'SetAspectRatio'];
     }
+    
+    /**
+     * Returns a TimeRanges-like object for buffer visualization
+     * This mimics the HTML5 video element's buffered property
+     */
+    get buffered() {
+        const ranges = this.getBufferedRanges();
+        return {
+            length: ranges.length,
+            start: (index) => {
+                if (index < 0 || index >= ranges.length) {
+                    throw new Error('Index out of bounds');
+                }
+                // Convert from ticks to seconds (10000 ticks = 1 ms)
+                return ranges[index].start / 10000000;
+            },
+            end: (index) => {
+                if (index < 0 || index >= ranges.length) {
+                    throw new Error('Index out of bounds');
+                }
+                // Convert from ticks to seconds (10000 ticks = 1 ms)
+                return ranges[index].end / 10000000;
+            }
+        };
+    }
 
     supports(feature) {
         if (!this._supportedFeatures) {
@@ -804,17 +836,42 @@
     }
 
     getBufferedRanges() {
-        return [];
+        // WebChannel Q_INVOKABLE methods return Promises, but jellyfin-web expects
+        // this method to be synchronous. We cache the last known value and update
+        // it asynchronously.
+        // Convert from milliseconds to ticks (1 ms = 10000 ticks) for jellyfin-web compatibility
+        const ranges = this._cachedBufferedRanges || [];
+        return ranges.map(r => ({
+            start: r.start * 10000,
+            end: r.end * 10000
+        }));
+    }
+    
+    /**
+     * @private
+     * Async method to fetch buffered ranges from C++ and cache them
+     */
+    async _updateBufferedRangesCache() {
+        try {
+            if (window.api && window.api.player && typeof window.api.player.getBufferedRangesJson === 'function') {
+                const jsonStr = await window.api.player.getBufferedRangesJson();
+                if (jsonStr) {
+                    this._cachedBufferedRanges = JSON.parse(jsonStr) || [];
+                }
+            }
+        } catch (e) {
+            console.warn('[MPV] _updateBufferedRangesCache error:', e);
+        }
     }
 
-    getStats() {
+    async getStats() {
         const playOptions = this._currentPlayOptions || [];
         const categories = [];
 
         if (!this._currentPlayOptions) {
-            return Promise.resolve({
+            return {
                 categories: categories
-            });
+            };
         }
 
         const mediaCategory = {
@@ -857,9 +914,42 @@
         };
         categories.push(audioCategory);
 
-        return Promise.resolve({
-            categories: categories
+        let bufferStats = {};
+        try {
+            if (window.api && window.api.player && typeof window.api.player.getBufferStatsJson === 'function') {
+                const jsonStr = await window.api.player.getBufferStatsJson();
+                if (jsonStr) {
+                    bufferStats = JSON.parse(jsonStr) || {};
+                }
+            }
+        } catch (e) {
+            console.warn('[MPV] getBufferStats error:', e);
+        }
+        const bufferCategory = {
+            stats: [],
+            type: 'buffer'
+        };
+
+        bufferCategory.stats.push({
+            label: 'Forward Buffer',
+            value: bufferStats.forwardBuffer ? bufferStats.forwardBuffer.toFixed(1) + 's' : 'N/A'
         });
+
+        bufferCategory.stats.push({
+            label: 'Backward Buffer',
+            value: bufferStats.backwardBuffer ? bufferStats.backwardBuffer.toFixed(1) + 's' : 'N/A'
+        });
+
+        bufferCategory.stats.push({
+            label: 'Max Forward Buffer',
+            value: bufferStats.maxForwardBuffer ? bufferStats.maxForwardBuffer.toFixed(1) + 's' : 'N/A'
+        });
+
+        categories.push(bufferCategory);
+
+        return {
+            categories: categories
+        };
     }
 
     getSupportedAspectRatios() {

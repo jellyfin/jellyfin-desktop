@@ -5,6 +5,9 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 #include "display/DisplayComponent.h"
 #include "settings/SettingsComponent.h"
 #include "system/SystemComponent.h"
@@ -50,7 +53,8 @@ PlayerComponent::PlayerComponent(QObject* parent)
   m_restoreDisplayTimer(this), m_reloadAudioTimer(this),
   m_streamSwitchImminent(false), m_doAc3Transcoding(false),
   m_videoRectangle(-1, 0, 0, 0),
-  m_albumArtProvider(new AlbumArtProvider(this))
+  m_albumArtProvider(new AlbumArtProvider(this)),
+  m_currentPosition(0), m_duration(0)
 {
   qmlRegisterType<MpvVideoItem>("Konvergo", 1, 0, "MpvVideo"); // deprecated name
   qmlRegisterType<MpvVideoItem>("Konvergo", 1, 0, "KonvergoVideo");
@@ -186,6 +190,7 @@ void PlayerComponent::initializeMpv()
   mpv_observe_property(m_mpv->mpv(), 0, "duration", MPV_FORMAT_DOUBLE);
   mpv_observe_property(m_mpv->mpv(), 0, "audio-device-list", MPV_FORMAT_NODE);
   mpv_observe_property(m_mpv->mpv(), 0, "video-dec-params", MPV_FORMAT_NODE);
+  mpv_observe_property(m_mpv->mpv(), 0, "demuxer-cache-state", MPV_FORMAT_NODE);
 
   // Setup a hook with the ID 1, which is run during the file is loaded.
   // Used to delay playback start for display framerate switching.
@@ -575,6 +580,122 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
         // dependent on the aspect ratio.
         updateVideoAspectSettings();
       }
+      else if (strcmp(prop->name, "demuxer-cache-state") == 0)
+      {
+        QVariantList newRanges;
+
+        // Handle null or non-node property values as empty ranges
+        if (prop->format == MPV_FORMAT_NODE && prop->data)
+        {
+          auto *node = static_cast<mpv_node*>(prop->data);
+          if (node->format == MPV_FORMAT_NODE_MAP)
+          {
+            mpv_node_list *map = node->u.list;
+            bool foundSeekableRanges = false;
+            for (int i = 0; i < map->num; i++)
+            {
+              if (strcmp(map->keys[i], "seekable-ranges") == 0)
+              {
+                foundSeekableRanges = true;
+                mpv_node *rangesNode = &map->values[i];
+                if (rangesNode->format == MPV_FORMAT_NODE_ARRAY)
+                {
+                  mpv_node_list *rangesArray = rangesNode->u.list;
+                  for (int j = 0; j < rangesArray->num; j++)
+                  {
+                    mpv_node *rangeNode = &rangesArray->values[j];
+                    if (rangeNode->format == MPV_FORMAT_NODE_MAP)
+                    {
+                      mpv_node_list *rangeMap = rangeNode->u.list;
+                      double startSec = 0.0;
+                      double endSec = 0.0;
+                      bool hasStart = false;
+                      bool hasEnd = false;
+
+                      for (int k = 0; k < rangeMap->num; k++)
+                      {
+                        if (strcmp(rangeMap->keys[k], "start") == 0 &&
+                            rangeMap->values[k].format == MPV_FORMAT_DOUBLE)
+                        {
+                          startSec = rangeMap->values[k].u.double_;
+                          hasStart = true;
+                        }
+                        else if (strcmp(rangeMap->keys[k], "end") == 0 &&
+                                 rangeMap->values[k].format == MPV_FORMAT_DOUBLE)
+                        {
+                          endSec = rangeMap->values[k].u.double_;
+                          hasEnd = true;
+                        }
+                      }
+
+                      if (hasStart && hasEnd)
+                      {
+                        // Handle NaN or infinity values by treating them as 0
+                        if (std::isnan(startSec) || std::isinf(startSec))
+                        {
+                          qWarning() << "Invalid start time value (NaN/Inf), treating as 0";
+                          startSec = 0.0;
+                        }
+                        if (std::isnan(endSec) || std::isinf(endSec))
+                        {
+                          qWarning() << "Invalid end time value (NaN/Inf), treating as 0";
+                          endSec = 0.0;
+                        }
+
+                        // Clamp negative values to 0
+                        if (startSec < 0.0)
+                          startSec = 0.0;
+                        if (endSec < 0.0)
+                          endSec = 0.0;
+
+                        // Validate that start <= end; discard invalid ranges with a warning
+                        if (startSec <= endSec)
+                        {
+                          // Convert from seconds (double) to milliseconds (qint64)
+                          qint64 startMs = static_cast<qint64>(qRound64(startSec * 1000.0));
+                          qint64 endMs = static_cast<qint64>(qRound64(endSec * 1000.0));
+
+                          QVariantMap range;
+                          range["start"] = startMs;
+                          range["end"] = endMs;
+                          newRanges.append(range);
+                        }
+                        else
+                        {
+                          qWarning() << "Discarding invalid buffer range: start" << startSec << "> end" << endSec;
+                        }
+                      }
+                    }
+                  }
+                }
+                else
+                {
+                  qWarning() << "Malformed demuxer-cache-state: seekable-ranges is not an array";
+                }
+                break;
+              }
+            }
+            if (!foundSeekableRanges)
+            {
+              qDebug() << "demuxer-cache-state missing seekable-ranges key, treating as empty ranges";
+            }
+          }
+          else
+          {
+            qWarning() << "Malformed demuxer-cache-state: expected node map format";
+          }
+        }
+        else if (prop->format != MPV_FORMAT_NONE)
+        {
+          qWarning() << "Malformed demuxer-cache-state: unexpected format, returning empty ranges";
+        }
+
+        // Only update member if ranges actually changed
+        if (newRanges != m_bufferedRanges)
+        {
+          m_bufferedRanges = newRanges;
+        }
+      }
       break;
     }
     case MPV_EVENT_LOG_MESSAGE:
@@ -800,6 +921,12 @@ void PlayerComponent::stop()
   }
   QStringList args("stop");
   m_mpv->command( args);
+
+  // Clear buffer data on playback stop
+  if (!m_bufferedRanges.isEmpty())
+  {
+    m_bufferedRanges.clear();
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1630,4 +1757,89 @@ QVariantList PlayerComponent::getWebPlaylist() const
 QString PlayerComponent::getCurrentWebPlaylistItemId() const
 {
   return m_currentWebPlaylistItemId;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+QString PlayerComponent::getBufferedRangesJson() const
+{
+  // Return empty JSON array if no media is playing
+  if (!m_mpv || m_mpv->getProperty("idle-active").toBool())
+  {
+    return QStringLiteral("[]");
+  }
+  
+  // Convert QVariantList to JSON string
+  QJsonArray jsonArray;
+  for (const QVariant& rangeVar : m_bufferedRanges)
+  {
+    QVariantMap range = rangeVar.toMap();
+    QJsonObject rangeObj;
+    rangeObj["start"] = range["start"].toLongLong();
+    rangeObj["end"] = range["end"].toLongLong();
+    jsonArray.append(rangeObj);
+  }
+  
+  QJsonDocument doc(jsonArray);
+  return QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+QString PlayerComponent::getBufferStatsJson() const
+{
+  QJsonObject stats;
+
+  // Return zero values if no media is playing
+  if (!m_mpv || m_mpv->getProperty("idle-active").toBool())
+  {
+    stats["forwardBuffer"] = 0.0;
+    stats["backwardBuffer"] = 0.0;
+    stats["maxForwardBuffer"] = 0.0;
+    QJsonDocument doc(stats);
+    return QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
+  }
+
+  // Get current position and duration from mpv (in seconds)
+  QVariant posVar = m_mpv->getProperty("playback-time");
+  QVariant durVar = m_mpv->getProperty("duration");
+
+  double positionSec = posVar.canConvert<double>() ? posVar.toDouble() : 0.0;
+  double durationSec = durVar.canConvert<double>() ? durVar.toDouble() : 0.0;
+
+  // Convert position to milliseconds for comparison with buffered ranges
+  qint64 positionMs = static_cast<qint64>(qRound64(positionSec * 1000.0));
+
+  double forwardBuffer = 0.0;
+  double backwardBuffer = 0.0;
+
+  // Calculate forward and backward buffer from buffered ranges
+  for (const QVariant& rangeVar : m_bufferedRanges)
+  {
+    QVariantMap range = rangeVar.toMap();
+    qint64 startMs = range["start"].toLongLong();
+    qint64 endMs = range["end"].toLongLong();
+
+    // Calculate backward buffer: buffered time behind current position
+    if (startMs < positionMs)
+    {
+      qint64 backwardEndMs = qMin(endMs, positionMs);
+      backwardBuffer += (backwardEndMs - startMs) / 1000.0;
+    }
+
+    // Calculate forward buffer: buffered time ahead of current position
+    if (endMs > positionMs)
+    {
+      qint64 forwardStartMs = qMax(startMs, positionMs);
+      forwardBuffer += (endMs - forwardStartMs) / 1000.0;
+    }
+  }
+
+  // maxForwardBuffer is the remaining duration from current position
+  double maxForwardBuffer = qMax(0.0, durationSec - positionSec);
+
+  stats["forwardBuffer"] = forwardBuffer;
+  stats["backwardBuffer"] = backwardBuffer;
+  stats["maxForwardBuffer"] = maxForwardBuffer;
+
+  QJsonDocument doc(stats);
+  return QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
 }
