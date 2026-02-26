@@ -318,7 +318,7 @@
                 // Handle audio
                 const audioRelIndex = this._audioTrackIndexToSetOnPlaying != null && this._audioTrackIndexToSetOnPlaying >= 0
                     ? this.getRelativeIndexByType(streams, this._audioTrackIndexToSetOnPlaying, 'Audio')
-                    : -1;
+                    : 1;
 
                 // Handle subtitle - check for external first
                 let subtitleParam;
