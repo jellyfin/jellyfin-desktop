@@ -50,12 +50,14 @@ class mpvAudioPlayer {
         self._volume = self.getSavedVolume() * 100;
         self._playRate = 1;
         self._hasConnection = false;
+        self._bufferedRanges = [];
 
         self.play = (options) => {
             self._started = false;
             self._timeUpdated = false;
             self._currentTime = null;
             self._duration = undefined;
+            self._bufferedRanges = [];
 
             const player = window.api.player;
             if (!self._hasConnection) {
@@ -66,6 +68,7 @@ class mpvAudioPlayer {
                 player.updateDuration.connect(onDuration);
                 player.error.connect(onError);
                 player.paused.connect(onPause);
+                player.bufferedRangesUpdated.connect(onBufferedRangesUpdated);
             }
 
             return setCurrentSrc(options);
@@ -139,6 +142,8 @@ class mpvAudioPlayer {
             player.updateDuration.disconnect(onDuration);
             player.error.disconnect(onError);
             player.paused.disconnect(onPause);
+            player.bufferedRangesUpdated.disconnect(onBufferedRangesUpdated);
+            self._bufferedRanges = [];
         };
 
         function onDuration(duration) {
@@ -178,6 +183,10 @@ class mpvAudioPlayer {
         function onPause() {
             self._paused = true;
             self.events.trigger(self, 'pause');
+        }
+
+        function onBufferedRangesUpdated(ranges) {
+            self._bufferedRanges = ranges;
         }
 
         function onError(error) {
@@ -240,7 +249,7 @@ class mpvAudioPlayer {
     }
 
     getBufferedRanges() {
-        return [];
+        return this._bufferedRanges;
     }
 
     pause() {

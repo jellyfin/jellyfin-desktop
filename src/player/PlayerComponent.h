@@ -219,6 +219,10 @@ Q_SIGNALS:
   void seekPerformed(qint64 positionMs);
   void metadataChanged(const QVariantMap& metadata);
   void volumeChanged(double volume);
+
+  // Buffered ranges from demuxer-cache-state, as list of {start, end} in ticks
+  void bufferedRangesUpdated(const QVariantList& ranges);
+
 private:
   // this is the function actually implemented in the backends. the variantmap contains
   // a few known keys:

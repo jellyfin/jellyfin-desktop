@@ -186,6 +186,7 @@ void PlayerComponent::initializeMpv()
   mpv_observe_property(m_mpv->mpv(), 0, "duration", MPV_FORMAT_DOUBLE);
   mpv_observe_property(m_mpv->mpv(), 0, "audio-device-list", MPV_FORMAT_NODE);
   mpv_observe_property(m_mpv->mpv(), 0, "video-dec-params", MPV_FORMAT_NODE);
+  mpv_observe_property(m_mpv->mpv(), 0, "demuxer-cache-state", MPV_FORMAT_NODE);
 
   // Setup a hook with the ID 1, which is run during the file is loaded.
   // Used to delay playback start for display framerate switching.
@@ -568,6 +569,23 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
       else if (strcmp(prop->name, "audio-device-list") == 0)
       {
         updateAudioDeviceList();
+      }
+      else if (strcmp(prop->name, "demuxer-cache-state") == 0 && prop->format == MPV_FORMAT_NODE)
+      {
+        constexpr double ticksPerSecond = 10000000.0; // 100ns ticks (Jellyfin's internal unit)
+        auto *node = static_cast<mpv_node*>(prop->data);
+        QVariantMap cacheState = mpv::qt::node_to_variant(node).toMap();
+        QVariantList seekableRanges = cacheState[QStringLiteral("seekable-ranges")].toList();
+        QVariantList ranges;
+        for (const QVariant &entry : seekableRanges)
+        {
+          QVariantMap rangeMap = entry.toMap();
+          QVariantMap r;
+          r[QStringLiteral("start")] = static_cast<qint64>(rangeMap[QStringLiteral("start")].toDouble() * ticksPerSecond);
+          r[QStringLiteral("end")] = static_cast<qint64>(rangeMap[QStringLiteral("end")].toDouble() * ticksPerSecond);
+          ranges.append(r);
+        }
+        emit bufferedRangesUpdated(ranges);
       }
       else if (strcmp(prop->name, "video-dec-params") == 0)
       {

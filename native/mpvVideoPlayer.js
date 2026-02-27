@@ -114,6 +114,17 @@
              * @type {boolean}
              */
             this._hasConnection = false;
+            /**
+             * @type {Array<{start: number, end: number}>}
+             */
+            this._bufferedRanges = [];
+
+            /**
+             * @private
+             */
+            this.onBufferedRangesUpdated = (ranges) => {
+                this._bufferedRanges = ranges;
+            };
 
             /**
              * @private
@@ -234,6 +245,7 @@
             this._started = false;
             this._timeUpdated = false;
             this._currentTime = null;
+            this._bufferedRanges = [];
 
             this.resetSubtitleOffset();
             if (options.fullscreen) {
@@ -481,6 +493,7 @@
 
             const player = window.api.player;
             this._hasConnection = false;
+            this._bufferedRanges = [];
             player.playing.disconnect(this.onPlaying);
             player.positionUpdate.disconnect(this.onTimeUpdate);
             player.finished.disconnect(this.onEnded);
@@ -488,6 +501,7 @@
             player.updateDuration.disconnect(this.onDuration);
             player.error.disconnect(this.onError);
             player.paused.disconnect(this.onPause);
+            player.bufferedRangesUpdated.disconnect(this.onBufferedRangesUpdated);
         }
 
         /**
@@ -535,6 +549,7 @@
                     player.updateDuration.connect(this.onDuration);
                     player.error.connect(this.onError);
                     player.paused.connect(this.onPause);
+                    player.bufferedRangesUpdated.connect(this.onBufferedRangesUpdated);
 
                     // Log all other signals
                     player.buffering.connect((percent) => {
@@ -804,7 +819,7 @@
     }
 
     getBufferedRanges() {
-        return [];
+        return this._bufferedRanges;
     }
 
     getStats() {
