@@ -5,10 +5,10 @@ REM Run once to install all build dependencies
 setlocal EnableDelayedExpansion
 call "%~dp0common.bat"
 
-set "7ZIP=C:\Program Files\7-Zip\7z.exe"
-if not exist "%7ZIP%" (
+set "SEVENZIP=C:\Program Files\7-Zip\7z.exe"
+if not exist "%SEVENZIP%" (
     for /f "delims=" %%i in ('where 7z.exe 2^>nul') do (
-        set "7ZIP=%%i"
+        set "SEVENZIP=%%i"
         goto :found7zip
     )
 )
@@ -68,10 +68,10 @@ if not exist "%DEPS_DIR%\mpv\libmpv-2.dll" (
     if errorlevel 1 (
         echo ERROR: Failed to download libmpv
     ) else (
-        if not exist "%7ZIP%" (
+        if not exist "%SEVENZIP%" (
             echo ERROR: 7-Zip not found. Please install 7-Zip and re-run setup.
         ) else (
-        "%7ZIP%" x "%DEPS_DIR%\mpv.7z" -o"%DEPS_DIR%\mpv_tmp" -y
+        "%SEVENZIP%" x "%DEPS_DIR%\mpv.7z" -o"%DEPS_DIR%\mpv_tmp" -y
         if errorlevel 1 (
             echo ERROR: Failed to extract libmpv archive
         ) else (
@@ -107,10 +107,10 @@ if not exist "%DEPS_DIR%\mpv-fallback\libmpv-2.dll" (
     if errorlevel 1 (
         echo ERROR: Failed to download libmpv fallback
     ) else (
-        if not exist "%7ZIP%" (
+        if not exist "%SEVENZIP%" (
             echo ERROR: 7-Zip not found. Please install 7-Zip and re-run setup.
         ) else (
-        "%7ZIP%" x "%DEPS_DIR%\mpv-fallback.7z" -o"%DEPS_DIR%\mpv-fallback-tmp" -y
+        "%SEVENZIP%" x "%DEPS_DIR%\mpv-fallback.7z" -o"%DEPS_DIR%\mpv-fallback-tmp" -y
         if errorlevel 1 (
             echo ERROR: Failed to extract libmpv fallback archive
         ) else (
@@ -146,7 +146,7 @@ if not exist "%DEPS_DIR%\wix" (
     echo Downloading WiX tools...
     curl -L -o "%DEPS_DIR%\wix.zip" https://github.com/wixtoolset/wix3/releases/download/wix3111rtm/wix311-binaries.zip
     mkdir "%DEPS_DIR%\wix"
-    %7ZIP% x -y "%DEPS_DIR%\wix.zip" -o"%DEPS_DIR%\wix"
+    %SEVENZIP% x -y "%DEPS_DIR%\wix.zip" -o"%DEPS_DIR%\wix"
     del "%DEPS_DIR%\wix.zip"
 )
 
