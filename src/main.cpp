@@ -1250,18 +1250,13 @@ int main(int argc, char* argv[]) {
                 [[fallthrough]];
             case SDL_EVENT_TEXT_INPUT:
                 input_stack.route(event);
-                // Handle special key combinations
-                if (event.type == SDL_EVENT_KEY_DOWN) {
-                    if (event.key.key == SDLK_ESCAPE && !menu.isOpen()) {
-                        running = false;
-                    }
 #ifdef __APPLE__
-                    // Cmd+Q to quit on macOS (no menu bar to provide this)
-                    if (event.key.key == SDLK_Q && (SDL_GetModState() & SDL_KMOD_GUI)) {
-                        running = false;
-                    }
-#endif
+                // Cmd+Q to quit on macOS (no menu bar to provide this)
+                if (event.type == SDL_EVENT_KEY_DOWN &&
+                    event.key.key == SDLK_Q && (SDL_GetModState() & SDL_KMOD_GUI)) {
+                    running = false;
                 }
+#endif
                 break;
 
             // Window events
