@@ -12,13 +12,17 @@ static const char* s_requiredDeviceExtensions[] = {
     VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
     VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
     VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-    VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
-    VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
     VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME,
     VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME,
     VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
     VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
     VK_KHR_MAINTENANCE_1_EXTENSION_NAME,
+};
+
+// Optional extensions (dmabuf hwdec interop)
+static const char* s_optionalDeviceExtensions[] = {
+    VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
+    VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
 };
 
 X11VideoLayer::X11VideoLayer() = default;
@@ -131,15 +135,23 @@ bool X11VideoLayer::init(SDL_Window* window, VkInstance, VkPhysicalDevice,
         return false;
     };
 
-    std::vector<const char*> enabledExtensions;
+    enabled_extensions_.clear();
     constexpr int requiredCount = sizeof(s_requiredDeviceExtensions) / sizeof(s_requiredDeviceExtensions[0]);
+    constexpr int optionalCount = sizeof(s_optionalDeviceExtensions) / sizeof(s_optionalDeviceExtensions[0]);
 
     for (int i = 0; i < requiredCount; i++) {
         if (!hasExtension(s_requiredDeviceExtensions[i])) {
             LOG_ERROR(LOG_PLATFORM, "[X11VideoLayer] Missing required extension: %s", s_requiredDeviceExtensions[i]);
             return false;
         }
-        enabledExtensions.push_back(s_requiredDeviceExtensions[i]);
+        enabled_extensions_.push_back(s_requiredDeviceExtensions[i]);
+    }
+
+    for (int i = 0; i < optionalCount; i++) {
+        if (hasExtension(s_optionalDeviceExtensions[i])) {
+            enabled_extensions_.push_back(s_optionalDeviceExtensions[i]);
+            LOG_INFO(LOG_PLATFORM, "[X11VideoLayer] Enabled optional extension: %s", s_optionalDeviceExtensions[i]);
+        }
     }
 
     // Find graphics queue family
@@ -182,8 +194,8 @@ bool X11VideoLayer::init(SDL_Window* window, VkInstance, VkPhysicalDevice,
     deviceInfo.pNext = &features2_;
     deviceInfo.queueCreateInfoCount = 1;
     deviceInfo.pQueueCreateInfos = &queueInfo;
-    deviceInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
-    deviceInfo.ppEnabledExtensionNames = enabledExtensions.data();
+    deviceInfo.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions_.size());
+    deviceInfo.ppEnabledExtensionNames = enabled_extensions_.data();
 
     VkResult deviceResult = vkCreateDevice(physical_device_, &deviceInfo, nullptr, &device_);
     if (deviceResult != VK_SUCCESS) {
@@ -271,8 +283,8 @@ void X11VideoLayer::cleanup() {
     // Note: display_ is owned by SDL, don't close it
     display_ = nullptr;
 }
-const char* const* X11VideoLayer::deviceExtensions() const { return s_requiredDeviceExtensions; }
-int X11VideoLayer::deviceExtensionCount() const { return sizeof(s_requiredDeviceExtensions) / sizeof(s_requiredDeviceExtensions[0]); }
+const char* const* X11VideoLayer::deviceExtensions() const { return enabled_extensions_.data(); }
+int X11VideoLayer::deviceExtensionCount() const { return static_cast<int>(enabled_extensions_.size()); }
 
 bool X11VideoLayer::createSwapchain(int width, int height) {
     // Query surface formats

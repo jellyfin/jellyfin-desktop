@@ -64,10 +64,11 @@ private:
     uint32_t queue_family_ = 0;
     VkSurfaceKHR vk_surface_ = VK_NULL_HANDLE;
 
-    // Features for mpv
+    // Features/extensions for mpv
     VkPhysicalDeviceVulkan11Features vk11_features_{};
     VkPhysicalDeviceVulkan12Features vk12_features_{};
     VkPhysicalDeviceFeatures2 features2_{};
+    std::vector<const char*> enabled_extensions_;
 
     // Swapchain
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;

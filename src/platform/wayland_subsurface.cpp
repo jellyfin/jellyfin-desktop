@@ -10,8 +10,6 @@ static const char* s_requiredDeviceExtensions[] = {
     VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
     VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
     VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-    VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
-    VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
     VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME,
     VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME,
     VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
@@ -19,8 +17,10 @@ static const char* s_requiredDeviceExtensions[] = {
     VK_KHR_MAINTENANCE_1_EXTENSION_NAME,
 };
 
-// Optional extensions (HDR support)
+// Optional extensions (dmabuf hwdec interop, HDR)
 static const char* s_optionalDeviceExtensions[] = {
+    VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
+    VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
     VK_EXT_HDR_METADATA_EXTENSION_NAME,
 };
 
@@ -219,7 +219,7 @@ bool WaylandSubsurface::init(SDL_Window* window, VkInstance, VkPhysicalDevice,
     };
 
     // Build extension list: required + available optional
-    std::vector<const char*> enabledExtensions;
+    enabled_extensions_.clear();
     constexpr int requiredCount = sizeof(s_requiredDeviceExtensions) / sizeof(s_requiredDeviceExtensions[0]);
     constexpr int optionalCount = sizeof(s_optionalDeviceExtensions) / sizeof(s_optionalDeviceExtensions[0]);
 
@@ -228,12 +228,12 @@ bool WaylandSubsurface::init(SDL_Window* window, VkInstance, VkPhysicalDevice,
             LOG_ERROR(LOG_PLATFORM, "Missing required extension: %s", s_requiredDeviceExtensions[i]);
             return false;
         }
-        enabledExtensions.push_back(s_requiredDeviceExtensions[i]);
+        enabled_extensions_.push_back(s_requiredDeviceExtensions[i]);
     }
 
     for (int i = 0; i < optionalCount; i++) {
         if (hasExtension(s_optionalDeviceExtensions[i])) {
-            enabledExtensions.push_back(s_optionalDeviceExtensions[i]);
+            enabled_extensions_.push_back(s_optionalDeviceExtensions[i]);
             LOG_INFO(LOG_PLATFORM, "Enabled optional extension: %s", s_optionalDeviceExtensions[i]);
         }
     }
@@ -278,8 +278,8 @@ bool WaylandSubsurface::init(SDL_Window* window, VkInstance, VkPhysicalDevice,
     deviceInfo.pNext = &features2_;
     deviceInfo.queueCreateInfoCount = 1;
     deviceInfo.pQueueCreateInfos = &queueInfo;
-    deviceInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
-    deviceInfo.ppEnabledExtensionNames = enabledExtensions.data();
+    deviceInfo.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions_.size());
+    deviceInfo.ppEnabledExtensionNames = enabled_extensions_.data();
 
     VkResult deviceResult = vkCreateDevice(physical_device_, &deviceInfo, nullptr, &device_);
     if (deviceResult != VK_SUCCESS) {
@@ -684,9 +684,9 @@ uint32_t WaylandSubsurface::vkQueueFamily() const {
 }
 
 const char* const* WaylandSubsurface::deviceExtensions() const {
-    return s_requiredDeviceExtensions;
+    return enabled_extensions_.data();
 }
 
 int WaylandSubsurface::deviceExtensionCount() const {
-    return sizeof(s_requiredDeviceExtensions) / sizeof(s_requiredDeviceExtensions[0]);
+    return static_cast<int>(enabled_extensions_.size());
 }
