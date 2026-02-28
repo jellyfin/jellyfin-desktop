@@ -2,10 +2,18 @@
 
 ## Quick Start
 
+### Setup and build
 ```cmd
 dev\windows\setup.bat   # First time: download dependencies
 dev\windows\build.bat   # Build
-dev\windows\run.bat     # Run
+```
+### Run the application
+```cmd
+dev\windows\run.bat
+```
+### Run the unit tests
+```cmd
+dev\windows\test.bat
 ```
 
 ## Prerequisites
@@ -31,6 +39,7 @@ dev\windows\run.bat     # Run
 - `build.bat` - Configure and build
 - `bundle.bat` - Create installer and portable ZIP
 - `run.bat` - Run executable (sets up Qt/mpv in PATH)
+- `test.bat` - Run unit tests (sets up Qt/mpv in PATH)
 - `common.bat` - Shared variables (sourced by other scripts)
 
 ## Clean Build

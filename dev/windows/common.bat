@@ -24,3 +24,17 @@ if not defined VCVARS if exist "%VS_CM%" set "VCVARS=%VS_CM%"
 if not defined VCVARS if exist "%VS_PR%" set "VCVARS=%VS_PR%"
 if not defined VCVARS if exist "%VS_EN%" set "VCVARS=%VS_EN%"
 if not defined VCVARS if exist "%VS_BT86%" set "VCVARS=%VS_BT86%"
+
+if "%~1"=="" goto :eof
+goto %~1
+
+REM === Setup runtime PATH for DLLs ===
+REM Call with: call "%~dp0common.bat" :setup_runtime
+:setup_runtime
+if not exist "%BUILD_DIR%" (
+    echo ERROR: Build not found. Run build.bat first
+    exit /b 1
+)
+set "PATH=%DEPS_DIR%\mpv;%PATH%"
+set "PATH=%DEPS_DIR%\qt\%QT_VERSION%\msvc2022_64\bin;%PATH%"
+goto :eof

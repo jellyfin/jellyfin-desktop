@@ -2,10 +2,18 @@
 
 ## Quick Start
 
+### Setup and build
 ```bash
 dev/macos/setup.sh   # First time: install dependencies
 dev/macos/build.sh   # Build
-dev/macos/run.sh     # Run
+```
+### Run the application
+```bash
+dev/macos/run.sh
+```
+### Run the unit tests
+```bash
+dev/macos/test.sh
 ```
 
 ## Prerequisites
@@ -31,6 +39,7 @@ dev/macos/run.sh     # Run
 - `build.sh` - Configure and build
 - `bundle.sh` - Create DMG for distribution
 - `run.sh` - Run the built app (passes arguments through)
+- `test.sh` - Run unit tests (sets up Qt/mpv in PATH)
 - `common.sh` - Shared variables (sourced by other scripts)
 
 ## Clean Build
