@@ -183,6 +183,8 @@ private:
     // Popup (dropdown) state
     bool popup_visible_ = false;
     CefRect popup_rect_;
+    int popup_pixel_width_ = 0;
+    int popup_pixel_height_ = 0;
     std::vector<uint8_t> popup_buffer_;
     std::vector<uint8_t> composite_buffer_;  // Main view + popup blended
 

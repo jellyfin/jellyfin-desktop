@@ -398,6 +398,8 @@ void Client::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
     popup_visible_ = show;
     if (!show) {
         popup_buffer_.clear();
+        popup_pixel_width_ = 0;
+        popup_pixel_height_ = 0;
     }
 }
 
@@ -417,10 +419,11 @@ void Client::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
     if (!on_paint_) return;
 
     if (type == PET_POPUP) {
-        // Store popup buffer for compositing
         size_t size = width * height * 4;
         popup_buffer_.resize(size);
         memcpy(popup_buffer_.data(), buffer, size);
+        popup_pixel_width_ = width;
+        popup_pixel_height_ = height;
         // Request main view repaint to composite popup
         if (browser) {
             browser->GetHost()->Invalidate(PET_VIEW);
@@ -440,10 +443,13 @@ void Client::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
     composite_buffer_.resize(size);
     memcpy(composite_buffer_.data(), buffer, size);
 
-    int px = popup_rect_.x;
-    int py = popup_rect_.y;
-    int pw = popup_rect_.width;
-    int ph = popup_rect_.height;
+    // popup_rect_ is in logical/CSS coordinates; buffers are in physical pixels.
+    // Scale popup position to physical space and use actual pixel dimensions.
+    float scale = (width_ > 0) ? static_cast<float>(width) / width_ : 1.0f;
+    int px = static_cast<int>(popup_rect_.x * scale);
+    int py = static_cast<int>(popup_rect_.y * scale);
+    int pw = popup_pixel_width_;
+    int ph = popup_pixel_height_;
     for (int y = 0; y < ph; y++) {
         int dst_y = py + y;
         if (dst_y < 0 || dst_y >= height) continue;
