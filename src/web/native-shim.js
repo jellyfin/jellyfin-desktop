@@ -16,6 +16,12 @@
         }
     });
 
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && window._isFullscreen) {
+            document.exitFullscreen().catch(() => {});
+        }
+    });
+
     // Buffered ranges storage (updated by native code)
     window._bufferedRanges = [];
     window._nativeUpdateBufferedRanges = function(ranges) {
