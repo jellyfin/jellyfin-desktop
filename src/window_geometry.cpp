@@ -1,6 +1,7 @@
 #include "window_geometry.h"
 #include "settings.h"
 #include "logging.h"
+#include <algorithm>
 #include <cstring>
 
 static bool isWayland() {
@@ -51,8 +52,8 @@ void clampWindowToDisplay(SDL_Window* window) {
     int w, h;
     SDL_GetWindowSize(window, &w, &h);
 
-    int clamped_w = (w > bounds.w) ? bounds.w : w;
-    int clamped_h = (h > bounds.h) ? bounds.h : h;
+    int clamped_w = std::min(w, bounds.w);
+    int clamped_h = std::min(h, bounds.h);
 
     if (clamped_w != w || clamped_h != h) {
         SDL_SetWindowSize(window, clamped_w, clamped_h);

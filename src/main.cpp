@@ -1338,8 +1338,8 @@ int main(int argc, char* argv[]) {
                 break;
 
             case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
-            case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
-            case SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED:
+            case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:  // display event (not window)
+            case SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED:  // display event (not window)
                 clampWindowToDisplay(window);
                 break;
 
