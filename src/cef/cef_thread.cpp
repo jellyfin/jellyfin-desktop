@@ -30,10 +30,10 @@ public:
 }
 
 void CefThread::shutdown() {
-    if (!running_.load()) return;
-
-    // Post quit to CEF's UI thread (must be called from same thread as CefInitialize)
-    CefPostTask(TID_UI, new QuitTask());
+    if (running_.load()) {
+        // Post quit to CEF's UI thread (must be called from same thread as CefInitialize)
+        CefPostTask(TID_UI, new QuitTask());
+    }
 
     if (thread_.joinable()) {
         thread_.join();
