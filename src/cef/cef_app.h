@@ -17,11 +17,11 @@ public:
     void SetDeviceScaleFactor(float scale) { device_scale_factor_ = scale; }
     void SetDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
 
-    // Set wake callback for external_message_pump mode (macOS)
+    // Set wake callback for external_message_pump mode (macOS/Linux)
     // Must be called before CefInitialize
     static void SetWakeCallback(std::function<void()> callback) { wake_callback_ = std::move(callback); }
 
-    // External message pump interface (macOS)
+    // External message pump interface (macOS/Linux)
     // Call when wake event received - pumps CEF work
     static void DoWork();
 
@@ -46,7 +46,7 @@ public:
                          CefRefPtr<CefV8Context> context) override;
 
 private:
-    // External message pump state (macOS)
+    // External message pump state (macOS/Linux)
     static inline std::function<void()> wake_callback_;
     static inline std::atomic<bool> is_active_{false};  // Re-entrancy guard
     static inline std::atomic<bool> reentrancy_detected_{false};
