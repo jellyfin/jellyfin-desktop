@@ -45,7 +45,6 @@ signals:
 #define INPUT_KEY_PAUSE     "KEY_PAUSE"
 #define INPUT_KEY_PLAY_PAUSE "KEY_PLAY_PAUSE"
 #define INPUT_KEY_STOP      "KEY_STOP"
-#define INPUT_KEY_DOWN      "KEY_DOWN"
 #define INPUT_KEY_BACK      "KEY_BACK"
 #define INPUT_KEY_SEEKFWD   "KEY_SEEKFWD"
 #define INPUT_KEY_SEEKBCK   "KEY_SEEKBCK"
@@ -77,7 +76,6 @@ signals:
 #define INPUT_KEY_SELECT_LONG  "KEY_SELECT_LONG"
 #define INPUT_KEY_MENU_LONG    "KEY_MENU_LONG"
 #define INPUT_KEY_PLAY_LONG    "KEY_PLAY_LONG"
-#define INPUT_KEY_DOWN_LONG    "KEY_DOWN_LONG"
 
 
 struct ReceiverSlot

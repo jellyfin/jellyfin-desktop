@@ -1,6 +1,5 @@
 #include <QGuiApplication>
 #include <QApplication>
-#include <QDateTime>
 #include <QFileInfo>
 #include <QIcon>
 #include <QtQml>
@@ -9,7 +8,6 @@
 #include <QtWebEngineQuick>
 #include <qtwebenginecoreglobal.h>
 #include <QtWebEngineCore/QWebEngineProfile>
-#include <QErrorMessage>
 #include <QtWebEngineCore/QWebEngineScript>
 #include <QCommandLineOption>
 #include <QDebug>
@@ -17,7 +15,6 @@
 
 #include "shared/Names.h"
 #include "system/SystemComponent.h"
-#include <QDebug>
 #include "Paths.h"
 #include "core/ProfileManager.h"
 #include "player/PlayerComponent.h"
