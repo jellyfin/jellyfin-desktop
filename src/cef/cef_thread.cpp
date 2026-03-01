@@ -32,7 +32,11 @@ public:
 void CefThread::shutdown() {
     if (running_.load()) {
         // Post quit to CEF's UI thread (must be called from same thread as CefInitialize)
-        CefPostTask(TID_UI, new QuitTask());
+        try {
+            CefPostTask(TID_UI, new QuitTask());
+        } catch (...) {
+            LOG_ERROR(LOG_CEF, "Failed to post quit task to CEF thread");
+        }
     }
 
     if (thread_.joinable()) {
