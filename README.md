@@ -5,8 +5,6 @@ Jellyfin desktop client built with Qt WebEngine and [libmpv](https://github.com/
 ![Screenshot of Jellyfin Desktop](screenshots/video_player.png)
 
 ## Downloads
-- [Windows, Mac, and Linux Releases](https://github.com/jellyfin/jellyfin-desktop/releases)
-  - Note for Mac users: builds for Intel require macOS 12+ and Apple Silicon builds requires macOS 14+
 - [Flathub (Linux)](https://flathub.org/apps/details/org.jellyfin.JellyfinDesktop)
 
 ### Development Builds

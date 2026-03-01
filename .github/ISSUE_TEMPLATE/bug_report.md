@@ -7,6 +7,9 @@ assignees: ''
 
 ---
 
+> [!IMPORTANT]
+> Versions v1.12.0 and older are no longer supported. We will only be accepting issues found in the builds linked to in the README https://github.com/jellyfin/jellyfin-desktop?tab=readme-ov-file#downloads 
+
 Four considerations:
  - Please do not open bug reports to ask questions. Use the Discussions feature instead.
  - Please make sure the issue only pertains to Jellyfin Desktop. If it also occurs in the web client, send the issue to jellyfin-web instead.
