@@ -836,6 +836,7 @@ int main(int argc, char* argv[]) {
     // Track who initiated fullscreen (only changes from NONE, returns to NONE on exit)
     enum class FullscreenSource { NONE, WM, CEF };
     FullscreenSource fullscreen_source = FullscreenSource::NONE;
+    bool was_maximized_before_fullscreen = false;
 
     // Create main browser entry
     auto main_entry = std::make_unique<BrowserEntry>();
@@ -1319,6 +1320,8 @@ int main(int argc, char* argv[]) {
 
             case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
                 LOG_DEBUG(LOG_WINDOW, "Fullscreen: SDL enter, source=%d", static_cast<int>(fullscreen_source));
+                was_maximized_before_fullscreen =
+                    (SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED) != 0;
                 if (fullscreen_source == FullscreenSource::NONE) {
                     fullscreen_source = FullscreenSource::WM;
                 }
@@ -1743,7 +1746,7 @@ int main(int argc, char* argv[]) {
     if (blank_cursor) {
         SDL_DestroyCursor(blank_cursor);
     }
-    saveWindowGeometry(window);
+    saveWindowGeometry(window, was_maximized_before_fullscreen);
     SDL_DestroyWindow(window);
     SDL_Quit();
 
