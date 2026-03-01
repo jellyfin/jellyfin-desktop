@@ -15,7 +15,7 @@ jobs:
       pull-requests: write
     steps:
     - name: Download coverage artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: coverage
         run-id: ${{ github.event.workflow_run.id }}
