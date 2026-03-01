@@ -57,20 +57,47 @@ bool Settings::load() {
     buffer << file.rdbuf();
     std::string content = buffer.str();
 
-    // Simple JSON parsing for serverUrl
-    size_t pos = content.find("\"serverUrl\"");
-    if (pos != std::string::npos) {
+    // Simple JSON parsing helpers
+    auto parseString = [&](const char* key) -> std::string {
+        size_t pos = content.find(std::string("\"") + key + "\"");
+        if (pos == std::string::npos) return {};
         pos = content.find(':', pos);
-        if (pos != std::string::npos) {
-            pos = content.find('"', pos);
-            if (pos != std::string::npos) {
-                size_t end = content.find('"', pos + 1);
-                if (end != std::string::npos) {
-                    server_url_ = content.substr(pos + 1, end - pos - 1);
-                }
-            }
-        }
-    }
+        if (pos == std::string::npos) return {};
+        pos = content.find('"', pos);
+        if (pos == std::string::npos) return {};
+        size_t end = content.find('"', pos + 1);
+        if (end == std::string::npos) return {};
+        return content.substr(pos + 1, end - pos - 1);
+    };
+
+    auto parseInt = [&](const char* key, int fallback) -> int {
+        size_t pos = content.find(std::string("\"") + key + "\"");
+        if (pos == std::string::npos) return fallback;
+        pos = content.find(':', pos);
+        if (pos == std::string::npos) return fallback;
+        // Skip whitespace after colon
+        pos++;
+        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t'))
+            pos++;
+        try { return std::stoi(content.substr(pos)); }
+        catch (...) { return fallback; }
+    };
+
+    auto parseBool = [&](const char* key, bool fallback) -> bool {
+        size_t pos = content.find(std::string("\"") + key + "\"");
+        if (pos == std::string::npos) return fallback;
+        pos = content.find(':', pos);
+        if (pos == std::string::npos) return fallback;
+        return content.find("true", pos) < content.find('\n', pos);
+    };
+
+    server_url_ = parseString("serverUrl");
+
+    window_geometry_.width = parseInt("windowWidth", 0);
+    window_geometry_.height = parseInt("windowHeight", 0);
+    window_geometry_.x = parseInt("windowX", -1);
+    window_geometry_.y = parseInt("windowY", -1);
+    window_geometry_.maximized = parseBool("windowMaximized", false);
 
     return true;
 }
@@ -81,9 +108,7 @@ bool Settings::save() {
         return false;
     }
 
-    file << "{\n";
-    file << "  \"serverUrl\": \"" << server_url_ << "\"\n";
-    file << "}\n";
+    writeJson(file, server_url_, window_geometry_);
 
     return true;
 }
@@ -92,14 +117,29 @@ void Settings::saveAsync() {
     // Capture current state and save in background
     std::string url = server_url_;
     std::string path = getConfigPath();
+    WindowGeometry geom = window_geometry_;
 
-    std::thread([this, url, path]() {
+    std::thread([this, url, path, geom]() {
         std::lock_guard<std::mutex> lock(save_mutex_);
         std::ofstream file(path);
         if (file.is_open()) {
-            file << "{\n";
-            file << "  \"serverUrl\": \"" << url << "\"\n";
-            file << "}\n";
+            writeJson(file, url, geom);
         }
     }).detach();
+}
+
+void Settings::writeJson(std::ofstream& file, const std::string& url,
+                          const WindowGeometry& geom) {
+    file << "{\n";
+    file << "  \"serverUrl\": \"" << url << "\"";
+    if (geom.width > 0 && geom.height > 0) {
+        file << ",\n  \"windowWidth\": " << geom.width;
+        file << ",\n  \"windowHeight\": " << geom.height;
+    }
+    if (geom.x >= 0 && geom.y >= 0) {
+        file << ",\n  \"windowX\": " << geom.x;
+        file << ",\n  \"windowY\": " << geom.y;
+    }
+    file << ",\n  \"windowMaximized\": " << (geom.maximized ? "true" : "false");
+    file << "\n}\n";
 }
