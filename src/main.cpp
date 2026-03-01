@@ -42,6 +42,7 @@ void wakeMacEventLoop();
 #include <windows.h>
 #include "context/wgl_context.h"
 #include "context/opengl_frame_context.h"
+#include "player/windows/media_session_windows.h"
 #else
 #include "context/egl_context.h"
 #include "context/opengl_frame_context.h"
@@ -676,7 +677,7 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
     mediaSession.addBackend(createMacOSMediaBackend(&mediaSession));
 #elif defined(_WIN32)
-    // Windows: No media session backend for now (SMTC can be added later)
+    mediaSession.addBackend(createWindowsMediaBackend(&mediaSession, window));
 #else
     mediaSession.addBackend(createMprisBackend(&mediaSession));
 #endif

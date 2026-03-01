@@ -100,6 +100,7 @@ elseif(WIN32)
         src/compositor/opengl_compositor.cpp
         src/player/media_session.cpp
         src/player/dcomp_renderer.cpp
+        src/player/windows/media_session_windows.cpp
     )
     set(PLATFORM_LIBRARIES
         OpenGL::GL
@@ -107,6 +108,8 @@ elseif(WIN32)
         d3d11
         dxgi
         dcomp
+        crypt32
+        windowsapp
     )
     set(PLATFORM_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/third_party")
 else()
