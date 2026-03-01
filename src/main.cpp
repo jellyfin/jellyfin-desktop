@@ -71,6 +71,13 @@ void wakeMacEventLoop();
 #include "single_instance.h"
 #include "window_geometry.h"
 #include "window_activation.h"
+#ifndef _WIN32
+#include <csignal>
+static volatile sig_atomic_t g_quit_requested = 0;
+static void signalHandler(int) {
+    g_quit_requested = 1;
+}
+#endif
 
 // Overlay fade constants
 constexpr float OVERLAY_FADE_DELAY_SEC = 1.0f;
@@ -696,6 +703,12 @@ int main(int argc, char* argv[]) {
     LOG_INFO(LOG_CEF, "CEF context initialized");
 #endif
 
+#ifndef _WIN32
+    // Install after CefInitialize (Chromium overwrites signal handlers during init)
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
+#endif
+
     // Browser stack manages all browsers and their paint buffers
     BrowserStack browsers;
     std::atomic<bool> paint_size_matched{true};  // Track if last paint matched compositor size
@@ -1275,6 +1288,18 @@ int main(int argc, char* argv[]) {
             }
 #endif
         }
+
+#ifndef _WIN32
+        // Check for deferred signal (Ctrl+C / kill) — cannot call SDL_PushEvent
+        // from a signal handler (not async-signal-safe), so we set a flag there
+        // and convert it to an SDL quit event here on the main thread.
+        if (g_quit_requested) {
+            g_quit_requested = 0;
+            SDL_Event qe{};
+            qe.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&qe);
+        }
+#endif
 
         while (have_event) {
             switch (event.type) {
