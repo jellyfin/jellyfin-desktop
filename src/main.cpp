@@ -1337,6 +1337,12 @@ int main(int argc, char* argv[]) {
                 }
                 break;
 
+            case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+            case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
+            case SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED:
+                clampWindowToDisplay(window);
+                break;
+
             case SDL_EVENT_WINDOW_RESIZED: {
                 current_width = event.window.data1;
                 current_height = event.window.data2;

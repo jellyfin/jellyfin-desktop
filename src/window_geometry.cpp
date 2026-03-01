@@ -26,11 +26,38 @@ void restoreWindowGeometry(SDL_Window* window) {
         LOG_INFO(LOG_WINDOW, "Restored window position: %d,%d", geom.x, geom.y);
     }
 
+    // Clamp to display bounds before maximizing
+    clampWindowToDisplay(window);
+
     // Restore maximized state (do this AFTER position/size so maximize
     // happens on the correct screen with correct pre-maximize geometry)
     if (geom.maximized) {
         SDL_MaximizeWindow(window);
         LOG_INFO(LOG_WINDOW, "Restored maximized state");
+    }
+}
+
+void clampWindowToDisplay(SDL_Window* window) {
+    SDL_WindowFlags flags = SDL_GetWindowFlags(window);
+    if (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))
+        return;
+
+    SDL_DisplayID display = SDL_GetDisplayForWindow(window);
+    if (!display) return;
+
+    SDL_Rect bounds;
+    if (!SDL_GetDisplayUsableBounds(display, &bounds)) return;
+
+    int w, h;
+    SDL_GetWindowSize(window, &w, &h);
+
+    int clamped_w = (w > bounds.w) ? bounds.w : w;
+    int clamped_h = (h > bounds.h) ? bounds.h : h;
+
+    if (clamped_w != w || clamped_h != h) {
+        SDL_SetWindowSize(window, clamped_w, clamped_h);
+        LOG_INFO(LOG_WINDOW, "Clamped window size from %dx%d to %dx%d (display: %dx%d)",
+                 w, h, clamped_w, clamped_h, bounds.w, bounds.h);
     }
 }
 

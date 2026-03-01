@@ -7,6 +7,10 @@
 // On Wayland, position is ignored (compositor controls it).
 void restoreWindowGeometry(SDL_Window* window);
 
+// Clamps window size to fit the current display's usable bounds.
+// Call when the display resolution changes or the window moves to a new display.
+void clampWindowToDisplay(SDL_Window* window);
+
 // Saves current window geometry to settings.
 // Call during shutdown, before SDL_DestroyWindow.
 // If fullscreen, saves pre_fullscreen_maximized instead of current state.
