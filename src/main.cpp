@@ -67,6 +67,7 @@ void wakeMacEventLoop();
 #include "ui/menu_overlay.h"
 #include "settings.h"
 #include "single_instance.h"
+#include "window_geometry.h"
 #include "window_activation.h"
 
 // Overlay fade constants
@@ -466,8 +467,8 @@ int main(int argc, char* argv[]) {
         wakeMainLoop();
     });
 
-    const int width = 1280;
-    const int height = 720;
+    int width = 1280;
+    int height = 720;
 
     // Use plain Wayland window - we create our own EGL context
     // SDL_WINDOW_HIGH_PIXEL_DENSITY enables HiDPI support
@@ -486,6 +487,10 @@ int main(int argc, char* argv[]) {
     std::atomic<bool> cursor_at_resize_edge{false};
     SDL_SetWindowHitTest(window, windowHitTest, &cursor_at_resize_edge);
     SDL_StartTextInput(window);
+
+    // Restore saved window geometry (size, position, maximized)
+    restoreWindowGeometry(window);
+    SDL_GetWindowSize(window, &width, &height);
 
 #ifdef __APPLE__
     // Window activation is deferred until first WINDOW_EXPOSED event
@@ -1738,6 +1743,7 @@ int main(int argc, char* argv[]) {
     if (blank_cursor) {
         SDL_DestroyCursor(blank_cursor);
     }
+    saveWindowGeometry(window);
     SDL_DestroyWindow(window);
     SDL_Quit();
 
