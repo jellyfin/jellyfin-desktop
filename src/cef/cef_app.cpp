@@ -5,6 +5,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
+#include <cmath>
 #include <cstring>
 #include "logging.h"
 
@@ -207,6 +208,15 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 }
 
 // V8 handler implementation - sends IPC messages to browser process
+// Extract int from a V8 value, accepting both integer and floating-point numbers.
+// JS numbers are doubles; IsInt() rejects non-integer doubles like 1799998.401,
+// which silently dropped resume positions and seek targets.
+static int v8ToInt(const CefRefPtr<CefV8Value>& val, int fallback) {
+    if (val->IsInt()) return val->GetIntValue();
+    if (val->IsDouble()) return static_cast<int>(std::lround(val->GetDoubleValue()));
+    return fallback;
+}
+
 bool NativeV8Handler::Execute(const CefString& name,
                               CefRefPtr<CefV8Value> object,
                               const CefV8ValueList& arguments,
@@ -218,9 +228,9 @@ bool NativeV8Handler::Execute(const CefString& name,
     if (name == "playerLoad") {
         if (arguments.size() >= 1 && arguments[0]->IsString()) {
             std::string url = arguments[0]->GetStringValue().ToString();
-            int startMs = arguments.size() > 1 && arguments[1]->IsInt() ? arguments[1]->GetIntValue() : 0;
-            int audioIdx = arguments.size() > 2 && arguments[2]->IsInt() ? arguments[2]->GetIntValue() : -1;
-            int subIdx = arguments.size() > 3 && arguments[3]->IsInt() ? arguments[3]->GetIntValue() : -1;
+            int startMs = arguments.size() > 1 ? v8ToInt(arguments[1], 0) : 0;
+            int audioIdx = arguments.size() > 2 ? v8ToInt(arguments[2], -1) : -1;
+            int subIdx = arguments.size() > 3 ? v8ToInt(arguments[3], -1) : -1;
             std::string metadataJson = arguments.size() > 4 && arguments[4]->IsString() ? arguments[4]->GetStringValue().ToString() : "{}";
 
             LOG_DEBUG(LOG_CEF, "V8 playerLoad: %s startMs=%d", url.c_str(), startMs);
@@ -260,19 +270,19 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSeek") {
-        if (arguments.size() >= 1 && arguments[0]->IsInt()) {
-            int64_t ms = arguments[0]->GetIntValue();
-            LOG_DEBUG(LOG_CEF, "V8 playerSeek: %ldms", (long)ms);
+        if (arguments.size() >= 1) {
+            int ms = v8ToInt(arguments[0], 0);
+            LOG_DEBUG(LOG_CEF, "V8 playerSeek: %dms", ms);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSeek");
-            msg->GetArgumentList()->SetInt(0, static_cast<int>(ms));
+            msg->GetArgumentList()->SetInt(0, ms);
             browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
         }
         return true;
     }
 
     if (name == "playerSetVolume") {
-        if (arguments.size() >= 1 && arguments[0]->IsInt()) {
-            int vol = arguments[0]->GetIntValue();
+        if (arguments.size() >= 1) {
+            int vol = v8ToInt(arguments[0], 100);
             LOG_DEBUG(LOG_CEF, "V8 playerSetVolume: %d", vol);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetVolume");
             msg->GetArgumentList()->SetInt(0, vol);
@@ -293,8 +303,8 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetSpeed") {
-        if (arguments.size() >= 1 && arguments[0]->IsInt()) {
-            int rateX1000 = arguments[0]->GetIntValue();
+        if (arguments.size() >= 1) {
+            int rateX1000 = v8ToInt(arguments[0], 1000);
             LOG_DEBUG(LOG_CEF, "V8 playerSetSpeed: %d", rateX1000);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetSpeed");
             msg->GetArgumentList()->SetInt(0, rateX1000);
@@ -304,8 +314,8 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetSubtitle") {
-        if (arguments.size() >= 1 && arguments[0]->IsInt()) {
-            int sid = arguments[0]->GetIntValue();
+        if (arguments.size() >= 1) {
+            int sid = v8ToInt(arguments[0], -1);
             LOG_DEBUG(LOG_CEF, "V8 playerSetSubtitle: %d", sid);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetSubtitle");
             msg->GetArgumentList()->SetInt(0, sid);
@@ -315,8 +325,8 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetAudio") {
-        if (arguments.size() >= 1 && arguments[0]->IsInt()) {
-            int aid = arguments[0]->GetIntValue();
+        if (arguments.size() >= 1) {
+            int aid = v8ToInt(arguments[0], -1);
             LOG_DEBUG(LOG_CEF, "V8 playerSetAudio: %d", aid);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetAudio");
             msg->GetArgumentList()->SetInt(0, aid);
@@ -348,8 +358,8 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "notifyPosition") {
-        if (arguments.size() >= 1 && arguments[0]->IsInt()) {
-            int posMs = arguments[0]->GetIntValue();
+        if (arguments.size() >= 1 && (arguments[0]->IsInt() || arguments[0]->IsDouble())) {
+            int posMs = v8ToInt(arguments[0], 0);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifyPosition");
             msg->GetArgumentList()->SetInt(0, posMs);
             browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
@@ -358,8 +368,8 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "notifySeek") {
-        if (arguments.size() >= 1 && arguments[0]->IsInt()) {
-            int posMs = arguments[0]->GetIntValue();
+        if (arguments.size() >= 1 && (arguments[0]->IsInt() || arguments[0]->IsDouble())) {
+            int posMs = v8ToInt(arguments[0], 0);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifySeek");
             msg->GetArgumentList()->SetInt(0, posMs);
             browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);

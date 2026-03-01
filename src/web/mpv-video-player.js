@@ -141,7 +141,7 @@
                 this._currentSrc = val;
                 console.log('[Media] [MPV] Playing:', val);
 
-                const ms = (options.playerStartPositionTicks || 0) / 10000;
+                const ms = Math.round((options.playerStartPositionTicks || 0) / 10000);
                 this._currentPlayOptions = options;
                 this._core._currentTime = ms;
 
