@@ -66,6 +66,7 @@ void wakeMacEventLoop();
 #include "input/window_state.h"
 #include "ui/menu_overlay.h"
 #include "settings.h"
+#include "single_instance.h"
 
 // Overlay fade constants
 constexpr float OVERLAY_FADE_DELAY_SEC = 1.0f;
@@ -417,6 +418,11 @@ int main(int argc, char* argv[]) {
         return exit_code;
     }
 
+    // Single-instance check: signal existing instance to raise, then exit
+    if (trySignalExisting()) {
+        return 0;
+    }
+
 #if defined(__APPLE__) && defined(NDEBUG)
     // In release builds, offer to move app to /Applications (clears quarantine)
     PFMoveToApplicationsFolderIfNecessary();
@@ -447,6 +453,13 @@ int main(int argc, char* argv[]) {
     // when CEF schedules work (otherwise SDL_WaitEvent blocks indefinitely)
     App::SetWakeCallback(wakeMainLoop);
 #endif
+
+    // Single-instance listener: raise window when another instance signals us
+    std::atomic<bool> raise_requested{false};
+    startListener([&raise_requested, &wakeMainLoop]() {
+        raise_requested.store(true, std::memory_order_release);
+        wakeMainLoop();
+    });
 
     const int width = 1280;
     const int height = 720;
@@ -1378,6 +1391,12 @@ int main(int argc, char* argv[]) {
             have_event = SDL_PollEvent(&event);
         }
 
+        // Raise window if another instance signaled us
+        if (raise_requested.exchange(false, std::memory_order_acq_rel)) {
+            SDL_RestoreWindow(window);
+            SDL_RaiseWindow(window);
+        }
+
 #ifdef __APPLE__
         // macOS: Always pump CEF - scheduling controls actual work frequency
         App::DoWork();
@@ -1698,6 +1717,7 @@ int main(int argc, char* argv[]) {
 #endif
     cefThread.shutdown();
 #endif
+    stopListener();
     shutdownStderrCapture();
     shutdownLogging();
     if (current_cursor) {

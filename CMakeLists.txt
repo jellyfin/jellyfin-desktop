@@ -302,6 +302,7 @@ add_custom_target(embedded_resources DEPENDS ${EMBEDDED_RESOURCES_HEADER})
 set(COMMON_SOURCES
     src/main.cpp
     src/logging.cpp
+    src/single_instance.cpp
     src/browser/browser_stack.cpp
     src/cef/cef_app.cpp
     src/cef/cef_client.cpp
