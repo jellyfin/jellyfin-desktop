@@ -48,8 +48,6 @@ void wakeMacEventLoop();
 #include "context/opengl_frame_context.h"
 #include "player/mpris/media_session_mpris.h"
 #include <unistd.h>  // For close()
-#include <wayland-client.h>
-#include "wayland-protocols/xdg-activation-v1-client.h"
 #endif
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
@@ -69,6 +67,7 @@ void wakeMacEventLoop();
 #include "ui/menu_overlay.h"
 #include "settings.h"
 #include "single_instance.h"
+#include "window_activation.h"
 
 // Overlay fade constants
 constexpr float OVERLAY_FADE_DELAY_SEC = 1.0f;
@@ -582,39 +581,9 @@ int main(int argc, char* argv[]) {
 
     CompositorContext compositor_ctx;
     compositor_ctx.gl_context = &egl;
-
-    // Bind xdg-activation-v1 for Wayland window activation (single-instance raise)
-    struct xdg_activation_v1* xdg_activation = nullptr;
-    struct wl_surface* wl_main_surface = nullptr;
-    {
-        SDL_PropertiesID props = SDL_GetWindowProperties(window);
-        auto* display = static_cast<struct wl_display*>(
-            SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr));
-        wl_main_surface = static_cast<struct wl_surface*>(
-            SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr));
-
-        if (display && wl_main_surface) {
-            auto registry_handler = [](void* data, wl_registry* registry,
-                                       uint32_t name, const char* interface, uint32_t version) {
-                if (strcmp(interface, xdg_activation_v1_interface.name) == 0) {
-                    *static_cast<xdg_activation_v1**>(data) = static_cast<xdg_activation_v1*>(
-                        wl_registry_bind(registry, name, &xdg_activation_v1_interface, 1));
-                }
-            };
-            static const wl_registry_listener listener = {
-                .global = +registry_handler,
-                .global_remove = [](void*, wl_registry*, uint32_t) {},
-            };
-            struct wl_registry* registry = wl_display_get_registry(display);
-            wl_registry_add_listener(registry, &listener, &xdg_activation);
-            wl_display_roundtrip(display);
-            wl_registry_destroy(registry);
-
-            if (xdg_activation)
-                LOG_INFO(LOG_MAIN, "Bound xdg_activation_v1 for window activation");
-        }
-    }
 #endif
+
+    initWindowActivation(window);
 
     // Load settings
     Settings::instance().load();
@@ -1434,15 +1403,8 @@ int main(int argc, char* argv[]) {
             std::lock_guard<std::mutex> lock(raise_mutex);
             if (raise_requested) {
                 raise_requested = false;
-#if !defined(__APPLE__) && !defined(_WIN32)
-                if (xdg_activation && wl_main_surface && !pending_activation_token.empty()) {
-                    xdg_activation_v1_activate(xdg_activation, pending_activation_token.c_str(), wl_main_surface);
-                    LOG_INFO(LOG_MAIN, "Activated window via xdg-activation-v1 token");
-                }
-#endif
+                activateWindow(window, pending_activation_token);
                 pending_activation_token.clear();
-                SDL_RestoreWindow(window);
-                SDL_RaiseWindow(window);
             }
         }
 
@@ -1766,10 +1728,7 @@ int main(int argc, char* argv[]) {
 #endif
     cefThread.shutdown();
 #endif
-#if !defined(__APPLE__) && !defined(_WIN32)
-    if (xdg_activation)
-        xdg_activation_v1_destroy(xdg_activation);
-#endif
+    cleanupWindowActivation();
     stopListener();
     shutdownStderrCapture();
     shutdownLogging();

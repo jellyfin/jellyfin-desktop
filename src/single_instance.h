@@ -1,5 +1,4 @@
-#ifndef SINGLE_INSTANCE_H
-#define SINGLE_INSTANCE_H
+#pragma once
 
 #include <functional>
 #include <string>
@@ -15,5 +14,3 @@ void startListener(std::function<void(const std::string&)> onRaise);
 
 // Stop the listener and clean up the socket/pipe.
 void stopListener();
-
-#endif // SINGLE_INSTANCE_H

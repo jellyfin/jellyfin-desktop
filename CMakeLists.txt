@@ -321,6 +321,7 @@ set(COMMON_SOURCES
     src/main.cpp
     src/logging.cpp
     src/single_instance.cpp
+    src/window_activation.cpp
     src/browser/browser_stack.cpp
     src/cef/cef_app.cpp
     src/cef/cef_client.cpp
