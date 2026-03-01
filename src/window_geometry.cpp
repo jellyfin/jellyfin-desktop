@@ -4,8 +4,11 @@
 #include <cstring>
 
 static bool isWayland() {
-    const char* driver = SDL_GetCurrentVideoDriver();
-    return driver && strcmp(driver, "wayland") == 0;
+    static const bool result = [] {
+        const char* driver = SDL_GetCurrentVideoDriver();
+        return driver && strcmp(driver, "wayland") == 0;
+    }();
+    return result;
 }
 
 void restoreWindowGeometry(SDL_Window* window) {

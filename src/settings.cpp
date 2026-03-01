@@ -79,8 +79,10 @@ bool Settings::load() {
         pos++;
         while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t'))
             pos++;
-        try { return std::stoi(content.substr(pos)); }
-        catch (...) { return fallback; }
+        char* end_ptr = nullptr;
+        long val = std::strtol(content.c_str() + pos, &end_ptr, 10);
+        if (end_ptr == content.c_str() + pos) return fallback;
+        return static_cast<int>(val);
     };
 
     auto parseBool = [&](const char* key, bool fallback) -> bool {
@@ -90,7 +92,8 @@ bool Settings::load() {
         if (pos == std::string::npos) return fallback;
         size_t end = content.find_first_of(",}\n", pos);
         if (end == std::string::npos) end = content.size();
-        return content.substr(pos + 1, end - pos - 1).find("true") != std::string::npos;
+        size_t true_pos = content.find("true", pos + 1);
+        return true_pos != std::string::npos && true_pos < end;
     };
 
     server_url_ = parseString("serverUrl");
@@ -102,6 +105,22 @@ bool Settings::load() {
     window_geometry_.maximized = parseBool("windowMaximized", false);
 
     return true;
+}
+
+static void writeJson(std::ofstream& file, const std::string& url,
+                       const Settings::WindowGeometry& geom) {
+    file << "{\n";
+    file << "  \"serverUrl\": \"" << url << "\"";
+    if (geom.width > 0 && geom.height > 0) {
+        file << ",\n  \"windowWidth\": " << geom.width;
+        file << ",\n  \"windowHeight\": " << geom.height;
+    }
+    if (geom.x >= 0 && geom.y >= 0) {
+        file << ",\n  \"windowX\": " << geom.x;
+        file << ",\n  \"windowY\": " << geom.y;
+    }
+    file << ",\n  \"windowMaximized\": " << (geom.maximized ? "true" : "false");
+    file << "\n}\n";
 }
 
 bool Settings::save() {
@@ -128,20 +147,4 @@ void Settings::saveAsync() {
             writeJson(file, url, geom);
         }
     }).detach();
-}
-
-void Settings::writeJson(std::ofstream& file, const std::string& url,
-                          const WindowGeometry& geom) {
-    file << "{\n";
-    file << "  \"serverUrl\": \"" << url << "\"";
-    if (geom.width > 0 && geom.height > 0) {
-        file << ",\n  \"windowWidth\": " << geom.width;
-        file << ",\n  \"windowHeight\": " << geom.height;
-    }
-    if (geom.x >= 0 && geom.y >= 0) {
-        file << ",\n  \"windowX\": " << geom.x;
-        file << ",\n  \"windowY\": " << geom.y;
-    }
-    file << ",\n  \"windowMaximized\": " << (geom.maximized ? "true" : "false");
-    file << "\n}\n";
 }

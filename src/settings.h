@@ -1,6 +1,5 @@
 #pragma once
 
-#include <fstream>
 #include <string>
 #include <mutex>
 
@@ -29,8 +28,6 @@ public:
 private:
     Settings() = default;
     std::string getConfigPath();
-    static void writeJson(std::ofstream& file, const std::string& url,
-                           const WindowGeometry& geom);
 
     std::string server_url_;
     WindowGeometry window_geometry_;

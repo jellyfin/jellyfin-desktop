@@ -488,6 +488,9 @@ int main(int argc, char* argv[]) {
     SDL_SetWindowHitTest(window, windowHitTest, &cursor_at_resize_edge);
     SDL_StartTextInput(window);
 
+    // Load settings before restoring geometry (must read saved state first)
+    Settings::instance().load();
+
     // Restore saved window geometry (size, position, maximized)
     restoreWindowGeometry(window);
     SDL_GetWindowSize(window, &width, &height);
@@ -589,9 +592,6 @@ int main(int argc, char* argv[]) {
 #endif
 
     initWindowActivation(window);
-
-    // Load settings
-    Settings::instance().load();
 
     // CEF settings (CefThread sets external_message_pump)
     CefSettings settings;
