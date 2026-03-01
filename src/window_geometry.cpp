@@ -39,8 +39,10 @@ void saveWindowGeometry(SDL_Window* window, bool pre_fullscreen_maximized) {
     bool fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
 
     // If fullscreen, size/position reflect the monitor, not the user's
-    // windowed geometry. Save only the pre-fullscreen maximized state.
+    // windowed geometry. Preserve previously-saved windowed geometry and
+    // only update the maximized flag.
     if (fullscreen) {
+        geom = Settings::instance().windowGeometry();
         geom.maximized = pre_fullscreen_maximized;
         Settings::instance().setWindowGeometry(geom);
         Settings::instance().save();

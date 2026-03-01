@@ -88,7 +88,9 @@ bool Settings::load() {
         if (pos == std::string::npos) return fallback;
         pos = content.find(':', pos);
         if (pos == std::string::npos) return fallback;
-        return content.find("true", pos) < content.find('\n', pos);
+        size_t end = content.find_first_of(",}\n", pos);
+        if (end == std::string::npos) end = content.size();
+        return content.substr(pos + 1, end - pos - 1).find("true") != std::string::npos;
     };
 
     server_url_ = parseString("serverUrl");

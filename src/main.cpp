@@ -1330,6 +1330,7 @@ int main(int argc, char* argv[]) {
 
             case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
                 LOG_DEBUG(LOG_WINDOW, "Fullscreen: SDL leave, source=%d", static_cast<int>(fullscreen_source));
+                was_maximized_before_fullscreen = false;
                 client->exitFullscreen();
                 if (fullscreen_source == FullscreenSource::WM) {
                     fullscreen_source = FullscreenSource::NONE;
