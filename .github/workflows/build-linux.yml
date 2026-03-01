@@ -24,7 +24,7 @@ jobs:
         docker run -v $(pwd)/deployment/dist:/dist -v $(pwd):/jellyfin -e TAG=${{ matrix.tag }} -e IMG=ubuntu builddeb
         sudo chown --recursive $USER $(pwd)/deployment/dist
     - name: Archive production artifacts
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: ubuntu-${{ matrix.tag }}
         path: ${{ github.workspace }}/deployment/dist/*
@@ -97,7 +97,7 @@ jobs:
         docker run -v $(pwd)/deployment/dist:/dist -v $(pwd):/jellyfin -e TAG=${{ matrix.tag }} -e IMG=debian builddeb
         sudo chown --recursive $USER $(pwd)/deployment/dist
     - name: Archive production artifacts
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: debian-${{ matrix.tag }}
         path: ${{ github.workspace }}/deployment/dist/*

@@ -61,7 +61,7 @@ jobs:
           --app-drop-link 375 150 \
           "${DMG_NAME}" "./build/output/Jellyfin Desktop.app"
     - name: Archive production artifacts
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.artifact }}
         path: ${{ github.workspace }}/JellyfinDesktop-*.dmg
