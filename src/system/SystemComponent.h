@@ -44,7 +44,7 @@ public:
   Q_INVOKABLE void cancelServerConnectivity();
   Q_SIGNAL void serverConnectivityResult(QString url, bool success, QString resolvedUrl);
 
-  QString extractBaseUrl(const QString& url);
+  static QString extractBaseUrl(const QString& url);
   void resolveUrl(const QString& url, std::function<void(const QString&)> callback);
 
   Q_INVOKABLE QString getUserAgent();

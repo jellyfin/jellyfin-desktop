@@ -141,8 +141,7 @@ void TestSystemComponent::testExtractBaseUrl()
   QFETCH(QString, input);
   QFETCH(QString, expected);
 
-  SystemComponent* component = &SystemComponent::Get();
-  QString result = component->extractBaseUrl(input);
+  QString result = SystemComponent::extractBaseUrl(input);
 
   QCOMPARE(result, expected);
 }
