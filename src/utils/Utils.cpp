@@ -4,7 +4,6 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QProcess>
-#include <QDateTime>
 #include <QHostInfo>
 #include <QJsonDocument>
 #include <QVariant>
