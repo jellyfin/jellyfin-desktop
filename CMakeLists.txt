@@ -139,6 +139,10 @@ else()
     set(VIEWPORTER_CLIENT_H "${WAYLAND_GENERATED_DIR}/viewporter-client.h")
     set(VIEWPORTER_CODE_C "${WAYLAND_GENERATED_DIR}/viewporter-code.c")
 
+    set(XDG_ACTIVATION_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/xdg-activation/xdg-activation-v1.xml")
+    set(XDG_ACTIVATION_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-activation-v1-client.h")
+    set(XDG_ACTIVATION_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-activation-v1-code.c")
+
     add_custom_command(
         OUTPUT ${COLOR_MGMT_CLIENT_H}
         COMMAND ${WAYLAND_SCANNER} client-header ${COLOR_MGMT_PROTOCOL} ${COLOR_MGMT_CLIENT_H}
@@ -163,6 +167,18 @@ else()
         DEPENDS ${VIEWPORTER_PROTOCOL}
         COMMENT "Generating viewporter code"
     )
+    add_custom_command(
+        OUTPUT ${XDG_ACTIVATION_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${XDG_ACTIVATION_PROTOCOL} ${XDG_ACTIVATION_CLIENT_H}
+        DEPENDS ${XDG_ACTIVATION_PROTOCOL}
+        COMMENT "Generating xdg-activation-v1 client header"
+    )
+    add_custom_command(
+        OUTPUT ${XDG_ACTIVATION_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${XDG_ACTIVATION_PROTOCOL} ${XDG_ACTIVATION_CODE_C}
+        DEPENDS ${XDG_ACTIVATION_PROTOCOL}
+        COMMENT "Generating xdg-activation-v1 code"
+    )
 
     set(PLATFORM_SOURCES
         src/context/egl_context.cpp
@@ -178,6 +194,8 @@ else()
         ${COLOR_MGMT_CLIENT_H}
         ${VIEWPORTER_CODE_C}
         ${VIEWPORTER_CLIENT_H}
+        ${XDG_ACTIVATION_CODE_C}
+        ${XDG_ACTIVATION_CLIENT_H}
     )
     set(PLATFORM_LIBRARIES
         ${WAYLAND_LIBRARIES}

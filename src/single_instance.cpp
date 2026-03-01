@@ -69,13 +69,13 @@ bool trySignalExisting() {
 
     const char msg[] = "raise\n";
     DWORD written;
-    WriteFile(pipe, msg, sizeof(msg) - 1, &written, NULL);
+    (void)WriteFile(pipe, msg, sizeof(msg) - 1, &written, NULL);
     CloseHandle(pipe);
     LOG_INFO(LOG_MAIN, "Signaled existing instance to raise window");
     return true;
 }
 
-void listenerThread(std::function<void()> onRaise) {
+void listenerThread(std::function<void(const std::string&)> onRaise) {
     while (g_listener_running) {
         HANDLE pipe = CreateNamedPipeA(
             PIPE_NAME,
@@ -104,13 +104,13 @@ void listenerThread(std::function<void()> onRaise) {
         }
 
         // Read message
-        char buf[64];
+        char buf[256];
         DWORD bytesRead;
         if (ReadFile(pipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
             buf[bytesRead] = '\0';
             if (std::strstr(buf, "raise")) {
                 LOG_INFO(LOG_MAIN, "Received raise signal from another instance");
-                onRaise();
+                onRaise(std::string{});
             }
         }
 
@@ -119,7 +119,7 @@ void listenerThread(std::function<void()> onRaise) {
     }
 }
 
-void startListener(std::function<void()> onRaise) {
+void startListener(std::function<void(const std::string&)> onRaise) {
     g_shutdown_event = CreateEvent(NULL, TRUE, FALSE, NULL);
     if (!g_shutdown_event)
         return;
@@ -178,16 +178,25 @@ bool trySignalExisting() {
         return false;
     }
 
-    const char msg[] = "raise\n";
+    // Forward XDG_ACTIVATION_TOKEN so the existing instance can use it
+    // to activate its window via xdg-activation-v1 protocol
+    std::string msg = "raise";
+    const char* token = std::getenv("XDG_ACTIVATION_TOKEN");
+    if (token && token[0]) {
+        msg += ' ';
+        msg += token;
+    }
+    msg += "\n";
+
     // Best-effort write; we're about to exit anyway
-    ssize_t n = write(fd, msg, sizeof(msg) - 1);
+    ssize_t n = write(fd, msg.c_str(), msg.size());
     (void)n;
     close(fd);
     LOG_INFO(LOG_MAIN, "Signaled existing instance to raise window");
     return true;
 }
 
-void listenerThread(std::function<void()> onRaise) {
+void listenerThread(std::function<void(const std::string&)> onRaise) {
     struct pollfd pfds[2] = {
         {g_listen_fd, POLLIN, 0},
         {g_wake_pipe[0], POLLIN, 0}
@@ -207,22 +216,32 @@ void listenerThread(std::function<void()> onRaise) {
             if (client < 0)
                 continue;
 
-            char buf[64];
+            char buf[256];
             ssize_t n = read(client, buf, sizeof(buf) - 1);
             close(client);
 
             if (n > 0) {
                 buf[n] = '\0';
                 if (std::strstr(buf, "raise")) {
-                    LOG_INFO(LOG_MAIN, "Received raise signal from another instance");
-                    onRaise();
+                    // Parse optional activation token after "raise "
+                    std::string token;
+                    const char* space = std::strchr(buf, ' ');
+                    if (space) {
+                        token = space + 1;
+                        // Strip trailing newline
+                        while (!token.empty() && (token.back() == '\n' || token.back() == '\r'))
+                            token.pop_back();
+                    }
+                    LOG_INFO(LOG_MAIN, "Received raise signal from another instance (token=%s)",
+                             token.empty() ? "none" : "present");
+                    onRaise(token);
                 }
             }
         }
     }
 }
 
-void startListener(std::function<void()> onRaise) {
+void startListener(std::function<void(const std::string&)> onRaise) {
     std::string path = getSocketPath();
     if (path.size() >= sizeof(sockaddr_un::sun_path)) {
         LOG_ERROR(LOG_MAIN, "Socket path too long (%zu bytes): %s", path.size(), path.c_str());
