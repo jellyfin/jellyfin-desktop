@@ -526,13 +526,19 @@ void Client::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType 
 }
 
 void Client::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-    browser_ = browser;
+    {
+        std::lock_guard<std::mutex> lock(browser_mutex_);
+        browser_ = browser;
+    }
     LOG_INFO(LOG_CEF, "Browser created");
 }
 
 void Client::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     LOG_INFO(LOG_CEF, "Browser closing");
-    browser_ = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(browser_mutex_);
+        browser_ = nullptr;
+    }
     is_closed_ = true;
 }
 
@@ -544,16 +550,18 @@ void Client::OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
 }
 
 void Client::sendMouseMove(int x, int y, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefMouseEvent event;
     event.x = x;
     event.y = y;
     event.modifiers = modifiers;
-    browser_->GetHost()->SendMouseMoveEvent(event, false);
+    b->GetHost()->SendMouseMoveEvent(event, false);
 }
 
 void Client::sendMouseClick(int x, int y, bool down, int button, int clickCount, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     LOG_DEBUG(LOG_CEF, "Mouse button %d %s at %d,%d clicks=%d",
               button, down ? "DOWN" : "UP", x, y, clickCount);
     CefMouseEvent event;
@@ -581,11 +589,12 @@ void Client::sendMouseClick(int x, int y, bool down, int button, int clickCount,
     }
     event.modifiers = modifiers;
 
-    browser_->GetHost()->SendMouseClickEvent(event, btn_type, !down, clickCount);
+    b->GetHost()->SendMouseClickEvent(event, btn_type, !down, clickCount);
 }
 
 void Client::sendKeyEvent(int key, bool down, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
 
     CefKeyEvent event;
     event.windows_key_code = sdlKeyToWindowsVK(key);
@@ -611,30 +620,32 @@ void Client::sendKeyEvent(int key, bool down, int modifiers) {
     event.type = down ? KEYEVENT_KEYDOWN : KEYEVENT_KEYUP;
 #endif
     event.modifiers = modifiers;
-    browser_->GetHost()->SendKeyEvent(event);
+    b->GetHost()->SendKeyEvent(event);
 
     // Send CHAR event for Enter key to trigger form submission
     if (down && key == 0x0D) {
         event.type = KEYEVENT_CHAR;
         event.character = '\r';
         event.unmodified_character = '\r';
-        browser_->GetHost()->SendKeyEvent(event);
+        b->GetHost()->SendKeyEvent(event);
     }
 }
 
 void Client::sendChar(int charCode, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefKeyEvent event;
     event.windows_key_code = charCode;
     event.character = charCode;
     event.unmodified_character = charCode;
     event.type = KEYEVENT_CHAR;
     event.modifiers = modifiers;
-    browser_->GetHost()->SendKeyEvent(event);
+    b->GetHost()->SendKeyEvent(event);
 }
 
 void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefMouseEvent event;
     event.x = x;
     event.y = y;
@@ -642,17 +653,19 @@ void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifi
     // SDL3 provides smooth scroll values, scale for CEF (expects ~120 per notch)
     int pixelX = static_cast<int>(deltaX * 53.0f);  // Smooth scroll factor
     int pixelY = static_cast<int>(deltaY * 53.0f);
-    browser_->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
 }
 
 void Client::sendFocus(bool focused) {
-    if (!browser_) return;
-    browser_->GetHost()->SetFocus(focused);
+    auto b = browser();
+    if (!b) return;
+    b->GetHost()->SetFocus(focused);
 }
 
 void Client::sendTouch(int id, float x, float y, float radiusX, float radiusY,
                        float pressure, int type, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefTouchEvent event;
     event.id = id;
     event.x = x;
@@ -664,31 +677,34 @@ void Client::sendTouch(int id, float x, float y, float radiusX, float radiusY,
     event.type = static_cast<cef_touch_event_type_t>(type);
     event.modifiers = modifiers;
     event.pointer_type = CEF_POINTER_TYPE_TOUCH;
-    browser_->GetHost()->SendTouchEvent(event);
+    b->GetHost()->SendTouchEvent(event);
 }
 
 void Client::paste(const char* mimeType, const void* data, size_t len) {
-    doPaste(browser_, mimeType, data, len);
+    doPaste(browser(), mimeType, data, len);
 }
 
 void Client::copy() {
-    doCopy(browser_, false);
+    doCopy(browser(), false);
 }
 
 void Client::cut() {
-    doCopy(browser_, true);
+    doCopy(browser(), true);
 }
 
 void Client::selectAll() {
-    if (browser_) browser_->GetMainFrame()->SelectAll();
+    auto b = browser();
+    if (b) b->GetMainFrame()->SelectAll();
 }
 
 void Client::undo() {
-    if (browser_) browser_->GetMainFrame()->Undo();
+    auto b = browser();
+    if (b) b->GetMainFrame()->Undo();
 }
 
 void Client::redo() {
-    if (browser_) browser_->GetMainFrame()->Redo();
+    auto b = browser();
+    if (b) b->GetMainFrame()->Redo();
 }
 
 void Client::resize(int width, int height, int physical_w, int physical_h) {
@@ -696,41 +712,46 @@ void Client::resize(int width, int height, int physical_w, int physical_h) {
     height_ = height;
     physical_w_ = physical_w;
     physical_h_ = physical_h;
-    if (browser_) {
+    auto b = browser();
+    if (b) {
         // NotifyScreenInfoChanged first so CEF re-queries GetScreenInfo and
         // caches the correct device_scale_factor BEFORE WasResized triggers a
         // paint.  Without this, CEF uses a stale scale from the previous size,
         // producing a paint buffer that is a few pixels off from the actual
         // physical dimensions (visible as a gap at the window edges).
-        browser_->GetHost()->NotifyScreenInfoChanged();
-        browser_->GetHost()->WasResized();
-        browser_->GetHost()->Invalidate(PET_VIEW);
+        b->GetHost()->NotifyScreenInfoChanged();
+        b->GetHost()->WasResized();
+        b->GetHost()->Invalidate(PET_VIEW);
     }
 }
 
 void Client::forceRepaint() {
-    if (browser_) {
-        browser_->GetHost()->Invalidate(PET_VIEW);
+    auto b = browser();
+    if (b) {
+        b->GetHost()->Invalidate(PET_VIEW);
     }
 }
 
 void Client::loadUrl(const std::string& url) {
-    if (browser_) {
-        browser_->GetMainFrame()->LoadURL(url);
+    auto b = browser();
+    if (b) {
+        b->GetMainFrame()->LoadURL(url);
     }
 }
 
 void Client::executeJS(const std::string& code) {
-    if (!browser_) return;
-    CefRefPtr<CefFrame> frame = browser_->GetMainFrame();
+    auto b = browser();
+    if (!b) return;
+    CefRefPtr<CefFrame> frame = b->GetMainFrame();
     if (frame) {
         frame->ExecuteJavaScript(code, frame->GetURL(), 0);
     }
 }
 
 void Client::exitFullscreen() {
-    if (!browser_) return;
-    browser_->GetHost()->ExitFullscreen(true);
+    auto b = browser();
+    if (!b) return;
+    b->GetHost()->ExitFullscreen(true);
 }
 
 void Client::emitPlaying() {
@@ -974,13 +995,19 @@ void OverlayClient::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintEleme
 }
 
 void OverlayClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-    browser_ = browser;
+    {
+        std::lock_guard<std::mutex> lock(browser_mutex_);
+        browser_ = browser;
+    }
     LOG_INFO(LOG_CEF, "Overlay browser created");
 }
 
 void OverlayClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     LOG_INFO(LOG_CEF, "Overlay browser closing");
-    browser_ = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(browser_mutex_);
+        browser_ = nullptr;
+    }
     is_closed_ = true;
 }
 
@@ -989,28 +1016,32 @@ void OverlayClient::resize(int width, int height, int physical_w, int physical_h
     height_ = height;
     physical_w_ = physical_w;
     physical_h_ = physical_h;
-    if (browser_) {
-        browser_->GetHost()->NotifyScreenInfoChanged();
-        browser_->GetHost()->WasResized();
-        browser_->GetHost()->Invalidate(PET_VIEW);
+    auto b = browser();
+    if (b) {
+        b->GetHost()->NotifyScreenInfoChanged();
+        b->GetHost()->WasResized();
+        b->GetHost()->Invalidate(PET_VIEW);
     }
 }
 
 void OverlayClient::sendFocus(bool focused) {
-    if (browser_) browser_->GetHost()->SetFocus(focused);
+    auto b = browser();
+    if (b) b->GetHost()->SetFocus(focused);
 }
 
 void OverlayClient::sendMouseMove(int x, int y, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefMouseEvent event;
     event.x = x;
     event.y = y;
     event.modifiers = modifiers;
-    browser_->GetHost()->SendMouseMoveEvent(event, false);
+    b->GetHost()->SendMouseMoveEvent(event, false);
 }
 
 void OverlayClient::sendMouseClick(int x, int y, bool down, int button, int clickCount, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefMouseEvent event;
     event.x = x;
     event.y = y;
@@ -1023,22 +1054,24 @@ void OverlayClient::sendMouseClick(int x, int y, bool down, int button, int clic
         default: btn_type = MBT_LEFT; if (down) modifiers |= EVENTFLAG_LEFT_MOUSE_BUTTON; break;
     }
     event.modifiers = modifiers;
-    browser_->GetHost()->SendMouseClickEvent(event, btn_type, !down, clickCount);
+    b->GetHost()->SendMouseClickEvent(event, btn_type, !down, clickCount);
 }
 
 void OverlayClient::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefMouseEvent event;
     event.x = x;
     event.y = y;
     event.modifiers = modifiers;
     int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
-    browser_->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
 }
 
 void OverlayClient::sendKeyEvent(int key, bool down, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefKeyEvent event;
     event.windows_key_code = sdlKeyToWindowsVK(key);
 #ifdef __APPLE__
@@ -1048,30 +1081,32 @@ void OverlayClient::sendKeyEvent(int key, bool down, int modifiers) {
 #endif
     event.modifiers = modifiers;
     event.type = down ? KEYEVENT_KEYDOWN : KEYEVENT_KEYUP;
-    browser_->GetHost()->SendKeyEvent(event);
+    b->GetHost()->SendKeyEvent(event);
 
     if (down && key == 0x0D) {
         event.type = KEYEVENT_CHAR;
         event.character = '\r';
         event.unmodified_character = '\r';
-        browser_->GetHost()->SendKeyEvent(event);
+        b->GetHost()->SendKeyEvent(event);
     }
 }
 
 void OverlayClient::sendChar(int charCode, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefKeyEvent event;
     event.windows_key_code = charCode;
     event.character = charCode;
     event.unmodified_character = charCode;
     event.type = KEYEVENT_CHAR;
     event.modifiers = modifiers;
-    browser_->GetHost()->SendKeyEvent(event);
+    b->GetHost()->SendKeyEvent(event);
 }
 
 void OverlayClient::sendTouch(int id, float x, float y, float radiusX, float radiusY,
                               float pressure, int type, int modifiers) {
-    if (!browser_) return;
+    auto b = browser();
+    if (!b) return;
     CefTouchEvent event;
     event.id = id;
     event.x = x;
@@ -1083,29 +1118,32 @@ void OverlayClient::sendTouch(int id, float x, float y, float radiusX, float rad
     event.type = static_cast<cef_touch_event_type_t>(type);
     event.modifiers = modifiers;
     event.pointer_type = CEF_POINTER_TYPE_TOUCH;
-    browser_->GetHost()->SendTouchEvent(event);
+    b->GetHost()->SendTouchEvent(event);
 }
 
 void OverlayClient::paste(const char* mimeType, const void* data, size_t len) {
-    doPaste(browser_, mimeType, data, len);
+    doPaste(browser(), mimeType, data, len);
 }
 
 void OverlayClient::copy() {
-    doCopy(browser_, false);
+    doCopy(browser(), false);
 }
 
 void OverlayClient::cut() {
-    doCopy(browser_, true);
+    doCopy(browser(), true);
 }
 
 void OverlayClient::selectAll() {
-    if (browser_) browser_->GetMainFrame()->SelectAll();
+    auto b = browser();
+    if (b) b->GetMainFrame()->SelectAll();
 }
 
 void OverlayClient::undo() {
-    if (browser_) browser_->GetMainFrame()->Undo();
+    auto b = browser();
+    if (b) b->GetMainFrame()->Undo();
 }
 
 void OverlayClient::redo() {
-    if (browser_) browser_->GetMainFrame()->Redo();
+    auto b = browser();
+    if (b) b->GetMainFrame()->Redo();
 }

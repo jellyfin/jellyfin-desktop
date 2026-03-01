@@ -7,6 +7,7 @@
 #include "include/cef_context_menu_handler.h"
 #include <atomic>
 #include <functional>
+#include <mutex>
 #include <vector>
 
 class MenuOverlay;
@@ -121,7 +122,10 @@ public:
                         CefRefPtr<CefRunContextMenuCallback> callback) override;
 
     bool isClosed() const { return is_closed_; }
-    CefRefPtr<CefBrowser> browser() const { return browser_; }
+    CefRefPtr<CefBrowser> browser() const {
+        std::lock_guard<std::mutex> lock(browser_mutex_);
+        return browser_;
+    }
 
     // Input forwarding (InputReceiver)
     void sendMouseMove(int x, int y, int modifiers) override;
@@ -177,8 +181,9 @@ private:
     float scale_override_ = 0.0f;  // 0 = use physical/logical ratio
     int physical_w_ = 0;  // Stored physical dimensions (set during resize)
     int physical_h_ = 0;
+    mutable std::mutex browser_mutex_;  // Protects browser_ across threads
     std::atomic<bool> is_closed_ = false;
-    CefRefPtr<CefBrowser> browser_;
+    CefRefPtr<CefBrowser> browser_;     // Guarded by browser_mutex_
 
     // Popup (dropdown) state
     bool popup_visible_ = false;
@@ -236,7 +241,10 @@ public:
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
     bool isClosed() const { return is_closed_; }
-    CefRefPtr<CefBrowser> browser() const { return browser_; }
+    CefRefPtr<CefBrowser> browser() const {
+        std::lock_guard<std::mutex> lock(browser_mutex_);
+        return browser_;
+    }
     void resize(int width, int height, int physical_w, int physical_h);
     void setScaleOverride(float scale) { scale_override_ = scale; }
     void sendFocus(bool focused) override;
@@ -267,8 +275,9 @@ private:
     float scale_override_ = 0.0f;
     int physical_w_ = 0;  // Stored physical dimensions (set during resize)
     int physical_h_ = 0;
+    mutable std::mutex browser_mutex_;  // Protects browser_ across threads
     std::atomic<bool> is_closed_ = false;
-    CefRefPtr<CefBrowser> browser_;
+    CefRefPtr<CefBrowser> browser_;     // Guarded by browser_mutex_
 
     IMPLEMENT_REFCOUNTING(OverlayClient);
     DISALLOW_COPY_AND_ASSIGN(OverlayClient);
