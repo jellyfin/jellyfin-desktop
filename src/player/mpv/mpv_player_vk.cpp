@@ -460,7 +460,8 @@ void MpvPlayerVk::render(VkImage image, VkImageView view, uint32_t width, uint32
     fbo.height = height;
     fbo.format = format;
     fbo.current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    fbo.target_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    fbo.target_layout = subsurface_ ? subsurface_->targetImageLayout()
+                                    : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     int flip_y = 0;
     mpv_render_param render_params[] = {

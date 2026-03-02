@@ -39,6 +39,10 @@ public:
     virtual const char* const* deviceExtensions() const = 0;
     virtual int deviceExtensionCount() const = 0;
 
+    // Image layout for mpv render target (swapchain images use PRESENT_SRC_KHR,
+    // non-swapchain shared images use GENERAL)
+    virtual VkImageLayout targetImageLayout() const { return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; }
+
     virtual void show() {}  // Re-show surface (default no-op; Wayland re-attaches on present)
     virtual void hide() {}  // Detach buffer to hide surface (default no-op)
     virtual void setColorspace() {}  // Platform-specific colorspace setup (default no-op)

@@ -6,9 +6,7 @@ class MpvPlayer;
 class VideoRenderer;
 struct SDL_Window;
 
-#ifdef _WIN32
-class WGLContext;
-#elif !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(_WIN32)
 class EGLContext_;
 #endif
 
@@ -18,10 +16,8 @@ struct VideoStack {
     std::unique_ptr<VideoRenderer> renderer;
 
     // Factory - creates platform-appropriate video stack
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
     static VideoStack create(SDL_Window* window, int width, int height, const char* hwdec = "auto-safe");
-#elif defined(_WIN32)
-    static VideoStack create(SDL_Window* window, int width, int height, WGLContext* wgl, const char* hwdec = "auto-safe");
 #else
     static VideoStack create(SDL_Window* window, int width, int height, EGLContext_* egl, const char* hwdec = "auto-safe");
 #endif

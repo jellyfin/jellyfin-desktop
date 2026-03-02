@@ -55,6 +55,7 @@ public:
     void setPosition(int x, int y);
 
     bool isHdr() const { return is_hdr_; }
+    VkImageLayout targetImageLayout() const { return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; }
     void setColorspace() {}  // macOS EDR is automatic
     void setDestinationSize(int, int) {}  // no-op on macOS
 

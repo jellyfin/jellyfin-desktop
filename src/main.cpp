@@ -544,7 +544,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Create video stack
-    VideoStack videoStack = VideoStack::create(window, width, height, &wgl, hwdec);
+    VideoStack videoStack = VideoStack::create(window, width, height, hwdec);
     if (!videoStack.player || !videoStack.renderer) {
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -1059,7 +1059,7 @@ int main(int argc, char* argv[]) {
 
 #ifndef __APPLE__
     // Windows and Linux use threaded video rendering
-    // Windows: OpenGL with shared WGL context + FBO
+    // Windows: Vulkan gpu-next with DComp
     // Linux/Wayland: Vulkan subsurface
     // Linux/X11: OpenGL with shared EGL context + FBO
     VideoRenderController videoController;
@@ -1409,9 +1409,10 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
                 videoRenderer.resize(physical_w, physical_h);
 #elif defined(_WIN32)
-                // Resize WGL context
+                // Resize WGL context (for CEF compositor)
                 wgl.resize(current_width, current_height);
-                videoController.requestResize(current_width, current_height);
+                // Resize video surface at physical pixel resolution
+                videoController.requestResize(physical_w, physical_h);
 #else
                 // Resize EGL context
                 egl.resize(physical_w, physical_h);
@@ -1700,7 +1701,7 @@ int main(int argc, char* argv[]) {
         // Flush and composite all browsers (back-to-front order)
         browsers.renderAll(current_width, current_height);
 #elif defined(_WIN32)
-        // Windows: Threaded OpenGL rendering with FBO compositing
+        // Windows: Vulkan gpu-next video via DComp, OpenGL for CEF compositing
         glViewport(0, 0, current_width, current_height);
         frameContext.beginFrame(clear_color, videoController.getClearAlpha());
         videoController.render(current_width, current_height);

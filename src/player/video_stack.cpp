@@ -67,49 +67,42 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
 }
 
 #elif defined(_WIN32)
-#include "context/wgl_context.h"
-#include "mpv/mpv_player_gl.h"
-#include "dcomp_renderer.h"
-#include "platform/windows_video_layer.h"
+#include "mpv/mpv_player_vk.h"
+#include "vulkan_subsurface_renderer.h"
+#include "platform/windows_video_surface.h"
 
 namespace {
-    std::unique_ptr<WindowsVideoLayer> g_windows_video_layer;
+    std::unique_ptr<WindowsVideoSurface> g_windows_video_surface;
 }
 
-VideoStack VideoStack::create(SDL_Window* window, int width, int height, WGLContext* wgl, const char* hwdec) {
+VideoStack VideoStack::create(SDL_Window* window, int width, int height, const char* hwdec) {
+    (void)width; (void)height;  // Use physical dimensions instead
     VideoStack stack;
 
-    // Create DComp video layer
-    g_windows_video_layer = std::make_unique<WindowsVideoLayer>();
-    if (!g_windows_video_layer->init(window)) {
-        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video layer init failed");
-        return stack;
-    }
-    if (!g_windows_video_layer->createSwapchain(width, height)) {
-        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video layer swap chain failed");
-        return stack;
-    }
-    if (!g_windows_video_layer->initInterop(wgl)) {
-        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows GL-DXGI interop init failed");
+    g_windows_video_surface = std::make_unique<WindowsVideoSurface>();
+    if (!g_windows_video_surface->init(window, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0,
+                                       nullptr, 0, nullptr)) {
+        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video surface init failed");
         return stack;
     }
 
-    auto player = std::make_unique<MpvPlayerGL>();
-    if (!player->init(wgl, hwdec)) {
-        LOG_ERROR(LOG_MPV, "MpvPlayerGL init failed");
+    int physical_w, physical_h;
+    SDL_GetWindowSizeInPixels(window, &physical_w, &physical_h);
+    if (!g_windows_video_surface->createSwapchain(physical_w, physical_h)) {
+        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video surface swapchain failed");
         return stack;
     }
 
-    auto renderer = std::make_unique<DCompRenderer>(player.get(), g_windows_video_layer.get());
-    if (!renderer->initThreaded(wgl)) {
-        LOG_ERROR(LOG_VIDEO, "DCompRenderer threaded init failed");
+    auto player = std::make_unique<MpvPlayerVk>();
+    if (!player->init(nullptr, g_windows_video_surface.get(), hwdec)) {
+        LOG_ERROR(LOG_MPV, "MpvPlayerVk init failed");
         return stack;
     }
 
-    stack.renderer = std::move(renderer);
+    stack.renderer = std::make_unique<VulkanSubsurfaceRenderer>(player.get(), g_windows_video_surface.get());
     stack.player = std::move(player);
 
-    LOG_INFO(LOG_PLATFORM, "Using DirectComposition for video (Windows, threaded)");
+    LOG_INFO(LOG_PLATFORM, "Using Vulkan gpu-next with DComp for video (Windows)");
     return stack;
 }
 
@@ -195,9 +188,9 @@ void VideoStack::cleanupStatics() {
         g_macos_layer.reset();
     }
 #elif defined(_WIN32)
-    if (g_windows_video_layer) {
-        g_windows_video_layer->cleanup();
-        g_windows_video_layer.reset();
+    if (g_windows_video_surface) {
+        g_windows_video_surface->cleanup();
+        g_windows_video_surface.reset();
     }
 #else
     if (g_wayland_subsurface) {

@@ -90,18 +90,18 @@ if(APPLE)
         letsmove
     )
 elseif(WIN32)
-    # Windows: WGL for OpenGL, Vulkan available for video layer
+    # Windows: WGL for CEF compositor, Vulkan for video (gpu-next via DComp)
     find_package(OpenGL REQUIRED)
 
     set(PLATFORM_SOURCES
         src/context/wgl_context.cpp
         src/context/gl_loader.cpp
         src/context/opengl_frame_context.cpp
-        src/platform/windows_video_layer.cpp
+        src/platform/windows_video_surface.cpp
         src/compositor/opengl_compositor.cpp
         src/player/media_session.cpp
-        src/player/mpv/mpv_player_gl.cpp
-        src/player/dcomp_renderer.cpp
+        src/player/mpv/mpv_player_vk.cpp
+        src/player/vulkan_subsurface_renderer.cpp
         src/player/windows/media_session_windows.cpp
         ${CMAKE_SOURCE_DIR}/resources/win/iconres.rc
     )

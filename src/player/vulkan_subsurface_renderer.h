@@ -8,8 +8,8 @@ class MpvPlayerVk;
 class MacOSVideoLayer;
 using VideoSurface = MacOSVideoLayer;
 #elif defined(_WIN32)
-class WindowsVideoLayer;
-using VideoSurface = WindowsVideoLayer;
+class WindowsVideoSurface;
+using VideoSurface = WindowsVideoSurface;
 #else
 class VideoSurface;
 #endif

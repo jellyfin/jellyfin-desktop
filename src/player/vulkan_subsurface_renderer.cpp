@@ -2,6 +2,8 @@
 #include "mpv/mpv_player_vk.h"
 #ifdef __APPLE__
 #include "platform/macos_layer.h"
+#elif defined(_WIN32)
+#include "platform/windows_video_surface.h"
 #else
 #include "platform/video_surface.h"
 #endif
