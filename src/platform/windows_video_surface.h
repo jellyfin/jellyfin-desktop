@@ -10,7 +10,6 @@
 #include <dwmapi.h>
 #include "video_surface.h"
 #include <vector>
-#include <mutex>
 
 struct SDL_Window;
 

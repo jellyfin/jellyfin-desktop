@@ -10,7 +10,9 @@
 #pragma comment(lib, "dcomp.lib")
 #pragma comment(lib, "dwmapi.lib")
 
-// Required device extensions for mpv/libplacebo on Windows
+// Required device extensions for mpv/libplacebo on Windows.
+// VK_KHR_swapchain is not used directly (presentation goes through DXGI),
+// but libplacebo requires it during pl_vulkan_import.
 static const char* s_requiredDeviceExtensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
@@ -473,8 +475,8 @@ bool WindowsVideoSurface::startFrame(VkImage* outImage, VkImageView* outView, Vk
 void WindowsVideoSurface::submitFrame() {
     if (!frame_active_ || !swap_chain_ || !staging_texture_) return;
 
-    // Ensure all Vulkan GPU work is complete before D3D11 reads the shared texture
-    vkQueueWaitIdle(queue_);
+    // No explicit Vulkan sync needed here: mpv's done_frame callback calls
+    // pl_gpu_finish() which already drains this queue before returning.
 
     // Copy from shared staging texture to swap chain back buffer
     ID3D11Texture2D* back_buffer = nullptr;

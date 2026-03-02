@@ -73,11 +73,24 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
 
 namespace {
     std::unique_ptr<WindowsVideoSurface> g_windows_video_surface;
+    bool atexit_registered = false;
+
+    void atexitCleanup() {
+        if (g_windows_video_surface) {
+            g_windows_video_surface->cleanup();
+            g_windows_video_surface.reset();
+        }
+    }
 }
 
 VideoStack VideoStack::create(SDL_Window* window, int width, int height, const char* hwdec) {
     (void)width; (void)height;  // Use physical dimensions instead
     VideoStack stack;
+
+    if (!atexit_registered) {
+        std::atexit(atexitCleanup);
+        atexit_registered = true;
+    }
 
     g_windows_video_surface = std::make_unique<WindowsVideoSurface>();
     if (!g_windows_video_surface->init(window, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0,
