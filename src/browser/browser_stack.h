@@ -143,6 +143,11 @@ public:
     // Flush paint buffers, import GPU textures, and composite all visible browsers
     void renderAll(int width, int height);
 
+#ifdef _WIN32
+    // Set DComp overlay mode on all compositors (no Y-flip, no BGRA swizzle)
+    void setDCompOverlay(bool enabled);
+#endif
+
     // Check if stack is empty
     bool empty() const { return browsers_.empty(); }
 

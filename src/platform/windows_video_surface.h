@@ -10,6 +10,7 @@
 #include <dwmapi.h>
 #include "video_surface.h"
 #include <vector>
+#include <mutex>
 
 struct SDL_Window;
 
@@ -54,6 +55,15 @@ public:
     void show() override;
     void hide() override;
 
+    // Public accessors for DComp infrastructure (used by WindowsOverlayLayer)
+    IDCompositionDevice* dcompDevice() const { return dcomp_device_; }
+    IDCompositionVisual* videoVisual() const { return video_visual_; }
+    ID3D11Device* d3dDevice() const { return d3d_device_; }
+    ID3D11DeviceContext* d3dContext() const { return d3d_context_; }
+
+    // Mutex for D3D11/DComp thread safety (video thread vs main thread)
+    std::mutex& d3dMutex() { return d3d_mutex_; }
+
 private:
     bool initD3D11(SDL_Window* window);
     bool initVulkan();
@@ -97,6 +107,10 @@ private:
     VkImage shared_image_ = VK_NULL_HANDLE;
     VkImageView shared_view_ = VK_NULL_HANDLE;
     VkDeviceMemory imported_memory_ = VK_NULL_HANDLE;
+
+    // Thread safety for D3D11 immediate context + DComp device
+    // (video render thread's submitFrame vs main thread's overlay end)
+    std::mutex d3d_mutex_;
 
     uint32_t width_ = 0;
     uint32_t height_ = 0;

@@ -2,6 +2,8 @@
 #include "cef_app.h"
 #include "logging.h"
 #include "include/cef_task.h"
+#include <cstdlib>
+#include <future>
 
 CefThread::~CefThread() {
     shutdown();
@@ -72,7 +74,16 @@ void CefThread::threadFunc(CefMainArgs args, CefSettings settings, CefRefPtr<Cef
     // Run CEF's internal message loop - blocks until CefQuitMessageLoop() is called
     CefRunMessageLoop();
 
-    LOG_INFO(LOG_CEF, "CEF thread shutting down");
-    CefShutdown();
+    LOG_INFO(LOG_CEF, "CEF thread: CefRunMessageLoop returned, calling CefShutdown...");
+
+    // CefShutdown() can hang waiting for subprocess IPC cleanup.
+    // Run it with a timeout to avoid blocking the process indefinitely.
+    auto future = std::async(std::launch::async, []() { CefShutdown(); });
+    if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+        LOG_WARN(LOG_CEF, "CEF thread: CefShutdown timed out after 5s, forcing exit");
+        _exit(0);
+    }
+
+    LOG_INFO(LOG_CEF, "CEF thread: CefShutdown complete");
     running_.store(false);
 }

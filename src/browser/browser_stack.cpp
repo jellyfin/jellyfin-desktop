@@ -249,6 +249,14 @@ void BrowserStack::renderAll(int width, int height) {
     }
 }
 
+#ifdef _WIN32
+void BrowserStack::setDCompOverlay(bool enabled) {
+    for (auto& entry : browsers_) {
+        entry->compositor->setDCompOverlay(enabled);
+    }
+}
+#endif
+
 bool BrowserStack::anyHasPendingContent() const {
     return false;
 }

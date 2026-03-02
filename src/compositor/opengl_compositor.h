@@ -36,6 +36,11 @@ public:
     // Composite overlay to screen with alpha blending
     void composite(uint32_t width, uint32_t height, float alpha);
 
+#ifdef _WIN32
+    // Set rendering mode for DComp overlay FBO (disables Y-flip and BGRA swizzle)
+    void setDCompOverlay(bool enabled) { dcomp_overlay_ = enabled; }
+#endif
+
     // Queue dmabuf for import (thread-safe, called from CEF callback)
     void queueDmabuf(int fd, uint32_t stride, uint64_t modifier, int width, int height);
 
@@ -72,9 +77,14 @@ private:
     GLuint program_ = 0;
     GLint alpha_loc_ = -1;
     GLint swizzle_loc_ = -1;
+    GLint flip_y_loc_ = -1;
     GLint tex_size_loc_ = -1;
     GLint view_size_loc_ = -1;
     GLint sampler_loc_ = -1;
+
+#ifdef _WIN32
+    bool dcomp_overlay_ = false;
+#endif
 
     // VAO for fullscreen quad
     GLuint vao_ = 0;

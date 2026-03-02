@@ -105,9 +105,10 @@ void main() {
 // Windows: Desktop OpenGL 2.1+ with GL_TEXTURE_2D
 static const char* vert_src = R"(#version 130
 out vec2 texCoord;
+uniform float flipY;
 void main() {
     vec2 pos = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-    texCoord = vec2(pos.x, 1.0 - pos.y);
+    texCoord = vec2(pos.x, mix(pos.y, 1.0 - pos.y, flipY));
     gl_Position = vec4(pos * 2.0 - 1.0, 0.0, 1.0);
 }
 )";
@@ -117,10 +118,13 @@ in vec2 texCoord;
 out vec4 fragColor;
 uniform sampler2D overlayTex;
 uniform float alpha;
+uniform float swizzleBgra;
 void main() {
     vec4 color = texture(overlayTex, texCoord);
-    // CEF provides BGRA - swizzle to RGBA
-    fragColor = color.bgra * alpha;
+    // CEF provides BGRA - swizzle to RGBA when rendering to default framebuffer,
+    // skip swizzle when rendering to D3D11 interop FBO (already B8G8R8A8)
+    vec4 swizzled = mix(color, color.bgra, swizzleBgra);
+    fragColor = swizzled * alpha;
 }
 )";
 #else
@@ -179,6 +183,9 @@ bool OpenGLCompositor::init(GLContext* ctx, uint32_t width, uint32_t height) {
     LOG_INFO(LOG_COMPOSITOR, "Compositor initialized with texture unit %d", texture_unit_);
 
 #ifdef _WIN32
+    // Ensure WGL context is current - it may have been displaced by D3D11/Vulkan
+    // device creation in VideoStack::create() before compositor init
+    ctx_->makeCurrent();
     loadWGLExtensions();
 #endif
 
@@ -266,6 +273,7 @@ bool OpenGLCompositor::createShader() {
     // Get uniform locations
     alpha_loc_ = glGetUniformLocation(program_, "alpha");
     swizzle_loc_ = glGetUniformLocation(program_, "swizzleBgra");
+    flip_y_loc_ = glGetUniformLocation(program_, "flipY");
     tex_size_loc_ = glGetUniformLocation(program_, "texSize");
     view_size_loc_ = glGetUniformLocation(program_, "viewSize");
     sampler_loc_ = glGetUniformLocation(program_, "overlayTex");
@@ -474,6 +482,14 @@ void OpenGLCompositor::composite(uint32_t width, uint32_t height, float alpha) {
     glUniform1f(alpha_loc_, alpha);
     if (view_size_loc_ >= 0) glUniform2f(view_size_loc_, static_cast<float>(width), static_cast<float>(height));
 
+#ifdef _WIN32
+    // DComp overlay FBO: no Y-flip (D3D11 top-left origin)
+    // Default framebuffer: flip Y
+    // BGRA swizzle always needed — GL driver handles byte-order mapping internally
+    if (flip_y_loc_ >= 0) glUniform1f(flip_y_loc_, dcomp_overlay_ ? 0.0f : 1.0f);
+    if (swizzle_loc_ >= 0) glUniform1f(swizzle_loc_, 1.0f);
+#endif
+
     // Use this compositor's dedicated texture unit to prevent interference
     glActiveTexture(GL_TEXTURE0 + texture_unit_);
     if (sampler_loc_ >= 0) glUniform1i(sampler_loc_, texture_unit_);
@@ -505,7 +521,6 @@ void OpenGLCompositor::composite(uint32_t width, uint32_t height, float alpha) {
     if (cef_texture_) {
         glBindTexture(GL_TEXTURE_2D, cef_texture_);
         if (tex_size_loc_ >= 0) glUniform2f(tex_size_loc_, static_cast<float>(cef_texture_width_), static_cast<float>(cef_texture_height_));
-        if (swizzle_loc_ >= 0) glUniform1f(swizzle_loc_, 1.0f);  // BGRA swizzle for CEF
     } else {
         return;
     }

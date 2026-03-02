@@ -3,6 +3,7 @@
 #include "platform/windows_video_surface.h"
 #include "logging.h"
 #include <SDL3/SDL.h>
+#include <d3d11_4.h>
 #include <cstring>
 
 #pragma comment(lib, "d3d11.lib")
@@ -67,6 +68,16 @@ bool WindowsVideoSurface::initD3D11(SDL_Window* window) {
     LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] D3D11 device created (feature level %d.%d)",
              (actualLevel >> 12) & 0xF, (actualLevel >> 8) & 0xF);
 
+    // Enable D3D11 multithread protection — video render thread and main thread
+    // both use the immediate context (submitFrame vs overlay end)
+    ID3D11Multithread* mt = nullptr;
+    hr = d3d_device_->QueryInterface(__uuidof(ID3D11Multithread), (void**)&mt);
+    if (SUCCEEDED(hr) && mt) {
+        mt->SetMultithreadProtected(TRUE);
+        mt->Release();
+        LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] D3D11 multithread protection enabled");
+    }
+
     // Get adapter LUID for matching Vulkan physical device
     IDXGIDevice* dxgi_device = nullptr;
     hr = d3d_device_->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi_device);
@@ -93,8 +104,10 @@ bool WindowsVideoSurface::initD3D11(SDL_Window* window) {
         return false;
     }
 
-    // Create composition target (topmost=FALSE -> behind window content)
-    hr = dcomp_device_->CreateTargetForHwnd(parent_hwnd_, FALSE, &dcomp_target_);
+    // Create composition target (topmost=TRUE -> above window content).
+    // Both video and CEF overlay visuals are DComp children with explicit
+    // Z-ordering, so we don't rely on DWM per-pixel alpha from WGL.
+    hr = dcomp_device_->CreateTargetForHwnd(parent_hwnd_, TRUE, &dcomp_target_);
     if (FAILED(hr)) {
         LOG_ERROR(LOG_PLATFORM, "[WindowsVideoSurface] CreateTargetForHwnd failed: 0x%08lx", hr);
         return false;
@@ -113,6 +126,12 @@ bool WindowsVideoSurface::initD3D11(SDL_Window* window) {
         LOG_ERROR(LOG_PLATFORM, "[WindowsVideoSurface] CreateVisual (video) failed");
         return false;
     }
+
+    // Always add video visual to root (overlay visual will be a child of video_visual,
+    // and DComp children render ON TOP of their parent's content — guaranteeing overlay
+    // is always above video regardless of z-order)
+    root_visual_->AddVisual(video_visual_, FALSE, nullptr);
+    dcomp_device_->Commit();
 
     // Enable per-pixel transparency via DWM
     MARGINS margins = {-1, -1, -1, -1};
@@ -288,7 +307,7 @@ bool WindowsVideoSurface::createSharedResources(int width, int height) {
     tex_desc.SampleDesc.Count = 1;
     tex_desc.Usage = D3D11_USAGE_DEFAULT;
     tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    tex_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+    tex_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
 
     HRESULT hr = d3d_device_->CreateTexture2D(&tex_desc, nullptr, &staging_texture_);
     if (FAILED(hr)) {
@@ -478,6 +497,9 @@ void WindowsVideoSurface::submitFrame() {
     // No explicit Vulkan sync needed here: mpv's done_frame callback calls
     // pl_gpu_finish() which already drains this queue before returning.
 
+    // Lock D3D11/DComp — main thread's overlay end() uses the same context
+    std::lock_guard<std::mutex> lock(d3d_mutex_);
+
     // Copy from shared staging texture to swap chain back buffer
     ID3D11Texture2D* back_buffer = nullptr;
     HRESULT hr = swap_chain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&back_buffer);
@@ -512,8 +534,8 @@ bool WindowsVideoSurface::recreateSwapchain(int width, int height) {
 }
 
 void WindowsVideoSurface::show() {
-    if (!visible_ && root_visual_ && video_visual_) {
-        root_visual_->AddVisual(video_visual_, FALSE, nullptr);
+    if (!visible_ && video_visual_ && swap_chain_) {
+        video_visual_->SetContent(swap_chain_);
         dcomp_device_->Commit();
         visible_ = true;
         LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] Video visual shown");
@@ -521,8 +543,8 @@ void WindowsVideoSurface::show() {
 }
 
 void WindowsVideoSurface::hide() {
-    if (visible_ && root_visual_ && video_visual_) {
-        root_visual_->RemoveVisual(video_visual_);
+    if (visible_ && video_visual_) {
+        video_visual_->SetContent(nullptr);
         dcomp_device_->Commit();
         visible_ = false;
         LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] Video visual hidden");

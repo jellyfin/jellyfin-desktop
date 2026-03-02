@@ -42,6 +42,8 @@ void wakeMacEventLoop();
 #include <windows.h>
 #include "context/wgl_context.h"
 #include "context/opengl_frame_context.h"
+#include "platform/windows_video_surface.h"
+#include "platform/windows_overlay_layer.h"
 #include "player/windows/media_session_windows.h"
 #else
 #include "context/egl_context.h"
@@ -555,8 +557,27 @@ int main(int argc, char* argv[]) {
     bool has_video = false;
     bool video_needs_rerender = false;
     double current_playback_rate = 1.0;
-
     OpenGLFrameContext frameContext(&wgl);
+
+    // Create DComp overlay layer for CEF rendering (above video in DComp tree)
+    // WGL context may have been displaced by D3D11/Vulkan device creation
+    wgl.makeCurrent();
+    WindowsOverlayLayer overlayLayer;
+    bool has_overlay = false;
+    if (videoStack.surface) {
+        has_overlay = overlayLayer.init(
+            videoStack.surface->dcompDevice(),
+            videoStack.surface->videoVisual(),
+            videoStack.surface->d3dDevice(),
+            videoStack.surface->d3dContext(),
+            &videoStack.surface->d3dMutex(),
+            &wgl, width, height);
+        if (has_overlay) {
+            overlayLayer.show();
+        } else {
+            LOG_WARN(LOG_GL, "DComp overlay init failed, CEF will render to WGL framebuffer");
+        }
+    }
 
     // Compositor context for BrowserEntry init
     CompositorContext compositor_ctx;
@@ -859,6 +880,7 @@ int main(int argc, char* argv[]) {
     overlay_ptr->input_layer->setWindowSize(width, height);
     overlay_ptr->wake_main_loop = wakeMainLoop;
     browsers.add("overlay", std::move(overlay_entry));
+    LOG_DEBUG(LOG_MAIN, "Overlay browser entry added");
 
     // Track who initiated fullscreen (only changes from NONE, returns to NONE on exit)
     enum class FullscreenSource { NONE, WM, CEF };
@@ -866,12 +888,14 @@ int main(int argc, char* argv[]) {
     bool was_maximized_before_fullscreen = false;
 
     // Create main browser entry
+    LOG_DEBUG(LOG_MAIN, "Creating main browser entry...");
     auto main_entry = std::make_unique<BrowserEntry>();
     BrowserEntry* main_ptr = main_entry.get();  // save pointer before move
 #ifdef __APPLE__
     // Use pre-created Metal compositor (avoids startup delay)
     main_ptr->setCompositor(std::move(main_compositor));
 #else
+    LOG_DEBUG(LOG_MAIN, "Initializing main compositor (%dx%d)...", physical_width, physical_height);
     if (!main_ptr->initCompositor(compositor_ctx, physical_width, physical_height)) {
         LOG_ERROR(LOG_COMPOSITOR, "Main compositor init failed");
         SDL_DestroyWindow(window);
@@ -1002,7 +1026,8 @@ int main(int argc, char* argv[]) {
     overlay_browser_settings.windowless_frame_rate = browser_settings.windowless_frame_rate;
 
     std::string overlay_html_path = "app://resources/index.html";
-    CefBrowserHost::CreateBrowser(overlay_window_info, overlay_client, overlay_html_path, overlay_browser_settings, nullptr, nullptr);
+    bool overlay_created = CefBrowserHost::CreateBrowser(overlay_window_info, overlay_client, overlay_html_path, overlay_browser_settings, nullptr, nullptr);
+    LOG_INFO(LOG_CEF, "Overlay CreateBrowser: %s", overlay_created ? "ok" : "FAILED");
 
     // State tracking
     using Clock = std::chrono::steady_clock;
@@ -1155,9 +1180,8 @@ int main(int argc, char* argv[]) {
                 if (!has_video) {
                     has_video = true;
                     LOG_INFO(LOG_MAIN, "Video restored after file transition");
-#ifdef __APPLE__
                     videoRenderer.setVisible(true);
-#else
+#ifndef __APPLE__
                     videoController.setActive(true);
 #endif
                 }
@@ -1498,8 +1522,8 @@ int main(int argc, char* argv[]) {
                     if (mpv->loadFile(cmd.url, startSec)) {
                         has_video = true;
                         LOG_INFO(LOG_MAIN, "Video loaded, has_video=true");
-#ifdef __APPLE__
                         videoRenderer.setVisible(true);
+#ifdef __APPLE__
                         if (videoRenderer.isHdr()) {
                             videoRenderer.setColorspace();
                         }
@@ -1701,17 +1725,25 @@ int main(int argc, char* argv[]) {
         // Flush and composite all browsers (back-to-front order)
         browsers.renderAll(current_width, current_height);
 #elif defined(_WIN32)
-        // Windows: Vulkan gpu-next video via DComp, OpenGL for CEF compositing
-        glViewport(0, 0, current_width, current_height);
-        frameContext.beginFrame(clear_color, videoController.getClearAlpha());
+        // Windows: Vulkan gpu-next video via DComp, CEF overlay via DComp
+        // Both are DComp visuals with explicit Z-ordering (video behind, CEF in front).
         videoController.render(current_width, current_height);
 
-        // Composite video texture (from threaded FBO)
-        videoRenderer.composite(current_width, current_height);
+        if (has_overlay) {
+            // Render CEF to DComp overlay FBO (GL→D3D11 via WGL_NV_DX_interop2)
+            // DComp mode: no Y-flip (D3D11 top-left origin), no BGRA swizzle (B8G8R8A8 format)
+            browsers.setDCompOverlay(true);
+            overlayLayer.begin(current_width, current_height);
+            browsers.renderAll(current_width, current_height);
+            overlayLayer.end();
+            browsers.setDCompOverlay(false);
+        }
 
-        // Flush and composite all browsers (back-to-front order)
-        browsers.renderAll(current_width, current_height);
-
+        // WGL framebuffer: opaque black placeholder (covered by DComp topmost visuals)
+        frameContext.beginFrame(0.0f, 1.0f);
+        if (!has_overlay) {
+            browsers.renderAll(current_width, current_height);
+        }
         frameContext.endFrame();
 #else
         // Linux: Get physical dimensions for viewport (HiDPI)
@@ -1774,14 +1806,21 @@ int main(int argc, char* argv[]) {
     CefShutdown();
 #elif defined(_WIN32)
     // Windows: wait for async browser close before cleanup
+    LOG_INFO(LOG_MAIN, "Shutdown: closing browsers...");
     browsers.closeAllBrowsers();
     while (!browsers.allBrowsersClosed()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    LOG_INFO(LOG_MAIN, "Shutdown: browsers closed, cleaning compositors...");
     browsers.cleanupCompositors();
+    LOG_INFO(LOG_MAIN, "Shutdown: cleaning overlay layer...");
+    overlayLayer.cleanup();
+    LOG_INFO(LOG_MAIN, "Shutdown: cleaning video renderer...");
     videoRenderer.cleanup();
     VideoStack::cleanupStatics();
+    LOG_INFO(LOG_MAIN, "Shutdown: cleaning WGL...");
     wgl.cleanup();
+    LOG_INFO(LOG_MAIN, "Shutdown: shutting down CEF thread...");
     cefThread.shutdown();
 #else
     // Linux: pump CEF work during browser close (external_message_pump mode)
