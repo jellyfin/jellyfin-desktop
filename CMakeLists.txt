@@ -499,16 +499,10 @@ if(WIN32)
         install(FILES "${CMAKE_SOURCE_DIR}/third_party/SDL/lib/x64/SDL3.dll" DESTINATION .)
     endif()
 
-    # libmpv
+    # libmpv and its runtime dependencies
     if(EXTERNAL_MPV_DIR)
-        install(FILES "${EXTERNAL_MPV_DIR}/lib/libmpv-2.dll" DESTINATION .)
-    endif()
-
-    # MSYS2 DLLs for mpv dependencies (optional - set MSYS2_BIN_DIR)
-    set(MSYS2_BIN_DIR "" CACHE PATH "Path to MSYS2 bin directory for mpv DLL dependencies (e.g. C:/msys64/clang64/bin)")
-    if(MSYS2_BIN_DIR AND EXISTS "${MSYS2_BIN_DIR}")
-        file(GLOB MSYS2_DLLS "${MSYS2_BIN_DIR}/*.dll")
-        install(FILES ${MSYS2_DLLS} DESTINATION .)
+        file(GLOB _MPV_DLLS "${EXTERNAL_MPV_DIR}/lib/*.dll")
+        install(FILES ${_MPV_DLLS} DESTINATION .)
     endif()
 elseif(APPLE)
     # macOS app bundle installation
