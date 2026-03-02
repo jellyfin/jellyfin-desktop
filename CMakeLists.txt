@@ -101,6 +101,7 @@ elseif(WIN32)
         src/player/media_session.cpp
         src/player/dcomp_renderer.cpp
         src/player/windows/media_session_windows.cpp
+        ${CMAKE_SOURCE_DIR}/resources/win/iconres.rc
     )
     set(PLATFORM_LIBRARIES
         OpenGL::GL
@@ -343,6 +344,17 @@ add_executable(jellyfin-desktop-cef
     ${COMMON_SOURCES}
     ${PLATFORM_SOURCES}
 )
+
+# Windows: hide console window (use WinMain entry via mainCRTStartup)
+if(WIN32)
+    if(MSVC)
+        target_link_options(jellyfin-desktop-cef PRIVATE
+            /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup
+        )
+    else()
+        target_link_options(jellyfin-desktop-cef PRIVATE -mwindows)
+    endif()
+endif()
 
 # Ensure JS shims are embedded before compiling cef_app.cpp
 add_dependencies(jellyfin-desktop-cef embedded_js embedded_resources generate_version)
