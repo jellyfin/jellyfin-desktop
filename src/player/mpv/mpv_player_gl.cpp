@@ -214,6 +214,7 @@ bool MpvPlayerGL::init(GLContext* gl, const char* hwdec) {
 
     int advanced_control = 1;
 
+#ifdef MPV_RENDER_PARAM_BACKEND
 #ifdef _WIN32
     // Windows/Wine: use legacy gpu backend (gpu-next ignores flip_y)
     const char* backend = "gpu";
@@ -221,10 +222,13 @@ bool MpvPlayerGL::init(GLContext* gl, const char* hwdec) {
     // Use gpu-next (libplacebo) backend for HDR support
     const char* backend = "gpu-next";
 #endif
+#endif
 
     mpv_render_param params[] = {
         {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_OPENGL)},
+#ifdef MPV_RENDER_PARAM_BACKEND
         {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
+#endif
         {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init},
         {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
         {MPV_RENDER_PARAM_INVALID, nullptr}
@@ -232,10 +236,10 @@ bool MpvPlayerGL::init(GLContext* gl, const char* hwdec) {
 
     int result = mpv_render_context_create(&render_ctx_, mpv_, params);
     if (result < 0) {
-        LOG_ERROR(LOG_MPV, "mpv_render_context_create (OpenGL/%s) failed: %s", backend, mpv_error_string(result));
+        LOG_ERROR(LOG_MPV, "mpv_render_context_create (OpenGL) failed: %s", mpv_error_string(result));
         return false;
     }
-    LOG_INFO(LOG_MPV, "mpv OpenGL using backend: %s", backend);
+    LOG_INFO(LOG_MPV, "mpv OpenGL render context created");
 
     mpv_render_context_set_update_callback(render_ctx_, onMpvRedraw, this);
     return true;

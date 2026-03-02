@@ -137,7 +137,7 @@ def extract_tarball(tarball_path, extract_dir):
     """Extract tarball to directory, returns extracted dir name."""
     root_dir = tarball_path.name.removesuffix(".tar.bz2")
     final_dir = extract_dir / root_dir
-    temp_dir = extract_dir / f".{root_dir}.tmp"
+    temp_dir = extract_dir / ".cef_extract_tmp"
 
     log.info("Extracting to %s", relpath(final_dir))
 

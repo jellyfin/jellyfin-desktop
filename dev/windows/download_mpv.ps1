@@ -72,7 +72,8 @@ try {
         Copy-Item $ForkHeaders (Join-Path $IncludeDir "mpv") -Recurse
     } else {
         Write-Host "mpv submodule not found, using headers from download" -ForegroundColor Yellow
-        Move-Item (Join-Path $ExtractDir "include") $OutputPath -Force
+        $DownloadedInclude = Join-Path $ExtractDir "include"
+        Copy-Item -Path "$DownloadedInclude\*" -Destination $IncludeDir -Recurse -Force
     }
 
     # Copy DLL to lib/

@@ -11,44 +11,76 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Get-Item $PSScriptRoot).Parent.Parent.FullName
 
+# Refresh PATH to pick up recently installed tools (e.g. via winget)
+$env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
+
 Write-Host "=== jellyfin-desktop-cef Windows Setup ===" -ForegroundColor Cyan
 Write-Host "Repository: $RepoRoot"
 Write-Host ""
 
-# Check prerequisites
+# Check prerequisites, auto-installing missing ones via winget
 function Test-Command($Command) {
     return [bool](Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
-$Missing = @()
-if (-not (Test-Command "python")) { $Missing += "Python 3" }
-if (-not (Test-Command "cmake")) { $Missing += "CMake" }
-if (-not (Test-Command "ninja")) { $Missing += "Ninja" }
-if (-not (Test-Command "7z")) { $Missing += "7-Zip" }
+$Prerequisites = @(
+    @{ Command = "python"; Name = "Python 3";  WingetId = "Python.Python.3.12" },
+    @{ Command = "cmake";  Name = "CMake";     WingetId = "Kitware.CMake" },
+    @{ Command = "ninja";  Name = "Ninja";     WingetId = "Ninja-build.Ninja" },
+    @{ Command = "7z";     Name = "7-Zip";     WingetId = "7zip.7zip" },
+    @{ Command = "git";    Name = "Git";       WingetId = "Git.Git" }
+)
 
-if ($Missing.Count -gt 0) {
-    Write-Host "Missing prerequisites:" -ForegroundColor Red
-    $Missing | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
-    Write-Host ""
-    Write-Host "Install via winget or scoop:"
-    Write-Host "  winget install Python.Python.3.12"
-    Write-Host "  winget install Kitware.CMake"
-    Write-Host "  winget install Ninja-build.Ninja"
-    Write-Host "  winget install 7zip.7zip"
-    exit 1
+function Find-Command($Command) {
+    # Check PATH first
+    if (Test-Command $Command) { return $true }
+    # Some installers (e.g. 7-Zip) don't add to PATH - search Program Files
+    $Exe = Get-ChildItem -Path "$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LocalAppData" `
+        -Filter "$Command.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($Exe) {
+        $env:Path += ";$($Exe.DirectoryName)"
+        return $true
+    }
+    return $false
 }
 
-# Check for Visual Studio
+foreach ($Prereq in $Prerequisites) {
+    if (-not (Find-Command $Prereq.Command)) {
+        Write-Host "$($Prereq.Name) not found, installing via winget..." -ForegroundColor Yellow
+        & winget install --source winget --accept-package-agreements --accept-source-agreements $Prereq.WingetId
+        # Refresh PATH after install
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
+        if (-not (Find-Command $Prereq.Command)) {
+            Write-Host "$($Prereq.Name) installed but not found in PATH. Restart your shell and re-run." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "$($Prereq.Name) installed" -ForegroundColor Green
+    }
+}
+
+# Check for Visual Studio with C++ workload
+Write-Host "=== Visual Studio ===" -ForegroundColor Cyan
 $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (-not (Test-Path $VsWhere)) {
-    Write-Host "Visual Studio not found. Install Visual Studio 2022 with C++ workload." -ForegroundColor Red
-    exit 1
+
+# Check if VS with VC tools is already installed
+$VsPath = $null
+if (Test-Path $VsWhere) {
+    $VsPath = & $VsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 }
 
-$VsPath = & $VsWhere -latest -products * -property installationPath
 if (-not $VsPath) {
-    Write-Host "Visual Studio installation not found." -ForegroundColor Red
-    exit 1
+    Write-Host "Visual Studio C++ workload not found, installing Build Tools via winget..." -ForegroundColor Yellow
+    & winget install --source winget --accept-package-agreements --accept-source-agreements --force Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
+        Write-Host "Failed to install Visual Studio Build Tools" -ForegroundColor Red
+        exit 1
+    }
+    # Re-check
+    $VsPath = & $VsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $VsPath) {
+        Write-Host "Visual Studio C++ workload still not found after install." -ForegroundColor Red
+        exit 1
+    }
 }
 Write-Host "Visual Studio: $VsPath" -ForegroundColor Green
 
@@ -106,17 +138,31 @@ if (-not $SkipSdl) {
     }
 }
 
-# Vulkan SDK check
+# Vulkan SDK
 if (-not $SkipVulkan) {
     Write-Host ""
     Write-Host "=== Vulkan SDK ===" -ForegroundColor Cyan
     $VulkanSdk = $env:VULKAN_SDK
+    if (-not $VulkanSdk -or -not (Test-Path $VulkanSdk)) {
+        # Check default install location
+        $VulkanBase = "C:\VulkanSDK"
+        if (Test-Path $VulkanBase) {
+            $Latest = Get-ChildItem $VulkanBase -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            if ($Latest) { $VulkanSdk = $Latest.FullName }
+        }
+    }
     if ($VulkanSdk -and (Test-Path $VulkanSdk)) {
         Write-Host "Vulkan SDK: $VulkanSdk" -ForegroundColor Green
     } else {
-        Write-Host "Vulkan SDK not found." -ForegroundColor Yellow
-        Write-Host "Download from: https://vulkan.lunarg.com/sdk/home"
-        Write-Host "Or install via: winget install KhronosGroup.VulkanSDK"
+        Write-Host "Vulkan SDK not found, installing via winget..." -ForegroundColor Yellow
+        & winget install --source winget --accept-package-agreements --accept-source-agreements KhronosGroup.VulkanSDK
+        $VulkanBase = "C:\VulkanSDK"
+        if (Test-Path $VulkanBase) {
+            $Latest = Get-ChildItem $VulkanBase -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            if ($Latest) {
+                Write-Host "Vulkan SDK: $($Latest.FullName)" -ForegroundColor Green
+            }
+        }
     }
 }
 
