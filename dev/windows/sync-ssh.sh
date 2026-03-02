@@ -15,6 +15,8 @@ sync_to_remote() {
     _remote_marker="$(echo "$REMOTE_DIR/$_sync_marker" | tr '/' '\\')"
     _remote_archive="$REMOTE_TMP/jellyfin-desktop-cef.tar"
 
+    _local_sha_file="/tmp/build-ssh-sync-sha-$(echo "$_remote" | tr -c 'a-zA-Z0-9' '_')"
+
     if ! ssh "$_remote" "dir $_remote_marker" >/dev/null 2>&1; then
         echo "First sync: sending full source tree..."
         git archive --format=tar HEAD > "$_archive"
@@ -40,7 +42,15 @@ sync_to_remote() {
         done
     else
         echo "Incremental sync: sending changed files..."
+        _synced_sha=""
+        [ -f "$_local_sha_file" ] && _synced_sha="$(cat "$_local_sha_file")"
+
         {
+            # Files changed since last synced commit
+            if [ -n "$_synced_sha" ] && git rev-parse --verify "$_synced_sha" >/dev/null 2>&1; then
+                git diff --name-only "$_synced_sha"..HEAD
+            fi
+            # Uncommitted and untracked changes
             git diff --name-only HEAD
             git diff --name-only --cached
             git ls-files --others --exclude-standard
@@ -60,6 +70,7 @@ sync_to_remote() {
 
     scp "$_archive" "$_remote:$_remote_archive"
     ssh "$_remote" "cd $REMOTE_DIR && tar -xf $_remote_archive && echo synced > $_sync_marker"
+    git rev-parse HEAD > "$_local_sha_file"
 
     rm -f "$_archive"
     ssh "$_remote" "del \"$(echo "$_remote_archive" | tr '/' '\\')\"" 2>/dev/null || true
