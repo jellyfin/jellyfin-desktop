@@ -9,7 +9,6 @@ on:
       - 'v*'
 
 env:
-  MPV_VERSION: "20260118-git-468d34c"
   SDL_VERSION: "3.4.0"
 
 jobs:
@@ -21,11 +20,13 @@ jobs:
           - arch: x64
             runner: windows-latest
             platform: windows64
-            mpv_arch: x86_64-v3
+            msystem: CLANG64
+            pkg_prefix: mingw-w64-clang-x86_64
           - arch: arm64
             runner: windows-11-arm
             platform: windowsarm64
-            mpv_arch: aarch64
+            msystem: CLANGARM64
+            pkg_prefix: mingw-w64-clang-aarch64
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -67,20 +68,26 @@ jobs:
           7z x sdl3.zip -othird_party
           mv "third_party/SDL3-${SDL_VERSION}" third_party/SDL
 
-      - name: Download libmpv
-        shell: bash
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          install: >-
+            ${{ matrix.pkg_prefix }}-cc
+            ${{ matrix.pkg_prefix }}-meson
+            ${{ matrix.pkg_prefix }}-pkgconf
+            ${{ matrix.pkg_prefix }}-ffmpeg
+            ${{ matrix.pkg_prefix }}-libplacebo
+            ${{ matrix.pkg_prefix }}-libass
+            ${{ matrix.pkg_prefix }}-vulkan-headers
+            ${{ matrix.pkg_prefix }}-vulkan-loader
+            ${{ matrix.pkg_prefix }}-shaderc
+            ${{ matrix.pkg_prefix }}-spirv-cross
+
+      - name: Build mpv from source
+        shell: pwsh
         run: |
-          # Preserve submodule headers (has render_vk.h), use prebuilt DLL
-          mv third_party/mpv/include third_party/mpv-include
-          rm -rf third_party/mpv
-          mkdir -p third_party/mpv/lib
-          mv third_party/mpv-include third_party/mpv/include
-          curl -L "https://sourceforge.net/projects/mpv-player-windows/files/libmpv/mpv-dev-${{ matrix.mpv_arch }}-${MPV_VERSION}.7z/download" -o mpv.7z
-          7z x mpv.7z -ompv-tmp
-          mv mpv-tmp/libmpv-2.dll third_party/mpv/lib/
-          # Generate .def file from DLL (package doesn't include it)
-          cd third_party/mpv/lib
-          gendef libmpv-2.dll
+          dev\windows\build_mpv_source.ps1 -Arch ${{ matrix.arch }} -Force
 
       - name: Install Vulkan SDK
         shell: pwsh
@@ -94,13 +101,10 @@ jobs:
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
-          cd third_party\mpv\lib
-          lib /def:libmpv-2.def /out:mpv.lib /MACHINE:${{ matrix.arch == 'arm64' && 'ARM64' || 'X64' }}
-          cd %GITHUB_WORKSPACE%
           cmake -B build -G Ninja ^
             -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
             -DSDL3_DIR=%CD%\third_party\SDL\cmake ^
-            -DEXTERNAL_MPV_DIR=%CD%\third_party\mpv
+            -DEXTERNAL_MPV_DIR=%CD%\third_party\mpv-install
           cmake --build build
 
       - name: Create package
