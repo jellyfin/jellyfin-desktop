@@ -3,7 +3,7 @@
 Experimental rewrite of [Jellyfin Desktop](https://github.com/jellyfin/jellyfin-desktop) built on [CEF](https://bitbucket.org/chromiumembedded/cef).
 
 - **CEF** - embedded Chromium browser
-- **mpv** - forked libmpv: gpu-next, Vulkan, HDR passthrough (Wayland, macOS)
+- **mpv** - forked libmpv: gpu-next, Vulkan, HDR passthrough (Linux Wayland, macOS, Windows)
 - **SDL3** - cross-platform window management and input
 
 ## Downloads
@@ -37,7 +37,7 @@ This experimental rewrite exists to test a number of things:
 
 It is currently in a heavy state of development, but is largely functional on Linux and macOS. It's overall much snappier than the Qt Jellyfin Desktop, doesn't suffer from the Qt WebEngine memory leak [[1]](https://github.com/jellyfin/jellyfin-desktop/issues/1091), and works well enough to have become my primary desktop client.
 
-The Linux and macOS builds for this project come bundled with the forked libmpv that *finally* gives Jellyfin users a way to watch HDR content on the desktop. Below are photos in an attempt to capture what actual HDR playback looks like ("grey" background under the window is actually pure `#ffffff` white) (source video [[3]](https://www.youtube.com/watch?v=LxnMg0I0LZM)).
+The Linux and macOS builds for this project come bundled with the forked libmpv that enables playback with HDR passthrough. Below are photos in an attempt to capture what actual HDR playback looks like ("grey" background under the window is actually pure `#ffffff` white) (source video [[3]](https://www.youtube.com/watch?v=LxnMg0I0LZM)).
 
 |  |    |
 | :--- | :--- |
