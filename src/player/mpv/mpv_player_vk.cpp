@@ -194,7 +194,7 @@ bool MpvPlayerVk::init(VulkanContext* vk, VideoSurface* subsurface, const char* 
         mpv_set_option(mpv_, "target-peak", MPV_FORMAT_DOUBLE, &peak);
         LOG_INFO(LOG_MPV, "HDR output enabled (bt.709/linear for macOS EDR)");
 #else
-        // Linux Wayland HDR uses PQ/BT.2020
+        // Linux Wayland and Windows HDR use PQ/BT.2020
         mpv_set_option_string(mpv_, "target-prim", "bt.2020");
         mpv_set_option_string(mpv_, "target-trc", "pq");
         mpv_set_option_string(mpv_, "target-colorspace-hint", "yes");

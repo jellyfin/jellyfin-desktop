@@ -5,7 +5,7 @@
 #include <vulkan/vulkan.h>
 #include <windows.h>
 #include <d3d11.h>
-#include <dxgi1_2.h>
+#include <dxgi1_6.h>
 #include <dcomp.h>
 #include <dwmapi.h>
 #include "video_surface.h"
@@ -32,9 +32,9 @@ public:
     void submitFrame() override;
 
     // Accessors
-    VkFormat swapchainFormat() const override { return VK_FORMAT_B8G8R8A8_UNORM; }
+    VkFormat swapchainFormat() const override { return vk_format_; }
     VkExtent2D swapchainExtent() const override { return {width_, height_}; }
-    bool isHdr() const override { return false; }
+    bool isHdr() const override { return is_hdr_; }
     uint32_t width() const override { return width_; }
     uint32_t height() const override { return height_; }
 
@@ -70,6 +70,8 @@ private:
     bool createSharedResources(int width, int height);
     void destroySharedResources();
     void destroySwapchain();
+    bool detectHdrCapability();
+    IDXGIFactory2* getDxgiFactory();
 
     SDL_Window* parent_window_ = nullptr;
     HWND parent_hwnd_ = nullptr;
@@ -77,7 +79,7 @@ private:
     // D3D11
     ID3D11Device* d3d_device_ = nullptr;
     ID3D11DeviceContext* d3d_context_ = nullptr;
-    IDXGISwapChain1* swap_chain_ = nullptr;
+    IDXGISwapChain3* swap_chain_ = nullptr;
     ID3D11Texture2D* staging_texture_ = nullptr;
     HANDLE shared_handle_ = nullptr;
 
@@ -111,6 +113,10 @@ private:
     // Thread safety for D3D11 immediate context + DComp device
     // (video render thread's submitFrame vs main thread's overlay end)
     std::mutex d3d_mutex_;
+
+    bool is_hdr_ = false;
+    DXGI_FORMAT dxgi_format_ = DXGI_FORMAT_B8G8R8A8_UNORM;
+    VkFormat vk_format_ = VK_FORMAT_B8G8R8A8_UNORM;
 
     uint32_t width_ = 0;
     uint32_t height_ = 0;

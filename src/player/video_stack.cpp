@@ -116,7 +116,8 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
     stack.player = std::move(player);
     stack.surface = g_windows_video_surface.get();
 
-    LOG_INFO(LOG_PLATFORM, "Using Vulkan gpu-next with DComp for video (Windows)");
+    LOG_INFO(LOG_PLATFORM, "Using Vulkan gpu-next with DComp for video (HDR: %s)",
+             g_windows_video_surface->isHdr() ? "yes" : "no");
     return stack;
 }
 

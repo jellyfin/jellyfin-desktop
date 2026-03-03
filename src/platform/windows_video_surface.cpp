@@ -140,9 +140,62 @@ bool WindowsVideoSurface::initD3D11(SDL_Window* window) {
         LOG_WARN(LOG_PLATFORM, "[WindowsVideoSurface] DwmExtendFrameIntoClientArea failed: 0x%08lx", hr);
     }
 
+    is_hdr_ = detectHdrCapability();
+    if (is_hdr_) {
+        dxgi_format_ = DXGI_FORMAT_R10G10B10A2_UNORM;
+        vk_format_ = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] HDR mode enabled, using R10G10B10A2");
+    }
+
     dcomp_device_->Commit();
     LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] D3D11 + DComp initialized");
     return true;
+}
+
+bool WindowsVideoSurface::detectHdrCapability() {
+    IDXGIDevice* dxgi_device = nullptr;
+    HRESULT hr = d3d_device_->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi_device);
+    if (FAILED(hr)) return false;
+
+    IDXGIAdapter* adapter = nullptr;
+    dxgi_device->GetAdapter(&adapter);
+    dxgi_device->Release();
+
+    IDXGIOutput* output = nullptr;
+    hr = adapter->EnumOutputs(0, &output);
+    adapter->Release();
+    if (FAILED(hr) || !output) return false;
+
+    IDXGIOutput6* output6 = nullptr;
+    hr = output->QueryInterface(__uuidof(IDXGIOutput6), (void**)&output6);
+    output->Release();
+    if (FAILED(hr) || !output6) return false;
+
+    DXGI_OUTPUT_DESC1 desc1;
+    hr = output6->GetDesc1(&desc1);
+    output6->Release();
+    if (FAILED(hr)) return false;
+
+    bool hdr = (desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+    LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] Display HDR: %s (colorSpace=%d, maxLuminance=%.0f, minLuminance=%.4f)",
+             hdr ? "yes" : "no", desc1.ColorSpace, desc1.MaxLuminance, desc1.MinLuminance);
+    return hdr;
+}
+
+IDXGIFactory2* WindowsVideoSurface::getDxgiFactory() {
+    IDXGIDevice* dxgi_device = nullptr;
+    HRESULT hr = d3d_device_->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi_device);
+    if (FAILED(hr) || !dxgi_device) return nullptr;
+
+    IDXGIAdapter* adapter = nullptr;
+    dxgi_device->GetAdapter(&adapter);
+    dxgi_device->Release();
+    if (!adapter) return nullptr;
+
+    IDXGIFactory2* factory = nullptr;
+    adapter->GetParent(__uuidof(IDXGIFactory2), (void**)&factory);
+    adapter->Release();
+    return factory;
 }
 
 bool WindowsVideoSurface::initVulkan() {
@@ -303,7 +356,7 @@ bool WindowsVideoSurface::createSharedResources(int width, int height) {
     tex_desc.Height = height;
     tex_desc.MipLevels = 1;
     tex_desc.ArraySize = 1;
-    tex_desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    tex_desc.Format = dxgi_format_;
     tex_desc.SampleDesc.Count = 1;
     tex_desc.Usage = D3D11_USAGE_DEFAULT;
     tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
@@ -341,7 +394,7 @@ bool WindowsVideoSurface::createSharedResources(int width, int height) {
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.pNext = &extMemImageInfo;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+    imageInfo.format = vk_format_;
     imageInfo.extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
     imageInfo.mipLevels = 1;
     imageInfo.arrayLayers = 1;
@@ -422,7 +475,7 @@ bool WindowsVideoSurface::createSharedResources(int width, int height) {
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = shared_image_;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+    viewInfo.format = vk_format_;
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
     vkResult = vkCreateImageView(device_, &viewInfo, nullptr, &shared_view_);
@@ -441,32 +494,68 @@ bool WindowsVideoSurface::createSwapchain(int width, int height) {
     width_ = width;
     height_ = height;
 
-    // Get DXGI factory from device
-    IDXGIDevice* dxgi_device = nullptr;
-    d3d_device_->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi_device);
-    IDXGIAdapter* adapter = nullptr;
-    dxgi_device->GetAdapter(&adapter);
-    IDXGIFactory2* factory = nullptr;
-    adapter->GetParent(__uuidof(IDXGIFactory2), (void**)&factory);
-    adapter->Release();
-    dxgi_device->Release();
-
     // Create composition swap chain
     DXGI_SWAP_CHAIN_DESC1 desc = {};
     desc.Width = width;
     desc.Height = height;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.Format = dxgi_format_;
     desc.SampleDesc.Count = 1;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.BufferCount = 2;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
 
-    HRESULT hr = factory->CreateSwapChainForComposition(d3d_device_, &desc, nullptr, &swap_chain_);
+    IDXGIFactory2* factory = getDxgiFactory();
+    if (!factory) {
+        LOG_ERROR(LOG_PLATFORM, "[WindowsVideoSurface] Failed to get DXGI factory");
+        return false;
+    }
+
+    IDXGISwapChain1* swap_chain1 = nullptr;
+    HRESULT hr = factory->CreateSwapChainForComposition(d3d_device_, &desc, nullptr, &swap_chain1);
     factory->Release();
     if (FAILED(hr)) {
         LOG_ERROR(LOG_PLATFORM, "[WindowsVideoSurface] CreateSwapChainForComposition failed: 0x%08lx", hr);
         return false;
+    }
+
+    hr = swap_chain1->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swap_chain_);
+    swap_chain1->Release();
+    if (FAILED(hr)) {
+        LOG_ERROR(LOG_PLATFORM, "[WindowsVideoSurface] QueryInterface IDXGISwapChain3 failed: 0x%08lx", hr);
+        return false;
+    }
+
+    if (is_hdr_) {
+        hr = swap_chain_->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+        if (FAILED(hr)) {
+            LOG_WARN(LOG_PLATFORM, "[WindowsVideoSurface] SetColorSpace1 failed: 0x%08lx, falling back to SDR", hr);
+            is_hdr_ = false;
+            dxgi_format_ = DXGI_FORMAT_B8G8R8A8_UNORM;
+            vk_format_ = VK_FORMAT_B8G8R8A8_UNORM;
+            // Recreate swap chain with SDR format (CopyResource requires matching formats)
+            swap_chain_->Release();
+            swap_chain_ = nullptr;
+            desc.Format = dxgi_format_;
+            factory = getDxgiFactory();
+            if (!factory) {
+                LOG_ERROR(LOG_PLATFORM, "[WindowsVideoSurface] SDR fallback: failed to get DXGI factory");
+                return false;
+            }
+            IDXGISwapChain1* sc1 = nullptr;
+            hr = factory->CreateSwapChainForComposition(d3d_device_, &desc, nullptr, &sc1);
+            factory->Release();
+            if (FAILED(hr)) {
+                LOG_ERROR(LOG_PLATFORM, "[WindowsVideoSurface] SDR swap chain fallback failed: 0x%08lx", hr);
+                return false;
+            }
+            hr = sc1->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&swap_chain_);
+            sc1->Release();
+            if (FAILED(hr)) {
+                LOG_ERROR(LOG_PLATFORM, "[WindowsVideoSurface] SDR fallback: QueryInterface IDXGISwapChain3 failed: 0x%08lx", hr);
+                return false;
+            }
+        }
     }
 
     video_visual_->SetContent(swap_chain_);
@@ -477,7 +566,8 @@ bool WindowsVideoSurface::createSwapchain(int width, int height) {
     }
 
     dcomp_device_->Commit();
-    LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] Swap chain created: %dx%d", width, height);
+    LOG_INFO(LOG_PLATFORM, "[WindowsVideoSurface] Swap chain created: %dx%d (HDR: %s)",
+             width, height, is_hdr_ ? "yes" : "no");
     return true;
 }
 
@@ -487,7 +577,7 @@ bool WindowsVideoSurface::startFrame(VkImage* outImage, VkImageView* outView, Vk
     frame_active_ = true;
     *outImage = shared_image_;
     *outView = shared_view_;
-    *outFormat = VK_FORMAT_B8G8R8A8_UNORM;
+    *outFormat = vk_format_;
     return true;
 }
 
