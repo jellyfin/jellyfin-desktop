@@ -180,13 +180,6 @@
         "display_name": "Allow Browser Zoom",
         "help": "Allows zooming the web interface using Ctrl+Plus/Minus, Ctrl+Scroll, or pinch-to-zoom. Changing this setting requires an application restart for pinch-to-zoom.",
         "default": true
-      },
-      {
-        "value": "pipMode",
-        "display_name": "Picture-in-Picture",
-        "help": "Shrinks the window to a small always-on-top video overlay.",
-        "default": false,
-        "hidden": true
       }
     ]
   },

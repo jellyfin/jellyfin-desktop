@@ -512,14 +512,6 @@ void WindowManager::updateMainSectionSettings(const QVariantMap& values)
   // Browser zoom
   if (values.contains("allowBrowserZoom"))
     enforceZoom();
-
-  // PiP mode
-  if (values.contains("pipMode"))
-  {
-    bool pip = values["pipMode"].toBool();
-    if (pip != m_pipMode)
-      setPiPMode(pip);
-  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
