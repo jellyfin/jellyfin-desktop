@@ -939,9 +939,7 @@ void WindowManager::setPiPMode(bool enable)
     if (isFullScreen())
       setFullScreen(false);
 
-    // Hide web UI, show only video
-    // PlayerComponent::Get().setVideoOnlyMode(true);
-
+    // Ensure cursor is visible in PiP
     setCursorVisibility(true);
 
     m_window->setMinimumSize(QSize(160, 90));
@@ -966,8 +964,6 @@ void WindowManager::setPiPMode(bool enable)
   }
   else //Exiting PiP mode
   {
-    // PlayerComponent::Get().setVideoOnlyMode(false);
-
     m_window->setMinimumSize(WINDOWW_MIN_SIZE);
 
     setAlwaysOnTop(m_prePipAlwaysOnTop);

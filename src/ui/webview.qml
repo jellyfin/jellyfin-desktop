@@ -222,6 +222,13 @@ Window
     onHeightChanged: console.log("MpvVideoItem height changed:", height)
   }
 
+  // Detect mouse hover over the window for PiP controls
+  HoverHandler
+  {
+    id: pipHover
+    enabled: components.window.pipMode
+  }
+
   WebEngineView
   {
     id: web
@@ -230,6 +237,13 @@ Window
     height: mainWindow.height
     z: 100
     backgroundColor: "transparent"
+    enabled: !components.window.pipMode || pipHover.hovered
+    opacity: components.window.pipMode && !pipHover.hovered ? 0.0 : 1.0
+
+    Behavior on opacity
+    {
+      NumberAnimation { duration: 200 }
+    }
 
     // this is needed to prevent intermittent(?) black screens when unminizing
     // or resumsing from suspend (linux/{x11/wayland}, possibly others).
