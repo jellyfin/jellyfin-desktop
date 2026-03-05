@@ -613,7 +613,7 @@
      * @private
      */
     static getSupportedFeatures() {
-        return ['PlaybackRate', 'SetAspectRatio'];
+        return ['PlaybackRate', 'SetAspectRatio', 'PictureInPicture'];
     }
 
     supports(feature) {
@@ -670,10 +670,12 @@
         console.error(`Picture in picture error: ${err}`);
     }
 
-    setPictureInPictureEnabled() {}
+    setPictureInPictureEnabled(enabled) {
+        window.api.window.setPiPMode(enabled);
+    }
 
     isPictureInPictureEnabled() {
-        return false;
+        return window.api.window.pipMode;
     }
 
     isAirPlayEnabled() {
@@ -813,6 +815,7 @@
     }
 
     togglePictureInPicture() {
+        window.api.window.togglePiP();
     }
 
     toggleAirPlay() {

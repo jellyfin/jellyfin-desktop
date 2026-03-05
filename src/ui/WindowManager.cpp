@@ -215,6 +215,9 @@ void WindowManager::setFullScreen(bool enable)
 
   if (enable)
   {
+    if (m_pipMode)
+      setPiPMode(false);
+
     // Use showFullScreen()
     m_window->showFullScreen();
     updateForcedScreen();
@@ -291,12 +294,18 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
       if (!m_cursorVisible)
         OSXUtils::SetCursorVisible(false);
 #endif
-      // Show title bar in PiP mode on hover
+      // Show title bar in PiP mode to allow dragging.
+      // Maximize/full-screen is disabled as it is too confusing in PIP
       if (m_pipMode && !m_pipTogglingTitleBar)
       {
         m_pipTogglingTitleBar = true;
         QRect geo = m_window->geometry();
-        m_window->setFlags(m_window->flags() & ~Qt::FramelessWindowHint);
+        Qt::WindowFlags flags = (m_window->flags() & ~Qt::FramelessWindowHint)
+                              | Qt::CustomizeWindowHint
+                              | Qt::WindowTitleHint
+                              | Qt::WindowMinimizeButtonHint
+                              | Qt::WindowCloseButtonHint;
+        m_window->setFlags(flags);
         m_window->setGeometry(geo);
         m_window->show();
         m_pipTogglingTitleBar = false;
@@ -318,6 +327,17 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
         m_window->setGeometry(geo);
         m_window->show();
         m_pipTogglingTitleBar = false;
+      }
+    }
+    else if (event->type() == QEvent::Close)
+    {
+      // In PiP mode, close button exits PiP and pauses playback
+      if (m_pipMode)
+      {
+        event->ignore();
+        PlayerComponent::Get().pause();
+        setPiPMode(false);
+        return true;
       }
     }
   }
