@@ -125,7 +125,7 @@ private:
   // PiP state
   bool m_pipMode;
   QRect m_prePipGeometry;
-  bool m_prePipAlwaysOnTop;
+  Qt::WindowFlags m_prePipFlags;
   QWindow::Visibility m_prePipVisibility;
 
   // initial size tracking to detect if size changed from default

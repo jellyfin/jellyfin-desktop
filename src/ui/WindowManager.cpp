@@ -33,7 +33,7 @@ WindowManager::WindowManager(QObject* parent)
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
     m_pipMode(false),
-    m_prePipAlwaysOnTop(false),
+    m_prePipFlags(),
     m_prePipVisibility(QWindow::Windowed),
     m_initialSize(),
     m_initialScreenSize()
@@ -933,7 +933,6 @@ void WindowManager::setPiPMode(bool enable)
   if (enable)
   {
     m_prePipGeometry = m_window->geometry();
-    m_prePipAlwaysOnTop = isAlwaysOnTop();
     m_prePipVisibility = m_window->visibility();
 
     if (isFullScreen())
@@ -957,16 +956,17 @@ void WindowManager::setPiPMode(bool enable)
       m_window->resize(PIP_SIZE);
     }
 
-    setAlwaysOnTop(true);
+    m_prePipFlags = m_window->flags();
+    m_window->setFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
 
     m_pipMode = true;
     emit pipModeChanged(true);
   }
   else //Exiting PiP mode
   {
-    m_window->setMinimumSize(WINDOWW_MIN_SIZE);
+    m_window->setFlags(m_prePipFlags);
 
-    setAlwaysOnTop(m_prePipAlwaysOnTop);
+    m_window->setMinimumSize(WINDOWW_MIN_SIZE);
 
     m_window->setGeometry(m_prePipGeometry);
 
