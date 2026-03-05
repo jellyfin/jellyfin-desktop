@@ -1036,5 +1036,9 @@ void WindowManager::setPiPMode(bool enable)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::togglePiP()
 {
+  // Only allow entering PiP when video is playing
+  if (!m_pipMode && PlayerComponent::Get().videoAspectRatio() <= 0)
+    return;
+
   setPiPMode(!m_pipMode);
 }
