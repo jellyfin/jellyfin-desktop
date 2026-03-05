@@ -33,6 +33,7 @@ WindowManager::WindowManager(QObject* parent)
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
     m_pipMode(false),
+    m_pipTogglingTitleBar(false),
     m_prePipFlags(),
     m_prePipVisibility(QWindow::Windowed),
     m_initialSize(),
@@ -288,6 +289,16 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
       if (!m_cursorVisible)
         OSXUtils::SetCursorVisible(false);
 #endif
+      // Show title bar in PiP mode on hover
+      if (m_pipMode && !m_pipTogglingTitleBar)
+      {
+        m_pipTogglingTitleBar = true;
+        QRect geo = m_window->geometry();
+        m_window->setFlags(m_window->flags() & ~Qt::FramelessWindowHint);
+        m_window->setGeometry(geo);
+        m_window->show();
+        m_pipTogglingTitleBar = false;
+      }
     }
     else if (event->type() == QEvent::Leave)
     {
@@ -296,6 +307,16 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
       // Always show cursor when leaving window
       OSXUtils::SetCursorVisible(true);
 #endif
+      // Hide title bar in PiP mode when mouse leaves
+      if (m_pipMode && !m_pipTogglingTitleBar)
+      {
+        m_pipTogglingTitleBar = true;
+        QRect geo = m_window->geometry();
+        m_window->setFlags(m_window->flags() | Qt::FramelessWindowHint);
+        m_window->setGeometry(geo);
+        m_window->show();
+        m_pipTogglingTitleBar = false;
+      }
     }
   }
   return ComponentBase::eventFilter(watched, event);

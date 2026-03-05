@@ -124,6 +124,7 @@ private:
 
   // PiP state
   bool m_pipMode;
+  bool m_pipTogglingTitleBar;
   QRect m_prePipGeometry;
   Qt::WindowFlags m_prePipFlags;
   QWindow::Visibility m_prePipVisibility;
