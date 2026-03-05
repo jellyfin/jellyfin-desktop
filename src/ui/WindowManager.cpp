@@ -34,6 +34,8 @@ WindowManager::WindowManager(QObject* parent)
     m_geometrySaveTimer(nullptr),
     m_pipMode(false),
     m_pipTogglingTitleBar(false),
+    m_pipEnforcingAspect(false),
+    m_pipAspectRatio(0),
     m_prePipFlags(),
     m_prePipVisibility(QWindow::Windowed),
     m_initialSize(),
@@ -953,6 +955,19 @@ void WindowManager::enforceZoom()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::enforcePipAspectRatio()
+{
+  if (!m_pipMode || !m_window || m_pipEnforcingAspect || m_pipAspectRatio <= 0)
+    return;
+
+  m_pipEnforcingAspect = true;
+  int newHeight = qRound(m_window->width() / m_pipAspectRatio);
+  if (newHeight != m_window->height())
+    m_window->resize(m_window->width(), newHeight);
+  m_pipEnforcingAspect = false;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::setPiPMode(bool enable)
 {
   if (!m_window || enable == m_pipMode)
@@ -971,27 +986,37 @@ void WindowManager::setPiPMode(bool enable)
 
     m_window->setMinimumSize(QSize(160, 90));
 
+    m_pipAspectRatio = PlayerComponent::Get().videoAspectRatio();
+    int pipWidth = PIP_SIZE.width();
+    int pipHeight = (m_pipAspectRatio > 0) ? qRound(pipWidth / m_pipAspectRatio) : PIP_SIZE.height();
+    QSize pipSize(pipWidth, pipHeight);
+
     QScreen* screen = findCurrentScreen();
     if (screen)
     {
       QRect screenGeo = screen->availableGeometry();
-      int x = screenGeo.right() - PIP_SIZE.width() - 20;
-      int y = screenGeo.bottom() - PIP_SIZE.height() - 20;
-      m_window->setGeometry(QRect(QPoint(x, y), PIP_SIZE));
+      int x = screenGeo.right() - pipSize.width() - 20;
+      int y = screenGeo.bottom() - pipSize.height() - 20;
+      m_window->setGeometry(QRect(QPoint(x, y), pipSize));
     }
     else
     {
-      m_window->resize(PIP_SIZE);
+      m_window->resize(pipSize);
     }
 
     m_prePipFlags = m_window->flags();
     m_window->setFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+
+    // Enforce aspect ratio on resize
+    connect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
 
     m_pipMode = true;
     emit pipModeChanged(true);
   }
   else //Exiting PiP mode
   {
+    disconnect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
+
     m_window->setFlags(m_prePipFlags);
 
     m_window->setMinimumSize(WINDOWW_MIN_SIZE);

@@ -1134,6 +1134,19 @@ qint64 PlayerComponent::getDuration()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+double PlayerComponent::videoAspectRatio()
+{
+  if (!m_mpv)
+    return 0;
+
+  int dw = m_mpv->getProperty("video-params/dw").toInt();
+  int dh = m_mpv->getProperty("video-params/dh").toInt();
+  if (dw > 0 && dh > 0)
+    return static_cast<double>(dw) / dh;
+  return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // This is called with the set of previous audio devices that were detected, and the set of current
 // audio devices. From this we guess whether we should reopen the audio device. If the user-selected
 // device went away previously, and now comes back, reinitializing the player's audio output will

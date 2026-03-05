@@ -108,6 +108,7 @@ private:
   void applySettings();
 
   void enforceZoom();
+  void enforcePipAspectRatio();
 
   QQuickWindow* m_window;
   QQuickItem* m_webView;
@@ -125,6 +126,8 @@ private:
   // PiP state
   bool m_pipMode;
   bool m_pipTogglingTitleBar;
+  bool m_pipEnforcingAspect;
+  double m_pipAspectRatio;
   QRect m_prePipGeometry;
   Qt::WindowFlags m_prePipFlags;
   QWindow::Visibility m_prePipVisibility;

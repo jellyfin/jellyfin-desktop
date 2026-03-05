@@ -122,6 +122,9 @@ public:
   Q_INVOKABLE qint64 getPosition();
   Q_INVOKABLE qint64 getDuration();
 
+  // Returns video aspect ratio (width/height), or 0 if unavailable
+  double videoAspectRatio();
+
   Q_INVOKABLE QVariantList getWebPlaylist() const;
   Q_INVOKABLE QString getCurrentWebPlaylistItemId() const;
   Q_INVOKABLE void setWebPlaylist(const QVariantList& playlist, const QString& currentItemId);
