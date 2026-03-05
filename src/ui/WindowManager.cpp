@@ -294,22 +294,8 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
       if (!m_cursorVisible)
         OSXUtils::SetCursorVisible(false);
 #endif
-      // Show title bar in PiP mode to allow dragging.
-      // Maximize/full-screen is disabled as it is too confusing in PIP
-      if (m_pipMode && !m_pipTogglingTitleBar)
-      {
-        m_pipTogglingTitleBar = true;
-        QRect geo = m_window->geometry();
-        Qt::WindowFlags flags = (m_window->flags() & ~Qt::FramelessWindowHint)
-                              | Qt::CustomizeWindowHint
-                              | Qt::WindowTitleHint
-                              | Qt::WindowMinimizeButtonHint
-                              | Qt::WindowCloseButtonHint;
-        m_window->setFlags(flags);
-        m_window->setGeometry(geo);
-        m_window->show();
-        m_pipTogglingTitleBar = false;
-      }
+      // Show title bar in PiP mode to allow dragging
+      setPipTitleBar(true);
     }
     else if (event->type() == QEvent::Leave)
     {
@@ -319,15 +305,7 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
       OSXUtils::SetCursorVisible(true);
 #endif
       // Hide title bar in PiP mode when mouse leaves
-      if (m_pipMode && !m_pipTogglingTitleBar)
-      {
-        m_pipTogglingTitleBar = true;
-        QRect geo = m_window->geometry();
-        m_window->setFlags(m_window->flags() | Qt::FramelessWindowHint);
-        m_window->setGeometry(geo);
-        m_window->show();
-        m_pipTogglingTitleBar = false;
-      }
+      setPipTitleBar(false);
     }
     else if (event->type() == QEvent::Close)
     {
@@ -998,6 +976,35 @@ void WindowManager::enforceZoom()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::setPipTitleBar(bool show)
+{
+  if (!m_pipMode || m_pipTogglingTitleBar)
+    return;
+
+  m_pipTogglingTitleBar = true;
+  QRect geo = m_window->geometry();
+
+  if (show)
+  {
+    // Show title bar with only minimize and close (no maximize — confusing in PiP)
+    Qt::WindowFlags flags = (m_window->flags() & ~Qt::FramelessWindowHint)
+                          | Qt::CustomizeWindowHint
+                          | Qt::WindowTitleHint
+                          | Qt::WindowMinimizeButtonHint
+                          | Qt::WindowCloseButtonHint;
+    m_window->setFlags(flags);
+  }
+  else
+  {
+    m_window->setFlags(m_window->flags() | Qt::FramelessWindowHint);
+  }
+
+  m_window->setGeometry(geo);
+  m_window->show();
+  m_pipTogglingTitleBar = false;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::enforcePipAspectRatio()
 {
   if (!m_pipMode || !m_window || m_pipEnforcingAspect || m_pipAspectRatio <= 0)
@@ -1062,7 +1069,7 @@ void WindowManager::setPiPMode(bool enable)
     m_pipMode = true;
     emit pipModeChanged(true);
   }
-  else //Exiting PiP mode
+  else // Exiting PiP mode
   {
     disconnect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
 

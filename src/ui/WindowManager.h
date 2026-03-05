@@ -113,6 +113,7 @@ private:
   void applySettings();
 
   void enforceZoom();
+  void setPipTitleBar(bool show);
   void enforcePipAspectRatio();
 
   QQuickWindow* m_window;
