@@ -656,6 +656,31 @@ QString WindowManager::maximizedKey() const { return configKeyPrefix() + "Window
 QString WindowManager::positionXKey() const { return configKeyPrefix() + "XPosition"; }
 QString WindowManager::positionYKey() const { return configKeyPrefix() + "YPosition"; }
 QString WindowManager::screenNameKey() const { return "ScreenName"; }
+QString WindowManager::pipWidthKey() const { return "PiP-Width"; }
+QString WindowManager::pipHeightKey() const { return "PiP-Height"; }
+QString WindowManager::pipXKey() const { return "PiP-XPosition"; }
+QString WindowManager::pipYKey() const { return "PiP-YPosition"; }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+QRect WindowManager::loadPipGeometry(double aspectRatio)
+{
+  int w = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipWidthKey()).toInt();
+  int h = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipHeightKey()).toInt();
+  int x = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipXKey()).toInt();
+  int y = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipYKey()).toInt();
+
+  // Use saved width but recompute height from current video aspect ratio
+  if (w > 0 && aspectRatio > 0)
+  {
+    h = qRound(w / aspectRatio);
+
+    QRect candidate(x, y, w, h);
+    if (fitsInScreens(candidate))
+      return candidate;
+  }
+
+  return QRect();
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::saveWindowSize()
@@ -663,13 +688,16 @@ void WindowManager::saveWindowSize()
   if (!m_window)
     return;
 
-  // Don't persist PiP geometry
-  if (m_pipMode)
-    return;
-
   SettingsSection* section = SettingsComponent::Get().getSection(SETTINGS_SECTION_STATE);
   if (!section)
     return;
+
+  if (m_pipMode)
+  {
+    section->setValue(pipWidthKey(), m_window->width());
+    section->setValue(pipHeightKey(), m_window->height());
+    return;
+  }
 
   bool isMaximized = m_window->windowState() & Qt::WindowMaximized;
   bool isFullScreen = m_window->windowState() & Qt::WindowFullScreen;
@@ -742,20 +770,23 @@ void WindowManager::saveWindowPosition()
   if (!m_window)
     return;
 
-  // Don't persist PiP geometry
-  if (m_pipMode)
-    return;
-
   // no-op on Wayland
   if (isWayland())
     return;
 
-  // Skip if maximized
-  if (m_window->windowState() & Qt::WindowMaximized)
-    return;
-
   SettingsSection* section = SettingsComponent::Get().getSection(SETTINGS_SECTION_STATE);
   if (!section)
+    return;
+
+  if (m_pipMode)
+  {
+    section->setValue(pipXKey(), m_window->x());
+    section->setValue(pipYKey(), m_window->y());
+    return;
+  }
+
+  // Skip if maximized
+  if (m_window->windowState() & Qt::WindowMaximized)
     return;
 
   m_windowedGeometry.moveTo(m_window->position());
@@ -1007,22 +1038,28 @@ void WindowManager::setPiPMode(bool enable)
     m_window->setMinimumSize(QSize(160, 90));
 
     m_pipAspectRatio = PlayerComponent::Get().videoAspectRatio();
-    int pipWidth = PIP_SIZE.width();
-    int pipHeight = (m_pipAspectRatio > 0) ? qRound(pipWidth / m_pipAspectRatio) : PIP_SIZE.height();
-    QSize pipSize(pipWidth, pipHeight);
 
-    QScreen* screen = findCurrentScreen();
-    if (screen)
+    QRect pipRect = loadPipGeometry(m_pipAspectRatio);
+    if (!pipRect.isValid())
     {
-      QRect screenGeo = screen->availableGeometry();
-      int x = screenGeo.right() - pipSize.width() - 20;
-      int y = screenGeo.bottom() - pipSize.height() - 20;
-      m_window->setGeometry(QRect(QPoint(x, y), pipSize));
+      int pipWidth = PIP_SIZE.width();
+      int pipHeight = (m_pipAspectRatio > 0) ? qRound(pipWidth / m_pipAspectRatio) : PIP_SIZE.height();
+      QSize pipSize(pipWidth, pipHeight);
+
+      QScreen* screen = findCurrentScreen();
+      if (screen)
+      {
+        QRect screenGeo = screen->availableGeometry();
+        int x = screenGeo.right() - pipSize.width() - 20;
+        int y = screenGeo.bottom() - pipSize.height() - 20;
+        pipRect = QRect(QPoint(x, y), pipSize);
+      }
+      else
+      {
+        pipRect = QRect(m_window->position(), pipSize);
+      }
     }
-    else
-    {
-      m_window->resize(pipSize);
-    }
+    m_window->setGeometry(pipRect);
 
     m_prePipFlags = m_window->flags();
     m_window->setFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);

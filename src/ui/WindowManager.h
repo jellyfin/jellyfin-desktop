@@ -95,6 +95,11 @@ private:
   QString positionXKey() const;
   QString positionYKey() const;
   QString screenNameKey() const;
+  QString pipWidthKey() const;
+  QString pipHeightKey() const;
+  QString pipXKey() const;
+  QString pipYKey() const;
+  QRect loadPipGeometry(double aspectRatio);
 
   // Screens
   void updateScreens();
