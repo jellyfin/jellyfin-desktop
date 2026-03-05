@@ -139,6 +139,13 @@ void WindowManager::initializeWindow(QQuickWindow* window)
   connect(qApp, &QGuiApplication::aboutToQuit,
           this, &WindowManager::saveGeometrySlot);
 
+  // Auto-exit PiP when playback stops (user navigated away from player)
+  connect(&PlayerComponent::Get(), &PlayerComponent::playbackStopped,
+          this, [this](bool isNavigating) {
+            if (m_pipMode && !isNavigating)
+              setPiPMode(false);
+          });
+
   // Find web view and connect to zoom changes
   m_webView = m_window->findChild<QQuickItem*>("web");
   if (m_webView)
