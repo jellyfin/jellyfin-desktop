@@ -5,6 +5,7 @@
 #include "EventFilter.h"
 #include "settings/SettingsComponent.h"
 #include "input/InputKeyboard.h"
+#include "ui/WindowManager.h"
 #include <QQuickWindow>
 #include <QQuickItem>
 
@@ -96,6 +97,24 @@ bool EventFilter::eventFilter(QObject* watched, QEvent* event)
         if (desktopWhiteListedKeys.contains(seq))
         {
           InputKeyboard::Get().keyPress(seq, keystatus);
+          return true;
+        }
+
+        // PiP toggle: intercept before WebEngineView consumes it
+        if (key->key() == Qt::Key_P
+            && (key->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))
+                == (Qt::ControlModifier | Qt::ShiftModifier))
+        {
+          if (event->type() == QEvent::KeyPress)
+            WindowManager::Get().togglePiP();
+          return true;
+        }
+
+        // Exit PiP on Escape
+        if (key->key() == Qt::Key_Escape && WindowManager::Get().isPiPMode())
+        {
+          if (event->type() == QEvent::KeyPress)
+            WindowManager::Get().togglePiP();
           return true;
         }
       }

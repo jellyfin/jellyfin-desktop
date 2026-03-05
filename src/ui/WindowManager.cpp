@@ -32,6 +32,9 @@ WindowManager::WindowManager(QObject* parent)
     m_cursorInsideWindow(true),
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
+    m_pipMode(false),
+    m_prePipAlwaysOnTop(false),
+    m_prePipVisibility(QWindow::Windowed),
     m_initialSize(),
     m_initialScreenSize()
 {
@@ -67,8 +70,9 @@ void WindowManager::initializeWindow(QQuickWindow* window)
   // Install event filter to track cursor enter/leave
   m_window->installEventFilter(this);
 
-  // Register host command for fullscreen toggle
+  // Register host commands
   InputComponent::Get().registerHostCommand("fullscreen", this, "toggleFullscreen");
+  InputComponent::Get().registerHostCommand("togglePip", this, "togglePiP");
 
   // Load and apply saved geometry
   loadGeometry();
@@ -243,6 +247,10 @@ void WindowManager::toggleFullscreen()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::setCursorVisibility(bool visible)
 {
+  // Always show cursor in PiP mode
+  if (m_pipMode)
+    visible = true;
+
   if (visible == m_cursorVisible)
     return;
 
@@ -454,6 +462,14 @@ void WindowManager::updateMainSectionSettings(const QVariantMap& values)
   // Browser zoom
   if (values.contains("allowBrowserZoom"))
     enforceZoom();
+
+  // PiP mode
+  if (values.contains("pipMode"))
+  {
+    bool pip = values["pipMode"].toBool();
+    if (pip != m_pipMode)
+      setPiPMode(pip);
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -597,6 +613,10 @@ void WindowManager::saveWindowSize()
   if (!m_window)
     return;
 
+  // Don't persist PiP geometry
+  if (m_pipMode)
+    return;
+
   SettingsSection* section = SettingsComponent::Get().getSection(SETTINGS_SECTION_STATE);
   if (!section)
     return;
@@ -670,6 +690,10 @@ void WindowManager::saveWindowSize()
 void WindowManager::saveWindowPosition()
 {
   if (!m_window)
+    return;
+
+  // Don't persist PiP geometry
+  if (m_pipMode)
     return;
 
   // no-op on Wayland
@@ -898,4 +922,70 @@ void WindowManager::enforceZoom()
       m_enforcingZoom = false;
     }
   }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::setPiPMode(bool enable)
+{
+  if (!m_window || enable == m_pipMode)
+    return;
+
+  if (enable)
+  {
+    m_prePipGeometry = m_window->geometry();
+    m_prePipAlwaysOnTop = isAlwaysOnTop();
+    m_prePipVisibility = m_window->visibility();
+
+    if (isFullScreen())
+      setFullScreen(false);
+
+    // Hide web UI, show only video
+    // PlayerComponent::Get().setVideoOnlyMode(true);
+
+    setCursorVisibility(true);
+
+    m_window->setMinimumSize(QSize(160, 90));
+
+    QScreen* screen = findCurrentScreen();
+    if (screen)
+    {
+      QRect screenGeo = screen->availableGeometry();
+      int x = screenGeo.right() - PIP_SIZE.width() - 20;
+      int y = screenGeo.bottom() - PIP_SIZE.height() - 20;
+      m_window->setGeometry(QRect(QPoint(x, y), PIP_SIZE));
+    }
+    else
+    {
+      m_window->resize(PIP_SIZE);
+    }
+
+    setAlwaysOnTop(true);
+
+    m_pipMode = true;
+    emit pipModeChanged(true);
+  }
+  else //Exiting PiP mode
+  {
+    // PlayerComponent::Get().setVideoOnlyMode(false);
+
+    m_window->setMinimumSize(WINDOWW_MIN_SIZE);
+
+    setAlwaysOnTop(m_prePipAlwaysOnTop);
+
+    m_window->setGeometry(m_prePipGeometry);
+
+    if (m_prePipVisibility == QWindow::Maximized)
+      m_window->showMaximized();
+    else if (m_prePipVisibility == QWindow::FullScreen)
+      m_window->showFullScreen();
+
+    m_pipMode = false;
+    emit pipModeChanged(false);
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::togglePiP()
+{
+  setPiPMode(!m_pipMode);
 }

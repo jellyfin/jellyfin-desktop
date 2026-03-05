@@ -13,10 +13,12 @@
 #define WEBUI_MAX_HEIGHT 1440.0
 #define WEBUI_SIZE QSize(1280, 720)
 #define WINDOWW_MIN_SIZE QSize(213, 120)
+#define PIP_SIZE QSize(400, 225)
 
 class WindowManager : public ComponentBase
 {
   Q_OBJECT
+  Q_PROPERTY(bool pipMode READ isPiPMode NOTIFY pipModeChanged)
 
 public:
   static WindowManager& Get();
@@ -44,6 +46,11 @@ public:
   Q_INVOKABLE void setFullScreen(bool enable);
   Q_INVOKABLE bool isFullScreen() const;
 
+  // Picture-in-Picture
+  Q_INVOKABLE void setPiPMode(bool enable);
+  Q_INVOKABLE void togglePiP();
+  bool isPiPMode() const { return m_pipMode; }
+
   // Cursor visibility
   Q_INVOKABLE void setCursorVisibility(bool visible);
 
@@ -58,6 +65,7 @@ public slots:
 
 signals:
   void fullScreenSwitched();
+  void pipModeChanged(bool enabled);
 
 private slots:
   void onVisibilityChanged(QWindow::Visibility visibility);
@@ -113,6 +121,12 @@ private:
   QWindow::Visibility m_previousVisibility;  // State before fullscreen
   QRect m_windowedGeometry;                  // Geometry when in Windowed state
   QTimer* m_geometrySaveTimer;               // Debounced disk sync
+
+  // PiP state
+  bool m_pipMode;
+  QRect m_prePipGeometry;
+  bool m_prePipAlwaysOnTop;
+  QWindow::Visibility m_prePipVisibility;
 
   // initial size tracking to detect if size changed from default
   QSize m_initialSize;

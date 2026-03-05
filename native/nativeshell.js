@@ -13,7 +13,8 @@ const features = [
     "remotevideo",
     "displaymode",
     "screensaver",
-    "fileinput"
+    "fileinput",
+    "pictureinpicture"
 ];
 
 const getPlugins = () => {
