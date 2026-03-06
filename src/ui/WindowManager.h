@@ -112,7 +112,7 @@ private:
   void applySettings();
 
   void enforceZoom();
-  void setPipTitleBar(bool show);
+  void startPipDrag();
   void enforcePipAspectRatio();
 
   QQuickWindow* m_window;
@@ -131,8 +131,9 @@ private:
   // PiP state
   bool m_pipMode;
   bool m_pipAppWasInactive;
-  bool m_pipTitleBarVisible;
-  bool m_pipTogglingTitleBar;
+  bool m_pipDragging;
+  QPoint m_pipDragStartCursorPos;
+  QPoint m_pipDragStartWindowPos;
   bool m_pipEnforcingAspect;
   double m_pipAspectRatio;
   QRect m_prePipGeometry;

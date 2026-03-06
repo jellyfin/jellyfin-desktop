@@ -34,8 +34,7 @@ WindowManager::WindowManager(QObject* parent)
     m_geometrySaveTimer(nullptr),
     m_pipMode(false),
     m_pipAppWasInactive(false),
-    m_pipTitleBarVisible(false),
-    m_pipTogglingTitleBar(false),
+    m_pipDragging(false),
     m_pipEnforcingAspect(false),
     m_pipAspectRatio(0),
     m_prePipFlags(),
@@ -295,48 +294,62 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
 {
   if (watched == m_window)
   {
-    // Absorb the click that reactivates PiP so it gives focus without pausing the video
-    if (m_pipMode && m_pipAppWasInactive && event->type() == QEvent::MouseButtonPress)
+    // PiP drag-to-move: click anywhere and drag to reposition the window
+    if (m_pipMode && event->type() == QEvent::MouseButtonPress)
     {
-      m_pipAppWasInactive = false;
-      return true;
+      auto* me = static_cast<QMouseEvent*>(event);
+      if (me->button() == Qt::LeftButton)
+      {
+        startPipDrag();
+        if (m_pipAppWasInactive)
+        {
+          // Absorb the click that reactivates PiP so it gives focus without pausing the video,
+          // but still record drag start position so user can drag immediately.
+          m_pipAppWasInactive = false;
+          return true;
+        }
+      }
+    }
+    else if (m_pipMode && m_pipDragStartCursorPos != QPoint() && event->type() == QEvent::MouseMove)
+    {
+      QPoint delta = QCursor::pos() - m_pipDragStartCursorPos;
+      if (!m_pipDragging && delta.manhattanLength() > 3)
+        m_pipDragging = true;
+      if (m_pipDragging)
+      {
+        m_window->setPosition(m_pipDragStartWindowPos + delta);
+        return true;
+      }
+    }
+    else if (m_pipMode && event->type() == QEvent::MouseButtonRelease)
+    {
+      auto* me = static_cast<QMouseEvent*>(event);
+      if (me->button() == Qt::LeftButton)
+      {
+        bool wasDragging = m_pipDragging;
+        m_pipDragging = false;
+        m_pipDragStartCursorPos = QPoint();
+        if (wasDragging)
+          return true;
+      }
     }
 
     if (event->type() == QEvent::Enter)
     {
       m_cursorInsideWindow = true;
-      qDebug() << "WindowManager: Enter event, pipMode=" << m_pipMode
-               << "titleBarVisible=" << m_pipTitleBarVisible;
 #ifdef Q_OS_MAC
       // Re-hide cursor if it should be hidden
       if (!m_cursorVisible)
         OSXUtils::SetCursorVisible(false);
 #endif
-      // Show title bar in PiP mode to allow dragging
-      setPipTitleBar(true);
     }
     else if (event->type() == QEvent::Leave)
     {
       m_cursorInsideWindow = false;
-      qDebug() << "WindowManager: Leave event, pipMode=" << m_pipMode
-               << "titleBarVisible=" << m_pipTitleBarVisible;
 #ifdef Q_OS_MAC
       // Always show cursor when leaving window
       OSXUtils::SetCursorVisible(true);
 #endif
-      // Hide title bar in PiP mode when mouse leaves
-      setPipTitleBar(false);
-    }
-    else if (event->type() == QEvent::Close)
-    {
-      // In PiP mode, close button exits PiP and pauses playback
-      if (m_pipMode)
-      {
-        event->ignore();
-        PlayerComponent::Get().pause();
-        setPiPMode(false);
-        return true;
-      }
     }
   }
   return ComponentBase::eventFilter(watched, event);
@@ -993,45 +1006,11 @@ void WindowManager::enforceZoom()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-void WindowManager::setPipTitleBar(bool show)
+void WindowManager::startPipDrag()
 {
-  qDebug() << "setPipTitleBar(" << show << ")"
-           << "pipMode=" << m_pipMode
-           << "toggling=" << m_pipTogglingTitleBar
-           << "visible=" << m_pipTitleBarVisible;
-
-  if (!m_pipMode || m_pipTogglingTitleBar || show == m_pipTitleBarVisible)
-  {
-    qDebug() << "setPipTitleBar: early return";
-    return;
-  }
-
-  m_pipTitleBarVisible = show;
-  m_pipTogglingTitleBar = true;
-  QRect geo = m_window->geometry();
-
-  if (show)
-  {
-    // Show title bar with only minimize and close (no maximize — confusing in PiP)
-    Qt::WindowFlags flags = (m_window->flags() & ~Qt::FramelessWindowHint)
-                          | Qt::CustomizeWindowHint
-                          | Qt::WindowTitleHint
-                          | Qt::WindowMinimizeButtonHint
-                          | Qt::WindowCloseButtonHint;
-    m_window->setFlags(flags);
-  }
-  else
-  {
-    m_window->setFlags(m_window->flags() | Qt::FramelessWindowHint);
-  }
-
-  m_window->setGeometry(geo);
-  m_window->show();
-
-  qDebug() << "setPipTitleBar: flags set to" << m_window->flags()
-           << "geometry:" << m_window->geometry();
-
-  m_pipTogglingTitleBar = false;
+  m_pipDragging = false;
+  m_pipDragStartCursorPos = QCursor::pos();
+  m_pipDragStartWindowPos = m_window->position();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1092,9 +1071,7 @@ void WindowManager::setPiPMode(bool enable)
     }
     m_window->setGeometry(pipRect);
 
-    qDebug() << "setPiPMode: entering PIP, flags before:" << m_window->flags();
     m_window->setFlags(Qt::FramelessWindowHint);
-    qDebug() << "setPiPMode: flags after:" << m_window->flags();
     setAlwaysOnTop(true);
 
     // Enforce aspect ratio on resize
@@ -1109,7 +1086,8 @@ void WindowManager::setPiPMode(bool enable)
 
     m_pipMode = false;
     m_pipAppWasInactive = false;
-    m_pipTitleBarVisible = false;
+    m_pipDragging = false;
+    m_pipDragStartCursorPos = QPoint();
     m_pipAspectRatio = 0;
     emit pipModeChanged(false);
 
