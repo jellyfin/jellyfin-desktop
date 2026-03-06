@@ -1089,6 +1089,12 @@ void WindowManager::setPiPMode(bool enable)
   {
     disconnect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
 
+    m_pipMode = false;
+    m_pipAppWasInactive = false;
+    m_pipTitleBarVisible = false;
+    m_pipAspectRatio = 0;
+    emit pipModeChanged(false);
+
     m_window->setFlags(m_prePipFlags);
 
     m_window->setMinimumSize(WINDOWW_MIN_SIZE);
@@ -1099,12 +1105,6 @@ void WindowManager::setPiPMode(bool enable)
       m_window->showMaximized();
     else if (m_prePipVisibility == QWindow::FullScreen)
       m_window->showFullScreen();
-
-    m_pipMode = false;
-    m_pipAppWasInactive = false;
-    m_pipTitleBarVisible = false;
-    m_pipAspectRatio = 0;
-    emit pipModeChanged(false);
   }
 }
 
