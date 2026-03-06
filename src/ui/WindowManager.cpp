@@ -627,7 +627,6 @@ QString WindowManager::positionXKey() const { return configKeyPrefix() + "XPosit
 QString WindowManager::positionYKey() const { return configKeyPrefix() + "YPosition"; }
 QString WindowManager::screenNameKey() const { return "ScreenName"; }
 QString WindowManager::pipWidthKey() const { return "PiP-Width"; }
-QString WindowManager::pipHeightKey() const { return "PiP-Height"; }
 QString WindowManager::pipXKey() const { return "PiP-XPosition"; }
 QString WindowManager::pipYKey() const { return "PiP-YPosition"; }
 
@@ -635,14 +634,13 @@ QString WindowManager::pipYKey() const { return "PiP-YPosition"; }
 QRect WindowManager::loadPipGeometry(double aspectRatio)
 {
   int w = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipWidthKey()).toInt();
-  int h = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipHeightKey()).toInt();
   int x = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipXKey()).toInt();
   int y = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipYKey()).toInt();
 
   // Use saved width but recompute height from current video aspect ratio
   if (w > 0 && aspectRatio > 0)
   {
-    h = qRound(w / aspectRatio);
+    int h = qRound(w / aspectRatio);
 
     QRect candidate(x, y, w, h);
     if (fitsInScreens(candidate))
@@ -665,7 +663,6 @@ void WindowManager::saveWindowSize()
   if (m_pipMode)
   {
     section->setValue(pipWidthKey(), m_window->width());
-    section->setValue(pipHeightKey(), m_window->height());
     return;
   }
 
