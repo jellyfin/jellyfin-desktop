@@ -130,6 +130,7 @@ private:
 
   // PiP state
   bool m_pipMode;
+  bool m_pipTitleBarVisible;
   bool m_pipTogglingTitleBar;
   bool m_pipEnforcingAspect;
   double m_pipAspectRatio;

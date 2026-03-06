@@ -33,6 +33,7 @@ WindowManager::WindowManager(QObject* parent)
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
     m_pipMode(false),
+    m_pipTitleBarVisible(false),
     m_pipTogglingTitleBar(false),
     m_pipEnforcingAspect(false),
     m_pipAspectRatio(0),
@@ -975,9 +976,10 @@ void WindowManager::enforceZoom()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::setPipTitleBar(bool show)
 {
-  if (!m_pipMode || m_pipTogglingTitleBar)
+  if (!m_pipMode || m_pipTogglingTitleBar || show == m_pipTitleBarVisible)
     return;
 
+  m_pipTitleBarVisible = show;
   m_pipTogglingTitleBar = true;
   QRect geo = m_window->geometry();
 
@@ -1022,8 +1024,9 @@ void WindowManager::setPiPMode(bool enable)
 
   if (enable)
   {
-    m_prePipGeometry = m_window->geometry();
+    m_prePipGeometry = m_windowedGeometry;
     m_prePipVisibility = m_window->visibility();
+    m_prePipFlags = m_window->flags();
 
     if (isFullScreen())
       setFullScreen(false);
@@ -1033,7 +1036,8 @@ void WindowManager::setPiPMode(bool enable)
 
     m_window->setMinimumSize(QSize(160, 90));
 
-    m_pipAspectRatio = PlayerComponent::Get().videoAspectRatio();
+    if (m_pipAspectRatio <= 0)
+      m_pipAspectRatio = PlayerComponent::Get().videoAspectRatio();
 
     QRect pipRect = loadPipGeometry(m_pipAspectRatio);
     if (!pipRect.isValid())
@@ -1057,8 +1061,8 @@ void WindowManager::setPiPMode(bool enable)
     }
     m_window->setGeometry(pipRect);
 
-    m_prePipFlags = m_window->flags();
-    m_window->setFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    m_window->setFlags(Qt::FramelessWindowHint);
+    setAlwaysOnTop(true);
 
     // Enforce aspect ratio on resize
     connect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
@@ -1082,6 +1086,8 @@ void WindowManager::setPiPMode(bool enable)
       m_window->showFullScreen();
 
     m_pipMode = false;
+    m_pipTitleBarVisible = false;
+    m_pipAspectRatio = 0;
     emit pipModeChanged(false);
   }
 }
@@ -1089,9 +1095,17 @@ void WindowManager::setPiPMode(bool enable)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::togglePiP()
 {
-  // Only allow entering PiP when video is playing
-  if (!m_pipMode && PlayerComponent::Get().videoAspectRatio() <= 0)
+  if (m_pipMode)
+  {
+    setPiPMode(false);
+    return;
+  }
+
+  // Only allow entering PiP when a video exists
+  double aspect = PlayerComponent::Get().videoAspectRatio();
+  if (aspect <= 0)
     return;
 
-  setPiPMode(!m_pipMode);
+  m_pipAspectRatio = aspect;
+  setPiPMode(true);
 }
