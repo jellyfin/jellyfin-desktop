@@ -305,6 +305,8 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::Enter)
     {
       m_cursorInsideWindow = true;
+      qDebug() << "WindowManager: Enter event, pipMode=" << m_pipMode
+               << "titleBarVisible=" << m_pipTitleBarVisible;
 #ifdef Q_OS_MAC
       // Re-hide cursor if it should be hidden
       if (!m_cursorVisible)
@@ -316,6 +318,8 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
     else if (event->type() == QEvent::Leave)
     {
       m_cursorInsideWindow = false;
+      qDebug() << "WindowManager: Leave event, pipMode=" << m_pipMode
+               << "titleBarVisible=" << m_pipTitleBarVisible;
 #ifdef Q_OS_MAC
       // Always show cursor when leaving window
       OSXUtils::SetCursorVisible(true);
@@ -991,8 +995,16 @@ void WindowManager::enforceZoom()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::setPipTitleBar(bool show)
 {
+  qDebug() << "setPipTitleBar(" << show << ")"
+           << "pipMode=" << m_pipMode
+           << "toggling=" << m_pipTogglingTitleBar
+           << "visible=" << m_pipTitleBarVisible;
+
   if (!m_pipMode || m_pipTogglingTitleBar || show == m_pipTitleBarVisible)
+  {
+    qDebug() << "setPipTitleBar: early return";
     return;
+  }
 
   m_pipTitleBarVisible = show;
   m_pipTogglingTitleBar = true;
@@ -1015,6 +1027,10 @@ void WindowManager::setPipTitleBar(bool show)
 
   m_window->setGeometry(geo);
   m_window->show();
+
+  qDebug() << "setPipTitleBar: flags set to" << m_window->flags()
+           << "geometry:" << m_window->geometry();
+
   m_pipTogglingTitleBar = false;
 }
 
@@ -1076,7 +1092,9 @@ void WindowManager::setPiPMode(bool enable)
     }
     m_window->setGeometry(pipRect);
 
+    qDebug() << "setPiPMode: entering PIP, flags before:" << m_window->flags();
     m_window->setFlags(Qt::FramelessWindowHint);
+    qDebug() << "setPiPMode: flags after:" << m_window->flags();
     setAlwaysOnTop(true);
 
     // Enforce aspect ratio on resize
