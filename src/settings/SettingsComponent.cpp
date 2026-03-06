@@ -35,6 +35,12 @@ void SettingsComponent::componentPostInitialize()
   InputComponent::Get().registerHostCommand("set_setting", this, "setSettingCommand");
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void SettingsComponent::registerSection(SettingsSection* section)
+{
+  m_sections.insert(section->sectionName(), section);
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////
 void SettingsComponent::cycleSettingCommand(const QString& args)
 {
@@ -281,7 +287,7 @@ void SettingsComponent::loadConf(const QString& path, bool storage)
       sec = new SettingsSection(section, PLATFORM_ANY, -1, this);
       sec->setHidden(true);
       sec->setStorage(true);
-      m_sections.insert(section, sec);
+      registerSection(sec);
     }
     else if (!sec)
     {
@@ -398,7 +404,7 @@ void SettingsComponent::setValues(const QVariantMap& options)
       section = new SettingsSection(key, PLATFORM_ANY, -1, this);
       section->setHidden(true);
       section->setStorage(true);
-      m_sections.insert(key, section);
+      registerSection(section);
     }
 
     if (values.isNull())
@@ -620,7 +626,7 @@ void SettingsComponent::parseSection(const QJsonObject& sectionObject)
     section->registerSetting(setting);
   }
 
-  m_sections.insert(sectionName, section);
+  registerSection(section);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////

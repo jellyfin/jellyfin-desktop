@@ -102,6 +102,8 @@ public:
   //
   static bool resetAndSaveOldConfiguration();
 
+  void registerSection(SettingsSection* section);
+
 private:
   explicit SettingsComponent(QObject *parent = nullptr);
   bool loadDescription();
