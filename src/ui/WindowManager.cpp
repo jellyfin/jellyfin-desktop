@@ -33,8 +33,8 @@ WindowManager::WindowManager(QObject* parent)
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
     m_pipMode(false),
-    m_pipAppWasInactive(false),
     m_pipDragging(false),
+    m_pipForwardingClick(false),
     m_pipEnforcingAspect(false),
     m_pipAspectRatio(0),
     m_prePipFlags(),
@@ -148,13 +148,6 @@ void WindowManager::initializeWindow(QQuickWindow* window)
           this, [this](bool isNavigating) {
             if (m_pipMode && !isNavigating)
               setPiPMode(false);
-          });
-
-  // Track app deactivation so we can absorb the click that reactivates PiP
-  connect(qApp, &QGuiApplication::applicationStateChanged,
-          this, [this](Qt::ApplicationState state) {
-            if (m_pipMode && state == Qt::ApplicationInactive)
-              m_pipAppWasInactive = true;
           });
 
   // Find web view and connect to zoom changes
@@ -294,20 +287,17 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
 {
   if (watched == m_window)
   {
-    // PiP drag-to-move: click anywhere and drag to reposition the window
-    if (m_pipMode && event->type() == QEvent::MouseButtonPress)
+    // PiP drag-to-move: click anywhere and drag to reposition the window.
+    // Press is always consumed to prevent the web UI from toggling play/pause.
+    // On release, if it wasn't a drag, we forward a synthetic press event so web UI continues to function normally.
+    if (m_pipMode && !m_pipForwardingClick && event->type() == QEvent::MouseButtonPress)
     {
       auto* me = static_cast<QMouseEvent*>(event);
       if (me->button() == Qt::LeftButton)
       {
         startPipDrag();
-        if (m_pipAppWasInactive)
-        {
-          // Absorb the click that reactivates PiP so it gives focus without pausing the video,
-          // but still record drag start position so user can drag immediately.
-          m_pipAppWasInactive = false;
-          return true;
-        }
+        m_pipPressEvent.reset(me->clone());
+        return true;
       }
     }
     else if (m_pipMode && m_pipDragStartCursorPos != QPoint() && event->type() == QEvent::MouseMove)
@@ -321,7 +311,7 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
         return true;
       }
     }
-    else if (m_pipMode && event->type() == QEvent::MouseButtonRelease)
+    else if (m_pipMode && !m_pipForwardingClick && event->type() == QEvent::MouseButtonRelease)
     {
       auto* me = static_cast<QMouseEvent*>(event);
       if (me->button() == Qt::LeftButton)
@@ -331,6 +321,17 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
         m_pipDragStartCursorPos = QPoint();
         if (wasDragging)
           return true;
+
+        // Not a drag — forward the original press + this release
+        if (m_pipPressEvent)
+        {
+          m_pipForwardingClick = true;
+          QCoreApplication::sendEvent(m_window, m_pipPressEvent.get());
+          QCoreApplication::sendEvent(m_window, me);
+          m_pipForwardingClick = false;
+          m_pipPressEvent.reset();
+          return true;
+        }
       }
     }
 
@@ -1085,7 +1086,6 @@ void WindowManager::setPiPMode(bool enable)
     disconnect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
 
     m_pipMode = false;
-    m_pipAppWasInactive = false;
     m_pipDragging = false;
     m_pipDragStartCursorPos = QPoint();
     m_pipAspectRatio = 0;

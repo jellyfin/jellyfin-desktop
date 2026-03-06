@@ -1,6 +1,8 @@
 #ifndef WINDOWMANAGER_H
 #define WINDOWMANAGER_H
 
+#include <QCoreApplication>
+#include <QMouseEvent>
 #include <QObject>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -8,6 +10,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <QWindow>
+#include <memory>
 #include "core/ComponentManager.h"
 
 #define WEBUI_MAX_HEIGHT 1440.0
@@ -130,10 +133,11 @@ private:
 
   // PiP state
   bool m_pipMode;
-  bool m_pipAppWasInactive;
   bool m_pipDragging;
+  bool m_pipForwardingClick;
   QPoint m_pipDragStartCursorPos;
   QPoint m_pipDragStartWindowPos;
+  std::unique_ptr<QMouseEvent> m_pipPressEvent;
   bool m_pipEnforcingAspect;
   double m_pipAspectRatio;
   QRect m_prePipGeometry;
