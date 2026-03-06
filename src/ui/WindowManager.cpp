@@ -33,6 +33,7 @@ WindowManager::WindowManager(QObject* parent)
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
     m_pipMode(false),
+    m_pipAppWasInactive(false),
     m_pipTitleBarVisible(false),
     m_pipTogglingTitleBar(false),
     m_pipEnforcingAspect(false),
@@ -148,6 +149,13 @@ void WindowManager::initializeWindow(QQuickWindow* window)
           this, [this](bool isNavigating) {
             if (m_pipMode && !isNavigating)
               setPiPMode(false);
+          });
+
+  // Track app deactivation so we can absorb the click that reactivates PiP
+  connect(qApp, &QGuiApplication::applicationStateChanged,
+          this, [this](Qt::ApplicationState state) {
+            if (m_pipMode && state == Qt::ApplicationInactive)
+              m_pipAppWasInactive = true;
           });
 
   // Find web view and connect to zoom changes
@@ -287,6 +295,13 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
 {
   if (watched == m_window)
   {
+    // Absorb the click that reactivates PiP so it gives focus without pausing the video
+    if (m_pipMode && m_pipAppWasInactive && event->type() == QEvent::MouseButtonPress)
+    {
+      m_pipAppWasInactive = false;
+      return true;
+    }
+
     if (event->type() == QEvent::Enter)
     {
       m_cursorInsideWindow = true;
@@ -1086,6 +1101,7 @@ void WindowManager::setPiPMode(bool enable)
       m_window->showFullScreen();
 
     m_pipMode = false;
+    m_pipAppWasInactive = false;
     m_pipTitleBarVisible = false;
     m_pipAspectRatio = 0;
     emit pipModeChanged(false);
