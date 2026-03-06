@@ -98,6 +98,13 @@ Window
 
   Action
   {
+    enabled: mainWindow.webDesktopMode && mainWindow.visibility === Window.FullScreen
+    shortcut: "Escape"
+    onTriggered: mainWindow.setFullScreen(false)
+  }
+
+  Action
+  {
     enabled: mainWindow.webDesktopMode
     shortcut: StandardKey.Close
     onTriggered: mainWindow.close()
