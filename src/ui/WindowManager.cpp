@@ -1030,7 +1030,7 @@ void WindowManager::setPiPMode(bool enable)
 
   if (enable)
   {
-    if (SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "forceAlwaysFS").toBool())
+    if (SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "forceAlwaysFS").toBool() || isWayland())
       return;
 
     m_pip.prePipGeometry = m_windowedGeometry;
