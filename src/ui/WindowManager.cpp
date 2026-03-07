@@ -396,7 +396,8 @@ void WindowManager::onVisibilityChanged(QWindow::Visibility visibility)
 
   // Track previous visibility (only when NOT fullscreen or hidden)
   // Preserve pre-fullscreen state for restore
-  if (visibility != QWindow::FullScreen && visibility != QWindow::Hidden)
+  // Skip during PiP mode to avoid corrupting m_previousVisibility with transitional states
+  if (!m_pipMode && visibility != QWindow::FullScreen && visibility != QWindow::Hidden)
   {
     qDebug() << "onVisibilityChanged: updating m_previousVisibility from" << m_previousVisibility << "to" << visibility;
     m_previousVisibility = visibility;
@@ -1042,6 +1043,8 @@ void WindowManager::setPiPMode(bool enable)
     m_prePipVisibility = m_window->visibility();
     m_prePipFlags = m_window->flags();
 
+    m_pipMode = true;
+
     if (isFullScreen())
       setFullScreen(false);
 
@@ -1081,7 +1084,6 @@ void WindowManager::setPiPMode(bool enable)
     // Enforce aspect ratio on resize
     connect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
 
-    m_pipMode = true;
     emit pipModeChanged(true);
   }
   else // Exiting PiP mode
