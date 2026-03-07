@@ -277,10 +277,73 @@ void WindowManager::setCursorVisibility(bool visible)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+static Qt::CursorShape cursorForEdges(Qt::Edges edges)
+{
+  bool left = edges & Qt::LeftEdge;
+  bool right = edges & Qt::RightEdge;
+  bool top = edges & Qt::TopEdge;
+  bool bottom = edges & Qt::BottomEdge;
+
+  if ((left && top) || (right && bottom))
+    return Qt::SizeFDiagCursor;
+  if ((left && bottom) || (right && top))
+    return Qt::SizeBDiagCursor;
+  if (left || right)
+    return Qt::SizeHorCursor;
+  return Qt::SizeVerCursor;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+Qt::Edges WindowManager::pipEdgesAt(const QPoint& localPos) const
+{
+  if (!m_window)
+    return {};
+
+  const int grip = 8;
+  Qt::Edges edges;
+
+  if (localPos.x() < grip)
+    edges |= Qt::LeftEdge;
+  if (localPos.x() >= m_window->width() - grip)
+    edges |= Qt::RightEdge;
+  if (localPos.y() < grip)
+    edges |= Qt::TopEdge;
+  if (localPos.y() >= m_window->height() - grip)
+    edges |= Qt::BottomEdge;
+
+  return edges;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 bool WindowManager::eventFilter(QObject* watched, QEvent* event)
 {
   if (watched == m_window)
   {
+    // PiP edge resize: frameless windows lose native resize borders on Windows
+    // and some Linux WMs, so we manually detect edges, show resize cursors on
+    // hover, and call startSystemResize() on press.  macOS handles this natively.
+#ifndef Q_OS_MAC
+    if (m_pip.active && event->type() == QEvent::MouseMove && !m_pip.pressEvent && !m_pip.dragging)
+    {
+      auto* me = static_cast<QMouseEvent*>(event);
+      Qt::Edges edges = pipEdgesAt(me->position().toPoint());
+      if (edges && !m_pip.resizeCursorSet)
+      {
+        qApp->setOverrideCursor(QCursor(cursorForEdges(edges)));
+        m_pip.resizeCursorSet = true;
+      }
+      else if (edges && m_pip.resizeCursorSet)
+      {
+        qApp->changeOverrideCursor(QCursor(cursorForEdges(edges)));
+      }
+      else if (!edges && m_pip.resizeCursorSet)
+      {
+        qApp->restoreOverrideCursor();
+        m_pip.resizeCursorSet = false;
+      }
+    }
+#endif
+
     // PiP drag-to-move: click anywhere and drag to reposition the window.
     // Press is consumed to prevent the web UI from toggling play/pause.
     // On move past threshold, startSystemMove() hands off to the OS.
@@ -290,6 +353,21 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
       auto* me = static_cast<QMouseEvent*>(event);
       if (me->button() == Qt::LeftButton)
       {
+        // Edge press: start system resize instead of drag
+#ifndef Q_OS_MAC
+        Qt::Edges edges = pipEdgesAt(me->position().toPoint());
+        if (edges)
+        {
+          if (m_pip.resizeCursorSet)
+          {
+            qApp->restoreOverrideCursor();
+            m_pip.resizeCursorSet = false;
+          }
+          m_window->startSystemResize(edges);
+          return true;
+        }
+#endif
+
         m_pip.dragging = false;
         m_pip.dragStartCursorPos = QCursor::pos();
         m_pip.pressEvent.reset(me->clone());
@@ -343,6 +421,13 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
     else if (event->type() == QEvent::Leave)
     {
       m_cursorInsideWindow = false;
+#ifndef Q_OS_MAC
+      if (m_pip.resizeCursorSet)
+      {
+        qApp->restoreOverrideCursor();
+        m_pip.resizeCursorSet = false;
+      }
+#endif
 #ifdef Q_OS_MAC
       // Always show cursor when leaving window
       OSXUtils::SetCursorVisible(true);
@@ -1091,6 +1176,14 @@ void WindowManager::enterPiP()
 void WindowManager::exitPiP()
 {
   disconnect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
+
+#ifndef Q_OS_MAC
+  if (m_pip.resizeCursorSet)
+  {
+    qApp->restoreOverrideCursor();
+    m_pip.resizeCursorSet = false;
+  }
+#endif
 
   // Save restore values before reset
   auto restoreFlags = m_pip.prePipFlags;

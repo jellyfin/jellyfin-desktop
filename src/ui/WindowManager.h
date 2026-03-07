@@ -116,6 +116,7 @@ private:
 
   void enforceZoom();
   void enforcePipAspectRatio();
+  Qt::Edges pipEdgesAt(const QPoint& localPos) const;
   void enterPiP();
   void exitPiP();
 
@@ -139,6 +140,7 @@ private:
     bool dragging = false;
     bool forwardingClick = false;
     bool enforcingAspect = false;
+    bool resizeCursorSet = false;
     double aspectRatio = 0;
     QPoint dragStartCursorPos;
     std::unique_ptr<QMouseEvent> pressEvent;
@@ -154,6 +156,7 @@ private:
       dragging = false;
       forwardingClick = false;
       enforcingAspect = false;
+      resizeCursorSet = false;
       aspectRatio = 0;
       dragStartCursorPos = QPoint();
       pressEvent.reset();
