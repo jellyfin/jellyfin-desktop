@@ -230,11 +230,6 @@ Window
     height: mainWindow.height
     z: 100
     backgroundColor: "transparent"
-    
-    Behavior on opacity
-    {
-      NumberAnimation { duration: 200 }
-    }
 
     // this is needed to prevent intermittent(?) black screens when unminizing
     // or resumsing from suspend (linux/{x11/wayland}, possibly others).
