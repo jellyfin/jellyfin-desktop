@@ -1086,14 +1086,27 @@ void WindowManager::setPiPMode(bool enable)
     m_pip.reset();
     emit pipModeChanged(false);
 
+    // setFlags() recreates the native window on macOS, which breaks Chromium's
+    // mouse tracking. To force real native Enter/Leave events, we place the
+    // window off-screen after setFlags(), then defer the real geometry restore
+    // to the next event loop tick. This gives macOS time to process the
+    // off-screen position, so that when the window moves under the cursor,
+    // a real native Enter event is generated.
     m_window->setFlags(restoreFlags);
     m_window->setMinimumSize(WINDOWW_MIN_SIZE);
-    m_window->setGeometry(restoreGeometry);
+    m_window->setGeometry(QRect(-10000, -10000, restoreGeometry.width(), restoreGeometry.height()));
 
-    if (restoreVisibility == QWindow::Maximized)
-      m_window->showMaximized();
-    else if (restoreVisibility == QWindow::FullScreen)
-      m_window->showFullScreen();
+    QTimer::singleShot(0, this, [this, restoreGeometry, restoreVisibility]() {
+      m_window->setGeometry(restoreGeometry);
+
+      if (restoreVisibility == QWindow::Maximized)
+        m_window->showMaximized();
+      else if (restoreVisibility == QWindow::FullScreen)
+        m_window->showFullScreen();
+
+      m_cursorInsideWindow = m_window->geometry().contains(QCursor::pos());
+    });
+
   }
 }
 
