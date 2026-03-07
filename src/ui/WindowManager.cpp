@@ -233,6 +233,13 @@ void WindowManager::setFullScreen(bool enable)
     {
       qDebug() << "setFullScreen(false): restoring to windowed";
       m_window->showNormal();
+      // Explicitly restore position — Qt's internal restore geometry may be
+      // stale after a PiP→FS transition (window was temporarily off-screen).
+      // The interaction between PIP and FS is complicated. It is probably cleaner to disallow PIP <-> FS transitions.
+      // However, this requires WebView changes, and carefully enabling/disabling shortcut keys (including video area double click)
+      // The current implementation handles all cases well enough
+      if (!isWayland() && m_windowedGeometry.isValid())
+        m_window->setPosition(m_windowedGeometry.topLeft());
     }
   }
 }
@@ -1208,7 +1215,10 @@ void WindowManager::exitPiP()
     // showFullScreen() before this timer fired), skip the deferred restore
     // so we don't override the fullscreen geometry with the windowed one.
     if (isFullScreen())
+    {
+      m_windowedGeometry = restoreGeometry;
       return;
+    }
 
     m_window->setGeometry(restoreGeometry);
 
