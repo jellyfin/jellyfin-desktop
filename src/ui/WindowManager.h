@@ -52,7 +52,7 @@ public:
   // Picture-in-Picture
   Q_INVOKABLE void setPiPMode(bool enable);
   Q_INVOKABLE void togglePiP();
-  bool isPiPMode() const { return m_pipMode; }
+  bool isPiPMode() const { return m_pip.active; }
 
   // Cursor visibility
   Q_INVOKABLE void setCursorVisibility(bool visible);
@@ -132,17 +132,35 @@ private:
   QTimer* m_geometrySaveTimer;               // Debounced disk sync
 
   // PiP state
-  bool m_pipMode;
-  bool m_pipDragging;
-  bool m_pipForwardingClick;
-  QPoint m_pipDragStartCursorPos;
-  QPoint m_pipDragStartWindowPos;
-  std::unique_ptr<QMouseEvent> m_pipPressEvent;
-  bool m_pipEnforcingAspect;
-  double m_pipAspectRatio;
-  QRect m_prePipGeometry;
-  Qt::WindowFlags m_prePipFlags;
-  QWindow::Visibility m_prePipVisibility;
+  struct PipState
+  {
+    bool active = false;
+    bool dragging = false;
+    bool forwardingClick = false;
+    bool enforcingAspect = false;
+    double aspectRatio = 0;
+    QPoint dragStartCursorPos;
+    QPoint dragStartWindowPos;
+    std::unique_ptr<QMouseEvent> pressEvent;
+
+    // Pre-PiP window state for restore
+    QRect prePipGeometry;
+    Qt::WindowFlags prePipFlags;
+    QWindow::Visibility prePipVisibility = QWindow::Windowed;
+
+    void reset()
+    {
+      active = false;
+      dragging = false;
+      forwardingClick = false;
+      enforcingAspect = false;
+      aspectRatio = 0;
+      dragStartCursorPos = QPoint();
+      dragStartWindowPos = QPoint();
+      pressEvent.reset();
+    }
+  };
+  PipState m_pip;
 
   // initial size tracking to detect if size changed from default
   QSize m_initialSize;

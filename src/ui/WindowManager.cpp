@@ -32,13 +32,7 @@ WindowManager::WindowManager(QObject* parent)
     m_cursorInsideWindow(true),
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
-    m_pipMode(false),
-    m_pipDragging(false),
-    m_pipForwardingClick(false),
-    m_pipEnforcingAspect(false),
-    m_pipAspectRatio(0),
-    m_prePipFlags(),
-    m_prePipVisibility(QWindow::Windowed),
+    m_pip(),
     m_initialSize(),
     m_initialScreenSize()
 {
@@ -146,7 +140,7 @@ void WindowManager::initializeWindow(QQuickWindow* window)
   // Auto-exit PiP when playback stops (user navigated away from player)
   connect(&PlayerComponent::Get(), &PlayerComponent::playbackStopped,
           this, [this](bool isNavigating) {
-            if (m_pipMode && !isNavigating)
+            if (m_pip.active && !isNavigating)
               setPiPMode(false);
           });
 
@@ -216,7 +210,7 @@ void WindowManager::setFullScreen(bool enable)
 
   if (enable)
   {
-    if (m_pipMode)
+    if (m_pip.active)
       setPiPMode(false);
 
     // Use showFullScreen()
@@ -262,7 +256,7 @@ void WindowManager::toggleFullscreen()
 void WindowManager::setCursorVisibility(bool visible)
 {
   // Always show cursor in PiP mode
-  if (m_pipMode)
+  if (m_pip.active)
     visible = true;
 
   if (visible == m_cursorVisible)
@@ -290,46 +284,46 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
     // PiP drag-to-move: click anywhere and drag to reposition the window.
     // Press is always consumed to prevent the web UI from toggling play/pause.
     // On release, if it wasn't a drag, we forward a synthetic press event so web UI continues to function normally.
-    if (m_pipMode && !m_pipForwardingClick && event->type() == QEvent::MouseButtonPress)
+    if (m_pip.active && !m_pip.forwardingClick && event->type() == QEvent::MouseButtonPress)
     {
       auto* me = static_cast<QMouseEvent*>(event);
       if (me->button() == Qt::LeftButton)
       {
         startPipDrag();
-        m_pipPressEvent.reset(me->clone());
+        m_pip.pressEvent.reset(me->clone());
         return true;
       }
     }
-    else if (m_pipMode && m_pipDragStartCursorPos != QPoint() && event->type() == QEvent::MouseMove)
+    else if (m_pip.active && m_pip.dragStartCursorPos != QPoint() && event->type() == QEvent::MouseMove)
     {
-      QPoint delta = QCursor::pos() - m_pipDragStartCursorPos;
-      if (!m_pipDragging && delta.manhattanLength() > 3)
-        m_pipDragging = true;
-      if (m_pipDragging)
+      QPoint delta = QCursor::pos() - m_pip.dragStartCursorPos;
+      if (!m_pip.dragging && delta.manhattanLength() > 3)
+        m_pip.dragging = true;
+      if (m_pip.dragging)
       {
-        m_window->setPosition(m_pipDragStartWindowPos + delta);
+        m_window->setPosition(m_pip.dragStartWindowPos + delta);
         return true;
       }
     }
-    else if (m_pipMode && !m_pipForwardingClick && event->type() == QEvent::MouseButtonRelease)
+    else if (m_pip.active && !m_pip.forwardingClick && event->type() == QEvent::MouseButtonRelease)
     {
       auto* me = static_cast<QMouseEvent*>(event);
       if (me->button() == Qt::LeftButton)
       {
-        bool wasDragging = m_pipDragging;
-        m_pipDragging = false;
-        m_pipDragStartCursorPos = QPoint();
+        bool wasDragging = m_pip.dragging;
+        m_pip.dragging = false;
+        m_pip.dragStartCursorPos = QPoint();
         if (wasDragging)
           return true;
 
         // Not a drag — forward the original press + this release
-        if (m_pipPressEvent)
+        if (m_pip.pressEvent)
         {
-          m_pipForwardingClick = true;
-          QCoreApplication::sendEvent(m_window, m_pipPressEvent.get());
+          m_pip.forwardingClick = true;
+          QCoreApplication::sendEvent(m_window, m_pip.pressEvent.get());
           QCoreApplication::sendEvent(m_window, me);
-          m_pipForwardingClick = false;
-          m_pipPressEvent.reset();
+          m_pip.forwardingClick = false;
+          m_pip.pressEvent.reset();
           return true;
         }
       }
@@ -397,7 +391,7 @@ void WindowManager::onVisibilityChanged(QWindow::Visibility visibility)
   // Track previous visibility (only when NOT fullscreen or hidden)
   // Preserve pre-fullscreen state for restore
   // Skip during PiP mode to avoid corrupting m_previousVisibility with transitional states
-  if (!m_pipMode && visibility != QWindow::FullScreen && visibility != QWindow::Hidden)
+  if (!m_pip.active && visibility != QWindow::FullScreen && visibility != QWindow::Hidden)
   {
     qDebug() << "onVisibilityChanged: updating m_previousVisibility from" << m_previousVisibility << "to" << visibility;
     m_previousVisibility = visibility;
@@ -695,7 +689,7 @@ void WindowManager::saveWindowSize()
   if (!section)
     return;
 
-  if (m_pipMode)
+  if (m_pip.active)
   {
     section->setValue(pipWidthKey(), m_window->width());
     return;
@@ -780,7 +774,7 @@ void WindowManager::saveWindowPosition()
   if (!section)
     return;
 
-  if (m_pipMode)
+  if (m_pip.active)
   {
     section->setValue(pipXKey(), m_window->x());
     section->setValue(pipYKey(), m_window->y());
@@ -1010,28 +1004,28 @@ void WindowManager::enforceZoom()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::startPipDrag()
 {
-  m_pipDragging = false;
-  m_pipDragStartCursorPos = QCursor::pos();
-  m_pipDragStartWindowPos = m_window->position();
+  m_pip.dragging = false;
+  m_pip.dragStartCursorPos = QCursor::pos();
+  m_pip.dragStartWindowPos = m_window->position();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::enforcePipAspectRatio()
 {
-  if (!m_pipMode || !m_window || m_pipEnforcingAspect || m_pipAspectRatio <= 0)
+  if (!m_pip.active || !m_window || m_pip.enforcingAspect || m_pip.aspectRatio <= 0)
     return;
 
-  m_pipEnforcingAspect = true;
-  int newHeight = qRound(m_window->width() / m_pipAspectRatio);
+  m_pip.enforcingAspect = true;
+  int newHeight = qRound(m_window->width() / m_pip.aspectRatio);
   if (newHeight != m_window->height())
     m_window->resize(m_window->width(), newHeight);
-  m_pipEnforcingAspect = false;
+  m_pip.enforcingAspect = false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::setPiPMode(bool enable)
 {
-  if (!m_window || enable == m_pipMode)
+  if (!m_window || enable == m_pip.active)
     return;
 
   if (enable)
@@ -1039,11 +1033,11 @@ void WindowManager::setPiPMode(bool enable)
     if (SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "forceAlwaysFS").toBool())
       return;
 
-    m_prePipGeometry = m_windowedGeometry;
-    m_prePipVisibility = m_window->visibility();
-    m_prePipFlags = m_window->flags();
+    m_pip.prePipGeometry = m_windowedGeometry;
+    m_pip.prePipVisibility = m_window->visibility();
+    m_pip.prePipFlags = m_window->flags();
 
-    m_pipMode = true;
+    m_pip.active = true;
 
     if (isFullScreen())
       setFullScreen(false);
@@ -1053,14 +1047,14 @@ void WindowManager::setPiPMode(bool enable)
 
     m_window->setMinimumSize(QSize(160, 90));
 
-    if (m_pipAspectRatio <= 0)
-      m_pipAspectRatio = PlayerComponent::Get().videoAspectRatio();
+    if (m_pip.aspectRatio <= 0)
+      m_pip.aspectRatio = PlayerComponent::Get().videoAspectRatio();
 
-    QRect pipRect = loadPipGeometry(m_pipAspectRatio);
+    QRect pipRect = loadPipGeometry(m_pip.aspectRatio);
     if (!pipRect.isValid())
     {
       int pipWidth = PIP_SIZE.width();
-      int pipHeight = (m_pipAspectRatio > 0) ? qRound(pipWidth / m_pipAspectRatio) : PIP_SIZE.height();
+      int pipHeight = (m_pip.aspectRatio > 0) ? qRound(pipWidth / m_pip.aspectRatio) : PIP_SIZE.height();
       QSize pipSize(pipWidth, pipHeight);
 
       QScreen* screen = findCurrentScreen();
@@ -1090,21 +1084,21 @@ void WindowManager::setPiPMode(bool enable)
   {
     disconnect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
 
-    m_pipMode = false;
-    m_pipDragging = false;
-    m_pipDragStartCursorPos = QPoint();
-    m_pipAspectRatio = 0;
+    // Save restore values before reset
+    auto restoreFlags = m_pip.prePipFlags;
+    auto restoreGeometry = m_pip.prePipGeometry;
+    auto restoreVisibility = m_pip.prePipVisibility;
+
+    m_pip.reset();
     emit pipModeChanged(false);
 
-    m_window->setFlags(m_prePipFlags);
-
+    m_window->setFlags(restoreFlags);
     m_window->setMinimumSize(WINDOWW_MIN_SIZE);
+    m_window->setGeometry(restoreGeometry);
 
-    m_window->setGeometry(m_prePipGeometry);
-
-    if (m_prePipVisibility == QWindow::Maximized)
+    if (restoreVisibility == QWindow::Maximized)
       m_window->showMaximized();
-    else if (m_prePipVisibility == QWindow::FullScreen)
+    else if (restoreVisibility == QWindow::FullScreen)
       m_window->showFullScreen();
   }
 }
@@ -1112,7 +1106,7 @@ void WindowManager::setPiPMode(bool enable)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::togglePiP()
 {
-  if (m_pipMode)
+  if (m_pip.active)
   {
     setPiPMode(false);
     return;
@@ -1123,6 +1117,6 @@ void WindowManager::togglePiP()
   if (aspect <= 0)
     return;
 
-  m_pipAspectRatio = aspect;
+  m_pip.aspectRatio = aspect;
   setPiPMode(true);
 }
