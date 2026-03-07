@@ -1204,6 +1204,12 @@ void WindowManager::exitPiP()
   m_window->setGeometry(QRect(-10000, -10000, restoreGeometry.width(), restoreGeometry.height()));
 
   QTimer::singleShot(0, this, [this, restoreGeometry, restoreVisibility]() {
+    // If the window is already fullscreen (e.g. PIP → FS transition called
+    // showFullScreen() before this timer fired), skip the deferred restore
+    // so we don't override the fullscreen geometry with the windowed one.
+    if (isFullScreen())
+      return;
+
     m_window->setGeometry(restoreGeometry);
 
     if (restoreVisibility == QWindow::Maximized)
