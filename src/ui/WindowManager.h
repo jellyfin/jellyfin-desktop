@@ -115,7 +115,6 @@ private:
   void applySettings();
 
   void enforceZoom();
-  void startPipDrag();
   void enforcePipAspectRatio();
 
   QQuickWindow* m_window;
@@ -140,7 +139,6 @@ private:
     bool enforcingAspect = false;
     double aspectRatio = 0;
     QPoint dragStartCursorPos;
-    QPoint dragStartWindowPos;
     std::unique_ptr<QMouseEvent> pressEvent;
 
     // Pre-PiP window state for restore
@@ -156,7 +154,6 @@ private:
       enforcingAspect = false;
       aspectRatio = 0;
       dragStartCursorPos = QPoint();
-      dragStartWindowPos = QPoint();
       pressEvent.reset();
     }
   };

@@ -282,28 +282,30 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
   if (watched == m_window)
   {
     // PiP drag-to-move: click anywhere and drag to reposition the window.
-    // Press is always consumed to prevent the web UI from toggling play/pause.
-    // On release, if it wasn't a drag, we forward a synthetic press event so web UI continues to function normally.
+    // Press is consumed to prevent the web UI from toggling play/pause.
+    // On move past threshold, startSystemMove() hands off to the OS.
+    // On release without movement, we forward the original click.
     if (m_pip.active && !m_pip.forwardingClick && event->type() == QEvent::MouseButtonPress)
     {
       auto* me = static_cast<QMouseEvent*>(event);
       if (me->button() == Qt::LeftButton)
       {
-        startPipDrag();
+        m_pip.dragging = false;
+        m_pip.dragStartCursorPos = QCursor::pos();
         m_pip.pressEvent.reset(me->clone());
         return true;
       }
     }
-    else if (m_pip.active && m_pip.dragStartCursorPos != QPoint() && event->type() == QEvent::MouseMove)
+    else if (m_pip.active && m_pip.pressEvent && event->type() == QEvent::MouseMove)
     {
       QPoint delta = QCursor::pos() - m_pip.dragStartCursorPos;
       if (!m_pip.dragging && delta.manhattanLength() > 3)
-        m_pip.dragging = true;
-      if (m_pip.dragging)
       {
-        m_window->setPosition(m_pip.dragStartWindowPos + delta);
-        return true;
+        m_pip.dragging = true;
+        m_pip.pressEvent.reset();
+        m_window->startSystemMove();
       }
+      return true;
     }
     else if (m_pip.active && !m_pip.forwardingClick && event->type() == QEvent::MouseButtonRelease)
     {
@@ -999,14 +1001,6 @@ void WindowManager::enforceZoom()
       m_enforcingZoom = false;
     }
   }
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-void WindowManager::startPipDrag()
-{
-  m_pip.dragging = false;
-  m_pip.dragStartCursorPos = QCursor::pos();
-  m_pip.dragStartWindowPos = m_window->position();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
