@@ -655,9 +655,9 @@ QString WindowManager::maximizedKey() const { return configKeyPrefix() + "Window
 QString WindowManager::positionXKey() const { return configKeyPrefix() + "XPosition"; }
 QString WindowManager::positionYKey() const { return configKeyPrefix() + "YPosition"; }
 QString WindowManager::screenNameKey() const { return "ScreenName"; }
-QString WindowManager::pipWidthKey() const { return "PiP-Width"; }
-QString WindowManager::pipXKey() const { return "PiP-XPosition"; }
-QString WindowManager::pipYKey() const { return "PiP-YPosition"; }
+QString WindowManager::pipWidthKey() const { return configKeyPrefix() + "PiP-Width"; }
+QString WindowManager::pipXKey() const { return configKeyPrefix() + "PiP-XPosition"; }
+QString WindowManager::pipYKey() const { return configKeyPrefix() + "PiP-YPosition"; }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 QRect WindowManager::loadPipGeometry(double aspectRatio)
