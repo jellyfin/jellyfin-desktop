@@ -868,8 +868,8 @@ void WindowManager::saveWindowPosition()
     return;
   }
 
-  // Skip if maximized
-  if (m_window->windowState() & Qt::WindowMaximized)
+  // Skip if maximized or fullscreen
+  if (m_window->windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen))
     return;
 
   m_windowedGeometry.moveTo(m_window->position());
