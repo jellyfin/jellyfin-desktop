@@ -116,6 +116,8 @@ private:
 
   void enforceZoom();
   void enforcePipAspectRatio();
+  void enterPiP();
+  void exitPiP();
 
   QQuickWindow* m_window;
   QQuickItem* m_webView;
