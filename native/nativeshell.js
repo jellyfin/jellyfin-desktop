@@ -14,7 +14,7 @@ const features = [
     "displaymode",
     "screensaver",
     "fileinput",
-    "pictureinpicture"
+    ...(!jmpInfo.settings?.main?.forceAlwaysFS ? ["pictureinpicture"] : [])
 ];
 
 const getPlugins = () => {

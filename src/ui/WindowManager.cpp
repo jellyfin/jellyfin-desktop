@@ -1035,6 +1035,9 @@ void WindowManager::setPiPMode(bool enable)
 
   if (enable)
   {
+    if (SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "forceAlwaysFS").toBool())
+      return;
+
     m_prePipGeometry = m_windowedGeometry;
     m_prePipVisibility = m_window->visibility();
     m_prePipFlags = m_window->flags();
