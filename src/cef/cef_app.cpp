@@ -150,6 +150,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("notifyRateChange", CefV8Value::CreateFunction("notifyRateChange", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("setClipboard", CefV8Value::CreateFunction("setClipboard", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("getClipboard", CefV8Value::CreateFunction("getClipboard", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("appExit", CefV8Value::CreateFunction("appExit", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject the JavaScript shim that creates window.api, window.NativeShell, etc.
@@ -473,6 +474,13 @@ bool NativeV8Handler::Execute(const CefString& name,
             ? arguments[0]->GetStringValue().ToString() : "text/plain";
         CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("getClipboard");
         msg->GetArgumentList()->SetString(0, mimeType);
+        browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
+        return true;
+    }
+
+    if (name == "appExit") {
+        LOG_INFO(LOG_CEF, "V8 appExit");
+        CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("appExit");
         browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
         return true;
     }

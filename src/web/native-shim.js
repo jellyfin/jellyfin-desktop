@@ -204,7 +204,7 @@
                 window.open(url, '_blank');
             },
             exit() {
-                console.log('[Media] exit requested');
+                if (window.jmpNative) window.jmpNative.appExit();
             },
             cancelServerConnectivity() {
                 if (window.jmpCheckServerConnectivity && window.jmpCheckServerConnectivity.abort) {
@@ -344,7 +344,8 @@
             const features = [
                 'filedownload', 'displaylanguage', 'htmlaudioautoplay',
                 'htmlvideoautoplay', 'externallinks', 'multiserver',
-                'fullscreenchange', 'remotevideo', 'displaymode'
+                'fullscreenchange', 'remotevideo', 'displaymode',
+                'exitmenu'
             ];
             return features.includes(command.toLowerCase());
         },
