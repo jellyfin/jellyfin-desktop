@@ -13,7 +13,8 @@ const features = [
     "remotevideo",
     "displaymode",
     "screensaver",
-    "fileinput"
+    "fileinput",
+    ...(!jmpInfo.settings?.main?.forceAlwaysFS ? ["pictureinpicture"] : [])
 ];
 
 const getPlugins = () => {

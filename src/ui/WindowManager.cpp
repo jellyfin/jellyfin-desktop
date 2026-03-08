@@ -32,6 +32,7 @@ WindowManager::WindowManager(QObject* parent)
     m_cursorInsideWindow(true),
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
+    m_pip(),
     m_initialSize(),
     m_initialScreenSize()
 {
@@ -67,8 +68,9 @@ void WindowManager::initializeWindow(QQuickWindow* window)
   // Install event filter to track cursor enter/leave
   m_window->installEventFilter(this);
 
-  // Register host command for fullscreen toggle
+  // Register host commands
   InputComponent::Get().registerHostCommand("fullscreen", this, "toggleFullscreen");
+  InputComponent::Get().registerHostCommand("togglePip", this, "togglePiP");
 
   // Load and apply saved geometry
   loadGeometry();
@@ -134,6 +136,13 @@ void WindowManager::initializeWindow(QQuickWindow* window)
   // Connect to application shutdown
   connect(qApp, &QGuiApplication::aboutToQuit,
           this, &WindowManager::saveGeometrySlot);
+
+  // Auto-exit PiP when playback stops (user navigated away from player)
+  connect(&PlayerComponent::Get(), &PlayerComponent::playbackStopped,
+          this, [this](bool isNavigating) {
+            if (m_pip.active && !isNavigating)
+              setPiPMode(false);
+          });
 
   // Find web view and connect to zoom changes
   m_webView = m_window->findChild<QQuickItem*>("web");
@@ -201,6 +210,9 @@ void WindowManager::setFullScreen(bool enable)
 
   if (enable)
   {
+    if (m_pip.active)
+      setPiPMode(false);
+
     // Use showFullScreen()
     m_window->showFullScreen();
     updateForcedScreen();
@@ -221,6 +233,13 @@ void WindowManager::setFullScreen(bool enable)
     {
       qDebug() << "setFullScreen(false): restoring to windowed";
       m_window->showNormal();
+      // Explicitly restore position — Qt's internal restore geometry may be
+      // stale after a PiP→FS transition (window was temporarily off-screen).
+      // The interaction between PIP and FS is complicated. It is probably cleaner to disallow PIP <-> FS transitions.
+      // However, this requires WebView changes, and carefully enabling/disabling shortcut keys (including video area double click)
+      // The current implementation handles all cases well enough
+      if (!isWayland() && m_windowedGeometry.isValid())
+        m_window->setPosition(m_windowedGeometry.topLeft());
     }
   }
 }
@@ -243,6 +262,10 @@ void WindowManager::toggleFullscreen()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::setCursorVisibility(bool visible)
 {
+  // Always show cursor in PiP mode
+  if (m_pip.active)
+    visible = true;
+
   if (visible == m_cursorVisible)
     return;
 
@@ -261,10 +284,138 @@ void WindowManager::setCursorVisibility(bool visible)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+static Qt::CursorShape cursorForEdges(Qt::Edges edges)
+{
+  bool left = edges & Qt::LeftEdge;
+  bool right = edges & Qt::RightEdge;
+  bool top = edges & Qt::TopEdge;
+  bool bottom = edges & Qt::BottomEdge;
+
+  if ((left && top) || (right && bottom))
+    return Qt::SizeFDiagCursor;
+  if ((left && bottom) || (right && top))
+    return Qt::SizeBDiagCursor;
+  if (left || right)
+    return Qt::SizeHorCursor;
+  return Qt::SizeVerCursor;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+Qt::Edges WindowManager::pipEdgesAt(const QPoint& localPos) const
+{
+  if (!m_window)
+    return {};
+
+  const int grip = 8;
+  Qt::Edges edges;
+
+  if (localPos.x() < grip)
+    edges |= Qt::LeftEdge;
+  if (localPos.x() >= m_window->width() - grip)
+    edges |= Qt::RightEdge;
+  if (localPos.y() < grip)
+    edges |= Qt::TopEdge;
+  if (localPos.y() >= m_window->height() - grip)
+    edges |= Qt::BottomEdge;
+
+  return edges;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 bool WindowManager::eventFilter(QObject* watched, QEvent* event)
 {
   if (watched == m_window)
   {
+    // PiP edge resize: frameless windows lose native resize borders on Windows
+    // and some Linux WMs, so we manually detect edges, show resize cursors on
+    // hover, and call startSystemResize() on press.  macOS handles this natively.
+#ifndef Q_OS_MAC
+    if (m_pip.active && event->type() == QEvent::MouseMove && !m_pip.pressEvent && !m_pip.dragging)
+    {
+      auto* me = static_cast<QMouseEvent*>(event);
+      Qt::Edges edges = pipEdgesAt(me->position().toPoint());
+      if (edges && !m_pip.resizeCursorSet)
+      {
+        qApp->setOverrideCursor(QCursor(cursorForEdges(edges)));
+        m_pip.resizeCursorSet = true;
+      }
+      else if (edges && m_pip.resizeCursorSet)
+      {
+        qApp->changeOverrideCursor(QCursor(cursorForEdges(edges)));
+      }
+      else if (!edges && m_pip.resizeCursorSet)
+      {
+        qApp->restoreOverrideCursor();
+        m_pip.resizeCursorSet = false;
+      }
+    }
+#endif
+
+    // PiP drag-to-move: click anywhere and drag to reposition the window.
+    // Press is consumed to prevent the web UI from toggling play/pause.
+    // On move past threshold, startSystemMove() hands off to the OS.
+    // On release without movement, we forward the original click.
+    if (m_pip.active && !m_pip.forwardingClick && event->type() == QEvent::MouseButtonPress)
+    {
+      auto* me = static_cast<QMouseEvent*>(event);
+      if (me->button() == Qt::LeftButton)
+      {
+        // Edge press: start system resize instead of drag
+#ifndef Q_OS_MAC
+        Qt::Edges edges = pipEdgesAt(me->position().toPoint());
+        if (edges)
+        {
+          if (m_pip.resizeCursorSet)
+          {
+            qApp->restoreOverrideCursor();
+            m_pip.resizeCursorSet = false;
+          }
+          m_window->startSystemResize(edges);
+          return true;
+        }
+#endif
+
+        m_pip.dragging = false;
+        m_pip.dragStartCursorPos = QCursor::pos();
+        m_pip.pressEvent.reset(me->clone());
+        return true;
+      }
+    }
+    else if (m_pip.active && m_pip.pressEvent && event->type() == QEvent::MouseMove)
+    {
+      QPoint delta = QCursor::pos() - m_pip.dragStartCursorPos;
+      if (!m_pip.dragging && delta.manhattanLength() > 3)
+      {
+        m_pip.dragging = true;
+        m_pip.pressEvent.reset();
+        m_window->startSystemMove();
+      }
+      return true;
+    }
+    else if (m_pip.active && !m_pip.forwardingClick && event->type() == QEvent::MouseButtonRelease)
+    {
+      auto* me = static_cast<QMouseEvent*>(event);
+      if (me->button() == Qt::LeftButton)
+      {
+        bool wasDragging = m_pip.dragging;
+        m_pip.dragging = false;
+        m_pip.dragStartCursorPos = QPoint();
+        if (wasDragging)
+          return true;
+
+        // Not a drag — forward the original press + this release
+        if (m_pip.pressEvent)
+        {
+          m_pip.forwardingClick = true;
+          QCoreApplication::sendEvent(m_window, m_pip.pressEvent.get());
+          QCoreApplication::sendEvent(m_window, me);
+          m_pip.forwardingClick = false;
+          m_pip.pressEvent.reset();
+          return true;
+        }
+      }
+    }
+
     if (event->type() == QEvent::Enter)
     {
       m_cursorInsideWindow = true;
@@ -277,6 +428,13 @@ bool WindowManager::eventFilter(QObject* watched, QEvent* event)
     else if (event->type() == QEvent::Leave)
     {
       m_cursorInsideWindow = false;
+#ifndef Q_OS_MAC
+      if (m_pip.resizeCursorSet)
+      {
+        qApp->restoreOverrideCursor();
+        m_pip.resizeCursorSet = false;
+      }
+#endif
 #ifdef Q_OS_MAC
       // Always show cursor when leaving window
       OSXUtils::SetCursorVisible(true);
@@ -326,7 +484,8 @@ void WindowManager::onVisibilityChanged(QWindow::Visibility visibility)
 
   // Track previous visibility (only when NOT fullscreen or hidden)
   // Preserve pre-fullscreen state for restore
-  if (visibility != QWindow::FullScreen && visibility != QWindow::Hidden)
+  // Skip during PiP mode to avoid corrupting m_previousVisibility with transitional states
+  if (!m_pip.active && visibility != QWindow::FullScreen && visibility != QWindow::Hidden)
   {
     qDebug() << "onVisibilityChanged: updating m_previousVisibility from" << m_previousVisibility << "to" << visibility;
     m_previousVisibility = visibility;
@@ -590,6 +749,29 @@ QString WindowManager::maximizedKey() const { return configKeyPrefix() + "Window
 QString WindowManager::positionXKey() const { return configKeyPrefix() + "XPosition"; }
 QString WindowManager::positionYKey() const { return configKeyPrefix() + "YPosition"; }
 QString WindowManager::screenNameKey() const { return "ScreenName"; }
+QString WindowManager::pipWidthKey() const { return configKeyPrefix() + "PiP-Width"; }
+QString WindowManager::pipXKey() const { return configKeyPrefix() + "PiP-XPosition"; }
+QString WindowManager::pipYKey() const { return configKeyPrefix() + "PiP-YPosition"; }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+QRect WindowManager::loadPipGeometry(double aspectRatio)
+{
+  int w = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipWidthKey()).toInt();
+  int x = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipXKey()).toInt();
+  int y = SettingsComponent::Get().value(SETTINGS_SECTION_STATE, pipYKey()).toInt();
+
+  // Use saved width but recompute height from current video aspect ratio
+  if (w > 0 && aspectRatio > 0)
+  {
+    int h = qRound(w / aspectRatio);
+
+    QRect candidate(x, y, w, h);
+    if (fitsInScreens(candidate))
+      return candidate;
+  }
+
+  return QRect();
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void WindowManager::saveWindowSize()
@@ -600,6 +782,12 @@ void WindowManager::saveWindowSize()
   SettingsSection* section = SettingsComponent::Get().getSection(SETTINGS_SECTION_STATE);
   if (!section)
     return;
+
+  if (m_pip.active)
+  {
+    section->setValue(pipWidthKey(), m_window->width());
+    return;
+  }
 
   bool isMaximized = m_window->windowState() & Qt::WindowMaximized;
   bool isFullScreen = m_window->windowState() & Qt::WindowFullScreen;
@@ -676,12 +864,19 @@ void WindowManager::saveWindowPosition()
   if (isWayland())
     return;
 
-  // Skip if maximized
-  if (m_window->windowState() & Qt::WindowMaximized)
-    return;
-
   SettingsSection* section = SettingsComponent::Get().getSection(SETTINGS_SECTION_STATE);
   if (!section)
+    return;
+
+  if (m_pip.active)
+  {
+    section->setValue(pipXKey(), m_window->x());
+    section->setValue(pipYKey(), m_window->y());
+    return;
+  }
+
+  // Skip if maximized or fullscreen
+  if (m_window->windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen))
     return;
 
   m_windowedGeometry.moveTo(m_window->position());
@@ -898,4 +1093,140 @@ void WindowManager::enforceZoom()
       m_enforcingZoom = false;
     }
   }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::enforcePipAspectRatio()
+{
+  if (!m_pip.active || !m_window || m_pip.enforcingAspect || m_pip.aspectRatio <= 0)
+    return;
+
+  m_pip.enforcingAspect = true;
+  int newHeight = qRound(m_window->width() / m_pip.aspectRatio);
+  if (newHeight != m_window->height())
+    m_window->resize(m_window->width(), newHeight);
+  m_pip.enforcingAspect = false;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::setPiPMode(bool enable)
+{
+  if (!m_window || enable == m_pip.active)
+    return;
+
+  if (enable)
+    enterPiP();
+  else
+    exitPiP();
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::togglePiP()
+{
+  setPiPMode(!m_pip.active);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::enterPiP()
+{
+  if (SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "forceAlwaysFS").toBool() || isWayland())
+    return;
+
+  m_pip.aspectRatio = PlayerComponent::Get().videoAspectRatio();
+  if (m_pip.aspectRatio <= 0) // No video in current view
+    return;
+
+  m_pip.prePipGeometry = m_windowedGeometry;
+  m_pip.prePipVisibility = m_window->visibility();
+  m_pip.prePipFlags = m_window->flags();
+
+  // Must be set before setFullScreen(false) so onVisibilityChanged
+  // skips updating m_previousVisibility during the transition.
+  m_pip.active = true;
+
+  if (isFullScreen())
+    setFullScreen(false);
+
+  setCursorVisibility(true);
+  m_window->setMinimumSize(QSize(160, 90));
+
+  QRect pipRect = loadPipGeometry(m_pip.aspectRatio);
+  if (!pipRect.isValid())
+  {
+    int pipWidth = PIP_SIZE.width();
+    int pipHeight = qRound(pipWidth / m_pip.aspectRatio);
+    QSize pipSize(pipWidth, pipHeight);
+
+    QScreen* screen = findCurrentScreen();
+    if (screen)
+    {
+      QRect screenGeo = screen->availableGeometry();
+      int x = screenGeo.right() - pipSize.width() - 20;
+      int y = screenGeo.bottom() - pipSize.height() - 20;
+      pipRect = QRect(QPoint(x, y), pipSize);
+    }
+    else
+    {
+      pipRect = QRect(m_window->position(), pipSize);
+    }
+  }
+  m_window->setGeometry(pipRect);
+
+  m_window->setFlags(Qt::FramelessWindowHint);
+  setAlwaysOnTop(true);
+
+  connect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
+  emit pipModeChanged(true);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::exitPiP()
+{
+  disconnect(m_window, &QQuickWindow::widthChanged, this, &WindowManager::enforcePipAspectRatio);
+
+#ifndef Q_OS_MAC
+  if (m_pip.resizeCursorSet)
+  {
+    qApp->restoreOverrideCursor();
+    m_pip.resizeCursorSet = false;
+  }
+#endif
+
+  // Save restore values before reset
+  auto restoreFlags = m_pip.prePipFlags;
+  auto restoreGeometry = m_pip.prePipGeometry;
+  auto restoreVisibility = m_pip.prePipVisibility;
+
+  m_pip.reset();
+  emit pipModeChanged(false);
+
+  // setFlags() recreates the native window on macOS, which breaks Chromium's
+  // mouse tracking. To force real native Enter/Leave events, we place the
+  // window off-screen after setFlags(), then defer the real geometry restore
+  // to the next event loop tick. This gives macOS time to process the
+  // off-screen position, so that when the window moves under the cursor,
+  // a real native Enter event is generated.
+  m_window->setFlags(restoreFlags);
+  m_window->setMinimumSize(WINDOWW_MIN_SIZE);
+  m_window->setGeometry(QRect(-10000, -10000, restoreGeometry.width(), restoreGeometry.height()));
+
+  QTimer::singleShot(0, this, [this, restoreGeometry, restoreVisibility]() {
+    // If the window is already fullscreen (e.g. PIP → FS transition called
+    // showFullScreen() before this timer fired), skip the deferred restore
+    // so we don't override the fullscreen geometry with the windowed one.
+    if (isFullScreen())
+    {
+      m_windowedGeometry = restoreGeometry;
+      return;
+    }
+
+    m_window->setGeometry(restoreGeometry);
+
+    if (restoreVisibility == QWindow::Maximized)
+      m_window->showMaximized();
+    else if (restoreVisibility == QWindow::FullScreen)
+      m_window->showFullScreen();
+
+    m_cursorInsideWindow = m_window->geometry().contains(QCursor::pos());
+  });
 }

@@ -1,6 +1,8 @@
 #ifndef WINDOWMANAGER_H
 #define WINDOWMANAGER_H
 
+#include <QCoreApplication>
+#include <QMouseEvent>
 #include <QObject>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -8,15 +10,18 @@
 #include <QScreen>
 #include <QTimer>
 #include <QWindow>
+#include <memory>
 #include "core/ComponentManager.h"
 
 #define WEBUI_MAX_HEIGHT 1440.0
 #define WEBUI_SIZE QSize(1280, 720)
 #define WINDOWW_MIN_SIZE QSize(213, 120)
+#define PIP_SIZE QSize(400, 225)
 
 class WindowManager : public ComponentBase
 {
   Q_OBJECT
+  Q_PROPERTY(bool pipMode READ isPiPMode NOTIFY pipModeChanged)
 
 public:
   static WindowManager& Get();
@@ -44,6 +49,11 @@ public:
   Q_INVOKABLE void setFullScreen(bool enable);
   Q_INVOKABLE bool isFullScreen() const;
 
+  // Picture-in-Picture
+  Q_INVOKABLE void setPiPMode(bool enable);
+  Q_INVOKABLE void togglePiP();
+  bool isPiPMode() const { return m_pip.active; }
+
   // Cursor visibility
   Q_INVOKABLE void setCursorVisibility(bool visible);
 
@@ -58,6 +68,7 @@ public slots:
 
 signals:
   void fullScreenSwitched();
+  void pipModeChanged(bool enabled);
 
 private slots:
   void onVisibilityChanged(QWindow::Visibility visibility);
@@ -87,6 +98,10 @@ private:
   QString positionXKey() const;
   QString positionYKey() const;
   QString screenNameKey() const;
+  QString pipWidthKey() const;
+  QString pipXKey() const;
+  QString pipYKey() const;
+  QRect loadPipGeometry(double aspectRatio);
 
   // Screens
   void updateScreens();
@@ -100,6 +115,10 @@ private:
   void applySettings();
 
   void enforceZoom();
+  void enforcePipAspectRatio();
+  Qt::Edges pipEdgesAt(const QPoint& localPos) const;
+  void enterPiP();
+  void exitPiP();
 
   QQuickWindow* m_window;
   QQuickItem* m_webView;
@@ -113,6 +132,37 @@ private:
   QWindow::Visibility m_previousVisibility;  // State before fullscreen
   QRect m_windowedGeometry;                  // Geometry when in Windowed state
   QTimer* m_geometrySaveTimer;               // Debounced disk sync
+
+  // PiP state
+  struct PipState
+  {
+    bool active = false;
+    bool dragging = false;
+    bool forwardingClick = false;
+    bool enforcingAspect = false;
+    bool resizeCursorSet = false;
+    double aspectRatio = 0;
+    QPoint dragStartCursorPos;
+    std::unique_ptr<QMouseEvent> pressEvent;
+
+    // Pre-PiP window state for restore
+    QRect prePipGeometry;
+    Qt::WindowFlags prePipFlags;
+    QWindow::Visibility prePipVisibility = QWindow::Windowed;
+
+    void reset()
+    {
+      active = false;
+      dragging = false;
+      forwardingClick = false;
+      enforcingAspect = false;
+      resizeCursorSet = false;
+      aspectRatio = 0;
+      dragStartCursorPos = QPoint();
+      pressEvent.reset();
+    }
+  };
+  PipState m_pip;
 
   // initial size tracking to detect if size changed from default
   QSize m_initialSize;
