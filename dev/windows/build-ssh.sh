@@ -35,6 +35,12 @@ REMOTE="$1"
 # --- Sync ---
 sync_to_remote "$REMOTE"
 
+# --- Build mpv from source if needed ---
+if ! ssh "$REMOTE" "dir C:\\jellyfin-desktop-cef\\third_party\\mpv-install\\lib\\mpv.lib" >/dev/null 2>&1; then
+    echo "=== Building mpv from source ==="
+    ssh "$REMOTE" 'C:\jellyfin-desktop-cef\dev\windows\build_mpv_source.bat'
+fi
+
 # --- Build ---
 ssh "$REMOTE" 'C:\jellyfin-desktop-cef\dev\windows\build.bat'
 

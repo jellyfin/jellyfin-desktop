@@ -452,7 +452,7 @@ if(NOT EXTERNAL_MPV_DIR)
     add_dependencies(jellyfin-desktop-cef mpv_build)
 endif()
 
-# Copy libmpv to build directory (only when building from source)
+# Copy libmpv to build directory
 if(NOT EXTERNAL_MPV_DIR)
     if(APPLE)
         add_custom_command(TARGET jellyfin-desktop-cef POST_BUILD
@@ -479,6 +479,14 @@ if(NOT EXTERNAL_MPV_DIR)
                 "$<TARGET_FILE_DIR:jellyfin-desktop-cef>/libmpv.so.2"
         )
     endif()
+elseif(WIN32)
+    # External mpv: copy all DLLs (libmpv + dependencies) to build directory
+    file(GLOB _MPV_BUILD_DLLS "${EXTERNAL_MPV_DIR}/lib/*.dll")
+    add_custom_command(TARGET jellyfin-desktop-cef POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${_MPV_BUILD_DLLS}
+            "$<TARGET_FILE_DIR:jellyfin-desktop-cef>"
+    )
 endif()
 
 # Install rules
