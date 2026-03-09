@@ -1,7 +1,7 @@
 # Project Notes
 
 ## Constraints
-- **No artificial heartbeats/polling** - event-driven architecture only. Never use timeouts as a workaround for proper event integration.
+- **No artificial heartbeats/polling** - event-driven architecture only. Never use timeouts as a workaround for proper event integration. No arbitrary timeout-based bailouts in shutdown paths either — fix the root cause instead.
 - **No texture stretching during resize** - CEF content must always render at 1:1 pixel mapping. Never scale/stretch textures to fill the viewport. Gaps from stale texture sizes are acceptable; stretching is not.
 
 ## Build

@@ -1834,6 +1834,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Cleanup
+#ifdef _WIN32
+    // Hide window immediately so user doesn't see "not responding" during cleanup
+    SDL_HideWindow(window);
+#endif
 #ifdef __APPLE__
     SDL_RemoveEventWatch(liveResizeCallback, &live_resize_ctx);
 #endif
