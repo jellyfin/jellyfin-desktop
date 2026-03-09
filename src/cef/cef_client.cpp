@@ -13,6 +13,19 @@
 
 namespace {
 
+void applySettingValue(const std::string& section, const std::string& key, const std::string& value) {
+    auto& s = Settings::instance();
+    if (key == "hwdec") s.setHwdec(value);
+    else if (key == "audioPassthrough") s.setAudioPassthrough(value);
+    else if (key == "audioExclusive") s.setAudioExclusive(value == "true");
+    else if (key == "audioChannels") s.setAudioChannels(value);
+    else if (key == "disableGpuCompositing") s.setDisableGpuCompositing(value == "true");
+    else if (key == "dmabuf") s.setDmabuf(value == "true");
+    else if (key == "logLevel") s.setLogLevel(value);
+    else LOG_WARN(LOG_CEF, "Unknown setting key: %s.%s", section.c_str(), key.c_str());
+    s.saveAsync();
+}
+
 void doCopy(CefRefPtr<CefBrowser> browser, bool cut) {
     if (!browser) return;
     auto frame = browser->GetFocusedFrame();
@@ -322,6 +335,13 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
         LOG_INFO(LOG_CEF, "IPC saving server URL: %s", url.c_str());
         Settings::instance().setServerUrl(url);
         Settings::instance().saveAsync();
+        return true;
+    } else if (name == "setSettingValue") {
+        std::string section = args->GetString(0).ToString();
+        std::string key = args->GetString(1).ToString();
+        std::string value = args->GetString(2).ToString();
+        LOG_INFO(LOG_CEF, "IPC setSettingValue: %s.%s = %s", section.c_str(), key.c_str(), value.c_str());
+        applySettingValue(section, key, value);
         return true;
     } else if (name == "notifyMetadata") {
         std::string metadata = args->GetString(0).ToString();
@@ -876,6 +896,15 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
         LOG_INFO(LOG_CEF, "Overlay IPC saving server URL: %s", url.c_str());
         Settings::instance().setServerUrl(url);
         Settings::instance().saveAsync();
+        return true;
+    }
+
+    if (name == "setSettingValue") {
+        std::string section = args->GetString(0).ToString();
+        std::string key = args->GetString(1).ToString();
+        std::string value = args->GetString(2).ToString();
+        LOG_INFO(LOG_CEF, "Overlay IPC setSettingValue: %s.%s = %s", section.c_str(), key.c_str(), value.c_str());
+        applySettingValue(section, key, value);
         return true;
     }
 

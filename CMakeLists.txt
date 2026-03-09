@@ -337,6 +337,7 @@ set(COMMON_SOURCES
     src/player/mpv_event_thread.cpp
     src/player/video_render_controller.cpp
     src/player/media_session_thread.cpp
+    src/cjson/cJSON.c
     src/settings.cpp
     src/window_geometry.cpp
     src/ui/menu_overlay.cpp

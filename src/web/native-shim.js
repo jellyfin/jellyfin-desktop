@@ -49,6 +49,9 @@
         return signal;
     }
 
+    // Saved settings from native (injected as placeholder, replaced at load time)
+    const _savedSettings = JSON.parse('__SETTINGS_JSON__');
+
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
         version: '1.0.0',
@@ -57,33 +60,60 @@
         userAgent: navigator.userAgent,
         scriptPath: '',
         sections: [
-            { key: 'main', order: 0 },
+            { key: 'playback', order: 0 },
             { key: 'audio', order: 1 },
-            { key: 'video', order: 2 }
+            { key: 'advanced', order: 2 }
         ],
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
-            audio: { channels: '2.0' },
-            video: {
-                force_transcode_dovi: false,
-                force_transcode_hdr: false,
-                force_transcode_hi10p: false,
-                force_transcode_hevc: false,
-                force_transcode_av1: false,
-                force_transcode_4k: false,
-                always_force_transcode: false,
-                allow_transcode_to_hevc: true,
-                prefer_transcode_to_h265: false,
-                aspect: 'normal',
-                default_playback_speed: 1
+            playback: {
+                hwdec: _savedSettings.hwdec || 'auto-safe'
+            },
+            audio: {
+                audioPassthrough: _savedSettings.audioPassthrough || '',
+                audioExclusive: _savedSettings.audioExclusive || false,
+                audioChannels: _savedSettings.audioChannels || ''
+            },
+            advanced: {
+                disableGpuCompositing: _savedSettings.disableGpuCompositing || false,
+                dmabuf: _savedSettings.dmabuf || false,
+                logLevel: _savedSettings.logLevel || ''
             }
         },
         settingsDescriptions: {
-            video: [{ key: 'aspect', options: [
-                { value: 'normal', title: 'video.aspect.normal' },
-                { value: 'zoom', title: 'video.aspect.zoom' },
-                { value: 'stretch', title: 'video.aspect.stretch' }
-            ]}]
+            playback: [
+                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto-safe" for safe auto-detection, "auto" for aggressive auto-detection, or "no" to disable.', options: [
+                    { value: 'auto-safe', title: 'Auto (Safe)' },
+                    { value: 'auto', title: 'Auto' },
+                    { value: 'no', title: 'Disabled' },
+                    { value: 'vaapi', title: 'VA-API (Linux)' },
+                    { value: 'nvdec', title: 'NVDEC (NVIDIA)' },
+                    { value: 'vulkan', title: 'Vulkan' },
+                    { value: 'd3d11va', title: 'D3D11VA (Windows)' },
+                    { value: 'videotoolbox', title: 'VideoToolbox (macOS)' }
+                ]}
+            ],
+            audio: [
+                { key: 'audioPassthrough', displayName: 'Audio Passthrough', help: 'Comma-separated list of codecs to pass through to the audio device (e.g. ac3,eac3,dts-hd,truehd). Leave empty to disable.', inputType: 'textarea' },
+                { key: 'audioExclusive', displayName: 'Exclusive Audio Output', help: 'Take exclusive control of the audio device during playback. May reduce latency but prevents other apps from playing audio.' },
+                { key: 'audioChannels', displayName: 'Audio Channel Layout', help: 'Force a specific channel layout. Leave empty for auto-detection.', options: [
+                    { value: '', title: 'Auto' },
+                    { value: 'stereo', title: 'Stereo' },
+                    { value: '5.1', title: '5.1 Surround' },
+                    { value: '7.1', title: '7.1 Surround' }
+                ]}
+            ],
+            advanced: [
+                { key: 'disableGpuCompositing', displayName: 'Disable GPU Compositing', help: 'Disable Chromium GPU compositing. May help with rendering issues on some systems.' },
+                { key: 'dmabuf', displayName: 'DMA-BUF Zero-Copy (Linux)', help: 'Enable DMA-BUF zero-copy CEF rendering. Experimental, Linux only.' },
+                { key: 'logLevel', displayName: 'Log Level', help: 'Set the application log verbosity level.', options: [
+                    { value: '', title: 'Default (Info)' },
+                    { value: 'verbose', title: 'Verbose' },
+                    { value: 'debug', title: 'Debug' },
+                    { value: 'warn', title: 'Warning' },
+                    { value: 'error', title: 'Error' }
+                ]}
+            ]
         },
         settingsUpdate: [],
         settingsDescriptionsUpdate: []
@@ -214,6 +244,9 @@
         },
         settings: {
             setValue(section, key, value, callback) {
+                if (window.jmpNative && window.jmpNative.setSettingValue) {
+                    window.jmpNative.setSettingValue(section, key, typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value));
+                }
                 if (callback) callback();
             },
             sectionValueUpdate: createSignal('sectionValueUpdate'),
@@ -283,7 +316,9 @@
         downloadFile(info) {
             window.api.system.openExternalUrl(info.url);
         },
-        openClientSettings() {},
+        openClientSettings() {
+            showSettingsModal();
+        },
         getPlugins() {
             return plugins;
         }
@@ -345,7 +380,7 @@
                 'filedownload', 'displaylanguage', 'htmlaudioautoplay',
                 'htmlvideoautoplay', 'externallinks', 'multiserver',
                 'fullscreenchange', 'remotevideo', 'displaymode',
-                'exitmenu'
+                'exitmenu', 'clientsettings'
             ];
             return features.includes(command.toLowerCase());
         },
@@ -368,6 +403,163 @@
         style.textContent = 'body.mouseIdle, body.mouseIdle * { cursor: none !important; }';
         document.head.appendChild(style);
     });
+
+    // Settings modal (adapted from jellyfin-desktop's nativeshell.js)
+    function showSettingsModal() {
+        const modalContainer = document.createElement('div');
+        modalContainer.className = 'dialogContainer';
+        modalContainer.style.backgroundColor = 'rgba(0,0,0,0.5)';
+        modalContainer.addEventListener('click', e => {
+            if (e.target === modalContainer) modalContainer.remove();
+        });
+        document.body.appendChild(modalContainer);
+
+        const dialog = document.createElement('div');
+        dialog.className = 'focuscontainer dialog dialog-fixedSize dialog-small formDialog opened';
+        modalContainer.appendChild(dialog);
+
+        const header = document.createElement('div');
+        header.className = 'formDialogHeader';
+        dialog.appendChild(header);
+
+        const title = document.createElement('h3');
+        title.className = 'formDialogHeaderTitle';
+        title.textContent = 'Client Settings';
+        header.appendChild(title);
+
+        const contents = document.createElement('div');
+        contents.className = 'formDialogContent smoothScrollY';
+        contents.style.paddingTop = '2em';
+        contents.style.marginBottom = '6.2em';
+        dialog.appendChild(contents);
+
+        // Restart notice
+        const notice = document.createElement('div');
+        notice.style.cssText = 'padding: 0.5em 1em; margin: 0 1em 1em; background: #332b00; border-radius: 4px; color: #ffcc00; font-size: 0.9em;';
+        notice.textContent = 'Changes take effect after restarting the application.';
+        contents.appendChild(notice);
+
+        for (const sectionOrder of jmpInfo.sections.sort((a, b) => a.order - b.order)) {
+            const section = sectionOrder.key;
+            const values = jmpInfo.settings[section];
+            const descriptions = jmpInfo.settingsDescriptions[section];
+            if (!descriptions || !descriptions.length) continue;
+
+            const group = document.createElement('fieldset');
+            group.className = 'editItemMetadataForm editMetadataForm dialog-content-centered';
+            group.style.border = '0';
+            group.style.outline = '0';
+            contents.appendChild(group);
+
+            const legend = document.createElement('legend');
+            const legendHeader = document.createElement('h2');
+            legendHeader.textContent = section.charAt(0).toUpperCase() + section.slice(1);
+            legend.appendChild(legendHeader);
+            group.appendChild(legend);
+
+            for (const setting of descriptions) {
+                const label = document.createElement('label');
+                label.className = 'inputContainer';
+                label.style.marginBottom = '1.8em';
+                label.style.display = 'block';
+
+                if (setting.options) {
+                    const control = document.createElement('select');
+                    control.className = 'emby-select-withcolor emby-select';
+                    for (const option of setting.options) {
+                        const opt = document.createElement('option');
+                        opt.value = option.value;
+                        opt.selected = String(option.value) === String(values[setting.key]);
+                        opt.textContent = option.title;
+                        control.appendChild(opt);
+                    }
+                    control.addEventListener('change', () => {
+                        jmpInfo.settings[section][setting.key] = control.value;
+                        window.api.settings.setValue(section, setting.key, control.value);
+                    });
+                    const labelText = document.createElement('label');
+                    labelText.className = 'inputLabel';
+                    labelText.textContent = setting.displayName + ':';
+                    label.appendChild(labelText);
+                    if (setting.help) {
+                        const helpText = document.createElement('div');
+                        helpText.style.cssText = 'font-size: 0.8em; color: #999; margin-bottom: 0.5em;';
+                        helpText.textContent = setting.help;
+                        label.appendChild(helpText);
+                    }
+                    label.appendChild(control);
+                } else if (setting.inputType === 'textarea') {
+                    const control = document.createElement('textarea');
+                    control.className = 'emby-select-withcolor emby-select';
+                    control.style.resize = 'none';
+                    control.value = values[setting.key] || '';
+                    control.rows = 2;
+                    control.addEventListener('change', () => {
+                        jmpInfo.settings[section][setting.key] = control.value;
+                        window.api.settings.setValue(section, setting.key, control.value);
+                    });
+                    const labelText = document.createElement('label');
+                    labelText.className = 'inputLabel';
+                    labelText.textContent = setting.displayName + ':';
+                    label.appendChild(labelText);
+                    if (setting.help) {
+                        const helpText = document.createElement('div');
+                        helpText.style.cssText = 'font-size: 0.8em; color: #999; margin-bottom: 0.5em;';
+                        helpText.textContent = setting.help;
+                        label.appendChild(helpText);
+                    }
+                    label.appendChild(control);
+                } else {
+                    const control = document.createElement('input');
+                    control.type = 'checkbox';
+                    control.checked = !!values[setting.key];
+                    control.addEventListener('change', () => {
+                        jmpInfo.settings[section][setting.key] = control.checked;
+                        window.api.settings.setValue(section, setting.key, control.checked);
+                    });
+                    label.appendChild(control);
+                    label.appendChild(document.createTextNode(' ' + setting.displayName));
+                    if (setting.help) {
+                        const helpText = document.createElement('div');
+                        helpText.style.cssText = 'font-size: 0.8em; color: #999; margin-top: 0.3em;';
+                        helpText.textContent = setting.help;
+                        label.appendChild(helpText);
+                    }
+                }
+
+                group.appendChild(label);
+            }
+        }
+
+        // Reset server button
+        if (jmpInfo.settings.main && jmpInfo.settings.main.userWebClient) {
+            const group = document.createElement('fieldset');
+            group.className = 'editItemMetadataForm editMetadataForm dialog-content-centered';
+            group.style.border = '0';
+            group.style.outline = '0';
+            contents.appendChild(group);
+
+            const legend = document.createElement('legend');
+            const legendHeader = document.createElement('h2');
+            legendHeader.textContent = 'Server';
+            legend.appendChild(legendHeader);
+            group.appendChild(legend);
+
+            const btn = document.createElement('button');
+            btn.className = 'raised button-cancel block btnCancel emby-button';
+            btn.textContent = 'Reset Saved Server';
+            btn.style.maxWidth = '50%';
+            btn.style.margin = '0 auto';
+            btn.addEventListener('click', () => {
+                jmpInfo.settings.main.userWebClient = '';
+                if (window.jmpNative && window.jmpNative.saveServerUrl) {
+                    window.jmpNative.saveServerUrl('');
+                }
+                window.location.reload();
+            });
+            group.appendChild(btn);
+        }
+    }
 
     console.log('[Media] Native shim installed');
 })();

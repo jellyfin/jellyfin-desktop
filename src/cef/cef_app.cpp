@@ -151,6 +151,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("setClipboard", CefV8Value::CreateFunction("setClipboard", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("getClipboard", CefV8Value::CreateFunction("getClipboard", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("appExit", CefV8Value::CreateFunction("appExit", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("setSettingValue", CefV8Value::CreateFunction("setSettingValue", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject the JavaScript shim that creates window.api, window.NativeShell, etc.
@@ -162,6 +163,14 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     if (pos != std::string::npos) {
         shim_str.replace(pos, placeholder.length(), Settings::instance().serverUrl());
     }
+
+    // Replace placeholder with saved settings JSON
+    std::string settings_placeholder = "__SETTINGS_JSON__";
+    pos = shim_str.find(settings_placeholder);
+    if (pos != std::string::npos) {
+        shim_str.replace(pos, settings_placeholder.length(), Settings::instance().cliSettingsJson());
+    }
+
     frame->ExecuteJavaScript(shim_str, frame->GetURL(), 0);
 
     // Inject the player plugins
@@ -419,6 +428,21 @@ bool NativeV8Handler::Execute(const CefString& name,
             LOG_DEBUG(LOG_CEF, "V8 notifyRateChange: %.2f", rate);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifyRateChange");
             msg->GetArgumentList()->SetDouble(0, rate);
+            browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
+        }
+        return true;
+    }
+
+    if (name == "setSettingValue") {
+        if (arguments.size() >= 3 && arguments[0]->IsString() && arguments[1]->IsString() && arguments[2]->IsString()) {
+            std::string section = arguments[0]->GetStringValue().ToString();
+            std::string key = arguments[1]->GetStringValue().ToString();
+            std::string value = arguments[2]->GetStringValue().ToString();
+            LOG_INFO(LOG_CEF, "V8 setSettingValue: %s.%s = %s", section.c_str(), key.c_str(), value.c_str());
+            CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("setSettingValue");
+            msg->GetArgumentList()->SetString(0, section);
+            msg->GetArgumentList()->SetString(1, key);
+            msg->GetArgumentList()->SetString(2, value);
             browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
         }
         return true;

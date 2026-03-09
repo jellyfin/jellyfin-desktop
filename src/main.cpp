@@ -288,18 +288,30 @@ int main(int argc, char* argv[]) {
     // CEF subprocesses inherit this env var - skip our arg parsing entirely
     bool is_cef_subprocess = (getenv("JELLYFIN_CEF_SUBPROCESS") != nullptr);
 
-    // Parse arguments (main process only)
+    // Load saved settings first, then let CLI flags override
     SDL_LogPriority log_level = SDL_LOG_PRIORITY_INFO;
-    bool use_dmabuf = false;  // Disable DMA-BUF by default (can cause system freezes)
+    bool use_dmabuf = false;
     bool disable_gpu_compositing = false;
-    const char* hwdec = "auto-safe";
-    const char* audio_passthrough = nullptr;
+    std::string hwdec_str = "auto-safe";
+    std::string audio_passthrough_str;
     bool audio_exclusive = false;
-    const char* audio_channels = nullptr;
-    std::string passthrough_normalized;
+    std::string audio_channels_str;
     if (!is_cef_subprocess) {
+        // Load persisted settings as defaults
+        Settings::instance().load();
+        auto& saved = Settings::instance();
+        if (!saved.hwdec().empty()) hwdec_str = saved.hwdec();
+        if (!saved.audioPassthrough().empty()) audio_passthrough_str = saved.audioPassthrough();
+        audio_exclusive = saved.audioExclusive();
+        if (!saved.audioChannels().empty()) audio_channels_str = saved.audioChannels();
+        disable_gpu_compositing = saved.disableGpuCompositing();
+        use_dmabuf = saved.dmabuf();
+
+        // Parse CLI arguments (override saved settings)
         const char* log_level_str = nullptr;
         const char* log_file_path = nullptr;
+        std::string saved_log_level = saved.logLevel();
+        if (!saved_log_level.empty()) log_level_str = saved_log_level.c_str();
         for (int i = 1; i < argc; i++) {
             if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
                 printf("Usage: jellyfin-desktop-cef [options]\n"
@@ -336,19 +348,19 @@ int main(int argc, char* argv[]) {
             } else if (strcmp(argv[i], "--dmabuf") == 0) {
                 use_dmabuf = true;
             } else if (strcmp(argv[i], "--hwdec") == 0) {
-                hwdec = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "auto-safe";
+                hwdec_str = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "auto-safe";
             } else if (strncmp(argv[i], "--hwdec=", 8) == 0) {
-                hwdec = argv[i] + 8;
+                hwdec_str = argv[i] + 8;
             } else if (strcmp(argv[i], "--audio-passthrough") == 0) {
-                audio_passthrough = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
+                audio_passthrough_str = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
             } else if (strncmp(argv[i], "--audio-passthrough=", 20) == 0) {
-                audio_passthrough = argv[i] + 20;
+                audio_passthrough_str = argv[i] + 20;
             } else if (strcmp(argv[i], "--audio-exclusive") == 0) {
                 audio_exclusive = true;
             } else if (strcmp(argv[i], "--audio-channels") == 0) {
-                audio_channels = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
+                audio_channels_str = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
             } else if (strncmp(argv[i], "--audio-channels=", 17) == 0) {
-                audio_channels = argv[i] + 17;
+                audio_channels_str = argv[i] + 17;
             } else if (argv[i][0] == '-') {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
                 return 1;
@@ -375,20 +387,20 @@ int main(int argc, char* argv[]) {
         initLogging(log_level);
 
         // Normalize audio passthrough: dts-hd subsumes dts
-        if (audio_passthrough && audio_passthrough[0] && strstr(audio_passthrough, "dts-hd")) {
-            std::string input(audio_passthrough);
+        if (!audio_passthrough_str.empty() && audio_passthrough_str.find("dts-hd") != std::string::npos) {
+            std::string input = audio_passthrough_str;
+            audio_passthrough_str.clear();
             size_t pos = 0;
             while (pos < input.size()) {
                 size_t comma = input.find(',', pos);
                 if (comma == std::string::npos) comma = input.size();
                 std::string codec = input.substr(pos, comma - pos);
                 if (codec != "dts") {
-                    if (!passthrough_normalized.empty()) passthrough_normalized += ',';
-                    passthrough_normalized += codec;
+                    if (!audio_passthrough_str.empty()) audio_passthrough_str += ',';
+                    audio_passthrough_str += codec;
                 }
                 pos = comma + 1;
             }
-            audio_passthrough = passthrough_normalized.c_str();
         }
 
         // Startup banner
@@ -399,13 +411,16 @@ int main(int argc, char* argv[]) {
             LOG_INFO(LOG_MAIN, "DMA-BUF zero-copy CEF rendering enabled (experimental)");
         }
 #endif
-        if (audio_passthrough && audio_passthrough[0])
-            LOG_INFO(LOG_MAIN, "Audio passthrough: %s", audio_passthrough);
+        if (!audio_passthrough_str.empty())
+            LOG_INFO(LOG_MAIN, "Audio passthrough: %s", audio_passthrough_str.c_str());
         if (audio_exclusive)
             LOG_INFO(LOG_MAIN, "Audio exclusive mode enabled");
-        if (audio_channels && audio_channels[0])
-            LOG_INFO(LOG_MAIN, "Audio channels: %s", audio_channels);
+        if (!audio_channels_str.empty())
+            LOG_INFO(LOG_MAIN, "Audio channels: %s", audio_channels_str.c_str());
     }
+    const char* hwdec = hwdec_str.c_str();
+    const char* audio_passthrough = audio_passthrough_str.empty() ? nullptr : audio_passthrough_str.c_str();
+    const char* audio_channels = audio_channels_str.empty() ? nullptr : audio_channels_str.c_str();
 
 #ifdef __APPLE__
     // macOS: Get executable path early for CEF framework loading
@@ -540,10 +555,7 @@ int main(int argc, char* argv[]) {
     SDL_SetWindowHitTest(window, windowHitTest, &cursor_at_resize_edge);
     SDL_StartTextInput(window);
 
-    // Load settings before restoring geometry (must read saved state first)
-    Settings::instance().load();
-
-    // Restore saved window geometry (size, position, maximized)
+    // Restore saved window geometry (settings already loaded during init)
     restoreWindowGeometry(window);
     SDL_GetWindowSize(window, &width, &height);
 

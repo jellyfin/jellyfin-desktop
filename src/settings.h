@@ -25,11 +25,46 @@ public:
     const WindowGeometry& windowGeometry() const { return window_geometry_; }
     void setWindowGeometry(const WindowGeometry& geom) { window_geometry_ = geom; }
 
+    // CLI-equivalent settings (persisted, overridden by CLI flags)
+    const std::string& hwdec() const { return hwdec_; }
+    void setHwdec(const std::string& v) { hwdec_ = v; }
+
+    const std::string& audioPassthrough() const { return audio_passthrough_; }
+    void setAudioPassthrough(const std::string& v) { audio_passthrough_ = v; }
+
+    bool audioExclusive() const { return audio_exclusive_; }
+    void setAudioExclusive(bool v) { audio_exclusive_ = v; }
+
+    const std::string& audioChannels() const { return audio_channels_; }
+    void setAudioChannels(const std::string& v) { audio_channels_ = v; }
+
+    bool disableGpuCompositing() const { return disable_gpu_compositing_; }
+    void setDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
+
+    bool dmabuf() const { return dmabuf_; }
+    void setDmabuf(bool v) { dmabuf_ = v; }
+
+    const std::string& logLevel() const { return log_level_; }
+    void setLogLevel(const std::string& v) { log_level_ = v; }
+
+    // JSON string of CLI-equivalent settings (for injection into JS)
+    std::string cliSettingsJson() const;
+
 private:
     Settings() = default;
     std::string getConfigPath();
 
     std::string server_url_;
     WindowGeometry window_geometry_;
+
+    // CLI-equivalent settings
+    std::string hwdec_;
+    std::string audio_passthrough_;
+    bool audio_exclusive_ = false;
+    std::string audio_channels_;
+    bool disable_gpu_compositing_ = false;
+    bool dmabuf_ = false;
+    std::string log_level_;
+
     std::mutex save_mutex_;  // Prevent concurrent saves
 };

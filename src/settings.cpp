@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "cjson/cJSON.h"
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
@@ -47,104 +48,124 @@ std::string Settings::getConfigPath() {
     return config_dir + "/settings.json";
 }
 
+static const char* jsonStr(const cJSON* root, const char* key, const char* fallback = "") {
+    const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (cJSON_IsString(item) && item->valuestring) return item->valuestring;
+    return fallback;
+}
+
+static int jsonInt(const cJSON* root, const char* key, int fallback) {
+    const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (cJSON_IsNumber(item)) return item->valueint;
+    return fallback;
+}
+
+static bool jsonBool(const cJSON* root, const char* key, bool fallback) {
+    const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (cJSON_IsBool(item)) return cJSON_IsTrue(item);
+    return fallback;
+}
+
 bool Settings::load() {
     std::ifstream file(getConfigPath());
-    if (!file.is_open()) {
+    if (!file.is_open())
         return false;
-    }
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
+    std::stringstream buf;
+    buf << file.rdbuf();
+    std::string contents = buf.str();
 
-    // Simple JSON parsing helpers
-    auto parseString = [&](const char* key) -> std::string {
-        size_t pos = content.find(std::string("\"") + key + "\"");
-        if (pos == std::string::npos) return {};
-        pos = content.find(':', pos);
-        if (pos == std::string::npos) return {};
-        pos = content.find('"', pos);
-        if (pos == std::string::npos) return {};
-        size_t end = content.find('"', pos + 1);
-        if (end == std::string::npos) return {};
-        return content.substr(pos + 1, end - pos - 1);
-    };
+    cJSON* root = cJSON_Parse(contents.c_str());
+    if (!root)
+        return false;
 
-    auto parseInt = [&](const char* key, int fallback) -> int {
-        size_t pos = content.find(std::string("\"") + key + "\"");
-        if (pos == std::string::npos) return fallback;
-        pos = content.find(':', pos);
-        if (pos == std::string::npos) return fallback;
-        // Skip whitespace after colon
-        pos++;
-        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t'))
-            pos++;
-        char* end_ptr = nullptr;
-        long val = std::strtol(content.c_str() + pos, &end_ptr, 10);
-        if (end_ptr == content.c_str() + pos) return fallback;
-        return static_cast<int>(val);
-    };
+    server_url_ = jsonStr(root, "serverUrl");
 
-    auto parseBool = [&](const char* key, bool fallback) -> bool {
-        size_t pos = content.find(std::string("\"") + key + "\"");
-        if (pos == std::string::npos) return fallback;
-        pos = content.find(':', pos);
-        if (pos == std::string::npos) return fallback;
-        size_t end = content.find_first_of(",}\n", pos);
-        if (end == std::string::npos) end = content.size();
-        size_t true_pos = content.find("true", pos + 1);
-        return true_pos != std::string::npos && true_pos < end;
-    };
+    window_geometry_.width = jsonInt(root, "windowWidth", 0);
+    window_geometry_.height = jsonInt(root, "windowHeight", 0);
+    window_geometry_.x = jsonInt(root, "windowX", -1);
+    window_geometry_.y = jsonInt(root, "windowY", -1);
+    window_geometry_.maximized = jsonBool(root, "windowMaximized", false);
 
-    server_url_ = parseString("serverUrl");
+    hwdec_ = jsonStr(root, "hwdec");
+    audio_passthrough_ = jsonStr(root, "audioPassthrough");
+    audio_exclusive_ = jsonBool(root, "audioExclusive", false);
+    audio_channels_ = jsonStr(root, "audioChannels");
+    disable_gpu_compositing_ = jsonBool(root, "disableGpuCompositing", false);
+    dmabuf_ = jsonBool(root, "dmabuf", false);
+    log_level_ = jsonStr(root, "logLevel");
 
-    window_geometry_.width = parseInt("windowWidth", 0);
-    window_geometry_.height = parseInt("windowHeight", 0);
-    window_geometry_.x = parseInt("windowX", -1);
-    window_geometry_.y = parseInt("windowY", -1);
-    window_geometry_.maximized = parseBool("windowMaximized", false);
-
+    cJSON_Delete(root);
     return true;
 }
 
-static void writeJson(std::ofstream& file, const std::string& url,
-                       const Settings::WindowGeometry& geom) {
-    file << "{\n";
-    file << "  \"serverUrl\": \"" << url << "\"";
+static std::string buildSettingsJson(const Settings& s, bool pretty) {
+    cJSON* root = cJSON_CreateObject();
+
+    cJSON_AddStringToObject(root, "serverUrl", s.serverUrl().c_str());
+
+    auto& geom = s.windowGeometry();
     if (geom.width > 0 && geom.height > 0) {
-        file << ",\n  \"windowWidth\": " << geom.width;
-        file << ",\n  \"windowHeight\": " << geom.height;
+        cJSON_AddNumberToObject(root, "windowWidth", geom.width);
+        cJSON_AddNumberToObject(root, "windowHeight", geom.height);
     }
     if (geom.x >= 0 && geom.y >= 0) {
-        file << ",\n  \"windowX\": " << geom.x;
-        file << ",\n  \"windowY\": " << geom.y;
+        cJSON_AddNumberToObject(root, "windowX", geom.x);
+        cJSON_AddNumberToObject(root, "windowY", geom.y);
     }
-    file << ",\n  \"windowMaximized\": " << (geom.maximized ? "true" : "false");
-    file << "\n}\n";
+    cJSON_AddBoolToObject(root, "windowMaximized", geom.maximized);
+
+    if (!s.hwdec().empty()) cJSON_AddStringToObject(root, "hwdec", s.hwdec().c_str());
+    if (!s.audioPassthrough().empty()) cJSON_AddStringToObject(root, "audioPassthrough", s.audioPassthrough().c_str());
+    if (s.audioExclusive()) cJSON_AddBoolToObject(root, "audioExclusive", true);
+    if (!s.audioChannels().empty()) cJSON_AddStringToObject(root, "audioChannels", s.audioChannels().c_str());
+    if (s.disableGpuCompositing()) cJSON_AddBoolToObject(root, "disableGpuCompositing", true);
+    if (s.dmabuf()) cJSON_AddBoolToObject(root, "dmabuf", true);
+    if (!s.logLevel().empty()) cJSON_AddStringToObject(root, "logLevel", s.logLevel().c_str());
+
+    char* str = pretty ? cJSON_Print(root) : cJSON_PrintUnformatted(root);
+    std::string result(str);
+    cJSON_free(str);
+    cJSON_Delete(root);
+    return result;
 }
 
 bool Settings::save() {
     std::ofstream file(getConfigPath());
-    if (!file.is_open()) {
+    if (!file.is_open())
         return false;
-    }
 
-    writeJson(file, server_url_, window_geometry_);
-
+    file << buildSettingsJson(*this, true) << '\n';
     return true;
 }
 
 void Settings::saveAsync() {
-    // Capture current state and save in background
-    std::string url = server_url_;
     std::string path = getConfigPath();
-    WindowGeometry geom = window_geometry_;
+    std::string data = buildSettingsJson(*this, true);
 
-    std::thread([this, url, path, geom]() {
+    std::thread([this, path, data]() {
         std::lock_guard<std::mutex> lock(save_mutex_);
         std::ofstream file(path);
         if (file.is_open()) {
-            writeJson(file, url, geom);
+            file << data << '\n';
         }
     }).detach();
+}
+
+std::string Settings::cliSettingsJson() const {
+    cJSON* root = cJSON_CreateObject();
+
+    if (!hwdec_.empty()) cJSON_AddStringToObject(root, "hwdec", hwdec_.c_str());
+    if (!audio_passthrough_.empty()) cJSON_AddStringToObject(root, "audioPassthrough", audio_passthrough_.c_str());
+    if (audio_exclusive_) cJSON_AddBoolToObject(root, "audioExclusive", true);
+    if (!audio_channels_.empty()) cJSON_AddStringToObject(root, "audioChannels", audio_channels_.c_str());
+    if (disable_gpu_compositing_) cJSON_AddBoolToObject(root, "disableGpuCompositing", true);
+    if (dmabuf_) cJSON_AddBoolToObject(root, "dmabuf", true);
+    if (!log_level_.empty()) cJSON_AddStringToObject(root, "logLevel", log_level_.c_str());
+
+    char* str = cJSON_PrintUnformatted(root);
+    std::string result(str);
+    cJSON_free(str);
+    cJSON_Delete(root);
+    return result;
 }
