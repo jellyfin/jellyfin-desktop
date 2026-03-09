@@ -14,6 +14,12 @@ class EGLContext_;
 class WindowsVideoSurface;
 #endif
 
+struct AudioConfig {
+    const char* spdif = nullptr;    // --audio-passthrough codec list
+    const char* channels = nullptr; // --audio-channels layout
+    bool exclusive = false;         // --audio-exclusive
+};
+
 // Video subsystem - owns player and renderer
 struct VideoStack {
     std::unique_ptr<MpvPlayer> player;
@@ -24,9 +30,9 @@ struct VideoStack {
 
     // Factory - creates platform-appropriate video stack
 #if defined(__APPLE__) || defined(_WIN32)
-    static VideoStack create(SDL_Window* window, int width, int height, const char* hwdec = "auto-safe");
+    static VideoStack create(SDL_Window* window, int width, int height, const char* hwdec = "auto-safe", AudioConfig audio = {});
 #else
-    static VideoStack create(SDL_Window* window, int width, int height, EGLContext_* egl, const char* hwdec = "auto-safe");
+    static VideoStack create(SDL_Window* window, int width, int height, EGLContext_* egl, const char* hwdec = "auto-safe", AudioConfig audio = {});
 #endif
 
     // Cleanup static resources (call before program exit to avoid static destructor issues)

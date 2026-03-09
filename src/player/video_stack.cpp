@@ -7,6 +7,15 @@
 #include <mpv/render.h>
 #include <cstdlib>
 
+static void configureAudioOptions(mpv_handle* mpv, const AudioConfig& audio) {
+    if (audio.spdif && audio.spdif[0])
+        mpv_set_option_string(mpv, "audio-spdif", audio.spdif);
+    if (audio.channels && audio.channels[0])
+        mpv_set_option_string(mpv, "audio-channels", audio.channels);
+    if (audio.exclusive)
+        mpv_set_option_string(mpv, "audio-exclusive", "yes");
+}
+
 // Shared Vulkan pre-init hook: sets hwdec-codecs and PQ/BT.2020 HDR options
 static void configureVulkanHook(mpv_handle* mpv, bool use_hdr) {
     mpv_set_option_string(mpv, "hwdec-codecs", "h264,vc1,hevc,vp8,av1,prores,prores_raw,ffv1,dpx");
@@ -84,7 +93,7 @@ namespace {
     }
 }
 
-VideoStack VideoStack::create(SDL_Window* window, int width, int height, const char* hwdec) {
+VideoStack VideoStack::create(SDL_Window* window, int width, int height, const char* hwdec, AudioConfig audio) {
     VideoStack stack;
 
     // Register atexit handler to clean up before static destructors
@@ -117,6 +126,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
     bool use_hdr = g_macos_layer->isHdr();
     if (!player->init(hwdec, [&](mpv_handle* mpv) {
         configureVulkanHook(mpv, use_hdr);
+        configureAudioOptions(mpv, audio);
     })) {
         LOG_ERROR(LOG_MPV, "MpvPlayer init failed");
         return stack;
@@ -184,7 +194,7 @@ namespace {
     }
 }
 
-VideoStack VideoStack::create(SDL_Window* window, int width, int height, const char* hwdec) {
+VideoStack VideoStack::create(SDL_Window* window, int width, int height, const char* hwdec, AudioConfig audio) {
     (void)width; (void)height;  // Use physical dimensions instead
     VideoStack stack;
 
@@ -211,6 +221,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
     bool use_hdr = g_windows_video_surface->isHdr();
     if (!player->init(hwdec, [&](mpv_handle* mpv) {
         configureVulkanHook(mpv, use_hdr);
+        configureAudioOptions(mpv, audio);
     })) {
         LOG_ERROR(LOG_MPV, "MpvPlayer init failed");
         return stack;
@@ -282,7 +293,7 @@ static void* gl_get_proc_address(void* ctx, const char* name) {
     return reinterpret_cast<void*>(eglGetProcAddress(name));
 }
 
-VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLContext_* egl, const char* hwdec) {
+VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLContext_* egl, const char* hwdec, AudioConfig audio) {
     VideoStack stack;
 
     // Detect Wayland vs X11 at runtime
@@ -314,6 +325,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
         bool use_hdr = g_wayland_subsurface->isHdr();
         if (!player->init(hwdec, [&](mpv_handle* mpv) {
             configureVulkanHook(mpv, use_hdr);
+            configureAudioOptions(mpv, audio);
         })) {
             LOG_ERROR(LOG_MPV, "MpvPlayer init failed");
             return stack;
@@ -329,7 +341,9 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
     } else {
         // X11: OpenGL composition with threaded rendering
         auto player = std::make_unique<MpvPlayer>();
-        if (!player->init(hwdec)) {
+        if (!player->init(hwdec, [&](mpv_handle* mpv) {
+            configureAudioOptions(mpv, audio);
+        })) {
             LOG_ERROR(LOG_MPV, "MpvPlayer init failed");
             return stack;
         }

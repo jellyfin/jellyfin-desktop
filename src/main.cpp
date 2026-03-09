@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstring>
 #include <cstdlib>
+#include <string>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
@@ -292,6 +293,10 @@ int main(int argc, char* argv[]) {
     bool use_dmabuf = false;  // Disable DMA-BUF by default (can cause system freezes)
     bool disable_gpu_compositing = false;
     const char* hwdec = "auto-safe";
+    const char* audio_passthrough = nullptr;
+    bool audio_exclusive = false;
+    const char* audio_channels = nullptr;
+    std::string passthrough_normalized;
     if (!is_cef_subprocess) {
         const char* log_level_str = nullptr;
         const char* log_file_path = nullptr;
@@ -308,6 +313,9 @@ int main(int argc, char* argv[]) {
 #endif
                        "  --disable-gpu-compositing  Disable Chromium GPU compositing\n"
                        "  --hwdec <mode>          Set mpv hardware decoding mode (default: auto-safe)\n"
+                       "  --audio-passthrough <codecs>  Enable audio passthrough (e.g. ac3,dts-hd,eac3,truehd)\n"
+                       "  --audio-exclusive       Use exclusive audio output mode\n"
+                       "  --audio-channels <layout>  Set audio channel layout (e.g. stereo, 5.1, 7.1)\n"
                        );
                 return 0;
             } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -331,6 +339,16 @@ int main(int argc, char* argv[]) {
                 hwdec = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "auto-safe";
             } else if (strncmp(argv[i], "--hwdec=", 8) == 0) {
                 hwdec = argv[i] + 8;
+            } else if (strcmp(argv[i], "--audio-passthrough") == 0) {
+                audio_passthrough = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
+            } else if (strncmp(argv[i], "--audio-passthrough=", 20) == 0) {
+                audio_passthrough = argv[i] + 20;
+            } else if (strcmp(argv[i], "--audio-exclusive") == 0) {
+                audio_exclusive = true;
+            } else if (strcmp(argv[i], "--audio-channels") == 0) {
+                audio_channels = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
+            } else if (strncmp(argv[i], "--audio-channels=", 17) == 0) {
+                audio_channels = argv[i] + 17;
             } else if (argv[i][0] == '-') {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
                 return 1;
@@ -356,6 +374,23 @@ int main(int argc, char* argv[]) {
 
         initLogging(log_level);
 
+        // Normalize audio passthrough: dts-hd subsumes dts
+        if (audio_passthrough && audio_passthrough[0] && strstr(audio_passthrough, "dts-hd")) {
+            std::string input(audio_passthrough);
+            size_t pos = 0;
+            while (pos < input.size()) {
+                size_t comma = input.find(',', pos);
+                if (comma == std::string::npos) comma = input.size();
+                std::string codec = input.substr(pos, comma - pos);
+                if (codec != "dts") {
+                    if (!passthrough_normalized.empty()) passthrough_normalized += ',';
+                    passthrough_normalized += codec;
+                }
+                pos = comma + 1;
+            }
+            audio_passthrough = passthrough_normalized.c_str();
+        }
+
         // Startup banner
         LOG_INFO(LOG_MAIN, "jellyfin-desktop-cef " APP_VERSION_STRING " built " __DATE__ " " __TIME__);
         LOG_INFO(LOG_MAIN, "CEF " CEF_VERSION);
@@ -364,6 +399,12 @@ int main(int argc, char* argv[]) {
             LOG_INFO(LOG_MAIN, "DMA-BUF zero-copy CEF rendering enabled (experimental)");
         }
 #endif
+        if (audio_passthrough && audio_passthrough[0])
+            LOG_INFO(LOG_MAIN, "Audio passthrough: %s", audio_passthrough);
+        if (audio_exclusive)
+            LOG_INFO(LOG_MAIN, "Audio exclusive mode enabled");
+        if (audio_channels && audio_channels[0])
+            LOG_INFO(LOG_MAIN, "Audio channels: %s", audio_channels);
     }
 
 #ifdef __APPLE__
@@ -511,9 +552,14 @@ int main(int argc, char* argv[]) {
     // to ensure the window is actually visible before activating
 #endif
 
+    AudioConfig audioConfig;
+    audioConfig.spdif = audio_passthrough;
+    audioConfig.channels = audio_channels;
+    audioConfig.exclusive = audio_exclusive;
+
 #ifdef __APPLE__
     // Create video stack
-    VideoStack videoStack = VideoStack::create(window, width, height, hwdec);
+    VideoStack videoStack = VideoStack::create(window, width, height, hwdec, audioConfig);
     if (!videoStack.player || !videoStack.renderer) {
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -546,7 +592,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Create video stack
-    VideoStack videoStack = VideoStack::create(window, width, height, hwdec);
+    VideoStack videoStack = VideoStack::create(window, width, height, hwdec, audioConfig);
     if (!videoStack.player || !videoStack.renderer) {
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -595,7 +641,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Create video stack (detects Wayland vs X11 internally)
-    VideoStack videoStack = VideoStack::create(window, width, height, &egl, hwdec);
+    VideoStack videoStack = VideoStack::create(window, width, height, &egl, hwdec, audioConfig);
     if (!videoStack.player || !videoStack.renderer) {
         SDL_DestroyWindow(window);
         SDL_Quit();
