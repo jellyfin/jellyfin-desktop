@@ -63,23 +63,24 @@ void initMacApplication() {
     // This must be done before SDL_Init, which would create a plain NSApplication
     [JellyfinApplication sharedApplication];
 
-    // Make this a foreground app (shows in dock, gets menubar, receives keyboard)
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    // Helper processes (GPU, renderer) only need CefAppProtocol - skip dock/menu setup
+    bool is_subprocess = (getenv("JELLYFIN_CEF_SUBPROCESS") != nullptr);
+    if (!is_subprocess) {
+        // Make this a foreground app (shows in dock, gets menubar, receives keyboard)
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-    // Create basic menu bar with Quit item for Cmd+Q
-    NSMenu* menubar = [[NSMenu alloc] init];
-    NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
-    [menubar addItem:appMenuItem];
-    NSMenu* appMenu = [[NSMenu alloc] init];
-    NSMenuItem* quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit"
-                                                      action:@selector(terminate:)
-                                               keyEquivalent:@"q"];
-    [appMenu addItem:quitItem];
-    [appMenuItem setSubmenu:appMenu];
-    [NSApp setMainMenu:menubar];
-
-    // NOTE: Don't activate here - this runs in helper processes too.
-    // Activation happens in activateMacWindow() for main process only.
+        // Create basic menu bar with Quit item for Cmd+Q
+        NSMenu* menubar = [[NSMenu alloc] init];
+        NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
+        [menubar addItem:appMenuItem];
+        NSMenu* appMenu = [[NSMenu alloc] init];
+        NSMenuItem* quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit"
+                                                          action:@selector(terminate:)
+                                                   keyEquivalent:@"q"];
+        [appMenu addItem:quitItem];
+        [appMenuItem setSubmenu:appMenu];
+        [NSApp setMainMenu:menubar];
+    }
 
     NSLog(@"NSApplication class: %@", NSStringFromClass([NSApp class]));
     NSLog(@"Conforms to CefAppProtocol: %@", [NSApp conformsToProtocol:@protocol(CefAppProtocol)] ? @"YES" : @"NO");

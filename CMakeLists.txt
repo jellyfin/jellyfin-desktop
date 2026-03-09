@@ -433,6 +433,13 @@ if(NOT EXTERNAL_CEF_DIR)
             COMMAND install_name_tool -id "${NEW_INSTALL_NAME}" "${CEF_FRAMEWORK_LIB}"
             # Fix executable's reference to framework
             COMMAND install_name_tool -change "${OLD_INSTALL_NAME}" "${NEW_INSTALL_NAME}" "$<TARGET_FILE:jellyfin-desktop-cef>"
+            # Symlink GL libraries next to executable (CEF GPU compositor needs them at executable path)
+            COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "Frameworks/${CEF_FRAMEWORK_NAME}.framework/Libraries/libEGL.dylib"
+                "${CMAKE_BINARY_DIR}/libEGL.dylib"
+            COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "Frameworks/${CEF_FRAMEWORK_NAME}.framework/Libraries/libGLESv2.dylib"
+                "${CMAKE_BINARY_DIR}/libGLESv2.dylib"
             COMMENT "Copying CEF framework and fixing install_name paths"
         )
     else()
@@ -531,6 +538,16 @@ elseif(APPLE)
     install(DIRECTORY "${CMAKE_BINARY_DIR}/Frameworks/Chromium Embedded Framework.framework"
         DESTINATION "${APP_NAME}/Contents/Frameworks"
     )
+
+    # Symlink GL libraries next to executable (CEF GPU compositor needs them at executable path)
+    install(CODE "
+        execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink
+            \"../Frameworks/Chromium Embedded Framework.framework/Libraries/libEGL.dylib\"
+            \"\${CMAKE_INSTALL_PREFIX}/${APP_NAME}/Contents/MacOS/libEGL.dylib\")
+        execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink
+            \"../Frameworks/Chromium Embedded Framework.framework/Libraries/libGLESv2.dylib\"
+            \"\${CMAKE_INSTALL_PREFIX}/${APP_NAME}/Contents/MacOS/libGLESv2.dylib\")
+    ")
 
     # Install Info.plist (configure version)
     if(EXISTS "${CMAKE_SOURCE_DIR}/VERSION")
