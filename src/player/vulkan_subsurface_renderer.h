@@ -1,7 +1,7 @@
 #pragma once
 #include "video_renderer.h"
 
-class MpvPlayerVk;
+class MpvPlayer;
 
 // VideoSurface is a type alias on macOS/Windows, forward-declare the actual class
 #ifdef __APPLE__
@@ -13,7 +13,7 @@ class VideoSurface;
 
 class VulkanSubsurfaceRenderer : public VideoRenderer {
 public:
-    VulkanSubsurfaceRenderer(MpvPlayerVk* player, VideoSurface* surface);
+    VulkanSubsurfaceRenderer(MpvPlayer* player, VideoSurface* surface);
     bool hasFrame() const override;
     bool render(int width, int height) override;
     void setVisible(bool visible) override;
@@ -24,6 +24,6 @@ public:
     float getClearAlpha(bool video_ready) const override;
     bool isHdr() const override;
 private:
-    MpvPlayerVk* player_;
+    MpvPlayer* player_;
     VideoSurface* surface_;
 };

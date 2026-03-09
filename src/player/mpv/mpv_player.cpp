@@ -1,21 +1,17 @@
-#include "player/mpv/mpv_player_gl.h"
+#include "player/mpv/mpv_player.h"
 #include <mpv/client.h>
 #include <mpv/render.h>
-#include <mpv/render_gl.h>
-#ifdef __APPLE__
-#include <dlfcn.h>
-#endif
 #include <clocale>
 #include <cmath>
 #include "logging.h"
 
-MpvPlayerGL::MpvPlayerGL() = default;
+MpvPlayer::MpvPlayer() = default;
 
-MpvPlayerGL::~MpvPlayerGL() {
+MpvPlayer::~MpvPlayer() {
     cleanup();
 }
 
-void MpvPlayerGL::cleanup() {
+void MpvPlayer::cleanup() {
     if (render_ctx_) {
         mpv_render_context_free(render_ctx_);
         render_ctx_ = nullptr;
@@ -26,21 +22,21 @@ void MpvPlayerGL::cleanup() {
     }
 }
 
-void MpvPlayerGL::onMpvRedraw(void* ctx) {
-    MpvPlayerGL* player = static_cast<MpvPlayerGL*>(ctx);
+void MpvPlayer::onMpvRedraw(void* ctx) {
+    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
     player->needs_redraw_ = true;
     if (player->redraw_callback_) {
         player->redraw_callback_();
     }
 }
 
-void MpvPlayerGL::onMpvWakeup(void* ctx) {
-    MpvPlayerGL* player = static_cast<MpvPlayerGL*>(ctx);
+void MpvPlayer::onMpvWakeup(void* ctx) {
+    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
     player->has_events_ = true;
     if (player->on_wakeup_) player->on_wakeup_();
 }
 
-void MpvPlayerGL::processEvents() {
+void MpvPlayer::processEvents() {
     if (!mpv_ || !has_events_.exchange(false)) return;
 
     while (true) {
@@ -50,12 +46,13 @@ void MpvPlayerGL::processEvents() {
     }
 }
 
-void MpvPlayerGL::handleMpvEvent(mpv_event* event) {
+void MpvPlayer::handleMpvEvent(mpv_event* event) {
     switch (event->event_id) {
         case MPV_EVENT_PROPERTY_CHANGE: {
             mpv_event_property* prop = static_cast<mpv_event_property*>(event->data);
             if (strcmp(prop->name, "playback-time") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
                 double pos = *static_cast<double*>(prop->data);
+                // Filter jitter (15ms threshold like jellyfin-desktop)
                 if (std::fabs(pos - last_position_) > 0.015) {
                     last_position_ = pos;
                     if (on_position_) on_position_(pos * 1000.0);
@@ -104,6 +101,7 @@ void MpvPlayerGL::handleMpvEvent(mpv_event* event) {
                                                 else if (strcmp(range->u.list->keys[k], "end") == 0 && range->u.list->values[k].format == MPV_FORMAT_DOUBLE)
                                                     end = range->u.list->values[k].u.double_;
                                             }
+                                            // Convert seconds to ticks (100ns units)
                                             ranges.push_back({
                                                 static_cast<int64_t>(start * 10000000.0),
                                                 static_cast<int64_t>(end * 10000000.0)
@@ -128,7 +126,9 @@ void MpvPlayerGL::handleMpvEvent(mpv_event* event) {
             break;
         case MPV_EVENT_END_FILE: {
             mpv_event_end_file* ef = static_cast<mpv_event_end_file*>(event->data);
-            LOG_DEBUG(LOG_MPV, "END_FILE reason=%d", ef->reason);
+            LOG_DEBUG(LOG_MPV, "END_FILE reason=%d (0=EOF, 2=STOP, 4=ERROR)", ef->reason);
+            // With keep-open=yes, EOF reason won't fire (handled by eof-reached property)
+            // STOP reason fires on explicit stop command
             if (ef->reason == MPV_END_FILE_REASON_STOP) {
                 playing_ = false;
                 if (on_canceled_) on_canceled_();
@@ -138,40 +138,26 @@ void MpvPlayerGL::handleMpvEvent(mpv_event* event) {
                 LOG_ERROR(LOG_MPV, "Playback error: %s", error.c_str());
                 if (on_error_) on_error_(error);
             }
+            // Note: EOF/QUIT/REDIRECT reasons are handled by eof-reached property observation
             break;
         }
         case MPV_EVENT_LOG_MESSAGE: {
             auto* msg = static_cast<mpv_event_log_message*>(event->data);
+            // Strip trailing newline if present
             std::string text = msg->text;
             if (!text.empty() && text.back() == '\n') {
                 text.pop_back();
             }
-            LOG_DEBUG(LOG_MPV, "[%s] %s", msg->prefix, text.c_str());
+            LOG_DEBUG(LOG_MPV, "%s: %s", msg->prefix, text.c_str());
             break;
         }
         default:
+            LOG_DEBUG(LOG_MPV, "Unhandled event: %s", mpv_event_name(event->event_id));
             break;
     }
 }
 
-static void* gl_get_proc_address(void* ctx, const char* name) {
-#ifdef _WIN32
-    auto* wgl = static_cast<WGLContext*>(ctx);
-    return wgl->getProcAddress(name);
-#elif defined(__APPLE__)
-    (void)ctx;
-    // macOS: use dlsym for OpenGL functions
-    extern void* dlsym(void*, const char*);
-    return dlsym(RTLD_DEFAULT, name);
-#else
-    auto* egl = static_cast<EGLContext_*>(ctx);
-    return reinterpret_cast<void*>(eglGetProcAddress(name));
-#endif
-}
-
-bool MpvPlayerGL::init(GLContext* gl, const char* hwdec) {
-    gl_ = gl;
-
+bool MpvPlayer::init(const char* hwdec, PreInitHook preInitHook) {
     std::setlocale(LC_NUMERIC, "C");
 
     mpv_ = mpv_create();
@@ -182,70 +168,55 @@ bool MpvPlayerGL::init(GLContext* gl, const char* hwdec) {
 
     mpv_set_option_string(mpv_, "vo", "libmpv");
     mpv_set_option_string(mpv_, "hwdec", hwdec);
-    mpv_set_option_string(mpv_, "keep-open", "yes");
+    mpv_set_option_string(mpv_, "keep-open", "yes");  // Keep video layer alive, detect EOF via eof-reached property
     mpv_set_option_string(mpv_, "terminal", "no");
-    mpv_set_option_string(mpv_, "video-sync", "audio");
-    mpv_set_option_string(mpv_, "interpolation", "no");
-    mpv_set_option_string(mpv_, "ytdl", "no");
+    mpv_set_option_string(mpv_, "video-sync", "audio");  // Simple audio sync, no frame interpolation
+    mpv_set_option_string(mpv_, "interpolation", "no");  // Disable motion interpolation
+    mpv_set_option_string(mpv_, "ytdl", "no");  // Disable youtube-dl
+    // Discard audio output if no audio device could be opened
+    // Prevents blocking/crashes on audio errors (like jellyfin-desktop)
     mpv_set_option_string(mpv_, "audio-fallback-to-null", "yes");
+
+    if (preInitHook) {
+        preInitHook(mpv_);
+    }
 
     if (mpv_initialize(mpv_) < 0) {
         LOG_ERROR(LOG_MPV, "mpv_initialize failed");
         return false;
     }
 
+    // Enable mpv log forwarding (info level by default)
     mpv_request_log_messages(mpv_, "info");
 
+    // Set up property observation (like jellyfin-desktop)
     mpv_observe_property(mpv_, 0, "playback-time", MPV_FORMAT_DOUBLE);
     mpv_observe_property(mpv_, 0, "duration", MPV_FORMAT_DOUBLE);
     mpv_observe_property(mpv_, 0, "pause", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv_, 0, "seeking", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv_, 0, "paused-for-cache", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv_, 0, "core-idle", MPV_FORMAT_FLAG);
-    mpv_observe_property(mpv_, 0, "eof-reached", MPV_FORMAT_FLAG);
+    mpv_observe_property(mpv_, 0, "eof-reached", MPV_FORMAT_FLAG);  // Detect natural track end with keep-open=yes
     mpv_observe_property(mpv_, 0, "demuxer-cache-state", MPV_FORMAT_NODE);
 
+    // Wakeup callback for event-driven processing
     mpv_set_wakeup_callback(mpv_, onMpvWakeup, this);
 
-    // Set up OpenGL render context
-    mpv_opengl_init_params gl_init{};
-    gl_init.get_proc_address = gl_get_proc_address;
-    gl_init.get_proc_address_ctx = gl_;
+    return true;
+}
 
-    int advanced_control = 1;
-
-#ifdef MPV_RENDER_PARAM_BACKEND
-#ifdef _WIN32
-    // Windows/Wine: use legacy gpu backend (gpu-next ignores flip_y)
-    const char* backend = "gpu";
-#else
-    // Use gpu-next (libplacebo) backend for HDR support
-    const char* backend = "gpu-next";
-#endif
-#endif
-
-    mpv_render_param params[] = {
-        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_OPENGL)},
-#ifdef MPV_RENDER_PARAM_BACKEND
-        {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
-#endif
-        {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init},
-        {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
-        {MPV_RENDER_PARAM_INVALID, nullptr}
-    };
-
+bool MpvPlayer::createRenderContext(mpv_render_param* params) {
     int result = mpv_render_context_create(&render_ctx_, mpv_, params);
     if (result < 0) {
-        LOG_ERROR(LOG_MPV, "mpv_render_context_create (OpenGL) failed: %s", mpv_error_string(result));
+        LOG_ERROR(LOG_MPV, "mpv_render_context_create failed: %s", mpv_error_string(result));
         return false;
     }
-    LOG_INFO(LOG_MPV, "mpv OpenGL render context created");
 
     mpv_render_context_set_update_callback(render_ctx_, onMpvRedraw, this);
     return true;
 }
 
-bool MpvPlayerGL::loadFile(const std::string& path, double startSeconds) {
+bool MpvPlayer::loadFile(const std::string& path, double startSeconds) {
     // Clear pause state before loading
     int pause = 0;
     mpv_set_property_async(mpv_, 0, "pause", MPV_FORMAT_FLAG, &pause);
@@ -285,54 +256,57 @@ bool MpvPlayerGL::loadFile(const std::string& path, double startSeconds) {
     return ret >= 0;
 }
 
-void MpvPlayerGL::stop() {
+void MpvPlayer::stop() {
     if (!mpv_) return;
     const char* cmd[] = {"stop", nullptr};
     mpv_command_async(mpv_, 0, cmd);
     playing_ = false;
 }
 
-void MpvPlayerGL::pause() {
+void MpvPlayer::pause() {
     if (!mpv_) return;
     int pause = 1;
     mpv_set_property_async(mpv_, 0, "pause", MPV_FORMAT_FLAG, &pause);
 }
 
-void MpvPlayerGL::play() {
+void MpvPlayer::play() {
     if (!mpv_) return;
     int pause = 0;
     mpv_set_property_async(mpv_, 0, "pause", MPV_FORMAT_FLAG, &pause);
 }
 
-void MpvPlayerGL::seek(double seconds) {
+void MpvPlayer::seek(double seconds) {
     if (!mpv_) return;
     std::string time_str = std::to_string(seconds);
     const char* cmd[] = {"seek", time_str.c_str(), "absolute", nullptr};
     mpv_command_async(mpv_, 0, cmd);
 }
 
-void MpvPlayerGL::setVolume(int volume) {
+void MpvPlayer::setVolume(int volume) {
     if (!mpv_) return;
     double vol = static_cast<double>(volume);
     mpv_set_property_async(mpv_, 0, "volume", MPV_FORMAT_DOUBLE, &vol);
 }
 
-void MpvPlayerGL::setMuted(bool muted) {
+void MpvPlayer::setMuted(bool muted) {
     if (!mpv_) return;
     int m = muted ? 1 : 0;
     mpv_set_property_async(mpv_, 0, "mute", MPV_FORMAT_FLAG, &m);
 }
 
-void MpvPlayerGL::setSpeed(double speed) {
+void MpvPlayer::setSpeed(double speed) {
     if (!mpv_) return;
     mpv_set_property_async(mpv_, 0, "speed", MPV_FORMAT_DOUBLE, &speed);
 }
 
-void MpvPlayerGL::setNormalizationGain(double gainDb) {
+void MpvPlayer::setNormalizationGain(double gainDb) {
     if (!mpv_) return;
     if (gainDb == 0.0) {
+        // Clear audio filter
         mpv_set_property_string(mpv_, "af", "");
     } else {
+        // Apply gain via lavfi volume filter
+        // Format: lavfi=[volume=<dB>dB]
         char filter[64];
         snprintf(filter, sizeof(filter), "lavfi=[volume=%.2fdB]", gainDb);
         mpv_set_property_string(mpv_, "af", filter);
@@ -340,7 +314,7 @@ void MpvPlayerGL::setNormalizationGain(double gainDb) {
     }
 }
 
-void MpvPlayerGL::setSubtitleTrack(int sid) {
+void MpvPlayer::setSubtitleTrack(int sid) {
     if (!mpv_) return;
     if (sid < 0) {
         mpv_set_property_string(mpv_, "sid", "no");
@@ -350,7 +324,7 @@ void MpvPlayerGL::setSubtitleTrack(int sid) {
     }
 }
 
-void MpvPlayerGL::setAudioTrack(int aid) {
+void MpvPlayer::setAudioTrack(int aid) {
     if (!mpv_) return;
     if (aid < 0) {
         mpv_set_property_string(mpv_, "aid", "no");
@@ -360,71 +334,46 @@ void MpvPlayerGL::setAudioTrack(int aid) {
     }
 }
 
-void MpvPlayerGL::setAudioDelay(double seconds) {
+void MpvPlayer::setAudioDelay(double seconds) {
     if (!mpv_) return;
     mpv_set_property_async(mpv_, 0, "audio-delay", MPV_FORMAT_DOUBLE, &seconds);
 }
 
-double MpvPlayerGL::getPosition() const {
+double MpvPlayer::getPosition() const {
     if (!mpv_) return 0;
     double pos = 0;
     mpv_get_property(mpv_, "time-pos", MPV_FORMAT_DOUBLE, &pos);
     return pos;
 }
 
-double MpvPlayerGL::getDuration() const {
-    if (!mpv_) return 0;
-    double dur = 0;
-    mpv_get_property(mpv_, "duration", MPV_FORMAT_DOUBLE, &dur);
-    return dur;
-}
-
-double MpvPlayerGL::getSpeed() const {
+double MpvPlayer::getSpeed() const {
     if (!mpv_) return 1.0;
     double speed = 1.0;
     mpv_get_property(mpv_, "speed", MPV_FORMAT_DOUBLE, &speed);
     return speed;
 }
 
-bool MpvPlayerGL::isPaused() const {
+double MpvPlayer::getDuration() const {
+    if (!mpv_) return 0;
+    double dur = 0;
+    mpv_get_property(mpv_, "duration", MPV_FORMAT_DOUBLE, &dur);
+    return dur;
+}
+
+bool MpvPlayer::isPaused() const {
     if (!mpv_) return false;
     int paused = 0;
     mpv_get_property(mpv_, "pause", MPV_FORMAT_FLAG, &paused);
     return paused != 0;
 }
 
-bool MpvPlayerGL::hasFrame() const {
+bool MpvPlayer::hasFrame() const {
     if (!render_ctx_) return false;
-    return (mpv_render_context_update(render_ctx_) & MPV_RENDER_UPDATE_FRAME) != 0;
+    uint64_t flags = mpv_render_context_update(render_ctx_);
+    return (flags & MPV_RENDER_UPDATE_FRAME) != 0;
 }
 
-void MpvPlayerGL::reportSwap() {
+void MpvPlayer::reportSwap() {
     if (render_ctx_)
         mpv_render_context_report_swap(render_ctx_);
-}
-
-void MpvPlayerGL::render(int width, int height, int fbo, bool flip) {
-    if (!render_ctx_) return;
-
-    static bool first = true;
-    if (first) {
-        LOG_INFO(LOG_MPV, "render: %dx%d fbo=%d flip=%d", width, height, fbo, flip ? 1 : 0);
-        first = false;
-    }
-
-    mpv_opengl_fbo fbo_params{};
-    fbo_params.fbo = fbo;
-    fbo_params.w = width;
-    fbo_params.h = height;
-    fbo_params.internal_format = 0;  // Let mpv decide
-
-    int flip_y = flip ? 1 : 0;
-
-    mpv_render_param params[] = {
-        {MPV_RENDER_PARAM_OPENGL_FBO, &fbo_params},
-        {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
-        {MPV_RENDER_PARAM_INVALID, nullptr}
-    };
-
-    mpv_render_context_render(render_ctx_, params);
 }

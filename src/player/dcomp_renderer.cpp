@@ -1,13 +1,17 @@
 #ifdef _WIN32
 
 #include "dcomp_renderer.h"
-#include "mpv/mpv_player_gl.h"
+#include "mpv/mpv_player.h"
+#include <mpv/render.h>
+#include <mpv/render_gl.h>
 #include "platform/windows_video_layer.h"
 #include "context/wgl_context.h"
 #include "context/gl_loader.h"
 #include "logging.h"
 
-DCompRenderer::DCompRenderer(MpvPlayerGL* player, WindowsVideoLayer* layer)
+// NOTE: The MpvPlayer passed here must have an OpenGL render context created
+// with backend "gpu" (not "gpu-next"), because gpu-next ignores flip_y on Windows.
+DCompRenderer::DCompRenderer(MpvPlayer* player, WindowsVideoLayer* layer)
     : player_(player), layer_(layer) {}
 
 DCompRenderer::~DCompRenderer() {
@@ -56,7 +60,20 @@ bool DCompRenderer::render(int width, int height) {
     // CopyResource is a raw copy with no flip, so mpv must render flipped.
     glBindFramebuffer(GL_FRAMEBUFFER, layer_->fbo());
     glViewport(0, 0, layer_->width(), layer_->height());
-    player_->render(layer_->width(), layer_->height(), layer_->fbo(), true);
+
+    mpv_opengl_fbo fbo_params{};
+    fbo_params.fbo = layer_->fbo();
+    fbo_params.w = layer_->width();
+    fbo_params.h = layer_->height();
+    fbo_params.internal_format = 0;
+
+    int flip_y = 1;
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_OPENGL_FBO, &fbo_params},
+        {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+        {MPV_RENDER_PARAM_INVALID, nullptr}
+    };
+    mpv_render_context_render(player_->renderContext(), params);
 
     // Wait for render to complete before releasing interop
     glFinish();

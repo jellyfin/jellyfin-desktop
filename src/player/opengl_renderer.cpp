@@ -1,5 +1,7 @@
 #include "opengl_renderer.h"
-#include "mpv/mpv_player_gl.h"
+#include "mpv/mpv_player.h"
+#include <mpv/render.h>
+#include <mpv/render_gl.h>
 #include "logging.h"
 
 #ifdef _WIN32
@@ -50,7 +52,7 @@ void main() {
 )";
 #endif
 
-OpenGLRenderer::OpenGLRenderer(MpvPlayerGL* player) : player_(player) {}
+OpenGLRenderer::OpenGLRenderer(MpvPlayer* player) : player_(player) {}
 
 OpenGLRenderer::~OpenGLRenderer() {
     cleanup();
@@ -152,6 +154,30 @@ void OpenGLRenderer::destroyFBO() {
     fbo_height_ = 0;
 }
 
+void OpenGLRenderer::renderToFBO(int fbo, int width, int height, bool flip) {
+    mpv_opengl_fbo fbo_params{};
+    fbo_params.fbo = fbo;
+    fbo_params.w = width;
+    fbo_params.h = height;
+    fbo_params.internal_format = 0;  // Let mpv decide
+
+    int flip_y = flip ? 1 : 0;
+
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_OPENGL_FBO, &fbo_params},
+        {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+        {MPV_RENDER_PARAM_INVALID, nullptr}
+    };
+
+    static bool first = true;
+    if (first) {
+        LOG_INFO(LOG_MPV, "render: %dx%d fbo=%d flip=%d", width, height, fbo, flip ? 1 : 0);
+        first = false;
+    }
+
+    mpv_render_context_render(player_->renderContext(), params);
+}
+
 bool OpenGLRenderer::render(int width, int height) {
     if (threaded_) {
         // Make shared context current on this thread
@@ -183,7 +209,7 @@ bool OpenGLRenderer::render(int width, int height) {
         auto& back = buffers_[write_index_];
         glBindFramebuffer(GL_FRAMEBUFFER, back.fbo);
         glViewport(0, 0, width, height);
-        player_->render(width, height, back.fbo, false);  // No flip - FBO is top-down
+        renderToFBO(back.fbo, width, height, false);  // No flip - FBO is top-down
 
         // Wait for render to complete before publishing texture
         glFinish();
@@ -201,7 +227,7 @@ bool OpenGLRenderer::render(int width, int height) {
         has_rendered_.store(true);
     } else {
         // Direct rendering to default framebuffer
-        player_->render(width, height, 0, true);  // Flip for screen
+        renderToFBO(0, width, height, true);  // Flip for screen
         has_rendered_.store(true);
     }
     return true;
@@ -231,6 +257,7 @@ void OpenGLRenderer::composite(int width, int height) {
         glDeleteShader(frag);
 
         glGenVertexArrays(1, &composite_vao_);
+        composite_tex_loc_ = glGetUniformLocation(composite_program_, "videoTex");
     }
 
     // Use atomically published front texture
@@ -240,7 +267,7 @@ void OpenGLRenderer::composite(int width, int height) {
     glUseProgram(composite_program_);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glUniform1i(glGetUniformLocation(composite_program_, "videoTex"), 0);
+    glUniform1i(composite_tex_loc_, 0);
 
     glBindVertexArray(composite_vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);

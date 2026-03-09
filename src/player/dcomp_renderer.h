@@ -5,13 +5,13 @@
 #include <atomic>
 #include <windows.h>
 
-class MpvPlayerGL;
+class MpvPlayer;
 class WindowsVideoLayer;
 class WGLContext;
 
 class DCompRenderer : public VideoRenderer {
 public:
-    DCompRenderer(MpvPlayerGL* player, WindowsVideoLayer* layer);
+    DCompRenderer(MpvPlayer* player, WindowsVideoLayer* layer);
     ~DCompRenderer();
 
     bool initThreaded(WGLContext* wgl);
@@ -29,7 +29,7 @@ public:
     bool isHdr() const override { return false; }
 
 private:
-    MpvPlayerGL* player_;
+    MpvPlayer* player_;
     WindowsVideoLayer* layer_;
     WGLContext* wgl_ = nullptr;
     HGLRC shared_ctx_ = nullptr;

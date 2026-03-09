@@ -1,12 +1,14 @@
 #include "vulkan_subsurface_renderer.h"
-#include "mpv/mpv_player_vk.h"
+#include "mpv/mpv_player.h"
+#include <mpv/render.h>
+#include <mpv/render_vk.h>
 #ifdef __APPLE__
 #include "platform/macos_layer.h"
 #else
 #include "platform/video_surface.h"
 #endif
 
-VulkanSubsurfaceRenderer::VulkanSubsurfaceRenderer(MpvPlayerVk* player, VideoSurface* surface)
+VulkanSubsurfaceRenderer::VulkanSubsurfaceRenderer(MpvPlayer* player, VideoSurface* surface)
     : player_(player), surface_(surface) {}
 
 bool VulkanSubsurfaceRenderer::hasFrame() const {
@@ -19,7 +21,23 @@ bool VulkanSubsurfaceRenderer::render(int width, int height) {
     VkImageView view;
     VkFormat format;
     if (surface_->startFrame(&image, &view, &format)) {
-        player_->render(image, view, surface_->width(), surface_->height(), format);
+        mpv_vulkan_fbo fbo{};
+        fbo.image = image;
+        fbo.image_view = view;
+        fbo.width = surface_->width();
+        fbo.height = surface_->height();
+        fbo.format = format;
+        fbo.current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        fbo.target_layout = surface_->targetImageLayout();
+
+        int flip_y = 0;
+        mpv_render_param render_params[] = {
+            {MPV_RENDER_PARAM_VULKAN_FBO, &fbo},
+            {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+            {MPV_RENDER_PARAM_INVALID, nullptr}
+        };
+
+        mpv_render_context_render(player_->renderContext(), render_params);
         surface_->submitFrame();
         player_->reportSwap();
         return true;

@@ -73,7 +73,7 @@ if(APPLE)
         src/compositor/metal_compositor.mm
         src/player/media_session.cpp
         src/player/macos/media_session_macos.mm
-        src/player/mpv/mpv_player_vk.cpp
+        src/player/mpv/mpv_player.cpp
         src/player/vulkan_subsurface_renderer.cpp
     )
 
@@ -101,7 +101,7 @@ elseif(WIN32)
         src/platform/windows_overlay_layer.cpp
         src/compositor/opengl_compositor.cpp
         src/player/media_session.cpp
-        src/player/mpv/mpv_player_vk.cpp
+        src/player/mpv/mpv_player.cpp
         src/player/vulkan_subsurface_renderer.cpp
         src/player/windows/media_session_windows.cpp
         ${CMAKE_SOURCE_DIR}/resources/win/iconres.rc
@@ -192,8 +192,7 @@ else()
         src/compositor/opengl_compositor.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
-        src/player/mpv/mpv_player_gl.cpp
-        src/player/mpv/mpv_player_vk.cpp
+        src/player/mpv/mpv_player.cpp
         src/player/vulkan_subsurface_renderer.cpp
         src/player/opengl_renderer.cpp
         ${COLOR_MGMT_CODE_C}

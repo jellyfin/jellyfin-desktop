@@ -11,13 +11,13 @@
 #include <atomic>
 #include <mutex>
 
-class MpvPlayerGL;
+class MpvPlayer;
 class EGLContext_;
 class WGLContext;
 
 class OpenGLRenderer : public VideoRenderer {
 public:
-    explicit OpenGLRenderer(MpvPlayerGL* player);
+    explicit OpenGLRenderer(MpvPlayer* player);
     ~OpenGLRenderer();
 
     // Initialize for threaded rendering (creates shared context + FBO)
@@ -42,8 +42,9 @@ public:
 private:
     void createFBO(int width, int height);
     void destroyFBO();
+    void renderToFBO(int fbo, int width, int height, bool flip);
 
-    MpvPlayerGL* player_;
+    MpvPlayer* player_;
     bool threaded_ = false;
 
 #ifdef _WIN32
@@ -68,6 +69,7 @@ private:
 
     GLuint composite_program_ = 0;
     GLuint composite_vao_ = 0;
+    GLint composite_tex_loc_ = -1;
 
     std::mutex fbo_mutex_;
     std::atomic<bool> has_rendered_{false};
