@@ -255,6 +255,8 @@ QString SystemComponent::extractBaseUrl(const QString& url)
 QSslConfiguration SystemComponent::getSSLConfiguration()
 {
   QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
+  // Require TLS 1.2 or newer
+  sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
   if (SettingsComponent::Get().ignoreSSLErrors()) {
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
   } else if (SettingsComponent::Get().autodetectCertBundle()) {
