@@ -26,7 +26,7 @@ private:
   void onMetaData(const QVariantMap &meta, QUrl baseUrl);
   void setAudioMeta(const QVariantMap &meta);
   void setVideoMeta(const QVariantMap &meta);
-  void setThumbnail(const QVariantMap &meta, QUrl baseUrl);
+  void onAlbumArtReady(const QByteArray& imageData);
   void playing();
   void stopped();
   void paused();

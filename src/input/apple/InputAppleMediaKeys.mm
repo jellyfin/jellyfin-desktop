@@ -90,6 +90,7 @@ bool InputAppleMediaKeys::initInput()
 {
   m_currentTime = 0;
   m_pendingUpdate = false;
+
   m_delegate = [[MediaKeysDelegate alloc] initWithInput:this];
   connect(&PlayerComponent::Get(), &PlayerComponent::stateChanged, this,
           &InputAppleMediaKeys::handleStateChanged);
@@ -98,6 +99,8 @@ bool InputAppleMediaKeys::initInput()
   connect(&PlayerComponent::Get(), &PlayerComponent::updateDuration, this,
           &InputAppleMediaKeys::handleUpdateDuration);
   connect(&PlayerComponent::Get(), &PlayerComponent::onMetaData, this,
+          &InputAppleMediaKeys::handleUpdateMetaData);
+  connect(&PlayerComponent::Get(), &PlayerComponent::metadataChanged, this,
           &InputAppleMediaKeys::handleUpdateMetaData);
 
   // Connect to AlbumArtProvider signals
@@ -145,19 +148,15 @@ static MPNowPlayingPlaybackState convertState(PlayerComponent::State newState)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void InputAppleMediaKeys::handleStateChanged(PlayerComponent::State newState)
 {
-  MPNowPlayingPlaybackState newMPState = convertState(newState);
+  m_currentState = newState;
+
   MPNowPlayingInfoCenter *center = [MPNowPlayingInfoCenter defaultCenter];
   NSMutableDictionary *playingInfo = [NSMutableDictionary dictionaryWithDictionary:center.nowPlayingInfo];
   [playingInfo setObject:[NSNumber numberWithDouble:static_cast<double>(m_currentTime) / 1000] forKey:MPNowPlayingInfoPropertyElapsedPlaybackTime];
   center.nowPlayingInfo = playingInfo;
-  [MPNowPlayingInfoCenter defaultCenter].playbackState = newMPState;
-  if (SetNowPlayingVisibility && GetLocalOrigin) {
-    if (newState == PlayerComponent::State::finished || newState == PlayerComponent::State::canceled || newState == PlayerComponent::State::error)
-      SetNowPlayingVisibility(GetLocalOrigin(), MRNowPlayingClientVisibilityNeverVisible);
-    else if (newState == PlayerComponent::State::paused || newState == PlayerComponent::State::playing || newState == PlayerComponent::State::buffering)
-      SetNowPlayingVisibility(GetLocalOrigin(), MRNowPlayingClientVisibilityAlwaysVisible);
-  }
+  center.playbackState = convertState(newState);
 
+  ensureNowPlayingVisibility();
   m_pendingUpdate = true;
 }
 
@@ -217,6 +216,10 @@ void InputAppleMediaKeys::handleUpdateMetaData(const QVariantMap& meta)
   }
 
   MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = info;
+  MPNowPlayingInfoCenter.defaultCenter.playbackState = convertState(m_currentState);
+  
+  // This will attempt to update the MacOS "Now Playing" UI.
+  ensureNowPlayingVisibility();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -250,4 +253,22 @@ void InputAppleMediaKeys::handleAlbumArtReady(const QByteArray& imageData)
 void InputAppleMediaKeys::handleAlbumArtUnavailable()
 {
   // No action needed - metadata remains without artwork
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void InputAppleMediaKeys::ensureNowPlayingVisibility()
+{
+  if (!SetNowPlayingVisibility || !GetLocalOrigin) {
+    return;
+  }
+
+  if (m_currentState == PlayerComponent::State::finished ||
+      m_currentState == PlayerComponent::State::canceled ||
+      m_currentState == PlayerComponent::State::error) {
+        SetNowPlayingVisibility(GetLocalOrigin(), MRNowPlayingClientVisibilityNeverVisible);
+    } else if (m_currentState == PlayerComponent::State::paused ||
+           m_currentState == PlayerComponent::State::playing ||
+           m_currentState == PlayerComponent::State::buffering) {
+        SetNowPlayingVisibility(GetLocalOrigin(), MRNowPlayingClientVisibilityAlwaysVisible);
+    }
 }

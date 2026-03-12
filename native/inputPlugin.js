@@ -172,7 +172,47 @@ class inputPlugin {
 
                 const state = playbackManager.getPlayerState();
                 if (state && state.NowPlayingItem) {
-                    api.player.notifyMetadata(state.NowPlayingItem);
+                    let apiToken = '';
+                    try {
+                        // Attempt to get API token.
+                        if (window.ApiClient) {
+                            if (typeof window.ApiClient.accessToken === 'function') {
+                                apiToken = window.ApiClient.accessToken() || '';
+                            } else if (window.ApiClient.accessToken) {
+                                apiToken = window.ApiClient.accessToken || '';
+                            } else if (window.ApiClient._serverInfo?.AccessToken) {
+                                apiToken = window.ApiClient._serverInfo.AccessToken;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('inputPlugin: failed to get API token:', e);
+                    }
+                    
+                    // Get server URL
+                    let serverUrl = '';
+                    try {
+                        if (window.ApiClient && typeof window.ApiClient.serverAddress === 'function') {
+                            serverUrl = window.ApiClient.serverAddress() || '';
+                        }
+                    } catch (e) {
+                        console.error('inputPlugin: failed to get serverAddress:', e);
+                    }
+                    if (!serverUrl) {
+                        // Possible backup solution.
+                        serverUrl = window.location.origin;
+                    }
+                    const metadata = Object.assign({}, state.NowPlayingItem, {
+                        _serverUrl: serverUrl,
+                        _apiToken: apiToken
+                    });
+                    try {
+                        if (typeof api.player.notifyServerUrl === 'function') {
+                            api.player.notifyServerUrl(serverUrl);
+                        }
+                    } catch (e) {
+                        console.error('inputPlugin: notifyServerUrl failed:', e);
+                    }
+                    api.player.notifyMetadata(metadata);
 
                     const initialPos = playbackManager.currentTime();
                     if (initialPos !== undefined && initialPos !== null) {
