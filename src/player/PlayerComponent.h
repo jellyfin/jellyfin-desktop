@@ -74,6 +74,7 @@ public:
   Q_INVOKABLE void notifyPosition(qint64 positionMs);
   Q_INVOKABLE void notifySeek(qint64 positionMs);
   Q_INVOKABLE void notifyMetadata(const QVariantMap& metadata);
+  Q_INVOKABLE void notifyServerUrl(const QString& url);
   Q_INVOKABLE void notifyVolumeChange(double volume);
 
   // 0-100 volume 0=mute and 100=normal
@@ -277,6 +278,7 @@ private:
   QTimer* m_playlistTimer;
   QVariantList m_queuedItems;
 
+  QUrl m_serverBaseUrl;
   AlbumArtProvider* m_albumArtProvider;
 };
 

@@ -341,6 +341,10 @@ void PlayerComponent::queueMedia(const QString& url, const QVariantMap& options,
   QUrl jellyfinBaseUrl = qurl.adjusted(QUrl::RemovePath | QUrl::RemoveQuery);
   emit onMetaData(jellyfinMetadata, jellyfinBaseUrl);
 
+  // Store the server base URL for use by notifyMetadata (JS path)
+  if (m_serverBaseUrl.isEmpty())
+    m_serverBaseUrl = jellyfinBaseUrl;
+
   // Request album art from the provider
   if (m_albumArtProvider)
     m_albumArtProvider->requestArtwork(jellyfinMetadata, jellyfinBaseUrl);
@@ -800,7 +804,32 @@ void PlayerComponent::notifySeek(qint64 positionMs)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::notifyMetadata(const QVariantMap& metadata)
 {
+  // Extract server URL embedded by JavaScript as a fallback
+  if (metadata.contains("_serverUrl"))
+  {
+    QUrl url(metadata["_serverUrl"].toString());
+    if (!url.isEmpty())
+      m_serverBaseUrl = url;
+  }
+
+  // Extract API token embedded by JavaScript for authenticated artwork requests
+  if (metadata.contains("_apiToken"))
+  {
+    QString token = metadata["_apiToken"].toString();
+    if (!token.isEmpty() && m_albumArtProvider)
+      m_albumArtProvider->setApiToken(token);
+  }
+
   emit metadataChanged(metadata);
+
+  if (m_albumArtProvider && !m_serverBaseUrl.isEmpty())
+    m_albumArtProvider->requestArtwork(metadata, m_serverBaseUrl);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void PlayerComponent::notifyServerUrl(const QString& url)
+{
+  m_serverBaseUrl = QUrl(url);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
