@@ -1,6 +1,5 @@
 #include <QApplication>
 #include <QStyle>
-#include <QUrlQuery>
 
 #include <Windows.Foundation.h>
 #include <systemmediatransportcontrolsinterop.h>
@@ -9,9 +8,13 @@
 
 #include "TaskbarComponentWin.h"
 #include "PlayerComponent.h"
+#include "player/AlbumArtProvider.h"
 #include "input/InputComponent.h"
 #include "settings/SettingsComponent.h"
 #include "settings/SettingsSection.h"
+
+#include <robuffer.h>
+#include <Windows.Storage.Streams.h>
 
 using namespace ABI::Windows::Foundation;
 using namespace ABI::Windows::Media;
@@ -69,6 +72,15 @@ void TaskbarComponentWin::setWindow(QQuickWindow* window)
   connect(&PlayerComponent::Get(), &PlayerComponent::paused, this, &TaskbarComponentWin::paused);
   connect(&PlayerComponent::Get(), &PlayerComponent::stopped, this, &TaskbarComponentWin::stopped);
   connect(&PlayerComponent::Get(), &PlayerComponent::onMetaData, this, &TaskbarComponentWin::onMetaData);
+  connect(&PlayerComponent::Get(), &PlayerComponent::metadataChanged, this, [this](const QVariantMap& meta) {
+    onMetaData(meta, QUrl());
+  });
+
+  if (PlayerComponent::Get().albumArtProvider())
+  {
+    connect(PlayerComponent::Get().albumArtProvider(), &AlbumArtProvider::artworkReady,
+            this, &TaskbarComponentWin::onAlbumArtReady);
+  }
 
   setControlsVisible(false);
   setPaused(false);
@@ -223,6 +235,8 @@ void TaskbarComponentWin::initializeMediaTransport(HWND hwnd)
     return;
   }
 
+  m_displayUpdater->put_AppMediaId(HStringReference(L"org.jellyfin.JellyfinDesktop").Get());
+
   m_initialized = true;
   qInfo() << "SystemMediaTransportControls successfully initialized";
 }
@@ -243,6 +257,9 @@ void TaskbarComponentWin::onMetaData(const QVariantMap& meta, QUrl baseUrl)
     return;
   }
 
+  // Re-set AppMediaId after ClearAll wipes it
+  m_displayUpdater->put_AppMediaId(HStringReference(L"org.jellyfin.JellyfinDesktop").Get());
+
   if (mediaType == "Video")
   {
     setVideoMeta(meta);
@@ -251,8 +268,6 @@ void TaskbarComponentWin::onMetaData(const QVariantMap& meta, QUrl baseUrl)
   {
     setAudioMeta(meta);
   }
-
-  setThumbnail(meta, baseUrl);
 
   hr = m_displayUpdater->Update();
   if (FAILED(hr))
@@ -348,71 +363,119 @@ void TaskbarComponentWin::setVideoMeta(const QVariantMap& meta)
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
-void TaskbarComponentWin::setThumbnail(const QVariantMap& meta, QUrl baseUrl)
+void TaskbarComponentWin::onAlbumArtReady(const QByteArray& imageData)
 {
-  QString imgUrl;
+  if (!m_initialized || !m_displayUpdater)
+    return;
+
   HRESULT hr;
 
-  auto images = meta["ImageTags"].toMap();
-  if (images.contains("Primary"))
+  // Create an InMemoryRandomAccessStream and write the image data into it.
+  ComPtr<ABI::Windows::Storage::Streams::IRandomAccessStream> memStream;
+  hr = ActivateInstance(HStringReference(RuntimeClass_Windows_Storage_Streams_InMemoryRandomAccessStream).Get(),
+                        &memStream);
+  if (FAILED(hr))
   {
-    auto itemId = meta["Id"].toString();
-    auto imgTag = images["Primary"].toString();
-    QUrlQuery query;
-    query.addQueryItem("tag", imgTag);
-    baseUrl.setPath("/Items/" + itemId + "/Images/Primary");
-    baseUrl.setQuery(query);
-    imgUrl = baseUrl.toString();
-  }
-  else if (meta.contains("AlbumId") && meta.contains("AlbumPrimaryImageTag")
-           && meta["AlbumId"].canConvert(QMetaType::QString)
-           && meta["AlbumPrimaryImageTag"].canConvert(QMetaType::QString))
-  {
-    auto itemId = meta["AlbumId"].toString();
-    auto imgTag = meta["AlbumPrimaryImageTag"].toString();
-    QUrlQuery query;
-    query.addQueryItem("tag", imgTag);
-    baseUrl.setPath("/Items/" + itemId + "/Images/Primary");
-    baseUrl.setQuery(query);
-    imgUrl = baseUrl.toString();
-  }
-  else
-  {
-    qDebug() << "No Primary image found. Do nothing";
+    qWarning() << "Failed to create InMemoryRandomAccessStream";
     return;
   }
 
-  
+  // Get the IOutputStream interface to write data.
+  ComPtr<ABI::Windows::Storage::Streams::IOutputStream> outputStream;
+  hr = memStream.As(&outputStream);
+  if (FAILED(hr))
+  {
+    qWarning() << "Failed to get IOutputStream from memory stream";
+    return;
+  }
 
+  // Create a DataWriter to write bytes into the stream.
+  ComPtr<ABI::Windows::Storage::Streams::IDataWriter> writer;
+  hr = ActivateInstance(HStringReference(RuntimeClass_Windows_Storage_Streams_DataWriter).Get(), &writer);
+  if (FAILED(hr))
+  {
+    qWarning() << "Failed to create DataWriter";
+    return;
+  }
+
+  // Attach the writer to the output stream.
+  ComPtr<ABI::Windows::Storage::Streams::IDataWriterFactory> writerFactory;
+  hr = GetActivationFactory(HStringReference(RuntimeClass_Windows_Storage_Streams_DataWriter).Get(), &writerFactory);
+  if (FAILED(hr))
+  {
+    qWarning() << "Failed to get DataWriter factory";
+    return;
+  }
+
+  hr = writerFactory->CreateDataWriter(outputStream.Get(), &writer);
+  if (FAILED(hr))
+  {
+    qWarning() << "Failed to create DataWriter with output stream";
+    return;
+  }
+
+  // Write the image bytes.
+  hr = writer->WriteBytes(imageData.size(), (BYTE*)imageData.constData());
+  if (FAILED(hr))
+  {
+    qWarning() << "Failed to write image bytes";
+    return;
+  }
+
+  // Flush the writer (synchronously store to stream).
+  ComPtr<ABI::Windows::Foundation::IAsyncOperation<UINT32>> storeOp;
+  hr = writer->StoreAsync(&storeOp);
+  if (FAILED(hr))
+  {
+    qWarning() << "Failed to store DataWriter";
+    return;
+  }
+
+  // Despite the name, this "async" operation is entirely in-memory.
+  ComPtr<ABI::Windows::Foundation::IAsyncInfo> asyncInfo;
+  hr = storeOp.As(&asyncInfo);
+  if (SUCCEEDED(hr))
+  {
+    ABI::Windows::Foundation::AsyncStatus status;
+    do {
+      hr = asyncInfo->get_Status(&status);
+    } while (SUCCEEDED(hr) && status == ABI::Windows::Foundation::AsyncStatus::Started);
+
+    if (status != ABI::Windows::Foundation::AsyncStatus::Completed)
+    {
+      qWarning() << "DataWriter store did not complete successfully";
+      return;
+    }
+  }
+
+  UINT32 bytesWritten = 0;
+  storeOp->GetResults(&bytesWritten);
+
+  // Detach the stream from the writer so it doesn't get closed.
+  hr = writer->DetachStream(&outputStream);
+
+  // Seek back to the beginning.
+  hr = memStream->Seek(0);
+  if (FAILED(hr))
+  {
+    qWarning() << "Failed to seek memory stream to beginning";
+    return;
+  }
+
+  // Create a RandomAccessStreamReference from the in-memory stream.
   ComPtr<IRandomAccessStreamReferenceStatics> streamRefFactory;
   hr = GetActivationFactory(HStringReference(RuntimeClass_Windows_Storage_Streams_RandomAccessStreamReference).Get(),
     &streamRefFactory);
   if (FAILED(hr))
   {
-    qWarning() << "Failed instantiating stream factory";
+    qWarning() << "Failed to get RandomAccessStreamReference factory";
     return;
   }
 
-  ComPtr<IUriRuntimeClassFactory> uriFactory;
-  hr = GetActivationFactory(HStringReference(RuntimeClass_Windows_Foundation_Uri).Get(), &uriFactory);
+  hr = streamRefFactory->CreateFromStream(memStream.Get(), &m_thumbnail);
   if (FAILED(hr))
   {
-    qWarning() << "Failed instantiating uri factory";
-    return;
-  }
-
-  ComPtr<IUriRuntimeClass> uri;
-  hr = uriFactory->CreateUri(HStringReference((const wchar_t*)imgUrl.utf16()).Get(), &uri);
-  if (FAILED(hr))
-  {
-    qWarning() << "Failed to create uri";
-    return;
-  }
-
-  hr = streamRefFactory->CreateFromUri(uri.Get(), &m_thumbnail);
-  if (FAILED(hr))
-  {
-    qWarning() << "Failed to create stream from uri";
+    qWarning() << "Failed to create stream reference from memory stream";
     return;
   }
 
@@ -422,6 +485,15 @@ void TaskbarComponentWin::setThumbnail(const QVariantMap& meta, QUrl baseUrl)
     qWarning() << "Failed to set thumbnail";
     return;
   }
+
+  hr = m_displayUpdater->Update();
+  if (FAILED(hr))
+  {
+    qWarning() << "Failed to update display after setting thumbnail";
+    return;
+  }
+
+  qDebug() << "Taskbar thumbnail updated from album art (" << bytesWritten << "bytes)";
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////

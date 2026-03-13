@@ -38,10 +38,13 @@
 #include "SignalManager.h"
 #endif
 
-#if defined(Q_OS_WIN) && defined(_M_X64)
+#if defined(Q_OS_WIN)
 #include <windows.h>
+#include <shobjidl.h>
 #include <cstdio>
+#endif
 
+#if defined(Q_OS_WIN) && defined(_M_X64)
 /////////////////////////////////////////////////////////////////////////////////////////
 // Check AVX2 support and swap libmpv DLL if needed (before delay-load triggers)
 // Only relevant for x64 - ARM64 doesn't have AVX2
@@ -441,7 +444,8 @@ int main(int argc, char *argv[])
     QtWebEngineQuick::initialize();
     QApplication app(newArgc, newArgv);
 
-#if defined(Q_OS_WIN) 
+#if defined(Q_OS_WIN)
+    SetCurrentProcessExplicitAppUserModelID(L"org.jellyfin.JellyfinDesktop");
     // Setting window icon on OSX will break user ability to change it
     app.setWindowIcon(QIcon(":/images/icon.png"));
 #endif

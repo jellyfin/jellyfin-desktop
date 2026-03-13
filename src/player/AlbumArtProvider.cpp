@@ -44,6 +44,16 @@ void AlbumArtProvider::requestArtwork(const QVariantMap& metadata, const QUrl& b
     return;
   }
 
+  // Append api_key query parameter for authentication (same method Jellyfin uses for media streams)
+  if (!m_apiToken.isEmpty())
+  {
+    QUrl url(artUrl);
+    QUrlQuery query(url);
+    query.addQueryItem("api_key", m_apiToken);
+    url.setQuery(query);
+    artUrl = url.toString();
+  }
+
   // If already downloading this URL, wait for it
   if (m_pendingReply && m_pendingUrl == artUrl)
     return;
@@ -122,6 +132,11 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
   QString mediaType = metadata.value("MediaType").toString();
   QString itemType = metadata.value("Type").toString();
 
+  // Preserve the base path (e.g. "/stable" for servers behind a reverse proxy subpath)
+  QString basePath = baseUrl.path();
+  if (basePath.endsWith('/'))
+    basePath.chop(1);
+
   QUrl artUrl = baseUrl;
   QUrlQuery query;
 
@@ -134,7 +149,7 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
 
       if (!albumId.isEmpty() && !imageTag.isEmpty())
       {
-        artUrl.setPath(QString("/Items/%1/Images/Primary").arg(albumId));
+        artUrl.setPath(basePath + QString("/Items/%1/Images/Primary").arg(albumId));
         query.addQueryItem("tag", imageTag);
         query.addQueryItem("maxWidth", "512");
         artUrl.setQuery(query);
@@ -150,7 +165,7 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
 
       if (!itemId.isEmpty() && !imageTag.isEmpty())
       {
-        artUrl.setPath(QString("/Items/%1/Images/Primary").arg(itemId));
+        artUrl.setPath(basePath + QString("/Items/%1/Images/Primary").arg(itemId));
         query.addQueryItem("tag", imageTag);
         query.addQueryItem("maxWidth", "512");
         artUrl.setQuery(query);
@@ -167,7 +182,7 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
 
       if (!seriesId.isEmpty() && !imageTag.isEmpty())
       {
-        artUrl.setPath(QString("/Items/%1/Images/Primary").arg(seriesId));
+        artUrl.setPath(basePath + QString("/Items/%1/Images/Primary").arg(seriesId));
         query.addQueryItem("tag", imageTag);
         query.addQueryItem("maxWidth", "512");
         artUrl.setQuery(query);
@@ -182,7 +197,7 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
 
       if (!seasonId.isEmpty() && !imageTag.isEmpty())
       {
-        artUrl.setPath(QString("/Items/%1/Images/Primary").arg(seasonId));
+        artUrl.setPath(basePath + QString("/Items/%1/Images/Primary").arg(seasonId));
         query.addQueryItem("tag", imageTag);
         query.addQueryItem("maxWidth", "512");
         artUrl.setQuery(query);
@@ -198,7 +213,7 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
 
       if (!itemId.isEmpty() && !imageTag.isEmpty())
       {
-        artUrl.setPath(QString("/Items/%1/Images/Primary").arg(itemId));
+        artUrl.setPath(basePath + QString("/Items/%1/Images/Primary").arg(itemId));
         query.addQueryItem("tag", imageTag);
         query.addQueryItem("maxWidth", "512");
         artUrl.setQuery(query);
@@ -216,7 +231,7 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
 
       if (!itemId.isEmpty() && !imageTag.isEmpty())
       {
-        artUrl.setPath(QString("/Items/%1/Images/Primary").arg(itemId));
+        artUrl.setPath(basePath + QString("/Items/%1/Images/Primary").arg(itemId));
         query.addQueryItem("tag", imageTag);
         query.addQueryItem("maxWidth", "512");
         artUrl.setQuery(query);
@@ -231,7 +246,7 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
 
       if (!itemId.isEmpty() && !imageTag.isEmpty())
       {
-        artUrl.setPath(QString("/Items/%1/Images/Backdrop/0").arg(itemId));
+        artUrl.setPath(basePath + QString("/Items/%1/Images/Backdrop/0").arg(itemId));
         query.addQueryItem("tag", imageTag);
         query.addQueryItem("maxWidth", "512");
         artUrl.setQuery(query);
@@ -249,7 +264,7 @@ QString AlbumArtProvider::extractArtworkUrl(const QVariantMap& metadata, const Q
 
       if (!itemId.isEmpty() && !imageTag.isEmpty())
       {
-        artUrl.setPath(QString("/Items/%1/Images/Primary").arg(itemId));
+        artUrl.setPath(basePath + QString("/Items/%1/Images/Primary").arg(itemId));
         query.addQueryItem("tag", imageTag);
         query.addQueryItem("maxWidth", "512");
         artUrl.setQuery(query);

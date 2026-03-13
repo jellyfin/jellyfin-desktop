@@ -34,8 +34,11 @@ private:
   GetLocalOriginFunc GetLocalOrigin;
   SetCanBeNowPlayingApplicationFunc SetCanBeNowPlayingApplication;
 
+  void ensureNowPlayingVisibility();
+
   bool m_pendingUpdate;
   quint64 m_currentTime;
+  PlayerComponent::State m_currentState = PlayerComponent::State::finished;
 };
 
 #endif //KONVERGO_INPUTAPPLEMEDIAKEYS_H

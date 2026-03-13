@@ -19,6 +19,7 @@ public:
   ~AlbumArtProvider() override;
 
   void requestArtwork(const QVariantMap& metadata, const QUrl& baseUrl);
+  void setApiToken(const QString& token) { m_apiToken = token; }
   void cancelPending();
 
 Q_SIGNALS:
@@ -35,6 +36,7 @@ private:
   QNetworkAccessManager* m_networkManager;
   QNetworkReply* m_pendingReply;
   QString m_pendingUrl;
+  QString m_apiToken;
 };
 
 #endif // ALBUMARTPROVIDER_H
