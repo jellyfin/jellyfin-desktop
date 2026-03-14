@@ -1307,6 +1307,58 @@ int main(int argc, char* argv[]) {
     };
 
     SDL_AddEventWatch(liveResizeCallback, &live_resize_ctx);
+#elif defined(_WIN32)
+    // Live resize support for Windows - the Win32 modal resize loop blocks
+    // our main event loop, so we use an event watcher to resize DComp layers
+    // and notify CEF as the window edge is dragged.
+    struct WinLiveResizeContext {
+        SDL_Window* window;
+        BrowserStack* browsers;
+        DCompBrowserLayer* mainBrowserLayer;
+        DCompBrowserLayer* overlayBrowserLayer;
+        VideoRenderController* videoController;
+        WGLContext* wgl;
+        int* current_width;
+        int* current_height;
+        bool has_dcomp;
+    };
+    WinLiveResizeContext win_live_resize_ctx = {
+        window,
+        &browsers,
+        &mainBrowserLayer,
+        &overlayBrowserLayer,
+        &videoController,
+        &wgl,
+        &current_width,
+        &current_height,
+        has_dcomp_browsers
+    };
+
+    auto winLiveResizeCallback = [](void* userdata, SDL_Event* event) -> bool {
+        if (event->type != SDL_EVENT_WINDOW_RESIZED) return true;
+        auto* ctx = static_cast<WinLiveResizeContext*>(userdata);
+
+        *ctx->current_width = event->window.data1;
+        *ctx->current_height = event->window.data2;
+
+        int physical_w, physical_h;
+        SDL_GetWindowSizeInPixels(ctx->window, &physical_w, &physical_h);
+
+        ctx->browsers->resizeAll(*ctx->current_width, *ctx->current_height, physical_w, physical_h);
+
+        if (ctx->has_dcomp) {
+            float scale = (*ctx->current_width > 0)
+                ? static_cast<float>(physical_w) / *ctx->current_width : 1.0f;
+            ctx->mainBrowserLayer->setScale(scale);
+            ctx->overlayBrowserLayer->setScale(scale);
+        }
+        ctx->wgl->resize(*ctx->current_width, *ctx->current_height);
+        ctx->videoController->requestResize(physical_w, physical_h);
+
+        return true;
+    };
+
+    SDL_AddEventWatch(winLiveResizeCallback, &win_live_resize_ctx);
 #endif
 
 #ifndef _WIN32
@@ -1600,25 +1652,19 @@ int main(int argc, char* argv[]) {
                     paint_size_matched = false;
                 }
 
+#ifdef _WIN32
+                // On Windows, the live-resize event watcher (winLiveResizeCallback)
+                // handles browser/DComp/WGL/video resize for all resize events
+                // (including those from the Win32 modal drag loop).
+                // Skip here to avoid double-processing which causes flicker.
+#elif defined(__APPLE__)
+                // Resize all browsers and compositors via BrowserStack
+                browsers.resizeAll(current_width, current_height, physical_w, physical_h);
+                videoRenderer.resize(physical_w, physical_h);
+#else
                 // Resize all browsers and compositors via BrowserStack
                 browsers.resizeAll(current_width, current_height, physical_w, physical_h);
 
-#ifdef __APPLE__
-                videoRenderer.resize(physical_w, physical_h);
-#elif defined(_WIN32)
-                // Resize DComp browser layers at physical pixel resolution
-                if (has_dcomp_browsers) {
-                    mainBrowserLayer.resize(physical_w, physical_h);
-                    overlayBrowserLayer.resize(physical_w, physical_h);
-                    float dcomp_scale = (current_width > 0) ? static_cast<float>(physical_w) / current_width : 1.0f;
-                    mainBrowserLayer.setScale(dcomp_scale);
-                    overlayBrowserLayer.setScale(dcomp_scale);
-                }
-                // Resize WGL context (for CEF compositor)
-                wgl.resize(current_width, current_height);
-                // Resize video surface at physical pixel resolution
-                videoController.requestResize(physical_w, physical_h);
-#else
                 // Resize EGL context
                 egl.resize(physical_w, physical_h);
 
@@ -1656,8 +1702,6 @@ int main(int argc, char* argv[]) {
                 browsers.notifyAllScreenInfoChanged();
 #ifdef _WIN32
                 if (has_dcomp_browsers) {
-                    mainBrowserLayer.resize(physical_w, physical_h);
-                    overlayBrowserLayer.resize(physical_w, physical_h);
                     mainBrowserLayer.setScale(new_scale);
                     overlayBrowserLayer.setScale(new_scale);
                 }
@@ -1993,6 +2037,8 @@ int main(int argc, char* argv[]) {
 #endif
 #ifdef __APPLE__
     SDL_RemoveEventWatch(liveResizeCallback, &live_resize_ctx);
+#elif defined(_WIN32)
+    SDL_RemoveEventWatch(winLiveResizeCallback, &win_live_resize_ctx);
 #endif
     mediaSessionThread.stop();
 #ifndef __APPLE__

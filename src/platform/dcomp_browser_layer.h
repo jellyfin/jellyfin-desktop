@@ -6,7 +6,6 @@
 #include <dxgi1_2.h>
 #include <dcomp.h>
 #include <mutex>
-#include <atomic>
 
 // Renders a single CEF browser to a DComp visual via shared D3D11 textures.
 // Each browser (main, overlay) gets its own instance with its own swap chain.
@@ -49,9 +48,6 @@ public:
     // Set visual opacity (0.0 = transparent, 1.0 = opaque).
     void setOpacity(float alpha);
 
-    // Resize the browser swap chain.
-    void resize(int width, int height);
-
     // Returns the browser visual (for adding child layers).
     IDCompositionVisual* visual() const { return browser_visual_; }
 
@@ -93,11 +89,6 @@ private:
 
     bool visible_ = false;
     bool first_paint_logged_ = false;
-
-    // Resize-pending state: after resize(), drop stale CEF paints at the old size
-    bool resize_pending_ = false;
-    int pre_resize_w_ = 0;
-    int pre_resize_h_ = 0;
 
     // Effect group for opacity (created lazily)
     IDCompositionEffectGroup* effect_group_ = nullptr;
