@@ -762,6 +762,16 @@ void Client::redo() {
     if (b) b->GetMainFrame()->Redo();
 }
 
+void Client::goBack() {
+    auto b = browser();
+    if (b) b->GoBack();
+}
+
+void Client::goForward() {
+    auto b = browser();
+    if (b) b->GoForward();
+}
+
 void Client::resize(int width, int height, int physical_w, int physical_h) {
     LOG_DEBUG(LOG_CEF, "Client::resize: logical=%dx%d physical=%dx%d", width, height, physical_w, physical_h);
     width_ = width;

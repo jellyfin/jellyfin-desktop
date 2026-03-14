@@ -31,21 +31,38 @@ public:
             }
 
             case SDL_EVENT_MOUSE_BUTTON_DOWN: {
-                int x = static_cast<int>(event.button.x);
-                int y = static_cast<int>(event.button.y);
                 int btn = event.button.button;
-                int mods = getModifiers();
-                updateClickCount(x, y, btn);
-                receiver_->sendFocus(true);
-                receiver_->sendMouseClick(x, y, true, btn, click_count_, mods);
+                switch (btn) {
+                    case SDL_BUTTON_LEFT:
+                    case SDL_BUTTON_MIDDLE:
+                    case SDL_BUTTON_RIGHT: {
+                        int x = static_cast<int>(event.button.x);
+                        int y = static_cast<int>(event.button.y);
+                        int mods = getModifiers();
+                        updateClickCount(x, y, btn);
+                        receiver_->sendFocus(true);
+                        receiver_->sendMouseClick(x, y, true, btn, click_count_, mods);
+                        break;
+                    }
+                    case SDL_BUTTON_X1: receiver_->goBack(); break;
+                    case SDL_BUTTON_X2: receiver_->goForward(); break;
+                }
                 return true;
             }
 
             case SDL_EVENT_MOUSE_BUTTON_UP: {
-                int x = static_cast<int>(event.button.x);
-                int y = static_cast<int>(event.button.y);
-                int mods = getModifiers();
-                receiver_->sendMouseClick(x, y, false, event.button.button, click_count_, mods);
+                int btn = event.button.button;
+                switch (btn) {
+                    case SDL_BUTTON_LEFT:
+                    case SDL_BUTTON_MIDDLE:
+                    case SDL_BUTTON_RIGHT: {
+                        int x = static_cast<int>(event.button.x);
+                        int y = static_cast<int>(event.button.y);
+                        int mods = getModifiers();
+                        receiver_->sendMouseClick(x, y, false, btn, click_count_, mods);
+                        break;
+                    }
+                }
                 return true;
             }
 

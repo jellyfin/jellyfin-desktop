@@ -31,6 +31,8 @@ public:
     virtual void selectAll() = 0;
     virtual void undo() = 0;
     virtual void redo() = 0;
+    virtual void goBack() = 0;
+    virtual void goForward() = 0;
 };
 
 // Message callback for player commands from renderer
@@ -159,6 +161,8 @@ public:
     void selectAll() override;
     void undo() override;
     void redo() override;
+    void goBack() override;
+    void goForward() override;
     void resize(int width, int height, int physical_w, int physical_h);
     void forceRepaint();
     void loadUrl(const std::string& url);
@@ -286,6 +290,8 @@ public:
     void selectAll() override;
     void undo() override;
     void redo() override;
+    void goBack() override {}
+    void goForward() override {}
 
 private:
     int width_;
