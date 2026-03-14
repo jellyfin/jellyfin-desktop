@@ -11,7 +11,7 @@ show_help() {
 Usage: $(basename "$0") <ssh-host>
 
 Sync, build, and package jellyfin-desktop-cef on a Windows VM via SSH.
-Uses incremental tar sync (only changed files after first full sync).
+Uses rclone for efficient file sync over SSH.
 
 Arguments:
     ssh-host    SSH host
