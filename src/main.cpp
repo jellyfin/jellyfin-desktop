@@ -1112,9 +1112,13 @@ int main(int argc, char* argv[]) {
 #ifdef _WIN32
         // Windows: DComp shared texture callbacks for main browser
         , has_dcomp_browsers ?
-            WinSharedTexturePaintCallback([&mainBrowserLayer](void* handle, int type, int w, int h) {
+            WinSharedTexturePaintCallback([&mainBrowserLayer, &paint_size_matched](void* handle, int type, int w, int h) {
                 if (type == PET_VIEW) {
                     mainBrowserLayer.onPaintView(static_cast<HANDLE>(handle), w, h);
+                    // DComp path: mark size matched so the WasResized retry loop
+                    // (for stale-paint recovery) stops.  The DCompBrowserLayer
+                    // handles any size mismatch internally via swap chain recreation.
+                    paint_size_matched = true;
                 } else if (type == PET_POPUP) {
                     mainBrowserLayer.onPaintPopup(static_cast<HANDLE>(handle), w, h);
                 }

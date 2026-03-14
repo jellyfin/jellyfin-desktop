@@ -94,6 +94,11 @@ private:
     bool visible_ = false;
     bool first_paint_logged_ = false;
 
+    // Resize-pending state: after resize(), drop stale CEF paints at the old size
+    bool resize_pending_ = false;
+    int pre_resize_w_ = 0;
+    int pre_resize_h_ = 0;
+
     // Effect group for opacity (created lazily)
     IDCompositionEffectGroup* effect_group_ = nullptr;
 };

@@ -149,12 +149,24 @@ void DCompBrowserLayer::onPaintView(HANDLE shared_texture_handle, int width, int
 
     // Resize swap chain if CEF's texture size changed
     if (width != width_ || height != height_) {
+        if (resize_pending_) {
+            if (width == pre_resize_w_ && height == pre_resize_h_) {
+                // Stale frame from before resize — drop it to avoid
+                // bouncing the swap chain back to the old size
+                return;
+            }
+            // CEF processed the resize but landed on different dimensions
+            // than resize() set (e.g. scale rounding) — accept it
+            resize_pending_ = false;
+        }
         LOG_INFO(LOG_PLATFORM, "[DCompBrowserLayer] View resize: %dx%d -> %dx%d",
                  width_, height_, width, height);
         destroySwapChain(swap_chain_);
         if (!createSwapChainFor(width, height, &swap_chain_, browser_visual_)) return;
         width_ = width;
         height_ = height;
+    } else {
+        resize_pending_ = false;
     }
 
     copyAndPresent(shared_texture_handle, swap_chain_);
@@ -259,6 +271,15 @@ void DCompBrowserLayer::resize(int width, int height) {
     std::lock_guard<std::mutex> lock(*d3d_mutex_);
     LOG_INFO(LOG_PLATFORM, "[DCompBrowserLayer] Resize: %dx%d -> %dx%d",
              width_, height_, width, height);
+
+    // Track pre-resize dimensions so onPaintView can drop stale frames.
+    // Only record on the first resize in a sequence (rapid A->B->C: keep A).
+    if (!resize_pending_) {
+        pre_resize_w_ = width_;
+        pre_resize_h_ = height_;
+    }
+    resize_pending_ = true;
+
     destroySwapChain(swap_chain_);
     createSwapChainFor(width, height, &swap_chain_, browser_visual_);
     width_ = width;

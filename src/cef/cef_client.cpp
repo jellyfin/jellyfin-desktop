@@ -763,6 +763,7 @@ void Client::redo() {
 }
 
 void Client::resize(int width, int height, int physical_w, int physical_h) {
+    LOG_DEBUG(LOG_CEF, "Client::resize: logical=%dx%d physical=%dx%d", width, height, physical_w, physical_h);
     width_ = width;
     height_ = height;
     physical_w_ = physical_w;
