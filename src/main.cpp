@@ -1835,7 +1835,8 @@ int main(int argc, char* argv[]) {
                 overlay_state = OverlayState::HIDDEN;
                 // Hide compositor layer and close browser
 #ifdef _WIN32
-                overlayBrowserLayer.hide();
+                if (has_dcomp_browsers)
+                    overlayBrowserLayer.hide();
 #endif
                 if (auto* entry = browsers.get("overlay")) {
                     entry->compositor->setVisible(false);
