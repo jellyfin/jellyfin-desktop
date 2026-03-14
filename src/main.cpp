@@ -556,6 +556,16 @@ int main(int argc, char* argv[]) {
     SDL_SetWindowHitTest(window, windowHitTest, &cursor_at_resize_edge);
     SDL_StartTextInput(window);
 
+#ifdef _WIN32
+    // Set window background to black (default white brush flashes before first render)
+    {
+        HWND hwnd = (HWND)SDL_GetPointerProperty(
+            SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+        if (hwnd)
+            SetClassLongPtrA(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)GetStockObject(BLACK_BRUSH));
+    }
+#endif
+
     // Restore saved window geometry (settings already loaded during init)
     restoreWindowGeometry(window);
     SDL_GetWindowSize(window, &width, &height);

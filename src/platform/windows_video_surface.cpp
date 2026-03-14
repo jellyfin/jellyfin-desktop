@@ -558,6 +558,21 @@ bool WindowsVideoSurface::createSwapchain(int width, int height) {
         }
     }
 
+    // Clear to black (avoids white flash before first video frame)
+    {
+        ID3D11Texture2D* bb = nullptr;
+        if (SUCCEEDED(swap_chain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb))) {
+            ID3D11RenderTargetView* rtv = nullptr;
+            if (SUCCEEDED(d3d_device_->CreateRenderTargetView(bb, nullptr, &rtv))) {
+                float black[4] = {0, 0, 0, 1};
+                d3d_context_->ClearRenderTargetView(rtv, black);
+                rtv->Release();
+            }
+            bb->Release();
+            swap_chain_->Present(0, 0);
+        }
+    }
+
     video_visual_->SetContent(swap_chain_);
 
     // Create shared Vulkan/D3D11 resources

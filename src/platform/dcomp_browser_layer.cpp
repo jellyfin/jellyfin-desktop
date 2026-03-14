@@ -94,6 +94,19 @@ bool DCompBrowserLayer::createSwapChainFor(int width, int height,
         return false;
     }
 
+    // Clear to transparent black (avoids white flash before first CEF paint)
+    ID3D11Texture2D* bb = nullptr;
+    if (SUCCEEDED((*out_chain)->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb))) {
+        ID3D11RenderTargetView* rtv = nullptr;
+        if (SUCCEEDED(d3d_device_->CreateRenderTargetView(bb, nullptr, &rtv))) {
+            float black[4] = {0, 0, 0, 0};
+            d3d_context_->ClearRenderTargetView(rtv, black);
+            rtv->Release();
+        }
+        bb->Release();
+        (*out_chain)->Present(0, 0);
+    }
+
     visual->SetContent(*out_chain);
     return true;
 }
