@@ -99,6 +99,7 @@ elseif(WIN32)
         src/context/opengl_frame_context.cpp
         src/platform/windows_video_surface.cpp
         src/platform/windows_overlay_layer.cpp
+        src/platform/dcomp_browser_layer.cpp
         src/compositor/opengl_compositor.cpp
         src/player/media_session.cpp
         src/player/mpv/mpv_player.cpp

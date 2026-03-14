@@ -57,6 +57,18 @@ using AcceleratedPaintCallback = std::function<void(int fd, uint32_t stride, uin
 using IOSurfacePaintCallback = std::function<void(void* surface, int format, int width, int height)>;
 #endif
 
+#ifdef _WIN32
+// Windows shared texture paint callback (D3D11 shared handle via OnAcceleratedPaint)
+// handle: NT HANDLE to D3D11 Texture2D, valid only during callback
+using WinSharedTexturePaintCallback = std::function<void(void* handle, int type, int width, int height)>;
+
+// Windows popup show/hide callback
+using WinPopupShowCallback = std::function<void(bool show)>;
+
+// Windows popup size callback (CSS logical coordinates)
+using WinPopupSizeCallback = std::function<void(int x, int y, int width, int height)>;
+#endif
+
 class Client : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler, public CefLoadHandler, public CefContextMenuHandler, public InputReceiver {
 public:
     using PaintCallback = std::function<void(const void* buffer, int width, int height)>;
@@ -68,6 +80,11 @@ public:
            PhysicalSizeCallback physical_size_cb = nullptr
 #ifdef __APPLE__
            , IOSurfacePaintCallback on_iosurface_paint = nullptr
+#endif
+#ifdef _WIN32
+           , WinSharedTexturePaintCallback on_win_shared_paint = nullptr,
+           WinPopupShowCallback on_win_popup_show = nullptr,
+           WinPopupSizeCallback on_win_popup_size = nullptr
 #endif
            );
 
@@ -174,6 +191,11 @@ private:
 #ifdef __APPLE__
     IOSurfacePaintCallback on_iosurface_paint_;
 #endif
+#ifdef _WIN32
+    WinSharedTexturePaintCallback on_win_shared_paint_;
+    WinPopupShowCallback on_win_popup_show_;
+    WinPopupSizeCallback on_win_popup_size_;
+#endif
     MenuOverlay* menu_ = nullptr;
     CursorChangeCallback on_cursor_change_;
     FullscreenChangeCallback on_fullscreen_change_;
@@ -208,6 +230,9 @@ public:
                   AcceleratedPaintCallback on_accel_paint = nullptr
 #ifdef __APPLE__
                   , IOSurfacePaintCallback on_iosurface_paint = nullptr
+#endif
+#ifdef _WIN32
+                  , WinSharedTexturePaintCallback on_win_shared_paint = nullptr
 #endif
                   );
 
@@ -271,6 +296,9 @@ private:
     AcceleratedPaintCallback on_accel_paint_;
 #ifdef __APPLE__
     IOSurfacePaintCallback on_iosurface_paint_;
+#endif
+#ifdef _WIN32
+    WinSharedTexturePaintCallback on_win_shared_paint_;
 #endif
     float scale_override_ = 0.0f;
     int physical_w_ = 0;  // Stored physical dimensions (set during resize)

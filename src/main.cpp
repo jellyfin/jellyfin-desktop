@@ -45,6 +45,7 @@ void wakeMacEventLoop();
 #include "context/opengl_frame_context.h"
 #include "platform/windows_video_surface.h"
 #include "platform/windows_overlay_layer.h"
+#include "platform/dcomp_browser_layer.h"
 #include "player/windows/media_session_windows.h"
 #else
 #include "context/egl_context.h"
@@ -622,18 +623,59 @@ int main(int argc, char* argv[]) {
     wgl.makeCurrent();
     WindowsOverlayLayer overlayLayer;
     bool has_overlay = false;
+
+    // DComp browser layers for zero-copy shared texture rendering
+    DCompBrowserLayer mainBrowserLayer;
+    DCompBrowserLayer overlayBrowserLayer;
+    bool has_dcomp_browsers = false;
+
     if (videoStack.surface) {
-        has_overlay = overlayLayer.init(
+        // Initialize DComp browser layers (one per browser, each with own swap chain)
+        // Visual tree: video_visual_ → main_visual_ → overlay_visual_
+        bool main_ok = mainBrowserLayer.init(
             videoStack.surface->dcompDevice(),
             videoStack.surface->videoVisual(),
             videoStack.surface->d3dDevice(),
             videoStack.surface->d3dContext(),
             &videoStack.surface->d3dMutex(),
-            &wgl, width, height);
-        if (has_overlay) {
-            overlayLayer.show();
+            width, height);
+
+        if (main_ok) {
+            bool overlay_ok = overlayBrowserLayer.init(
+                videoStack.surface->dcompDevice(),
+                mainBrowserLayer.visual(),  // overlay is child of main
+                videoStack.surface->d3dDevice(),
+                videoStack.surface->d3dContext(),
+                &videoStack.surface->d3dMutex(),
+                width, height);
+
+            if (overlay_ok) {
+                mainBrowserLayer.show();
+                overlayBrowserLayer.show();
+                has_dcomp_browsers = true;
+                LOG_INFO(LOG_PLATFORM, "DComp browser layers initialized (zero-copy shared textures)");
+            } else {
+                LOG_WARN(LOG_PLATFORM, "Overlay DComp browser layer init failed");
+                mainBrowserLayer.cleanup();
+            }
         } else {
-            LOG_WARN(LOG_GL, "DComp overlay init failed, CEF will render to WGL framebuffer");
+            LOG_WARN(LOG_PLATFORM, "Main DComp browser layer init failed");
+        }
+
+        // Fall back to GL overlay if DComp browser layers failed
+        if (!has_dcomp_browsers) {
+            has_overlay = overlayLayer.init(
+                videoStack.surface->dcompDevice(),
+                videoStack.surface->videoVisual(),
+                videoStack.surface->d3dDevice(),
+                videoStack.surface->d3dContext(),
+                &videoStack.surface->d3dMutex(),
+                &wgl, width, height);
+            if (has_overlay) {
+                overlayLayer.show();
+            } else {
+                LOG_WARN(LOG_GL, "DComp overlay init failed, CEF will render to WGL framebuffer");
+            }
         }
     }
 
@@ -928,6 +970,16 @@ int main(int argc, char* argv[]) {
             overlay_ptr->compositor->queueIOSurface(surface, format, w, h);
         }
 #endif
+#ifdef _WIN32
+        // Windows: DComp shared texture callback for overlay browser
+        , has_dcomp_browsers ?
+            WinSharedTexturePaintCallback([&overlayBrowserLayer](void* handle, int type, int w, int h) {
+                if (type == PET_VIEW) {
+                    overlayBrowserLayer.onPaintView(static_cast<HANDLE>(handle), w, h);
+                }
+                // Overlay browser has no popups (no dropdowns in settings UI)
+            }) : nullptr
+#endif
     ));
     overlay_ptr->client = overlay_client;
     overlay_ptr->getBrowser = [overlay_client]() { return overlay_client->browser(); };
@@ -1033,6 +1085,25 @@ int main(int argc, char* argv[]) {
             main_ptr->compositor->queueIOSurface(surface, format, w, h);
         }
 #endif
+#ifdef _WIN32
+        // Windows: DComp shared texture callbacks for main browser
+        , has_dcomp_browsers ?
+            WinSharedTexturePaintCallback([&mainBrowserLayer](void* handle, int type, int w, int h) {
+                if (type == PET_VIEW) {
+                    mainBrowserLayer.onPaintView(static_cast<HANDLE>(handle), w, h);
+                } else if (type == PET_POPUP) {
+                    mainBrowserLayer.onPaintPopup(static_cast<HANDLE>(handle), w, h);
+                }
+            }) : nullptr,
+        has_dcomp_browsers ?
+            WinPopupShowCallback([&mainBrowserLayer](bool show) {
+                mainBrowserLayer.onPopupShow(show);
+            }) : nullptr,
+        has_dcomp_browsers ?
+            WinPopupSizeCallback([&mainBrowserLayer](int x, int y, int w, int h) {
+                mainBrowserLayer.onPopupSize(x, y, w, h);
+            }) : nullptr
+#endif
     ));
     main_ptr->client = client;
     main_ptr->getBrowser = [client]() { return client->browser(); };
@@ -1049,7 +1120,7 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
     window_info.shared_texture_enabled = true;  // macOS: use IOSurface zero-copy
 #elif defined(_WIN32)
-    window_info.shared_texture_enabled = false;  // No DirectX interop yet, use OnPaint
+    window_info.shared_texture_enabled = has_dcomp_browsers;  // Windows: use DComp zero-copy
 #else
     window_info.shared_texture_enabled = use_dmabuf;  // Linux: dmabuf zero-copy
 #endif
@@ -1075,7 +1146,7 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
     overlay_window_info.shared_texture_enabled = true;  // macOS: use IOSurface zero-copy
 #elif defined(_WIN32)
-    overlay_window_info.shared_texture_enabled = false;  // No DirectX interop yet, use OnPaint
+    overlay_window_info.shared_texture_enabled = has_dcomp_browsers;  // Windows: use DComp zero-copy
 #else
     overlay_window_info.shared_texture_enabled = use_dmabuf;  // Linux: dmabuf zero-copy
 #endif
@@ -1491,6 +1562,14 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
                 videoRenderer.resize(physical_w, physical_h);
 #elif defined(_WIN32)
+                // Resize DComp browser layers at physical pixel resolution
+                if (has_dcomp_browsers) {
+                    mainBrowserLayer.resize(physical_w, physical_h);
+                    overlayBrowserLayer.resize(physical_w, physical_h);
+                    float dcomp_scale = (current_width > 0) ? static_cast<float>(physical_w) / current_width : 1.0f;
+                    mainBrowserLayer.setScale(dcomp_scale);
+                    overlayBrowserLayer.setScale(dcomp_scale);
+                }
                 // Resize WGL context (for CEF compositor)
                 wgl.resize(current_width, current_height);
                 // Resize video surface at physical pixel resolution
@@ -1531,6 +1610,14 @@ int main(int argc, char* argv[]) {
                 // Resize all browsers and compositors, notify of scale change
                 browsers.resizeAll(new_logical_w, new_logical_h, physical_w, physical_h);
                 browsers.notifyAllScreenInfoChanged();
+#ifdef _WIN32
+                if (has_dcomp_browsers) {
+                    mainBrowserLayer.resize(physical_w, physical_h);
+                    overlayBrowserLayer.resize(physical_w, physical_h);
+                    mainBrowserLayer.setScale(new_scale);
+                    overlayBrowserLayer.setScale(new_scale);
+                }
+#endif
                 break;
             }
 
@@ -1747,6 +1834,9 @@ int main(int argc, char* argv[]) {
                 browsers.setAlpha("overlay", 0.0f);
                 overlay_state = OverlayState::HIDDEN;
                 // Hide compositor layer and close browser
+#ifdef _WIN32
+                overlayBrowserLayer.hide();
+#endif
                 if (auto* entry = browsers.get("overlay")) {
                     entry->compositor->setVisible(false);
                     if (entry->getBrowser) {
@@ -1787,9 +1877,9 @@ int main(int argc, char* argv[]) {
         // Both are DComp visuals with explicit Z-ordering (video behind, CEF in front).
         videoController.render(current_width, current_height);
 
-        if (has_overlay) {
-            // Render CEF to DComp overlay FBO (GL→D3D11 via WGL_NV_DX_interop2)
-            // DComp mode: no Y-flip (D3D11 top-left origin), no BGRA swizzle (B8G8R8A8 format)
+        // DComp zero-copy: CEF drives rendering via OnAcceleratedPaint callbacks,
+        // no main-thread rendering needed. Fall back to GL overlay otherwise.
+        if (!has_dcomp_browsers && has_overlay) {
             browsers.setDCompOverlay(true);
             overlayLayer.begin(current_width, current_height);
             browsers.renderAll(current_width, current_height);
@@ -1797,12 +1887,14 @@ int main(int argc, char* argv[]) {
             browsers.setDCompOverlay(false);
         }
 
-        // WGL framebuffer: opaque black placeholder (covered by DComp topmost visuals)
-        frameContext.beginFrame(0.0f, 1.0f);
-        if (!has_overlay) {
-            browsers.renderAll(current_width, current_height);
+        if (!has_dcomp_browsers) {
+            // WGL framebuffer: opaque black placeholder (covered by DComp topmost visuals)
+            frameContext.beginFrame(0.0f, 1.0f);
+            if (!has_overlay) {
+                browsers.renderAll(current_width, current_height);
+            }
+            frameContext.endFrame();
         }
-        frameContext.endFrame();
 #else
         // Linux: Get physical dimensions for viewport (HiDPI)
         // Use SDL_GetWindowSizeInPixels instead of int(logical * scale) to avoid
@@ -1876,6 +1968,8 @@ int main(int argc, char* argv[]) {
     LOG_INFO(LOG_MAIN, "Shutdown: browsers closed, cleaning compositors...");
     browsers.cleanupCompositors();
     LOG_INFO(LOG_MAIN, "Shutdown: cleaning overlay layer...");
+    overlayBrowserLayer.cleanup();
+    mainBrowserLayer.cleanup();
     overlayLayer.cleanup();
     LOG_INFO(LOG_MAIN, "Shutdown: cleaning video renderer...");
     videoRenderer.cleanup();

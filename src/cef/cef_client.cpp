@@ -227,12 +227,22 @@ Client::Client(int width, int height, PaintCallback on_paint, PlayerMessageCallb
 #ifdef __APPLE__
                , IOSurfacePaintCallback on_iosurface_paint
 #endif
+#ifdef _WIN32
+               , WinSharedTexturePaintCallback on_win_shared_paint,
+               WinPopupShowCallback on_win_popup_show,
+               WinPopupSizeCallback on_win_popup_size
+#endif
                )
     : width_(width), height_(height), on_paint_(std::move(on_paint)),
       on_player_msg_(std::move(on_player_msg)),
       on_accel_paint_(std::move(on_accel_paint)),
 #ifdef __APPLE__
       on_iosurface_paint_(std::move(on_iosurface_paint)),
+#endif
+#ifdef _WIN32
+      on_win_shared_paint_(std::move(on_win_shared_paint)),
+      on_win_popup_show_(std::move(on_win_popup_show)),
+      on_win_popup_size_(std::move(on_win_popup_size)),
 #endif
       menu_(menu), on_cursor_change_(std::move(on_cursor_change)),
       on_fullscreen_change_(std::move(on_fullscreen_change)),
@@ -427,10 +437,20 @@ void Client::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
         popup_pixel_width_ = 0;
         popup_pixel_height_ = 0;
     }
+#ifdef _WIN32
+    if (on_win_popup_show_) {
+        on_win_popup_show_(show);
+    }
+#endif
 }
 
 void Client::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) {
     popup_rect_ = rect;
+#ifdef _WIN32
+    if (on_win_popup_size_) {
+        on_win_popup_size_(rect.x, rect.y, rect.width, rect.height);
+    }
+#endif
 }
 
 void Client::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
@@ -546,6 +566,15 @@ void Client::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType 
             if (fd >= 0) {
                 on_accel_paint_(fd, info.planes[0].stride, info.modifier, w, h);
             }
+        }
+    }
+#elif defined(_WIN32)
+    // Windows: import D3D11 shared texture handle for zero-copy DComp rendering
+    if (on_win_shared_paint_) {
+        int w = info.extra.coded_size.width;
+        int h = info.extra.coded_size.height;
+        if (w > 0 && h > 0) {
+            on_win_shared_paint_(info.shared_texture_handle, static_cast<int>(type), w, h);
         }
     }
 #endif
@@ -856,6 +885,9 @@ OverlayClient::OverlayClient(int width, int height, PaintCallback on_paint, Load
 #ifdef __APPLE__
                              , IOSurfacePaintCallback on_iosurface_paint
 #endif
+#ifdef _WIN32
+                             , WinSharedTexturePaintCallback on_win_shared_paint
+#endif
                              )
     : width_(width), height_(height), on_paint_(std::move(on_paint)),
       on_load_server_(std::move(on_load_server)),
@@ -863,6 +895,9 @@ OverlayClient::OverlayClient(int width, int height, PaintCallback on_paint, Load
       on_accel_paint_(std::move(on_accel_paint))
 #ifdef __APPLE__
       , on_iosurface_paint_(std::move(on_iosurface_paint))
+#endif
+#ifdef _WIN32
+      , on_win_shared_paint_(std::move(on_win_shared_paint))
 #endif
       {}
 
@@ -1024,6 +1059,15 @@ void OverlayClient::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintEleme
             if (fd >= 0) {
                 on_accel_paint_(fd, info.planes[0].stride, info.modifier, w, h);
             }
+        }
+    }
+#elif defined(_WIN32)
+    // Windows: import D3D11 shared texture handle for zero-copy DComp rendering
+    if (on_win_shared_paint_) {
+        int w = info.extra.coded_size.width;
+        int h = info.extra.coded_size.height;
+        if (w > 0 && h > 0) {
+            on_win_shared_paint_(info.shared_texture_handle, static_cast<int>(type), w, h);
         }
     }
 #endif
