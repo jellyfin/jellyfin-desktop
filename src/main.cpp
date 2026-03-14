@@ -488,6 +488,18 @@ int main(int argc, char* argv[]) {
         return exit_code;
     }
 
+#ifdef _WIN32
+    // Create a job object so CEF subprocesses are killed when we exit.
+    // KILL_ON_JOB_CLOSE ensures children die even on _exit() or crash.
+    HANDLE job = CreateJobObjectA(nullptr, nullptr);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = {};
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info));
+        AssignProcessToJobObject(job, GetCurrentProcess());
+    }
+#endif
+
     // Single-instance check: signal existing instance to raise, then exit
     if (trySignalExisting()) {
         return 0;
@@ -1970,25 +1982,32 @@ int main(int argc, char* argv[]) {
     VideoStack::cleanupStatics();
     CefShutdown();
 #elif defined(_WIN32)
-    // Windows: wait for async browser close before cleanup
+    // Windows: wait for async browser close, then shut down CEF thread.
+    // CEF thread must be stopped BEFORE GPU resource cleanup — its 5s
+    // _exit() safety net ensures the process (and job-object children)
+    // won't linger if any subsequent cleanup hangs.
     LOG_INFO(LOG_MAIN, "Shutdown: closing browsers...");
     browsers.closeAllBrowsers();
     while (!browsers.allBrowsersClosed()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    LOG_INFO(LOG_MAIN, "Shutdown: browsers closed, cleaning compositors...");
+    LOG_INFO(LOG_MAIN, "Shutdown: browsers closed, shutting down CEF...");
+    cefThread.shutdown();
+    LOG_INFO(LOG_MAIN, "Shutdown: cleaning compositors...");
     browsers.cleanupCompositors();
-    LOG_INFO(LOG_MAIN, "Shutdown: cleaning overlay layer...");
     overlayBrowserLayer.cleanup();
     mainBrowserLayer.cleanup();
     overlayLayer.cleanup();
     LOG_INFO(LOG_MAIN, "Shutdown: cleaning video renderer...");
     videoRenderer.cleanup();
     VideoStack::cleanupStatics();
-    LOG_INFO(LOG_MAIN, "Shutdown: cleaning WGL...");
     wgl.cleanup();
-    LOG_INFO(LOG_MAIN, "Shutdown: shutting down CEF thread...");
-    cefThread.shutdown();
+    // Save window geometry before force-exit so position persists.
+    saveWindowGeometry(window, was_maximized_before_fullscreen);
+    // Force-exit: atexit handlers / static destructors from CEF, D3D, or
+    // Vulkan drivers can hang.  _exit() bypasses them and closes our job
+    // object handle, which kills any lingering CEF subprocesses.
+    _exit(0);
 #else
     // Linux: pump CEF work during browser close (external_message_pump mode)
     browsers.closeAllBrowsers();
