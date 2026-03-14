@@ -46,6 +46,9 @@ public:
     void show();
     void hide();
 
+    // Set visual opacity (0.0 = transparent, 1.0 = opaque).
+    void setOpacity(float alpha);
+
     // Resize the browser swap chain.
     void resize(int width, int height);
 
@@ -90,6 +93,9 @@ private:
 
     bool visible_ = false;
     bool first_paint_logged_ = false;
+
+    // Effect group for opacity (created lazily)
+    IDCompositionEffectGroup* effect_group_ = nullptr;
 };
 
 #endif // _WIN32

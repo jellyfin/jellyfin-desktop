@@ -217,6 +217,23 @@ void DCompBrowserLayer::onPopupSize(int x, int y, int width, int height) {
     (void)height;
 }
 
+void DCompBrowserLayer::setOpacity(float alpha) {
+    if (!dcomp_device_ || !browser_visual_) return;
+    std::lock_guard<std::mutex> lock(*d3d_mutex_);
+
+    if (!effect_group_) {
+        HRESULT hr = dcomp_device_->CreateEffectGroup(&effect_group_);
+        if (FAILED(hr)) {
+            LOG_ERROR(LOG_PLATFORM, "[DCompBrowserLayer] CreateEffectGroup failed: 0x%08lx", hr);
+            return;
+        }
+        browser_visual_->SetEffect(effect_group_);
+    }
+
+    effect_group_->SetOpacity(alpha);
+    dcomp_device_->Commit();
+}
+
 void DCompBrowserLayer::show() {
     if (!visible_ && parent_visual_ && browser_visual_) {
         std::lock_guard<std::mutex> lock(*d3d_mutex_);
@@ -265,6 +282,10 @@ void DCompBrowserLayer::cleanup() {
     if (popup_visual_) {
         popup_visual_->Release();
         popup_visual_ = nullptr;
+    }
+    if (effect_group_) {
+        effect_group_->Release();
+        effect_group_ = nullptr;
     }
     if (browser_visual_) {
         browser_visual_->Release();

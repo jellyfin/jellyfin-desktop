@@ -973,8 +973,11 @@ int main(int argc, char* argv[]) {
         [&](const std::string& url) {
             // loadServer callback - start loading main browser
             LOG_INFO(LOG_OVERLAY, "loadServer callback: %s", url.c_str());
-            std::lock_guard<std::mutex> lock(cmd_mutex);
-            pending_server_url = url;
+            {
+                std::lock_guard<std::mutex> lock(cmd_mutex);
+                pending_server_url = url;
+            }
+            wakeMainLoop();
         },
         getPhysicalSize,
 #if !defined(__APPLE__) && !defined(_WIN32)
@@ -1011,8 +1014,7 @@ int main(int argc, char* argv[]) {
     overlay_ptr->input_layer = std::make_unique<BrowserLayer>(overlay_client.get());
     overlay_ptr->input_layer->setWindowSize(width, height);
     overlay_ptr->wake_main_loop = wakeMainLoop;
-    browsers.add("overlay", std::move(overlay_entry));
-    LOG_DEBUG(LOG_MAIN, "Overlay browser entry added");
+    // overlay_entry add is deferred until after main, so overlay composites on top
 
     // Track who initiated fullscreen (only changes from NONE, returns to NONE on exit)
     enum class FullscreenSource { NONE, WM, CEF };
@@ -1136,6 +1138,8 @@ int main(int argc, char* argv[]) {
     main_ptr->input_layer->setWindowSize(width, height);
     main_ptr->wake_main_loop = wakeMainLoop;
     browsers.add("main", std::move(main_entry));
+    browsers.add("overlay", std::move(overlay_entry));  // overlay on top for fade
+    LOG_DEBUG(LOG_MAIN, "Browser entries added (main behind, overlay on top)");
 
     CefWindowInfo window_info;
     window_info.SetAsWindowless(0);
@@ -1435,8 +1439,22 @@ int main(int argc, char* argv[]) {
             have_event = SDL_PollEvent(&event);
         } else {
 #ifdef _WIN32
-            // Idle: block until SDL event (input, window, or CEF wake callback)
-            have_event = SDL_WaitEvent(&event);
+            if (overlay_state == OverlayState::WAITING) {
+                // Overlay fade timer pending — don't block indefinitely.
+                // DComp zero-copy paints bypass the main loop wake, so we
+                // must wake ourselves to advance the overlay state machine.
+                auto remaining = OVERLAY_FADE_DELAY_SEC -
+                    std::chrono::duration<float>(Clock::now() - overlay_fade_start).count();
+                if (remaining <= 0) {
+                    have_event = SDL_PollEvent(&event);
+                } else {
+                    int timeout_ms = static_cast<int>(remaining * 1000) + 1;
+                    have_event = SDL_WaitEventTimeout(&event, timeout_ms);
+                }
+            } else {
+                // Idle: block until SDL event (input, window, or CEF wake callback)
+                have_event = SDL_WaitEvent(&event);
+            }
 #else
             // Pump CEF before waiting - this processes any pending tasks and
             // may schedule more work (which will wake us via OnScheduleMessagePumpWork)
@@ -1872,6 +1890,10 @@ int main(int argc, char* argv[]) {
             } else {
                 overlay_browser_alpha = 1.0f - progress;
                 browsers.setAlpha("overlay", overlay_browser_alpha);
+#ifdef _WIN32
+                if (has_dcomp_browsers)
+                    overlayBrowserLayer.setOpacity(overlay_browser_alpha);
+#endif
             }
         }
 
