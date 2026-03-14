@@ -1,79 +1,35 @@
 #!/usr/bin/env sh
-# Sync local source tree to a Windows remote via SSH.
+# Sync local source tree to a Windows remote via SSH using rclone.
 # Sourced by other scripts; can also be run directly.
 #
 # Usage (direct):  sync-ssh.sh <ssh-host>
 # Usage (sourced): . sync-ssh.sh && sync_to_remote <ssh-host>
 
 REMOTE_DIR='C:/jellyfin-desktop-cef'
-REMOTE_TMP='C:/Users/user/AppData/Local/Temp'
 
 sync_to_remote() {
     _remote="$1"
-    _archive='/tmp/jellyfin-desktop-cef.tar'
-    _sync_marker='.build-ssh-sync'
-    _remote_marker="$(echo "$REMOTE_DIR/$_sync_marker" | tr '/' '\\')"
-    _remote_archive="$REMOTE_TMP/jellyfin-desktop-cef.tar"
 
-    _local_sha_file="/tmp/build-ssh-sync-sha-$(echo "$_remote" | tr -c 'a-zA-Z0-9' '_')"
-
-    if ! ssh "$_remote" "dir $_remote_marker" >/dev/null 2>&1; then
-        echo "First sync: sending full source tree..."
-        git archive --format=tar HEAD > "$_archive"
-
-        # Overlay uncommitted tracked changes
-        git diff --name-only HEAD | while read -r file; do
-            [ -f "$file" ] && tar --update -f "$_archive" "$file"
-        done
-
-        # Add untracked files (excluding gitignored)
-        git ls-files --others --exclude-standard | while read -r file; do
-            [ -f "$file" ] && tar --update -f "$_archive" "$file"
-        done
-
-        # Include submodule contents (git archive excludes them)
-        git submodule foreach --quiet 'echo $sm_path' | while read -r sm; do
-            if [ -d "$sm" ]; then
-                echo "  Including submodule: $sm"
-                git -C "$sm" archive --format=tar --prefix="$sm/" HEAD > /tmp/sub.tar
-                tar --concatenate -f "$_archive" /tmp/sub.tar
-                rm -f /tmp/sub.tar
-            fi
-        done
-    else
-        echo "Incremental sync: sending changed files..."
-        _synced_sha=""
-        [ -f "$_local_sha_file" ] && _synced_sha="$(cat "$_local_sha_file")"
-
-        {
-            # Files changed since last synced commit
-            if [ -n "$_synced_sha" ] && git rev-parse --verify "$_synced_sha" >/dev/null 2>&1; then
-                git diff --name-only "$_synced_sha"..HEAD
-            fi
-            # Uncommitted and untracked changes
-            git diff --name-only HEAD
-            git diff --name-only --cached
-            git ls-files --others --exclude-standard
-            # Include submodule changes
-            git submodule foreach --quiet \
-                'git diff --name-only HEAD 2>/dev/null | sed "s|^|$sm_path/|"'
-        } | sort -u > /tmp/changed-files.txt
-
-        if [ -s /tmp/changed-files.txt ]; then
-            tar -cf "$_archive" -T /tmp/changed-files.txt 2>/dev/null || true
-        else
-            echo "No changes to sync."
-            tar -cf "$_archive" --files-from=/dev/null
-        fi
-        rm -f /tmp/changed-files.txt
-    fi
-
-    scp "$_archive" "$_remote:$_remote_archive"
-    ssh "$_remote" "cd $REMOTE_DIR && tar -xf $_remote_archive && echo synced > $_sync_marker"
-    git rev-parse HEAD > "$_local_sha_file"
-
-    rm -f "$_archive"
-    ssh "$_remote" "del \"$(echo "$_remote_archive" | tr '/' '\\')\"" 2>/dev/null || true
+    rclone --config /dev/null sync . ":sftp,ssh='ssh $_remote':$REMOTE_DIR" \
+        --exclude '.git/**' \
+        --exclude '/build/**' \
+        --exclude '/dist/**' \
+        --exclude '.cache/**' \
+        --exclude '.vscode/**' \
+        --exclude '.idea/**' \
+        --exclude '*.swp' \
+        --exclude '/compile_commands.json' \
+        --exclude '/out' \
+        --exclude '/app.log' \
+        --exclude '/wayland-protocols/**' \
+        --exclude '/generated/**' \
+        --filter '- /third_party/mpv/build/**' \
+        --filter '+ /third_party/mpv/**' \
+        --filter '+ /third_party/letsmove/**' \
+        --filter '+ /third_party/GL/**' \
+        --filter '+ /third_party/KHR/**' \
+        --filter '- /third_party/**' \
+        -P
 
     echo "Synced to $_remote:$REMOTE_DIR"
 }
