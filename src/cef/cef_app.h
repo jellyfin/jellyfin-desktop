@@ -25,6 +25,11 @@ public:
     // Call when wake event received - pumps CEF work
     static void DoWork();
 
+    // Main loop sleep coordination: call setWaiting(true) before SDL_WaitEvent,
+    // then check hasWorkPending() — if true, skip the wait.
+    static bool hasWorkPending() { return work_pending_.load(std::memory_order_seq_cst); }
+    static void setWaiting(bool v) { is_waiting_.store(v, std::memory_order_seq_cst); }
+
     // CefApp
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
     CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
@@ -49,7 +54,8 @@ private:
     // External message pump state (macOS/Linux)
     static inline std::function<void()> wake_callback_;
     static inline std::atomic<bool> is_active_{false};  // Re-entrancy guard
-    static inline std::atomic<bool> reentrancy_detected_{false};
+    static inline std::atomic<bool> work_pending_{false};  // Immediate work pending
+    static inline std::atomic<bool> is_waiting_{false};  // True while main loop is in SDL_WaitEvent
     static inline SDL_TimerID timer_id_{0};  // For delayed work
     static Uint32 TimerCallback(void* userdata, SDL_TimerID id, Uint32 interval);
 

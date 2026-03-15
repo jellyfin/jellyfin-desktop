@@ -30,10 +30,6 @@ void initMacApplication();
 void activateMacWindow(SDL_Window* window);
 // Set titlebar color (transparent titlebar chrome)
 void setMacTitlebarColor(uint8_t r, uint8_t g, uint8_t b);
-// Wait for NSApplication events (integrates Cocoa + CFRunLoop)
-void waitForMacEvent();
-// Wake the NSApplication event loop from another thread
-void wakeMacEventLoop();
 #endif
 
 #ifdef __APPLE__
@@ -304,12 +300,6 @@ static SDL_HitTestResult SDLCALL windowHitTest(SDL_Window* win, const SDL_Point*
     else if (left)            result = SDL_HITTEST_RESIZE_LEFT;
     else if (right)           result = SDL_HITTEST_RESIZE_RIGHT;
 
-    // Signal main loop to stay in poll mode while cursor is at a resize edge.
-    // This ensures configure events during interactive resize are processed
-    // without blocking, since SDL_WaitEvent processes them one-at-a-time.
-    auto* at_edge = static_cast<std::atomic<bool>*>(data);
-    at_edge->store(result != SDL_HITTEST_NORMAL, std::memory_order_relaxed);
-
     return result;
 }
 
@@ -552,10 +542,6 @@ int main(int argc, char* argv[]) {
         SDL_Event event{};
         event.type = SDL_EVENT_WAKE;
         SDL_PushEvent(&event);
-#ifdef __APPLE__
-        // Wake NSApplication event loop (we use waitForMacEvent instead of SDL_WaitEvent)
-        wakeMacEventLoop();
-#endif
     };
 
 #ifndef _WIN32
@@ -601,8 +587,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::atomic<bool> cursor_at_resize_edge{false};
-    SDL_SetWindowHitTest(window, windowHitTest, &cursor_at_resize_edge);
+    SDL_SetWindowHitTest(window, windowHitTest, nullptr);
     SDL_StartTextInput(window);
 
 #ifdef _WIN32
@@ -1237,8 +1222,12 @@ int main(int argc, char* argv[]) {
         accel_popup_cb
 #ifdef __APPLE__
         // IOSurface callback for macOS accelerated paint - queue for import on main thread
-        , [main_ptr](void* surface, int format, int w, int h) {
+        , [main_ptr, &paint_size_matched](void* surface, int format, int w, int h) {
             main_ptr->compositor->queueIOSurface(surface, format, w, h);
+            if (w == static_cast<int>(main_ptr->compositor->width()) &&
+                h == static_cast<int>(main_ptr->compositor->height())) {
+                paint_size_matched.store(true, std::memory_order_relaxed);
+            }
         }
 #endif
 #ifdef _WIN32
@@ -1618,8 +1607,7 @@ int main(int argc, char* argv[]) {
         }
         SDL_Event event;
         bool have_event;
-        bool at_resize_edge = cursor_at_resize_edge.load(std::memory_order_relaxed);
-        if (needs_render || has_video || has_pending || has_pending_cmds || !paint_size_matched || at_resize_edge) {
+        if (needs_render || has_video || has_pending || has_pending_cmds || !paint_size_matched) {
             have_event = SDL_PollEvent(&event);
         } else {
 #ifdef _WIN32
@@ -1640,8 +1628,8 @@ int main(int argc, char* argv[]) {
                 have_event = SDL_WaitEvent(&event);
             }
 #else
-            // Pump CEF before waiting - this processes any pending tasks and
-            // may schedule more work (which will wake us via OnScheduleMessagePumpWork)
+            // Drain CEF work before sleeping — handles immediate work without
+            // pushing SDL events (OnScheduleMessagePumpWork just sets a flag).
             App::DoWork();
 
             // Re-check if CEF work generated content
@@ -1653,15 +1641,18 @@ int main(int argc, char* argv[]) {
             if (has_pending || has_pending_cmds) {
                 have_event = SDL_PollEvent(&event);
             } else {
-#ifdef __APPLE__
-                // Wait using NSApplication's event loop - properly integrates
-                // Cocoa events, CFRunLoop sources, and Mojo IPC
-                waitForMacEvent();
-                have_event = SDL_PollEvent(&event);
-#else
-                // Idle: block until SDL event (input, window, or CEF wake callback)
-                have_event = SDL_WaitEvent(&event);
-#endif
+                // Signal we're about to sleep — OnScheduleMessagePumpWork will
+                // push a wake event only while this flag is true (seq_cst
+                // ordering prevents the race where both threads see stale values).
+                App::setWaiting(true);
+                if (App::hasWorkPending()) {
+                    // CEF scheduled work between DoWork and now — don't sleep
+                    App::setWaiting(false);
+                    have_event = SDL_PollEvent(&event);
+                } else {
+                    have_event = SDL_WaitEvent(&event);
+                    App::setWaiting(false);
+                }
             }
 #endif
         }
@@ -1774,9 +1765,12 @@ int main(int argc, char* argv[]) {
 
                 // Only invalidate paint match when size actually changed,
                 // otherwise a duplicate configure event resets the flag after
-                // CEF already painted at the correct size (causing stale black border)
-                if (physical_w != static_cast<int>(main_ptr->compositor->width()) ||
-                    physical_h != static_cast<int>(main_ptr->compositor->height())) {
+                // CEF already painted at the correct size (causing stale black border).
+                // Skip 0x0 — macOS returns this during resize before the
+                // backing store is ready, which would permanently stick the flag.
+                if (physical_w > 0 && physical_h > 0 &&
+                    (physical_w != static_cast<int>(main_ptr->compositor->width()) ||
+                     physical_h != static_cast<int>(main_ptr->compositor->height()))) {
                     paint_size_matched = false;
                 }
 

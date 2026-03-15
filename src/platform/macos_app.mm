@@ -63,58 +63,30 @@ void initMacApplication() {
     // This must be done before SDL_Init, which would create a plain NSApplication
     [JellyfinApplication sharedApplication];
 
-    // Helper processes (GPU, renderer) only need CefAppProtocol - skip dock/menu setup
+    // Helper processes (GPU, renderer) only need CefAppProtocol - hide from dock
     bool is_subprocess = (getenv("JELLYFIN_CEF_SUBPROCESS") != nullptr);
-    if (!is_subprocess) {
-        // Make this a foreground app (shows in dock, gets menubar, receives keyboard)
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-
-        // Create basic menu bar with Quit item for Cmd+Q
-        NSMenu* menubar = [[NSMenu alloc] init];
-        NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
-        [menubar addItem:appMenuItem];
-        NSMenu* appMenu = [[NSMenu alloc] init];
-        NSMenuItem* quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit"
-                                                          action:@selector(terminate:)
-                                                   keyEquivalent:@"q"];
-        [appMenu addItem:quitItem];
-        [appMenuItem setSubmenu:appMenu];
-        [NSApp setMainMenu:menubar];
+    if (is_subprocess) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        return;
     }
+
+    // Make this a foreground app (shows in dock, gets menubar, receives keyboard)
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+
+    // Create basic menu bar with Quit item for Cmd+Q
+    NSMenu* menubar = [[NSMenu alloc] init];
+    NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
+    [menubar addItem:appMenuItem];
+    NSMenu* appMenu = [[NSMenu alloc] init];
+    NSMenuItem* quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit"
+                                                      action:@selector(terminate:)
+                                               keyEquivalent:@"q"];
+    [appMenu addItem:quitItem];
+    [appMenuItem setSubmenu:appMenu];
+    [NSApp setMainMenu:menubar];
 
     NSLog(@"NSApplication class: %@", NSStringFromClass([NSApp class]));
     NSLog(@"Conforms to CefAppProtocol: %@", [NSApp conformsToProtocol:@protocol(CefAppProtocol)] ? @"YES" : @"NO");
-}
-
-// Wait for NSApplication events (integrates with both Cocoa and CFRunLoop)
-// Doesn't dequeue - just waits until an event is available, then returns
-// so SDL can process it
-void waitForMacEvent() {
-    @autoreleasepool {
-        // Wait indefinitely for any event, but don't dequeue it
-        // This pumps CFRunLoop (processing Mojo IPC) while waiting
-        [NSApp nextEventMatchingMask:NSEventMaskAny
-                           untilDate:[NSDate distantFuture]
-                              inMode:NSDefaultRunLoopMode
-                             dequeue:NO];
-        // Event stays in queue for SDL to process
-    }
-}
-
-// Wake the NSApplication event loop from another thread
-void wakeMacEventLoop() {
-    @autoreleasepool {
-        NSEvent* event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
-                                            location:NSMakePoint(0, 0)
-                                       modifierFlags:0
-                                           timestamp:0
-                                        windowNumber:0
-                                             context:nil
-                                             subtype:0
-                                               data1:0
-                                               data2:0];
-        [NSApp postEvent:event atStart:YES];
-    }
 }
 
 // Call this after SDL window is created to ensure it can receive keyboard input

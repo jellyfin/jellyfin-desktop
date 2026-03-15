@@ -69,9 +69,13 @@ void App::OnContextInitialized() {
 void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
     // Called by CEF (from any thread) when it needs CefDoMessageLoopWork()
     if (delay_ms <= 0) {
-        // Immediate work - wake main loop now
-        if (wake_callback_) {
-            wake_callback_();
+        // Set flag (seq_cst pairs with is_waiting_ check to prevent missed wakes)
+        work_pending_.store(true, std::memory_order_seq_cst);
+        // Only push an SDL event if the main loop is blocked in SDL_WaitEvent.
+        // When the main loop is active (processing events or in DoWork), it
+        // will check work_pending_ before sleeping — no wake event needed.
+        if (is_waiting_.load(std::memory_order_seq_cst)) {
+            if (wake_callback_) wake_callback_();
         }
     } else {
         // Delayed work - use SDL timer
@@ -92,26 +96,26 @@ Uint32 App::TimerCallback(void* /*userdata*/, SDL_TimerID /*id*/, Uint32 /*inter
 }
 
 void App::DoWork() {
-    // Re-entrancy protection - CefDoMessageLoopWork can trigger callbacks
-    // that call back into this (e.g., paint callbacks)
-    if (is_active_.load()) {
-        reentrancy_detected_.store(true);
+    if (is_active_.load(std::memory_order_relaxed)) {
+        work_pending_.store(true, std::memory_order_relaxed);
         return;
     }
 
-    reentrancy_detected_.store(false);
-    is_active_.store(true);
+    is_active_.store(true, std::memory_order_relaxed);
 
-    CefDoMessageLoopWork();
+    // Process current work, then drain follow-up immediate work that was
+    // scheduled during CefDoMessageLoopWork.  Draining here prevents each
+    // follow-up from pushing a wake event that spins the main loop.
+    int iterations = 0;
+    do {
+        work_pending_.store(false, std::memory_order_relaxed);
+        CefDoMessageLoopWork();
+        iterations++;
+    } while (work_pending_.load(std::memory_order_relaxed) && iterations < 5);
 
-    is_active_.store(false);
-
-    // If re-entrancy was detected, schedule immediate work
-    if (reentrancy_detected_.load()) {
-        if (wake_callback_) {
-            wake_callback_();
-        }
-    }
+    is_active_.store(false, std::memory_order_relaxed);
+    // Don't clear work_pending_ here — if CEF threads set it during the last
+    // iteration, the main loop needs to see it to avoid sleeping.
 }
 
 void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
