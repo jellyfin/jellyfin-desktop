@@ -1132,8 +1132,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 #endif
+#if !defined(__APPLE__)
     main_ptr->compositor->setScale(
         (width > 0) ? static_cast<float>(physical_width) / width : 1.0f);
+#endif
     auto main_paint_cb = main_ptr->makePaintCallback();
 
     // Popup callbacks for accelerated paint path (dropdown menus with dmabuf/DComp)
