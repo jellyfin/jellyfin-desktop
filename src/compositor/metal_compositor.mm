@@ -102,7 +102,12 @@ bool MetalCompositor::init(SDL_Window* window, uint32_t width, uint32_t height) 
     metal_layer_.drawableSize = CGSizeMake(width, height);
     metal_layer_.contentsScale = [ns_window backingScaleFactor];
     metal_layer_.opaque = NO;  // Allow transparency for video to show through
-    metal_layer_.presentsWithTransaction = YES;  // Sync presents with CA for fluid resize
+    // Vsync throttle: with 2 drawables and displaySyncEnabled=YES (default),
+    // nextDrawable blocks when both are in-flight — the Metal equivalent of
+    // eglSwapBuffers blocking on Linux.  3 drawables (the default) rarely block
+    // because the GPU finishes fast enough, letting the main loop spin.
+    metal_layer_.maximumDrawableCount = 2;
+    // presentsWithTransaction is toggled on during resize for fluid CA-synced presents.
 
     // Disable implicit animations to prevent jelly effect during resize
     metal_layer_.actions = @{
@@ -315,8 +320,13 @@ bool MetalCompositor::importQueuedIOSurface() {
     // Check if this is the same surface as before - skip texture recreation
     IOSurfaceID surfaceID = IOSurfaceGetID(surface);
     if (surfaceID == cached_surface_id_ && texture_) {
-        // Same surface, just mark as having content
+        // Same surface — check if content actually changed
+        uint32_t seed = IOSurfaceGetSeed(surface);
         CFRelease(surface);
+        if (seed == cached_surface_seed_) {
+            return false;  // No visual change — skip compositing
+        }
+        cached_surface_seed_ = seed;
         has_content_ = true;
         return true;
     }
@@ -344,6 +354,9 @@ bool MetalCompositor::importQueuedIOSurface() {
     desc.usage = MTLTextureUsageShaderRead;
     desc.storageMode = MTLStorageModeShared;  // IOSurface is shared memory
 
+    // Record seed before releasing our reference (texture retains the surface internally)
+    uint32_t seed = IOSurfaceGetSeed(surface);
+
     // Create texture directly from IOSurface - zero-copy!
     id<MTLTexture> texture = [DEVICE newTextureWithDescriptor:desc iosurface:surface plane:0];
 
@@ -357,6 +370,7 @@ bool MetalCompositor::importQueuedIOSurface() {
 
     texture_ = (void*)CFBridgingRetain(texture);
     cached_surface_id_ = surfaceID;
+    cached_surface_seed_ = seed;
     has_content_ = true;
     staging_dirty_ = false;  // No staging buffer upload needed
 
@@ -421,10 +435,22 @@ void MetalCompositor::composite(uint32_t width, uint32_t height, float alpha) {
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [encoder endEncoding];
 
-        // With presentsWithTransaction=YES, wait for GPU then present in CA transaction
-        [commandBuffer commit];
-        [commandBuffer waitUntilScheduled];
-        [drawable present];
+        if (metal_layer_.presentsWithTransaction) {
+            // Resize mode: sync present with CA transaction for fluid resize
+            [commandBuffer commit];
+            [commandBuffer waitUntilScheduled];
+            [drawable present];
+        } else {
+            // Normal mode: async present at next vblank (displaySyncEnabled paces frames)
+            [commandBuffer presentDrawable:drawable];
+            [commandBuffer commit];
+        }
+    }
+}
+
+void MetalCompositor::setPresentsWithTransaction(bool enabled) {
+    if (metal_layer_) {
+        metal_layer_.presentsWithTransaction = enabled;
     }
 }
 

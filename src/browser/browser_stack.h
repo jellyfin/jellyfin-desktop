@@ -86,7 +86,7 @@ struct BrowserEntry {
     void flushPaintBuffer();
 
     // Platform-specific compositor operations
-    void importQueued();   // importQueuedIOSurface (macOS) / importQueuedDmabuf (Linux)
+    bool importQueued();   // importQueuedIOSurface (macOS) / importQueuedDmabuf (Linux)
 
     // Notify browser of screen info change (HiDPI scale change)
     void notifyScreenInfoChanged();
@@ -140,12 +140,21 @@ public:
     // Cleanup all compositors (call before destroying graphics context)
     void cleanupCompositors();
 
+    // Import queued GPU textures (IOSurface/dmabuf) without compositing.
+    // Returns true if any new content was imported.
+    bool importAll();
+
     // Flush paint buffers, import GPU textures, and composite all visible browsers
     void renderAll(int width, int height);
 
 #ifdef _WIN32
     // Set DComp overlay mode on all compositors (no Y-flip, no BGRA swizzle)
     void setDCompOverlay(bool enabled);
+#endif
+
+#ifdef __APPLE__
+    // Toggle transactional present mode on all compositors
+    void setPresentsWithTransaction(bool enabled);
 #endif
 
     // Check if stack is empty

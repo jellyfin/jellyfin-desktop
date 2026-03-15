@@ -1404,6 +1404,9 @@ int main(int argc, char* argv[]) {
 
         // Render on EXPOSED events during live resize
         if (event->type == SDL_EVENT_WINDOW_EXPOSED && event->window.data1 == 1) {
+            // Sync presents with CA transaction during resize for fluid resize
+            ctx->browsers->setPresentsWithTransaction(true);
+
             // macOS uses external_message_pump - must pump CEF here during resize
             App::DoWork();
 
@@ -2080,23 +2083,34 @@ int main(int argc, char* argv[]) {
         // Menu overlay blending
         menu.clearRedraw();
 
+        // Import queued GPU textures (cheap pointer swap).  New content
+        // from OnAcceleratedPaint triggers compositing even without user input.
+#ifdef __APPLE__
+        bool imported = browsers.importAll();
+
+        // Ensure async presentation after live resize (which uses transactional)
+        browsers.setPresentsWithTransaction(false);
+#endif
+
         // Render video to subsurface/layer
 #ifdef __APPLE__
-        if (has_video) {
-            bool hasFrame = videoRenderer.hasFrame();
-            static int frame_log_count = 0;
-            if (hasFrame) {
-                if (videoRenderer.render(current_width, current_height)) {
-                    video_ready = true;
-                    if (frame_log_count++ < 5) {
-                        LOG_INFO(LOG_MAIN, "Video frame rendered (count=%d)", frame_log_count);
+        if (needs_render || imported) {
+            if (has_video) {
+                bool hasFrame = videoRenderer.hasFrame();
+                static int frame_log_count = 0;
+                if (hasFrame) {
+                    if (videoRenderer.render(current_width, current_height)) {
+                        video_ready = true;
+                        if (frame_log_count++ < 5) {
+                            LOG_INFO(LOG_MAIN, "Video frame rendered (count=%d)", frame_log_count);
+                        }
                     }
                 }
             }
-        }
 
-        // Flush and composite all browsers (back-to-front order)
-        browsers.renderAll(current_width, current_height);
+            // Flush and composite all browsers (back-to-front order)
+            browsers.renderAll(current_width, current_height);
+        }
 #elif defined(_WIN32)
         // Windows: Vulkan gpu-next video via DComp, CEF overlay via DComp
         // Both are DComp visuals with explicit Z-ordering (video behind, CEF in front).

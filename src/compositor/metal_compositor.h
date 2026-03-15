@@ -40,6 +40,9 @@ public:
     // Visibility
     void setVisible(bool visible);
 
+    // Toggle transactional present (CA-synced for resize, async for normal rendering)
+    void setPresentsWithTransaction(bool enabled);
+
     bool hasValidOverlay() const { return has_content_; }
 
     uint32_t width() const { return width_; }
@@ -69,7 +72,7 @@ private:
     std::mutex mutex_;
     void* staging_buffer_ = nullptr;
     size_t staging_size_ = 0;
-    bool staging_dirty_ = false;
+    std::atomic<bool> staging_dirty_{false};
     bool has_content_ = false;
 
     // IOSurface queue for zero-copy rendering
@@ -81,7 +84,8 @@ private:
     };
     QueuedIOSurface queued_iosurface_;
     std::atomic<bool> iosurface_pending_{false};
-    uint32_t cached_surface_id_ = 0;  // To avoid recreating texture for same surface
+    uint32_t cached_surface_id_ = 0;   // To avoid recreating texture for same surface
+    uint32_t cached_surface_seed_ = 0; // IOSurfaceGetSeed — skip compositing when content unchanged
 };
 
 #endif // __APPLE__

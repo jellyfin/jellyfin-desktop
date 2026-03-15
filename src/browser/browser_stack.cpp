@@ -83,15 +83,17 @@ void BrowserEntry::flushPaintBuffer() {
     }
 }
 
-void BrowserEntry::importQueued() {
+bool BrowserEntry::importQueued() {
 #ifdef __APPLE__
-    compositor->importQueuedIOSurface();
+    return compositor->importQueuedIOSurface();
 #elif !defined(_WIN32)
     // Linux: import queued dmabuf (main view + popup)
-    compositor->importQueuedDmabuf();
-    compositor->importQueuedPopupDmabuf();
+    bool main = compositor->importQueuedDmabuf();
+    bool popup = compositor->importQueuedPopupDmabuf();
+    return main || popup;
+#else
+    return false;
 #endif
-    // Windows: no-op (no GPU texture import path)
 }
 
 void BrowserEntry::notifyScreenInfoChanged() {
@@ -258,6 +260,30 @@ void BrowserStack::setDCompOverlay(bool enabled) {
 }
 #endif
 
+#ifdef __APPLE__
+void BrowserStack::setPresentsWithTransaction(bool enabled) {
+    for (auto& entry : browsers_) {
+        entry->compositor->setPresentsWithTransaction(enabled);
+    }
+}
+#endif
+
+bool BrowserStack::importAll() {
+    bool any = false;
+    for (auto& entry : browsers_) {
+        if (entry->importQueued()) any = true;
+    }
+    return any;
+}
+
 bool BrowserStack::anyHasPendingContent() const {
+    for (const auto& entry : browsers_) {
+        // Check software paint buffers (matches flushPaintBuffer's dirty+non-empty check)
+        int read_idx = 1 - entry->paint_write_idx.load(std::memory_order_acquire);
+        const auto& buf = entry->paint_buffers[read_idx];
+        if (buf.dirty && !buf.data.empty()) {
+            return true;
+        }
+    }
     return false;
 }
