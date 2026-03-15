@@ -37,13 +37,10 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION}"
 
-      - name: Install build tools
-        run: |
-          brew install cmake ninja meson pkg-config
-
-      - name: Install mpv dependencies
+      - name: Install dependencies
         run: |
           brew install \
+            meson \
             ffmpeg \
             libplacebo \
             libass \
@@ -52,7 +49,6 @@ jobs:
             vulkan-headers \
             molten-vk \
             sdl3 \
-            lcms2 \
             libunibreak \
             zimg
 
