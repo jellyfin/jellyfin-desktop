@@ -28,6 +28,7 @@ PLATFORM_MAP = {
 
 log = logging.getLogger(__name__)
 REPO_ROOT = pathlib.Path(__file__).parent.parent
+CEF_VERSION_FILE = REPO_ROOT / "CEF_VERSION"
 
 
 def relpath(path):
@@ -53,6 +54,14 @@ def fetch_index():
     log.info("Fetching CEF builds index")
     with urllib.request.urlopen(CEF_INDEX_URL) as resp:
         return json.load(resp)
+
+
+def find_version_by_prefix(index, platform_id, version_prefix):
+    """Find a CEF version in the index matching the given prefix."""
+    for v in index.get(platform_id, {}).get("versions", []):
+        if v.get("cef_version", "").startswith(version_prefix):
+            return v
+    return None
 
 
 def find_latest_stable(index, platform_id):
@@ -83,11 +92,11 @@ def get_minimal_distribution(version_data):
     raise RuntimeError("No suitable distribution found")
 
 
-def compute_sha1(path):
-    """Compute SHA1 hash of a file."""
-    h = hashlib.sha1()
+def compute_hash(path, algorithm="sha1"):
+    """Compute hash of a file."""
+    h = hashlib.new(algorithm)
     with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
+        for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
 
@@ -95,7 +104,7 @@ def compute_sha1(path):
 def verify_sha1(path, expected_sha1):
     """Verify SHA1 hash of a file."""
     log.info("Verifying SHA1")
-    actual_sha1 = compute_sha1(path)
+    actual_sha1 = compute_hash(path, "sha1")
     if actual_sha1 != expected_sha1:
         raise RuntimeError(
             f"SHA1 mismatch: expected {expected_sha1}, got {actual_sha1}"
@@ -190,7 +199,18 @@ def find_existing_tarball(output_dir, platform_id):
     return None
 
 
+def read_pinned_version():
+    """Read pinned CEF version from CEF_VERSION file, if it exists."""
+    if CEF_VERSION_FILE.exists():
+        version = CEF_VERSION_FILE.read_text().strip()
+        if version:
+            return version
+    return None
+
+
 def main():
+    pinned = read_pinned_version()
+
     parser = argparse.ArgumentParser(description="Download CEF distribution")
     parser.add_argument(
         "--platform",
@@ -199,7 +219,8 @@ def main():
     )
     parser.add_argument(
         "--version",
-        help="CEF version to download (default: latest stable)",
+        default=pinned,
+        help="CEF version to download (default: from CEF_VERSION file, or latest stable)",
     )
     parser.add_argument(
         "--output-dir",
@@ -210,7 +231,7 @@ def main():
     parser.add_argument(
         "--show-latest",
         action="store_true",
-        help="Output JSON with latest version info, don't download",
+        help="Output JSON with version info, don't download",
     )
     args = parser.parse_args()
 
@@ -221,6 +242,12 @@ def main():
 
     # Check for existing tarball and sha1
     existing = find_existing_tarball(args.output_dir, platform_id)
+    if existing and args.version:
+        _, existing_name = existing
+        if not existing_name.startswith(f"cef_binary_{args.version}"):
+            log.info("Existing CEF doesn't match requested version %s, re-downloading",
+                     args.version)
+            existing = None
     if existing:
         tarball_path, versioned_dir_name = existing
         sha1_path = tarball_path.parent / f"{tarball_path.name}.sha1"
@@ -233,11 +260,7 @@ def main():
         index = fetch_index()
 
         if args.version:
-            version_data = None
-            for v in index.get(platform_id, {}).get("versions", []):
-                if v.get("cef_version", "").startswith(args.version):
-                    version_data = v
-                    break
+            version_data = find_version_by_prefix(index, platform_id, args.version)
             if not version_data:
                 raise RuntimeError(
                     f"Version {args.version} not found for {platform_id}"

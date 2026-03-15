@@ -47,21 +47,13 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION}"
 
-      - name: Resolve CEF version
-        id: cef
-        shell: bash
-        run: |
-          CEF_VERSION=$(python dev/download_cef.py --platform ${{ matrix.platform }} --show-latest | python -c "import sys,json; print(json.load(sys.stdin)['cef_version'])")
-          echo "version=${CEF_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "CEF version: ${CEF_VERSION}"
-
       - name: Cache CEF
         uses: actions/cache@v4
         with:
           path: |
             third_party/cef
             third_party/cef_binary_*
-          key: cef-${{ matrix.platform }}-${{ steps.cef.outputs.version }}
+          key: cef-${{ matrix.platform }}-${{ hashFiles('CEF_VERSION') }}
 
       - name: Download CEF
         run: |

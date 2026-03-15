@@ -47,6 +47,18 @@ set(CEF_ROOT "${CMAKE_SOURCE_DIR}/third_party/cef" CACHE PATH "CEF binary distri
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 find_package(CEF REQUIRED)
 
+# Verify CEF version matches CEF_VERSION file
+if(EXISTS "${CMAKE_SOURCE_DIR}/CEF_VERSION")
+    file(READ "${CMAKE_SOURCE_DIR}/CEF_VERSION" _EXPECTED_CEF_VERSION)
+    string(STRIP "${_EXPECTED_CEF_VERSION}" _EXPECTED_CEF_VERSION)
+    if(NOT CEF_VERSION STREQUAL _EXPECTED_CEF_VERSION)
+        message(FATAL_ERROR
+            "CEF version mismatch:\n"
+            "  CEF_VERSION file: ${_EXPECTED_CEF_VERSION}\n"
+            "  Found CEF:        ${CEF_VERSION}")
+    endif()
+endif()
+
 # SDL3
 find_package(SDL3 REQUIRED)
 

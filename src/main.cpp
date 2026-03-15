@@ -17,6 +17,7 @@
 
 #include "include/cef_app.h"
 #include "include/cef_version.h"
+#include "include/cef_version_info.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
 #ifdef __APPLE__
@@ -425,6 +426,7 @@ int main(int argc, char* argv[]) {
         // Startup banner
         LOG_INFO(LOG_MAIN, "jellyfin-desktop-cef " APP_VERSION_STRING " built " __DATE__ " " __TIME__);
         LOG_INFO(LOG_MAIN, "CEF " CEF_VERSION);
+
 #if !defined(__APPLE__) && !defined(_WIN32)
         if (use_dmabuf) {
             LOG_INFO(LOG_MAIN, "DMA-BUF zero-copy CEF rendering enabled (experimental)");
@@ -476,6 +478,22 @@ int main(int argc, char* argv[]) {
     // This must happen before any CEF code that might create an NSApplication
     initMacApplication();
 #endif
+
+    // Verify runtime CEF matches compile-time version exactly
+    // (must be after cef_load_library on macOS, which populates function pointers)
+    if (cef_version_info(0) != CEF_VERSION_MAJOR ||
+        cef_version_info(1) != CEF_VERSION_MINOR ||
+        cef_version_info(2) != CEF_VERSION_PATCH ||
+        cef_version_info(3) != CEF_COMMIT_NUMBER ||
+        cef_version_info(4) != CHROME_VERSION_MAJOR ||
+        cef_version_info(5) != CHROME_VERSION_MINOR ||
+        cef_version_info(6) != CHROME_VERSION_BUILD ||
+        cef_version_info(7) != CHROME_VERSION_PATCH) {
+        LOG_WARN(LOG_CEF, "Runtime CEF %d.%d.%d (chromium %d.%d.%d.%d) does not match compiled "
+                 CEF_VERSION,
+                 cef_version_info(0), cef_version_info(1), cef_version_info(2),
+                 cef_version_info(4), cef_version_info(5), cef_version_info(6), cef_version_info(7));
+    }
 
     // Mark so CEF subprocesses skip arg parsing
     if (!is_cef_subprocess) {

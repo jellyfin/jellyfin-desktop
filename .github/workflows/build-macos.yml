@@ -62,9 +62,7 @@ jobs:
           path: |
             third_party/cef
             third_party/cef_binary_*
-          key: cef-macos-${{ matrix.arch }}-${{ hashFiles('dev/download_cef.py') }}
-          restore-keys: |
-            cef-macos-${{ matrix.arch }}-
+          key: cef-macos-${{ matrix.arch }}-${{ hashFiles('CEF_VERSION') }}
 
       - name: Download CEF
         run: |

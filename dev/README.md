@@ -23,6 +23,22 @@ cd jellyfin-desktop-cef
 .\dev\windows\build.ps1
 ```
 
+## CEF Version
+
+The target CEF version is pinned in `CEF_VERSION` at the repo root. All platforms use this version.
+
+- `dev/download_cef.py` reads it automatically when downloading CEF
+- CMake verifies the installed CEF matches at configure time
+- CI cache keys are based on it
+
+To bump CEF:
+
+```sh
+echo "NEW_VERSION_STRING" > CEF_VERSION
+python3 dev/download_cef.py              # download new version
+python3 dev/flatpak/update_cef.py        # update Flatpak manifest URL + sha256
+```
+
 ## Flatpak (Linux)
 
 See [dev/flatpak/README.md](flatpak/README.md) for details.
