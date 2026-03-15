@@ -150,6 +150,16 @@ modules:
               stable-only: true
               url-template: https://www.freedesktop.org/software/uchardet/releases/uchardet-$version.tar.xz
 
+  - name: plasma-wayland-protocols
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/share/plasma-wayland-protocols
+      - cp server-decoration-palette.xml /app/share/plasma-wayland-protocols/
+    sources:
+      - type: file
+        url: https://invent.kde.org/libraries/plasma-wayland-protocols/-/raw/master/src/protocols/server-decoration-palette.xml
+        sha256: 101e225ff0e035b8f4ed177a05cf6c985a5aba8c243b9f649cb1cd78d7c6b1f9
+
   - name: jellyfin-desktop-cef
     buildsystem: cmake-ninja
     config-opts:

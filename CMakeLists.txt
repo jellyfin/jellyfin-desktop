@@ -148,6 +148,18 @@ else()
     set(XDG_ACTIVATION_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-activation-v1-client.h")
     set(XDG_ACTIVATION_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-activation-v1-code.c")
 
+    # KDE server decoration palette — per-window titlebar colors on KWin.
+    # Required by default; pass -DENABLE_KDE_PALETTE=OFF to disable.
+    option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support (requires plasma-wayland-protocols at build time)" ON)
+    if(ENABLE_KDE_PALETTE)
+        find_file(DECO_PALETTE_PROTOCOL server-decoration-palette.xml
+            PATHS /usr/share/plasma-wayland-protocols
+                  /app/share/plasma-wayland-protocols
+            REQUIRED)
+        set(DECO_PALETTE_CLIENT_H "${WAYLAND_GENERATED_DIR}/server-decoration-palette-client.h")
+        set(DECO_PALETTE_CODE_C "${WAYLAND_GENERATED_DIR}/server-decoration-palette-code.c")
+    endif()
+
     add_custom_command(
         OUTPUT ${COLOR_MGMT_CLIENT_H}
         COMMAND ${WAYLAND_SCANNER} client-header ${COLOR_MGMT_PROTOCOL} ${COLOR_MGMT_CLIENT_H}
@@ -184,6 +196,20 @@ else()
         DEPENDS ${XDG_ACTIVATION_PROTOCOL}
         COMMENT "Generating xdg-activation-v1 code"
     )
+    if(ENABLE_KDE_PALETTE)
+        add_custom_command(
+            OUTPUT ${DECO_PALETTE_CLIENT_H}
+            COMMAND ${WAYLAND_SCANNER} client-header ${DECO_PALETTE_PROTOCOL} ${DECO_PALETTE_CLIENT_H}
+            DEPENDS ${DECO_PALETTE_PROTOCOL}
+            COMMENT "Generating server-decoration-palette client header"
+        )
+        add_custom_command(
+            OUTPUT ${DECO_PALETTE_CODE_C}
+            COMMAND ${WAYLAND_SCANNER} private-code ${DECO_PALETTE_PROTOCOL} ${DECO_PALETTE_CODE_C}
+            DEPENDS ${DECO_PALETTE_PROTOCOL}
+            COMMENT "Generating server-decoration-palette code"
+        )
+    endif()
 
     set(PLATFORM_SOURCES
         src/context/egl_context.cpp
@@ -203,6 +229,14 @@ else()
         ${XDG_ACTIVATION_CODE_C}
         ${XDG_ACTIVATION_CLIENT_H}
     )
+    if(ENABLE_KDE_PALETTE)
+        list(APPEND PLATFORM_SOURCES
+            src/platform/kde_decoration_palette.cpp
+            ${DECO_PALETTE_CODE_C}
+            ${DECO_PALETTE_CLIENT_H}
+        )
+        add_compile_definitions(HAVE_KDE_DECORATION_PALETTE)
+    endif()
     set(PLATFORM_LIBRARIES
         ${WAYLAND_LIBRARIES}
         ${WAYLAND_EGL_LIBRARIES}

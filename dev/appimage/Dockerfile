@@ -33,6 +33,11 @@ RUN git submodule update --init
 # Download CEF (uses dev/download_cef.py to fetch latest stable and set up third_party/cef symlink)
 RUN python3 dev/download_cef.py
 
+# KDE server-decoration-palette protocol (build-time only, for KWin titlebar colors)
+RUN mkdir -p /usr/share/plasma-wayland-protocols && \
+    wget -q -O /usr/share/plasma-wayland-protocols/server-decoration-palette.xml \
+    "https://invent.kde.org/libraries/plasma-wayland-protocols/-/raw/master/src/protocols/server-decoration-palette.xml"
+
 # Build mpv from submodule (custom fork with libmpv Vulkan gpu-next support)
 RUN cd third_party/mpv && \
     rm -rf build && \

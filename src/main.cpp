@@ -55,6 +55,9 @@ void wakeMacEventLoop();
 #include "context/opengl_frame_context.h"
 #include "player/mpris/media_session_mpris.h"
 #include <unistd.h>  // For close()
+#ifdef HAVE_KDE_DECORATION_PALETTE
+#include "platform/kde_decoration_palette.h"
+#endif
 #endif
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
@@ -276,6 +279,8 @@ static void setTitlebarColor([[maybe_unused]] SDL_Window* window, uint8_t r, uin
     }
 #elif defined(__APPLE__)
     setMacTitlebarColor(r, g, b);
+#elif defined(HAVE_KDE_DECORATION_PALETTE)
+    setKdeTitlebarColor(r, g, b);
 #endif
 }
 
@@ -801,6 +806,10 @@ int main(int argc, char* argv[]) {
 #endif
 
     initWindowActivation(window);
+#ifdef HAVE_KDE_DECORATION_PALETTE
+    initKdeDecorationPalette(window);
+    setKdeTitlebarColor(0x10, 0x10, 0x10);
+#endif
 
     // CEF settings (CefThread sets external_message_pump)
     CefSettings settings;
@@ -2195,6 +2204,9 @@ int main(int argc, char* argv[]) {
     VideoStack::cleanupStatics();
     egl.cleanup();
     CefShutdown();
+#endif
+#ifdef HAVE_KDE_DECORATION_PALETTE
+    cleanupKdeDecorationPalette();
 #endif
     cleanupWindowActivation();
     stopListener();
