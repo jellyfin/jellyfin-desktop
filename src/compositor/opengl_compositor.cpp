@@ -146,10 +146,11 @@ uniform float alpha;
 uniform float swizzleBgra;
 uniform vec2 texSize;
 uniform vec2 viewSize;
+uniform vec2 texOffset;
 void main() {
-    int px = int(gl_FragCoord.x);
+    int px = int(gl_FragCoord.x) - int(texOffset.x);
     // Flip Y using viewport height so texture anchors to TOP
-    int tex_y = int(viewSize.y) - 1 - int(gl_FragCoord.y);
+    int tex_y = int(viewSize.y) - 1 - int(gl_FragCoord.y) - int(texOffset.y);
 
     // Out of bounds = transparent (let background show through)
     if (px < 0 || tex_y < 0 || px >= int(texSize.x) || tex_y >= int(texSize.y)) {
@@ -277,6 +278,7 @@ bool OpenGLCompositor::createShader() {
     tex_size_loc_ = glGetUniformLocation(program_, "texSize");
     view_size_loc_ = glGetUniformLocation(program_, "viewSize");
     sampler_loc_ = glGetUniformLocation(program_, "overlayTex");
+    tex_offset_loc_ = glGetUniformLocation(program_, "texOffset");
 
     return true;
 }
@@ -326,79 +328,30 @@ void OpenGLCompositor::updateOverlayPartial(const void* data, int src_width, int
 
 void OpenGLCompositor::queueDmabuf(int fd, uint32_t stride, uint64_t modifier, int w, int h) {
 #if !defined(__APPLE__) && !defined(_WIN32)
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Close any previously queued fd that wasn't imported
-    if (dmabuf_pending_.load(std::memory_order_relaxed) && queued_dmabuf_.fd >= 0) {
-        close(queued_dmabuf_.fd);
-    }
-
-    queued_dmabuf_.fd = fd;
-    queued_dmabuf_.stride = stride;
-    queued_dmabuf_.modifier = modifier;
-    queued_dmabuf_.width = w;
-    queued_dmabuf_.height = h;
-    dmabuf_pending_.store(true, std::memory_order_release);
+    queueDmabufImpl(queued_dmabuf_, dmabuf_pending_, fd, stride, modifier, w, h);
 #else
     (void)fd; (void)stride; (void)modifier; (void)w; (void)h;
 #endif
 }
 
-bool OpenGLCompositor::importQueuedDmabuf() {
 #if !defined(__APPLE__) && !defined(_WIN32)
-    // Fast-path: check atomic without lock
-    if (!dmabuf_pending_.load(std::memory_order_acquire)) {
-        return false;
+void OpenGLCompositor::queueDmabufImpl(QueuedDmabuf& queued, std::atomic<bool>& pending,
+                                        int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (pending.load(std::memory_order_relaxed) && queued.fd >= 0) {
+        close(queued.fd);
     }
+    queued.fd = fd;
+    queued.stride = stride;
+    queued.modifier = modifier;
+    queued.width = w;
+    queued.height = h;
+    pending.store(true, std::memory_order_release);
+}
 
-    if (!glEGLImageTargetTexture2DOES || !eglCreateImageKHR || !eglDestroyImageKHR || !ctx_) {
-        return false;
-    }
-
-    // Get queued dmabuf under lock
-    int fd;
-    uint32_t stride;
-    uint64_t modifier;
-    int w, h;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!dmabuf_pending_.load(std::memory_order_relaxed)) {
-            return false;  // Another thread got it
-        }
-        fd = queued_dmabuf_.fd;
-        stride = queued_dmabuf_.stride;
-        modifier = queued_dmabuf_.modifier;
-        w = queued_dmabuf_.width;
-        h = queued_dmabuf_.height;
-        dmabuf_pending_.store(false, std::memory_order_relaxed);
-        queued_dmabuf_.fd = -1;
-    }
-
-    if (fd < 0) {
-        return false;
-    }
-
-    EGLDisplay display = ctx_->display();
-
-    // Destroy previous EGLImage if exists
-    if (egl_image_) {
-        eglDestroyImageKHR(display, static_cast<EGLImageKHR>(egl_image_));
-        egl_image_ = nullptr;
-    }
-
-    // Create dmabuf texture if needed
-    if (!dmabuf_texture_) {
-        glGenTextures(1, &dmabuf_texture_);
-        glBindTexture(GL_TEXTURE_2D, dmabuf_texture_);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    }
-
-    // Create EGLImage from dmabuf
-    // CEF uses DRM_FORMAT_ARGB8888 - EGL import handles format conversion
-    // DRM_FORMAT_MOD_INVALID means no modifier - don't include modifier attrs
+void* OpenGLCompositor::createDmabufEGLImage(void* dpy,
+                                              int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+    auto display = static_cast<EGLDisplay>(dpy);
     EGLImageKHR image;
     if (modifier == DRM_FORMAT_MOD_INVALID) {
         EGLint attrs[] = {
@@ -425,18 +378,61 @@ bool OpenGLCompositor::importQueuedDmabuf() {
         };
         image = eglCreateImageKHR(display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, attrs);
     }
-
-    // Close the fd after creating the EGLImage (EGL keeps its own reference)
     close(fd);
+    return image;
+}
+#endif
 
+bool OpenGLCompositor::importQueuedDmabuf() {
+#if !defined(__APPLE__) && !defined(_WIN32)
+    if (!dmabuf_pending_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (!glEGLImageTargetTexture2DOES || !eglCreateImageKHR || !eglDestroyImageKHR || !ctx_) {
+        return false;
+    }
+
+    int fd;
+    uint32_t stride;
+    uint64_t modifier;
+    int w, h;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!dmabuf_pending_.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        fd = queued_dmabuf_.fd;
+        stride = queued_dmabuf_.stride;
+        modifier = queued_dmabuf_.modifier;
+        w = queued_dmabuf_.width;
+        h = queued_dmabuf_.height;
+        dmabuf_pending_.store(false, std::memory_order_relaxed);
+        queued_dmabuf_.fd = -1;
+    }
+    if (fd < 0) return false;
+
+    EGLDisplay display = ctx_->display();
+    if (egl_image_) {
+        eglDestroyImageKHR(display, static_cast<EGLImageKHR>(egl_image_));
+        egl_image_ = nullptr;
+    }
+
+    if (!dmabuf_texture_) {
+        glGenTextures(1, &dmabuf_texture_);
+        glBindTexture(GL_TEXTURE_2D, dmabuf_texture_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+
+    auto image = static_cast<EGLImageKHR>(createDmabufEGLImage(display, fd, stride, modifier, w, h));
     if (!image) {
-        EGLint err = eglGetError();
-        LOG_ERROR(LOG_COMPOSITOR, "eglCreateImageKHR failed: 0x%x", err);
+        LOG_ERROR(LOG_COMPOSITOR, "eglCreateImageKHR failed: 0x%x", eglGetError());
         return false;
     }
     egl_image_ = image;
 
-    // Bind to texture
     glBindTexture(GL_TEXTURE_2D, dmabuf_texture_);
     glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
 
@@ -464,6 +460,138 @@ bool OpenGLCompositor::importQueuedDmabuf() {
     return true;
 #else
     return false;
+#endif
+}
+
+void OpenGLCompositor::queuePopupDmabuf(int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+#if !defined(__APPLE__) && !defined(_WIN32)
+    queueDmabufImpl(queued_popup_dmabuf_, popup_dmabuf_pending_, fd, stride, modifier, w, h);
+#else
+    (void)fd; (void)stride; (void)modifier; (void)w; (void)h;
+#endif
+}
+
+bool OpenGLCompositor::importQueuedPopupDmabuf() {
+#if !defined(__APPLE__) && !defined(_WIN32)
+    // Deferred GL cleanup from setPopupVisible(false) — must run on GL thread
+    if (popup_cleanup_pending_.load(std::memory_order_acquire)) {
+        if (popup_egl_image_ && eglDestroyImageKHR) {
+            eglDestroyImageKHR(ctx_->display(), static_cast<EGLImageKHR>(popup_egl_image_));
+            popup_egl_image_ = nullptr;
+        }
+        if (popup_dmabuf_texture_) {
+            glDeleteTextures(1, &popup_dmabuf_texture_);
+            popup_dmabuf_texture_ = 0;
+        }
+        popup_dmabuf_width_ = 0;
+        popup_dmabuf_height_ = 0;
+        popup_cleanup_pending_.store(false, std::memory_order_release);
+    }
+
+    if (!popup_dmabuf_pending_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (!glEGLImageTargetTexture2DOES || !eglCreateImageKHR || !eglDestroyImageKHR || !ctx_) {
+        return false;
+    }
+
+    int fd;
+    uint32_t stride;
+    uint64_t modifier;
+    int w, h;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!popup_dmabuf_pending_.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        fd = queued_popup_dmabuf_.fd;
+        stride = queued_popup_dmabuf_.stride;
+        modifier = queued_popup_dmabuf_.modifier;
+        w = queued_popup_dmabuf_.width;
+        h = queued_popup_dmabuf_.height;
+        popup_dmabuf_pending_.store(false, std::memory_order_relaxed);
+        queued_popup_dmabuf_.fd = -1;
+    }
+    if (fd < 0) return false;
+
+    EGLDisplay display = ctx_->display();
+    if (popup_egl_image_) {
+        eglDestroyImageKHR(display, static_cast<EGLImageKHR>(popup_egl_image_));
+        popup_egl_image_ = nullptr;
+    }
+
+    if (!popup_dmabuf_texture_) {
+        glGenTextures(1, &popup_dmabuf_texture_);
+        glBindTexture(GL_TEXTURE_2D, popup_dmabuf_texture_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+
+    auto image = static_cast<EGLImageKHR>(createDmabufEGLImage(display, fd, stride, modifier, w, h));
+    if (!image) {
+        LOG_ERROR(LOG_COMPOSITOR, "popup eglCreateImageKHR failed: 0x%x", eglGetError());
+        return false;
+    }
+    popup_egl_image_ = image;
+
+    glBindTexture(GL_TEXTURE_2D, popup_dmabuf_texture_);
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
+
+    GLenum glErr = glGetError();
+    if (glErr != GL_NO_ERROR) {
+        LOG_ERROR(LOG_COMPOSITOR, "popup glEGLImageTargetTexture2DOES failed: 0x%x", glErr);
+        eglDestroyImageKHR(display, image);
+        popup_egl_image_ = nullptr;
+        return false;
+    }
+
+    popup_dmabuf_width_ = w;
+    popup_dmabuf_height_ = h;
+
+    LOG_DEBUG(LOG_COMPOSITOR, "popup dmabuf imported: %dx%d", w, h);
+    return true;
+#else
+    return false;
+#endif
+}
+
+void OpenGLCompositor::setPopupVisible(bool visible) {
+#if !defined(__APPLE__) && !defined(_WIN32)
+    std::lock_guard<std::mutex> lock(mutex_);
+    popup_visible_ = visible;
+    if (!visible) {
+        // Close any queued but not-yet-imported popup fd
+        if (popup_dmabuf_pending_.load(std::memory_order_relaxed) && queued_popup_dmabuf_.fd >= 0) {
+            close(queued_popup_dmabuf_.fd);
+            queued_popup_dmabuf_.fd = -1;
+            popup_dmabuf_pending_.store(false, std::memory_order_relaxed);
+        }
+        // Defer GL resource cleanup to GL thread (via importQueuedPopupDmabuf)
+        popup_cleanup_pending_.store(true, std::memory_order_release);
+    }
+#else
+    (void)visible;
+#endif
+}
+
+void OpenGLCompositor::setPopupPosition(int css_x, int css_y) {
+#if !defined(__APPLE__) && !defined(_WIN32)
+    std::lock_guard<std::mutex> lock(mutex_);
+    popup_css_x_ = css_x;
+    popup_css_y_ = css_y;
+#else
+    (void)css_x; (void)css_y;
+#endif
+}
+
+void OpenGLCompositor::setScale(float scale) {
+#if !defined(__APPLE__) && !defined(_WIN32)
+    std::lock_guard<std::mutex> lock(mutex_);
+    popup_scale_ = scale;
+#else
+    (void)scale;
 #endif
 }
 
@@ -495,9 +623,16 @@ void OpenGLCompositor::composite(uint32_t width, uint32_t height, float alpha) {
     if (sampler_loc_ >= 0) glUniform1i(sampler_loc_, texture_unit_);
 
 #if !defined(__APPLE__) && !defined(_WIN32)
+    // Main view: no offset
+    if (tex_offset_loc_ >= 0) glUniform2f(tex_offset_loc_, 0.0f, 0.0f);
+
     // Bind texture and get dimensions under lock to prevent race with updateOverlayPartial
     GLuint tex_to_use = 0;
     int tex_w = 0, tex_h = 0;
+    bool draw_popup = false;
+    GLuint popup_tex = 0;
+    int popup_tw = 0, popup_th = 0;
+    int popup_ox = 0, popup_oy = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (use_dmabuf_ && dmabuf_texture_) {
@@ -514,6 +649,14 @@ void OpenGLCompositor::composite(uint32_t width, uint32_t height, float alpha) {
             glBindTexture(GL_TEXTURE_2D, tex_to_use);
             if (swizzle_loc_ >= 0) glUniform1f(swizzle_loc_, 1.0f);
         }
+        if (popup_visible_ && popup_dmabuf_texture_) {
+            draw_popup = true;
+            popup_tex = popup_dmabuf_texture_;
+            popup_tw = popup_dmabuf_width_;
+            popup_th = popup_dmabuf_height_;
+            popup_ox = static_cast<int>(popup_css_x_ * popup_scale_);
+            popup_oy = static_cast<int>(popup_css_y_ * popup_scale_);
+        }
     }
     if (!tex_to_use) return;
     if (tex_size_loc_ >= 0) glUniform2f(tex_size_loc_, static_cast<float>(tex_w), static_cast<float>(tex_h));
@@ -528,6 +671,18 @@ void OpenGLCompositor::composite(uint32_t width, uint32_t height, float alpha) {
 
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+
+#if !defined(__APPLE__) && !defined(_WIN32)
+    // Popup pass: render popup dmabuf on top at the correct position
+    if (draw_popup) {
+        glBindTexture(GL_TEXTURE_2D, popup_tex);
+        if (tex_size_loc_ >= 0) glUniform2f(tex_size_loc_, static_cast<float>(popup_tw), static_cast<float>(popup_th));
+        if (tex_offset_loc_ >= 0) glUniform2f(tex_offset_loc_, static_cast<float>(popup_ox), static_cast<float>(popup_oy));
+        if (swizzle_loc_ >= 0) glUniform1f(swizzle_loc_, 0.0f);  // dmabuf: driver converts
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+#endif
+
     glBindVertexArray(0);
 
     glDisable(GL_BLEND);
@@ -559,6 +714,22 @@ void OpenGLCompositor::cleanup() {
     use_dmabuf_ = false;
     dmabuf_width_ = 0;
     dmabuf_height_ = 0;
+
+    // Clean up popup dmabuf resources
+    if (popup_egl_image_ && eglDestroyImageKHR) {
+        eglDestroyImageKHR(ctx_->display(), static_cast<EGLImageKHR>(popup_egl_image_));
+        popup_egl_image_ = nullptr;
+    }
+    if (popup_dmabuf_texture_) {
+        glDeleteTextures(1, &popup_dmabuf_texture_);
+        popup_dmabuf_texture_ = 0;
+    }
+    // Close any queued but not-yet-imported fds
+    if (queued_dmabuf_.fd >= 0) { close(queued_dmabuf_.fd); queued_dmabuf_.fd = -1; }
+    if (queued_popup_dmabuf_.fd >= 0) { close(queued_popup_dmabuf_.fd); queued_popup_dmabuf_.fd = -1; }
+    popup_visible_ = false;
+    popup_dmabuf_width_ = 0;
+    popup_dmabuf_height_ = 0;
 #endif
 
     // Clean up CEF texture

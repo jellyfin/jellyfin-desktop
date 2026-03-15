@@ -224,26 +224,27 @@ private:
 Client::Client(int width, int height, PaintCallback on_paint, PlayerMessageCallback on_player_msg,
                AcceleratedPaintCallback on_accel_paint, MenuOverlay* menu,
                CursorChangeCallback on_cursor_change, FullscreenChangeCallback on_fullscreen_change,
-               PhysicalSizeCallback physical_size_cb, ThemeColorCallback on_theme_color
+               PhysicalSizeCallback physical_size_cb, ThemeColorCallback on_theme_color,
+               PopupShowCallback on_popup_show, PopupSizeCallback on_popup_size,
+               AcceleratedPaintCallback on_accel_popup_paint
 #ifdef __APPLE__
                , IOSurfacePaintCallback on_iosurface_paint
 #endif
 #ifdef _WIN32
-               , WinSharedTexturePaintCallback on_win_shared_paint,
-               WinPopupShowCallback on_win_popup_show,
-               WinPopupSizeCallback on_win_popup_size
+               , WinSharedTexturePaintCallback on_win_shared_paint
 #endif
                )
     : width_(width), height_(height), on_paint_(std::move(on_paint)),
       on_player_msg_(std::move(on_player_msg)),
       on_accel_paint_(std::move(on_accel_paint)),
+      on_popup_show_(std::move(on_popup_show)),
+      on_popup_size_(std::move(on_popup_size)),
+      on_accel_popup_paint_(std::move(on_accel_popup_paint)),
 #ifdef __APPLE__
       on_iosurface_paint_(std::move(on_iosurface_paint)),
 #endif
 #ifdef _WIN32
       on_win_shared_paint_(std::move(on_win_shared_paint)),
-      on_win_popup_show_(std::move(on_win_popup_show)),
-      on_win_popup_size_(std::move(on_win_popup_size)),
 #endif
       menu_(menu), on_cursor_change_(std::move(on_cursor_change)),
       on_fullscreen_change_(std::move(on_fullscreen_change)),
@@ -447,20 +448,16 @@ void Client::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
         popup_pixel_width_ = 0;
         popup_pixel_height_ = 0;
     }
-#ifdef _WIN32
-    if (on_win_popup_show_) {
-        on_win_popup_show_(show);
+    if (on_popup_show_) {
+        on_popup_show_(show);
     }
-#endif
 }
 
 void Client::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) {
     popup_rect_ = rect;
-#ifdef _WIN32
-    if (on_win_popup_size_) {
-        on_win_popup_size_(rect.x, rect.y, rect.width, rect.height);
+    if (on_popup_size_) {
+        on_popup_size_(rect.x, rect.y, rect.width, rect.height);
     }
-#endif
 }
 
 void Client::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
@@ -566,15 +563,19 @@ void Client::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType 
     }
 
     // Import dmabuf for zero-copy rendering
-    if (on_accel_paint_ && type == PET_VIEW && info.plane_count > 0) {
-        // Use CEF's actual dmabuf dimensions, not window size
+    if (info.plane_count > 0) {
         int w = info.extra.coded_size.width;
         int h = info.extra.coded_size.height;
         if (w > 0 && h > 0) {
-            // Dup the fd since CEF may close it after this callback
             int fd = dup(info.planes[0].fd);
             if (fd >= 0) {
-                on_accel_paint_(fd, info.planes[0].stride, info.modifier, w, h);
+                if (type == PET_VIEW && on_accel_paint_) {
+                    on_accel_paint_(fd, info.planes[0].stride, info.modifier, w, h);
+                } else if (type == PET_POPUP && on_accel_popup_paint_) {
+                    on_accel_popup_paint_(fd, info.planes[0].stride, info.modifier, w, h);
+                } else {
+                    close(fd);
+                }
             }
         }
     }

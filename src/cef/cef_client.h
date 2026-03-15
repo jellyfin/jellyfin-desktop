@@ -62,16 +62,16 @@ using AcceleratedPaintCallback = std::function<void(int fd, uint32_t stride, uin
 using IOSurfacePaintCallback = std::function<void(void* surface, int format, int width, int height)>;
 #endif
 
+// Popup show/hide callback (accelerated paint path)
+using PopupShowCallback = std::function<void(bool show)>;
+
+// Popup size callback (CSS logical coordinates, accelerated paint path)
+using PopupSizeCallback = std::function<void(int x, int y, int width, int height)>;
+
 #ifdef _WIN32
 // Windows shared texture paint callback (D3D11 shared handle via OnAcceleratedPaint)
 // handle: NT HANDLE to D3D11 Texture2D, valid only during callback
 using WinSharedTexturePaintCallback = std::function<void(void* handle, int type, int width, int height)>;
-
-// Windows popup show/hide callback
-using WinPopupShowCallback = std::function<void(bool show)>;
-
-// Windows popup size callback (CSS logical coordinates)
-using WinPopupSizeCallback = std::function<void(int x, int y, int width, int height)>;
 #endif
 
 class Client : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler, public CefLoadHandler, public CefContextMenuHandler, public InputReceiver {
@@ -83,14 +83,15 @@ public:
            CursorChangeCallback on_cursor_change = nullptr,
            FullscreenChangeCallback on_fullscreen_change = nullptr,
            PhysicalSizeCallback physical_size_cb = nullptr,
-           ThemeColorCallback on_theme_color = nullptr
+           ThemeColorCallback on_theme_color = nullptr,
+           PopupShowCallback on_popup_show = nullptr,
+           PopupSizeCallback on_popup_size = nullptr,
+           AcceleratedPaintCallback on_accel_popup_paint = nullptr
 #ifdef __APPLE__
            , IOSurfacePaintCallback on_iosurface_paint = nullptr
 #endif
 #ifdef _WIN32
-           , WinSharedTexturePaintCallback on_win_shared_paint = nullptr,
-           WinPopupShowCallback on_win_popup_show = nullptr,
-           WinPopupSizeCallback on_win_popup_size = nullptr
+           , WinSharedTexturePaintCallback on_win_shared_paint = nullptr
 #endif
            );
 
@@ -196,13 +197,14 @@ private:
     PaintCallback on_paint_;
     PlayerMessageCallback on_player_msg_;
     AcceleratedPaintCallback on_accel_paint_;
+    PopupShowCallback on_popup_show_;
+    PopupSizeCallback on_popup_size_;
+    AcceleratedPaintCallback on_accel_popup_paint_;
 #ifdef __APPLE__
     IOSurfacePaintCallback on_iosurface_paint_;
 #endif
 #ifdef _WIN32
     WinSharedTexturePaintCallback on_win_shared_paint_;
-    WinPopupShowCallback on_win_popup_show_;
-    WinPopupSizeCallback on_win_popup_size_;
 #endif
     MenuOverlay* menu_ = nullptr;
     CursorChangeCallback on_cursor_change_;

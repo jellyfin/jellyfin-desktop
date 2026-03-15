@@ -87,8 +87,9 @@ void BrowserEntry::importQueued() {
 #ifdef __APPLE__
     compositor->importQueuedIOSurface();
 #elif !defined(_WIN32)
-    // Linux: import queued dmabuf
+    // Linux: import queued dmabuf (main view + popup)
     compositor->importQueuedDmabuf();
+    compositor->importQueuedPopupDmabuf();
 #endif
     // Windows: no-op (no GPU texture import path)
 }

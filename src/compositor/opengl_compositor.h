@@ -47,6 +47,13 @@ public:
     // Import queued dmabuf (must be called from main/GL thread)
     bool importQueuedDmabuf();
 
+    // Popup dmabuf support (Linux only - for CEF dropdown menus in dmabuf mode)
+    void queuePopupDmabuf(int fd, uint32_t stride, uint64_t modifier, int width, int height);
+    bool importQueuedPopupDmabuf();
+    void setPopupVisible(bool visible);
+    void setPopupPosition(int css_x, int css_y);  // CSS logical coordinates
+    void setScale(float scale);  // Physical / logical ratio for popup positioning
+
     // Resize resources
     void resize(uint32_t width, uint32_t height);
 
@@ -81,6 +88,7 @@ private:
     GLint tex_size_loc_ = -1;
     GLint view_size_loc_ = -1;
     GLint sampler_loc_ = -1;
+    GLint tex_offset_loc_ = -1;
 
 #ifdef _WIN32
     bool dcomp_overlay_ = false;
@@ -111,5 +119,24 @@ private:
     };
     QueuedDmabuf queued_dmabuf_;
     std::atomic<bool> dmabuf_pending_{false};  // Fast-path check without mutex
+
+    // Shared helpers for dmabuf import (reduces duplication between view/popup paths)
+    void queueDmabufImpl(QueuedDmabuf& queued, std::atomic<bool>& pending,
+                         int fd, uint32_t stride, uint64_t modifier, int w, int h);
+    void* createDmabufEGLImage(void* display,
+                               int fd, uint32_t stride, uint64_t modifier, int w, int h);
+
+    // Popup dmabuf support
+    GLuint popup_dmabuf_texture_ = 0;
+    void* popup_egl_image_ = nullptr;
+    int popup_dmabuf_width_ = 0;
+    int popup_dmabuf_height_ = 0;
+    bool popup_visible_ = false;
+    int popup_css_x_ = 0;  // CSS logical position
+    int popup_css_y_ = 0;
+    float popup_scale_ = 1.0f;  // Physical / logical ratio
+    QueuedDmabuf queued_popup_dmabuf_;
+    std::atomic<bool> popup_dmabuf_pending_{false};
+    std::atomic<bool> popup_cleanup_pending_{false};  // Deferred GL cleanup from CEF thread
 #endif
 };

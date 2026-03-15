@@ -1132,7 +1132,34 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 #endif
+    main_ptr->compositor->setScale(
+        (width > 0) ? static_cast<float>(physical_width) / width : 1.0f);
     auto main_paint_cb = main_ptr->makePaintCallback();
+
+    // Popup callbacks for accelerated paint path (dropdown menus with dmabuf/DComp)
+#if !defined(__APPLE__) && !defined(_WIN32)
+    PopupShowCallback popup_show_cb = [main_ptr, wakeMainLoop](bool show) {
+        main_ptr->compositor->setPopupVisible(show);
+        wakeMainLoop();
+    };
+    PopupSizeCallback popup_size_cb = [main_ptr](int x, int y, int /*w*/, int /*h*/) {
+        main_ptr->compositor->setPopupPosition(x, y);
+    };
+    AcceleratedPaintCallback accel_popup_cb = [main_ptr, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+        main_ptr->compositor->queuePopupDmabuf(fd, stride, modifier, w, h);
+        wakeMainLoop();
+    };
+#elif defined(_WIN32)
+    PopupShowCallback popup_show_cb = has_dcomp_browsers ?
+        PopupShowCallback([&mainBrowserLayer](bool show) { mainBrowserLayer.onPopupShow(show); }) : nullptr;
+    PopupSizeCallback popup_size_cb = has_dcomp_browsers ?
+        PopupSizeCallback([&mainBrowserLayer](int x, int y, int w, int h) { mainBrowserLayer.onPopupSize(x, y, w, h); }) : nullptr;
+    AcceleratedPaintCallback accel_popup_cb = nullptr;
+#else
+    PopupShowCallback popup_show_cb = nullptr;
+    PopupSizeCallback popup_size_cb = nullptr;
+    AcceleratedPaintCallback accel_popup_cb = nullptr;
+#endif
 
     CefRefPtr<Client> client(new Client(width, height,
         [main_paint_cb, main_ptr, &paint_size_matched](const void* buffer, int w, int h) {
@@ -1202,7 +1229,10 @@ int main(int argc, char* argv[]) {
             std::lock_guard<std::mutex> lock(cmd_mutex);
             pending_cmds.push_back({"theme_color", color, 0, 0.0});
             wakeMainLoop();
-        }
+        },
+        popup_show_cb,
+        popup_size_cb,
+        accel_popup_cb
 #ifdef __APPLE__
         // IOSurface callback for macOS accelerated paint - queue for import on main thread
         , [main_ptr](void* surface, int format, int w, int h) {
@@ -1222,14 +1252,6 @@ int main(int argc, char* argv[]) {
                 } else if (type == PET_POPUP) {
                     mainBrowserLayer.onPaintPopup(static_cast<HANDLE>(handle), w, h);
                 }
-            }) : nullptr,
-        has_dcomp_browsers ?
-            WinPopupShowCallback([&mainBrowserLayer](bool show) {
-                mainBrowserLayer.onPopupShow(show);
-            }) : nullptr,
-        has_dcomp_browsers ?
-            WinPopupSizeCallback([&mainBrowserLayer](int x, int y, int w, int h) {
-                mainBrowserLayer.onPopupSize(x, y, w, h);
             }) : nullptr
 #endif
     ));
@@ -1799,6 +1821,8 @@ int main(int argc, char* argv[]) {
                     mainBrowserLayer.setScale(new_scale);
                     overlayBrowserLayer.setScale(new_scale);
                 }
+#elif !defined(__APPLE__)
+                main_ptr->compositor->setScale(new_scale);
 #endif
                 break;
             }
