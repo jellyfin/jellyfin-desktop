@@ -4,6 +4,7 @@
 - **No hand-rolled JSON** — never manually construct or parse JSON with string concatenation, manual escaping, or homebrew parsers. Always use a proper JSON library or API (e.g. CEF's `CefParseJSON`/`CefWriteJSON`, or a vendored library if CEF isn't available in that context).
 - **No artificial heartbeats/polling** - event-driven architecture only. Never use timeouts as a workaround for proper event integration. No arbitrary timeout-based bailouts in shutdown paths either — fix the root cause instead.
 - **No texture stretching during resize** - CEF content must always render at 1:1 pixel mapping. Never scale/stretch textures to fill the viewport. Gaps from stale texture sizes are acceptable; stretching is not.
+- **No single-process mode on macOS** — `--single-process` causes Mojo IPC sources to fire on the main thread's CFRunLoop, making ANY CFRunLoop-based blocking wait (including `SDL_WaitEvent`) spin at 100-166% CPU. Pipe-based workarounds avoid CFRunLoop but miss Cocoa user input events. The fix is multi-process mode (same as Linux), where renderer runs in a separate process and `SDL_WaitEvent` idles correctly.
 
 ## Build
 ```

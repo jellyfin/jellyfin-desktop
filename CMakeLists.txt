@@ -611,6 +611,45 @@ elseif(APPLE)
     # Create Resources directory (required even if empty)
     install(DIRECTORY DESTINATION "${APP_NAME}/Contents/Resources")
 
+    # Create helper app bundles (required for multi-process on macOS)
+    # macOS needs subprocess executables inside signed .app bundles for validation
+    set(HELPER_BASE_NAME "jellyfin-desktop-cef Helper")
+    set(HELPER_BUNDLE_ID_BASE "org.jellyfin.jellyfin-desktop-cef.helper")
+    set(HELPER_SUFFIXES "" " (GPU)" " (Renderer)" " (Plugin)")
+    set(HELPER_ID_SUFFIXES "" ".GPU" ".renderer" ".plugin")
+
+    list(LENGTH HELPER_SUFFIXES _helper_count)
+    math(EXPR _helper_last "${_helper_count} - 1")
+    foreach(_i RANGE 0 ${_helper_last})
+        list(GET HELPER_SUFFIXES ${_i} _suffix)
+        list(GET HELPER_ID_SUFFIXES ${_i} _id_suffix)
+
+        set(HELPER_NAME "${HELPER_BASE_NAME}${_suffix}")
+        set(HELPER_EXECUTABLE "${HELPER_NAME}")
+        set(HELPER_BUNDLE_ID "${HELPER_BUNDLE_ID_BASE}${_id_suffix}")
+        set(HELPER_APP "${HELPER_NAME}.app")
+        set(HELPER_DEST "${APP_NAME}/Contents/Frameworks/${HELPER_APP}/Contents")
+
+        # Configure Info.plist
+        configure_file(
+            "${CMAKE_SOURCE_DIR}/resources/macos/helper-Info.plist.in"
+            "${CMAKE_BINARY_DIR}/helper-plists/${HELPER_APP}-Info.plist"
+            @ONLY
+        )
+
+        # Install Info.plist
+        install(FILES "${CMAKE_BINARY_DIR}/helper-plists/${HELPER_APP}-Info.plist"
+            DESTINATION "${HELPER_DEST}"
+            RENAME "Info.plist"
+        )
+
+        # Install helper executable (minimal CEF-only binary, renamed)
+        install(PROGRAMS $<TARGET_FILE:jellyfin-desktop-cef-helper>
+            DESTINATION "${HELPER_DEST}/MacOS"
+            RENAME "${HELPER_NAME}"
+        )
+    endforeach()
+
     # Configure bundle completion script
     configure_file(
         "${CMAKE_SOURCE_DIR}/cmake/CompleteBundleMac.cmake.in"
@@ -630,6 +669,26 @@ else()
     if(EXTERNAL_MPV_DIR)
         install(FILES "${EXTERNAL_MPV_DIR}/lib/libmpv.so" DESTINATION .)
     endif()
+endif()
+
+# macOS: Build minimal CEF subprocess helper (no SDL/mpv/Vulkan deps)
+if(APPLE)
+    add_executable(jellyfin-desktop-cef-helper
+        src/cef/helper_main.cpp
+        src/settings.cpp
+        src/cjson/cJSON.c
+    )
+    add_dependencies(jellyfin-desktop-cef-helper embedded_js)
+    target_include_directories(jellyfin-desktop-cef-helper PRIVATE
+        ${CEF_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_BINARY_DIR}/generated
+    )
+    # Link only the wrapper (static) — framework is loaded dynamically via cef_load_library
+    target_link_libraries(jellyfin-desktop-cef-helper PRIVATE
+        ${CEF_WRAPPER_PATH}
+    )
+    target_compile_features(jellyfin-desktop-cef-helper PRIVATE cxx_std_20)
 endif()
 
 # CPack for creating distribution packages

@@ -453,11 +453,20 @@ int main(int argc, char* argv[]) {
     }
 
     // macOS: Load CEF framework dynamically (required - linking alone isn't enough)
-    // Check if running from app bundle (exe is in Contents/MacOS/) or dev build
+    // Detect bundle structure to find Chromium Embedded Framework.framework:
+    //   Main app:   Contents/MacOS/<exe>        → Contents/Frameworks/
+    //   Helper app: Contents/Frameworks/<H>.app/Contents/MacOS/<exe> → Contents/Frameworks/
+    //   Dev build:  build/<exe>                  → build/Frameworks/
     std::filesystem::path cef_framework_path;
     if (exe_path.parent_path().filename() == "Contents") {
-        // App bundle: framework is at ../Frameworks/
-        cef_framework_path = exe_path.parent_path() / "Frameworks";
+        auto bundle_app = exe_path.parent_path().parent_path(); // *.app
+        if (bundle_app.parent_path().filename() == "Frameworks") {
+            // Helper bundle inside main app's Frameworks/ — CEF framework is a sibling
+            cef_framework_path = bundle_app.parent_path();
+        } else {
+            // Main app bundle: framework is at Contents/Frameworks/
+            cef_framework_path = exe_path.parent_path() / "Frameworks";
+        }
     } else {
         // Dev build: framework is at ./Frameworks/
         cef_framework_path = exe_path / "Frameworks";
@@ -804,8 +813,10 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
     // macOS: Set framework path (cef_framework_path set earlier during CEF loading)
     CefString(&settings.framework_dir_path).FromString((cef_framework_path / "Chromium Embedded Framework.framework").string());
-    // Use main executable as subprocess - it handles CefExecuteProcess early
-    CefString(&settings.browser_subprocess_path).FromString((exe_path / "jellyfin-desktop-cef").string());
+    // Multi-process: subprocess must be inside a signed .app bundle for macOS validation.
+    // Helper bundles live at Contents/Frameworks/<name>.app/Contents/MacOS/<name>
+    auto helper_path = cef_framework_path / "jellyfin-desktop-cef Helper.app" / "Contents" / "MacOS" / "jellyfin-desktop-cef Helper";
+    CefString(&settings.browser_subprocess_path).FromString(helper_path.string());
 #elif defined(_WIN32)
     // Windows: Get exe path
     wchar_t exe_buf[MAX_PATH];
