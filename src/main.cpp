@@ -310,7 +310,7 @@ int main(int argc, char* argv[]) {
 
     // Load saved settings first, then let CLI flags override
     SDL_LogPriority log_level = SDL_LOG_PRIORITY_INFO;
-    bool use_dmabuf = false;
+    bool use_dmabuf = true;
     bool disable_gpu_compositing = false;
     std::string hwdec_str = "auto-safe";
     std::string audio_passthrough_str;
@@ -325,7 +325,6 @@ int main(int argc, char* argv[]) {
         audio_exclusive = saved.audioExclusive();
         if (!saved.audioChannels().empty()) audio_channels_str = saved.audioChannels();
         disable_gpu_compositing = saved.disableGpuCompositing();
-        use_dmabuf = saved.dmabuf();
 
         // Parse CLI arguments (override saved settings)
         const char* log_level_str = nullptr;
@@ -341,7 +340,7 @@ int main(int argc, char* argv[]) {
                        "  --log-level <level>     Set log level (verbose|debug|info|warn|error)\n"
                        "  --log-file <path>       Write logs to file (with timestamps)\n"
 #if !defined(__APPLE__) && !defined(_WIN32)
-                       "  --dmabuf                Enable DMA-BUF zero-copy CEF rendering (experimental)\n"
+                       "  --disable-dmabuf             Disable DMA-BUF zero-copy CEF rendering\n"
 #endif
                        "  --disable-gpu-compositing  Disable Chromium GPU compositing\n"
                        "  --hwdec <mode>          Set mpv hardware decoding mode (default: auto-safe)\n"
@@ -365,8 +364,8 @@ int main(int argc, char* argv[]) {
                 log_file_path = argv[i] + 11;
             } else if (strcmp(argv[i], "--disable-gpu-compositing") == 0) {
                 disable_gpu_compositing = true;
-            } else if (strcmp(argv[i], "--dmabuf") == 0) {
-                use_dmabuf = true;
+            } else if (strcmp(argv[i], "--disable-dmabuf") == 0) {
+                use_dmabuf = false;
             } else if (strcmp(argv[i], "--hwdec") == 0) {
                 hwdec_str = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "auto-safe";
             } else if (strncmp(argv[i], "--hwdec=", 8) == 0) {
@@ -428,8 +427,8 @@ int main(int argc, char* argv[]) {
         LOG_INFO(LOG_MAIN, "CEF " CEF_VERSION);
 
 #if !defined(__APPLE__) && !defined(_WIN32)
-        if (use_dmabuf) {
-            LOG_INFO(LOG_MAIN, "DMA-BUF zero-copy CEF rendering enabled (experimental)");
+        if (!use_dmabuf) {
+            LOG_INFO(LOG_MAIN, "DMA-BUF zero-copy CEF rendering disabled via --disable-dmabuf");
         }
 #endif
         if (!audio_passthrough_str.empty())

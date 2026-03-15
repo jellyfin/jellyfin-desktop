@@ -92,7 +92,6 @@ bool Settings::load() {
     audio_exclusive_ = jsonBool(root, "audioExclusive", false);
     audio_channels_ = jsonStr(root, "audioChannels");
     disable_gpu_compositing_ = jsonBool(root, "disableGpuCompositing", false);
-    dmabuf_ = jsonBool(root, "dmabuf", false);
     titlebar_theme_color_ = jsonBool(root, "titlebarThemeColor", true);
     log_level_ = jsonStr(root, "logLevel");
 
@@ -121,7 +120,6 @@ static std::string buildSettingsJson(const Settings& s, bool pretty) {
     if (s.audioExclusive()) cJSON_AddBoolToObject(root, "audioExclusive", true);
     if (!s.audioChannels().empty()) cJSON_AddStringToObject(root, "audioChannels", s.audioChannels().c_str());
     if (s.disableGpuCompositing()) cJSON_AddBoolToObject(root, "disableGpuCompositing", true);
-    if (s.dmabuf()) cJSON_AddBoolToObject(root, "dmabuf", true);
     if (!s.titlebarThemeColor()) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
     if (!s.logLevel().empty()) cJSON_AddStringToObject(root, "logLevel", s.logLevel().c_str());
 
@@ -162,7 +160,6 @@ std::string Settings::cliSettingsJson() const {
     if (audio_exclusive_) cJSON_AddBoolToObject(root, "audioExclusive", true);
     if (!audio_channels_.empty()) cJSON_AddStringToObject(root, "audioChannels", audio_channels_.c_str());
     if (disable_gpu_compositing_) cJSON_AddBoolToObject(root, "disableGpuCompositing", true);
-    if (dmabuf_) cJSON_AddBoolToObject(root, "dmabuf", true);
     if (!titlebar_theme_color_) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
     if (!log_level_.empty()) cJSON_AddStringToObject(root, "logLevel", log_level_.c_str());
 

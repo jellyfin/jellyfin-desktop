@@ -41,9 +41,6 @@ public:
     bool disableGpuCompositing() const { return disable_gpu_compositing_; }
     void setDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
 
-    bool dmabuf() const { return dmabuf_; }
-    void setDmabuf(bool v) { dmabuf_ = v; }
-
     bool titlebarThemeColor() const { return titlebar_theme_color_; }
     void setTitlebarThemeColor(bool v) { titlebar_theme_color_ = v; }
 
@@ -66,7 +63,6 @@ private:
     bool audio_exclusive_ = false;
     std::string audio_channels_;
     bool disable_gpu_compositing_ = false;
-    bool dmabuf_ = false;
     bool titlebar_theme_color_ = true;
     std::string log_level_;
 
