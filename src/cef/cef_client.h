@@ -45,6 +45,9 @@ using CursorChangeCallback = std::function<void(cef_cursor_type_t type)>;
 // Fullscreen mode change callback (web content requested fullscreen)
 using FullscreenChangeCallback = std::function<void(bool fullscreen)>;
 
+// Theme color change callback (web content updated <meta name="theme-color">)
+using ThemeColorCallback = std::function<void(const std::string& color)>;
+
 // Physical pixel size callback (returns actual framebuffer dimensions)
 using PhysicalSizeCallback = std::function<void(int& width, int& height)>;
 
@@ -79,7 +82,8 @@ public:
            AcceleratedPaintCallback on_accel_paint = nullptr, MenuOverlay* menu = nullptr,
            CursorChangeCallback on_cursor_change = nullptr,
            FullscreenChangeCallback on_fullscreen_change = nullptr,
-           PhysicalSizeCallback physical_size_cb = nullptr
+           PhysicalSizeCallback physical_size_cb = nullptr,
+           ThemeColorCallback on_theme_color = nullptr
 #ifdef __APPLE__
            , IOSurfacePaintCallback on_iosurface_paint = nullptr
 #endif
@@ -203,6 +207,7 @@ private:
     MenuOverlay* menu_ = nullptr;
     CursorChangeCallback on_cursor_change_;
     FullscreenChangeCallback on_fullscreen_change_;
+    ThemeColorCallback on_theme_color_;
     PhysicalSizeCallback physical_size_cb_;
     float scale_override_ = 0.0f;  // 0 = use physical/logical ratio
     int physical_w_ = 0;  // Stored physical dimensions (set during resize)

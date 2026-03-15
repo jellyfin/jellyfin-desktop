@@ -395,13 +395,46 @@
     window.initCompleted = Promise.resolve();
     window.apiPromise = Promise.resolve(window.api);
 
-    // Inject CSS to hide cursor when jellyfin-web signals mouse idle.
-    // jellyfin-web adds 'mouseIdle' to body after inactivity during video playback.
-    // This CSS makes CEF report CT_NONE so the native side can hide the OS cursor.
+    // Observe <meta name="theme-color"> for titlebar color sync.
+    // jellyfin-web's themeManager.js updates this tag when the user switches themes.
+    function sendThemeColor(color) {
+        if (color && window.jmpNative && window.jmpNative.themeColor) {
+            window.jmpNative.themeColor(color);
+        }
+    }
+
+    function observeThemeColorMeta(meta) {
+        sendThemeColor(meta.content);
+        new MutationObserver(() => sendThemeColor(meta.content))
+            .observe(meta, { attributes: true, attributeFilter: ['content'] });
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
+        // Inject CSS to hide cursor when jellyfin-web signals mouse idle.
+        // jellyfin-web adds 'mouseIdle' to body after inactivity during video playback.
+        // This CSS makes CEF report CT_NONE so the native side can hide the OS cursor.
         const style = document.createElement('style');
         style.textContent = 'body.mouseIdle, body.mouseIdle * { cursor: none !important; }';
         document.head.appendChild(style);
+
+        // Sync titlebar color with theme-color meta tag
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) {
+            observeThemeColorMeta(meta);
+        } else {
+            // Tag may be added dynamically — watch for it
+            new MutationObserver((mutations, obs) => {
+                for (const m of mutations) {
+                    for (const node of m.addedNodes) {
+                        if (node.nodeName === 'META' && node.name === 'theme-color') {
+                            obs.disconnect();
+                            observeThemeColorMeta(node);
+                            return;
+                        }
+                    }
+                }
+            }).observe(document.head, { childList: true });
+        }
     });
 
     // Settings modal (adapted from jellyfin-desktop's nativeshell.js)

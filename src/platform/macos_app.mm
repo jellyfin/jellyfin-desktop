@@ -129,5 +129,21 @@ void activateMacWindow(SDL_Window* window) {
         [ns_window makeKeyAndOrderFront:nil];
         // Store for dock click handling
         g_mainWindow = ns_window;
+
+        // Dark titlebar with transparent chrome so backgroundColor shows through
+        ns_window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+        ns_window.titlebarAppearsTransparent = YES;
+        ns_window.backgroundColor = [NSColor colorWithSRGBRed:0x10 / 255.0
+                                                        green:0x10 / 255.0
+                                                         blue:0x10 / 255.0
+                                                        alpha:1.0];
     }
+}
+
+void setMacTitlebarColor(uint8_t r, uint8_t g, uint8_t b) {
+    if (!g_mainWindow) return;
+    g_mainWindow.backgroundColor = [NSColor colorWithSRGBRed:r / 255.0
+                                                       green:g / 255.0
+                                                        blue:b / 255.0
+                                                       alpha:1.0];
 }

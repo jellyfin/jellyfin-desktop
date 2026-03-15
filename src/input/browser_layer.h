@@ -127,8 +127,10 @@ public:
             case SDL_EVENT_FINGER_DOWN:
             case SDL_EVENT_FINGER_UP:
             case SDL_EVENT_FINGER_MOTION: {
-                int type = (event.type == SDL_EVENT_FINGER_DOWN) ? 1 :
-                           (event.type == SDL_EVENT_FINGER_UP) ? 0 : 2;
+                int type;
+                if (event.type == SDL_EVENT_FINGER_DOWN) type = 1;
+                else if (event.type == SDL_EVENT_FINGER_UP) type = 0;
+                else type = 2;
                 // SDL coords are 0-1 normalized, convert to window pixels
                 float x = event.tfinger.x * window_width_;
                 float y = event.tfinger.y * window_height_;

@@ -152,6 +152,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("getClipboard", CefV8Value::CreateFunction("getClipboard", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("appExit", CefV8Value::CreateFunction("appExit", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("setSettingValue", CefV8Value::CreateFunction("setSettingValue", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("themeColor", CefV8Value::CreateFunction("themeColor", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject the JavaScript shim that creates window.api, window.NativeShell, etc.
@@ -506,6 +507,16 @@ bool NativeV8Handler::Execute(const CefString& name,
         LOG_INFO(LOG_CEF, "V8 appExit");
         CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("appExit");
         browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
+        return true;
+    }
+
+    if (name == "themeColor") {
+        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+            std::string color = arguments[0]->GetStringValue().ToString();
+            CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("themeColor");
+            msg->GetArgumentList()->SetString(0, color);
+            browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
+        }
         return true;
     }
 

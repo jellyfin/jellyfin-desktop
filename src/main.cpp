@@ -28,6 +28,8 @@
 void initMacApplication();
 // Activate window for keyboard focus after SDL window creation
 void activateMacWindow(SDL_Window* window);
+// Set titlebar color (transparent titlebar chrome)
+void setMacTitlebarColor(uint8_t r, uint8_t g, uint8_t b);
 // Wait for NSApplication events (integrates Cocoa + CFRunLoop)
 void waitForMacEvent();
 // Wake the NSApplication event loop from another thread
@@ -41,6 +43,7 @@ void wakeMacEventLoop();
 #elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dwmapi.h>
 #include "context/wgl_context.h"
 #include "context/opengl_frame_context.h"
 #include "platform/windows_video_surface.h"
@@ -86,23 +89,6 @@ static void signalHandler(int) {
 // Overlay fade constants
 constexpr float OVERLAY_FADE_DELAY_SEC = 1.0f;
 constexpr float OVERLAY_FADE_DURATION_SEC = 0.25f;
-
-// Double/triple click detection
-constexpr int MULTI_CLICK_DISTANCE = 4;
-constexpr Uint64 MULTI_CLICK_TIME = 500;
-
-// Convert SDL modifier state to CEF modifier flags
-// CEF flags: SHIFT=1<<1, CTRL=1<<2, ALT=1<<3, CMD=1<<7
-int sdlModsToCef(SDL_Keymod sdlMods) {
-    int cef = 0;
-    if (sdlMods & SDL_KMOD_SHIFT) cef |= (1 << 1);  // EVENTFLAG_SHIFT_DOWN
-    if (sdlMods & SDL_KMOD_CTRL)  cef |= (1 << 2);  // EVENTFLAG_CONTROL_DOWN
-    if (sdlMods & SDL_KMOD_ALT)   cef |= (1 << 3);  // EVENTFLAG_ALT_DOWN
-#ifdef __APPLE__
-    if (sdlMods & SDL_KMOD_GUI)   cef |= (1 << 7);  // EVENTFLAG_COMMAND_DOWN (Cmd key)
-#endif
-    return cef;
-}
 
 // Map CEF cursor type to SDL system cursor
 SDL_SystemCursor cefCursorToSDL(cef_cursor_type_t type) {
@@ -254,6 +240,43 @@ MediaMetadata parseMetadataJson(const std::string& json) {
         meta.media_type = MediaType::Video;
     }
     return meta;
+}
+
+// Parse CSS hex color (#rgb or #rrggbb) into r, g, b components.
+// Returns false if the string is not a valid hex color.
+static bool parseHexColor(const std::string& color, uint8_t& r, uint8_t& g, uint8_t& b) {
+    if (color.empty() || color[0] != '#') return false;
+    if (color.size() == 7) {
+        unsigned int hex = 0;
+        if (sscanf(color.c_str() + 1, "%06x", &hex) != 1) return false;
+        r = (hex >> 16) & 0xFF;
+        g = (hex >> 8) & 0xFF;
+        b = hex & 0xFF;
+        return true;
+    }
+    if (color.size() == 4) {
+        unsigned int hex = 0;
+        if (sscanf(color.c_str() + 1, "%03x", &hex) != 1) return false;
+        r = ((hex >> 8) & 0xF) * 0x11;
+        g = ((hex >> 4) & 0xF) * 0x11;
+        b = (hex & 0xF) * 0x11;
+        return true;
+    }
+    return false;
+}
+
+static void setTitlebarColor([[maybe_unused]] SDL_Window* window, uint8_t r, uint8_t g, uint8_t b) {
+#ifdef _WIN32
+    HWND hwnd = (HWND)SDL_GetPointerProperty(
+        SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    if (hwnd) {
+        // DWMWA_CAPTION_COLOR (35) requires Windows 11 build 22000+; silently ignored on older
+        COLORREF color = RGB(r, g, b);
+        DwmSetWindowAttribute(hwnd, 35, &color, sizeof(color));
+    }
+#elif defined(__APPLE__)
+    setMacTitlebarColor(r, g, b);
+#endif
 }
 
 static SDL_HitTestResult SDLCALL windowHitTest(SDL_Window* win, const SDL_Point* area, void* data) {
@@ -569,13 +592,23 @@ int main(int argc, char* argv[]) {
     SDL_StartTextInput(window);
 
 #ifdef _WIN32
-    // Set window background to black (default white brush flashes before first render)
+    // Set window background and titlebar to #101010 before first render
     {
         HWND hwnd = (HWND)SDL_GetPointerProperty(
             SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
-        if (hwnd)
-            SetClassLongPtrA(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)GetStockObject(BLACK_BRUSH));
+        if (hwnd) {
+            HBRUSH brush = CreateSolidBrush(RGB(0x10, 0x10, 0x10));
+            SetClassLongPtrA(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)brush);
+            // Dark mode titlebar (prevents light titlebar flash on Win10+)
+            BOOL dark = TRUE;
+            DwmSetWindowAttribute(hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark));
+            // Explicit caption color (Win11+, silently ignored on older)
+            COLORREF color = RGB(0x10, 0x10, 0x10);
+            DwmSetWindowAttribute(hwnd, 35 /*DWMWA_CAPTION_COLOR*/, &color, sizeof(color));
+        }
     }
+#elif defined(__APPLE__)
+    // macOS: initial titlebar color is set in activateMacWindow
 #endif
 
     // Restore saved window geometry (settings already loaded during init)
@@ -731,6 +764,10 @@ int main(int argc, char* argv[]) {
 
     // Frame context (same for both Wayland and X11 - both use EGL)
     OpenGLFrameContext frameContext(&egl);
+
+    // Render an initial #101010 frame so the window doesn't flash the default background
+    frameContext.beginFrame(16.0f / 255.0f, 1.0f);
+    frameContext.endFrame();
 
     // Compositor context for BrowserEntry init
     // Use SDL physical size - resize handler will update when Wayland reports actual scale
@@ -922,6 +959,11 @@ int main(int argc, char* argv[]) {
     float clear_color = 16.0f / 255.0f;  // #101010 until fade begins
     std::string pending_server_url;
 
+    // Titlebar color is locked to #101010 until the overlay fade begins,
+    // so the titlebar matches the overlay background during loading.
+    bool titlebar_color_unlocked = false;
+    std::string pending_titlebar_color;  // Stores color received before fade
+
     // Context menu overlay
     MenuOverlay menu;
     if (!menu.init()) {
@@ -1102,7 +1144,12 @@ int main(int argc, char* argv[]) {
                 // WM-initiated fullscreen: ignore CEF exit request
             }
         },
-        getPhysicalSize
+        getPhysicalSize,
+        [&cmd_mutex, &pending_cmds, &wakeMainLoop](const std::string& color) {
+            std::lock_guard<std::mutex> lock(cmd_mutex);
+            pending_cmds.push_back({"theme_color", color, 0, 0.0});
+            wakeMainLoop();
+        }
 #ifdef __APPLE__
         // IOSurface callback for macOS accelerated paint - queue for import on main thread
         , [main_ptr](void* surface, int format, int w, int h) {
@@ -1652,28 +1699,18 @@ int main(int argc, char* argv[]) {
                     paint_size_matched = false;
                 }
 
-#ifdef _WIN32
-                // On Windows, the live-resize event watcher (winLiveResizeCallback)
-                // handles browser/DComp/WGL/video resize for all resize events
-                // (including those from the Win32 modal drag loop).
-                // Skip here to avoid double-processing which causes flicker.
-#elif defined(__APPLE__)
-                // Resize all browsers and compositors via BrowserStack
+#ifndef _WIN32
+                // Windows: winLiveResizeCallback handles all resize work
+                // (browser/DComp/WGL/video) to avoid double-processing.
                 browsers.resizeAll(current_width, current_height, physical_w, physical_h);
+#ifdef __APPLE__
                 videoRenderer.resize(physical_w, physical_h);
 #else
-                // Resize all browsers and compositors via BrowserStack
-                browsers.resizeAll(current_width, current_height, physical_w, physical_h);
-
-                // Resize EGL context
                 egl.resize(physical_w, physical_h);
-
-                // Resize video layer on render thread (no-op for X11/OpenGL)
                 videoController.requestResize(physical_w, physical_h);
                 videoRenderer.setDestinationSize(current_width, current_height);
-
-                // Track resize time for paint matching
                 last_resize_time = Clock::now();
+#endif
 #endif
                 break;
             }
@@ -1870,6 +1907,15 @@ int main(int argc, char* argv[]) {
                 } else if (cmd.cmd == "media_rate") {
                     // Route media session rate change to JS player
                     client->emitRateChanged(cmd.doubleArg);
+                } else if (cmd.cmd == "theme_color") {
+                    if (titlebar_color_unlocked) {
+                        uint8_t r, g, b;
+                        if (parseHexColor(cmd.url, r, g, b)) {
+                            setTitlebarColor(window, r, g, b);
+                        }
+                    } else {
+                        pending_titlebar_color = cmd.url;
+                    }
                 }
             }
             pending_cmds.clear();
@@ -1903,6 +1949,15 @@ int main(int argc, char* argv[]) {
             if (elapsed >= OVERLAY_FADE_DELAY_SEC) {
                 overlay_state = OverlayState::FADING;
                 clear_color = 0.0f;  // Switch to black background
+                // Unlock titlebar color and apply any pending theme color
+                titlebar_color_unlocked = true;
+                if (!pending_titlebar_color.empty()) {
+                    uint8_t r, g, b;
+                    if (parseHexColor(pending_titlebar_color, r, g, b)) {
+                        setTitlebarColor(window, r, g, b);
+                    }
+                    pending_titlebar_color.clear();
+                }
                 // Switch input from overlay to main browser
                 window_state.remove(active_browser);
                 active_browser->onFocusLost();

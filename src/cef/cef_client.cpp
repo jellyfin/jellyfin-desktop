@@ -223,7 +223,7 @@ private:
 Client::Client(int width, int height, PaintCallback on_paint, PlayerMessageCallback on_player_msg,
                AcceleratedPaintCallback on_accel_paint, MenuOverlay* menu,
                CursorChangeCallback on_cursor_change, FullscreenChangeCallback on_fullscreen_change,
-               PhysicalSizeCallback physical_size_cb
+               PhysicalSizeCallback physical_size_cb, ThemeColorCallback on_theme_color
 #ifdef __APPLE__
                , IOSurfacePaintCallback on_iosurface_paint
 #endif
@@ -246,6 +246,7 @@ Client::Client(int width, int height, PaintCallback on_paint, PlayerMessageCallb
 #endif
       menu_(menu), on_cursor_change_(std::move(on_cursor_change)),
       on_fullscreen_change_(std::move(on_fullscreen_change)),
+      on_theme_color_(std::move(on_theme_color)),
       physical_size_cb_(std::move(physical_size_cb)) {}
 
 bool Client::OnConsoleMessage(CefRefPtr<CefBrowser> browser,
@@ -279,12 +280,20 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                        CefRefPtr<CefFrame> frame,
                                        CefProcessId source_process,
                                        CefRefPtr<CefProcessMessage> message) {
-    if (!on_player_msg_) return false;
-
     std::string name = message->GetName().ToString();
     CefRefPtr<CefListValue> args = message->GetArgumentList();
 
     LOG_DEBUG(LOG_CEF, "IPC received message: %s", name.c_str());
+
+    if (name == "themeColor") {
+        std::string color = args->GetString(0).ToString();
+        if (on_theme_color_) {
+            on_theme_color_(color);
+        }
+        return true;
+    }
+
+    if (!on_player_msg_) return false;
 
     if (name == "playerLoad") {
         std::string url = args->GetString(0).ToString();
