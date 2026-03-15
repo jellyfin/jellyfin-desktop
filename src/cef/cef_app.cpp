@@ -38,6 +38,9 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
 #ifdef __APPLE__
     // macOS: Use mock keychain to avoid system keychain prompts
     command_line->AppendSwitch("use-mock-keychain");
+    // Single process mode - avoids Mach port rendezvous issues with ad-hoc signed app bundles
+    // The rendezvous service registration fails for ad-hoc signed apps in /Applications
+    command_line->AppendSwitch("single-process");
 #endif
 
 #if !defined(__APPLE__) && !defined(_WIN32)
