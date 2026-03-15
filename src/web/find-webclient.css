@@ -8,6 +8,7 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     font-size: 1em;
     padding: 1em;
+    animation: fadeIn 0.20s ease-in;
 }
 .logo {
     max-width: 500px;
@@ -129,6 +130,10 @@ button:disabled {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+@keyframes fadeIn {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
 }
 @keyframes fadeOut {
     0% { opacity: 1; }
