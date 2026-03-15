@@ -570,15 +570,24 @@ int main(int argc, char* argv[]) {
         wakeMainLoop();
     });
 
-    int width = 1280;
-    int height = 720;
+    // Create window at saved geometry to avoid resize flash on startup
+    const auto& saved_geom = Settings::instance().windowGeometry();
+    int width = (saved_geom.width > 0) ? saved_geom.width : 1280;
+    int height = (saved_geom.height > 0) ? saved_geom.height : 720;
 
-    // Use plain Wayland window - we create our own EGL context
-    // SDL_WINDOW_HIGH_PIXEL_DENSITY enables HiDPI support
+    Uint32 win_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#ifdef _WIN32
+    // Start hidden so DWM attributes and DComp are set before the window is shown,
+    // avoiding a flash of default titlebar color and black client area.
+    // MAXIMIZED is deferred as pending_flags and applied on ShowWindow.
+    win_flags |= SDL_WINDOW_HIDDEN;
+    if (saved_geom.maximized) win_flags |= SDL_WINDOW_MAXIMIZED;
+#endif
+
     SDL_Window* window = SDL_CreateWindow(
         "Jellyfin Desktop CEF",
         width, height,
-        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY
+        win_flags
     );
 
     if (!window) {
@@ -597,14 +606,13 @@ int main(int argc, char* argv[]) {
         HWND hwnd = (HWND)SDL_GetPointerProperty(
             SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
         if (hwnd) {
-            HBRUSH brush = CreateSolidBrush(RGB(0x10, 0x10, 0x10));
-            SetClassLongPtrA(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)brush);
+            COLORREF bg = RGB(0x10, 0x10, 0x10);
+            SetClassLongPtrA(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(bg));
             // Dark mode titlebar (prevents light titlebar flash on Win10+)
             BOOL dark = TRUE;
             DwmSetWindowAttribute(hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark));
             // Explicit caption color (Win11+, silently ignored on older)
-            COLORREF color = RGB(0x10, 0x10, 0x10);
-            DwmSetWindowAttribute(hwnd, 35 /*DWMWA_CAPTION_COLOR*/, &color, sizeof(color));
+            DwmSetWindowAttribute(hwnd, 35 /*DWMWA_CAPTION_COLOR*/, &bg, sizeof(bg));
         }
     }
 #elif defined(__APPLE__)
@@ -673,6 +681,11 @@ int main(int argc, char* argv[]) {
     double current_playback_rate = 1.0;
     OpenGLFrameContext frameContext(&wgl);
 
+    // Render an initial #101010 frame so the WGL surface matches the window background
+    // through the DComp visual tree before CEF's first paint
+    frameContext.beginFrame(0x10 / 255.0f, 1.0f);
+    frameContext.endFrame();
+
     // Create DComp overlay layer for CEF rendering (above video in DComp tree)
     // WGL context may have been displaced by D3D11/Vulkan device creation
     wgl.makeCurrent();
@@ -733,6 +746,13 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+
+    // All DWM attributes, DComp visuals, and initial frames are set up —
+    // show the window now to avoid flashing default titlebar/background
+    SDL_ShowWindow(window);
+
+    // Re-read dimensions after show — maximize may have changed the window size
+    SDL_GetWindowSize(window, &width, &height);
 
     // Compositor context for BrowserEntry init
     CompositorContext compositor_ctx;

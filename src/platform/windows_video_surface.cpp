@@ -558,14 +558,14 @@ bool WindowsVideoSurface::createSwapchain(int width, int height) {
         }
     }
 
-    // Clear to black (avoids white flash before first video frame)
+    // Clear to #101010 (matches window background, avoids white flash before first video frame)
     {
         ID3D11Texture2D* bb = nullptr;
         if (SUCCEEDED(swap_chain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb))) {
             ID3D11RenderTargetView* rtv = nullptr;
             if (SUCCEEDED(d3d_device_->CreateRenderTargetView(bb, nullptr, &rtv))) {
-                float black[4] = {0, 0, 0, 1};
-                d3d_context_->ClearRenderTargetView(rtv, black);
+                float bg[4] = {0x10 / 255.0f, 0x10 / 255.0f, 0x10 / 255.0f, 1};
+                d3d_context_->ClearRenderTargetView(rtv, bg);
                 rtv->Release();
             }
             bb->Release();
