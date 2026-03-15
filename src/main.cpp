@@ -983,6 +983,30 @@ int main(int argc, char* argv[]) {
     // so the titlebar matches the overlay background during loading.
     bool titlebar_color_unlocked = false;
     std::string pending_titlebar_color;  // Stores color received before fade
+    std::string current_theme_color;     // Last applied theme color (for restore after video)
+
+    bool titlebar_theme_color = Settings::instance().titlebarThemeColor();
+
+    // Apply a hex color string (e.g. "#1c2a48") to the window titlebar
+    auto applyTitlebarColor = [&](const std::string& color) {
+        if (!titlebar_theme_color) return;
+        uint8_t r, g, b;
+        if (parseHexColor(color, r, g, b)) {
+            setTitlebarColor(window, r, g, b);
+        }
+    };
+
+    // Set titlebar black during video, restore theme color when leaving
+    auto setVideoTitlebar = [&](bool playing) {
+        if (!titlebar_theme_color || !titlebar_color_unlocked) return;
+        if (playing) {
+            setTitlebarColor(window, 0, 0, 0);
+        } else if (!current_theme_color.empty()) {
+            applyTitlebarColor(current_theme_color);
+        } else {
+            setTitlebarColor(window, 0x10, 0x10, 0x10);
+        }
+    };
 
     // Context menu overlay
     MenuOverlay menu;
@@ -1457,6 +1481,7 @@ int main(int argc, char* argv[]) {
                 // FILE_LOADED (Playing event) follows, so re-enable video here.
                 if (!has_video) {
                     has_video = true;
+                    setVideoTitlebar(true);
                     LOG_INFO(LOG_MAIN, "Video restored after file transition");
                     videoRenderer.setVisible(true);
 #ifndef __APPLE__
@@ -1480,6 +1505,7 @@ int main(int argc, char* argv[]) {
             case MpvEvent::Type::Finished:
                 LOG_INFO(LOG_MAIN, "Track finished naturally (EOF)");
                 has_video = false;
+                setVideoTitlebar(false);
                 video_ready = false;
 #ifdef __APPLE__
                 videoRenderer.setVisible(false);
@@ -1493,6 +1519,7 @@ int main(int argc, char* argv[]) {
             case MpvEvent::Type::Canceled:
                 LOG_DEBUG(LOG_MAIN, "Track canceled (user stop)");
                 has_video = false;
+                setVideoTitlebar(false);
                 video_ready = false;
 #ifdef __APPLE__
                 videoRenderer.setVisible(false);
@@ -1530,6 +1557,7 @@ int main(int argc, char* argv[]) {
             case MpvEvent::Type::Error:
                 LOG_ERROR(LOG_MAIN, "Playback error: %s", ev.error.c_str());
                 has_video = false;
+                setVideoTitlebar(false);
                 video_ready = false;
 #ifdef __APPLE__
                 videoRenderer.setVisible(false);
@@ -1811,6 +1839,7 @@ int main(int argc, char* argv[]) {
                     }
                     if (mpv->loadFile(cmd.url, startSec)) {
                         has_video = true;
+                        setVideoTitlebar(true);
                         LOG_INFO(LOG_MAIN, "Video loaded, has_video=true");
                         videoRenderer.setVisible(true);
 #ifdef __APPLE__
@@ -1840,6 +1869,7 @@ int main(int argc, char* argv[]) {
                 } else if (cmd.cmd == "stop") {
                     mpv->stop();
                     has_video = false;
+                    setVideoTitlebar(false);
                     video_ready = false;
 #ifdef __APPLE__
                     videoRenderer.setVisible(false);
@@ -1929,9 +1959,9 @@ int main(int argc, char* argv[]) {
                     client->emitRateChanged(cmd.doubleArg);
                 } else if (cmd.cmd == "theme_color") {
                     if (titlebar_color_unlocked) {
-                        uint8_t r, g, b;
-                        if (parseHexColor(cmd.url, r, g, b)) {
-                            setTitlebarColor(window, r, g, b);
+                        current_theme_color = cmd.url;
+                        if (!has_video) {
+                            applyTitlebarColor(cmd.url);
                         }
                     } else {
                         pending_titlebar_color = cmd.url;
@@ -1972,10 +2002,8 @@ int main(int argc, char* argv[]) {
                 // Unlock titlebar color and apply any pending theme color
                 titlebar_color_unlocked = true;
                 if (!pending_titlebar_color.empty()) {
-                    uint8_t r, g, b;
-                    if (parseHexColor(pending_titlebar_color, r, g, b)) {
-                        setTitlebarColor(window, r, g, b);
-                    }
+                    current_theme_color = pending_titlebar_color;
+                    applyTitlebarColor(pending_titlebar_color);
                     pending_titlebar_color.clear();
                 }
                 // Switch input from overlay to main browser

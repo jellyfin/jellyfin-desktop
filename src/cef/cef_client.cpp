@@ -21,6 +21,7 @@ void applySettingValue(const std::string& section, const std::string& key, const
     else if (key == "audioChannels") s.setAudioChannels(value);
     else if (key == "disableGpuCompositing") s.setDisableGpuCompositing(value == "true");
     else if (key == "dmabuf") s.setDmabuf(value == "true");
+    else if (key == "titlebarThemeColor") s.setTitlebarThemeColor(value == "true");
     else if (key == "logLevel") s.setLogLevel(value);
     else LOG_WARN(LOG_CEF, "Unknown setting key: %s.%s", section.c_str(), key.c_str());
     s.saveAsync();
