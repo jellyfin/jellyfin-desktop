@@ -23,9 +23,9 @@ public:
                 mouse_y_ = static_cast<int>(event.motion.y);
                 int mods = getModifiers();
                 SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
-                if (buttons & SDL_BUTTON_LMASK) mods |= (1 << 5);
-                if (buttons & SDL_BUTTON_MMASK) mods |= (1 << 6);
-                if (buttons & SDL_BUTTON_RMASK) mods |= (1 << 7);
+                if (buttons & SDL_BUTTON_LMASK) mods |= EVENTFLAG_LEFT_MOUSE_BUTTON;
+                if (buttons & SDL_BUTTON_MMASK) mods |= EVENTFLAG_MIDDLE_MOUSE_BUTTON;
+                if (buttons & SDL_BUTTON_RMASK) mods |= EVENTFLAG_RIGHT_MOUSE_BUTTON;
                 receiver_->sendMouseMove(mouse_x_, mouse_y_, mods);
                 return true;
             }
@@ -79,7 +79,7 @@ public:
 
                 // Handle action modifier shortcuts (Cmd on macOS, Ctrl elsewhere)
                 if (down && isActionModifier()) {
-                    bool shift = mods & (1 << 0);
+                    bool shift = mods & EVENTFLAG_SHIFT_DOWN;
                     switch (event.key.key) {
                         case SDLK_V: {
                             static const char* mimeTypes[] = {
@@ -161,9 +161,9 @@ private:
     int getModifiers() {
         SDL_Keymod mod = SDL_GetModState();
         int mods = 0;
-        if (mod & SDL_KMOD_SHIFT) mods |= (1 << 0);
-        if (mod & SDL_KMOD_CTRL) mods |= (1 << 2);
-        if (mod & SDL_KMOD_ALT) mods |= (1 << 3);
+        if (mod & SDL_KMOD_SHIFT) mods |= EVENTFLAG_SHIFT_DOWN;
+        if (mod & SDL_KMOD_CTRL) mods |= EVENTFLAG_CONTROL_DOWN;
+        if (mod & SDL_KMOD_ALT) mods |= EVENTFLAG_ALT_DOWN;
         return mods;
     }
 
