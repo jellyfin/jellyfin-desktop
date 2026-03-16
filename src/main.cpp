@@ -315,6 +315,7 @@ int main(int argc, char* argv[]) {
     SDL_LogPriority log_level = SDL_LOG_PRIORITY_INFO;
     bool use_dmabuf = true;
     bool disable_gpu_compositing = false;
+    int remote_debugging_port = 0;
     std::string hwdec_str = "auto-safe";
     std::string audio_passthrough_str;
     bool audio_exclusive = false;
@@ -350,6 +351,7 @@ int main(int argc, char* argv[]) {
                        "  --audio-passthrough <codecs>  Enable audio passthrough (e.g. ac3,dts-hd,eac3,truehd)\n"
                        "  --audio-exclusive       Use exclusive audio output mode\n"
                        "  --audio-channels <layout>  Set audio channel layout (e.g. stereo, 5.1, 7.1)\n"
+                       "  --remote-debug-port <port>  Enable Chrome remote debugging on port (1024-65535)\n"
                        );
                 return 0;
             } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -383,6 +385,11 @@ int main(int argc, char* argv[]) {
                 audio_channels_str = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
             } else if (strncmp(argv[i], "--audio-channels=", 17) == 0) {
                 audio_channels_str = argv[i] + 17;
+            } else if (strcmp(argv[i], "--remote-debug-port") == 0) {
+                const char* val = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
+                remote_debugging_port = atoi(val);
+            } else if (strncmp(argv[i], "--remote-debug-port=", 20) == 0) {
+                remote_debugging_port = atoi(argv[i] + 20);
             } else if (argv[i][0] == '-') {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
                 return 1;
@@ -848,6 +855,7 @@ int main(int argc, char* argv[]) {
     CefSettings settings;
     settings.no_sandbox = true;
     settings.windowless_rendering_enabled = true;
+    settings.remote_debugging_port = remote_debugging_port;
 
 #ifdef __APPLE__
     // macOS: Set framework path (cef_framework_path set earlier during CEF loading)
