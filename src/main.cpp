@@ -795,14 +795,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Probe dmabuf support before CefInitialize — Chromium's Ozone compositor
-    // uses GBM-backed shared images that require EGL dmabuf import of ARGB8888.
-    // Drivers that lack this (e.g. NVIDIA proprietary) cause CEF's GPU process
-    // to fail silently, producing a black screen.
+    // Probe dmabuf support before CefInitialize — CEF's shared texture path
+    // requires GBM → EGL → GL dmabuf import of ARGB8888. Drivers that lack
+    // this (e.g. NVIDIA proprietary) cause OnAcceleratedPaint to never fire.
+    // Disabling dmabuf falls back to OnPaint with CPU pixel buffers while
+    // keeping GPU compositing (GPU composites internally, reads back pixels).
     if (use_dmabuf && !egl.supportsDmaBufImport()) {
-        LOG_INFO(LOG_MAIN, "EGL does not support ARGB8888 dmabuf import; disabling CEF GPU compositing");
+        LOG_INFO(LOG_MAIN, "EGL does not support ARGB8888 dmabuf import; disabling dmabuf");
         use_dmabuf = false;
-        disable_gpu_compositing = true;
     }
 
     // Create video stack (detects Wayland vs X11 internally)
