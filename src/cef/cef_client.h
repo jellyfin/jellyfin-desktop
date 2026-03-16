@@ -48,6 +48,9 @@ using FullscreenChangeCallback = std::function<void(bool fullscreen)>;
 // Theme color change callback (web content updated <meta name="theme-color">)
 using ThemeColorCallback = std::function<void(const std::string& color)>;
 
+// OSD visibility change callback (video player OSD shown/hidden)
+using OsdVisibleCallback = std::function<void(bool visible)>;
+
 // Physical pixel size callback (returns actual framebuffer dimensions)
 using PhysicalSizeCallback = std::function<void(int& width, int& height)>;
 
@@ -84,6 +87,7 @@ public:
            FullscreenChangeCallback on_fullscreen_change = nullptr,
            PhysicalSizeCallback physical_size_cb = nullptr,
            ThemeColorCallback on_theme_color = nullptr,
+           OsdVisibleCallback on_osd_visible = nullptr,
            PopupShowCallback on_popup_show = nullptr,
            PopupSizeCallback on_popup_size = nullptr,
            AcceleratedPaintCallback on_accel_popup_paint = nullptr
@@ -210,6 +214,7 @@ private:
     CursorChangeCallback on_cursor_change_;
     FullscreenChangeCallback on_fullscreen_change_;
     ThemeColorCallback on_theme_color_;
+    OsdVisibleCallback on_osd_visible_;
     PhysicalSizeCallback physical_size_cb_;
     float scale_override_ = 0.0f;  // 0 = use physical/logical ratio
     int physical_w_ = 0;  // Stored physical dimensions (set during resize)

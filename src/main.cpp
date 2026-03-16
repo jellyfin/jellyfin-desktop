@@ -31,6 +31,8 @@ void initMacApplication();
 void activateMacWindow(SDL_Window* window);
 // Set titlebar color (transparent titlebar chrome)
 void setMacTitlebarColor(uint8_t r, uint8_t g, uint8_t b);
+// Show/hide traffic light buttons (close, minimize, zoom)
+void setMacTrafficLightsVisible(bool visible);
 #endif
 
 #ifdef __APPLE__
@@ -1027,6 +1029,9 @@ int main(int argc, char* argv[]) {
     std::string current_theme_color;     // Last applied theme color (for restore after video)
 
     bool titlebar_theme_color = Settings::instance().titlebarThemeColor();
+#ifdef __APPLE__
+    bool transparent_titlebar = Settings::instance().transparentTitlebar();
+#endif
 
     // Apply a hex color string (e.g. "#1c2a48") to the window titlebar
     auto applyTitlebarColor = [&](const std::string& color) {
@@ -1039,6 +1044,9 @@ int main(int argc, char* argv[]) {
 
     // Set titlebar black during video, restore theme color when leaving
     auto setVideoTitlebar = [&](bool playing) {
+#ifdef __APPLE__
+        if (transparent_titlebar && !playing) setMacTrafficLightsVisible(true);
+#endif
         if (!titlebar_theme_color || !titlebar_color_unlocked) return;
         if (playing) {
             setTitlebarColor(window, 0, 0, 0);
@@ -1264,6 +1272,15 @@ int main(int argc, char* argv[]) {
             pending_cmds.push_back({"theme_color", color, 0, 0.0});
             wakeMainLoop();
         },
+#ifdef __APPLE__
+        [&cmd_mutex, &pending_cmds, &wakeMainLoop](bool visible) {
+            std::lock_guard<std::mutex> lock(cmd_mutex);
+            pending_cmds.push_back({"osd_visible", "", visible ? 1 : 0, 0.0});
+            wakeMainLoop();
+        },
+#else
+        nullptr,
+#endif
         popup_show_cb,
         popup_size_cb,
         accel_popup_cb
@@ -2038,6 +2055,10 @@ int main(int argc, char* argv[]) {
                     } else {
                         pending_titlebar_color = cmd.url;
                     }
+#ifdef __APPLE__
+                } else if (cmd.cmd == "osd_visible" && transparent_titlebar) {
+                    setMacTrafficLightsVisible(cmd.intArg != 0);
+#endif
                 }
             }
             pending_cmds.clear();

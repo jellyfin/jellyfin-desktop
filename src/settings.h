@@ -44,6 +44,9 @@ public:
     bool titlebarThemeColor() const { return titlebar_theme_color_; }
     void setTitlebarThemeColor(bool v) { titlebar_theme_color_ = v; }
 
+    bool transparentTitlebar() const { return transparent_titlebar_; }
+    void setTransparentTitlebar(bool v) { transparent_titlebar_ = v; }
+
     const std::string& logLevel() const { return log_level_; }
     void setLogLevel(const std::string& v) { log_level_ = v; }
 
@@ -64,6 +67,7 @@ private:
     std::string audio_channels_;
     bool disable_gpu_compositing_ = false;
     bool titlebar_theme_color_ = true;
+    bool transparent_titlebar_ = true;
     std::string log_level_;
 
     std::mutex save_mutex_;  // Prevent concurrent saves

@@ -21,6 +21,7 @@ void applySettingValue(const std::string& section, const std::string& key, const
     else if (key == "audioChannels") s.setAudioChannels(value);
     else if (key == "disableGpuCompositing") s.setDisableGpuCompositing(value == "true");
     else if (key == "titlebarThemeColor") s.setTitlebarThemeColor(value == "true");
+    else if (key == "transparentTitlebar") s.setTransparentTitlebar(value == "true");
     else if (key == "logLevel") s.setLogLevel(value);
     else LOG_WARN(LOG_CEF, "Unknown setting key: %s.%s", section.c_str(), key.c_str());
     s.saveAsync();
@@ -224,6 +225,7 @@ Client::Client(int width, int height, PaintCallback on_paint, PlayerMessageCallb
                AcceleratedPaintCallback on_accel_paint, MenuOverlay* menu,
                CursorChangeCallback on_cursor_change, FullscreenChangeCallback on_fullscreen_change,
                PhysicalSizeCallback physical_size_cb, ThemeColorCallback on_theme_color,
+               OsdVisibleCallback on_osd_visible,
                PopupShowCallback on_popup_show, PopupSizeCallback on_popup_size,
                AcceleratedPaintCallback on_accel_popup_paint
 #ifdef __APPLE__
@@ -248,6 +250,7 @@ Client::Client(int width, int height, PaintCallback on_paint, PlayerMessageCallb
       menu_(menu), on_cursor_change_(std::move(on_cursor_change)),
       on_fullscreen_change_(std::move(on_fullscreen_change)),
       on_theme_color_(std::move(on_theme_color)),
+      on_osd_visible_(std::move(on_osd_visible)),
       physical_size_cb_(std::move(physical_size_cb)) {}
 
 bool Client::OnConsoleMessage(CefRefPtr<CefBrowser> browser,
@@ -290,6 +293,14 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
         std::string color = args->GetString(0).ToString();
         if (on_theme_color_) {
             on_theme_color_(color);
+        }
+        return true;
+    }
+
+    if (name == "osdVisible") {
+        bool visible = args->GetBool(0);
+        if (on_osd_visible_) {
+            on_osd_visible_(visible);
         }
         return true;
     }

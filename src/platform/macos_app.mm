@@ -4,10 +4,50 @@
 #import <Cocoa/Cocoa.h>
 #import <Carbon/Carbon.h>  // For kCoreEventClass, kAEReopenApplication
 #include "include/cef_application_mac.h"
+#include "settings.h"
 #include <SDL3/SDL.h>
 
 // Store main window reference for dock click handling
 static NSWindow* g_mainWindow = nil;
+static NSView* g_titlebarDragView = nil;
+static bool g_trafficLightsVisible = true;
+static const CGFloat kTitlebarHeight = 28.0;
+
+// Apply current traffic light visibility state to window buttons and drag view.
+// Uses alphaValue instead of setHidden: because AppKit can reset hidden state
+// when redrawing standard window buttons during activation changes.
+static void applyTrafficLightsVisibility() {
+    if (!g_mainWindow) return;
+    CGFloat alpha = g_trafficLightsVisible ? 1.0 : 0.0;
+    [g_mainWindow standardWindowButton:NSWindowCloseButton].alphaValue = alpha;
+    [g_mainWindow standardWindowButton:NSWindowMiniaturizeButton].alphaValue = alpha;
+    [g_mainWindow standardWindowButton:NSWindowZoomButton].alphaValue = alpha;
+    if (g_titlebarDragView) {
+        [g_titlebarDragView setHidden:!g_trafficLightsVisible];
+    }
+}
+
+// Transparent view covering the titlebar area that intercepts mouse events
+// and initiates window dragging, preventing clicks from reaching CEF.
+@interface TitlebarDragView : NSView
+@end
+
+@implementation TitlebarDragView
+
+- (void)mouseDown:(NSEvent*)event {
+    [self.window performWindowDragWithEvent:event];
+}
+
+- (void)mouseUp:(NSEvent*)event {
+    // Swallow — don't pass to views underneath
+}
+
+// Accept first mouse so clicks on inactive windows also drag (not forwarded to CEF)
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    return YES;
+}
+
+@end
 
 @interface JellyfinApplication : NSApplication <CefAppProtocol> {
     BOOL handlingSendEvent_;
@@ -102,13 +142,40 @@ void activateMacWindow(SDL_Window* window) {
         // Store for dock click handling
         g_mainWindow = ns_window;
 
-        // Dark titlebar with transparent chrome so backgroundColor shows through
         ns_window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-        ns_window.titlebarAppearsTransparent = YES;
         ns_window.backgroundColor = [NSColor colorWithSRGBRed:0x10 / 255.0
                                                         green:0x10 / 255.0
                                                          blue:0x10 / 255.0
                                                         alpha:1.0];
+
+        if (Settings::instance().transparentTitlebar()) {
+            // Transparent titlebar overlaying window content (traffic lights float over web UI)
+            ns_window.styleMask |= NSWindowStyleMaskFullSizeContentView;
+            ns_window.titlebarAppearsTransparent = YES;
+            ns_window.titleVisibility = NSWindowTitleHidden;
+
+            // Add transparent drag view over the titlebar area to prevent mouse events
+            // from reaching CEF and enable window dragging by click-drag.
+            NSView* content = ns_window.contentView;
+            NSRect dragFrame = NSMakeRect(0,
+                                          content.bounds.size.height - kTitlebarHeight,
+                                          content.bounds.size.width,
+                                          kTitlebarHeight);
+            g_titlebarDragView = [[TitlebarDragView alloc] initWithFrame:dragFrame];
+            g_titlebarDragView.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+            [content addSubview:g_titlebarDragView positioned:NSWindowAbove relativeTo:nil];
+
+            // macOS redraws standard window buttons on activation changes, which can
+            // reset their hidden state. Re-apply after each transition.
+            NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
+            [nc addObserverForName:NSWindowDidBecomeMainNotification object:ns_window queue:nil
+                        usingBlock:^(NSNotification*) { applyTrafficLightsVisibility(); }];
+            [nc addObserverForName:NSWindowDidResignMainNotification object:ns_window queue:nil
+                        usingBlock:^(NSNotification*) { applyTrafficLightsVisibility(); }];
+        } else {
+            // Colored titlebar with standard chrome
+            ns_window.titlebarAppearsTransparent = YES;
+        }
     }
 }
 
@@ -118,4 +185,10 @@ void setMacTitlebarColor(uint8_t r, uint8_t g, uint8_t b) {
                                                        green:g / 255.0
                                                         blue:b / 255.0
                                                        alpha:1.0];
+}
+
+void setMacTrafficLightsVisible(bool visible) {
+    if (!g_mainWindow || visible == g_trafficLightsVisible) return;
+    g_trafficLightsVisible = visible;
+    applyTrafficLightsVisibility();
 }

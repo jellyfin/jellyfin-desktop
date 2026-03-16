@@ -93,6 +93,7 @@ bool Settings::load() {
     audio_channels_ = jsonStr(root, "audioChannels");
     disable_gpu_compositing_ = jsonBool(root, "disableGpuCompositing", false);
     titlebar_theme_color_ = jsonBool(root, "titlebarThemeColor", true);
+    transparent_titlebar_ = jsonBool(root, "transparentTitlebar", true);
     log_level_ = jsonStr(root, "logLevel");
 
     cJSON_Delete(root);
@@ -121,6 +122,7 @@ static std::string buildSettingsJson(const Settings& s, bool pretty) {
     if (!s.audioChannels().empty()) cJSON_AddStringToObject(root, "audioChannels", s.audioChannels().c_str());
     if (s.disableGpuCompositing()) cJSON_AddBoolToObject(root, "disableGpuCompositing", true);
     if (!s.titlebarThemeColor()) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
+    if (!s.transparentTitlebar()) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
     if (!s.logLevel().empty()) cJSON_AddStringToObject(root, "logLevel", s.logLevel().c_str());
 
     char* str = pretty ? cJSON_Print(root) : cJSON_PrintUnformatted(root);
@@ -161,6 +163,7 @@ std::string Settings::cliSettingsJson() const {
     if (!audio_channels_.empty()) cJSON_AddStringToObject(root, "audioChannels", audio_channels_.c_str());
     if (disable_gpu_compositing_) cJSON_AddBoolToObject(root, "disableGpuCompositing", true);
     if (!titlebar_theme_color_) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
+    if (!transparent_titlebar_) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
     if (!log_level_.empty()) cJSON_AddStringToObject(root, "logLevel", log_level_.c_str());
 
     char* str = cJSON_PrintUnformatted(root);

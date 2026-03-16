@@ -75,6 +75,7 @@
                 audioChannels: _savedSettings.audioChannels || ''
             },
             advanced: {
+                transparentTitlebar: _savedSettings.transparentTitlebar !== false,
                 disableGpuCompositing: _savedSettings.disableGpuCompositing || false,
                 logLevel: _savedSettings.logLevel || ''
             }
@@ -116,6 +117,15 @@
         settingsUpdate: [],
         settingsDescriptionsUpdate: []
     };
+
+    // macOS-only: transparent titlebar toggle (shown first in Advanced section)
+    if (navigator.platform.startsWith('Mac')) {
+        jmpInfo.settingsDescriptions.advanced.unshift({
+            key: 'transparentTitlebar',
+            displayName: 'Transparent Titlebar',
+            help: 'Overlay traffic light buttons on the window content instead of a separate titlebar. Requires restart.'
+        });
+    }
 
     // Player state
     const playerState = {
@@ -412,7 +422,33 @@
         // jellyfin-web adds 'mouseIdle' to body after inactivity during video playback.
         // This CSS makes CEF report CT_NONE so the native side can hide the OS cursor.
         const style = document.createElement('style');
-        style.textContent = 'body.mouseIdle, body.mouseIdle * { cursor: none !important; }';
+        let css = 'body.mouseIdle, body.mouseIdle * { cursor: none !important; }';
+
+        // macOS: offset UI elements so traffic lights don't overlap content
+        if (navigator.platform.startsWith('Mac') && jmpInfo.settings.advanced.transparentTitlebar) {
+            css += '\n:root { --mac-titlebar-height: 28px; }';
+            css += '\n.skinHeader { padding-top: var(--mac-titlebar-height) !important; }';
+            css += '\n.mainAnimatedPage { top: var(--mac-titlebar-height) !important; }';
+            css += '\n.touch-menu-la { padding-top: var(--mac-titlebar-height); }';
+            // Dashboard uses MUI AppBar + Drawer instead of .skinHeader
+            css += '\n.MuiAppBar-positionFixed { padding-top: var(--mac-titlebar-height) !important; }';
+            css += '\n.MuiDrawer-paper { padding-top: var(--mac-titlebar-height) !important; }';
+            // Dialog headers (e.g. client settings modal)
+            css += '\n.formDialogHeader { padding-top: var(--mac-titlebar-height) !important; }';
+
+            // Hide/show traffic lights with the video OSD.
+            // jellyfin-web uses an internal Events.trigger() system (obj._callbacks),
+            // not DOM events. Register directly on that callback structure.
+            document._callbacks = document._callbacks || {};
+            document._callbacks['SHOW_VIDEO_OSD'] = document._callbacks['SHOW_VIDEO_OSD'] || [];
+            document._callbacks['SHOW_VIDEO_OSD'].push((_e, visible) => {
+                if (window.jmpNative && window.jmpNative.setOsdVisible) {
+                    window.jmpNative.setOsdVisible(!!visible);
+                }
+            });
+        }
+
+        style.textContent = css;
         document.head.appendChild(style);
 
         // Sync titlebar color with theme-color meta tag
