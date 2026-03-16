@@ -793,6 +793,16 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Probe dmabuf support before CefInitialize — Chromium's Ozone compositor
+    // uses GBM-backed shared images that require EGL dmabuf import of ARGB8888.
+    // Drivers that lack this (e.g. NVIDIA proprietary) cause CEF's GPU process
+    // to fail silently, producing a black screen.
+    if (use_dmabuf && !egl.supportsDmaBufImport()) {
+        LOG_INFO(LOG_MAIN, "EGL does not support ARGB8888 dmabuf import; disabling CEF GPU compositing");
+        use_dmabuf = false;
+        disable_gpu_compositing = true;
+    }
+
     // Create video stack (detects Wayland vs X11 internally)
     VideoStack videoStack = VideoStack::create(window, width, height, &egl, hwdec, audioConfig);
     if (!videoStack.player || !videoStack.renderer) {
@@ -924,6 +934,7 @@ int main(int argc, char* argv[]) {
     // Chromium assumes the main process thread is the UI thread on Linux;
     // running CefInitialize on a dedicated thread causes subtle corruption.
     settings.external_message_pump = true;
+    app->SetDisableGpuCompositing(disable_gpu_compositing);
     if (!CefInitialize(main_args, settings, app, nullptr)) {
         LOG_ERROR(LOG_CEF, "CefInitialize failed");
         SDL_DestroyWindow(window);

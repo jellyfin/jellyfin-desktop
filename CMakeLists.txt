@@ -257,6 +257,7 @@ else()
         ${X11_LIBRARIES}
         OpenGL::EGL
         OpenGL::OpenGL
+        ${CMAKE_DL_LIBS}
     )
     set(PLATFORM_INCLUDE_DIRS
         ${WAYLAND_INCLUDE_DIRS}

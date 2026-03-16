@@ -29,6 +29,7 @@ public:
     bool makeCurrent(EGLContext ctx) const;
     bool makeCurrentMain() const;
 
+    bool supportsDmaBufImport() const;
     EGLDisplay display() const { return display_; }
     EGLContext context() const { return context_; }
     EGLConfig config() const { return config_; }

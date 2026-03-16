@@ -1,6 +1,10 @@
 #include "context/egl_context.h"
 #include "logging.h"
 #include <cstring>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <drm_fourcc.h>
 
 #ifdef SDL_PLATFORM_LINUX
 #include <wayland-egl.h>
@@ -268,4 +272,153 @@ bool EGLContext_::makeCurrent(EGLContext ctx) const {
 bool EGLContext_::makeCurrentMain() const {
     if (display_ == EGL_NO_DISPLAY) return false;
     return eglMakeCurrent(display_, surface_, surface_, context_) == EGL_TRUE;
+}
+
+// GBM function typedefs for dlsym
+struct gbm_device;
+struct gbm_bo;
+using PFN_gbm_create_device = gbm_device* (*)(int fd);
+using PFN_gbm_device_destroy = void (*)(gbm_device*);
+using PFN_gbm_bo_create = gbm_bo* (*)(gbm_device*, uint32_t width, uint32_t height, uint32_t format, uint32_t flags);
+using PFN_gbm_bo_destroy = void (*)(gbm_bo*);
+using PFN_gbm_bo_get_fd = int (*)(gbm_bo*);
+using PFN_gbm_bo_get_stride = uint32_t (*)(gbm_bo*);
+
+bool EGLContext_::supportsDmaBufImport() const {
+    if (display_ == EGL_NO_DISPLAY) return false;
+
+    // dlopen libgbm — if not installed, skip probe (Mesa users don't need it)
+    void* gbm_lib = dlopen("libgbm.so.1", RTLD_LAZY | RTLD_LOCAL);
+    if (!gbm_lib) {
+        LOG_INFO(LOG_GL, "[EGL] libgbm not available, skipping dmabuf probe");
+        return true;
+    }
+
+    auto fn_create_device = reinterpret_cast<PFN_gbm_create_device>(dlsym(gbm_lib, "gbm_create_device"));
+    auto fn_device_destroy = reinterpret_cast<PFN_gbm_device_destroy>(dlsym(gbm_lib, "gbm_device_destroy"));
+    auto fn_bo_create = reinterpret_cast<PFN_gbm_bo_create>(dlsym(gbm_lib, "gbm_bo_create"));
+    auto fn_bo_destroy = reinterpret_cast<PFN_gbm_bo_destroy>(dlsym(gbm_lib, "gbm_bo_destroy"));
+    auto fn_bo_get_fd = reinterpret_cast<PFN_gbm_bo_get_fd>(dlsym(gbm_lib, "gbm_bo_get_fd"));
+    auto fn_bo_get_stride = reinterpret_cast<PFN_gbm_bo_get_stride>(dlsym(gbm_lib, "gbm_bo_get_stride"));
+    if (!fn_create_device || !fn_device_destroy || !fn_bo_create ||
+        !fn_bo_destroy || !fn_bo_get_fd || !fn_bo_get_stride) {
+        LOG_WARN(LOG_GL, "[EGL] libgbm missing symbols, skipping dmabuf probe");
+        dlclose(gbm_lib);
+        return true;
+    }
+
+    auto fn_egl_create_image = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(
+        eglGetProcAddress("eglCreateImageKHR"));
+    auto fn_egl_destroy_image = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(
+        eglGetProcAddress("eglDestroyImageKHR"));
+    auto fn_gl_image_target = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
+        eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+    if (!fn_egl_create_image || !fn_egl_destroy_image || !fn_gl_image_target) {
+        LOG_WARN(LOG_GL, "[EGL] EGL image extensions not available");
+        dlclose(gbm_lib);
+        return false;
+    }
+
+    // Find the DRM render node for the GPU backing this EGL display
+    int drm_fd = -1;
+    auto fn_query_display = reinterpret_cast<PFNEGLQUERYDISPLAYATTRIBEXTPROC>(
+        eglGetProcAddress("eglQueryDisplayAttribEXT"));
+    auto fn_query_device_str = reinterpret_cast<PFNEGLQUERYDEVICESTRINGEXTPROC>(
+        eglGetProcAddress("eglQueryDeviceStringEXT"));
+    if (fn_query_display && fn_query_device_str) {
+        EGLAttrib device_attrib = 0;
+        if (fn_query_display(display_, EGL_DEVICE_EXT, &device_attrib) && device_attrib) {
+            auto egl_device = reinterpret_cast<EGLDeviceEXT>(device_attrib);
+            const char* node = fn_query_device_str(egl_device, EGL_DRM_RENDER_NODE_FILE_EXT);
+            if (node) {
+                drm_fd = open(node, O_RDWR | O_CLOEXEC);
+                if (drm_fd >= 0) {
+                    LOG_INFO(LOG_GL, "[EGL] Dmabuf probe using render node: %s", node);
+                }
+            }
+        }
+    }
+    // Fallback: scan render nodes if EGL device query isn't available
+    if (drm_fd < 0) {
+        for (int i = 128; i < 136; i++) {
+            char path[32];
+            snprintf(path, sizeof(path), "/dev/dri/renderD%d", i);
+            drm_fd = open(path, O_RDWR | O_CLOEXEC);
+            if (drm_fd >= 0) break;
+        }
+    }
+    if (drm_fd < 0) {
+        LOG_WARN(LOG_GL, "[EGL] No DRM render node found, skipping dmabuf probe");
+        dlclose(gbm_lib);
+        return true;
+    }
+
+    bool result = false;
+    gbm_device* device = fn_create_device(drm_fd);
+    if (!device) {
+        LOG_WARN(LOG_GL, "[EGL] gbm_create_device failed");
+        close(drm_fd);
+        dlclose(gbm_lib);
+        return false;
+    }
+
+    // GBM_BO_USE_RENDERING = 0x0002
+    gbm_bo* bo = fn_bo_create(device, 64, 64, DRM_FORMAT_ARGB8888, 0x0002);
+    if (!bo) {
+        LOG_WARN(LOG_GL, "[EGL] gbm_bo_create ARGB8888 failed");
+        fn_device_destroy(device);
+        close(drm_fd);
+        dlclose(gbm_lib);
+        return false;
+    }
+
+    int dmabuf_fd = fn_bo_get_fd(bo);
+    uint32_t stride = fn_bo_get_stride(bo);
+    if (dmabuf_fd < 0) {
+        LOG_WARN(LOG_GL, "[EGL] gbm_bo_get_fd failed");
+        fn_bo_destroy(bo);
+        fn_device_destroy(device);
+        close(drm_fd);
+        dlclose(gbm_lib);
+        return false;
+    }
+
+    EGLint attrs[] = {
+        EGL_WIDTH, 64,
+        EGL_HEIGHT, 64,
+        EGL_LINUX_DRM_FOURCC_EXT, DRM_FORMAT_ARGB8888,
+        EGL_DMA_BUF_PLANE0_FD_EXT, dmabuf_fd,
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
+        EGL_DMA_BUF_PLANE0_PITCH_EXT, static_cast<EGLint>(stride),
+        EGL_NONE
+    };
+    // eglCreateImageKHR takes ownership of dmabuf_fd on success
+    EGLImageKHR image = fn_egl_create_image(display_, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, attrs);
+    if (!image) {
+        LOG_WARN(LOG_GL, "[EGL] Dmabuf probe: eglCreateImageKHR failed (0x%x)", eglGetError());
+        close(dmabuf_fd);
+    } else {
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        fn_gl_image_target(GL_TEXTURE_2D, image);
+        GLenum err = glGetError();
+        if (err == GL_NO_ERROR) {
+            result = true;
+        } else {
+            LOG_WARN(LOG_GL, "[EGL] Dmabuf probe: glEGLImageTargetTexture2DOES failed (0x%x)", err);
+        }
+        glDeleteTextures(1, &tex);
+        fn_egl_destroy_image(display_, image);
+    }
+
+    fn_bo_destroy(bo);
+    fn_device_destroy(device);
+    close(drm_fd);
+    dlclose(gbm_lib);
+
+    if (result) {
+        LOG_INFO(LOG_GL, "[EGL] Dmabuf probe: GBM -> EGL -> GL import OK");
+    }
+    return result;
 }
