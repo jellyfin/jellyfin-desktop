@@ -567,8 +567,6 @@ int main(int argc, char* argv[]) {
     auto wakeMainLoop = [
 #if !defined(__APPLE__) && !defined(_WIN32)
         &eventLoopWake
-#else
-        SDL_EVENT_WAKE
 #endif
     ]() {
 #if !defined(__APPLE__) && !defined(_WIN32)
