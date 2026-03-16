@@ -52,6 +52,7 @@ void setMacTitlebarColor(uint8_t r, uint8_t g, uint8_t b);
 #include "context/opengl_frame_context.h"
 #include "player/mpris/media_session_mpris.h"
 #include <unistd.h>  // For close()
+#include "platform/event_loop_linux.h"
 #ifdef HAVE_KDE_DECORATION_PALETTE
 #include "platform/kde_decoration_palette.h"
 #endif
@@ -560,10 +561,23 @@ int main(int argc, char* argv[]) {
 
     // Register custom event for cross-thread main loop wake-up
     static Uint32 SDL_EVENT_WAKE = SDL_RegisterEvents(1);
-    auto wakeMainLoop = []() {
+#if !defined(__APPLE__) && !defined(_WIN32)
+    EventLoopWake eventLoopWake;
+#endif
+    auto wakeMainLoop = [
+#if !defined(__APPLE__) && !defined(_WIN32)
+        &eventLoopWake
+#else
+        SDL_EVENT_WAKE
+#endif
+    ]() {
+#if !defined(__APPLE__) && !defined(_WIN32)
+        eventLoopWake.wake();
+#else
         SDL_Event event{};
         event.type = SDL_EVENT_WAKE;
         SDL_PushEvent(&event);
+#endif
     };
 
 #ifndef _WIN32
@@ -810,6 +824,8 @@ int main(int argc, char* argv[]) {
 
     CompositorContext compositor_ctx;
     compositor_ctx.gl_context = &egl;
+
+    eventLoopWake.init(window);
 #endif
 
     initWindowActivation(window);
@@ -1666,18 +1682,11 @@ int main(int argc, char* argv[]) {
             if (has_pending || has_pending_cmds) {
                 have_event = SDL_PollEvent(&event);
             } else {
-                // Signal we're about to sleep — OnScheduleMessagePumpWork will
-                // push a wake event only while this flag is true (seq_cst
-                // ordering prevents the race where both threads see stale values).
-                App::setWaiting(true);
-                if (App::hasWorkPending()) {
-                    // CEF scheduled work between DoWork and now — don't sleep
-                    App::setWaiting(false);
-                    have_event = SDL_PollEvent(&event);
-                } else {
-                    have_event = SDL_WaitEvent(&event);
-                    App::setWaiting(false);
-                }
+#ifdef __APPLE__
+                have_event = SDL_WaitEvent(&event);
+#else
+                have_event = eventLoopWake.waitForEvent(&event);
+#endif
             }
 #endif
         }
@@ -2259,6 +2268,7 @@ int main(int argc, char* argv[]) {
     videoRenderer.cleanup();
     VideoStack::cleanupStatics();
     egl.cleanup();
+    eventLoopWake.cleanup();
     CefShutdown();
 #endif
 #ifdef HAVE_KDE_DECORATION_PALETTE

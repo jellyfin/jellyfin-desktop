@@ -228,6 +228,7 @@ else()
         src/context/opengl_frame_context.cpp
         src/platform/wayland_subsurface.cpp
         src/platform/x11_video_layer.cpp
+        src/platform/event_loop_linux.cpp
         src/compositor/opengl_compositor.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp

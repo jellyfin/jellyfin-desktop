@@ -69,29 +69,24 @@ void App::OnContextInitialized() {
 void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
     // Called by CEF (from any thread) when it needs CefDoMessageLoopWork()
     if (delay_ms <= 0) {
-        // Set flag (seq_cst pairs with is_waiting_ check to prevent missed wakes)
-        work_pending_.store(true, std::memory_order_seq_cst);
-        // Only push an SDL event if the main loop is blocked in SDL_WaitEvent.
-        // When the main loop is active (processing events or in DoWork), it
-        // will check work_pending_ before sleeping — no wake event needed.
-        if (is_waiting_.load(std::memory_order_seq_cst)) {
-            if (wake_callback_) wake_callback_();
-        }
+        work_pending_.store(true, std::memory_order_relaxed);
+        // Always wake — the eventfd is a kernel counter, extra writes coalesce
+        // into one drain and are cheap. This avoids the fragile is_waiting_
+        // protocol that could miss wakes during renderer subprocess startup.
+        if (wake_callback_) wake_callback_();
     } else {
-        // Delayed work - use SDL timer
-        // Cancel any existing timer first
-        if (timer_id_ != 0) {
-            SDL_RemoveTimer(timer_id_);
-        }
-        timer_id_ = SDL_AddTimer(static_cast<Uint32>(delay_ms), TimerCallback, nullptr);
+        // Delayed work — cancel any existing timer, then schedule a new one
+        auto old = timer_id_.exchange(0, std::memory_order_relaxed);
+        if (old != 0) SDL_RemoveTimer(old);
+        timer_id_.store(
+            SDL_AddTimer(static_cast<Uint32>(delay_ms), TimerCallback, nullptr),
+            std::memory_order_relaxed);
     }
 }
 
 Uint32 App::TimerCallback(void* /*userdata*/, SDL_TimerID /*id*/, Uint32 /*interval*/) {
-    timer_id_ = 0;  // Timer fired, clear ID
-    if (wake_callback_) {
-        wake_callback_();
-    }
+    timer_id_.store(0, std::memory_order_relaxed);
+    if (wake_callback_) wake_callback_();
     return 0;  // Don't repeat
 }
 
