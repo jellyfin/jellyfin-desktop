@@ -161,6 +161,35 @@ function(fix_lib_dependencies lib framework_libs_var)
   endforeach()
 endfunction()
 
+#
+# Bundle MoltenVK (loaded at runtime by Vulkan loader via ICD discovery, not directly linked)
+#
+set(mvk_source "")
+if(EXISTS "${brew_lib}/libMoltenVK.dylib")
+  set(mvk_source "${brew_lib}/libMoltenVK.dylib")
+else()
+  # Fall back to Cellar (picks latest version via sorted glob)
+  file(GLOB mvk_candidates "${brew_prefix}/Cellar/molten-vk/*/lib/libMoltenVK.dylib")
+  if(mvk_candidates)
+    list(GET mvk_candidates -1 mvk_source)
+  endif()
+endif()
+
+if(mvk_source)
+  get_filename_component(mvk_real "${mvk_source}" REALPATH)
+  message(STATUS "Bundling MoltenVK: ${mvk_real}")
+  file(COPY "${mvk_real}" DESTINATION "${frameworks_dir}")
+  get_filename_component(mvk_real_name "${mvk_real}" NAME)
+  if(NOT "${mvk_real_name}" STREQUAL "libMoltenVK.dylib")
+    file(RENAME "${frameworks_dir}/${mvk_real_name}" "${frameworks_dir}/libMoltenVK.dylib")
+  endif()
+  execute_process(COMMAND install_name_tool -id
+    "@executable_path/../Frameworks/libMoltenVK.dylib"
+    "${frameworks_dir}/libMoltenVK.dylib" ERROR_QUIET)
+else()
+  message(WARNING "MoltenVK not found - Vulkan will not work without system MoltenVK")
+endif()
+
 # Build initial list of framework libs
 file(GLOB existing_dylibs "${frameworks_dir}/*.dylib")
 set(framework_libs "")

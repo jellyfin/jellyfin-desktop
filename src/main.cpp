@@ -459,6 +459,11 @@ int main(int argc, char* argv[]) {
     if (exe_path.parent_path().filename() == "Contents") {
         // App bundle: framework is at ../Frameworks/
         cef_framework_path = exe_path.parent_path() / "Frameworks";
+
+        // Point Vulkan loader to bundled MoltenVK ICD (so it works without system Vulkan)
+        auto icd_path = exe_path.parent_path() / "Resources" / "vulkan" / "icd.d" / "MoltenVK_icd.json";
+        setenv("VK_DRIVER_FILES", icd_path.string().c_str(), 0);      // modern name (1.3.234+)
+        setenv("VK_ICD_FILENAMES", icd_path.string().c_str(), 0);     // legacy fallback
     } else {
         // Dev build: framework is at ./Frameworks/
         cef_framework_path = exe_path / "Frameworks";

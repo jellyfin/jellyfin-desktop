@@ -623,6 +623,11 @@ elseif(APPLE)
     # Create Resources directory (required even if empty)
     install(DIRECTORY DESTINATION "${APP_NAME}/Contents/Resources")
 
+    # Install MoltenVK ICD manifest (Vulkan loader uses this to find bundled MoltenVK)
+    install(FILES "${CMAKE_SOURCE_DIR}/resources/macos/MoltenVK_icd.json"
+        DESTINATION "${APP_NAME}/Contents/Resources/vulkan/icd.d"
+    )
+
     # Configure bundle completion script
     configure_file(
         "${CMAKE_SOURCE_DIR}/cmake/CompleteBundleMac.cmake.in"
