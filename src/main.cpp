@@ -1997,6 +1997,8 @@ int main(int argc, char* argv[]) {
                 } else if (cmd.cmd == "speed") {
                     double speed = cmd.intArg / 1000.0;
                     mpv->setSpeed(speed);
+                } else if (cmd.cmd == "aspectRatio") {
+                    mpv->setAspectMode(cmd.url);
                 } else if (cmd.cmd == "subtitle") {
                     mpv->setSubtitleTrack(cmd.intArg);
                 } else if (cmd.cmd == "audio") {

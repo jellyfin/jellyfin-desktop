@@ -69,6 +69,9 @@
             playback: {
                 hwdec: _savedSettings.hwdec || 'auto-safe'
             },
+            video: {
+                aspect: _savedSettings.aspect || 'normal'
+            },
             audio: {
                 audioPassthrough: _savedSettings.audioPassthrough || '',
                 audioExclusive: _savedSettings.audioExclusive || false,
@@ -91,6 +94,13 @@
                     { value: 'vulkan', title: 'Vulkan' },
                     { value: 'd3d11va', title: 'D3D11VA (Windows)' },
                     { value: 'videotoolbox', title: 'VideoToolbox (macOS)' }
+                ]}
+            ],
+            video: [
+                { key: 'aspect', displayName: 'Aspect Ratio', help: 'Video aspect behavior used by the mpv renderer.', options: [
+                    { value: 'normal', title: 'video.aspect.normal' },
+                    { value: 'zoom', title: 'video.aspect.zoom' },
+                    { value: 'stretch', title: 'video.aspect.stretch' },
                 ]}
             ],
             audio: [
@@ -209,6 +219,10 @@
             setPlaybackRate(rate) {
                 console.log('[Media] player.setPlaybackRate:', rate);
                 if (window.jmpNative) window.jmpNative.playerSetSpeed(rate);
+            },
+            setAspectRatio(mode) {
+                console.log('[Media] player.setAspectRatio:', mode);
+                if (window.jmpNative) window.jmpNative.playerSetAspectRatio(mode || 'normal');
             },
             setSubtitleStream(index) {
                 console.log('[Media] player.setSubtitleStream:', index);

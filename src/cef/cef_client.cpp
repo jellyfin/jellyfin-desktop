@@ -349,6 +349,10 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
         int rateX1000 = args->GetInt(0);
         on_player_msg_("speed", "", rateX1000, "");
         return true;
+    } else if (name == "playerSetAspectRatio") {
+        std::string mode = args->GetString(0).ToString();
+        on_player_msg_("aspectRatio", mode, 0, "");
+        return true;
     } else if (name == "playerSetSubtitle") {
         int sid = args->GetInt(0);
         on_player_msg_("subtitle", "", sid, "");

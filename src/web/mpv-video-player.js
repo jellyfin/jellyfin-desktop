@@ -18,6 +18,13 @@
         return mediaStreams.find(s => s.Index === index) || null;
     }
 
+    const ASPECT_MODES = ['normal', 'zoom', 'stretch'];
+
+    function normalizeAspectMode(value) {
+        const mode = String(value || 'normal').toLowerCase();
+        return ASPECT_MODES.includes(mode) ? mode : 'normal';
+    }
+
     class mpvVideoPlayer {
         constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm, dashboard }) {
             this.events = events;
@@ -58,6 +65,7 @@
             this._timeUpdated = false;
             this._currentPlayOptions = undefined;
             this._endedPending = false;
+            this._aspectRatio = normalizeAspectMode(window.jmpInfo?.settings?.video?.aspect);
 
             // Set up video-specific event handlers
             this._core.handlers.onPlaying = () => {
@@ -173,7 +181,10 @@
                     { type: 'video', metadata: options.item },
                     audioParam,
                     subParam,
-                    resolve);
+                    () => {
+                        window.api.player.setAspectRatio(this._aspectRatio);
+                        resolve();
+                    });
             });
         }
 
@@ -355,13 +366,49 @@
         }
         isMuted() { return this._core.isMuted(); }
 
-        togglePictureInPicture() {}
-        toggleAirPlay() {}
-        getStats() { return Promise.resolve({ categories: [] }); }
-        getSupportedAspectRatios() { return []; }
-        getAspectRatio() { return 'normal'; }
-        setAspectRatio(value) {}
-    }
+                togglePictureInPicture() {}
+                toggleAirPlay() {}
+                getStats() { return Promise.resolve({ categories: [] }); }
+
+                getSupportedAspectRatios() {
+                        const fallbackOptions = ASPECT_MODES.map(value => ({ value, title: `video.aspect.${value}` }));
+                        const options = window.jmpInfo?.settingsDescriptions?.video?.find(x => x.key === 'aspect')?.options || fallbackOptions;
+                        const current = this.getAspectRatio();
+                        const labels = {
+                                normal: 'Auto',
+                                zoom: 'AspectRatioCover',
+                                stretch: 'AspectRatioFill'
+                        };
+
+                        return options
+                                .filter(option => ASPECT_MODES.includes(option.value))
+                                .map(option => {
+                                        const raw = String(option.title || option.value).replace('video.aspect.', '');
+                                        const translationKey = labels[raw];
+                                        const name = translationKey && this.globalize?.translate ? this.globalize.translate(translationKey) : raw;
+                                        return {
+                                                id: option.value,
+                                                value: option.value,
+                                                name,
+                                                selected: option.value === current
+                                        };
+                                });
+                }
+
+                getAspectRatio() {
+                        return normalizeAspectMode(window.jmpInfo?.settings?.video?.aspect || this._aspectRatio);
+                }
+
+                setAspectRatio(value) {
+                        const normalized = normalizeAspectMode(value);
+                        this._aspectRatio = normalized;
+                        if (window.jmpInfo?.settings?.video) {
+                                window.jmpInfo.settings.video.aspect = normalized;
+                        }
+                        window.api.player.setAspectRatio(normalized);
+                }
+        }
+
 
     window._mpvVideoPlayer = mpvVideoPlayer;
     console.log('[Media] mpvVideoPlayer class installed');
