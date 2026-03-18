@@ -962,7 +962,7 @@ int main(int argc, char* argv[]) {
 
     // Browser stack manages all browsers and their paint buffers
     BrowserStack browsers;
-    std::atomic<bool> paint_size_matched{true};  // Track if last paint matched compositor size
+    std::atomic<bool> paint_size_matched{false};  // No paint yet — keep loop active until first frame
 
     // Player command queue
     struct PlayerCmd {
