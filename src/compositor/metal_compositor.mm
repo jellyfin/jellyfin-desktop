@@ -102,11 +102,15 @@ bool MetalCompositor::init(SDL_Window* window, uint32_t width, uint32_t height) 
     metal_layer_.drawableSize = CGSizeMake(width, height);
     metal_layer_.contentsScale = [ns_window backingScaleFactor];
     metal_layer_.opaque = NO;  // Allow transparency for video to show through
-    // Vsync throttle: with 2 drawables and displaySyncEnabled=YES (default),
-    // nextDrawable blocks when both are in-flight — the Metal equivalent of
-    // eglSwapBuffers blocking on Linux.  3 drawables (the default) rarely block
-    // because the GPU finishes fast enough, letting the main loop spin.
-    metal_layer_.maximumDrawableCount = 2;
+    // Use 3 drawables (Metal default) so nextDrawable doesn't block for the
+    // current refresh interval.  With 2 drawables, nextDrawable blocks for one
+    // vsync period — on a ProMotion display starting at 60 Hz, this forces the
+    // main loop to 60 fps, which prevents ProMotion from ever ramping to 120 Hz
+    // (feedback loop).  With 3 drawables, nextDrawable returns immediately,
+    // the main loop runs at event rate (120 Hz during scrolling), and ProMotion
+    // ramps up.  No idle spinning: macOS gates rendering on needs_render/imported,
+    // so composite() is only called when there's actual content — the loop sleeps
+    // in SDL_WaitEvent otherwise.
     // presentsWithTransaction is toggled on during resize for fluid CA-synced presents.
 
     // Disable implicit animations to prevent jelly effect during resize
