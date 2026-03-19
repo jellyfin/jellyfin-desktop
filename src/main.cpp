@@ -962,7 +962,15 @@ int main(int argc, char* argv[]) {
 
     // Browser stack manages all browsers and their paint buffers
     BrowserStack browsers;
+
+// TODO: refactor this ugliness
+//   true:  mac/win must be this else be black window
+//   false: might fix occasional black screen on linux ?
+#if !defined(__APPLE__) && !defined(_WIN32)
     std::atomic<bool> paint_size_matched{false};  // No paint yet — keep loop active until first frame
+#else
+    std::atomic<bool> paint_size_matched{true};
+#endif
 
     // Player command queue
     struct PlayerCmd {
