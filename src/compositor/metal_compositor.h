@@ -43,6 +43,7 @@ public:
     // Toggle transactional present (CA-synced for resize, async for normal rendering)
     void setPresentsWithTransaction(bool enabled);
 
+    bool hasPendingImport() const { return iosurface_pending_.load(std::memory_order_acquire); }
     bool hasValidOverlay() const { return has_content_; }
 
     uint32_t width() const { return width_; }

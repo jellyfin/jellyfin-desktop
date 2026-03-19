@@ -1142,8 +1142,9 @@ int main(int argc, char* argv[]) {
 #endif
 #ifdef __APPLE__
         // IOSurface callback for macOS accelerated paint - queue for import on main thread
-        , [overlay_ptr](void* surface, int format, int w, int h) {
+        , [overlay_ptr, wakeMainLoop](void* surface, int format, int w, int h) {
             overlay_ptr->compositor->queueIOSurface(surface, format, w, h);
+            wakeMainLoop();
         }
 #endif
 #ifdef _WIN32
@@ -1302,12 +1303,13 @@ int main(int argc, char* argv[]) {
         accel_popup_cb
 #ifdef __APPLE__
         // IOSurface callback for macOS accelerated paint - queue for import on main thread
-        , [main_ptr, &paint_size_matched](void* surface, int format, int w, int h) {
+        , [main_ptr, &paint_size_matched, wakeMainLoop](void* surface, int format, int w, int h) {
             main_ptr->compositor->queueIOSurface(surface, format, w, h);
             if (w == static_cast<int>(main_ptr->compositor->width()) &&
                 h == static_cast<int>(main_ptr->compositor->height())) {
                 paint_size_matched.store(true, std::memory_order_relaxed);
             }
+            wakeMainLoop();
         }
 #endif
 #ifdef _WIN32
