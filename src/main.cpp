@@ -1915,6 +1915,14 @@ int main(int argc, char* argv[]) {
             }
         }
 
+#ifdef __APPLE__
+        // Flush coalesced scroll events before pumping CEF — sends one
+        // combined wheel event per frame instead of one per SDL event,
+        // eliminating stutter from uneven event distribution across frames.
+        client->flushScroll();
+        overlay_client->flushScroll();
+#endif
+
 #ifndef _WIN32
         // macOS/Linux: Pump CEF - scheduling controls actual work frequency
         App::DoWork();

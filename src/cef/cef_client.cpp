@@ -720,6 +720,16 @@ void Client::sendChar(int charCode, int modifiers) {
 }
 
 void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
+#ifdef __APPLE__
+    // macOS: accumulate scroll deltas — flushed once per frame via flushScroll()
+    // to coalesce multiple trackpad events into a single CEF wheel event.
+    scroll_x_ = x;
+    scroll_y_ = y;
+    scroll_mods_ = modifiers;
+    accum_scroll_x_ += deltaX * 10.0f;
+    accum_scroll_y_ += deltaY * 10.0f;
+    has_pending_scroll_ = true;
+#else
     auto b = browser();
     if (!b) return;
     CefMouseEvent event;
@@ -727,10 +737,33 @@ void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifi
     event.y = y;
     event.modifiers = modifiers;
     // SDL3 provides smooth scroll values, scale for CEF (expects ~120 per notch)
-    int pixelX = static_cast<int>(deltaX * 53.0f);  // Smooth scroll factor
+    int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+#endif
 }
+
+#ifdef __APPLE__
+void Client::flushScroll() {
+    if (!has_pending_scroll_) return;
+    has_pending_scroll_ = false;
+
+    int pixelX = static_cast<int>(accum_scroll_x_);
+    int pixelY = static_cast<int>(accum_scroll_y_);
+    accum_scroll_x_ -= pixelX;
+    accum_scroll_y_ -= pixelY;
+    if (pixelX == 0 && pixelY == 0) return;
+
+    auto b = browser();
+    if (!b) return;
+
+    CefMouseEvent event;
+    event.x = scroll_x_;
+    event.y = scroll_y_;
+    event.modifiers = scroll_mods_ | EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+}
+#endif
 
 void Client::sendFocus(bool focused) {
     auto b = browser();
@@ -1169,6 +1202,14 @@ void OverlayClient::sendMouseClick(int x, int y, bool down, int button, int clic
 }
 
 void OverlayClient::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
+#ifdef __APPLE__
+    scroll_x_ = x;
+    scroll_y_ = y;
+    scroll_mods_ = modifiers;
+    accum_scroll_x_ += deltaX * 10.0f;
+    accum_scroll_y_ += deltaY * 10.0f;
+    has_pending_scroll_ = true;
+#else
     auto b = browser();
     if (!b) return;
     CefMouseEvent event;
@@ -1178,7 +1219,30 @@ void OverlayClient::sendMouseWheel(int x, int y, float deltaX, float deltaY, int
     int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+#endif
 }
+
+#ifdef __APPLE__
+void OverlayClient::flushScroll() {
+    if (!has_pending_scroll_) return;
+    has_pending_scroll_ = false;
+
+    int pixelX = static_cast<int>(accum_scroll_x_);
+    int pixelY = static_cast<int>(accum_scroll_y_);
+    accum_scroll_x_ -= pixelX;
+    accum_scroll_y_ -= pixelY;
+    if (pixelX == 0 && pixelY == 0) return;
+
+    auto b = browser();
+    if (!b) return;
+
+    CefMouseEvent event;
+    event.x = scroll_x_;
+    event.y = scroll_y_;
+    event.modifiers = scroll_mods_ | EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+}
+#endif
 
 void OverlayClient::sendKeyEvent(int key, bool down, int modifiers) {
     auto b = browser();
