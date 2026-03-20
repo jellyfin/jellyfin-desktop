@@ -137,6 +137,7 @@ else()
     pkg_check_modules(LIBDRM REQUIRED libdrm)
     pkg_check_modules(WAYLAND REQUIRED wayland-client)
     pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
+    pkg_check_modules(LIBPLACEBO REQUIRED libplacebo)
     pkg_check_modules(SYSTEMD REQUIRED libsystemd)
     pkg_check_modules(X11 REQUIRED x11)
 
@@ -253,6 +254,7 @@ else()
     set(PLATFORM_LIBRARIES
         ${WAYLAND_LIBRARIES}
         ${WAYLAND_EGL_LIBRARIES}
+        ${LIBPLACEBO_LIBRARIES}
         ${SYSTEMD_LIBRARIES}
         ${X11_LIBRARIES}
         OpenGL::EGL
@@ -262,6 +264,7 @@ else()
     set(PLATFORM_INCLUDE_DIRS
         ${WAYLAND_INCLUDE_DIRS}
         ${WAYLAND_EGL_INCLUDE_DIRS}
+        ${LIBPLACEBO_INCLUDE_DIRS}
         ${LIBDRM_INCLUDE_DIRS}
         ${SYSTEMD_INCLUDE_DIRS}
         ${X11_INCLUDE_DIRS}

@@ -16,7 +16,9 @@ bool VulkanSubsurfaceRenderer::hasFrame() const {
 }
 
 bool VulkanSubsurfaceRenderer::render(int width, int height) {
-    (void)width; (void)height;  // Uses surface dimensions
+#if defined(__APPLE__) || defined(_WIN32)
+    // FBO mode: we manage the swapchain, mpv renders to our image.
+    (void)width; (void)height;
     VkImage image;
     VkImageView view;
     VkFormat format;
@@ -43,6 +45,21 @@ bool VulkanSubsurfaceRenderer::render(int width, int height) {
         return true;
     }
     return false;
+#else
+    // Swapchain mode: mpv/libplacebo handles frame acquisition and presentation.
+    // Pass window size so the swapchain can resize.
+    int size[2] = { width, height };
+    int flip_y = 0;
+    mpv_render_param render_params[] = {
+        {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+        {MPV_RENDER_PARAM_VULKAN_SWAPCHAIN_SIZE, size},
+        {MPV_RENDER_PARAM_INVALID, nullptr}
+    };
+
+    mpv_render_context_render(player_->renderContext(), render_params);
+    player_->reportSwap();
+    return true;
+#endif
 }
 
 void VulkanSubsurfaceRenderer::setVisible(bool visible) {
