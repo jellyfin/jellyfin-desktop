@@ -66,7 +66,7 @@ if ($Configure -or -not (Test-Path (Join-Path $BuildDir "build.ninja"))) {
         "-DCMAKE_BUILD_TYPE=$BuildType"
     )
 
-    # Add mpv paths (prefer mpv-install from download_mpv.ps1)
+    # Add mpv paths (prefer mpv-install from build_mpv_source.ps1)
     $MpvInstallDir = Join-Path $RepoRoot "third_party\mpv-install"
     $MpvDir = Join-Path $RepoRoot "third_party\mpv"
     if (Test-Path (Join-Path $MpvInstallDir "lib\mpv.lib")) {

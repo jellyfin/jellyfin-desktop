@@ -98,11 +98,11 @@ if (-not $SkipCef) {
     & python (Join-Path $RepoRoot "dev\download_cef.py")
 }
 
-# Download libmpv
+# Build libmpv from source
 if (-not $SkipMpv) {
     Write-Host ""
     Write-Host "=== libmpv ===" -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot "download_mpv.ps1")
+    & (Join-Path $PSScriptRoot "build_mpv_source.ps1")
 }
 
 # SDL3 setup - download prebuilt VC package
