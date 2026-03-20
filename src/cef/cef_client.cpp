@@ -7,11 +7,53 @@
 #include <SDL3/SDL.h>
 #include "logging.h"
 #include <mutex>
+#include <cctype>
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <unistd.h>  // For dup()
 #endif
 
 namespace {
+
+char convertSchemeCharToLower(unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+}
+
+// Launch URL via the OS default handler (browser).
+bool openUrlExternally(const std::string& url) {
+    if (url.empty()) return false;
+    if (!SDL_OpenURL(url.c_str())) {
+        LOG_WARN(LOG_CEF, "Failed to open external URL: %s", url.c_str());
+        return false;
+    }
+    LOG_DEBUG(LOG_CEF, "Opened external URL: %s", url.c_str());
+    return true;
+}
+
+// Decide whether a popup target should be delegated to the OS instead of CEF.
+bool shouldOpenPopupExternally(const std::string& url) {
+    if (url.empty()) return false;
+
+    CefURLParts parts;
+    if (!CefParseURL(url, parts)) {
+        return false;
+    }
+
+    std::string scheme = CefString(&parts.scheme).ToString();
+    std::transform(scheme.begin(), scheme.end(), scheme.begin(), convertSchemeCharToLower);
+
+    // Security policy: only delegate HTTPS URLs to the OS (default browser).
+    // If broader scheme support is desired, extend the check below explicitly.
+    return scheme == "https";
+}
+
+// Apply popup policy and log decisions in one place for both clients.
+void handlePopupNavigation(const std::string& url, const char* source_tag) {
+    if (shouldOpenPopupExternally(url)) {
+        openUrlExternally(url);
+    } else {
+        LOG_WARN(LOG_CEF, "%s blocked popup URL: %s", source_tag, url.c_str());
+    }
+}
 
 void applySettingValue(const std::string& section, const std::string& key, const std::string& value) {
     auto& s = Settings::instance();
@@ -609,6 +651,39 @@ void Client::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     LOG_INFO(LOG_CEF, "Browser created");
 }
 
+bool Client::OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           int popup_id,
+                           const CefString& target_url,
+                           const CefString& target_frame_name,
+                           WindowOpenDisposition target_disposition,
+                           bool user_gesture,
+                           const CefPopupFeatures& popupFeatures,
+                           CefWindowInfo& windowInfo,
+                           CefRefPtr<CefClient>& client,
+                           CefBrowserSettings& settings,
+                           CefRefPtr<CefDictionaryValue>& extra_info,
+                           bool* no_javascript_access) {
+    // Intercept all popup creation and route supported links to the external browser.
+    (void)browser;
+    (void)frame;
+    (void)popup_id;
+    (void)target_frame_name;
+    (void)target_disposition;
+    (void)user_gesture;
+    (void)popupFeatures;
+    (void)windowInfo;
+    (void)client;
+    (void)settings;
+    (void)extra_info;
+    (void)no_javascript_access;
+
+    handlePopupNavigation(target_url.ToString(), "Main");
+
+    // Block popup creation in-app to avoid extra CEF windows for external links.
+    return true;
+}
+
 void Client::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     LOG_INFO(LOG_CEF, "Browser closing");
     {
@@ -1144,6 +1219,38 @@ void OverlayClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
         browser_ = browser;
     }
     LOG_INFO(LOG_CEF, "Overlay browser created");
+}
+
+bool OverlayClient::OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  int popup_id,
+                                  const CefString& target_url,
+                                  const CefString& target_frame_name,
+                                  WindowOpenDisposition target_disposition,
+                                  bool user_gesture,
+                                  const CefPopupFeatures& popupFeatures,
+                                  CefWindowInfo& windowInfo,
+                                  CefRefPtr<CefClient>& client,
+                                  CefBrowserSettings& settings,
+                                  CefRefPtr<CefDictionaryValue>& extra_info,
+                                  bool* no_javascript_access) {
+    // Intercept overlay popups and route supported links to the external browser.
+    (void)browser;
+    (void)frame;
+    (void)popup_id;
+    (void)target_frame_name;
+    (void)target_disposition;
+    (void)user_gesture;
+    (void)popupFeatures;
+    (void)windowInfo;
+    (void)client;
+    (void)settings;
+    (void)extra_info;
+    (void)no_javascript_access;
+
+    handlePopupNavigation(target_url.ToString(), "Overlay");
+
+    return true;
 }
 
 void OverlayClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
