@@ -406,7 +406,7 @@ int main(int argc, char* argv[]) {
             log_level = static_cast<SDL_LogPriority>(level);
         }
         if (log_file_path && log_file_path[0]) {
-            g_log_file = fopen(log_file_path, "a");
+            g_log_file = fopen(log_file_path, "w");
             if (!g_log_file) {
                 fprintf(stderr, "Failed to open log file: %s\n", log_file_path);
                 return 1;
