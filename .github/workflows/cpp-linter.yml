@@ -1,0 +1,49 @@
+name: cpp-linter
+on:
+  pull_request: 
+    branches: [ main ]
+
+jobs:
+  cpp-linter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: libsdl-org/setup-sdl@main
+        id: sdl
+        with:
+          install-linux-dependencies: true
+          version: 3-latest
+          version-sdl-image: 3-latest
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            mpv libvulkan1 libvulkan-dev vulkan-tools \
+            wayland-protocols libplacebo-dev libsystemd-dev \
+            plasma-wayland-protocols meson ffmpeg \
+            libavcodec-dev libavformat-dev libavfilter-dev \
+            libass-dev libwayland-dev
+
+      - name: Download and generate dependencies, and build
+        run: | 
+          git submodule update --init --recursive
+          python3 dev/download_cef.py
+          cmake -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - uses: cpp-linter/cpp-linter-action@v2
+        id: linter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          database: build/compile_commands.json
+          style: 'file' # Use .clang-format config file
+          tidy-checks: '' # Use .clang-tidy config file
+          lines-changed-only: true
+          files-changed-only: true
+
+
+      - name: cpp-linter contains failed checks
+        if: steps.linter.outputs.checks-failed > 0
+        run: exit 1
