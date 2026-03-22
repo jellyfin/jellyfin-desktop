@@ -151,8 +151,19 @@ void MpvPlayer::handleMpvEvent(mpv_event* event) {
             LOG_DEBUG(LOG_MPV, "%s: %s", msg->prefix, text.c_str());
             break;
         }
+        // Async reply events (no action needed)
+        case MPV_EVENT_COMMAND_REPLY:
+        case MPV_EVENT_SET_PROPERTY_REPLY:
+        // Stream reconfiguration notifications (handled internally by mpv)
+        case MPV_EVENT_AUDIO_RECONFIG:
+        case MPV_EVENT_VIDEO_RECONFIG:
+        // Playback state transitions we don't need to act on
+        case MPV_EVENT_SEEK:
+        case MPV_EVENT_PLAYBACK_RESTART:
+        case MPV_EVENT_IDLE:
+            break;
         default:
-            LOG_DEBUG(LOG_MPV, "Unhandled event: %s", mpv_event_name(event->event_id));
+            LOG_WARN(LOG_MPV, "Unexpected event: %s", mpv_event_name(event->event_id));
             break;
     }
 }
