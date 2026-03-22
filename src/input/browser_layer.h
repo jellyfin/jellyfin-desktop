@@ -82,19 +82,27 @@ public:
                     bool shift = mods & EVENTFLAG_SHIFT_DOWN;
                     switch (event.key.key) {
                         case SDLK_V: {
-                            static const char* mimeTypes[] = {
-                                "image/png", "image/jpeg", "image/gif",
-                                "text/html", "text/plain"
-                            };
-                            for (const char* mime : mimeTypes) {
-                                size_t len = 0;
-                                void* data = SDL_GetClipboardData(mime, &len);
-                                if (data && len > 0) {
-                                    receiver_->paste(mime, data, len);
-                                    SDL_free(data);
-                                    break;
+                            // If the clipboard has text, use GetClipBoardText,
+                            // otherwise check for valid mimetypes
+                            const std::string clipboardText = SDL_GetClipboardText();
+                            if (!clipboardText.empty()) {
+                                receiver_->paste("text/plain", clipboardText.c_str(), clipboardText.size());
+                            } else {
+                                static const std::array<const char *, 3> mimeTypes{
+                                    { "image/png", "image/jpeg", "image/gif"}
+                                };
+
+                                for (const auto& mime: mimeTypes) {
+                                    size_t len{};
+                                    void* data = SDL_GetClipboardData(mime, &len);
+                                    if (data && len > 0) {
+                                        receiver_->paste(mime, data, len);
+                                        SDL_free(data);
+                                        break;
+                                    }
                                 }
                             }
+
                             return true;
                         }
                         case SDLK_C: receiver_->copy(); return true;
