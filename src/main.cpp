@@ -312,7 +312,7 @@ int main(int argc, char* argv[]) {
     bool is_cef_subprocess = (getenv("JELLYFIN_CEF_SUBPROCESS") != nullptr);
 
     // Load saved settings first, then let CLI flags override
-    SDL_LogPriority log_level = SDL_LOG_PRIORITY_INFO;
+    SDL_LogPriority log_level = SDL_LOG_PRIORITY_DEBUG;
     bool use_dmabuf = true;
     bool disable_gpu_compositing = false;
     int remote_debugging_port = 0;
