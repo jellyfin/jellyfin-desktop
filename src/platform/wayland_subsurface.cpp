@@ -27,7 +27,10 @@ static void desc_failed(void*, struct wp_image_description_v1*, uint32_t, const 
 static void desc_ready(void* d, struct wp_image_description_v1*, uint32_t) { ((ImageDescContext*)d)->ready = true; }
 static void desc_ready2(void* d, struct wp_image_description_v1*, uint32_t, uint32_t) { ((ImageDescContext*)d)->ready = true; }
 static const struct wp_image_description_v1_listener s_descListener = {
-    .failed = desc_failed, .ready = desc_ready, .ready2 = desc_ready2,
+    .failed = desc_failed, .ready = desc_ready,
+#if HAVE_WAYLAND_PROTOCOLS_1_47
+    .ready2 = desc_ready2,
+#endif
 };
 
 // Output info listener
