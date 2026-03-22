@@ -60,12 +60,17 @@ void MpvPlayer::handleMpvEvent(mpv_event* event) {
             } else if (strcmp(prop->name, "duration") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
                 double dur = *static_cast<double*>(prop->data);
                 if (on_duration_) on_duration_(dur * 1000.0);
+            } else if (strcmp(prop->name, "speed") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
+                double speed = *static_cast<double*>(prop->data);
+                if (on_speed_) on_speed_(speed);
             } else if (strcmp(prop->name, "pause") == 0 && prop->format == MPV_FORMAT_FLAG) {
                 bool paused = *static_cast<int*>(prop->data) != 0;
                 if (on_state_) on_state_(paused);
             } else if (strcmp(prop->name, "seeking") == 0 && prop->format == MPV_FORMAT_FLAG) {
                 bool seeking = *static_cast<int*>(prop->data) != 0;
-                if (seeking_ && !seeking) {
+                if (!seeking_ && seeking) {
+                    if (on_seeking_) on_seeking_(last_position_ * 1000.0);
+                } else if (seeking_ && !seeking) {
                     if (on_seeked_) on_seeked_(last_position_ * 1000.0);
                 }
                 seeking_ = seeking;
@@ -203,6 +208,7 @@ bool MpvPlayer::init(const char* hwdec, PreInitHook preInitHook) {
     // Set up property observation (like jellyfin-desktop)
     mpv_observe_property(mpv_, 0, "playback-time", MPV_FORMAT_DOUBLE);
     mpv_observe_property(mpv_, 0, "duration", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(mpv_, 0, "speed", MPV_FORMAT_DOUBLE);
     mpv_observe_property(mpv_, 0, "pause", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv_, 0, "seeking", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv_, 0, "paused-for-cache", MPV_FORMAT_FLAG);

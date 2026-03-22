@@ -193,6 +193,7 @@ public:
     // Player signal helpers
     void emitPlaying();
     void emitPaused();
+    void emitSeeking();
     void emitFinished();
     void emitCanceled();
     void emitError(const std::string& msg);

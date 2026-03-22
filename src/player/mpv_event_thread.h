@@ -15,10 +15,12 @@ struct MpvEvent {
     enum class Type {
         Position,
         Duration,
+        Speed,
         Playing,
         Paused,
         Finished,
         Canceled,
+        Seeking,
         Seeked,
         Buffering,
         CoreIdle,

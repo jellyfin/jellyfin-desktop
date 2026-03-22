@@ -1577,10 +1577,15 @@ int main(int argc, char* argv[]) {
         for (const auto& ev : mpvEvents.drain()) {
             switch (ev.type) {
             case MpvEvent::Type::Position:
+                client->updatePosition(ev.value);
                 mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
                 break;
             case MpvEvent::Type::Duration:
                 client->updateDuration(ev.value);
+                break;
+            case MpvEvent::Type::Speed:
+                current_playback_rate = ev.value;
+                mediaSessionThread.setRate(ev.value);
                 break;
             case MpvEvent::Type::Playing:
                 // Restore video state - loadfile replacement fires END_FILE(STOP)
@@ -1637,15 +1642,19 @@ int main(int argc, char* argv[]) {
                 client->emitCanceled();
                 mediaSessionThread.setPlaybackState(PlaybackState::Stopped);
                 break;
+            case MpvEvent::Type::Seeking:
+                client->emitSeeking();
+                mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
+                mediaSessionThread.emitSeeking();
+                break;
             case MpvEvent::Type::Seeked:
                 client->updatePosition(ev.value);
                 mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
-                mediaSessionThread.setRate(current_playback_rate);
                 mediaSessionThread.emitSeeked(static_cast<int64_t>(ev.value * 1000.0));
                 break;
             case MpvEvent::Type::Buffering:
                 mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
-                mediaSessionThread.setRate(ev.flag ? 0.0 : current_playback_rate);
+                mediaSessionThread.setBuffering(ev.flag);
                 break;
             case MpvEvent::Type::CoreIdle:
                 mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
@@ -2053,14 +2062,11 @@ int main(int argc, char* argv[]) {
                     mediaSessionThread.setCanGoNext(canNext);
                     mediaSessionThread.setCanGoPrevious(canPrev);
                 } else if (cmd.cmd == "media_notify_rate") {
-                    // Rate was encoded as rate * 1000000
-                    double rate = static_cast<double>(cmd.intArg) / 1000000.0;
-                    current_playback_rate = rate;
-                    mediaSessionThread.setRate(rate);
+                    // Ignored — mpv's speed property observation is authoritative
+                    (void)cmd.intArg;
                 } else if (cmd.cmd == "media_seeked") {
-                    // JS detected a seek - emit Seeked signal to media session
-                    int64_t pos_us = static_cast<int64_t>(cmd.intArg) * 1000;
-                    mediaSessionThread.emitSeeked(pos_us);
+                    // Ignored — mpv's seeking property observation handles this
+                    (void)cmd.intArg;
                 } else if (cmd.cmd == "media_action") {
                     // Route media session control commands to JS playbackManager
                     std::string js = "if(window._nativeHostInput) window._nativeHostInput(['" + cmd.url + "']);";

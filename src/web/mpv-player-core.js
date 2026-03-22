@@ -11,10 +11,12 @@
             this._timeUpdateTimer = null;
             this._lastTimerTick = null;
             this._hasConnection = false;
+            this._seeking = false;
 
             this.handlers = {
                 onPlaying: null,
                 onTimeUpdate: null,
+                onSeeking: null,
                 onEnded: null,
                 onPause: null,
                 onDuration: null,
@@ -27,7 +29,7 @@
             if (this._timeUpdateTimer) return;
             this._lastTimerTick = Date.now();
             this._timeUpdateTimer = setInterval(() => {
-                if (this._paused || this._currentTime === null) return;
+                if (this._paused || this._seeking || this._currentTime === null) return;
                 const now = Date.now();
                 const elapsed = now - this._lastTimerTick;
                 this._lastTimerTick = now;
@@ -51,6 +53,7 @@
             const p = window.api.player;
             p.playing.connect(this.handlers.onPlaying);
             p.positionUpdate.connect(this.handlers.onTimeUpdate);
+            p.seeking.connect(this.handlers.onSeeking);
             p.finished.connect(this.handlers.onEnded);
             p.updateDuration.connect(this.handlers.onDuration);
             p.error.connect(this.handlers.onError);
@@ -63,6 +66,7 @@
             const p = window.api.player;
             p.playing.disconnect(this.handlers.onPlaying);
             p.positionUpdate.disconnect(this.handlers.onTimeUpdate);
+            p.seeking.disconnect(this.handlers.onSeeking);
             p.finished.disconnect(this.handlers.onEnded);
             p.updateDuration.disconnect(this.handlers.onDuration);
             p.error.disconnect(this.handlers.onError);

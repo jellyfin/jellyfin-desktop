@@ -94,6 +94,19 @@ void MediaSessionThread::setMetadata(const MediaMetadata& meta) {
     enqueue(std::move(cmd));
 }
 
+void MediaSessionThread::setBuffering(bool buffering) {
+    MediaSessionCmd cmd;
+    cmd.type = MediaSessionCmd::Type::SetBuffering;
+    cmd.flag = buffering;
+    enqueue(std::move(cmd));
+}
+
+void MediaSessionThread::emitSeeking() {
+    MediaSessionCmd cmd;
+    cmd.type = MediaSessionCmd::Type::EmitSeeking;
+    enqueue(std::move(cmd));
+}
+
 void MediaSessionThread::emitSeeked(int64_t position_us) {
     MediaSessionCmd cmd;
     cmd.type = MediaSessionCmd::Type::EmitSeeked;
@@ -149,6 +162,12 @@ void MediaSessionThread::threadFunc() {
                     break;
                 case MediaSessionCmd::Type::SetMetadata:
                     session_->setMetadata(cmd.metadata);
+                    break;
+                case MediaSessionCmd::Type::SetBuffering:
+                    session_->setBuffering(cmd.flag);
+                    break;
+                case MediaSessionCmd::Type::EmitSeeking:
+                    session_->emitSeeking();
                     break;
                 case MediaSessionCmd::Type::EmitSeeked:
                     session_->emitSeeked(cmd.position_us);
@@ -220,6 +239,12 @@ void MediaSessionThread::threadFunc() {
                     break;
                 case MediaSessionCmd::Type::SetMetadata:
                     session_->setMetadata(cmd.metadata);
+                    break;
+                case MediaSessionCmd::Type::SetBuffering:
+                    session_->setBuffering(cmd.flag);
+                    break;
+                case MediaSessionCmd::Type::EmitSeeking:
+                    session_->emitSeeking();
                     break;
                 case MediaSessionCmd::Type::EmitSeeked:
                     session_->emitSeeked(cmd.position_us);

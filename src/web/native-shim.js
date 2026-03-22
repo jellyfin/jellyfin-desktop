@@ -32,7 +32,6 @@
     function createSignal(name) {
         const callbacks = [];
         const signal = function(...args) {
-            console.log('[Media] [Signal] ' + name + ' firing with', callbacks.length, 'listeners');
             for (const cb of callbacks) {
                 try { cb(...args); } catch(e) { console.error('[Media] [Signal] ' + name + ' error:', e); }
             }
@@ -147,6 +146,7 @@
             canceled: createSignal('canceled'),
             error: createSignal('error'),
             buffering: createSignal('buffering'),
+            seeking: createSignal('seeking'),
             positionUpdate: createSignal('positionUpdate'),
             updateDuration: createSignal('updateDuration'),
             stateChanged: createSignal('stateChanged'),
@@ -304,11 +304,6 @@
     window._nativeSeek = function(positionMs) {
         console.log('[Media] _nativeSeek:', positionMs);
         window.api.input.positionSeek(positionMs);
-        // Update position immediately and set rate to 0 during buffering
-        if (window.jmpNative) {
-            window.jmpNative.notifyPosition(Math.floor(positionMs));
-            window.jmpNative.notifyRateChange(0.0);
-        }
     };
 
     // window.NativeShell - app info and plugins

@@ -882,6 +882,10 @@ void Client::emitPaused() {
     executeJS("if(window._nativeEmit) window._nativeEmit('paused');");
 }
 
+void Client::emitSeeking() {
+    executeJS("if(window._nativeEmit) window._nativeEmit('seeking');");
+}
+
 void Client::emitFinished() {
     executeJS("if(window._nativeEmit) window._nativeEmit('finished');");
 }
