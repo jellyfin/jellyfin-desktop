@@ -676,20 +676,12 @@ void Client::sendKeyEvent(int key, bool down, int modifiers) {
     event.windows_key_code = sdlKeyToWindowsVK(key);
 #ifdef __APPLE__
     event.native_key_code = sdlKeyToMacNative(key);
-    // macOS: set character fields for all keys that have character codes
-    // Control keys need their char codes set or CEF may double-fire
-    if (key >= 0x20 && key < 0x7F) {
-        event.character = key;
-        event.unmodified_character = key;
-    } else if (key == 0x08 || key == 0x09 || key == 0x0D || key == 0x1B || key == 0x7F) {
-        // Backspace, Tab, Enter, Escape, Delete
-        event.character = key;
-        event.unmodified_character = key;
-    } else {
-        event.character = 0;
-        event.unmodified_character = 0;
-    }
-    // macOS: use RAWKEYDOWN like cefclient (KEYEVENT_KEYDOWN is never used)
+    // macOS: CEF creates a synthetic NSEvent from these fields. If both
+    // character and unmodified_character are 0, CEF misidentifies the event
+    // as NSEventTypeFlagsChanged (modifier key) instead of NSEventTypeKeyDown.
+    int mac_char = sdlKeyToMacChar(key);
+    event.character = mac_char;
+    event.unmodified_character = mac_char;
     event.type = down ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
 #else
     event.native_key_code = key;
@@ -1255,6 +1247,9 @@ void OverlayClient::sendKeyEvent(int key, bool down, int modifiers) {
     event.windows_key_code = sdlKeyToWindowsVK(key);
 #ifdef __APPLE__
     event.native_key_code = sdlKeyToMacNative(key);
+    int mac_char = sdlKeyToMacChar(key);
+    event.character = mac_char;
+    event.unmodified_character = mac_char;
 #else
     event.native_key_code = key;
 #endif

@@ -377,4 +377,46 @@ inline int sdlKeyToMacNative(int sdlKey) {
         default: return sdlKey;
     }
 }
+
+// Map SDL keycode to the macOS character code CEF expects.
+// CEF's TranslateWebKeyEvent creates a synthetic NSEvent from CefKeyEvent.
+// If character AND unmodified_character are both 0, CEF misidentifies the
+// event as NSEventTypeFlagsChanged (modifier key) instead of NSEventTypeKeyDown.
+// Returns 0 only for actual modifier keys or unmapped keys.
+inline int sdlKeyToMacChar(int sdlKey) {
+    // Printable ASCII — SDL keycode IS the character
+    if (sdlKey >= 0x20 && sdlKey < 0x7F) return sdlKey;
+
+    switch (sdlKey) {
+        case SDLK_BACKSPACE: return 0x08;
+        case SDLK_TAB:       return 0x09;
+        case SDLK_RETURN:    return 0x0D;
+        case SDLK_ESCAPE:    return 0x1B;
+        case SDLK_DELETE:    return 0x7F;
+
+        // NSFunctionKey Unicode values (from NSEvent.h)
+        case SDLK_UP:       return 0xF700;
+        case SDLK_DOWN:     return 0xF701;
+        case SDLK_LEFT:     return 0xF702;
+        case SDLK_RIGHT:    return 0xF703;
+        case SDLK_F1:       return 0xF704;
+        case SDLK_F2:       return 0xF705;
+        case SDLK_F3:       return 0xF706;
+        case SDLK_F4:       return 0xF707;
+        case SDLK_F5:       return 0xF708;
+        case SDLK_F6:       return 0xF709;
+        case SDLK_F7:       return 0xF70A;
+        case SDLK_F8:       return 0xF70B;
+        case SDLK_F9:       return 0xF70C;
+        case SDLK_F10:      return 0xF70D;
+        case SDLK_F11:      return 0xF70E;
+        case SDLK_F12:      return 0xF70F;
+        case SDLK_HOME:     return 0xF729;
+        case SDLK_END:      return 0xF72B;
+        case SDLK_PAGEUP:   return 0xF72C;
+        case SDLK_PAGEDOWN: return 0xF72D;
+
+        default: return 0;
+    }
+}
 #endif
