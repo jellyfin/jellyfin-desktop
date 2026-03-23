@@ -314,10 +314,18 @@ inline int sdlKeyToMacNative(int sdlKey) {
         case SDLK_Y: return kVK::ANSI_Y;
         case SDLK_Z: return kVK::ANSI_Z;
 
-        // On MacOS, 0 and 3 SDL codes do not correspond to the correct kVK
-        // codes and must be mapped manually
+        // Numbers - must map ALL (same as letters: SDL ASCII values collide
+        // with kVK codes, e.g. 0x30=Tab, 0x33=Backspace, 0x35=Escape)
         case SDLK_0: return kVK::ANSI_0;
+        case SDLK_1: return kVK::ANSI_1;
+        case SDLK_2: return kVK::ANSI_2;
         case SDLK_3: return kVK::ANSI_3;
+        case SDLK_4: return kVK::ANSI_4;
+        case SDLK_5: return kVK::ANSI_5;
+        case SDLK_6: return kVK::ANSI_6;
+        case SDLK_7: return kVK::ANSI_7;
+        case SDLK_8: return kVK::ANSI_8;
+        case SDLK_9: return kVK::ANSI_9;
 
         default: return sdlKey;
     }
