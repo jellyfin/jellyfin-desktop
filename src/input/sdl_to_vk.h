@@ -314,6 +314,11 @@ inline int sdlKeyToMacNative(int sdlKey) {
         case SDLK_Y: return kVK::ANSI_Y;
         case SDLK_Z: return kVK::ANSI_Z;
 
+        // On MacOS, 0 and 3 SDL codes do not correspond to the correct kVK
+        // codes and must be mapped manually
+        case SDLK_0: return kVK::ANSI_0;
+        case SDLK_3: return kVK::ANSI_3;
+
         default: return sdlKey;
     }
 }
