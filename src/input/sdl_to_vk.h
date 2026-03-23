@@ -243,13 +243,36 @@ namespace kVK {
     constexpr int ANSI_K        = 0x28;
     constexpr int ANSI_N        = 0x2D;
     constexpr int ANSI_M        = 0x2E;
+    // Punctuation
+    constexpr int ANSI_Equal        = 0x18;
+    constexpr int ANSI_Minus        = 0x1B;
+    constexpr int ANSI_RightBracket = 0x1E;
+    constexpr int ANSI_LeftBracket  = 0x21;
+    constexpr int ANSI_Quote        = 0x27;
+    constexpr int ANSI_Semicolon    = 0x29;
+    constexpr int ANSI_Backslash    = 0x2A;
+    constexpr int ANSI_Comma        = 0x2B;
+    constexpr int ANSI_Slash        = 0x2C;
+    constexpr int ANSI_Period       = 0x2F;
+    constexpr int ANSI_Grave        = 0x32;
     constexpr int Return        = 0x24;
     constexpr int Tab           = 0x30;
     constexpr int Space         = 0x31;
     constexpr int Delete        = 0x33;  // Backspace
     constexpr int Escape        = 0x35;
+    // Function keys
+    constexpr int F1            = 0x7A;
+    constexpr int F2            = 0x78;
+    constexpr int F3            = 0x63;
+    constexpr int F4            = 0x76;
     constexpr int F5            = 0x60;
+    constexpr int F6            = 0x61;
+    constexpr int F7            = 0x62;
+    constexpr int F8            = 0x64;
+    constexpr int F9            = 0x65;
+    constexpr int F10           = 0x6D;
     constexpr int F11           = 0x67;
+    constexpr int F12           = 0x6F;
     constexpr int Home          = 0x73;
     constexpr int PageUp        = 0x74;
     constexpr int ForwardDelete = 0x75;
@@ -282,8 +305,18 @@ inline int sdlKeyToMacNative(int sdlKey) {
         case SDLK_DELETE:    return kVK::ForwardDelete;
 
         // Function keys
+        case SDLK_F1:  return kVK::F1;
+        case SDLK_F2:  return kVK::F2;
+        case SDLK_F3:  return kVK::F3;
+        case SDLK_F4:  return kVK::F4;
         case SDLK_F5:  return kVK::F5;
+        case SDLK_F6:  return kVK::F6;
+        case SDLK_F7:  return kVK::F7;
+        case SDLK_F8:  return kVK::F8;
+        case SDLK_F9:  return kVK::F9;
+        case SDLK_F10: return kVK::F10;
         case SDLK_F11: return kVK::F11;
+        case SDLK_F12: return kVK::F12;
 
         // Letters - must map ALL to avoid collisions with kVK codes
         // (e.g., SDLK_S = 0x73 = kVK_Home without explicit mapping)
@@ -326,6 +359,20 @@ inline int sdlKeyToMacNative(int sdlKey) {
         case SDLK_7: return kVK::ANSI_7;
         case SDLK_8: return kVK::ANSI_8;
         case SDLK_9: return kVK::ANSI_9;
+
+        // Punctuation - SDL ASCII values collide with kVK codes
+        // (e.g., 0x60=kVK_F5, 0x3B=kVK_Control, 0x2D=kVK_ANSI_N)
+        case SDLK_COMMA:        return kVK::ANSI_Comma;
+        case SDLK_MINUS:        return kVK::ANSI_Minus;
+        case SDLK_PERIOD:       return kVK::ANSI_Period;
+        case SDLK_SLASH:        return kVK::ANSI_Slash;
+        case SDLK_SEMICOLON:    return kVK::ANSI_Semicolon;
+        case SDLK_EQUALS:       return kVK::ANSI_Equal;
+        case SDLK_LEFTBRACKET:  return kVK::ANSI_LeftBracket;
+        case SDLK_BACKSLASH:    return kVK::ANSI_Backslash;
+        case SDLK_RIGHTBRACKET: return kVK::ANSI_RightBracket;
+        case SDLK_GRAVE:        return kVK::ANSI_Grave;
+        case SDLK_APOSTROPHE:   return kVK::ANSI_Quote;
 
         default: return sdlKey;
     }
