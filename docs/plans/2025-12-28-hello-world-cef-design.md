@@ -37,7 +37,7 @@ MVP implements SDL2 + CEF OSR + OpenGL compositor. mpv integration comes later.
 ## Project Structure
 
 ```
-jellyfin-desktop-cef/
+jellyfin-desktop/
 ├── CMakeLists.txt
 ├── cmake/
 │   └── FindCEF.cmake

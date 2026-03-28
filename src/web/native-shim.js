@@ -54,7 +54,7 @@
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
         version: '1.0.0',
-        deviceName: 'Jellyfin Desktop CEF',
+        deviceName: 'Jellyfin Desktop',
         mode: 'desktop',
         userAgent: navigator.userAgent,
         scriptPath: '',
@@ -330,7 +330,7 @@
     // Device profile for direct play
     function getDeviceProfile() {
         return {
-            Name: 'Jellyfin Desktop CEF',
+            Name: 'Jellyfin Desktop',
             MaxStaticBitrate: 1000000000,
             MusicStreamingTranscodingBitrate: 1280000,
             TimelineOffsetSeconds: 5,
@@ -371,7 +371,7 @@
         init() {
             return Promise.resolve({
                 deviceName: jmpInfo.deviceName,
-                appName: 'Jellyfin Desktop CEF',
+                appName: 'Jellyfin Desktop',
                 appVersion: jmpInfo.version
             });
         },
@@ -389,7 +389,7 @@
         },
         getDeviceProfile,
         getSyncProfile: getDeviceProfile,
-        appName() { return 'Jellyfin Desktop CEF'; },
+        appName() { return 'Jellyfin Desktop'; },
         appVersion() { return jmpInfo.version; },
         deviceName() { return jmpInfo.deviceName; },
         exit() { window.api.system.exit(); }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(jellyfin-desktop-cef LANGUAGES C CXX)
+project(jellyfin-desktop LANGUAGES C CXX)
 
 # Enable Objective-C++ on macOS
 if(APPLE)
@@ -275,10 +275,10 @@ endif()
 # mpv configuration
 # Auto-detect external mpv from /opt if it exists
 set(_DEFAULT_EXTERNAL_MPV_DIR "")
-if(EXISTS "/opt/jellyfin-desktop-cef/libmpv/lib/libmpv.so")
-    set(_DEFAULT_EXTERNAL_MPV_DIR "/opt/jellyfin-desktop-cef/libmpv")
-elseif(APPLE AND EXISTS "/opt/jellyfin-desktop-cef/libmpv/lib/libmpv.dylib")
-    set(_DEFAULT_EXTERNAL_MPV_DIR "/opt/jellyfin-desktop-cef/libmpv")
+if(EXISTS "/opt/jellyfin-desktop/libmpv/lib/libmpv.so")
+    set(_DEFAULT_EXTERNAL_MPV_DIR "/opt/jellyfin-desktop/libmpv")
+elseif(APPLE AND EXISTS "/opt/jellyfin-desktop/libmpv/lib/libmpv.dylib")
+    set(_DEFAULT_EXTERNAL_MPV_DIR "/opt/jellyfin-desktop/libmpv")
 endif()
 
 set(EXTERNAL_MPV_DIR "${_DEFAULT_EXTERNAL_MPV_DIR}" CACHE PATH "Path to external mpv installation (must contain include/ and lib/)")
@@ -395,7 +395,7 @@ set(COMMON_SOURCES
     src/ui/menu_overlay.cpp
 )
 
-add_executable(jellyfin-desktop-cef
+add_executable(jellyfin-desktop
     ${COMMON_SOURCES}
     ${PLATFORM_SOURCES}
 )
@@ -403,18 +403,18 @@ add_executable(jellyfin-desktop-cef
 # Windows: hide console window (use WinMain entry via mainCRTStartup)
 if(WIN32)
     if(MSVC)
-        target_link_options(jellyfin-desktop-cef PRIVATE
+        target_link_options(jellyfin-desktop PRIVATE
             /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup
         )
     else()
-        target_link_options(jellyfin-desktop-cef PRIVATE -mwindows)
+        target_link_options(jellyfin-desktop PRIVATE -mwindows)
     endif()
 endif()
 
 # Ensure JS shims are embedded before compiling cef_app.cpp
-add_dependencies(jellyfin-desktop-cef embedded_js embedded_resources generate_version)
+add_dependencies(jellyfin-desktop embedded_js embedded_resources generate_version)
 
-target_include_directories(jellyfin-desktop-cef PRIVATE
+target_include_directories(jellyfin-desktop PRIVATE
     ${CEF_INCLUDE_DIRS}
     ${MPV_INCLUDE_DIRS}
     ${Vulkan_INCLUDE_DIRS}
@@ -423,7 +423,7 @@ target_include_directories(jellyfin-desktop-cef PRIVATE
     ${CMAKE_BINARY_DIR}/generated
 )
 
-target_link_libraries(jellyfin-desktop-cef PRIVATE
+target_link_libraries(jellyfin-desktop PRIVATE
     ${CEF_LIBRARIES}
     SDL3::SDL3
     ${MPV_LIBRARIES}
@@ -433,7 +433,7 @@ target_link_libraries(jellyfin-desktop-cef PRIVATE
 
 # When using external CEF, tell the app where to find resources
 if(EXTERNAL_CEF_DIR)
-    target_compile_definitions(jellyfin-desktop-cef PRIVATE
+    target_compile_definitions(jellyfin-desktop PRIVATE
         CEF_RESOURCES_DIR="${CEF_RESOURCE_DIR}"
     )
 endif()
@@ -459,7 +459,7 @@ if(UNIX AND NOT APPLE)
         list(APPEND RPATH_DIRS "${EXTERNAL_CEF_DIR}/lib")
     endif()
     list(JOIN RPATH_DIRS ";" RPATH_STRING)
-    set_target_properties(jellyfin-desktop-cef PROPERTIES
+    set_target_properties(jellyfin-desktop PROPERTIES
         INSTALL_RPATH "${RPATH_STRING}"
         BUILD_WITH_INSTALL_RPATH TRUE
     )
@@ -476,7 +476,7 @@ if(NOT EXTERNAL_CEF_DIR)
         set(OLD_INSTALL_NAME "@executable_path/../Frameworks/${CEF_FRAMEWORK_NAME}.framework/${CEF_FRAMEWORK_NAME}")
         set(NEW_INSTALL_NAME "@executable_path/Frameworks/${CEF_FRAMEWORK_NAME}.framework/${CEF_FRAMEWORK_NAME}")
 
-        add_custom_command(TARGET jellyfin-desktop-cef POST_BUILD
+        add_custom_command(TARGET jellyfin-desktop POST_BUILD
             # Copy framework
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Frameworks"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -485,7 +485,7 @@ if(NOT EXTERNAL_CEF_DIR)
             # Fix framework's install_name
             COMMAND install_name_tool -id "${NEW_INSTALL_NAME}" "${CEF_FRAMEWORK_LIB}"
             # Fix executable's reference to framework
-            COMMAND install_name_tool -change "${OLD_INSTALL_NAME}" "${NEW_INSTALL_NAME}" "$<TARGET_FILE:jellyfin-desktop-cef>"
+            COMMAND install_name_tool -change "${OLD_INSTALL_NAME}" "${NEW_INSTALL_NAME}" "$<TARGET_FILE:jellyfin-desktop>"
             # Symlink GL libraries next to executable (CEF GPU compositor needs them at executable path)
             COMMAND ${CMAKE_COMMAND} -E create_symlink
                 "Frameworks/${CEF_FRAMEWORK_NAME}.framework/Libraries/libEGL.dylib"
@@ -497,60 +497,60 @@ if(NOT EXTERNAL_CEF_DIR)
         )
     else()
         # Linux: Separate Resources and Release directories
-        add_custom_command(TARGET jellyfin-desktop-cef POST_BUILD
+        add_custom_command(TARGET jellyfin-desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CEF_RESOURCE_DIR}"
-                "$<TARGET_FILE_DIR:jellyfin-desktop-cef>"
+                "$<TARGET_FILE_DIR:jellyfin-desktop>"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CEF_RELEASE_DIR}"
-                "$<TARGET_FILE_DIR:jellyfin-desktop-cef>"
+                "$<TARGET_FILE_DIR:jellyfin-desktop>"
         )
     endif()
 endif()
 
 if(NOT EXTERNAL_MPV_DIR)
-    add_dependencies(jellyfin-desktop-cef mpv_build)
+    add_dependencies(jellyfin-desktop mpv_build)
 endif()
 
 # Copy libmpv to build directory
 if(NOT EXTERNAL_MPV_DIR)
     if(APPLE)
-        add_custom_command(TARGET jellyfin-desktop-cef POST_BUILD
+        add_custom_command(TARGET jellyfin-desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${MPV_BUILD_DIR}/libmpv.2.dylib"
-                "$<TARGET_FILE_DIR:jellyfin-desktop-cef>/libmpv.2.dylib"
+                "$<TARGET_FILE_DIR:jellyfin-desktop>/libmpv.2.dylib"
             # Fix libmpv install_name to load from executable directory
             COMMAND install_name_tool -id "@executable_path/libmpv.2.dylib"
-                "$<TARGET_FILE_DIR:jellyfin-desktop-cef>/libmpv.2.dylib"
+                "$<TARGET_FILE_DIR:jellyfin-desktop>/libmpv.2.dylib"
             # Fix executable to use local libmpv
             COMMAND install_name_tool -change "@rpath/libmpv.2.dylib"
-                "@executable_path/libmpv.2.dylib" "$<TARGET_FILE:jellyfin-desktop-cef>"
+                "@executable_path/libmpv.2.dylib" "$<TARGET_FILE:jellyfin-desktop>"
         )
     elseif(WIN32)
-        add_custom_command(TARGET jellyfin-desktop-cef POST_BUILD
+        add_custom_command(TARGET jellyfin-desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${MPV_BUILD_DIR}/libmpv-2.dll"
-                "$<TARGET_FILE_DIR:jellyfin-desktop-cef>/libmpv-2.dll"
+                "$<TARGET_FILE_DIR:jellyfin-desktop>/libmpv-2.dll"
         )
     else()
-        add_custom_command(TARGET jellyfin-desktop-cef POST_BUILD
+        add_custom_command(TARGET jellyfin-desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${MPV_BUILD_DIR}/libmpv.so.2"
-                "$<TARGET_FILE_DIR:jellyfin-desktop-cef>/libmpv.so.2"
+                "$<TARGET_FILE_DIR:jellyfin-desktop>/libmpv.so.2"
         )
     endif()
 elseif(WIN32)
     # External mpv: copy all DLLs (libmpv + dependencies) to build directory
     file(GLOB _MPV_BUILD_DLLS "${EXTERNAL_MPV_DIR}/lib/*.dll")
-    add_custom_command(TARGET jellyfin-desktop-cef POST_BUILD
+    add_custom_command(TARGET jellyfin-desktop POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${_MPV_BUILD_DLLS}
-            "$<TARGET_FILE_DIR:jellyfin-desktop-cef>"
+            "$<TARGET_FILE_DIR:jellyfin-desktop>"
     )
 endif()
 
 # Install rules
-install(TARGETS jellyfin-desktop-cef RUNTIME DESTINATION .)
+install(TARGETS jellyfin-desktop RUNTIME DESTINATION .)
 
 if(WIN32)
     # CEF binaries and resources
@@ -574,11 +574,11 @@ if(WIN32)
     endif()
 elseif(APPLE)
     # macOS app bundle installation
-    set(APP_NAME "Jellyfin Desktop CEF.app")
+    set(APP_NAME "Jellyfin Desktop.app")
     set(BUNDLE_CONTENTS "${CMAKE_INSTALL_PREFIX}/${APP_NAME}/Contents")
 
     # Install executable
-    install(PROGRAMS $<TARGET_FILE:jellyfin-desktop-cef>
+    install(PROGRAMS $<TARGET_FILE:jellyfin-desktop>
         DESTINATION "${APP_NAME}/Contents/MacOS"
     )
 
@@ -655,7 +655,7 @@ else()
 endif()
 
 # CPack for creating distribution packages
-set(CPACK_PACKAGE_NAME "jellyfin-desktop-cef")
+set(CPACK_PACKAGE_NAME "jellyfin-desktop")
 set(CPACK_PACKAGE_VENDOR "Jellyfin")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Jellyfin Desktop Client")
 file(READ "${CMAKE_SOURCE_DIR}/VERSION" CPACK_PACKAGE_VERSION)

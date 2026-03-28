@@ -1,4 +1,4 @@
-# Building Jellyfin Desktop CEF on macOS
+# Building Jellyfin Desktop on macOS
 
 ## Quick Start
 
@@ -25,8 +25,8 @@ dev/macos/run.sh     # Run
 - `third_party/cef/` - CEF binary distribution (downloaded by build.sh)
 - `third_party/mpv/` - mpv source (git submodule, built by cmake)
 - `build/` - Build output (safe to delete)
-- `build/jellyfin-desktop-cef` - Dev executable
-- `build/output/Jellyfin Desktop CEF.app` - App bundle (from bundle.sh)
+- `build/jellyfin-desktop` - Dev executable
+- `build/output/Jellyfin Desktop.app` - App bundle (from bundle.sh)
 
 ## Scripts
 

@@ -22,7 +22,7 @@
 
 ```cmake
 cmake_minimum_required(VERSION 3.19)
-project(jellyfin-desktop-cef LANGUAGES CXX)
+project(jellyfin-desktop LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -122,7 +122,7 @@ set(CEF_FOUND TRUE)
 #include <iostream>
 
 int main(int argc, char* argv[]) {
-    std::cout << "Hello from jellyfin-desktop-cef" << std::endl;
+    std::cout << "Hello from jellyfin-desktop" << std::endl;
     return 0;
 }
 ```
@@ -161,7 +161,7 @@ git commit -m "feat: add CMake build system foundation"
 Create: `README.md`
 
 ```markdown
-# Jellyfin Desktop CEF
+# Jellyfin Desktop
 
 Minimal CEF application with SDL2 and OpenGL.
 
@@ -312,7 +312,7 @@ Temporarily comment out CEF requirement for testing SDL2 in isolation. Modify `C
 
 ```cmake
 cmake_minimum_required(VERSION 3.19)
-project(jellyfin-desktop-cef LANGUAGES CXX)
+project(jellyfin-desktop LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -541,7 +541,7 @@ GLuint Renderer::createShaderProgram() {
 
 ```cmake
 cmake_minimum_required(VERSION 3.19)
-project(jellyfin-desktop-cef LANGUAGES CXX)
+project(jellyfin-desktop LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -807,7 +807,7 @@ void Client::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
 
 ```cmake
 cmake_minimum_required(VERSION 3.19)
-project(jellyfin-desktop-cef LANGUAGES CXX)
+project(jellyfin-desktop LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -1,6 +1,6 @@
 # Architecture: Window, SDL, Input, CEF, and the Rendering Pipeline
 
-This document describes how the window system, input handling, CEF browser integration, and rendering pipeline interact in jellyfin-desktop-cef. It covers the flow from hardware events to pixels on screen, the threading model, synchronization boundaries, and platform-specific divergences.
+This document describes how the window system, input handling, CEF browser integration, and rendering pipeline interact in jellyfin-desktop. It covers the flow from hardware events to pixels on screen, the threading model, synchronization boundaries, and platform-specific divergences.
 
 ---
 
@@ -100,7 +100,7 @@ The window is created in `main.cpp` with:
 
 ```
 SDL_Init(SDL_INIT_VIDEO)
-SDL_CreateWindow("Jellyfin Desktop CEF", width, height, flags)
+SDL_CreateWindow("Jellyfin Desktop", width, height, flags)
 ```
 
 Flags: `SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY`. On Windows, `SDL_WINDOW_HIDDEN` is also set to avoid a titlebar flash before the DWM attributes are applied.

@@ -2,7 +2,7 @@
 
 ## Storage
 
-**File:** `~/.config/jellyfin-desktop-cef/settings.json` (Linux/macOS) or `%APPDATA%\jellyfin-desktop-cef\settings.json` (Windows)
+**File:** `~/.config/jellyfin-desktop/settings.json` (Linux/macOS) or `%APPDATA%\jellyfin-desktop\settings.json` (Windows)
 
 **Persisted fields** (`settings.cpp:84-88`):
 

@@ -10,7 +10,7 @@ show_help() {
     cat << EOF
 Usage: $(basename "$0") <ssh-host>
 
-Sync, build, and package jellyfin-desktop-cef on a Windows VM via SSH.
+Sync, build, and package jellyfin-desktop on a Windows VM via SSH.
 Uses rclone for efficient file sync over SSH.
 
 Arguments:
@@ -36,13 +36,13 @@ REMOTE="$1"
 sync_to_remote "$REMOTE"
 
 # --- Build mpv from source if needed ---
-if ! ssh "$REMOTE" "dir C:\\jellyfin-desktop-cef\\third_party\\mpv-install\\lib\\mpv.lib" >/dev/null 2>&1; then
+if ! ssh "$REMOTE" "dir C:\\jellyfin-desktop\\third_party\\mpv-install\\lib\\mpv.lib" >/dev/null 2>&1; then
     echo "=== Building mpv from source ==="
-    ssh "$REMOTE" 'C:\jellyfin-desktop-cef\dev\windows\build_mpv_source.bat'
+    ssh "$REMOTE" 'C:\jellyfin-desktop\dev\windows\build_mpv_source.bat'
 fi
 
 # --- Build ---
-ssh "$REMOTE" 'C:\jellyfin-desktop-cef\dev\windows\build.bat'
+ssh "$REMOTE" 'C:\jellyfin-desktop\dev\windows\build.bat'
 
 # --- Package ---
 ssh "$REMOTE" "cd $REMOTE_DIR/build && cmake --install . --prefix install && cpack -G ZIP"
@@ -50,7 +50,7 @@ ssh "$REMOTE" "cd $REMOTE_DIR/build && cmake --install . --prefix install && cpa
 # Find and copy zip back
 LOCAL_OUT='dist'
 mkdir -p "$LOCAL_OUT"
-scp "$REMOTE:$REMOTE_DIR/build/jellyfin-desktop-cef-*.zip" "$LOCAL_OUT/"
+scp "$REMOTE:$REMOTE_DIR/build/jellyfin-desktop-*.zip" "$LOCAL_OUT/"
 
 echo "Created:"
 ls -lh "$LOCAL_OUT"/*.zip

@@ -1,6 +1,6 @@
 # Linux GPU and Wayland Features
 
-Comprehensive listing of all Wayland protocols, Vulkan extensions, EGL features, DRM/KMS capabilities, and libplacebo features used by Jellyfin Desktop CEF on Linux.
+Comprehensive listing of all Wayland protocols, Vulkan extensions, EGL features, DRM/KMS capabilities, and libplacebo features used by Jellyfin Desktop on Linux.
 
 ## 1. Wayland Protocols
 

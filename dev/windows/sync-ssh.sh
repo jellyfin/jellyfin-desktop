@@ -5,7 +5,7 @@
 # Usage (direct):  sync-ssh.sh <ssh-host>
 # Usage (sourced): . sync-ssh.sh && sync_to_remote <ssh-host>
 
-REMOTE_DIR='C:/jellyfin-desktop-cef'
+REMOTE_DIR='C:/jellyfin-desktop'
 
 sync_to_remote() {
     _remote="$1"

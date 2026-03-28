@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Jellyfin Desktop CEF - Run built app
+# Jellyfin Desktop - Run built app
 # Run build.sh first
 set -e
 
@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${0}")" && pwd)"
 . "${SCRIPT_DIR}/common.sh"
 
 APP_DIR="${BUILD_DIR}/output/${APP_NAME}"
-EXECUTABLE="${APP_DIR}/Contents/MacOS/jellyfin-desktop-cef"
+EXECUTABLE="${APP_DIR}/Contents/MacOS/jellyfin-desktop"
 
 # Check app bundle exists
 if [ ! -d "${APP_DIR}" ]; then

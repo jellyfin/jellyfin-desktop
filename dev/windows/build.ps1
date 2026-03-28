@@ -1,4 +1,4 @@
-# Build jellyfin-desktop-cef on Windows
+# Build jellyfin-desktop on Windows
 # Must be run from Visual Studio Developer Command Prompt or with vcvars64.bat loaded
 
 param(
@@ -101,4 +101,4 @@ if ($BuildResult -ne 0) {
 
 Write-Host ""
 Write-Host "Build complete!" -ForegroundColor Green
-Write-Host "Executable: $BuildDir\jellyfin-desktop-cef.exe"
+Write-Host "Executable: $BuildDir\jellyfin-desktop.exe"

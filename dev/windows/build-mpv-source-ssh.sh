@@ -27,4 +27,4 @@ REMOTE="$1"
 sync_to_remote "$REMOTE"
 
 echo "=== Building mpv from source ==="
-ssh "$REMOTE" 'C:\jellyfin-desktop-cef\dev\windows\build_mpv_source.bat -Force'
+ssh "$REMOTE" 'C:\jellyfin-desktop\dev\windows\build_mpv_source.bat -Force'

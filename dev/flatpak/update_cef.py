@@ -19,7 +19,7 @@ from download_cef import (
 )
 
 log = logging.getLogger(__name__)
-MANIFEST_PATH = pathlib.Path(__file__).parent / "org.jellyfin.JellyfinDesktopCEF.yml"
+MANIFEST_PATH = pathlib.Path(__file__).parent / "org.jellyfin.JellyfinDesktop.yml"
 
 
 def main():

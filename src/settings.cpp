@@ -27,7 +27,7 @@ std::string Settings::getConfigPath() {
     } else {
         config_dir = "C:\\";
     }
-    config_dir += "\\jellyfin-desktop-cef";
+    config_dir += "\\jellyfin-desktop";
 #else
     const char* xdg_config = std::getenv("XDG_CONFIG_HOME");
     if (xdg_config && xdg_config[0]) {
@@ -40,7 +40,7 @@ std::string Settings::getConfigPath() {
             config_dir = "/tmp";
         }
     }
-    config_dir += "/jellyfin-desktop-cef";
+    config_dir += "/jellyfin-desktop";
 #endif
 
     MKDIR(config_dir.c_str());

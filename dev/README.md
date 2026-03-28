@@ -3,13 +3,13 @@
 ## Quick Start (Linux/macOS)
 
 ```sh
-git clone https://github.com/jellyfin-labs/jellyfin-desktop-cef
-cd jellyfin-desktop-cef
+git clone https://github.com/jellyfin-labs/jellyfin-desktop
+cd jellyfin-desktop
 git submodule update --init --recursive
 python3 dev/download_cef.py
 cmake -B build -G Ninja
 cmake --build build
-./build/jellyfin-desktop-cef
+./build/jellyfin-desktop
 ```
 
 ## Quick Start (Windows)
@@ -17,8 +17,8 @@ cmake --build build
 See [dev/windows/README.md](windows/README.md) for detailed instructions.
 
 ```powershell
-git clone https://github.com/jellyfin-labs/jellyfin-desktop-cef
-cd jellyfin-desktop-cef
+git clone https://github.com/jellyfin-labs/jellyfin-desktop
+cd jellyfin-desktop
 .\dev\windows\setup.ps1
 .\dev\windows\build.ps1
 ```
@@ -46,7 +46,7 @@ See [dev/flatpak/README.md](flatpak/README.md) for details.
 ```sh
 cd dev/flatpak
 ./build.sh
-flatpak install --user jellyfin-desktop-cef.flatpak
+flatpak install --user jellyfin-desktop.flatpak
 ```
 
 ## Web Debugger

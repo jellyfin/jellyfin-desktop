@@ -431,7 +431,7 @@ bool WindowsVideoLayer::init(SDL_Window* window, VkInstance, VkPhysicalDevice,
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.apiVersion = VK_API_VERSION_1_2;
-    appInfo.pApplicationName = "Jellyfin Desktop CEF";
+    appInfo.pApplicationName = "Jellyfin Desktop";
 
     VkInstanceCreateInfo instanceInfo{};
     instanceInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
