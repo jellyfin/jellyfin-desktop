@@ -337,7 +337,7 @@ int main(int argc, char* argv[]) {
         if (!saved_log_level.empty()) log_level_str = saved_log_level.c_str();
         for (int i = 1; i < argc; i++) {
             if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-                printf("Usage: jellyfin-desktop-cef [options]\n"
+                printf("Usage: jellyfin-desktop [options]\n"
                        "\nOptions:\n"
                        "  -h, --help              Show this help message\n"
                        "  -v, --version           Show version information\n"
@@ -355,7 +355,7 @@ int main(int argc, char* argv[]) {
                        );
                 return 0;
             } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
-                printf("jellyfin-desktop-cef %s\n", APP_VERSION_STRING);
+                printf("jellyfin-desktop %s\n", APP_VERSION_STRING);
                 printf("  built " __DATE__ " " __TIME__ "\n");
                 printf("CEF %s\n", CEF_VERSION);
                 return 0;
@@ -433,7 +433,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Startup banner
-        LOG_INFO(LOG_MAIN, "jellyfin-desktop-cef " APP_VERSION_STRING " built " __DATE__ " " __TIME__);
+        LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING " built " __DATE__ " " __TIME__);
         LOG_INFO(LOG_MAIN, "CEF " CEF_VERSION);
 
 #if !defined(__APPLE__) && !defined(_WIN32)
@@ -560,7 +560,7 @@ int main(int argc, char* argv[]) {
     PFMoveToApplicationsFolderIfNecessary();
 #endif
 
-    SDL_SetAppMetadata("Jellyfin Desktop CEF", nullptr, "org.jellyfin.JellyfinDesktopCEF");
+    SDL_SetAppMetadata("Jellyfin Desktop", nullptr, "org.jellyfin.JellyfinDesktop");
 
     // SDL initialization with OpenGL (for main surface CEF overlay)
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -619,7 +619,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     SDL_Window* window = SDL_CreateWindow(
-        "Jellyfin Desktop CEF",
+        "Jellyfin Desktop",
         width, height,
         win_flags
     );
@@ -861,7 +861,7 @@ int main(int argc, char* argv[]) {
     // macOS: Set framework path (cef_framework_path set earlier during CEF loading)
     CefString(&settings.framework_dir_path).FromString((cef_framework_path / "Chromium Embedded Framework.framework").string());
     // Use main executable as subprocess - it handles CefExecuteProcess early
-    CefString(&settings.browser_subprocess_path).FromString((exe_path / "jellyfin-desktop-cef").string());
+    CefString(&settings.browser_subprocess_path).FromString((exe_path / "jellyfin-desktop").string());
 #elif defined(_WIN32)
     // Windows: Get exe path
     wchar_t exe_buf[MAX_PATH];
@@ -884,17 +884,17 @@ int main(int argc, char* argv[]) {
     std::filesystem::path cache_path;
 #ifdef _WIN32
     if (const char* appdata = std::getenv("LOCALAPPDATA")) {
-        cache_path = std::filesystem::path(appdata) / "jellyfin-desktop-cef";
+        cache_path = std::filesystem::path(appdata) / "jellyfin-desktop";
     }
 #elif defined(__APPLE__)
     if (const char* home = std::getenv("HOME")) {
-        cache_path = std::filesystem::path(home) / "Library" / "Caches" / "jellyfin-desktop-cef";
+        cache_path = std::filesystem::path(home) / "Library" / "Caches" / "jellyfin-desktop";
     }
 #else
     if (const char* xdg = std::getenv("XDG_CACHE_HOME")) {
-        cache_path = std::filesystem::path(xdg) / "jellyfin-desktop-cef";
+        cache_path = std::filesystem::path(xdg) / "jellyfin-desktop";
     } else if (const char* home = std::getenv("HOME")) {
-        cache_path = std::filesystem::path(home) / ".cache" / "jellyfin-desktop-cef";
+        cache_path = std::filesystem::path(home) / ".cache" / "jellyfin-desktop";
     }
 #endif
     if (!cache_path.empty()) {

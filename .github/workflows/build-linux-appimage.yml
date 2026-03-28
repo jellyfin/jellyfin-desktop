@@ -22,7 +22,7 @@ jobs:
       - name: Build AppImage
         run: |
           docker build \
-            -t jellyfin-desktop-cef-appimage \
+            -t jellyfin-desktop-appimage \
             -f dev/appimage/Dockerfile \
             .
 
@@ -33,10 +33,10 @@ jobs:
           mkdir -p output
           docker run --rm \
             -v "${WORKSPACE}/output:/host-output" \
-            jellyfin-desktop-cef-appimage
+            jellyfin-desktop-appimage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: linux-appimage-x86_64
-          path: output/JellyfinDesktopCEF-*.AppImage
+          path: output/JellyfinDesktop-*.AppImage

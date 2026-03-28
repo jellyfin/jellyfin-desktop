@@ -1,8 +1,8 @@
-app-id: org.jellyfin.JellyfinDesktopCEF
+app-id: org.jellyfin.JellyfinDesktop
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
-command: jellyfin-desktop-cef
+command: jellyfin-desktop
 finish-args:
   - --socket=wayland
   - --socket=x11
@@ -11,7 +11,7 @@ finish-args:
   - --share=network
   - --device=dri
   - --talk-name=org.freedesktop.ScreenSaver
-  - --own-name=org.mpris.MediaPlayer2.JellyfinDesktopCEF
+  - --own-name=org.mpris.MediaPlayer2.JellyfinDesktop
 cleanup:
   - '*.a'
   - '*.la'
@@ -160,17 +160,17 @@ modules:
         url: https://invent.kde.org/libraries/plasma-wayland-protocols/-/raw/master/src/protocols/server-decoration-palette.xml
         sha256: 101e225ff0e035b8f4ed177a05cf6c985a5aba8c243b9f649cb1cd78d7c6b1f9
 
-  - name: jellyfin-desktop-cef
+  - name: jellyfin-desktop
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DEXTERNAL_CEF_DIR=/app/cef
       - -DEXTERNAL_MPV_DIR=/app
     post-install:
-      - mkdir -p /app/bin && ln -sf ../jellyfin-desktop-cef /app/bin/jellyfin-desktop-cef
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktopCEF.desktop /app/share/applications/org.jellyfin.JellyfinDesktopCEF.desktop
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktopCEF.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktopCEF.svg
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktopCEF.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktopCEF.metainfo.xml
+      - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
+      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
+      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg
+      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
     sources:
       - type: dir
         path: ../..

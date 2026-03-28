@@ -1,4 +1,4 @@
-# Jellyfin Desktop CEF Flatpak
+# Jellyfin Desktop Flatpak
 
 ## Build Bundle
 
@@ -6,23 +6,23 @@
 ./build.sh
 ```
 
-Creates `jellyfin-desktop-cef.flatpak`.
+Creates `jellyfin-desktop.flatpak`.
 
 ## Install Bundle
 
 ```bash
-flatpak install --user jellyfin-desktop-cef.flatpak
+flatpak install --user jellyfin-desktop.flatpak
 ```
 
 ## Development
 
 Build and install directly:
 ```bash
-flatpak-builder --install --user --force-clean build-dir org.jellyfin.JellyfinDesktopCEF.yml
+flatpak-builder --install --user --force-clean build-dir org.jellyfin.JellyfinDesktop.yml
 ```
 
 Test run without installing:
 ```bash
-flatpak-builder --user --force-clean build-dir org.jellyfin.JellyfinDesktopCEF.yml
-flatpak-builder --run build-dir org.jellyfin.JellyfinDesktopCEF.yml jellyfin-desktop-cef
+flatpak-builder --user --force-clean build-dir org.jellyfin.JellyfinDesktop.yml
+flatpak-builder --run build-dir org.jellyfin.JellyfinDesktop.yml jellyfin-desktop
 ```

@@ -13,7 +13,7 @@
 ### Task 1: Add audio-fallback-to-null Option
 
 **Files:**
-- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/src/player/mpv/mpv_player_vk.cpp:169-175`
+- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop/src/player/mpv/mpv_player_vk.cpp:169-175`
 
 **Step 1: Add the option in init()**
 
@@ -27,7 +27,7 @@ mpv_set_option_string(mpv_, "audio-fallback-to-null", "yes");
 
 **Step 2: Verify build compiles**
 
-Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/build`
+Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop/build`
 Expected: Build succeeds
 
 **Step 3: Commit**
@@ -48,7 +48,7 @@ EOF
 ### Task 2: Add Error Callback Infrastructure
 
 **Files:**
-- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/src/player/mpv/mpv_player_vk.h:26,76-82,102`
+- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop/src/player/mpv/mpv_player_vk.h:26,76-82,102`
 
 **Step 1: Add error callback typedef and member**
 
@@ -72,7 +72,7 @@ ErrorCallback on_error_;
 
 **Step 2: Verify build compiles**
 
-Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/build`
+Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop/build`
 Expected: Build succeeds
 
 **Step 3: Commit**
@@ -90,7 +90,7 @@ EOF
 ### Task 3: Handle MPV_END_FILE_REASON_ERROR
 
 **Files:**
-- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/src/player/mpv/mpv_player_vk.cpp:128-139`
+- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop/src/player/mpv/mpv_player_vk.cpp:128-139`
 
 **Step 1: Add error handling in handleMpvEvent()**
 
@@ -118,7 +118,7 @@ case MPV_EVENT_END_FILE: {
 
 **Step 2: Verify build compiles**
 
-Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/build`
+Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop/build`
 Expected: Build succeeds
 
 **Step 3: Commit**
@@ -139,7 +139,7 @@ EOF
 ### Task 4: Wire Error Callback in main.cpp
 
 **Files:**
-- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/src/main.cpp:825-829`
+- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop/src/main.cpp:825-829`
 
 **Step 1: Add error callback setup**
 
@@ -161,7 +161,7 @@ mpv.setErrorCallback([&](const std::string& error) {
 
 **Step 2: Verify build compiles**
 
-Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/build`
+Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop/build`
 Expected: Build succeeds
 
 **Step 3: Commit**
@@ -182,7 +182,7 @@ EOF
 ### Task 5: Convert loadFile to Async Command
 
 **Files:**
-- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/src/player/mpv/mpv_player_vk.cpp:282-302`
+- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop/src/player/mpv/mpv_player_vk.cpp:282-302`
 
 **Step 1: Replace synchronous mpv_command with async version**
 
@@ -217,7 +217,7 @@ bool MpvPlayerVk::loadFile(const std::string& path, double startSeconds) {
 
 **Step 2: Verify build compiles**
 
-Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/build`
+Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop/build`
 Expected: Build succeeds
 
 **Step 3: Commit**
@@ -239,7 +239,7 @@ EOF
 ### Task 6: Convert Other Commands to Async (stop, seek)
 
 **Files:**
-- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/src/player/mpv/mpv_player_vk.cpp:304-328`
+- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop/src/player/mpv/mpv_player_vk.cpp:304-328`
 
 **Step 1: Update stop() and seek() methods**
 
@@ -267,7 +267,7 @@ void MpvPlayerVk::seek(double seconds) {
 
 **Step 2: Verify build compiles**
 
-Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/build`
+Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop/build`
 Expected: Build succeeds
 
 **Step 3: Commit**
@@ -285,7 +285,7 @@ EOF
 ### Task 7: Convert Property Sets to Async
 
 **Files:**
-- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/src/player/mpv/mpv_player_vk.cpp:311-370`
+- Modify: `/home/ar/src/github/jellyfin-labs/jellyfin-desktop/src/player/mpv/mpv_player_vk.cpp:311-370`
 
 **Step 1: Update pause(), play(), and setters to use async**
 
@@ -354,7 +354,7 @@ void MpvPlayerVk::setSubtitleTrack(int sid) {
 
 **Step 2: Verify build compiles**
 
-Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/build`
+Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop/build`
 Expected: Build succeeds
 
 **Step 3: Commit**
@@ -377,7 +377,7 @@ EOF
 
 **Step 1: Build the app**
 
-Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop-cef/build`
+Run: `cmake --build /home/ar/src/github/jellyfin-labs/jellyfin-desktop/build`
 Expected: Build succeeds with no errors
 
 **Step 2: Manual Test - Invalid URL**

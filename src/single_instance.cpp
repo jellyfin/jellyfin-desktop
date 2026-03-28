@@ -26,7 +26,7 @@ std::thread g_listener_thread;
 #ifdef _WIN32
 
 HANDLE g_shutdown_event = NULL;
-constexpr const char* PIPE_NAME = "\\\\.\\pipe\\jellyfin-desktop-cef";
+constexpr const char* PIPE_NAME = "\\\\.\\pipe\\jellyfin-desktop";
 
 #else
 
@@ -39,14 +39,14 @@ std::string getSocketPath() {
     if (tmpdir && tmpdir[0]) {
         std::string dir(tmpdir);
         if (dir.back() != '/') dir += '/';
-        return dir + "jellyfin-desktop-cef.sock";
+        return dir + "jellyfin-desktop.sock";
     }
-    return "/tmp/jellyfin-desktop-cef.sock";
+    return "/tmp/jellyfin-desktop.sock";
 #else
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
     if (runtime_dir && runtime_dir[0])
-        return std::string(runtime_dir) + "/jellyfin-desktop-cef.sock";
-    return "/tmp/jellyfin-desktop-cef-" + std::to_string(getuid()) + ".sock";
+        return std::string(runtime_dir) + "/jellyfin-desktop.sock";
+    return "/tmp/jellyfin-desktop-" + std::to_string(getuid()) + ".sock";
 #endif
 }
 

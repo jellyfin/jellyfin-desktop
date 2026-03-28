@@ -117,4 +117,4 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: windows-${{ matrix.arch }}
-          path: build/jellyfin-desktop-cef-*.zip
+          path: build/jellyfin-desktop-*.zip

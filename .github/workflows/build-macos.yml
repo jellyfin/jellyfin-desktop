@@ -78,14 +78,14 @@ jobs:
       - name: Create DMG
         run: |
           brew install create-dmg
-          APP_NAME="Jellyfin Desktop CEF"
+          APP_NAME="Jellyfin Desktop"
           VERSION="${{ steps.version.outputs.version }}"
           ARCH="${{ matrix.arch }}"
-          DMG_NAME="JellyfinDesktopCEF-${VERSION}-macos-${ARCH}.dmg"
+          DMG_NAME="JellyfinDesktop-${VERSION}-macos-${ARCH}.dmg"
 
           # create-dmg returns non-zero if icon positioning fails (no icon), ignore that
           create-dmg \
-            --volname "Jellyfin Desktop CEF v${VERSION}" \
+            --volname "Jellyfin Desktop v${VERSION}" \
             --no-internet-enable \
             --window-size 500 300 \
             --icon-size 100 \
@@ -105,4 +105,4 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: macos-${{ matrix.arch }}
-          path: JellyfinDesktopCEF-*.dmg
+          path: JellyfinDesktop-*.dmg

@@ -3,9 +3,9 @@ set -eu
 
 cd "$(dirname "$0")"
 
-MANIFEST="org.jellyfin.JellyfinDesktopCEF.yml"
-APP_ID="org.jellyfin.JellyfinDesktopCEF"
-BUNDLE_NAME="jellyfin-desktop-cef.flatpak"
+MANIFEST="org.jellyfin.JellyfinDesktop.yml"
+APP_ID="org.jellyfin.JellyfinDesktop"
+BUNDLE_NAME="jellyfin-desktop.flatpak"
 RUNTIME_VERSION="25.08"
 
 # Check dependencies

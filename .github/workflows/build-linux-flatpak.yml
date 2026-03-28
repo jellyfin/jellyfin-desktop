@@ -35,15 +35,15 @@ jobs:
       - name: Build Flatpak
         working-directory: dev/flatpak
         run: |
-          flatpak-builder --user --repo=repo --force-clean build-dir org.jellyfin.JellyfinDesktopCEF.yml
+          flatpak-builder --user --repo=repo --force-clean build-dir org.jellyfin.JellyfinDesktop.yml
 
       - name: Create bundle
         working-directory: dev/flatpak
         run: |
-          flatpak build-bundle repo jellyfin-desktop-cef.flatpak org.jellyfin.JellyfinDesktopCEF
+          flatpak build-bundle repo jellyfin-desktop.flatpak org.jellyfin.JellyfinDesktop
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: linux-flatpak
-          path: dev/flatpak/jellyfin-desktop-cef.flatpak
+          path: dev/flatpak/jellyfin-desktop.flatpak
