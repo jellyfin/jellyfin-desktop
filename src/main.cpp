@@ -609,13 +609,24 @@ int main(int argc, char* argv[]) {
     int width = (saved_geom.width > 0) ? saved_geom.width : 1280;
     int height = (saved_geom.height > 0) ? saved_geom.height : 720;
 
-    Uint32 win_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    SDL_WindowFlags win_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #ifdef _WIN32
     // Start hidden so DWM attributes and DComp are set before the window is shown,
     // avoiding a flash of default titlebar color and black client area.
     // MAXIMIZED is deferred as pending_flags and applied on ShowWindow.
     win_flags |= SDL_WINDOW_HIDDEN;
     if (saved_geom.maximized) win_flags |= SDL_WINDOW_MAXIMIZED;
+#else
+    // Wayland: the mpv video subsurface sits below the main EGL surface.
+    // Without SDL_WINDOW_TRANSPARENT, SDL sets a full opaque region on the
+    // parent wl_surface, telling the compositor it can skip everything below.
+    // In fullscreen the compositor takes this literally (direct scanout),
+    // making the video layer invisible.
+    {
+        const char* driver = SDL_GetCurrentVideoDriver();
+        if (driver && strcmp(driver, "wayland") == 0)
+            win_flags |= SDL_WINDOW_TRANSPARENT;
+    }
 #endif
 
     SDL_Window* window = SDL_CreateWindow(
