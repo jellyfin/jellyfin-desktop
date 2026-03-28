@@ -17,6 +17,7 @@ A [Jellyfin](https://jellyfin.org) desktop client built on [CEF](https://bitbuck
 
 ### macOS
 - [Apple Silicon](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-macos/main/macos-arm64.zip)
+- [Intel](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-macos/main/macos-x86_64.zip)
 
 After installing, remove quarantine: 
 ```
