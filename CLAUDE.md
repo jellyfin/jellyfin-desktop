@@ -27,4 +27,4 @@ cmake --build build
 mpv is the authoritative source of playback state. All state (position, speed, pause, seeking, etc.) flows from mpv property observations outward to the JS UI and OS media sessions. The JS UI and MPRIS/macOS media sessions are consumers — they never determine playback state, they only reflect what mpv reports. This means things like rate changes, seek completion, and position updates come from mpv, not from JS round-trips or manual bookkeeping.
 
 ## Debugging
-- For mpv (third_party/mpv) and external Jellyfin repos (jellyfin-web, jellyfin-desktop): investigate source code directly before suggesting debug logs that require manual user action
+- For mpv (third_party/mpv) and jellyfin-web: investigate source code directly before suggesting debug logs that require manual user action

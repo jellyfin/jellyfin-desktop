@@ -1,5 +1,5 @@
 ---
-name: investigate-jellyfin-repos
+name: investigate-jellyfin-web
 description: Use when researching features in jellyfin-web (the Jellyfin server's web UI rendered in CEF) for reference during implementation
 ---
 
