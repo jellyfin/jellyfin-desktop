@@ -339,20 +339,8 @@
         getSupportedPlaybackRates() { return this._core.getSupportedPlaybackRates(); }
 
         canSetAudioStreamIndex() { return true; }
-        setPictureInPictureEnabled(enabled) {
-            if (window.jmpNative && window.jmpNative.togglePiP) {
-                const isActive = window.jmpNative.isPiPActive ? window.jmpNative.isPiPActive() : false;
-                if (enabled !== isActive) {
-                    window.jmpNative.togglePiP();
-                }
-            }
-        }
-        isPictureInPictureEnabled() {
-            if (window.jmpNative && window.jmpNative.isPiPActive) {
-                return window.jmpNative.isPiPActive();
-            }
-            return false;
-        }
+        setPictureInPictureEnabled() {}
+        isPictureInPictureEnabled() { return false; }
         isAirPlayEnabled() { return false; }
         setAirPlayEnabled() {}
         setBrightness() {}

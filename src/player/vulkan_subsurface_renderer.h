@@ -25,6 +25,7 @@ public:
     bool isHdr() const override;
 #ifdef __APPLE__
     void* getVideoView() override;
+    void restoreVideoView() override;
 #endif
 private:
     MpvPlayer* player_;

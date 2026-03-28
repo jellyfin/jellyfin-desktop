@@ -1,7 +1,6 @@
 #ifdef __APPLE__
 
 #import "macos_layer.h"
-#include "logging.h"
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Metal/Metal.h>
@@ -455,6 +454,21 @@ void MacOSVideoLayer::setPosition(int x, int y) {
         frame.origin.x = x;
         frame.origin.y = y;
         [video_view_ setFrame:frame];
+    }
+}
+
+void* MacOSVideoLayer::getVideoView() {
+    return (__bridge void*)video_view_;
+}
+
+void MacOSVideoLayer::restoreVideoView() {
+    if (!video_view_ || video_view_.superview) return;
+
+    SDL_PropertiesID props = SDL_GetWindowProperties(window_);
+    NSWindow* ns_window = (__bridge NSWindow*)SDL_GetPointerProperty(
+        props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+    if (ns_window) {
+        [ns_window.contentView addSubview:video_view_ positioned:NSWindowBelow relativeTo:nil];
     }
 }
 

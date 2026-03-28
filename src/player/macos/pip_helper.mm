@@ -172,12 +172,6 @@ bool MacOSPiPHelper::isActive() const {
     return impl_->active;
 }
 
-void MacOSPiPHelper::setAspectRatio(int videoW, int videoH) {
-    if (impl_->pipController && videoW > 0 && videoH > 0) {
-        impl_->pipController.aspectRatio = NSMakeSize(videoW, videoH);
-    }
-}
-
 void MacOSPiPHelper::setPlaying(bool playing) {
     if (impl_->pipController) {
         impl_->pipController.playing = playing;

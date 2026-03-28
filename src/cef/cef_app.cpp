@@ -155,7 +155,6 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("setOsdVisible", CefV8Value::CreateFunction("setOsdVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("togglePiP", CefV8Value::CreateFunction("togglePiP", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("isPiPSupported", CefV8Value::CreateFunction("isPiPSupported", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("isPiPActive", CefV8Value::CreateFunction("isPiPActive", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject the JavaScript shim that creates window.api, window.NativeShell, etc.
@@ -544,14 +543,6 @@ bool NativeV8Handler::Execute(const CefString& name,
 #else
         retval = CefV8Value::CreateBool(false);
 #endif
-        return true;
-    }
-
-    if (name == "isPiPActive") {
-        // PiP active state is managed on the browser process side.
-        // For simplicity, return false here — the JS side uses togglePiP()
-        // and the PiP button toggles state. The web UI handles this.
-        retval = CefV8Value::CreateBool(false);
         return true;
     }
 

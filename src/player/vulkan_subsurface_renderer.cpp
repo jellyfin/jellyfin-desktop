@@ -102,4 +102,8 @@ bool VulkanSubsurfaceRenderer::isHdr() const {
 void* VulkanSubsurfaceRenderer::getVideoView() {
     return surface_->getVideoView();
 }
+
+void VulkanSubsurfaceRenderer::restoreVideoView() {
+    surface_->restoreVideoView();
+}
 #endif

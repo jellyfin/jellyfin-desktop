@@ -23,9 +23,6 @@ public:
 
     bool isActive() const;
 
-    // Update aspect ratio when video dimensions change
-    void setAspectRatio(int videoW, int videoH);
-
     // Update playback state so PiP buttons reflect correctly
     void setPlaying(bool playing);
 

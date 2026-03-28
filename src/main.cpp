@@ -1040,6 +1040,7 @@ int main(int argc, char* argv[]) {
         pending_cmds.push_back({"media_rate", "", 0, rate});
     };
 
+#ifdef __APPLE__
     // PiP callbacks — route through the command queue
     if (pipHelper) {
         pipHelper->setPlayPauseCallback([&cmd_mutex, &pending_cmds, &wakeMainLoop](bool playing) {
@@ -1053,6 +1054,7 @@ int main(int argc, char* argv[]) {
             wakeMainLoop();
         });
     }
+#endif
 
     // Overlay browser state
     enum class OverlayState { SHOWING, WAITING, FADING, HIDDEN };
@@ -1626,18 +1628,24 @@ int main(int argc, char* argv[]) {
                 }
                 client->emitPlaying();
                 mediaSessionThread.setPlaybackState(PlaybackState::Playing);
+#ifdef __APPLE__
                 if (pipHelper) pipHelper->setPlaying(true);
+#endif
                 break;
             case MpvEvent::Type::Paused:
                 if (mpv->isPlaying()) {
                     if (ev.flag) {
                         client->emitPaused();
                         mediaSessionThread.setPlaybackState(PlaybackState::Paused);
+#ifdef __APPLE__
                         if (pipHelper) pipHelper->setPlaying(false);
+#endif
                     } else {
                         client->emitPlaying();
                         mediaSessionThread.setPlaybackState(PlaybackState::Playing);
+#ifdef __APPLE__
                         if (pipHelper) pipHelper->setPlaying(true);
+#endif
                     }
                 }
                 break;
@@ -2022,11 +2030,10 @@ int main(int argc, char* argv[]) {
                     has_video = false;
                     setVideoTitlebar(false);
                     video_ready = false;
-                    // Stop PiP when video stops
+#ifdef __APPLE__
                     if (pipHelper && pipHelper->isActive()) {
                         pipHelper->stop();
                     }
-#ifdef __APPLE__
                     videoRenderer.setVisible(false);
 #else
                     videoController.setActive(false);
@@ -2129,9 +2136,8 @@ int main(int argc, char* argv[]) {
                         LOG_INFO(LOG_MAIN, "PiP toggled, active=%d", pipHelper->isActive());
                     }
                 } else if (cmd.cmd == "pipClosed") {
-                    // PiP closed — video view was reparented back, re-add to main window
                     LOG_INFO(LOG_MAIN, "PiP closed, restoring video view");
-                    // The video view auto-restores since PIPViewController releases it
+                    videoRenderer.restoreVideoView();
 #endif
                 }
             }
