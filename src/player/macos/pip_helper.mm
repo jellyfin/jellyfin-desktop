@@ -130,13 +130,12 @@ void MacOSPiPHelper::start(void* videoView, int videoW, int videoH) {
         auto restoreCb = impl_->restoreCb;
         auto implPtr = impl_;
         impl_->delegate.restoreBlock = ^{
-            // PiP was closed by the system (user clicked return/close button).
-            // Clean up our state — don't call dismiss since PiP already closed.
+            // Clean up our state after PiP closes (system or programmatic dismiss).
             implPtr->pipController = nil;
             implPtr->videoVC = nil;
             implPtr->delegate = nil;
             implPtr->active = false;
-            LOG_INFO(LOG_PLATFORM, "PiP: closed by system");
+            LOG_INFO(LOG_PLATFORM, "PiP: closed");
             restoreCb();
         };
     }
