@@ -2130,7 +2130,6 @@ int main(int argc, char* argv[]) {
                     setMacTrafficLightsVisible(cmd.intArg != 0);
                 } else if (cmd.cmd == "togglePiP") {
                     if (pipHelper && has_video) {
-                        // Pass the video view and current window size as aspect ratio
                         pipHelper->toggle(videoRenderer.getVideoView(),
                             current_width, current_height);
                         LOG_INFO(LOG_MAIN, "PiP toggled, active=%d", pipHelper->isActive());

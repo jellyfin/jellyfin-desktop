@@ -128,7 +128,17 @@ void MacOSPiPHelper::start(void* videoView, int videoW, int videoH) {
     }
     if (impl_->restoreCb) {
         auto restoreCb = impl_->restoreCb;
-        impl_->delegate.restoreBlock = ^{ restoreCb(); };
+        auto implPtr = impl_;
+        impl_->delegate.restoreBlock = ^{
+            // PiP was closed by the system (user clicked return/close button).
+            // Clean up our state — don't call dismiss since PiP already closed.
+            implPtr->pipController = nil;
+            implPtr->videoVC = nil;
+            implPtr->delegate = nil;
+            implPtr->active = false;
+            LOG_INFO(LOG_PLATFORM, "PiP: closed by system");
+            restoreCb();
+        };
     }
 
     impl_->pipController.delegate = impl_->delegate;
@@ -150,14 +160,13 @@ void MacOSPiPHelper::start(void* videoView, int videoW, int videoH) {
 
 void MacOSPiPHelper::stop() {
     if (!impl_->active) return;
+    impl_->active = false;
     if (impl_->pipController && impl_->videoVC) {
         [impl_->pipController dismissViewController:impl_->videoVC];
     }
-    impl_->pipController = nil;
-    impl_->videoVC = nil;
-    impl_->delegate = nil;
-    impl_->active = false;
-    LOG_INFO(LOG_PLATFORM, "PiP: stopped");
+    // Don't nil the delegate — pipDidClose will fire asynchronously
+    // and the restoreBlock will handle cleanup + restore callback.
+    LOG_INFO(LOG_PLATFORM, "PiP: stop requested");
 }
 
 void MacOSPiPHelper::toggle(void* videoView, int videoW, int videoH) {
