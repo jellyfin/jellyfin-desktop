@@ -13,8 +13,6 @@
       "Bash(cmake --build build*)",
       "Edit(src/**)",
       "Write(src/**)",
-      "Edit(docs/**)",
-      "Write(docs/**)",
       "Edit(resources/**)",
       "Write(resources/**)",
       "Edit(dev/**)",
