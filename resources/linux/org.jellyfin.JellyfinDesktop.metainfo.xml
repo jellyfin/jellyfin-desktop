@@ -14,7 +14,7 @@
   <launchable type="desktop-id">org.jellyfin.JellyfinDesktop.desktop</launchable>
   <icon type="stock">org.jellyfin.JellyfinDesktop</icon>
   <url type="homepage">https://jellyfin.org</url>
-  <url type="bugtracker">https://github.com/jellyfin-labs/jellyfin-desktop/issues</url>
+  <url type="bugtracker">https://github.com/jellyfin/jellyfin-desktop/issues</url>
   <url type="help">https://jellyfin.org/docs/</url>
   <developer id="org.jellyfin">
     <name>Jellyfin Contributors</name>

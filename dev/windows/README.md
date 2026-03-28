@@ -15,7 +15,7 @@ Install the following:
 
 ```powershell
 # Clone and setup
-git clone https://github.com/jellyfin-labs/jellyfin-desktop
+git clone https://github.com/jellyfin/jellyfin-desktop
 cd jellyfin-desktop
 
 # Run setup (downloads CEF, SDL3, mpv)

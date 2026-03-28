@@ -3,7 +3,7 @@
 ## Quick Start (Linux/macOS)
 
 ```sh
-git clone https://github.com/jellyfin-labs/jellyfin-desktop
+git clone https://github.com/jellyfin/jellyfin-desktop
 cd jellyfin-desktop
 git submodule update --init --recursive
 python3 dev/download_cef.py
@@ -17,7 +17,7 @@ cmake --build build
 See [dev/windows/README.md](windows/README.md) for detailed instructions.
 
 ```powershell
-git clone https://github.com/jellyfin-labs/jellyfin-desktop
+git clone https://github.com/jellyfin/jellyfin-desktop
 cd jellyfin-desktop
 .\dev\windows\setup.ps1
 .\dev\windows\build.ps1
