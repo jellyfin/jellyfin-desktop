@@ -59,10 +59,12 @@ public:
     void setColorspace() {}  // macOS EDR is automatic
     void setDestinationSize(int, int) {}  // no-op on macOS
 
-    // For mpv render context
+    // Get the video NSView for PiP (reparented into PiP window)
 #ifdef __OBJC__
+    void* getVideoView() { return (__bridge void*)video_view_; }
     void* getMetalLayer() { return (__bridge void*)metal_layer_; }
 #else
+    void* getVideoView() { return video_view_; }
     void* getMetalLayer() { return metal_layer_; }
 #endif
 
@@ -103,6 +105,7 @@ private:
     VkPhysicalDeviceHostQueryResetFeatures host_query_reset_features_{};
     const char* const* device_extensions_ = nullptr;
     int device_extension_count_ = 0;
+
 };
 
 #endif // __APPLE__

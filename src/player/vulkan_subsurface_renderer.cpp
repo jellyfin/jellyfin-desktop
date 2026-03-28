@@ -97,3 +97,9 @@ float VulkanSubsurfaceRenderer::getClearAlpha(bool video_ready) const {
 bool VulkanSubsurfaceRenderer::isHdr() const {
     return surface_->isHdr();
 }
+
+#ifdef __APPLE__
+void* VulkanSubsurfaceRenderer::getVideoView() {
+    return surface_->getVideoView();
+}
+#endif

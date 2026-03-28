@@ -78,6 +78,7 @@ if(APPLE)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
     find_library(IOSURFACE_FRAMEWORK IOSurface REQUIRED)
     find_library(MEDIAPLAYER_FRAMEWORK MediaPlayer REQUIRED)
+    find_library(PIP_FRAMEWORK PIP PATHS /System/Library/PrivateFrameworks REQUIRED)
 
     set(PLATFORM_SOURCES
         src/platform/macos_layer.mm
@@ -85,6 +86,7 @@ if(APPLE)
         src/compositor/metal_compositor.mm
         src/player/media_session.cpp
         src/player/macos/media_session_macos.mm
+        src/player/macos/pip_helper.mm
         src/player/mpv/mpv_player.cpp
         src/player/vulkan_subsurface_renderer.cpp
     )
@@ -99,6 +101,7 @@ if(APPLE)
         ${QUARTZCORE_FRAMEWORK}
         ${IOSURFACE_FRAMEWORK}
         ${MEDIAPLAYER_FRAMEWORK}
+        ${PIP_FRAMEWORK}
         letsmove
     )
 elseif(WIN32)
@@ -445,6 +448,7 @@ if(APPLE)
         src/platform/macos_app.mm
         src/compositor/metal_compositor.mm
         src/player/macos/media_session_macos.mm
+        src/player/macos/pip_helper.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
 endif()

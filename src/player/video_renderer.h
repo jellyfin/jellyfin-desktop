@@ -23,4 +23,7 @@ public:
 
     // HDR query
     virtual bool isHdr() const = 0;
+
+    // PiP: get the native video view (NSView* on macOS, nullptr otherwise)
+    virtual void* getVideoView() { return nullptr; }
 };

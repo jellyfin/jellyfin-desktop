@@ -38,6 +38,7 @@ void setMacTrafficLightsVisible(bool visible);
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include "player/macos/media_session_macos.h"
+#include "player/macos/pip_helper.h"
 #include "PFMoveApplication.h"
 #elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -680,6 +681,15 @@ int main(int argc, char* argv[]) {
     bool video_needs_rerender = false;
     double current_playback_rate = 1.0;
 
+    // Picture-in-Picture helper
+    std::unique_ptr<MacOSPiPHelper> pipHelper;
+    if (MacOSPiPHelper::isSupported()) {
+        pipHelper = std::make_unique<MacOSPiPHelper>();
+        LOG_INFO(LOG_PLATFORM, "PiP: supported on this system");
+    } else {
+        LOG_INFO(LOG_PLATFORM, "PiP: not supported on this system");
+    }
+
     // HiDPI setup for CEF overlays
     float initial_scale = SDL_GetWindowDisplayScale(window);
     int physical_width = static_cast<int>(width * initial_scale);
@@ -1029,6 +1039,20 @@ int main(int argc, char* argv[]) {
         std::lock_guard<std::mutex> lock(cmd_mutex);
         pending_cmds.push_back({"media_rate", "", 0, rate});
     };
+
+    // PiP callbacks — route through the command queue
+    if (pipHelper) {
+        pipHelper->setPlayPauseCallback([&cmd_mutex, &pending_cmds, &wakeMainLoop](bool playing) {
+            std::lock_guard<std::mutex> lock(cmd_mutex);
+            pending_cmds.push_back({playing ? "play" : "pause", "", 0, 0.0});
+            wakeMainLoop();
+        });
+        pipHelper->setRestoreCallback([&cmd_mutex, &pending_cmds, &wakeMainLoop]() {
+            std::lock_guard<std::mutex> lock(cmd_mutex);
+            pending_cmds.push_back({"pipClosed", "", 0, 0.0});
+            wakeMainLoop();
+        });
+    }
 
     // Overlay browser state
     enum class OverlayState { SHOWING, WAITING, FADING, HIDDEN };
@@ -1602,15 +1626,18 @@ int main(int argc, char* argv[]) {
                 }
                 client->emitPlaying();
                 mediaSessionThread.setPlaybackState(PlaybackState::Playing);
+                if (pipHelper) pipHelper->setPlaying(true);
                 break;
             case MpvEvent::Type::Paused:
                 if (mpv->isPlaying()) {
                     if (ev.flag) {
                         client->emitPaused();
                         mediaSessionThread.setPlaybackState(PlaybackState::Paused);
+                        if (pipHelper) pipHelper->setPlaying(false);
                     } else {
                         client->emitPlaying();
                         mediaSessionThread.setPlaybackState(PlaybackState::Playing);
+                        if (pipHelper) pipHelper->setPlaying(true);
                     }
                 }
                 break;
@@ -1995,6 +2022,10 @@ int main(int argc, char* argv[]) {
                     has_video = false;
                     setVideoTitlebar(false);
                     video_ready = false;
+                    // Stop PiP when video stops
+                    if (pipHelper && pipHelper->isActive()) {
+                        pipHelper->stop();
+                    }
 #ifdef __APPLE__
                     videoRenderer.setVisible(false);
 #else
@@ -2090,6 +2121,17 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
                 } else if (cmd.cmd == "osd_visible" && transparent_titlebar) {
                     setMacTrafficLightsVisible(cmd.intArg != 0);
+                } else if (cmd.cmd == "togglePiP") {
+                    if (pipHelper && has_video) {
+                        // Pass the video view and current window size as aspect ratio
+                        pipHelper->toggle(videoRenderer.getVideoView(),
+                            current_width, current_height);
+                        LOG_INFO(LOG_MAIN, "PiP toggled, active=%d", pipHelper->isActive());
+                    }
+                } else if (cmd.cmd == "pipClosed") {
+                    // PiP closed — video view was reparented back, re-add to main window
+                    LOG_INFO(LOG_MAIN, "PiP closed, restoring video view");
+                    // The video view auto-restores since PIPViewController releases it
 #endif
                 }
             }
