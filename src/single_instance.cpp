@@ -75,7 +75,7 @@ bool trySignalExisting() {
     return true;
 }
 
-void listenerThread(std::function<void(const std::string&)> onRaise) {
+void listenerThread(const std::function<void(const std::string&)>& onRaise) {
     while (g_listener_running) {
         HANDLE pipe = CreateNamedPipeA(
             PIPE_NAME,
@@ -119,13 +119,13 @@ void listenerThread(std::function<void(const std::string&)> onRaise) {
     }
 }
 
-void startListener(std::function<void(const std::string&)> onRaise) {
+void startListener(const std::function<void(const std::string&)>& onRaise) {
     g_shutdown_event = CreateEvent(NULL, TRUE, FALSE, NULL);
     if (!g_shutdown_event)
         return;
 
     g_listener_running = true;
-    g_listener_thread = std::thread(listenerThread, std::move(onRaise));
+    g_listener_thread = std::thread(listenerThread, onRaise);
 }
 
 void stopListener() {
@@ -170,8 +170,9 @@ bool trySignalExisting() {
     std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
 
     if (connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        int saved_errno = errno;
         close(fd);
-        if (errno == ECONNREFUSED || errno == ENOENT) {
+        if (saved_errno == ECONNREFUSED || saved_errno == ENOENT) {
             // Stale socket — remove it so we can bind
             unlink(path.c_str());
         }
@@ -196,7 +197,7 @@ bool trySignalExisting() {
     return true;
 }
 
-void listenerThread(std::function<void(const std::string&)> onRaise) {
+void listenerThread(const std::function<void(const std::string&)>& onRaise) {
     struct pollfd pfds[2] = {
         {g_listen_fd, POLLIN, 0},
         {g_wake_pipe[0], POLLIN, 0}
@@ -241,7 +242,7 @@ void listenerThread(std::function<void(const std::string&)> onRaise) {
     }
 }
 
-void startListener(std::function<void(const std::string&)> onRaise) {
+void startListener(const std::function<void(const std::string&)>& onRaise) {
     std::string path = getSocketPath();
     if (path.size() >= sizeof(sockaddr_un::sun_path)) {
         LOG_ERROR(LOG_MAIN, "Socket path too long (%zu bytes): %s", path.size(), path.c_str());
@@ -278,7 +279,7 @@ void startListener(std::function<void(const std::string&)> onRaise) {
     }
 
     g_listener_running = true;
-    g_listener_thread = std::thread(listenerThread, std::move(onRaise));
+    g_listener_thread = std::thread(listenerThread, onRaise);
 }
 
 void stopListener() {

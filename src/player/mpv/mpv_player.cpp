@@ -173,7 +173,7 @@ void MpvPlayer::handleMpvEvent(mpv_event* event) {
     }
 }
 
-bool MpvPlayer::init(const char* hwdec, PreInitHook preInitHook) {
+bool MpvPlayer::init(const char* hwdec, const PreInitHook& preInitHook) {
     std::setlocale(LC_NUMERIC, "C");
 
     mpv_ = mpv_create();

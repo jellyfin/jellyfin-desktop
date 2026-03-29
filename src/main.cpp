@@ -118,16 +118,16 @@ SDL_SystemCursor cefCursorToSDL(cef_cursor_type_t type) {
         case CT_ROWRESIZE: return SDL_SYSTEM_CURSOR_NS_RESIZE;
         case CT_MOVE: return SDL_SYSTEM_CURSOR_MOVE;
         case CT_PROGRESS: return SDL_SYSTEM_CURSOR_PROGRESS;
-        case CT_NODROP: return SDL_SYSTEM_CURSOR_NOT_ALLOWED;
+        case CT_NODROP:
         case CT_NOTALLOWED: return SDL_SYSTEM_CURSOR_NOT_ALLOWED;
-        case CT_GRAB: return SDL_SYSTEM_CURSOR_POINTER;
+        case CT_GRAB:
         case CT_GRABBING: return SDL_SYSTEM_CURSOR_POINTER;
         default: return SDL_SYSTEM_CURSOR_DEFAULT;
     }
 }
 
-static auto _main_start = std::chrono::steady_clock::now();
-inline long _ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - _main_start).count(); }
+static auto main_start = std::chrono::steady_clock::now();
+inline long ms_since_start() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - main_start).count(); }
 
 // Simple JSON string value extractor (handles escaped quotes)
 std::string jsonGetString(const std::string& json, const std::string& key) {
@@ -678,7 +678,6 @@ int main(int argc, char* argv[]) {
     VideoRenderer& videoRenderer = *videoStack.renderer;
     bool has_video = false;
     bool video_needs_rerender = false;
-    double current_playback_rate = 1.0;
 
     // HiDPI setup for CEF overlays
     float initial_scale = SDL_GetWindowDisplayScale(window);
@@ -711,7 +710,6 @@ int main(int argc, char* argv[]) {
     VideoRenderer& videoRenderer = *videoStack.renderer;
     bool has_video = false;
     bool video_needs_rerender = false;
-    double current_playback_rate = 1.0;
     OpenGLFrameContext frameContext(&wgl);
 
     // Render an initial #101010 frame so the WGL surface matches the window background
@@ -823,7 +821,6 @@ int main(int argc, char* argv[]) {
     VideoRenderer& videoRenderer = *videoStack.renderer;
     bool has_video = false;
     bool video_needs_rerender = false;
-    double current_playback_rate = 1.0;
 
     // Frame context (same for both Wayland and X11 - both use EGL)
     OpenGLFrameContext frameContext(&egl);
@@ -870,11 +867,11 @@ int main(int argc, char* argv[]) {
     CefString(&settings.resources_dir_path).FromString(exe_path.string());
     CefString(&settings.locales_dir_path).FromString((exe_path / "locales").string());
 #else
-    std::filesystem::path exe_path = std::filesystem::canonical("/proc/self/exe").parent_path();
 #ifdef CEF_RESOURCES_DIR
     CefString(&settings.resources_dir_path).FromString(CEF_RESOURCES_DIR);
     CefString(&settings.locales_dir_path).FromString(CEF_RESOURCES_DIR "/locales");
 #else
+    std::filesystem::path exe_path = std::filesystem::canonical("/proc/self/exe").parent_path();
     CefString(&settings.resources_dir_path).FromString(exe_path.string());
     CefString(&settings.locales_dir_path).FromString((exe_path / "locales").string());
 #endif
@@ -1084,7 +1081,7 @@ int main(int argc, char* argv[]) {
     // Blank cursor for hiding (1x1 transparent) - used when CEF reports CT_NONE
     SDL_Cursor* blank_cursor = nullptr;
     if (SDL_Surface* s = SDL_CreateSurface(1, 1, SDL_PIXELFORMAT_ARGB8888)) {
-        SDL_memset(s->pixels, 0, s->pitch * s->h);
+        SDL_memset(s->pixels, 0, static_cast<size_t>(s->pitch) * s->h);
         blank_cursor = SDL_CreateColorCursor(s, 0, 0);
         SDL_DestroySurface(s);
     }
@@ -1424,7 +1421,6 @@ int main(int argc, char* argv[]) {
     int current_width = width;
     int current_height = height;
     float current_scale = SDL_GetWindowDisplayScale(window);
-    bool video_ready = false;  // Latches true once first frame renders
 #ifdef __APPLE__
     bool window_activated = false;  // Activate window on first expose event
 #endif
@@ -1584,7 +1580,6 @@ int main(int argc, char* argv[]) {
                 client->updateDuration(ev.value);
                 break;
             case MpvEvent::Type::Speed:
-                current_playback_rate = ev.value;
                 mediaSessionThread.setRate(ev.value);
                 break;
             case MpvEvent::Type::Playing:
@@ -1618,7 +1613,7 @@ int main(int argc, char* argv[]) {
                 LOG_INFO(LOG_MAIN, "Track finished naturally (EOF)");
                 has_video = false;
                 setVideoTitlebar(false);
-                video_ready = false;
+
 #ifdef __APPLE__
                 videoRenderer.setVisible(false);
 #else
@@ -1632,7 +1627,7 @@ int main(int argc, char* argv[]) {
                 LOG_DEBUG(LOG_MAIN, "Track canceled (user stop)");
                 has_video = false;
                 setVideoTitlebar(false);
-                video_ready = false;
+
 #ifdef __APPLE__
                 videoRenderer.setVisible(false);
 #else
@@ -1674,7 +1669,7 @@ int main(int argc, char* argv[]) {
                 LOG_ERROR(LOG_MAIN, "Playback error: %s", ev.error.c_str());
                 has_video = false;
                 setVideoTitlebar(false);
-                video_ready = false;
+
 #ifdef __APPLE__
                 videoRenderer.setVisible(false);
 #else
@@ -1994,7 +1989,7 @@ int main(int argc, char* argv[]) {
                     mpv->stop();
                     has_video = false;
                     setVideoTitlebar(false);
-                    video_ready = false;
+    
 #ifdef __APPLE__
                     videoRenderer.setVisible(false);
 #else
@@ -2061,11 +2056,8 @@ int main(int argc, char* argv[]) {
                     bool canPrev = (cmd.intArg & 2) != 0;
                     mediaSessionThread.setCanGoNext(canNext);
                     mediaSessionThread.setCanGoPrevious(canPrev);
-                } else if (cmd.cmd == "media_notify_rate") {
-                    // Ignored — mpv's speed property observation is authoritative
-                    (void)cmd.intArg;
-                } else if (cmd.cmd == "media_seeked") {
-                    // Ignored — mpv's seeking property observation handles this
+                } else if (cmd.cmd == "media_notify_rate" || cmd.cmd == "media_seeked") {
+                    // Ignored — mpv property observations are authoritative for both
                     (void)cmd.intArg;
                 } else if (cmd.cmd == "media_action") {
                     // Route media session control commands to JS playbackManager
@@ -2147,7 +2139,7 @@ int main(int argc, char* argv[]) {
             float progress = elapsed / OVERLAY_FADE_DURATION_SEC;
             if (progress >= 1.0f) {
                 overlay_browser_alpha = 0.0f;
-                browsers.setAlpha("overlay", 0.0f);
+                browsers.setAlpha("overlay", overlay_browser_alpha);
                 overlay_state = OverlayState::HIDDEN;
                 // Hide compositor layer and close browser
 #ifdef _WIN32
@@ -2193,7 +2185,6 @@ int main(int argc, char* argv[]) {
                 static int frame_log_count = 0;
                 if (hasFrame) {
                     if (videoRenderer.render(current_width, current_height)) {
-                        video_ready = true;
                         if (frame_log_count++ < 5) {
                             LOG_INFO(LOG_MAIN, "Video frame rendered (count=%d)", frame_log_count);
                         }

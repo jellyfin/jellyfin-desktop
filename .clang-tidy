@@ -1,0 +1,39 @@
+---
+# Bug-finding and safety checks. Conservative enough to avoid noise from
+# CEF's C-style APIs and reference-counting macros.
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  misc-misplaced-const,
+  misc-non-copyable-objects,
+  misc-redundant-expression,
+  misc-static-assert,
+  misc-unconventional-assign-operator,
+  misc-uniqueptr-reset-release,
+  misc-unused-using-decls,
+  performance-*,
+  readability-container-size-empty,
+  readability-delete-null-pointer,
+  readability-misleading-indentation,
+  readability-redundant-smartptr-get,
+  readability-string-compare,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-invalid-enum-default-initialization,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-unchecked-string-to-number-conversion,
+  -performance-enum-size,
+  -performance-no-int-to-ptr,
+
+WarningsAsErrors: ''
+
+HeaderFilterRegex: 'src/(?!cjson/|ui/stb_).*\.h$'
+
+CheckOptions:
+  - key: bugprone-argument-comment.StrictMode
+    value: false
+  - key: bugprone-assert-side-effect.AssertMacros
+    value: 'DCHECK'
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: 'CefRefPtr;CefString'

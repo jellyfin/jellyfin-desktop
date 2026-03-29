@@ -10,7 +10,7 @@ bool trySignalExisting();
 // Start listening for signals from future instances.
 // onRaise is called from the listener thread when a "raise" message arrives.
 // The string parameter carries the Wayland activation token (empty if unavailable).
-void startListener(std::function<void(const std::string&)> onRaise);
+void startListener(const std::function<void(const std::string&)>& onRaise);
 
 // Stop the listener and clean up the socket/pipe.
 void stopListener();

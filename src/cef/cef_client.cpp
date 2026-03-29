@@ -482,7 +482,7 @@ void Client::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
     if (!on_paint_) return;
 
     if (type == PET_POPUP) {
-        size_t size = width * height * 4;
+        size_t size = static_cast<size_t>(width) * height * 4;
         popup_buffer_.resize(size);
         memcpy(popup_buffer_.data(), buffer, size);
         popup_pixel_width_ = width;
@@ -502,7 +502,7 @@ void Client::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
     }
 
     // Slow path: blend popup onto view (only when dropdown is visible)
-    size_t size = width * height * 4;
+    size_t size = static_cast<size_t>(width) * height * 4;
     composite_buffer_.resize(size);
     memcpy(composite_buffer_.data(), buffer, size);
 

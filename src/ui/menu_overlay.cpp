@@ -169,7 +169,7 @@ void MenuOverlay::render() {
     tex_width_ = (std::max)(MIN_WIDTH, max_text_width + PADDING_X * 2);
     tex_height_ = static_cast<int>(items_.size()) * ITEM_HEIGHT;
 
-    pixels_.resize(tex_width_ * tex_height_ * 4);
+    pixels_.resize(static_cast<size_t>(tex_width_) * tex_height_ * 4);
 
     // Background color (dark gray)
     uint8_t bg_r = 45, bg_g = 45, bg_b = 48, bg_a = 240;
@@ -217,7 +217,7 @@ void MenuOverlay::render() {
             int glyph_w = x1 - x0;
             int glyph_h = y1 - y0;
             if (glyph_w > 0 && glyph_h > 0) {
-                std::vector<uint8_t> glyph(glyph_w * glyph_h);
+                std::vector<uint8_t> glyph(static_cast<size_t>(glyph_w) * glyph_h);
                 stbtt_MakeCodepointBitmap(info, glyph.data(), glyph_w, glyph_h, glyph_w,
                                           font_scale_, font_scale_, c);
 

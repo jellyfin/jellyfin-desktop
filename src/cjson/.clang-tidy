@@ -1,0 +1,3 @@
+---
+# Disable all checks for vendored cJSON library.
+Checks: '-*'

@@ -55,7 +55,7 @@ void main() {
 OpenGLRenderer::OpenGLRenderer(MpvPlayer* player) : player_(player) {}
 
 OpenGLRenderer::~OpenGLRenderer() {
-    cleanup();
+    OpenGLRenderer::cleanup();
 }
 
 #ifdef _WIN32

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <functional>
+#include <utility>
 #include <vector>
 #include <atomic>
 
@@ -31,7 +32,7 @@ public:
 
     // Initialize mpv. preInitHook is called after mpv_create but before mpv_initialize
     // (use it to set HDR options, hwdec-codecs, etc.)
-    bool init(const char* hwdec = "auto-safe", PreInitHook preInitHook = nullptr);
+    bool init(const char* hwdec = "auto-safe", const PreInitHook& preInitHook = nullptr);
 
     // Create render context from caller-built params (Vulkan or OpenGL).
     // Caller builds the mpv_render_param array; this wraps mpv_render_context_create
@@ -71,21 +72,21 @@ public:
     void processEvents();
 
     // Callback setters
-    void setRedrawCallback(RedrawCallback cb) { redraw_callback_ = cb; }
-    void setPositionCallback(PositionCallback cb) { on_position_ = cb; }
-    void setDurationCallback(DurationCallback cb) { on_duration_ = cb; }
-    void setStateCallback(StateCallback cb) { on_state_ = cb; }
-    void setPlayingCallback(PlaybackCallback cb) { on_playing_ = cb; }
-    void setFinishedCallback(PlaybackCallback cb) { on_finished_ = cb; }
-    void setCanceledCallback(PlaybackCallback cb) { on_canceled_ = cb; }
-    void setSpeedCallback(SpeedCallback cb) { on_speed_ = cb; }
-    void setSeekingCallback(SeekCallback cb) { on_seeking_ = cb; }
-    void setSeekedCallback(SeekCallback cb) { on_seeked_ = cb; }
-    void setBufferingCallback(BufferingCallback cb) { on_buffering_ = cb; }
-    void setCoreIdleCallback(CoreIdleCallback cb) { on_core_idle_ = cb; }
-    void setBufferedRangesCallback(BufferedRangesCallback cb) { on_buffered_ranges_ = cb; }
-    void setErrorCallback(ErrorCallback cb) { on_error_ = cb; }
-    void setWakeupCallback(WakeupCallback cb) { on_wakeup_ = cb; }
+    void setRedrawCallback(RedrawCallback cb) { redraw_callback_ = std::move(cb); }
+    void setPositionCallback(PositionCallback cb) { on_position_ = std::move(cb); }
+    void setDurationCallback(DurationCallback cb) { on_duration_ = std::move(cb); }
+    void setStateCallback(StateCallback cb) { on_state_ = std::move(cb); }
+    void setPlayingCallback(PlaybackCallback cb) { on_playing_ = std::move(cb); }
+    void setFinishedCallback(PlaybackCallback cb) { on_finished_ = std::move(cb); }
+    void setCanceledCallback(PlaybackCallback cb) { on_canceled_ = std::move(cb); }
+    void setSpeedCallback(SpeedCallback cb) { on_speed_ = std::move(cb); }
+    void setSeekingCallback(SeekCallback cb) { on_seeking_ = std::move(cb); }
+    void setSeekedCallback(SeekCallback cb) { on_seeked_ = std::move(cb); }
+    void setBufferingCallback(BufferingCallback cb) { on_buffering_ = std::move(cb); }
+    void setCoreIdleCallback(CoreIdleCallback cb) { on_core_idle_ = std::move(cb); }
+    void setBufferedRangesCallback(BufferedRangesCallback cb) { on_buffered_ranges_ = std::move(cb); }
+    void setErrorCallback(ErrorCallback cb) { on_error_ = std::move(cb); }
+    void setWakeupCallback(WakeupCallback cb) { on_wakeup_ = std::move(cb); }
 
 private:
     static void onMpvRedraw(void* ctx);

@@ -46,6 +46,7 @@ public:
                     }
                     case SDL_BUTTON_X1: receiver_->goBack(); break;
                     case SDL_BUTTON_X2: receiver_->goForward(); break;
+                    default: break;
                 }
                 return true;
             }
@@ -62,6 +63,7 @@ public:
                         receiver_->sendMouseClick(x, y, false, btn, click_count_, mods);
                         break;
                     }
+                    default: break;
                 }
                 return true;
             }
@@ -113,6 +115,7 @@ public:
                             else receiver_->undo();
                             return true;
                         case SDLK_Y: receiver_->redo(); return true;
+                        default: break;
                     }
                 }
 

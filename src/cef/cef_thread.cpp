@@ -44,7 +44,7 @@ void CefThread::shutdown() {
     }
 }
 
-void CefThread::threadFunc(CefMainArgs args, CefSettings settings, CefRefPtr<CefApp> app) {
+void CefThread::threadFunc(CefMainArgs args, const CefSettings& settings, CefRefPtr<CefApp> app) {
     LOG_INFO(LOG_CEF, "CEF thread starting");
 
     // Initialize CEF on this thread

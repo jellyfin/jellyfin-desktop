@@ -23,7 +23,7 @@ public:
     bool isRunning() const { return running_.load(); }
 
 private:
-    void threadFunc(CefMainArgs args, CefSettings settings, CefRefPtr<CefApp> app);
+    void threadFunc(CefMainArgs args, const CefSettings& settings, CefRefPtr<CefApp> app);
 
     std::thread thread_;
     std::atomic<bool> running_{false};

@@ -237,7 +237,7 @@ bool NativeV8Handler::Execute(const CefString& name,
 
     // playerLoad(url, startMs, audioIdx, subIdx, metadataJson)
     if (name == "playerLoad") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+        if (!arguments.empty() && arguments[0]->IsString()) {
             std::string url = arguments[0]->GetStringValue().ToString();
             int startMs = arguments.size() > 1 ? v8ToInt(arguments[1], 0) : 0;
             int audioIdx = arguments.size() > 2 ? v8ToInt(arguments[2], -1) : -1;
@@ -281,7 +281,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSeek") {
-        if (arguments.size() >= 1) {
+        if (!arguments.empty()) {
             int ms = v8ToInt(arguments[0], 0);
             LOG_DEBUG(LOG_CEF, "V8 playerSeek: %dms", ms);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSeek");
@@ -292,7 +292,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetVolume") {
-        if (arguments.size() >= 1) {
+        if (!arguments.empty()) {
             int vol = v8ToInt(arguments[0], 100);
             LOG_DEBUG(LOG_CEF, "V8 playerSetVolume: %d", vol);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetVolume");
@@ -303,7 +303,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetMuted") {
-        if (arguments.size() >= 1 && arguments[0]->IsBool()) {
+        if (!arguments.empty() && arguments[0]->IsBool()) {
             bool muted = arguments[0]->GetBoolValue();
             LOG_DEBUG(LOG_CEF, "V8 playerSetMuted: %d", muted);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetMuted");
@@ -314,7 +314,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetSpeed") {
-        if (arguments.size() >= 1) {
+        if (!arguments.empty()) {
             int rateX1000 = v8ToInt(arguments[0], 1000);
             LOG_DEBUG(LOG_CEF, "V8 playerSetSpeed: %d", rateX1000);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetSpeed");
@@ -325,7 +325,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetSubtitle") {
-        if (arguments.size() >= 1) {
+        if (!arguments.empty()) {
             int sid = v8ToInt(arguments[0], -1);
             LOG_DEBUG(LOG_CEF, "V8 playerSetSubtitle: %d", sid);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetSubtitle");
@@ -336,7 +336,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetAudio") {
-        if (arguments.size() >= 1) {
+        if (!arguments.empty()) {
             int aid = v8ToInt(arguments[0], -1);
             LOG_DEBUG(LOG_CEF, "V8 playerSetAudio: %d", aid);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetAudio");
@@ -347,7 +347,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "playerSetAudioDelay") {
-        if (arguments.size() >= 1 && arguments[0]->IsDouble()) {
+        if (!arguments.empty() && arguments[0]->IsDouble()) {
             double delay = arguments[0]->GetDoubleValue();
             LOG_DEBUG(LOG_CEF, "V8 playerSetAudioDelay: %.2f", delay);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetAudioDelay");
@@ -358,7 +358,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "notifyMetadata") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+        if (!arguments.empty() && arguments[0]->IsString()) {
             std::string metadata = arguments[0]->GetStringValue().ToString();
             LOG_DEBUG(LOG_CEF, "V8 notifyMetadata: %.100s...", metadata.c_str());
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifyMetadata");
@@ -369,7 +369,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "notifyPosition") {
-        if (arguments.size() >= 1 && (arguments[0]->IsInt() || arguments[0]->IsDouble())) {
+        if (!arguments.empty() && (arguments[0]->IsInt() || arguments[0]->IsDouble())) {
             int posMs = v8ToInt(arguments[0], 0);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifyPosition");
             msg->GetArgumentList()->SetInt(0, posMs);
@@ -379,7 +379,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "notifySeek") {
-        if (arguments.size() >= 1 && (arguments[0]->IsInt() || arguments[0]->IsDouble())) {
+        if (!arguments.empty() && (arguments[0]->IsInt() || arguments[0]->IsDouble())) {
             int posMs = v8ToInt(arguments[0], 0);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifySeek");
             msg->GetArgumentList()->SetInt(0, posMs);
@@ -389,7 +389,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "notifyPlaybackState") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+        if (!arguments.empty() && arguments[0]->IsString()) {
             std::string state = arguments[0]->GetStringValue().ToString();
             LOG_DEBUG(LOG_CEF, "V8 notifyPlaybackState: %s", state.c_str());
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifyPlaybackState");
@@ -400,7 +400,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "notifyArtwork") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+        if (!arguments.empty() && arguments[0]->IsString()) {
             std::string artworkUri = arguments[0]->GetStringValue().ToString();
             LOG_DEBUG(LOG_CEF, "V8 notifyArtwork: %.50s...", artworkUri.c_str());
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifyArtwork");
@@ -424,7 +424,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "notifyRateChange") {
-        if (arguments.size() >= 1 && arguments[0]->IsDouble()) {
+        if (!arguments.empty() && arguments[0]->IsDouble()) {
             double rate = arguments[0]->GetDoubleValue();
             LOG_DEBUG(LOG_CEF, "V8 notifyRateChange: %.2f", rate);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("notifyRateChange");
@@ -450,7 +450,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "saveServerUrl") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+        if (!arguments.empty() && arguments[0]->IsString()) {
             std::string url = arguments[0]->GetStringValue().ToString();
             LOG_INFO(LOG_CEF, "V8 saveServerUrl: %s", url.c_str());
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("saveServerUrl");
@@ -461,7 +461,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "loadServer") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+        if (!arguments.empty() && arguments[0]->IsString()) {
             std::string url = arguments[0]->GetStringValue().ToString();
             LOG_INFO(LOG_CEF, "V8 loadServer: %s", url.c_str());
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("loadServer");
@@ -472,7 +472,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "checkServerConnectivity") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+        if (!arguments.empty() && arguments[0]->IsString()) {
             std::string url = arguments[0]->GetStringValue().ToString();
             LOG_DEBUG(LOG_CEF, "V8 checkServerConnectivity: %s", url.c_str());
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("checkServerConnectivity");
@@ -495,7 +495,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "getClipboard") {
-        std::string mimeType = arguments.size() >= 1 && arguments[0]->IsString()
+        std::string mimeType = !arguments.empty() && arguments[0]->IsString()
             ? arguments[0]->GetStringValue().ToString() : "text/plain";
         CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("getClipboard");
         msg->GetArgumentList()->SetString(0, mimeType);
@@ -511,7 +511,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "themeColor") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+        if (!arguments.empty() && arguments[0]->IsString()) {
             std::string color = arguments[0]->GetStringValue().ToString();
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("themeColor");
             msg->GetArgumentList()->SetString(0, color);
@@ -521,7 +521,7 @@ bool NativeV8Handler::Execute(const CefString& name,
     }
 
     if (name == "setOsdVisible") {
-        if (arguments.size() >= 1 && arguments[0]->IsBool()) {
+        if (!arguments.empty() && arguments[0]->IsBool()) {
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("osdVisible");
             msg->GetArgumentList()->SetBool(0, arguments[0]->GetBoolValue());
             browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);

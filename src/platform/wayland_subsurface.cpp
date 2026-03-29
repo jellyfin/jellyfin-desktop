@@ -54,7 +54,7 @@ static const wl_registry_listener s_registryListener = {
 };
 
 WaylandSubsurface::WaylandSubsurface() = default;
-WaylandSubsurface::~WaylandSubsurface() { cleanup(); }
+WaylandSubsurface::~WaylandSubsurface() { WaylandSubsurface::cleanup(); }
 
 void WaylandSubsurface::registryGlobal(void* data, wl_registry* registry,
                                         uint32_t name, const char* interface, uint32_t version) {

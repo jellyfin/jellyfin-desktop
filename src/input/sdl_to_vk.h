@@ -140,7 +140,7 @@ inline int sdlKeyToWindowsVK(int sdlKey) {
         case SDLK_MUTE:                 return VK::VOLUME_MUTE;
         case SDLK_VOLUMEUP:             return VK::VOLUME_UP;
         case SDLK_VOLUMEDOWN:           return VK::VOLUME_DOWN;
-        case SDLK_MEDIA_PLAY:           return VK::MEDIA_PLAY_PAUSE;
+        case SDLK_MEDIA_PLAY:
         case SDLK_MEDIA_PAUSE:          return VK::MEDIA_PLAY_PAUSE;
         case SDLK_MEDIA_NEXT_TRACK:     return VK::MEDIA_NEXT_TRACK;
         case SDLK_MEDIA_PREVIOUS_TRACK: return VK::MEDIA_PREV_TRACK;
@@ -155,7 +155,7 @@ inline int sdlKeyToWindowsVK(int sdlKey) {
         case SDLK_AC_HOME:    return VK::BROWSER_HOME;
 
         // Context menu (right-click equivalent)
-        case SDLK_APPLICATION: return VK::APPS;
+        case SDLK_APPLICATION:
         case SDLK_MENU:        return VK::APPS;
 
         // Punctuation - these collide with Windows VK codes if passed through

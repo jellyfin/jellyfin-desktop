@@ -28,7 +28,7 @@ static const char* s_optionalDeviceExtensions[] = {
 X11VideoLayer::X11VideoLayer() = default;
 
 X11VideoLayer::~X11VideoLayer() {
-    cleanup();
+    X11VideoLayer::cleanup();
 }
 
 bool X11VideoLayer::initX11(SDL_Window* window) {
