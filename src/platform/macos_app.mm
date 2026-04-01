@@ -6,15 +6,12 @@
 #include "include/cef_application_mac.h"
 #include "settings.h"
 #include <SDL3/SDL.h>
-#include <cmath>
 
 // Store main window reference for dock click handling
 static NSWindow* g_mainWindow = nil;
 static NSView* g_titlebarDragView = nil;
 static bool g_trafficLightsVisible = true;
 static const CGFloat kTitlebarHeight = 28.0;
-using NativeScrollHandler = void(*)(int x, int y, float deltaX, float deltaY);
-static NativeScrollHandler g_nativeScrollHandler = nullptr;
 
 // Apply current traffic light visibility state to window buttons and drag view.
 // Uses alphaValue instead of setHidden: because AppKit can reset hidden state
@@ -88,22 +85,6 @@ static void applyTrafficLightsVisibility() {
 
 - (void)sendEvent:(NSEvent*)event {
     CefScopedSendingEvent sendingEventScoper;
-    if (event.type == NSEventTypeScrollWheel && g_nativeScrollHandler) {
-        // Forward the original Cocoa scroll event deltas to the active browser
-        // before SDL translates them into wheel events.
-        NSWindow* window = event.window ?: g_mainWindow;
-        NSView* content = window.contentView;
-        if (content) {
-            NSPoint point = [content convertPoint:event.locationInWindow fromView:nil];
-            if (NSPointInRect(point, content.bounds)) {
-                int x = static_cast<int>(lround(point.x));
-                int y = static_cast<int>(lround(content.bounds.size.height - point.y));
-                g_nativeScrollHandler(x, y,
-                                      static_cast<float>(event.scrollingDeltaX),
-                                      static_cast<float>(event.scrollingDeltaY));
-            }
-        }
-    }
     [super sendEvent:event];
 }
 
@@ -210,12 +191,4 @@ void setMacTrafficLightsVisible(bool visible) {
     if (!g_mainWindow || visible == g_trafficLightsVisible) return;
     g_trafficLightsVisible = visible;
     applyTrafficLightsVisibility();
-}
-
-void setMacNativeScrollHandler(NativeScrollHandler handler) {
-    g_nativeScrollHandler = handler;
-}
-
-bool macNativeScrollBridgeEnabled() {
-    return g_nativeScrollHandler != nullptr;
 }

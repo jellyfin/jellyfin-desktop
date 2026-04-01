@@ -6,7 +6,6 @@
 #include "include/cef_parser.h"
 #include <SDL3/SDL.h>
 #include "logging.h"
-#include <cmath>
 #include <mutex>
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <unistd.h>  // For dup()
@@ -714,6 +713,8 @@ void Client::sendChar(int charCode, int modifiers) {
 
 void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
 #ifdef __APPLE__
+    // macOS: accumulate scroll deltas — flushed once per frame via flushScroll()
+    // to coalesce multiple trackpad events into a single CEF wheel event.
     scroll_x_ = x;
     scroll_y_ = y;
     scroll_mods_ = modifiers;
@@ -731,32 +732,6 @@ void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifi
     int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
-    return;
-#endif
-
-    return;
-}
-
-void Client::sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
-#ifdef __APPLE__
-    accum_scroll_x_ += deltaX;
-    accum_scroll_y_ += deltaY;
-    const int pixelX = static_cast<int>(std::lround(accum_scroll_x_));
-    const int pixelY = static_cast<int>(std::lround(accum_scroll_y_));
-    accum_scroll_x_ -= pixelX;
-    accum_scroll_y_ -= pixelY;
-    auto b = browser();
-    if (!b) return;
-
-    if (pixelX == 0 && pixelY == 0) return;
-
-    CefMouseEvent event;
-    event.x = x;
-    event.y = y;
-    event.modifiers = modifiers | EVENTFLAG_PRECISION_SCROLLING_DELTA;
-    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
-#else
-    sendMouseWheel(x, y, deltaX, deltaY, modifiers);
 #endif
 }
 
@@ -1240,32 +1215,6 @@ void OverlayClient::sendMouseWheel(int x, int y, float deltaX, float deltaY, int
     int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
-    return;
-#endif
-
-    return;
-}
-
-void OverlayClient::sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
-#ifdef __APPLE__
-    accum_scroll_x_ += deltaX;
-    accum_scroll_y_ += deltaY;
-    const int pixelX = static_cast<int>(std::lround(accum_scroll_x_));
-    const int pixelY = static_cast<int>(std::lround(accum_scroll_y_));
-    accum_scroll_x_ -= pixelX;
-    accum_scroll_y_ -= pixelY;
-    auto b = browser();
-    if (!b) return;
-
-    if (pixelX == 0 && pixelY == 0) return;
-
-    CefMouseEvent event;
-    event.x = x;
-    event.y = y;
-    event.modifiers = modifiers | EVENTFLAG_PRECISION_SCROLLING_DELTA;
-    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
-#else
-    sendMouseWheel(x, y, deltaX, deltaY, modifiers);
 #endif
 }
 
