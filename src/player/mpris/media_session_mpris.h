@@ -16,6 +16,8 @@ public:
     void setCanGoNext(bool can) override;
     void setCanGoPrevious(bool can) override;
     void setRate(double rate) override;
+    void setBuffering(bool buffering) override;
+    void emitSeeking() override;                     // Lock rate at 0x during seek
     void emitSeeked(int64_t position_us) override;  // Emit Seeked signal when user seeks
     void update() override;
     int getFd() override;
@@ -32,6 +34,7 @@ public:
 
 private:
     void emitPropertiesChanged(const char* interface, const char* property);
+    void syncRate();  // Apply pending_rate_ or 0 based on seeking_/buffering_
 
     MediaSession* session_;
     sd_bus* bus_ = nullptr;
@@ -44,7 +47,8 @@ private:
     double volume_ = 1.0;
     double rate_ = 1.0;
     double pending_rate_ = 1.0;  // Stored rate while locked at 0x
-    bool rate_locked_ = false;   // True when rate is locked at 0x (buffering/seeking)
+    bool seeking_ = false;       // Rate locked by seeking
+    bool buffering_ = false;     // Rate locked by buffering
     bool can_go_next_ = false;
     bool can_go_previous_ = false;
 };

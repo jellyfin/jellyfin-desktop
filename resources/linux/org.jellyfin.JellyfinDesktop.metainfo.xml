@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.jellyfin.JellyfinDesktopCEF</id>
-  <name>Jellyfin Desktop CEF</name>
+  <id>org.jellyfin.JellyfinDesktop</id>
+  <name>Jellyfin Desktop</name>
   <summary>Jellyfin media client for desktop</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-or-later</project_license>
   <description>
     <p>
-      Jellyfin Desktop CEF is a desktop client for Jellyfin media server,
+      Jellyfin Desktop is a desktop client for Jellyfin media server,
       built on the Chromium Embedded Framework (CEF) with mpv for video playback.
     </p>
   </description>
-  <launchable type="desktop-id">org.jellyfin.JellyfinDesktopCEF.desktop</launchable>
-  <icon type="stock">org.jellyfin.JellyfinDesktopCEF</icon>
+  <launchable type="desktop-id">org.jellyfin.JellyfinDesktop.desktop</launchable>
+  <icon type="stock">org.jellyfin.JellyfinDesktop</icon>
   <url type="homepage">https://jellyfin.org</url>
-  <url type="bugtracker">https://github.com/jellyfin-labs/jellyfin-desktop-cef/issues</url>
+  <url type="bugtracker">https://github.com/jellyfin/jellyfin-desktop/issues</url>
   <url type="help">https://jellyfin.org/docs/</url>
   <developer id="org.jellyfin">
     <name>Jellyfin Contributors</name>

@@ -243,13 +243,36 @@ namespace kVK {
     constexpr int ANSI_K        = 0x28;
     constexpr int ANSI_N        = 0x2D;
     constexpr int ANSI_M        = 0x2E;
+    // Punctuation
+    constexpr int ANSI_Equal        = 0x18;
+    constexpr int ANSI_Minus        = 0x1B;
+    constexpr int ANSI_RightBracket = 0x1E;
+    constexpr int ANSI_LeftBracket  = 0x21;
+    constexpr int ANSI_Quote        = 0x27;
+    constexpr int ANSI_Semicolon    = 0x29;
+    constexpr int ANSI_Backslash    = 0x2A;
+    constexpr int ANSI_Comma        = 0x2B;
+    constexpr int ANSI_Slash        = 0x2C;
+    constexpr int ANSI_Period       = 0x2F;
+    constexpr int ANSI_Grave        = 0x32;
     constexpr int Return        = 0x24;
     constexpr int Tab           = 0x30;
     constexpr int Space         = 0x31;
     constexpr int Delete        = 0x33;  // Backspace
     constexpr int Escape        = 0x35;
+    // Function keys
+    constexpr int F1            = 0x7A;
+    constexpr int F2            = 0x78;
+    constexpr int F3            = 0x63;
+    constexpr int F4            = 0x76;
     constexpr int F5            = 0x60;
+    constexpr int F6            = 0x61;
+    constexpr int F7            = 0x62;
+    constexpr int F8            = 0x64;
+    constexpr int F9            = 0x65;
+    constexpr int F10           = 0x6D;
     constexpr int F11           = 0x67;
+    constexpr int F12           = 0x6F;
     constexpr int Home          = 0x73;
     constexpr int PageUp        = 0x74;
     constexpr int ForwardDelete = 0x75;
@@ -282,8 +305,18 @@ inline int sdlKeyToMacNative(int sdlKey) {
         case SDLK_DELETE:    return kVK::ForwardDelete;
 
         // Function keys
+        case SDLK_F1:  return kVK::F1;
+        case SDLK_F2:  return kVK::F2;
+        case SDLK_F3:  return kVK::F3;
+        case SDLK_F4:  return kVK::F4;
         case SDLK_F5:  return kVK::F5;
+        case SDLK_F6:  return kVK::F6;
+        case SDLK_F7:  return kVK::F7;
+        case SDLK_F8:  return kVK::F8;
+        case SDLK_F9:  return kVK::F9;
+        case SDLK_F10: return kVK::F10;
         case SDLK_F11: return kVK::F11;
+        case SDLK_F12: return kVK::F12;
 
         // Letters - must map ALL to avoid collisions with kVK codes
         // (e.g., SDLK_S = 0x73 = kVK_Home without explicit mapping)
@@ -314,7 +347,76 @@ inline int sdlKeyToMacNative(int sdlKey) {
         case SDLK_Y: return kVK::ANSI_Y;
         case SDLK_Z: return kVK::ANSI_Z;
 
+        // Numbers - must map ALL (same as letters: SDL ASCII values collide
+        // with kVK codes, e.g. 0x30=Tab, 0x33=Backspace, 0x35=Escape)
+        case SDLK_0: return kVK::ANSI_0;
+        case SDLK_1: return kVK::ANSI_1;
+        case SDLK_2: return kVK::ANSI_2;
+        case SDLK_3: return kVK::ANSI_3;
+        case SDLK_4: return kVK::ANSI_4;
+        case SDLK_5: return kVK::ANSI_5;
+        case SDLK_6: return kVK::ANSI_6;
+        case SDLK_7: return kVK::ANSI_7;
+        case SDLK_8: return kVK::ANSI_8;
+        case SDLK_9: return kVK::ANSI_9;
+
+        // Punctuation - SDL ASCII values collide with kVK codes
+        // (e.g., 0x60=kVK_F5, 0x3B=kVK_Control, 0x2D=kVK_ANSI_N)
+        case SDLK_COMMA:        return kVK::ANSI_Comma;
+        case SDLK_MINUS:        return kVK::ANSI_Minus;
+        case SDLK_PERIOD:       return kVK::ANSI_Period;
+        case SDLK_SLASH:        return kVK::ANSI_Slash;
+        case SDLK_SEMICOLON:    return kVK::ANSI_Semicolon;
+        case SDLK_EQUALS:       return kVK::ANSI_Equal;
+        case SDLK_LEFTBRACKET:  return kVK::ANSI_LeftBracket;
+        case SDLK_BACKSLASH:    return kVK::ANSI_Backslash;
+        case SDLK_RIGHTBRACKET: return kVK::ANSI_RightBracket;
+        case SDLK_GRAVE:        return kVK::ANSI_Grave;
+        case SDLK_APOSTROPHE:   return kVK::ANSI_Quote;
+
         default: return sdlKey;
+    }
+}
+
+// Map SDL keycode to the macOS character code CEF expects.
+// CEF's TranslateWebKeyEvent creates a synthetic NSEvent from CefKeyEvent.
+// If character AND unmodified_character are both 0, CEF misidentifies the
+// event as NSEventTypeFlagsChanged (modifier key) instead of NSEventTypeKeyDown.
+// Returns 0 only for actual modifier keys or unmapped keys.
+inline int sdlKeyToMacChar(int sdlKey) {
+    // Printable ASCII — SDL keycode IS the character
+    if (sdlKey >= 0x20 && sdlKey < 0x7F) return sdlKey;
+
+    switch (sdlKey) {
+        case SDLK_BACKSPACE: return 0x08;
+        case SDLK_TAB:       return 0x09;
+        case SDLK_RETURN:    return 0x0D;
+        case SDLK_ESCAPE:    return 0x1B;
+        case SDLK_DELETE:    return 0x7F;
+
+        // NSFunctionKey Unicode values (from NSEvent.h)
+        case SDLK_UP:       return 0xF700;
+        case SDLK_DOWN:     return 0xF701;
+        case SDLK_LEFT:     return 0xF702;
+        case SDLK_RIGHT:    return 0xF703;
+        case SDLK_F1:       return 0xF704;
+        case SDLK_F2:       return 0xF705;
+        case SDLK_F3:       return 0xF706;
+        case SDLK_F4:       return 0xF707;
+        case SDLK_F5:       return 0xF708;
+        case SDLK_F6:       return 0xF709;
+        case SDLK_F7:       return 0xF70A;
+        case SDLK_F8:       return 0xF70B;
+        case SDLK_F9:       return 0xF70C;
+        case SDLK_F10:      return 0xF70D;
+        case SDLK_F11:      return 0xF70E;
+        case SDLK_F12:      return 0xF70F;
+        case SDLK_HOME:     return 0xF729;
+        case SDLK_END:      return 0xF72B;
+        case SDLK_PAGEUP:   return 0xF72C;
+        case SDLK_PAGEDOWN: return 0xF72D;
+
+        default: return 0;
     }
 }
 #endif

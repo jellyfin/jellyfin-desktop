@@ -96,9 +96,14 @@
 
             this._core.handlers.onTimeUpdate = (time) => {
                 if (time && !this._timeUpdated) this._timeUpdated = true;
+                this._core._seeking = false;
                 this._core._currentTime = time;
                 this._core._lastTimerTick = Date.now();
                 this.events.trigger(this, 'timeupdate');
+            };
+
+            this._core.handlers.onSeeking = () => {
+                this._core._seeking = true;
             };
 
             this._core.handlers.onEnded = () => {

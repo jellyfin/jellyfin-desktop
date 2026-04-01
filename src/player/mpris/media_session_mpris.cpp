@@ -6,13 +6,13 @@
 static const char* MPRIS_PATH = "/org/mpris/MediaPlayer2";
 static const char* MPRIS_ROOT_IFACE = "org.mpris.MediaPlayer2";
 static const char* MPRIS_PLAYER_IFACE = "org.mpris.MediaPlayer2.Player";
-static const char* SERVICE_NAME = "org.mpris.MediaPlayer2.JellyfinDesktopCEF";
+static const char* SERVICE_NAME = "org.mpris.MediaPlayer2.JellyfinDesktop";
 
 // Root interface property getters
 static int prop_get_identity(sd_bus* bus, const char* path, const char* interface,
                              const char* property, sd_bus_message* reply,
                              void* userdata, sd_bus_error* error) {
-    return sd_bus_message_append(reply, "s", "Jellyfin Desktop CEF");
+    return sd_bus_message_append(reply, "s", "Jellyfin Desktop");
 }
 
 static int prop_get_can_quit(sd_bus* bus, const char* path, const char* interface,
@@ -409,19 +409,19 @@ void MprisBackend::setArtwork(const std::string& dataUri) {
 void MprisBackend::setPlaybackState(PlaybackState state) {
     state_ = state;
 
-    // Clear metadata when stopped (JS only sends Stopped when truly stopped, not navigating)
+    // Clear state when stopped (JS only sends Stopped when truly stopped, not navigating)
     if (state == PlaybackState::Stopped) {
         metadata_ = MediaMetadata{};
         position_us_ = 0;
+        seeking_ = false;
+        buffering_ = false;
     }
 
-    // When resuming playback, unlock rate and restore pending rate
-    if (state == PlaybackState::Playing && rate_locked_) {
-        rate_locked_ = false;
-        if (rate_ != pending_rate_) {
-            rate_ = pending_rate_;
-            emitPropertiesChanged(MPRIS_PLAYER_IFACE, "Rate");
-        }
+    // When resuming playback, clear all rate locks and restore pending rate
+    if (state == PlaybackState::Playing && (seeking_ || buffering_)) {
+        seeking_ = false;
+        buffering_ = false;
+        syncRate();
     }
 
     // Emit all capability-related properties when state changes
@@ -455,31 +455,34 @@ void MprisBackend::setCanGoPrevious(bool can) {
 }
 
 void MprisBackend::setRate(double rate) {
-    if (rate == 0.0) {
-        // Entering buffering/seeking - lock at 0x
-        rate_locked_ = true;
-        if (rate_ != 0.0) {
-            rate_ = 0.0;
-            emitPropertiesChanged(MPRIS_PLAYER_IFACE, "Rate");
-        }
-    } else if (rate_locked_) {
-        // While locked, store rate for when we resume
-        pending_rate_ = rate;
-    } else {
-        // Normal operation
-        pending_rate_ = rate;
-        if (rate_ != rate) {
-            rate_ = rate;
-            emitPropertiesChanged(MPRIS_PLAYER_IFACE, "Rate");
-        }
-    }
+    pending_rate_ = rate;
+    syncRate();
+}
+
+void MprisBackend::setBuffering(bool buffering) {
+    buffering_ = buffering;
+    syncRate();
+}
+
+void MprisBackend::emitSeeking() {
+    seeking_ = true;
+    syncRate();
 }
 
 void MprisBackend::emitSeeked(int64_t position_us) {
     if (!bus_) return;
     position_us_ = position_us;
-    // Emit the Seeked signal (MPRIS spec: signal Seeked(x) where x is position in microseconds)
+    seeking_ = false;
+    syncRate();
     sd_bus_emit_signal(bus_, MPRIS_PATH, MPRIS_PLAYER_IFACE, "Seeked", "x", position_us);
+}
+
+void MprisBackend::syncRate() {
+    double target = (seeking_ || buffering_) ? 0.0 : pending_rate_;
+    if (rate_ != target) {
+        rate_ = target;
+        emitPropertiesChanged(MPRIS_PLAYER_IFACE, "Rate");
+    }
 }
 
 void MprisBackend::update() {

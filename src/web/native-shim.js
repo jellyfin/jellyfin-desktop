@@ -32,7 +32,6 @@
     function createSignal(name) {
         const callbacks = [];
         const signal = function(...args) {
-            console.log('[Media] [Signal] ' + name + ' firing with', callbacks.length, 'listeners');
             for (const cb of callbacks) {
                 try { cb(...args); } catch(e) { console.error('[Media] [Signal] ' + name + ' error:', e); }
             }
@@ -55,7 +54,7 @@
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
         version: '1.0.0',
-        deviceName: 'Jellyfin Desktop CEF',
+        deviceName: 'Jellyfin Desktop',
         mode: 'desktop',
         userAgent: navigator.userAgent,
         scriptPath: '',
@@ -157,6 +156,7 @@
             canceled: createSignal('canceled'),
             error: createSignal('error'),
             buffering: createSignal('buffering'),
+            seeking: createSignal('seeking'),
             positionUpdate: createSignal('positionUpdate'),
             updateDuration: createSignal('updateDuration'),
             stateChanged: createSignal('stateChanged'),
@@ -318,11 +318,6 @@
     window._nativeSeek = function(positionMs) {
         console.log('[Media] _nativeSeek:', positionMs);
         window.api.input.positionSeek(positionMs);
-        // Update position immediately and set rate to 0 during buffering
-        if (window.jmpNative) {
-            window.jmpNative.notifyPosition(Math.floor(positionMs));
-            window.jmpNative.notifyRateChange(0.0);
-        }
     };
 
     // window.NativeShell - app info and plugins
@@ -349,7 +344,7 @@
     // Device profile for direct play
     function getDeviceProfile() {
         return {
-            Name: 'Jellyfin Desktop CEF',
+            Name: 'Jellyfin Desktop',
             MaxStaticBitrate: 1000000000,
             MusicStreamingTranscodingBitrate: 1280000,
             TimelineOffsetSeconds: 5,
@@ -390,7 +385,7 @@
         init() {
             return Promise.resolve({
                 deviceName: jmpInfo.deviceName,
-                appName: 'Jellyfin Desktop CEF',
+                appName: 'Jellyfin Desktop',
                 appVersion: jmpInfo.version
             });
         },
@@ -408,7 +403,7 @@
         },
         getDeviceProfile,
         getSyncProfile: getDeviceProfile,
-        appName() { return 'Jellyfin Desktop CEF'; },
+        appName() { return 'Jellyfin Desktop'; },
         appVersion() { return jmpInfo.version; },
         deviceName() { return jmpInfo.deviceName; },
         exit() { window.api.system.exit(); }

@@ -33,6 +33,8 @@ void activateMacWindow(SDL_Window* window);
 void setMacTitlebarColor(uint8_t r, uint8_t g, uint8_t b);
 // Show/hide traffic light buttons (close, minimize, zoom)
 void setMacTrafficLightsVisible(bool visible);
+// Route native Cocoa scroll-wheel events directly to the active browser layer.
+void setMacNativeScrollHandler(void (*handler)(int x, int y, float deltaX, float deltaY));
 #endif
 
 #ifdef __APPLE__
@@ -78,6 +80,16 @@ void setMacTrafficLightsVisible(bool visible);
 #include "input/window_state.h"
 #include "ui/menu_overlay.h"
 #include "settings.h"
+
+#ifdef __APPLE__
+static BrowserLayer* g_active_browser_layer = nullptr;
+
+static void handleMacNativeScroll(int x, int y, float deltaX, float deltaY) {
+    if (g_active_browser_layer) {
+        g_active_browser_layer->handleNativeScroll(x, y, deltaX, deltaY);
+    }
+}
+#endif
 #include "single_instance.h"
 #include "window_geometry.h"
 #include "window_activation.h"
@@ -312,7 +324,7 @@ int main(int argc, char* argv[]) {
     bool is_cef_subprocess = (getenv("JELLYFIN_CEF_SUBPROCESS") != nullptr);
 
     // Load saved settings first, then let CLI flags override
-    SDL_LogPriority log_level = SDL_LOG_PRIORITY_INFO;
+    SDL_LogPriority log_level = SDL_LOG_PRIORITY_DEBUG;
     bool use_dmabuf = true;
     bool disable_gpu_compositing = false;
     int remote_debugging_port = 0;
@@ -337,7 +349,7 @@ int main(int argc, char* argv[]) {
         if (!saved_log_level.empty()) log_level_str = saved_log_level.c_str();
         for (int i = 1; i < argc; i++) {
             if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-                printf("Usage: jellyfin-desktop-cef [options]\n"
+                printf("Usage: jellyfin-desktop [options]\n"
                        "\nOptions:\n"
                        "  -h, --help              Show this help message\n"
                        "  -v, --version           Show version information\n"
@@ -355,7 +367,7 @@ int main(int argc, char* argv[]) {
                        );
                 return 0;
             } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
-                printf("jellyfin-desktop-cef %s\n", APP_VERSION_STRING);
+                printf("jellyfin-desktop %s\n", APP_VERSION_STRING);
                 printf("  built " __DATE__ " " __TIME__ "\n");
                 printf("CEF %s\n", CEF_VERSION);
                 return 0;
@@ -406,7 +418,7 @@ int main(int argc, char* argv[]) {
             log_level = static_cast<SDL_LogPriority>(level);
         }
         if (log_file_path && log_file_path[0]) {
-            g_log_file = fopen(log_file_path, "a");
+            g_log_file = fopen(log_file_path, "w");
             if (!g_log_file) {
                 fprintf(stderr, "Failed to open log file: %s\n", log_file_path);
                 return 1;
@@ -433,7 +445,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Startup banner
-        LOG_INFO(LOG_MAIN, "jellyfin-desktop-cef " APP_VERSION_STRING " built " __DATE__ " " __TIME__);
+        LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING " built " __DATE__ " " __TIME__);
         LOG_INFO(LOG_MAIN, "CEF " CEF_VERSION);
 
 #if !defined(__APPLE__) && !defined(_WIN32)
@@ -560,7 +572,7 @@ int main(int argc, char* argv[]) {
     PFMoveToApplicationsFolderIfNecessary();
 #endif
 
-    SDL_SetAppMetadata("Jellyfin Desktop CEF", nullptr, "org.jellyfin.JellyfinDesktopCEF");
+    SDL_SetAppMetadata("Jellyfin Desktop", nullptr, "org.jellyfin.JellyfinDesktop");
 
     // SDL initialization with OpenGL (for main surface CEF overlay)
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -609,17 +621,28 @@ int main(int argc, char* argv[]) {
     int width = (saved_geom.width > 0) ? saved_geom.width : 1280;
     int height = (saved_geom.height > 0) ? saved_geom.height : 720;
 
-    Uint32 win_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    SDL_WindowFlags win_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #ifdef _WIN32
     // Start hidden so DWM attributes and DComp are set before the window is shown,
     // avoiding a flash of default titlebar color and black client area.
     // MAXIMIZED is deferred as pending_flags and applied on ShowWindow.
     win_flags |= SDL_WINDOW_HIDDEN;
     if (saved_geom.maximized) win_flags |= SDL_WINDOW_MAXIMIZED;
+#else
+    // Wayland: the mpv video subsurface sits below the main EGL surface.
+    // Without SDL_WINDOW_TRANSPARENT, SDL sets a full opaque region on the
+    // parent wl_surface, telling the compositor it can skip everything below.
+    // In fullscreen the compositor takes this literally (direct scanout),
+    // making the video layer invisible.
+    {
+        const char* driver = SDL_GetCurrentVideoDriver();
+        if (driver && strcmp(driver, "wayland") == 0)
+            win_flags |= SDL_WINDOW_TRANSPARENT;
+    }
 #endif
 
     SDL_Window* window = SDL_CreateWindow(
-        "Jellyfin Desktop CEF",
+        "Jellyfin Desktop",
         width, height,
         win_flags
     );
@@ -861,7 +884,7 @@ int main(int argc, char* argv[]) {
     // macOS: Set framework path (cef_framework_path set earlier during CEF loading)
     CefString(&settings.framework_dir_path).FromString((cef_framework_path / "Chromium Embedded Framework.framework").string());
     // Use main executable as subprocess - it handles CefExecuteProcess early
-    CefString(&settings.browser_subprocess_path).FromString((exe_path / "jellyfin-desktop-cef").string());
+    CefString(&settings.browser_subprocess_path).FromString((exe_path / "jellyfin-desktop").string());
 #elif defined(_WIN32)
     // Windows: Get exe path
     wchar_t exe_buf[MAX_PATH];
@@ -884,17 +907,17 @@ int main(int argc, char* argv[]) {
     std::filesystem::path cache_path;
 #ifdef _WIN32
     if (const char* appdata = std::getenv("LOCALAPPDATA")) {
-        cache_path = std::filesystem::path(appdata) / "jellyfin-desktop-cef";
+        cache_path = std::filesystem::path(appdata) / "jellyfin-desktop";
     }
 #elif defined(__APPLE__)
     if (const char* home = std::getenv("HOME")) {
-        cache_path = std::filesystem::path(home) / "Library" / "Caches" / "jellyfin-desktop-cef";
+        cache_path = std::filesystem::path(home) / "Library" / "Caches" / "jellyfin-desktop";
     }
 #else
     if (const char* xdg = std::getenv("XDG_CACHE_HOME")) {
-        cache_path = std::filesystem::path(xdg) / "jellyfin-desktop-cef";
+        cache_path = std::filesystem::path(xdg) / "jellyfin-desktop";
     } else if (const char* home = std::getenv("HOME")) {
-        cache_path = std::filesystem::path(home) / ".cache" / "jellyfin-desktop-cef";
+        cache_path = std::filesystem::path(home) / ".cache" / "jellyfin-desktop";
     }
 #endif
     if (!cache_path.empty()) {
@@ -962,7 +985,15 @@ int main(int argc, char* argv[]) {
 
     // Browser stack manages all browsers and their paint buffers
     BrowserStack browsers;
-    std::atomic<bool> paint_size_matched{true};  // Track if last paint matched compositor size
+
+// TODO: refactor this ugliness
+//   true:  mac/win must be this else be black window
+//   false: might fix occasional black screen on linux ?
+#if !defined(__APPLE__) && !defined(_WIN32)
+    std::atomic<bool> paint_size_matched{false};  // No paint yet — keep loop active until first frame
+#else
+    std::atomic<bool> paint_size_matched{true};
+#endif
 
     // Player command queue
     struct PlayerCmd {
@@ -1134,8 +1165,9 @@ int main(int argc, char* argv[]) {
 #endif
 #ifdef __APPLE__
         // IOSurface callback for macOS accelerated paint - queue for import on main thread
-        , [overlay_ptr](void* surface, int format, int w, int h) {
+        , [overlay_ptr, wakeMainLoop](void* surface, int format, int w, int h) {
             overlay_ptr->compositor->queueIOSurface(surface, format, w, h);
+            wakeMainLoop();
         }
 #endif
 #ifdef _WIN32
@@ -1294,12 +1326,13 @@ int main(int argc, char* argv[]) {
         accel_popup_cb
 #ifdef __APPLE__
         // IOSurface callback for macOS accelerated paint - queue for import on main thread
-        , [main_ptr, &paint_size_matched](void* surface, int format, int w, int h) {
+        , [main_ptr, &paint_size_matched, wakeMainLoop](void* surface, int format, int w, int h) {
             main_ptr->compositor->queueIOSurface(surface, format, w, h);
             if (w == static_cast<int>(main_ptr->compositor->width()) &&
                 h == static_cast<int>(main_ptr->compositor->height())) {
                 paint_size_matched.store(true, std::memory_order_relaxed);
             }
+            wakeMainLoop();
         }
 #endif
 #ifdef _WIN32
@@ -1396,6 +1429,10 @@ int main(int argc, char* argv[]) {
 
     // Track which browser layer is active (for WindowStateNotifier)
     BrowserLayer* active_browser = browsers.getInputLayer("overlay");
+#ifdef __APPLE__
+    g_active_browser_layer = active_browser;
+    setMacNativeScrollHandler(handleMacNativeScroll);
+#endif
 
     // Push/pop menu layer on open/close
     menu.setOnOpen([&]() { input_stack.push(&menu_layer); });
@@ -1567,10 +1604,15 @@ int main(int argc, char* argv[]) {
         for (const auto& ev : mpvEvents.drain()) {
             switch (ev.type) {
             case MpvEvent::Type::Position:
+                client->updatePosition(ev.value);
                 mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
                 break;
             case MpvEvent::Type::Duration:
                 client->updateDuration(ev.value);
+                break;
+            case MpvEvent::Type::Speed:
+                current_playback_rate = ev.value;
+                mediaSessionThread.setRate(ev.value);
                 break;
             case MpvEvent::Type::Playing:
                 // Restore video state - loadfile replacement fires END_FILE(STOP)
@@ -1627,15 +1669,19 @@ int main(int argc, char* argv[]) {
                 client->emitCanceled();
                 mediaSessionThread.setPlaybackState(PlaybackState::Stopped);
                 break;
+            case MpvEvent::Type::Seeking:
+                client->emitSeeking();
+                mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
+                mediaSessionThread.emitSeeking();
+                break;
             case MpvEvent::Type::Seeked:
                 client->updatePosition(ev.value);
                 mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
-                mediaSessionThread.setRate(current_playback_rate);
                 mediaSessionThread.emitSeeked(static_cast<int64_t>(ev.value * 1000.0));
                 break;
             case MpvEvent::Type::Buffering:
                 mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
-                mediaSessionThread.setRate(ev.flag ? 0.0 : current_playback_rate);
+                mediaSessionThread.setBuffering(ev.flag);
                 break;
             case MpvEvent::Type::CoreIdle:
                 mediaSessionThread.setPosition(static_cast<int64_t>(ev.value * 1000.0));
@@ -1907,6 +1953,11 @@ int main(int argc, char* argv[]) {
             }
         }
 
+#ifdef __APPLE__
+        client->flushScroll();
+        overlay_client->flushScroll();
+#endif
+
 #ifndef _WIN32
         // macOS/Linux: Pump CEF - scheduling controls actual work frequency
         App::DoWork();
@@ -2037,14 +2088,11 @@ int main(int argc, char* argv[]) {
                     mediaSessionThread.setCanGoNext(canNext);
                     mediaSessionThread.setCanGoPrevious(canPrev);
                 } else if (cmd.cmd == "media_notify_rate") {
-                    // Rate was encoded as rate * 1000000
-                    double rate = static_cast<double>(cmd.intArg) / 1000000.0;
-                    current_playback_rate = rate;
-                    mediaSessionThread.setRate(rate);
+                    // Ignored — mpv's speed property observation is authoritative
+                    (void)cmd.intArg;
                 } else if (cmd.cmd == "media_seeked") {
-                    // JS detected a seek - emit Seeked signal to media session
-                    int64_t pos_us = static_cast<int64_t>(cmd.intArg) * 1000;
-                    mediaSessionThread.emitSeeked(pos_us);
+                    // Ignored — mpv's seeking property observation handles this
+                    (void)cmd.intArg;
                 } else if (cmd.cmd == "media_action") {
                     // Route media session control commands to JS playbackManager
                     std::string js = "if(window._nativeHostInput) window._nativeHostInput(['" + cmd.url + "']);";
@@ -2115,6 +2163,9 @@ int main(int argc, char* argv[]) {
                 input_stack.remove(browsers.getInputLayer("overlay"));
                 input_stack.push(browsers.getInputLayer("main"));
                 active_browser = browsers.getInputLayer("main");
+#ifdef __APPLE__
+                g_active_browser_layer = active_browser;
+#endif
                 window_state.add(active_browser);
                 active_browser->onFocusGained();
                 overlay_fade_start = now;
@@ -2265,6 +2316,8 @@ int main(int argc, char* argv[]) {
     mpv->cleanup();
 
 #ifdef __APPLE__
+    setMacNativeScrollHandler(nullptr);
+    g_active_browser_layer = nullptr;
     // macOS: simpler cleanup - CefShutdown handles browser cleanup
     browsers.cleanupCompositors();
     videoRenderer.cleanup();

@@ -60,6 +60,12 @@ public:
     // Set visibility (no-op on Linux, alpha controls rendering)
     void setVisible(bool visible) { (void)visible; }
 
+#if !defined(__APPLE__) && !defined(_WIN32)
+    bool hasPendingImport() const { return dmabuf_pending_.load(std::memory_order_acquire) || popup_dmabuf_pending_.load(std::memory_order_acquire); }
+#else
+    bool hasPendingImport() const { return false; }
+#endif
+
     // Check if we have valid content to composite
     bool hasValidOverlay() const { return has_content_ && texture_valid_; }
 

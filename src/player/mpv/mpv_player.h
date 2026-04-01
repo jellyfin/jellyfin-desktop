@@ -17,6 +17,7 @@ public:
     using StateCallback = std::function<void(bool paused)>;
     using PlaybackCallback = std::function<void()>;
     using SeekCallback = std::function<void(double ms)>;
+    using SpeedCallback = std::function<void(double speed)>;
     using BufferingCallback = std::function<void(bool buffering, double ms)>;
     using CoreIdleCallback = std::function<void(bool idle, double ms)>;
     struct BufferedRange { int64_t start; int64_t end; };
@@ -78,6 +79,8 @@ public:
     void setPlayingCallback(PlaybackCallback cb) { on_playing_ = cb; }
     void setFinishedCallback(PlaybackCallback cb) { on_finished_ = cb; }
     void setCanceledCallback(PlaybackCallback cb) { on_canceled_ = cb; }
+    void setSpeedCallback(SpeedCallback cb) { on_speed_ = cb; }
+    void setSeekingCallback(SeekCallback cb) { on_seeking_ = cb; }
     void setSeekedCallback(SeekCallback cb) { on_seeked_ = cb; }
     void setBufferingCallback(BufferingCallback cb) { on_buffering_ = cb; }
     void setCoreIdleCallback(CoreIdleCallback cb) { on_core_idle_ = cb; }
@@ -100,6 +103,8 @@ private:
     PlaybackCallback on_playing_;
     PlaybackCallback on_finished_;
     PlaybackCallback on_canceled_;
+    SpeedCallback on_speed_;
+    SeekCallback on_seeking_;
     SeekCallback on_seeked_;
     BufferingCallback on_buffering_;
     CoreIdleCallback on_core_idle_;

@@ -1,9 +1,9 @@
 FROM archlinux:latest
 
 # Install build + runtime dependencies
-# - CEF runtime deps (from jellyfin-desktop-cef-libcef-bin PKGBUILD)
-# - mpv build deps (from jellyfin-desktop-cef-libmpv-git PKGBUILD)
-# - App build deps (from jellyfin-desktop-cef-git PKGBUILD)
+# - CEF runtime deps (from jellyfin-desktop-libcef-bin PKGBUILD)
+# - mpv build deps (from jellyfin-desktop-libmpv-git PKGBUILD)
+# - App build deps (from jellyfin-desktop-git PKGBUILD)
 # - AppImage tooling
 RUN pacman -Syu --noconfirm && \
     pacman -S --noconfirm --needed \
@@ -48,7 +48,7 @@ RUN cd third_party/mpv && \
         -Dx11=enabled -Dwayland=enabled && \
     meson compile -C build
 
-# Build jellyfin-desktop-cef
+# Build jellyfin-desktop
 # - CMAKE_SKIP_RPATH=1: no hardcoded paths, AppRun handles library resolution
 # - Uses CEF from third_party/cef, mpv from submodule (not external dirs)
 WORKDIR /build
@@ -65,7 +65,7 @@ RUN mkdir -p /AppDir/usr/bin /AppDir/usr/share
 
 # Binary + CEF resources (post-build copies put everything in the build dir).
 # CEF finds resources relative to /proc/self/exe, so they must be next to the binary.
-RUN cp /build/jellyfin-desktop-cef /AppDir/usr/bin/ && \
+RUN cp /build/jellyfin-desktop /AppDir/usr/bin/ && \
     cp /build/*.pak /AppDir/usr/bin/ && \
     cp /build/icudtl.dat /AppDir/usr/bin/ && \
     cp /build/v8_context_snapshot.bin /AppDir/usr/bin/ && \
@@ -93,11 +93,11 @@ RUN cp /build/libmpv.so.2 /AppDir/usr/lib/
 RUN mkdir -p /AppDir/usr/share/applications \
              /AppDir/usr/share/icons/hicolor/scalable/apps \
              /AppDir/usr/share/metainfo && \
-    cp /src/resources/linux/org.jellyfin.JellyfinDesktopCEF.desktop \
+    cp /src/resources/linux/org.jellyfin.JellyfinDesktop.desktop \
        /AppDir/usr/share/applications/ && \
-    cp /src/resources/linux/org.jellyfin.JellyfinDesktopCEF.svg \
+    cp /src/resources/linux/org.jellyfin.JellyfinDesktop.svg \
        /AppDir/usr/share/icons/hicolor/scalable/apps/ && \
-    cp /src/resources/linux/org.jellyfin.JellyfinDesktopCEF.metainfo.xml \
+    cp /src/resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml \
        /AppDir/usr/share/metainfo/
 
 # Strip out files that aren't needed at runtime to reduce AppImage size
@@ -171,12 +171,12 @@ RUN find /AppDir/usr/lib /AppDir/usr/bin -type f \( -name '*.so*' -o -executable
 # the actual binary — critical for CEF, which re-executes /proc/self/exe for
 # renderer/GPU/utility subprocesses (--type=renderer, --type=gpu-process, etc).
 RUN patchelf --set-interpreter /tmp/.jf-cef-interp/ld-linux-x86-64.so.2 \
-    /AppDir/usr/bin/jellyfin-desktop-cef
+    /AppDir/usr/bin/jellyfin-desktop
 
 # Desktop integration files at AppDir root (required by AppImage spec)
-RUN cp /AppDir/usr/share/applications/org.jellyfin.JellyfinDesktopCEF.desktop /AppDir/ && \
-    cp /AppDir/usr/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktopCEF.svg /AppDir/ && \
-    ln -sf org.jellyfin.JellyfinDesktopCEF.svg /AppDir/.DirIcon
+RUN cp /AppDir/usr/share/applications/org.jellyfin.JellyfinDesktop.desktop /AppDir/ && \
+    cp /AppDir/usr/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg /AppDir/ && \
+    ln -sf org.jellyfin.JellyfinDesktop.svg /AppDir/.DirIcon
 
 COPY dev/appimage/AppRun /AppDir/AppRun
 RUN chmod +x /AppDir/AppRun
@@ -190,6 +190,6 @@ RUN wget -q -O /opt/tools/runtime-x86_64 \
 RUN mkdir -p /output && \
     ARCH=x86_64 /opt/tools/appimagetool/AppRun --no-appstream \
     --runtime-file /opt/tools/runtime-x86_64 \
-    /AppDir /output/JellyfinDesktopCEF-x86_64.AppImage
+    /AppDir /output/JellyfinDesktop-x86_64.AppImage
 
-CMD ["cp", "/output/JellyfinDesktopCEF-x86_64.AppImage", "/host-output/"]
+CMD ["cp", "/output/JellyfinDesktop-x86_64.AppImage", "/host-output/"]

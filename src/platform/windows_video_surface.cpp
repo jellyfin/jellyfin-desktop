@@ -210,7 +210,7 @@ bool WindowsVideoSurface::initVulkan() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.apiVersion = VK_API_VERSION_1_3;
-    appInfo.pApplicationName = "Jellyfin Desktop CEF";
+    appInfo.pApplicationName = "Jellyfin Desktop";
 
     VkInstanceCreateInfo instanceInfo{};
     instanceInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

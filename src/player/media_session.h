@@ -32,6 +32,8 @@ public:
     virtual void setCanGoNext(bool can) = 0;
     virtual void setCanGoPrevious(bool can) = 0;
     virtual void setRate(double rate) = 0;
+    virtual void setBuffering(bool /*buffering*/) {}
+    virtual void emitSeeking() {}
     virtual void emitSeeked(int64_t /*position_us*/) {}
     virtual void update() = 0;  // Called from event loop to process events
     virtual int getFd() = 0;    // File descriptor for poll, -1 if none
@@ -50,6 +52,8 @@ public:
     void setCanGoNext(bool can);
     void setCanGoPrevious(bool can);
     void setRate(double rate);
+    void setBuffering(bool buffering);
+    void emitSeeking();
     void emitSeeked(int64_t position_us);
 
     // Called from event loop

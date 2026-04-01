@@ -39,6 +39,14 @@ void MediaSession::setRate(double rate) {
     for (auto& b : backends_) b->setRate(rate);
 }
 
+void MediaSession::setBuffering(bool buffering) {
+    for (auto& b : backends_) b->setBuffering(buffering);
+}
+
+void MediaSession::emitSeeking() {
+    for (auto& b : backends_) b->emitSeeking();
+}
+
 void MediaSession::emitSeeked(int64_t position_us) {
     for (auto& b : backends_) b->emitSeeked(position_us);
 }

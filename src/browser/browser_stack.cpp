@@ -284,6 +284,10 @@ bool BrowserStack::anyHasPendingContent() const {
         if (buf.dirty && !buf.data.empty()) {
             return true;
         }
+        // Check accelerated paint (IOSurface/dmabuf queued for import)
+        if (entry->compositor && entry->compositor->hasPendingImport()) {
+            return true;
+        }
     }
     return false;
 }

@@ -20,6 +20,7 @@ public:
     virtual void sendMouseMove(int x, int y, int modifiers) = 0;
     virtual void sendMouseClick(int x, int y, bool down, int button, int clickCount, int modifiers) = 0;
     virtual void sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) = 0;
+    virtual void sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) = 0;
     virtual void sendKeyEvent(int key, bool down, int modifiers) = 0;
     virtual void sendChar(int charCode, int modifiers) = 0;
     virtual void sendTouch(int id, float x, float y, float radiusX, float radiusY,
@@ -159,6 +160,7 @@ public:
     void sendMouseMove(int x, int y, int modifiers) override;
     void sendMouseClick(int x, int y, bool down, int button, int clickCount, int modifiers) override;
     void sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) override;
+    void sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) override;
     void sendKeyEvent(int key, bool down, int modifiers) override;
     void sendChar(int charCode, int modifiers) override;
     void sendTouch(int id, float x, float y, float radiusX, float radiusY,
@@ -176,6 +178,10 @@ public:
     void forceRepaint();
     void loadUrl(const std::string& url);
 
+#ifdef __APPLE__
+    void flushScroll();
+#endif
+
     // Override scale factor (0 = use physical/logical ratio)
     void setScaleOverride(float scale) { scale_override_ = scale; }
 
@@ -188,6 +194,7 @@ public:
     // Player signal helpers
     void emitPlaying();
     void emitPaused();
+    void emitSeeking();
     void emitFinished();
     void emitCanceled();
     void emitError(const std::string& msg);
@@ -219,6 +226,13 @@ private:
     float scale_override_ = 0.0f;  // 0 = use physical/logical ratio
     int physical_w_ = 0;  // Stored physical dimensions (set during resize)
     int physical_h_ = 0;
+#ifdef __APPLE__
+    float accum_scroll_x_ = 0.0f;  // Sub-pixel scroll accumulator
+    float accum_scroll_y_ = 0.0f;
+    int scroll_x_ = 0, scroll_y_ = 0;
+    int scroll_mods_ = 0;
+    bool has_pending_scroll_ = false;
+#endif
     mutable std::mutex browser_mutex_;  // Protects browser_ across threads
     std::atomic<bool> is_closed_ = false;
     CefRefPtr<CefBrowser> browser_;     // Guarded by browser_mutex_
@@ -288,10 +302,14 @@ public:
     }
     void resize(int width, int height, int physical_w, int physical_h);
     void setScaleOverride(float scale) { scale_override_ = scale; }
+#ifdef __APPLE__
+    void flushScroll();
+#endif
     void sendFocus(bool focused) override;
     void sendMouseMove(int x, int y, int modifiers) override;
     void sendMouseClick(int x, int y, bool down, int button, int clickCount, int modifiers) override;
     void sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) override;
+    void sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) override;
     void sendKeyEvent(int key, bool down, int modifiers) override;
     void sendChar(int charCode, int modifiers) override;
     void sendTouch(int id, float x, float y, float radiusX, float radiusY,
@@ -321,6 +339,13 @@ private:
     float scale_override_ = 0.0f;
     int physical_w_ = 0;  // Stored physical dimensions (set during resize)
     int physical_h_ = 0;
+#ifdef __APPLE__
+    float accum_scroll_x_ = 0.0f;  // Sub-pixel scroll accumulator
+    float accum_scroll_y_ = 0.0f;
+    int scroll_x_ = 0, scroll_y_ = 0;
+    int scroll_mods_ = 0;
+    bool has_pending_scroll_ = false;
+#endif
     mutable std::mutex browser_mutex_;  // Protects browser_ across threads
     std::atomic<bool> is_closed_ = false;
     CefRefPtr<CefBrowser> browser_;     // Guarded by browser_mutex_

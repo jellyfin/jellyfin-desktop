@@ -15,8 +15,8 @@ Install the following:
 
 ```powershell
 # Clone and setup
-git clone https://github.com/jellyfin-labs/jellyfin-desktop-cef
-cd jellyfin-desktop-cef
+git clone https://github.com/jellyfin/jellyfin-desktop
+cd jellyfin-desktop
 
 # Run setup (downloads CEF, SDL3, mpv)
 .\dev\windows\setup.ps1
@@ -57,10 +57,10 @@ Downloaded automatically by `setup.ps1`, or manually:
 ### 4. libmpv
 
 ```powershell
-.\dev\windows\download_mpv.ps1
+.\dev\windows\build_mpv_source.ps1
 ```
 
-This downloads a prebuilt libmpv DLL, uses headers from the mpv submodule fork (for gpu-next support), and generates an MSVC import library.
+This builds libmpv from the mpv submodule source using MSYS2, and generates an MSVC import library.
 
 ## Building
 
@@ -88,7 +88,7 @@ This downloads a prebuilt libmpv DLL, uses headers from the mpv submodule fork (
 | `build.ps1` | Configure and build with Ninja |
 | `build_cef.ps1` | Build CEF wrapper library |
 | `build_mpv.ps1` | Setup mpv import library (from MSYS2 or downloaded) |
-| `download_mpv.ps1` | Download libmpv and generate MSVC import library |
+| `build_mpv_source.ps1` | Build mpv from submodule source using MSYS2 |
 
 ## Troubleshooting
 

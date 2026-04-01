@@ -1,4 +1,4 @@
-# Build jellyfin-desktop-cef on Windows
+# Build jellyfin-desktop on Windows
 # Must be run from Visual Studio Developer Command Prompt or with vcvars64.bat loaded
 
 param(
@@ -66,7 +66,7 @@ if ($Configure -or -not (Test-Path (Join-Path $BuildDir "build.ninja"))) {
         "-DCMAKE_BUILD_TYPE=$BuildType"
     )
 
-    # Add mpv paths (prefer mpv-install from download_mpv.ps1)
+    # Add mpv paths (prefer mpv-install from build_mpv_source.ps1)
     $MpvInstallDir = Join-Path $RepoRoot "third_party\mpv-install"
     $MpvDir = Join-Path $RepoRoot "third_party\mpv"
     if (Test-Path (Join-Path $MpvInstallDir "lib\mpv.lib")) {
@@ -101,4 +101,4 @@ if ($BuildResult -ne 0) {
 
 Write-Host ""
 Write-Host "Build complete!" -ForegroundColor Green
-Write-Host "Executable: $BuildDir\jellyfin-desktop-cef.exe"
+Write-Host "Executable: $BuildDir\jellyfin-desktop.exe"

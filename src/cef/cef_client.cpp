@@ -6,6 +6,7 @@
 #include "include/cef_parser.h"
 #include <SDL3/SDL.h>
 #include "logging.h"
+#include <cmath>
 #include <mutex>
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <unistd.h>  // For dup()
@@ -680,20 +681,12 @@ void Client::sendKeyEvent(int key, bool down, int modifiers) {
     event.windows_key_code = sdlKeyToWindowsVK(key);
 #ifdef __APPLE__
     event.native_key_code = sdlKeyToMacNative(key);
-    // macOS: set character fields for all keys that have character codes
-    // Control keys need their char codes set or CEF may double-fire
-    if (key >= 0x20 && key < 0x7F) {
-        event.character = key;
-        event.unmodified_character = key;
-    } else if (key == 0x08 || key == 0x09 || key == 0x0D || key == 0x1B || key == 0x7F) {
-        // Backspace, Tab, Enter, Escape, Delete
-        event.character = key;
-        event.unmodified_character = key;
-    } else {
-        event.character = 0;
-        event.unmodified_character = 0;
-    }
-    // macOS: use RAWKEYDOWN like cefclient (KEYEVENT_KEYDOWN is never used)
+    // macOS: CEF creates a synthetic NSEvent from these fields. If both
+    // character and unmodified_character are 0, CEF misidentifies the event
+    // as NSEventTypeFlagsChanged (modifier key) instead of NSEventTypeKeyDown.
+    int mac_char = sdlKeyToMacChar(key);
+    event.character = mac_char;
+    event.unmodified_character = mac_char;
     event.type = down ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
 #else
     event.native_key_code = key;
@@ -724,6 +717,14 @@ void Client::sendChar(int charCode, int modifiers) {
 }
 
 void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
+#ifdef __APPLE__
+    scroll_x_ = x;
+    scroll_y_ = y;
+    scroll_mods_ = modifiers;
+    accum_scroll_x_ += deltaX * 10.0f;
+    accum_scroll_y_ += deltaY * 10.0f;
+    has_pending_scroll_ = true;
+#else
     auto b = browser();
     if (!b) return;
     CefMouseEvent event;
@@ -731,10 +732,59 @@ void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifi
     event.y = y;
     event.modifiers = modifiers;
     // SDL3 provides smooth scroll values, scale for CEF (expects ~120 per notch)
-    int pixelX = static_cast<int>(deltaX * 53.0f);  // Smooth scroll factor
+    int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+    return;
+#endif
+
+    return;
 }
+
+void Client::sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
+#ifdef __APPLE__
+    accum_scroll_x_ += deltaX;
+    accum_scroll_y_ += deltaY;
+    const int pixelX = static_cast<int>(std::lround(accum_scroll_x_));
+    const int pixelY = static_cast<int>(std::lround(accum_scroll_y_));
+    accum_scroll_x_ -= pixelX;
+    accum_scroll_y_ -= pixelY;
+    auto b = browser();
+    if (!b) return;
+
+    if (pixelX == 0 && pixelY == 0) return;
+
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = modifiers | EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+#else
+    sendMouseWheel(x, y, deltaX, deltaY, modifiers);
+#endif
+}
+
+#ifdef __APPLE__
+void Client::flushScroll() {
+    if (!has_pending_scroll_) return;
+    has_pending_scroll_ = false;
+
+    int pixelX = static_cast<int>(accum_scroll_x_);
+    int pixelY = static_cast<int>(accum_scroll_y_);
+    accum_scroll_x_ -= pixelX;
+    accum_scroll_y_ -= pixelY;
+    if (pixelX == 0 && pixelY == 0) return;
+
+    auto b = browser();
+    if (!b) return;
+
+    CefMouseEvent event;
+    event.x = scroll_x_;
+    event.y = scroll_y_;
+    event.modifiers = scroll_mods_ | EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+}
+#endif
 
 void Client::sendFocus(bool focused) {
     auto b = browser();
@@ -851,6 +901,10 @@ void Client::emitPlaying() {
 
 void Client::emitPaused() {
     executeJS("if(window._nativeEmit) window._nativeEmit('paused');");
+}
+
+void Client::emitSeeking() {
+    executeJS("if(window._nativeEmit) window._nativeEmit('seeking');");
 }
 
 void Client::emitFinished() {
@@ -1173,6 +1227,14 @@ void OverlayClient::sendMouseClick(int x, int y, bool down, int button, int clic
 }
 
 void OverlayClient::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
+#ifdef __APPLE__
+    scroll_x_ = x;
+    scroll_y_ = y;
+    scroll_mods_ = modifiers;
+    accum_scroll_x_ += deltaX * 10.0f;
+    accum_scroll_y_ += deltaY * 10.0f;
+    has_pending_scroll_ = true;
+#else
     auto b = browser();
     if (!b) return;
     CefMouseEvent event;
@@ -1182,7 +1244,56 @@ void OverlayClient::sendMouseWheel(int x, int y, float deltaX, float deltaY, int
     int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+    return;
+#endif
+
+    return;
 }
+
+void OverlayClient::sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) {
+#ifdef __APPLE__
+    accum_scroll_x_ += deltaX;
+    accum_scroll_y_ += deltaY;
+    const int pixelX = static_cast<int>(std::lround(accum_scroll_x_));
+    const int pixelY = static_cast<int>(std::lround(accum_scroll_y_));
+    accum_scroll_x_ -= pixelX;
+    accum_scroll_y_ -= pixelY;
+    auto b = browser();
+    if (!b) return;
+
+    if (pixelX == 0 && pixelY == 0) return;
+
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = modifiers | EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+#else
+    sendMouseWheel(x, y, deltaX, deltaY, modifiers);
+#endif
+}
+
+#ifdef __APPLE__
+void OverlayClient::flushScroll() {
+    if (!has_pending_scroll_) return;
+    has_pending_scroll_ = false;
+
+    int pixelX = static_cast<int>(accum_scroll_x_);
+    int pixelY = static_cast<int>(accum_scroll_y_);
+    accum_scroll_x_ -= pixelX;
+    accum_scroll_y_ -= pixelY;
+    if (pixelX == 0 && pixelY == 0) return;
+
+    auto b = browser();
+    if (!b) return;
+
+    CefMouseEvent event;
+    event.x = scroll_x_;
+    event.y = scroll_y_;
+    event.modifiers = scroll_mods_ | EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+}
+#endif
 
 void OverlayClient::sendKeyEvent(int key, bool down, int modifiers) {
     auto b = browser();
@@ -1191,6 +1302,9 @@ void OverlayClient::sendKeyEvent(int key, bool down, int modifiers) {
     event.windows_key_code = sdlKeyToWindowsVK(key);
 #ifdef __APPLE__
     event.native_key_code = sdlKeyToMacNative(key);
+    int mac_char = sdlKeyToMacChar(key);
+    event.character = mac_char;
+    event.unmodified_character = mac_char;
 #else
     event.native_key_code = key;
 #endif

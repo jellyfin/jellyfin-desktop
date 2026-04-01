@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Jellyfin Desktop CEF - macOS bundle + DMG script
+# Jellyfin Desktop - macOS bundle + DMG script
 # Creates distributable app bundle and DMG
 set -eu
 
@@ -21,16 +21,16 @@ APP_DIR="${BUILD_DIR}/output/${APP_NAME}"
 
 # Create DMG
 echo "Creating DMG..."
-DMG_NAME="JellyfinDesktopCEF-${VERSION}-macos-${ARCH}.dmg"
+DMG_NAME="JellyfinDesktop-${VERSION}-macos-${ARCH}.dmg"
 rm -f "${BUILD_DIR}/${DMG_NAME}"
 
 # create-dmg returns non-zero if icon positioning fails (no icon), ignore that
 create-dmg \
-    --volname "Jellyfin Desktop CEF v${VERSION}" \
+    --volname "Jellyfin Desktop v${VERSION}" \
     --no-internet-enable \
     --window-size 500 300 \
     --icon-size 100 \
-    --icon "Jellyfin Desktop CEF.app" 125 150 \
+    --icon "Jellyfin Desktop.app" 125 150 \
     --app-drop-link 375 150 \
     "${BUILD_DIR}/${DMG_NAME}" "${APP_DIR}" || true
 

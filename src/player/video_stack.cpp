@@ -28,15 +28,19 @@ static void configureVulkanHook(mpv_handle* mpv, bool use_hdr) {
         double peak = 1000.0;  // EDR headroom
         mpv_set_option(mpv, "target-peak", MPV_FORMAT_DOUBLE, &peak);
         LOG_INFO(LOG_MPV, "HDR output enabled (bt.709/linear for macOS EDR)");
-#else
-        // Linux Wayland and Windows HDR use PQ/BT.2020
+#elif defined(_WIN32)
+        // Windows HDR: PQ/BT.2020 via DComp swapchain (FBO path)
         mpv_set_option_string(mpv, "target-prim", "bt.2020");
         mpv_set_option_string(mpv, "target-trc", "pq");
         mpv_set_option_string(mpv, "target-colorspace-hint", "yes");
-        mpv_set_option_string(mpv, "tone-mapping", "clip");  // No tone mapping for passthrough
+        mpv_set_option_string(mpv, "tone-mapping", "clip");
         double peak = 1000.0;
         mpv_set_option(mpv, "target-peak", MPV_FORMAT_DOUBLE, &peak);
         LOG_INFO(LOG_MPV, "HDR output enabled (bt.2020/pq/1000 nits)");
+#else
+        // Linux Wayland: libplacebo swapchain handles color management.
+        // No target options — swapchain provides the target color space.
+        LOG_INFO(LOG_MPV, "HDR output: libplacebo swapchain mode");
 #endif
     }
 }
@@ -331,10 +335,38 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
             return stack;
         }
 
-        if (!createVulkanRenderContext(player.get(), g_wayland_subsurface.get())) {
-            return stack;
+        // Pass VkSurface so mpv's libplacebo creates a swapchain on it
+        {
+            mpv_vulkan_init_params vk_params{};
+            vk_params.instance = g_wayland_subsurface->vkInstance();
+            vk_params.physical_device = g_wayland_subsurface->vkPhysicalDevice();
+            vk_params.device = g_wayland_subsurface->vkDevice();
+            vk_params.graphics_queue = g_wayland_subsurface->vkQueue();
+            vk_params.graphics_queue_family = g_wayland_subsurface->vkQueueFamily();
+            vk_params.get_instance_proc_addr = g_wayland_subsurface->vkGetProcAddr();
+            vk_params.features = g_wayland_subsurface->features();
+            vk_params.extensions = g_wayland_subsurface->deviceExtensions();
+            vk_params.num_extensions = g_wayland_subsurface->deviceExtensionCount();
+
+            VkSurfaceKHR vk_surface = g_wayland_subsurface->vkSurface();
+            mpv_display_profile dp = g_wayland_subsurface->displayProfile();
+            int advanced_control = 1;
+            const char* backend = "gpu-next";
+            mpv_render_param params[] = {
+                {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_VULKAN)},
+                {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
+                {MPV_RENDER_PARAM_VULKAN_INIT_PARAMS, &vk_params},
+                {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
+                {MPV_RENDER_PARAM_VULKAN_SURFACE, &vk_surface},
+                {MPV_RENDER_PARAM_DISPLAY_PROFILE, &dp},
+                {MPV_RENDER_PARAM_INVALID, nullptr}
+            };
+            if (!player->createRenderContext(params)) {
+                LOG_ERROR(LOG_MPV, "Failed to create render context with VkSurface");
+                return stack;
+            }
         }
-        LOG_INFO(LOG_MPV, "Vulkan render context created");
+        LOG_INFO(LOG_MPV, "Vulkan render context created (libplacebo swapchain)");
 
         stack.renderer = std::make_unique<VulkanSubsurfaceRenderer>(player.get(), g_wayland_subsurface.get());
         stack.player = std::move(player);

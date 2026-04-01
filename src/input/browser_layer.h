@@ -5,6 +5,10 @@
 #include "../cef/cef_client.h"
 #include <SDL3/SDL.h>
 
+#ifdef __APPLE__
+bool macNativeScrollBridgeEnabled();
+#endif
+
 // Input layer that forwards events to a CEF browser client
 class BrowserLayer : public InputLayer, public WindowStateListener {
 public:
@@ -13,6 +17,12 @@ public:
     void setReceiver(InputReceiver* receiver) { receiver_ = receiver; }
     InputReceiver* receiver() const { return receiver_; }
     void setWindowSize(int w, int h) { window_width_ = w; window_height_ = h; }
+    void handleNativeScroll(int x, int y, float deltaX, float deltaY) {
+        if (!receiver_) return;
+        mouse_x_ = x;
+        mouse_y_ = y;
+        receiver_->sendNativeMouseWheel(x, y, deltaX, deltaY, getModifiers());
+    }
 
     bool handleInput(const SDL_Event& event) override {
         if (!receiver_) return false;
@@ -67,6 +77,12 @@ public:
             }
 
             case SDL_EVENT_MOUSE_WHEEL: {
+#ifdef __APPLE__
+                if (macNativeScrollBridgeEnabled()) {
+                    // macOS scroll wheel input is handled directly from NSEvent.
+                    return true;
+                }
+#endif
                 int mods = getModifiers();
                 receiver_->sendMouseWheel(mouse_x_, mouse_y_, event.wheel.x, event.wheel.y, mods);
                 return true;
@@ -82,19 +98,27 @@ public:
                     bool shift = mods & EVENTFLAG_SHIFT_DOWN;
                     switch (event.key.key) {
                         case SDLK_V: {
-                            static const char* mimeTypes[] = {
-                                "image/png", "image/jpeg", "image/gif",
-                                "text/html", "text/plain"
-                            };
-                            for (const char* mime : mimeTypes) {
-                                size_t len = 0;
-                                void* data = SDL_GetClipboardData(mime, &len);
-                                if (data && len > 0) {
-                                    receiver_->paste(mime, data, len);
-                                    SDL_free(data);
-                                    break;
+                            // If the clipboard has text, use GetClipBoardText,
+                            // otherwise check for valid mimetypes
+                            const std::string clipboardText = SDL_GetClipboardText();
+                            if (!clipboardText.empty()) {
+                                receiver_->paste("text/plain", clipboardText.c_str(), clipboardText.size());
+                            } else {
+                                static const std::array<const char *, 3> mimeTypes{
+                                    { "image/png", "image/jpeg", "image/gif"}
+                                };
+
+                                for (const auto& mime: mimeTypes) {
+                                    size_t len{};
+                                    void* data = SDL_GetClipboardData(mime, &len);
+                                    if (data && len > 0) {
+                                        receiver_->paste(mime, data, len);
+                                        SDL_free(data);
+                                        break;
+                                    }
                                 }
                             }
+
                             return true;
                         }
                         case SDLK_C: receiver_->copy(); return true;

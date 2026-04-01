@@ -60,12 +60,17 @@ void MpvPlayer::handleMpvEvent(mpv_event* event) {
             } else if (strcmp(prop->name, "duration") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
                 double dur = *static_cast<double*>(prop->data);
                 if (on_duration_) on_duration_(dur * 1000.0);
+            } else if (strcmp(prop->name, "speed") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
+                double speed = *static_cast<double*>(prop->data);
+                if (on_speed_) on_speed_(speed);
             } else if (strcmp(prop->name, "pause") == 0 && prop->format == MPV_FORMAT_FLAG) {
                 bool paused = *static_cast<int*>(prop->data) != 0;
                 if (on_state_) on_state_(paused);
             } else if (strcmp(prop->name, "seeking") == 0 && prop->format == MPV_FORMAT_FLAG) {
                 bool seeking = *static_cast<int*>(prop->data) != 0;
-                if (seeking_ && !seeking) {
+                if (!seeking_ && seeking) {
+                    if (on_seeking_) on_seeking_(last_position_ * 1000.0);
+                } else if (seeking_ && !seeking) {
                     if (on_seeked_) on_seeked_(last_position_ * 1000.0);
                 }
                 seeking_ = seeking;
@@ -151,8 +156,19 @@ void MpvPlayer::handleMpvEvent(mpv_event* event) {
             LOG_DEBUG(LOG_MPV, "%s: %s", msg->prefix, text.c_str());
             break;
         }
+        // Async reply events (no action needed)
+        case MPV_EVENT_COMMAND_REPLY:
+        case MPV_EVENT_SET_PROPERTY_REPLY:
+        // Stream reconfiguration notifications (handled internally by mpv)
+        case MPV_EVENT_AUDIO_RECONFIG:
+        case MPV_EVENT_VIDEO_RECONFIG:
+        // Playback state transitions we don't need to act on
+        case MPV_EVENT_SEEK:
+        case MPV_EVENT_PLAYBACK_RESTART:
+        case MPV_EVENT_IDLE:
+            break;
         default:
-            LOG_DEBUG(LOG_MPV, "Unhandled event: %s", mpv_event_name(event->event_id));
+            LOG_WARN(LOG_MPV, "Unexpected event: %s", mpv_event_name(event->event_id));
             break;
     }
 }
@@ -192,6 +208,7 @@ bool MpvPlayer::init(const char* hwdec, PreInitHook preInitHook) {
     // Set up property observation (like jellyfin-desktop)
     mpv_observe_property(mpv_, 0, "playback-time", MPV_FORMAT_DOUBLE);
     mpv_observe_property(mpv_, 0, "duration", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(mpv_, 0, "speed", MPV_FORMAT_DOUBLE);
     mpv_observe_property(mpv_, 0, "pause", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv_, 0, "seeking", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv_, 0, "paused-for-cache", MPV_FORMAT_FLAG);

@@ -1,4 +1,4 @@
-# Jellyfin Desktop CEF - macOS bundle completion script
+# Jellyfin Desktop - macOS bundle completion script
 # Configured by CMake, run during install to fix library paths
 
 set(app "${CMAKE_INSTALL_PREFIX}/@APP_NAME@")
@@ -40,14 +40,14 @@ if(EXISTS "${CEF_FRAMEWORK_LIB}")
 
   # Fix executable's reference to framework
   execute_process(
-    COMMAND install_name_tool -change "${OLD_CEF_PATH}" "${NEW_CEF_PATH}" "${macos_dir}/jellyfin-desktop-cef"
+    COMMAND install_name_tool -change "${OLD_CEF_PATH}" "${NEW_CEF_PATH}" "${macos_dir}/jellyfin-desktop"
     RESULT_VARIABLE change_result
   )
   message(STATUS "  install_name_tool -change result: ${change_result}")
 
   # Verify the change
   execute_process(
-    COMMAND otool -L "${macos_dir}/jellyfin-desktop-cef"
+    COMMAND otool -L "${macos_dir}/jellyfin-desktop"
     OUTPUT_VARIABLE verify_output
   )
   message(STATUS "  Executable dependencies after fix:")
@@ -203,7 +203,7 @@ file(GLOB macos_dylibs "${macos_dir}/*.dylib")
 set_property(GLOBAL PROPERTY LIBS_TO_FIX ${macos_dylibs})
 
 # Also add the main executable
-set_property(GLOBAL APPEND PROPERTY LIBS_TO_FIX "${macos_dir}/jellyfin-desktop-cef")
+set_property(GLOBAL APPEND PROPERTY LIBS_TO_FIX "${macos_dir}/jellyfin-desktop")
 
 # Process libs iteratively (handles newly discovered deps)
 set(max_iterations 50)
@@ -308,7 +308,7 @@ endforeach()
 
 # Sign the main executable with entitlements (required for CEF JIT)
 message(STATUS "  Signing executable with entitlements")
-execute_process(COMMAND codesign --force --sign - --entitlements "${entitlements_file}" "${macos_dir}/jellyfin-desktop-cef" ERROR_QUIET)
+execute_process(COMMAND codesign --force --sign - --entitlements "${entitlements_file}" "${macos_dir}/jellyfin-desktop" ERROR_QUIET)
 
 # Sign the app bundle last with entitlements
 message(STATUS "  Signing app bundle")

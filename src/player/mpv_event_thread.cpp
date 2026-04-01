@@ -20,6 +20,11 @@ void MpvEventThread::start(MpvPlayer* player) {
         pending_.push_back(MpvEvent{MpvEvent::Type::Duration, ms});
     });
 
+    player_->setSpeedCallback([this](double speed) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pending_.push_back(MpvEvent{MpvEvent::Type::Speed, speed});
+    });
+
     player_->setPlayingCallback([this]() {
         std::lock_guard<std::mutex> lock(mutex_);
         pending_.push_back(MpvEvent{MpvEvent::Type::Playing});
@@ -38,6 +43,11 @@ void MpvEventThread::start(MpvPlayer* player) {
     player_->setCanceledCallback([this]() {
         std::lock_guard<std::mutex> lock(mutex_);
         pending_.push_back(MpvEvent{MpvEvent::Type::Canceled});
+    });
+
+    player_->setSeekingCallback([this](double ms) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pending_.push_back(MpvEvent{MpvEvent::Type::Seeking, ms});
     });
 
     player_->setSeekedCallback([this](double ms) {

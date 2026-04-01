@@ -1,10 +1,10 @@
 # Setup mpv import library for Windows
-# Can use either MSYS2-installed mpv or downloaded libmpv
+# Uses MSYS2-installed mpv or source-built mpv from build_mpv_source.ps1
 #
 # For MSYS2: Install mpv in MSYS2/CLANG64 environment:
 #   pacman -S mingw-w64-clang-x86_64-mpv
 #
-# For downloaded: Run download_mpv.ps1 first
+# For source build: Run build_mpv_source.ps1 first
 
 param(
     [string]$MsysPath = "C:\msys64\clang64",
@@ -58,30 +58,23 @@ if ($UseMsys -or (Test-Path (Join-Path $MsysPath "bin\libmpv-2.dll"))) {
     }
     Write-Host "Using MSYS2 mpv from $MsysPath" -ForegroundColor Cyan
 } else {
-    # Check for mpv-install from download_mpv.ps1
+    # Check for mpv-install from build_mpv_source.ps1
     $MpvInstall = Join-Path $RepoRoot "third_party\mpv-install"
     $MpvInstallDll = Join-Path $MpvInstall "lib\libmpv-2.dll"
-    # Also check legacy third_party/mpv/lib path
-    $DownloadedMpv = Join-Path $RepoRoot "third_party\mpv"
-    $DownloadedDll = Join-Path $DownloadedMpv "lib\libmpv-2.dll"
 
     if (Test-Path $MpvInstallDll) {
         $MpvDll = $MpvInstallDll
         # Prefer fork headers for gpu-next support
-        $ForkHeaders = Join-Path $DownloadedMpv "include\mpv"
+        $ForkHeaders = Join-Path $RepoRoot "third_party\mpv\include\mpv"
         if (Test-Path $ForkHeaders) {
             $MpvInclude = $ForkHeaders
         } else {
             $MpvInclude = Join-Path $MpvInstall "include\mpv"
         }
-        Write-Host "Using downloaded mpv from mpv-install" -ForegroundColor Cyan
-    } elseif (Test-Path $DownloadedDll) {
-        $MpvDll = $DownloadedDll
-        $MpvInclude = Join-Path $DownloadedMpv "include\mpv"
-        Write-Host "Using downloaded mpv" -ForegroundColor Cyan
+        Write-Host "Using source-built mpv from mpv-install" -ForegroundColor Cyan
     } else {
         Write-Host "mpv not found. Options:" -ForegroundColor Yellow
-        Write-Host "  1. Run download_mpv.ps1 to download prebuilt libmpv"
+        Write-Host "  1. Run build_mpv_source.ps1 to build mpv from source"
         Write-Host "  2. Use -UseMsys to use MSYS2-installed mpv"
         Write-Host "     (install with: pacman -S mingw-w64-clang-x86_64-mpv)"
         exit 1

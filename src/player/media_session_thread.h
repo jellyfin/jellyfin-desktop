@@ -16,6 +16,8 @@ struct MediaSessionCmd {
         SetPosition,
         SetRate,
         SetMetadata,
+        SetBuffering,
+        EmitSeeking,
         EmitSeeked,
         SetArtwork,
         SetCanGoNext,
@@ -45,6 +47,8 @@ public:
     void setPosition(int64_t position_us);
     void setRate(double rate);
     void setMetadata(const MediaMetadata& meta);
+    void setBuffering(bool buffering);
+    void emitSeeking();
     void emitSeeked(int64_t position_us);
     void setArtwork(const std::string& url);
     void setCanGoNext(bool can);

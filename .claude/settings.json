@@ -1,27 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Skill(investigate-jellyfin-repos)",
       "Skill(investigate-cef)",
-      "Skill(investigate-sdl)",
-      "Read",
-      "Glob",
-      "Grep",
-      "Task",
-      "TodoWrite",
-      "Bash(cmake -B build -G Ninja)",
-      "Bash(cmake --build build*)",
-      "Edit(src/**)",
-      "Write(src/**)",
-      "Edit(docs/**)",
-      "Write(docs/**)",
-      "Edit(resources/**)",
-      "Write(resources/**)",
-      "Edit(dev/**)",
-      "Write(dev/**)",
-      "Edit(*)",
-      "Write(*)",
-      "WebSearch"
+      "Skill(investigate-jellyfin-web)",
+      "Skill(investigate-sdl)"
     ]
   }
 }
