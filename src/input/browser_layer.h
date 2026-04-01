@@ -5,6 +5,10 @@
 #include "../cef/cef_client.h"
 #include <SDL3/SDL.h>
 
+#ifdef __APPLE__
+bool macNativeScrollBridgeEnabled();
+#endif
+
 // Input layer that forwards events to a CEF browser client
 class BrowserLayer : public InputLayer, public WindowStateListener {
 public:
@@ -13,6 +17,12 @@ public:
     void setReceiver(InputReceiver* receiver) { receiver_ = receiver; }
     InputReceiver* receiver() const { return receiver_; }
     void setWindowSize(int w, int h) { window_width_ = w; window_height_ = h; }
+    void handleNativeScroll(int x, int y, float deltaX, float deltaY) {
+        if (!receiver_) return;
+        mouse_x_ = x;
+        mouse_y_ = y;
+        receiver_->sendNativeMouseWheel(x, y, deltaX, deltaY, getModifiers());
+    }
 
     bool handleInput(const SDL_Event& event) override {
         if (!receiver_) return false;
@@ -67,6 +77,12 @@ public:
             }
 
             case SDL_EVENT_MOUSE_WHEEL: {
+#ifdef __APPLE__
+                if (macNativeScrollBridgeEnabled()) {
+                    // macOS scroll wheel input is handled directly from NSEvent.
+                    return true;
+                }
+#endif
                 int mods = getModifiers();
                 receiver_->sendMouseWheel(mouse_x_, mouse_y_, event.wheel.x, event.wheel.y, mods);
                 return true;
