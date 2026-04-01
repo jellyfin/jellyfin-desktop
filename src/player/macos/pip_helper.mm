@@ -88,6 +88,7 @@ struct MacOSPiPHelper::Impl {
     NSViewController* videoVC = nil;
     PiPDelegate* delegate = nil;
     bool active = false;
+    bool playing = true;  // tracks mpv state even before PiP opens
     std::function<void(bool)> playPauseCb;
     std::function<void()> restoreCb;
 };
@@ -100,7 +101,23 @@ MacOSPiPHelper::MacOSPiPHelper() : impl_(new Impl()) {}
 
 MacOSPiPHelper::~MacOSPiPHelper() {
     if (impl_) {
-        stop();
+        // Disconnect delegate first to prevent async callbacks after delete
+        if (impl_->delegate) {
+            impl_->delegate.playBlock = nil;
+            impl_->delegate.pauseBlock = nil;
+            impl_->delegate.restoreBlock = nil;
+        }
+        if (impl_->pipController) {
+            impl_->pipController.delegate = nil;
+        }
+        @try {
+            stop();
+        } @catch (NSException* e) {
+            LOG_WARN(LOG_PLATFORM, "PiP: exception during cleanup: %s", e.reason.UTF8String);
+        }
+        impl_->pipController = nil;
+        impl_->videoVC = nil;
+        impl_->delegate = nil;
         delete impl_;
     }
 }
@@ -141,7 +158,7 @@ void MacOSPiPHelper::start(void* videoView, int videoW, int videoH) {
     }
 
     impl_->pipController.delegate = impl_->delegate;
-    impl_->pipController.playing = YES;
+    impl_->pipController.playing = impl_->playing;
     impl_->pipController.aspectRatio = NSMakeSize(videoW, videoH);
 
     // Set replacement window for the fly-back animation
@@ -181,6 +198,7 @@ bool MacOSPiPHelper::isActive() const {
 }
 
 void MacOSPiPHelper::setPlaying(bool playing) {
+    impl_->playing = playing;
     if (impl_->pipController) {
         impl_->pipController.playing = playing;
     }
