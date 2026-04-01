@@ -64,7 +64,7 @@
             { key: 'advanced', order: 2 }
         ],
         settings: {
-            main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
+            main: { enableMPV: true, fullscreen: !!_savedSettings.tvMode, userWebClient: '__SERVER_URL__' },
             playback: {
                 hwdec: _savedSettings.hwdec || 'auto-safe'
             },
