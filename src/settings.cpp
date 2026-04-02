@@ -95,6 +95,7 @@ bool Settings::load() {
     titlebar_theme_color_ = jsonBool(root, "titlebarThemeColor", true);
     transparent_titlebar_ = jsonBool(root, "transparentTitlebar", true);
     log_level_ = jsonStr(root, "logLevel");
+    custom_mpv_config_ = jsonStr(root, "customMpvConfig");
 
     cJSON_Delete(root);
     return true;
@@ -124,6 +125,7 @@ static std::string buildSettingsJson(const Settings& s, bool pretty) {
     if (!s.titlebarThemeColor()) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
     if (!s.transparentTitlebar()) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
     if (!s.logLevel().empty()) cJSON_AddStringToObject(root, "logLevel", s.logLevel().c_str());
+    if (!s.customMpvConfig().empty()) cJSON_AddStringToObject(root, "customMpvConfig", s.customMpvConfig().c_str());
 
     char* str = pretty ? cJSON_Print(root) : cJSON_PrintUnformatted(root);
     std::string result(str);
@@ -165,6 +167,7 @@ std::string Settings::cliSettingsJson() const {
     if (!titlebar_theme_color_) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
     if (!transparent_titlebar_) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
     if (!log_level_.empty()) cJSON_AddStringToObject(root, "logLevel", log_level_.c_str());
+    if (!custom_mpv_config_.empty()) cJSON_AddStringToObject(root, "customMpvConfig", custom_mpv_config_.c_str());
 
     char* str = cJSON_PrintUnformatted(root);
     std::string result(str);
