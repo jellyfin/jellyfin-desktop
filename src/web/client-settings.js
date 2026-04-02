@@ -154,7 +154,9 @@
                     control.className = 'emby-input';
                     control.style.resize = 'none';
                     control.value = values[setting.key] || '';
-                    control.rows = 2;
+                    control.rows = setting.rows || 2;
+                    control.wrap = 'off'
+                    control.spellcheck = false;
                     control.addEventListener('change', () => {
                         jmpInfo.settings[section][setting.key] = control.value;
                         window.api.settings.setValue(section, setting.key, control.value);
