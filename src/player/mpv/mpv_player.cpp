@@ -3,7 +3,10 @@
 #include <mpv/render.h>
 #include <clocale>
 #include <cmath>
+#include <regex>
+#include <sstream>
 #include "logging.h"
+#include "settings.h"
 
 MpvPlayer::MpvPlayer() = default;
 
@@ -193,6 +196,8 @@ bool MpvPlayer::init(const char* hwdec, PreInitHook preInitHook) {
     // Prevents blocking/crashes on audio errors (like jellyfin-desktop)
     mpv_set_option_string(mpv_, "audio-fallback-to-null", "yes");
 
+    applyCustomConfig();
+
     if (preInitHook) {
         preInitHook(mpv_);
     }
@@ -220,6 +225,26 @@ bool MpvPlayer::init(const char* hwdec, PreInitHook preInitHook) {
     mpv_set_wakeup_callback(mpv_, onMpvWakeup, this);
 
     return true;
+}
+
+void MpvPlayer::applyCustomConfig() {
+    std::stringstream custom_config(Settings::instance().customMpvConfig());
+    std::string line;
+
+    std::regex pattern("(^\"+)|(\"+$)");
+
+    while(std::getline(custom_config, line, '\n')) {
+        int index = line.find('=');
+        if (index <= 0 || index >= line.length() - 1) continue;
+
+        auto option = std::regex_replace(line.substr(0, index), pattern, "");
+        auto value = std::regex_replace(line.substr(index+1), pattern, "");
+
+        int result = mpv_set_option_string(mpv_, option.c_str(), value.c_str());
+        if (result < 0) {
+            LOG_ERROR(LOG_MPV, "Failed to set option \"%s\" to \"%S\": %s", option.c_str(), value.c_str(), mpv_error_string(result));
+        }
+    }
 }
 
 bool MpvPlayer::createRenderContext(mpv_render_param* params) {
