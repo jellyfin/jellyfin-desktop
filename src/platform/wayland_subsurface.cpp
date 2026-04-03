@@ -419,15 +419,18 @@ void WaylandSubsurface::handlePreferredChanged() {
         display_profile_.ref_luma = q.ref_luma;
     }
 
-    if (changed) {
-        LOG_INFO(LOG_PLATFORM, "Display profile: scaled peak=%.1f min=%.4f (raw max=%.0f ref=%.0f)",
-                 preferred_csp_.hdr.max_luma, preferred_csp_.hdr.min_luma,
-                 q.max_luma, q.ref_luma);
+    // Track HDR/SDR transitions
+    bool was_hdr = output_is_hdr_;
+    output_is_hdr_ = preferred_csp_valid_ && preferred_csp_.hdr.max_luma > PL_COLOR_SDR_WHITE;
 
-        // Only update the surface image description when we own color
-        // management (dmabuf path — color_surface_ set by activateColorManagement).
-        // On the swapchain path, Mesa's WSI handles this via pl_swapchain.
-        if (color_surface_ && preferred_csp_.hdr.max_luma > PL_COLOR_SDR_WHITE) {
+    if (changed) {
+        LOG_INFO(LOG_PLATFORM, "Display profile: scaled peak=%.1f min=%.4f (raw max=%.0f ref=%.0f) %s",
+                 preferred_csp_.hdr.max_luma, preferred_csp_.hdr.min_luma,
+                 q.max_luma, q.ref_luma, output_is_hdr_ ? "HDR" : "SDR");
+
+        // Update the surface image description when we own color management
+        // (dmabuf path — color_surface_ set by activateColorManagement).
+        if (color_surface_ && output_is_hdr_) {
             struct pl_hdr_metadata hdr = preferred_csp_.hdr;
             long cll = lrintf(hdr.max_cll);
             long min_m = pl_primaries_valid(&hdr.prim) ? lrintf(hdr.min_luma * WAYLAND_MIN_LUM_FACTOR) : 0;
@@ -438,6 +441,9 @@ void WaylandSubsurface::handlePreferredChanged() {
                 last_sent_max_mastering_ = max_m;
                 setHdrImageDescription();
             }
+        } else if (color_surface_ && was_hdr && !output_is_hdr_) {
+            // Transitioned from HDR to SDR — set sRGB image description
+            setSdrImageDescription();
         }
     }
 }
@@ -621,10 +627,14 @@ void WaylandSubsurface::activateColorManagement() {
     if (!color_manager_ || !parent_surface_) return;
     if (!color_surface_)
         color_surface_ = wp_color_manager_v1_get_surface(color_manager_, parent_surface_);
-    // Set initial PQ/BT.2020 description so KWin starts sending
+    // Set initial image description so KWin starts sending
     // preferred_changed events for this surface.
-    if (color_surface_)
-        setHdrImageDescription();
+    if (color_surface_) {
+        if (output_is_hdr_)
+            setHdrImageDescription();
+        else
+            setSdrImageDescription();
+    }
 }
 
 void WaylandSubsurface::setHdrImageDescription(uint32_t, uint32_t) {
@@ -695,6 +705,44 @@ void WaylandSubsurface::setHdrImageDescription(uint32_t, uint32_t) {
                  have_hdr && have_primaries ? lrintf(hdr.max_luma) : 0L);
     }
     wp_image_description_v1_destroy(img_desc);
+}
+
+void WaylandSubsurface::setSdrImageDescription() {
+    uint32_t wl_prim = primaries_map_[PL_COLOR_PRIM_BT_709];
+    uint32_t wl_tf = transfer_map_[PL_COLOR_TRC_SRGB];
+    if (!supports_parametric_ || !wl_prim || !wl_tf || !color_manager_)
+        return;
+    if (!color_surface_) return;
+
+    auto* creator = wp_color_manager_v1_create_parametric_creator(color_manager_);
+    wp_image_description_creator_params_v1_set_primaries_named(creator, wl_prim);
+    wp_image_description_creator_params_v1_set_tf_named(creator, wl_tf);
+    // SDR: no mastering luminance, no CLL, no FALL — just named primaries + TF
+
+    auto* img_desc = wp_image_description_creator_params_v1_create(creator);
+
+    ImageDescContext dc{};
+    auto* dq = wl_display_create_queue(wl_display_);
+    wl_proxy_set_queue((wl_proxy*)img_desc, dq);
+    wp_image_description_v1_add_listener(img_desc, &s_descListener, &dc);
+    while (wl_display_dispatch_queue(wl_display_, dq) > 0)
+        if (dc.ready) break;
+
+    wl_proxy_set_queue((wl_proxy*)img_desc, nullptr);
+    wl_event_queue_destroy(dq);
+
+    if (dc.ready) {
+        wp_color_management_surface_v1_set_image_description(
+            color_surface_, img_desc, WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
+        wl_display_flush(wl_display_);
+        LOG_INFO(LOG_PLATFORM, "Set SDR image description: sRGB/BT.709");
+    }
+    wp_image_description_v1_destroy(img_desc);
+
+    // Reset HDR dedup state so a future HDR transition sends fresh values
+    last_sent_cll_ = -1;
+    last_sent_min_mastering_ = -1;
+    last_sent_max_mastering_ = -1;
 }
 
 void WaylandSubsurface::updateContentPeak() {

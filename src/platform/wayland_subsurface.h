@@ -47,9 +47,10 @@ public:
     void presentBuffer(DmabufBuffer* buf);
     void destroyDmabufPool();
 
-    // HDR signaling — set PQ/BT.2020 image description on parent surface.
+    // Color management — set image description on parent surface.
     void activateColorManagement();
     void setHdrImageDescription(uint32_t max_luma = 0, uint32_t ref_luma = 0);
+    void setSdrImageDescription();
 
     // Called after render — reads content_peak from display_profile and
     // updates the surface image description if the peak changed.

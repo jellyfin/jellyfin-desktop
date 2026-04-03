@@ -9,9 +9,10 @@
 #include <cstdlib>
 
 // Creates a Vulkan render context with a libplacebo-managed swapchain.
-// Used by platforms where libplacebo owns the swapchain (macOS, Windows, Wayland SDR).
+// Used by platforms where libplacebo owns the swapchain (macOS, Windows,
+// Wayland fallback when compositor lacks parametric color management).
 // display_profile is only passed when the platform manages color (isHdr) —
-// on Wayland SDR, Mesa's WSI handles color management and passing a profile
+// without it, Mesa's WSI handles color management and passing a profile
 // would cause libmpv to override Mesa's sRGB default with HDR hints.
 template<typename Surface>
 static bool createSwapchainRenderContext(MpvPlayer* player, Surface* surface) {
@@ -298,7 +299,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
              videoDriver ? videoDriver : "null", useWayland ? "Wayland" : "X11");
 
     if (useWayland) {
-        // Wayland: Vulkan subsurface for HDR
+        // Wayland: Vulkan subsurface with dmabuf FBO + explicit color management
         g_wayland_subsurface = std::make_unique<WaylandSubsurface>();
         if (!g_wayland_subsurface->init(window, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0,
                                         nullptr, 0, nullptr)) {
@@ -318,37 +319,43 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
 
         auto player = std::make_unique<MpvPlayer>();
         bool use_hdr = g_wayland_subsurface->isHdr();
-        // Dmabuf path only when display is HDR — we need to own the surface
-        // color management for PQ signaling. On SDR displays, fall through to
-        // the swapchain path (matching standalone mpv where Mesa handles it).
-        bool will_dmabuf = g_wayland_subsurface->supports_parametric_ && use_hdr;
+        // Dmabuf path when compositor supports wp_color_management parametric
+        // descriptions. We own the surface color management for both HDR (PQ)
+        // and SDR (sRGB), matching standalone mpv's explicit protocol path.
+        // Only fall back to the swapchain path when the compositor lacks
+        // parametric support (rare — KDE 6.x, wlroots 0.18+ all have it).
+        bool will_dmabuf = g_wayland_subsurface->supports_parametric_;
         if (!player->init(hwdec, [&](mpv_handle* mpv) {
             configureVulkanHook(mpv, use_hdr);
             configureAudioOptions(mpv, audio);
             if (will_dmabuf) {
-                mpv_set_option_string(mpv, "target-prim", "bt.2020");
-                mpv_set_option_string(mpv, "target-trc", "pq");
+                if (use_hdr) {
+                    mpv_set_option_string(mpv, "target-prim", "bt.2020");
+                    mpv_set_option_string(mpv, "target-trc", "pq");
+                } else {
+                    mpv_set_option_string(mpv, "target-prim", "bt.709");
+                    mpv_set_option_string(mpv, "target-trc", "srgb");
+                }
             }
         })) {
             LOG_ERROR(LOG_MPV, "MpvPlayer init failed");
             return stack;
         }
 
-        // Try dmabuf presentation path first (enables HDR signaling).
-        // No Vulkan swapchain — we own the surface for color management.
+        // Try dmabuf presentation path (explicit color management for HDR and SDR).
+        // No Vulkan swapchain — we own the surface image description.
         bool use_dmabuf = will_dmabuf && g_wayland_subsurface->initDmabufPool(physical_w, physical_h);
         if (use_dmabuf) {
             // Activate color management on the parent surface so KWin sends
             // preferred_changed events when EDR/HDR mode toggles.
             g_wayland_subsurface->activateColorManagement();
-            LOG_INFO(LOG_PLATFORM, "Using dmabuf presentation (HDR signaling enabled)");
+            LOG_INFO(LOG_PLATFORM, "Using dmabuf presentation (%s)", use_hdr ? "HDR" : "SDR");
             if (!createFboRenderContext(player.get(), g_wayland_subsurface.get())) {
                 return stack;
             }
         } else {
-            // Swapchain path (SDR) — Mesa's WSI handles color management.
-            // Pass VkSurface for swapchain but omit DISPLAY_PROFILE so
-            // libmpv's per-frame hint doesn't override Mesa's sRGB default.
+            // Swapchain fallback — compositor lacks parametric color management.
+            // Mesa's WSI handles color management implicitly.
             if (!createSwapchainRenderContext(player.get(), g_wayland_subsurface.get())) {
                 return stack;
             }
