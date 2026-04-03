@@ -11,7 +11,7 @@ class EGLContext_;
 #endif
 
 #ifdef _WIN32
-class WindowsVideoSurface;
+class WindowsVideoLayer;
 #endif
 
 struct AudioConfig {
@@ -25,7 +25,7 @@ struct VideoStack {
     std::unique_ptr<MpvPlayer> player;
     std::unique_ptr<VideoRenderer> renderer;
 #ifdef _WIN32
-    WindowsVideoSurface* surface = nullptr;  // non-owning, for DComp access
+    WindowsVideoLayer* video_layer = nullptr;  // non-owning, for adapter LUID access
 #endif
 
     // Factory - creates platform-appropriate video stack

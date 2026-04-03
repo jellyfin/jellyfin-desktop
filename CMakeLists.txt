@@ -109,7 +109,8 @@ elseif(WIN32)
         src/context/wgl_context.cpp
         src/context/gl_loader.cpp
         src/context/opengl_frame_context.cpp
-        src/platform/windows_video_surface.cpp
+        src/platform/windows_video_layer.cpp
+        src/platform/windows_dcomp_context.cpp
         src/platform/windows_overlay_layer.cpp
         src/platform/dcomp_browser_layer.cpp
         src/compositor/opengl_compositor.cpp
@@ -161,6 +162,10 @@ else()
     set(XDG_ACTIVATION_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-activation-v1-client.h")
     set(XDG_ACTIVATION_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-activation-v1-code.c")
 
+    set(LINUX_DMABUF_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/stable/linux-dmabuf/linux-dmabuf-v1.xml")
+    set(LINUX_DMABUF_CLIENT_H "${WAYLAND_GENERATED_DIR}/linux-dmabuf-v1-client.h")
+    set(LINUX_DMABUF_CODE_C "${WAYLAND_GENERATED_DIR}/linux-dmabuf-v1-code.c")
+
     # KDE server decoration palette — per-window titlebar colors on KWin.
     # Required by default; pass -DENABLE_KDE_PALETTE=OFF to disable.
     option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support (requires plasma-wayland-protocols at build time)" ON)
@@ -209,6 +214,18 @@ else()
         DEPENDS ${XDG_ACTIVATION_PROTOCOL}
         COMMENT "Generating xdg-activation-v1 code"
     )
+    add_custom_command(
+        OUTPUT ${LINUX_DMABUF_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${LINUX_DMABUF_PROTOCOL} ${LINUX_DMABUF_CLIENT_H}
+        DEPENDS ${LINUX_DMABUF_PROTOCOL}
+        COMMENT "Generating linux-dmabuf-v1 client header"
+    )
+    add_custom_command(
+        OUTPUT ${LINUX_DMABUF_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${LINUX_DMABUF_PROTOCOL} ${LINUX_DMABUF_CODE_C}
+        DEPENDS ${LINUX_DMABUF_PROTOCOL}
+        COMMENT "Generating linux-dmabuf-v1 code"
+    )
     if(ENABLE_KDE_PALETTE)
         add_custom_command(
             OUTPUT ${DECO_PALETTE_CLIENT_H}
@@ -242,6 +259,8 @@ else()
         ${VIEWPORTER_CLIENT_H}
         ${XDG_ACTIVATION_CODE_C}
         ${XDG_ACTIVATION_CLIENT_H}
+        ${LINUX_DMABUF_CODE_C}
+        ${LINUX_DMABUF_CLIENT_H}
     )
     if(ENABLE_KDE_PALETTE)
         list(APPEND PLATFORM_SOURCES

@@ -1,99 +1,86 @@
 #pragma once
 #ifdef _WIN32
 
+#define VK_USE_PLATFORM_WIN32_KHR
+#include <vulkan/vulkan.h>
 #include <windows.h>
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <dcomp.h>
-#include <dwmapi.h>
-#include <mutex>
-
-// GL types needed for interop handles
-#include <GL/gl.h>
+#include <dxgi1_6.h>
+#include <mpv/render_vk.h>
+#include <vector>
 
 struct SDL_Window;
-class WGLContext;
 
-// WGL_NV_DX_interop2 function types
-typedef HANDLE (WINAPI *PFNWGLDXOPENDEVICENVPROC)(void* dxDevice);
-typedef BOOL   (WINAPI *PFNWGLDXCLOSEDEVICENVPROC)(HANDLE hDevice);
-typedef HANDLE (WINAPI *PFNWGLDXREGISTEROBJECTNVPROC)(HANDLE hDevice, void* dxObject, GLuint name, GLenum type, GLenum access);
-typedef BOOL   (WINAPI *PFNWGLDXUNREGISTEROBJECTNVPROC)(HANDLE hDevice, HANDLE hObject);
-typedef BOOL   (WINAPI *PFNWGLDXLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, HANDLE* hObjects);
-typedef BOOL   (WINAPI *PFNWGLDXUNLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, HANDLE* hObjects);
-
-#ifndef WGL_ACCESS_WRITE_DISCARD_NV
-#define WGL_ACCESS_WRITE_DISCARD_NV 0x0002
-#endif
-
+// Video rendering layer for Windows.
+// Creates a child HWND and Vulkan surface — libplacebo manages the swapchain.
+// The DComp target (topmost=TRUE) on the parent HWND renders CEF above
+// the child HWND's Vulkan swapchain content.
 class WindowsVideoLayer {
 public:
-    WindowsVideoLayer();
-    ~WindowsVideoLayer();
-
     bool init(SDL_Window* window);
-    bool createSwapchain(int width, int height);
     void cleanup();
 
-    // GL-DXGI interop
-    bool initInterop(WGLContext* wgl);    // WGL-level: open device, register texture (any context)
-    bool createFBO();                      // GL-level: create FBO (must be called on the context that will use it)
-    void destroyFBO();                     // GL-level: delete FBO (must be called on the owning context)
-    bool lockInterop();                    // wglDXLockObjectsNV + staging_mutex_
-    void unlockInterop();                  // wglDXUnlockObjectsNV + staging_mutex_
-    GLuint fbo() const { return fbo_; }
-    int width() const { return width_; }
-    int height() const { return height_; }
+    // No-op: libplacebo manages the swapchain via the VkSurface.
+    bool createSwapchain(int width, int height);
 
-    // DComp presentation (main thread)
-    void present();          // CopyResource + swap chain Present
-    void commit();           // IDCompositionDevice::Commit
-    void show();             // Attach video visual
-    void hide();             // Detach video visual
-    void recreateSwapchain(int width, int height);
+    // Accessors for mpv render context
+    uint32_t width() const { return width_; }
+    uint32_t height() const { return height_; }
+    VkDevice vkDevice() const { return device_; }
+    VkInstance vkInstance() const { return instance_; }
+    VkPhysicalDevice vkPhysicalDevice() const { return physical_device_; }
+    VkQueue vkQueue() const { return queue_; }
+    uint32_t vkQueueFamily() const { return queue_family_; }
+    PFN_vkGetInstanceProcAddr vkGetProcAddr() const { return vkGetInstanceProcAddr; }
+    const VkPhysicalDeviceFeatures2* features() const { return &features2_; }
+    const char* const* deviceExtensions() const { return enabled_extensions_.data(); }
+    int deviceExtensionCount() const { return static_cast<int>(enabled_extensions_.size()); }
 
-    // Cleanup interop registration (call with GL context current for GL objects)
-    void destroyInterop();
+    VkSurfaceKHR vkSurface() const { return surface_; }
+    const mpv_display_profile& displayProfile() const { return display_profile_; }
+
+    void resize(uint32_t width, uint32_t height);
+    void setVisible(bool visible);
+    void show() { setVisible(true); }
+    void hide() { setVisible(false); }
+
+    bool isHdr() const { return is_hdr_; }
+    void setColorspace() {}
+    void setDestinationSize(int, int) {}
+    void setSwapchain(const void*) {}  // Windows doesn't re-hint
+
+    // DXGI adapter LUID — WindowsDCompContext uses this to create its
+    // D3D11 device on the same GPU.
+    const LUID& adapterLuid() const { return adapter_luid_; }
 
 private:
-    void destroySwapchain();
+    bool initVulkan();
+    void queryDisplayProfile();
 
     SDL_Window* parent_window_ = nullptr;
     HWND parent_hwnd_ = nullptr;
+    HWND child_hwnd_ = nullptr;
 
-    // D3D11
-    ID3D11Device* d3d_device_ = nullptr;
-    ID3D11DeviceContext* d3d_context_ = nullptr;
-    IDXGISwapChain1* swap_chain_ = nullptr;
-    ID3D11Texture2D* staging_texture_ = nullptr;    // GL-DXGI shared
+    // Vulkan
+    VkInstance instance_ = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkSurfaceKHR surface_ = VK_NULL_HANDLE;
+    VkQueue queue_ = VK_NULL_HANDLE;
+    uint32_t queue_family_ = 0;
 
-    // DComp
-    IDCompositionDevice* dcomp_device_ = nullptr;
-    IDCompositionTarget* dcomp_target_ = nullptr;
-    IDCompositionVisual* root_visual_ = nullptr;
-    IDCompositionVisual* video_visual_ = nullptr;
+    // Features/extensions for mpv
+    VkPhysicalDeviceVulkan11Features vk11_features_{};
+    VkPhysicalDeviceVulkan12Features vk12_features_{};
+    VkPhysicalDeviceFeatures2 features2_{};
+    std::vector<const char*> enabled_extensions_;
 
-    // GL-DXGI interop (WGL_NV_DX_interop2)
-    HANDLE dx_interop_device_ = nullptr;            // wglDXOpenDeviceNV
-    HANDLE dx_interop_texture_ = nullptr;           // wglDXRegisterObjectNV
-    GLuint gl_texture_ = 0;
-    GLuint fbo_ = 0;
-    GLuint depth_rb_ = 0;
+    LUID adapter_luid_ = {};
 
-    // WGL_NV_DX_interop2 function pointers
-    PFNWGLDXOPENDEVICENVPROC wglDXOpenDeviceNV_ = nullptr;
-    PFNWGLDXCLOSEDEVICENVPROC wglDXCloseDeviceNV_ = nullptr;
-    PFNWGLDXREGISTEROBJECTNVPROC wglDXRegisterObjectNV_ = nullptr;
-    PFNWGLDXUNREGISTEROBJECTNVPROC wglDXUnregisterObjectNV_ = nullptr;
-    PFNWGLDXLOCKOBJECTSNVPROC wglDXLockObjectsNV_ = nullptr;
-    PFNWGLDXUNLOCKOBJECTSNVPROC wglDXUnlockObjectsNV_ = nullptr;
+    uint32_t width_ = 0;
+    uint32_t height_ = 0;
+    bool is_hdr_ = false;
 
-    // Synchronization
-    std::mutex staging_mutex_;
-
-    int width_ = 0;
-    int height_ = 0;
-    bool visible_ = false;
+    mpv_display_profile display_profile_ = {};
 };
 
 #endif // _WIN32

@@ -5,53 +5,16 @@
 #include <SDL3/SDL.h>
 #include <mpv/client.h>
 #include <mpv/render.h>
+#include <mpv/render_vk.h>
 #include <cstdlib>
 
-static void configureAudioOptions(mpv_handle* mpv, const AudioConfig& audio) {
-    if (audio.spdif && audio.spdif[0])
-        mpv_set_option_string(mpv, "audio-spdif", audio.spdif);
-    if (audio.channels && audio.channels[0])
-        mpv_set_option_string(mpv, "audio-channels", audio.channels);
-    if (audio.exclusive)
-        mpv_set_option_string(mpv, "audio-exclusive", "yes");
-}
-
-// Shared Vulkan pre-init hook: sets hwdec-codecs and PQ/BT.2020 HDR options
-static void configureVulkanHook(mpv_handle* mpv, bool use_hdr) {
-    mpv_set_option_string(mpv, "hwdec-codecs", "h264,vc1,hevc,vp8,av1,prores,prores_raw,ffv1,dpx");
-    if (use_hdr) {
-#ifdef __APPLE__
-        // macOS EDR uses extended linear sRGB - output linear light values
-        mpv_set_option_string(mpv, "target-prim", "bt.709");
-        mpv_set_option_string(mpv, "target-trc", "linear");
-        mpv_set_option_string(mpv, "tone-mapping", "clip");
-        double peak = 1000.0;  // EDR headroom
-        mpv_set_option(mpv, "target-peak", MPV_FORMAT_DOUBLE, &peak);
-        LOG_INFO(LOG_MPV, "HDR output enabled (bt.709/linear for macOS EDR)");
-#elif defined(_WIN32)
-        // Windows HDR: PQ/BT.2020 via DComp swapchain (FBO path)
-        mpv_set_option_string(mpv, "target-prim", "bt.2020");
-        mpv_set_option_string(mpv, "target-trc", "pq");
-        mpv_set_option_string(mpv, "target-colorspace-hint", "yes");
-        mpv_set_option_string(mpv, "tone-mapping", "clip");
-        double peak = 1000.0;
-        mpv_set_option(mpv, "target-peak", MPV_FORMAT_DOUBLE, &peak);
-        LOG_INFO(LOG_MPV, "HDR output enabled (bt.2020/pq/1000 nits)");
-#else
-        // Linux Wayland: libplacebo swapchain handles color management.
-        // No target options — swapchain provides the target color space.
-        LOG_INFO(LOG_MPV, "HDR output: libplacebo swapchain mode");
-#endif
-    }
-}
-
-#ifdef __APPLE__
-#include <mpv/render_vk.h>
-#include "platform/macos_layer.h"
-#include "vulkan_subsurface_renderer.h"
-
+// Creates a Vulkan render context with a libplacebo-managed swapchain.
+// Used by platforms where libplacebo owns the swapchain (macOS, Windows, Wayland SDR).
+// display_profile is only passed when the platform manages color (isHdr) —
+// on Wayland SDR, Mesa's WSI handles color management and passing a profile
+// would cause libmpv to override Mesa's sRGB default with HDR hints.
 template<typename Surface>
-static bool createVulkanRenderContext(MpvPlayer* player, Surface* surface) {
+static bool createSwapchainRenderContext(MpvPlayer* player, Surface* surface) {
     mpv_vulkan_init_params vk_params{};
     vk_params.instance = surface->vkInstance();
     vk_params.physical_device = surface->vkPhysicalDevice();
@@ -63,25 +26,94 @@ static bool createVulkanRenderContext(MpvPlayer* player, Surface* surface) {
     vk_params.extensions = surface->deviceExtensions();
     vk_params.num_extensions = surface->deviceExtensionCount();
 
+    VkSurfaceKHR vk_surface = surface->vkSurface();
+    auto* dp = const_cast<mpv_display_profile*>(&surface->displayProfile());
     int advanced_control = 1;
-    const char* backends[] = {"gpu-next", "gpu"};
-    for (const char* backend : backends) {
-        mpv_render_param params[] = {
-            {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_VULKAN)},
-            {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
-            {MPV_RENDER_PARAM_VULKAN_INIT_PARAMS, &vk_params},
-            {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
-            {MPV_RENDER_PARAM_INVALID, nullptr}
-        };
-        if (player->createRenderContext(params)) {
-            LOG_INFO(LOG_MPV, "Using backend: %s", backend);
-            return true;
-        }
-        LOG_WARN(LOG_MPV, "Backend '%s' failed, trying next", backend);
+    const char* backend = "gpu-next";
+    bool use_profile = surface->isHdr();
+    mpv_render_param params_with_profile[] = {
+        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_VULKAN)},
+        {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
+        {MPV_RENDER_PARAM_VULKAN_INIT_PARAMS, &vk_params},
+        {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
+        {MPV_RENDER_PARAM_VULKAN_SURFACE, &vk_surface},
+        {MPV_RENDER_PARAM_DISPLAY_PROFILE, dp},
+        {MPV_RENDER_PARAM_INVALID, nullptr}
+    };
+    mpv_render_param params_no_profile[] = {
+        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_VULKAN)},
+        {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
+        {MPV_RENDER_PARAM_VULKAN_INIT_PARAMS, &vk_params},
+        {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
+        {MPV_RENDER_PARAM_VULKAN_SURFACE, &vk_surface},
+        {MPV_RENDER_PARAM_INVALID, nullptr}
+    };
+    auto* params = use_profile ? params_with_profile : params_no_profile;
+    if (!player->createRenderContext(params)) {
+        LOG_ERROR(LOG_MPV, "Failed to create render context with VkSurface");
+        return false;
     }
-    LOG_ERROR(LOG_MPV, "All Vulkan backends failed");
-    return false;
+    if (use_profile && dp->swapchain_out)
+        surface->setSwapchain(dp->swapchain_out);
+    LOG_INFO(LOG_MPV, "Vulkan render context created (libplacebo swapchain)");
+    return true;
 }
+
+// Creates a Vulkan render context WITHOUT a swapchain (FBO-only mode).
+// Used for dmabuf presentation where we manage the surface ourselves.
+template<typename Surface>
+static bool createFboRenderContext(MpvPlayer* player, Surface* surface) {
+    mpv_vulkan_init_params vk_params{};
+    vk_params.instance = surface->vkInstance();
+    vk_params.physical_device = surface->vkPhysicalDevice();
+    vk_params.device = surface->vkDevice();
+    vk_params.graphics_queue = surface->vkQueue();
+    vk_params.graphics_queue_family = surface->vkQueueFamily();
+    vk_params.get_instance_proc_addr = surface->vkGetProcAddr();
+    vk_params.features = surface->features();
+    vk_params.extensions = surface->deviceExtensions();
+    vk_params.num_extensions = surface->deviceExtensionCount();
+
+    // Pass display profile for content peak communication.
+    // video.c does PQ passthrough (no tone mapping) and writes the source
+    // content's peak luminance to display_profile.content_peak. The platform
+    // layer reads it to update the surface image description with the actual
+    // content metadata — matching standalone mpv's set_color_management.
+    auto* dp = const_cast<mpv_display_profile*>(&surface->displayProfile());
+    int advanced_control = 1;
+    const char* backend = "gpu-next";
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_VULKAN)},
+        {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
+        {MPV_RENDER_PARAM_VULKAN_INIT_PARAMS, &vk_params},
+        {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
+        {MPV_RENDER_PARAM_DISPLAY_PROFILE, dp},
+        {MPV_RENDER_PARAM_INVALID, nullptr}
+    };
+    if (!player->createRenderContext(params)) {
+        LOG_ERROR(LOG_MPV, "Failed to create render context (FBO mode)");
+        return false;
+    }
+    LOG_INFO(LOG_MPV, "Vulkan render context created (FBO mode, no swapchain)");
+    return true;
+}
+
+static void configureAudioOptions(mpv_handle* mpv, const AudioConfig& audio) {
+    if (audio.spdif && audio.spdif[0])
+        mpv_set_option_string(mpv, "audio-spdif", audio.spdif);
+    if (audio.channels && audio.channels[0])
+        mpv_set_option_string(mpv, "audio-channels", audio.channels);
+    if (audio.exclusive)
+        mpv_set_option_string(mpv, "audio-exclusive", "yes");
+}
+
+static void configureVulkanHook(mpv_handle* mpv, bool /*use_hdr*/) {
+    mpv_set_option_string(mpv, "hwdec-codecs", "h264,vc1,hevc,vp8,av1,prores,prores_raw,ffv1,dpx");
+}
+
+#ifdef __APPLE__
+#include "platform/macos_layer.h"
+#include "vulkan_subsurface_renderer.h"
 
 // Internal storage for macOS video layer (must outlive renderer)
 namespace {
@@ -111,7 +143,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
     int physical_w, physical_h;
     SDL_GetWindowSizeInPixels(window, &physical_w, &physical_h);
 
-    // Create video layer
+    // Create video layer (sets up CAMetalLayer + Vulkan instance/device/surface)
     g_macos_layer = std::make_unique<MacOSVideoLayer>();
     if (!g_macos_layer->init(window, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0,
                              nullptr, 0, nullptr)) {
@@ -119,7 +151,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
         return stack;
     }
     if (!g_macos_layer->createSwapchain(physical_w, physical_h)) {
-        LOG_ERROR(LOG_PLATFORM, "Fatal: macOS video layer swapchain failed");
+        LOG_ERROR(LOG_PLATFORM, "Fatal: macOS video layer init failed");
         return stack;
     }
     LOG_INFO(LOG_PLATFORM, "Using macOS CAMetalLayer for video (HDR: %s)",
@@ -136,10 +168,9 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
         return stack;
     }
 
-    if (!createVulkanRenderContext(player.get(), g_macos_layer.get())) {
+    if (!createSwapchainRenderContext(player.get(), g_macos_layer.get())) {
         return stack;
     }
-    LOG_INFO(LOG_MPV, "Vulkan render context created");
 
     // Create renderer
     stack.renderer = std::make_unique<VulkanSubsurfaceRenderer>(player.get(), g_macos_layer.get());
@@ -149,57 +180,23 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
 }
 
 #elif defined(_WIN32)
-#include <mpv/render_vk.h>
 #include "vulkan_subsurface_renderer.h"
-#include "platform/windows_video_surface.h"
-
-template<typename Surface>
-static bool createVulkanRenderContext(MpvPlayer* player, Surface* surface) {
-    mpv_vulkan_init_params vk_params{};
-    vk_params.instance = surface->vkInstance();
-    vk_params.physical_device = surface->vkPhysicalDevice();
-    vk_params.device = surface->vkDevice();
-    vk_params.graphics_queue = surface->vkQueue();
-    vk_params.graphics_queue_family = surface->vkQueueFamily();
-    vk_params.get_instance_proc_addr = surface->vkGetProcAddr();
-    vk_params.features = surface->features();
-    vk_params.extensions = surface->deviceExtensions();
-    vk_params.num_extensions = surface->deviceExtensionCount();
-
-    int advanced_control = 1;
-    const char* backends[] = {"gpu-next", "gpu"};
-    for (const char* backend : backends) {
-        mpv_render_param params[] = {
-            {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_VULKAN)},
-            {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
-            {MPV_RENDER_PARAM_VULKAN_INIT_PARAMS, &vk_params},
-            {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
-            {MPV_RENDER_PARAM_INVALID, nullptr}
-        };
-        if (player->createRenderContext(params)) {
-            LOG_INFO(LOG_MPV, "Using backend: %s", backend);
-            return true;
-        }
-        LOG_WARN(LOG_MPV, "Backend '%s' failed, trying next", backend);
-    }
-    LOG_ERROR(LOG_MPV, "All Vulkan backends failed");
-    return false;
-}
+#include "platform/windows_video_layer.h"
 
 namespace {
-    std::unique_ptr<WindowsVideoSurface> g_windows_video_surface;
+    std::unique_ptr<WindowsVideoLayer> g_windows_video_layer;
     bool atexit_registered = false;
 
     void atexitCleanup() {
-        if (g_windows_video_surface) {
-            g_windows_video_surface->cleanup();
-            g_windows_video_surface.reset();
+        if (g_windows_video_layer) {
+            g_windows_video_layer->cleanup();
+            g_windows_video_layer.reset();
         }
     }
 }
 
 VideoStack VideoStack::create(SDL_Window* window, int width, int height, const char* hwdec, AudioConfig audio) {
-    (void)width; (void)height;  // Use physical dimensions instead
+    (void)width; (void)height;
     VideoStack stack;
 
     if (!atexit_registered) {
@@ -207,22 +204,18 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
         atexit_registered = true;
     }
 
-    g_windows_video_surface = std::make_unique<WindowsVideoSurface>();
-    if (!g_windows_video_surface->init(window, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0,
-                                       nullptr, 0, nullptr)) {
-        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video surface init failed");
+    g_windows_video_layer = std::make_unique<WindowsVideoLayer>();
+    if (!g_windows_video_layer->init(window)) {
+        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video layer init failed");
         return stack;
     }
 
     int physical_w, physical_h;
     SDL_GetWindowSizeInPixels(window, &physical_w, &physical_h);
-    if (!g_windows_video_surface->createSwapchain(physical_w, physical_h)) {
-        LOG_ERROR(LOG_PLATFORM, "Fatal: Windows video surface swapchain failed");
-        return stack;
-    }
+    g_windows_video_layer->createSwapchain(physical_w, physical_h);
 
     auto player = std::make_unique<MpvPlayer>();
-    bool use_hdr = g_windows_video_surface->isHdr();
+    bool use_hdr = g_windows_video_layer->isHdr();
     if (!player->init(hwdec, [&](mpv_handle* mpv) {
         configureVulkanHook(mpv, use_hdr);
         configureAudioOptions(mpv, audio);
@@ -231,22 +224,20 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, const c
         return stack;
     }
 
-    if (!createVulkanRenderContext(player.get(), g_windows_video_surface.get())) {
+    if (!createSwapchainRenderContext(player.get(), g_windows_video_layer.get())) {
         return stack;
     }
-    LOG_INFO(LOG_MPV, "Vulkan render context created");
 
-    stack.renderer = std::make_unique<VulkanSubsurfaceRenderer>(player.get(), g_windows_video_surface.get());
+    stack.renderer = std::make_unique<VulkanSubsurfaceRenderer>(player.get(), g_windows_video_layer.get());
     stack.player = std::move(player);
-    stack.surface = g_windows_video_surface.get();
+    stack.video_layer = g_windows_video_layer.get();
 
-    LOG_INFO(LOG_PLATFORM, "Using Vulkan gpu-next with DComp for video (HDR: %s)",
-             g_windows_video_surface->isHdr() ? "yes" : "no");
+    LOG_INFO(LOG_PLATFORM, "Using Vulkan gpu-next with libplacebo swapchain (HDR: %s)",
+             g_windows_video_layer->isHdr() ? "yes" : "no");
     return stack;
 }
 
 #else // Linux
-#include <mpv/render_vk.h>
 #include <mpv/render_gl.h>
 #include "platform/wayland_subsurface.h"
 #include "context/egl_context.h"
@@ -327,46 +318,41 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
 
         auto player = std::make_unique<MpvPlayer>();
         bool use_hdr = g_wayland_subsurface->isHdr();
+        // Dmabuf path only when display is HDR — we need to own the surface
+        // color management for PQ signaling. On SDR displays, fall through to
+        // the swapchain path (matching standalone mpv where Mesa handles it).
+        bool will_dmabuf = g_wayland_subsurface->supports_parametric_ && use_hdr;
         if (!player->init(hwdec, [&](mpv_handle* mpv) {
             configureVulkanHook(mpv, use_hdr);
             configureAudioOptions(mpv, audio);
+            if (will_dmabuf) {
+                mpv_set_option_string(mpv, "target-prim", "bt.2020");
+                mpv_set_option_string(mpv, "target-trc", "pq");
+            }
         })) {
             LOG_ERROR(LOG_MPV, "MpvPlayer init failed");
             return stack;
         }
 
-        // Pass VkSurface so mpv's libplacebo creates a swapchain on it
-        {
-            mpv_vulkan_init_params vk_params{};
-            vk_params.instance = g_wayland_subsurface->vkInstance();
-            vk_params.physical_device = g_wayland_subsurface->vkPhysicalDevice();
-            vk_params.device = g_wayland_subsurface->vkDevice();
-            vk_params.graphics_queue = g_wayland_subsurface->vkQueue();
-            vk_params.graphics_queue_family = g_wayland_subsurface->vkQueueFamily();
-            vk_params.get_instance_proc_addr = g_wayland_subsurface->vkGetProcAddr();
-            vk_params.features = g_wayland_subsurface->features();
-            vk_params.extensions = g_wayland_subsurface->deviceExtensions();
-            vk_params.num_extensions = g_wayland_subsurface->deviceExtensionCount();
-
-            VkSurfaceKHR vk_surface = g_wayland_subsurface->vkSurface();
-            mpv_display_profile dp = g_wayland_subsurface->displayProfile();
-            int advanced_control = 1;
-            const char* backend = "gpu-next";
-            mpv_render_param params[] = {
-                {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_VULKAN)},
-                {MPV_RENDER_PARAM_BACKEND, const_cast<char*>(backend)},
-                {MPV_RENDER_PARAM_VULKAN_INIT_PARAMS, &vk_params},
-                {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced_control},
-                {MPV_RENDER_PARAM_VULKAN_SURFACE, &vk_surface},
-                {MPV_RENDER_PARAM_DISPLAY_PROFILE, &dp},
-                {MPV_RENDER_PARAM_INVALID, nullptr}
-            };
-            if (!player->createRenderContext(params)) {
-                LOG_ERROR(LOG_MPV, "Failed to create render context with VkSurface");
+        // Try dmabuf presentation path first (enables HDR signaling).
+        // No Vulkan swapchain — we own the surface for color management.
+        bool use_dmabuf = will_dmabuf && g_wayland_subsurface->initDmabufPool(physical_w, physical_h);
+        if (use_dmabuf) {
+            // Activate color management on the parent surface so KWin sends
+            // preferred_changed events when EDR/HDR mode toggles.
+            g_wayland_subsurface->activateColorManagement();
+            LOG_INFO(LOG_PLATFORM, "Using dmabuf presentation (HDR signaling enabled)");
+            if (!createFboRenderContext(player.get(), g_wayland_subsurface.get())) {
+                return stack;
+            }
+        } else {
+            // Swapchain path (SDR) — Mesa's WSI handles color management.
+            // Pass VkSurface for swapchain but omit DISPLAY_PROFILE so
+            // libmpv's per-frame hint doesn't override Mesa's sRGB default.
+            if (!createSwapchainRenderContext(player.get(), g_wayland_subsurface.get())) {
                 return stack;
             }
         }
-        LOG_INFO(LOG_MPV, "Vulkan render context created (libplacebo swapchain)");
 
         stack.renderer = std::make_unique<VulkanSubsurfaceRenderer>(player.get(), g_wayland_subsurface.get());
         stack.player = std::move(player);
@@ -431,9 +417,9 @@ void VideoStack::cleanupStatics() {
         g_macos_layer.reset();
     }
 #elif defined(_WIN32)
-    if (g_windows_video_surface) {
-        g_windows_video_surface->cleanup();
-        g_windows_video_surface.reset();
+    if (g_windows_video_layer) {
+        g_windows_video_layer->cleanup();
+        g_windows_video_layer.reset();
     }
 #else
     if (g_wayland_subsurface) {

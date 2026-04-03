@@ -15,7 +15,7 @@ public:
     DCompBrowserLayer();
     ~DCompBrowserLayer();
 
-    // Initialize with shared DComp/D3D11 infrastructure from WindowsVideoSurface.
+    // Initialize with shared DComp/D3D11 infrastructure from WindowsDCompContext.
     // parent_visual is where this layer's visual will be added as a child.
     bool init(IDCompositionDevice* dcomp_device,
               IDCompositionVisual* parent_visual,

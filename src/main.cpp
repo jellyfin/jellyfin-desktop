@@ -47,7 +47,8 @@ void setMacTrafficLightsVisible(bool visible);
 #include <dwmapi.h>
 #include "context/wgl_context.h"
 #include "context/opengl_frame_context.h"
-#include "platform/windows_video_surface.h"
+#include "platform/windows_video_layer.h"
+#include "platform/windows_dcomp_context.h"
 #include "platform/windows_overlay_layer.h"
 #include "platform/dcomp_browser_layer.h"
 #include "player/windows/media_session_windows.h"
@@ -781,24 +782,31 @@ int main(int argc, char* argv[]) {
     DCompBrowserLayer overlayBrowserLayer;
     bool has_dcomp_browsers = false;
 
-    if (videoStack.surface) {
+    // Create DComp context for CEF overlay (D3D11 + DComp, topmost above video child HWND)
+    WindowsDCompContext dcompContext;
+    if (videoStack.video_layer) {
+        if (!dcompContext.init(window, &videoStack.video_layer->adapterLuid())) {
+            LOG_WARN(LOG_PLATFORM, "DComp context init failed");
+        }
+    }
+
+    if (dcompContext.dcompDevice()) {
         // Initialize DComp browser layers (one per browser, each with own swap chain)
-        // Visual tree: video_visual_ → main_visual_ → overlay_visual_
         bool main_ok = mainBrowserLayer.init(
-            videoStack.surface->dcompDevice(),
-            videoStack.surface->videoVisual(),
-            videoStack.surface->d3dDevice(),
-            videoStack.surface->d3dContext(),
-            &videoStack.surface->d3dMutex(),
+            dcompContext.dcompDevice(),
+            dcompContext.rootVisual(),
+            dcompContext.d3dDevice(),
+            dcompContext.d3dContext(),
+            &dcompContext.d3dMutex(),
             width, height);
 
         if (main_ok) {
             bool overlay_ok = overlayBrowserLayer.init(
-                videoStack.surface->dcompDevice(),
+                dcompContext.dcompDevice(),
                 mainBrowserLayer.visual(),  // overlay is child of main
-                videoStack.surface->d3dDevice(),
-                videoStack.surface->d3dContext(),
-                &videoStack.surface->d3dMutex(),
+                dcompContext.d3dDevice(),
+                dcompContext.d3dContext(),
+                &dcompContext.d3dMutex(),
                 width, height);
 
             if (overlay_ok) {
@@ -817,11 +825,11 @@ int main(int argc, char* argv[]) {
         // Fall back to GL overlay if DComp browser layers failed
         if (!has_dcomp_browsers) {
             has_overlay = overlayLayer.init(
-                videoStack.surface->dcompDevice(),
-                videoStack.surface->videoVisual(),
-                videoStack.surface->d3dDevice(),
-                videoStack.surface->d3dContext(),
-                &videoStack.surface->d3dMutex(),
+                dcompContext.dcompDevice(),
+                dcompContext.rootVisual(),
+                dcompContext.d3dDevice(),
+                dcompContext.d3dContext(),
+                &dcompContext.d3dMutex(),
                 &wgl, width, height);
             if (has_overlay) {
                 overlayLayer.show();
@@ -854,10 +862,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Probe dmabuf support before CefInitialize — CEF's shared texture path
-    // requires GBM → EGL → GL dmabuf import of ARGB8888. Drivers that lack
-    // this (e.g. NVIDIA proprietary) cause OnAcceleratedPaint to never fire.
-    // Disabling dmabuf falls back to OnPaint with CPU pixel buffers while
-    // keeping GPU compositing (GPU composites internally, reads back pixels).
+    // requires GBM → EGL → GL dmabuf import of ARGB8888.
     if (use_dmabuf && !egl.supportsDmaBufImport()) {
         LOG_INFO(LOG_MAIN, "EGL does not support ARGB8888 dmabuf import; disabling dmabuf");
         use_dmabuf = false;
@@ -2388,6 +2393,7 @@ int main(int argc, char* argv[]) {
     overlayBrowserLayer.cleanup();
     mainBrowserLayer.cleanup();
     overlayLayer.cleanup();
+    dcompContext.cleanup();
     LOG_INFO(LOG_MAIN, "Shutdown: cleaning video renderer...");
     videoRenderer.cleanup();
     VideoStack::cleanupStatics();

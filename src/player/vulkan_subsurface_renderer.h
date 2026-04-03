@@ -7,6 +7,9 @@ class MpvPlayer;
 #ifdef __APPLE__
 class MacOSVideoLayer;
 using VideoSurface = MacOSVideoLayer;
+#elif defined(_WIN32)
+class WindowsVideoLayer;
+using VideoSurface = WindowsVideoLayer;
 #else
 class VideoSurface;
 #endif
