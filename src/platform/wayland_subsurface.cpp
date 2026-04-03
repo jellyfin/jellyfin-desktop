@@ -852,8 +852,13 @@ bool WaylandSubsurface::createCefSubsurface() {
     wl_subsurface_place_above(cef_subsurface_, parent_surface_);
     wl_subsurface_set_desync(cef_subsurface_);
 
-    // CEF surface gets input — it's the interactive UI layer.
-    // Don't set an empty input region (unlike mpv_surface_ which is click-through).
+    // Empty input region — click-through to SDL's parent surface.
+    // SDL handles all pointer/keyboard events on the parent and dispatches
+    // to CEF via SDL_Event → CefBrowserHost::SendMouseClickEvent etc.
+    // The CEF subsurface is visual only.
+    wl_region* empty = wl_compositor_create_region(wl_compositor_);
+    wl_surface_set_input_region(cef_surface_, empty);
+    wl_region_destroy(empty);
 
     if (viewporter_)
         cef_viewport_ = wp_viewporter_get_viewport(viewporter_, cef_surface_);
