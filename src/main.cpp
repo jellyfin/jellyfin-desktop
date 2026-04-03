@@ -35,6 +35,8 @@ void activateMacWindow(SDL_Window* window);
 void setMacTitlebarColor(uint8_t r, uint8_t g, uint8_t b);
 // Show/hide traffic light buttons (close, minimize, zoom)
 void setMacTrafficLightsVisible(bool visible);
+// Route native Cocoa scroll-wheel events directly to the active browser layer.
+void setMacNativeScrollHandler(void (*handler)(int x, int y, float deltaX, float deltaY, bool precise));
 #endif
 
 #ifdef __APPLE__
@@ -80,6 +82,16 @@ void setMacTrafficLightsVisible(bool visible);
 #include "input/window_state.h"
 #include "ui/menu_overlay.h"
 #include "settings.h"
+
+#ifdef __APPLE__
+static BrowserLayer* g_active_browser_layer = nullptr;
+
+static void handleMacNativeScroll(int x, int y, float deltaX, float deltaY, bool precise) {
+    if (g_active_browser_layer) {
+        g_active_browser_layer->handleNativeScroll(x, y, deltaX, deltaY, precise);
+    }
+}
+#endif
 #include "single_instance.h"
 #include "window_geometry.h"
 #include "window_activation.h"
@@ -1484,6 +1496,10 @@ int main(int argc, char* argv[]) {
     BrowserLayer* active_browser = player_mode
         ? browsers.getInputLayer("main")
         : browsers.getInputLayer("overlay");
+#ifdef __APPLE__
+    g_active_browser_layer = active_browser;
+    setMacNativeScrollHandler(handleMacNativeScroll);
+#endif
 
     // Push/pop menu layer on open/close
     menu.setOnOpen([&]() { input_stack.push(&menu_layer); });
@@ -2216,6 +2232,9 @@ int main(int argc, char* argv[]) {
                 input_stack.remove(browsers.getInputLayer("overlay"));
                 input_stack.push(browsers.getInputLayer("main"));
                 active_browser = browsers.getInputLayer("main");
+#ifdef __APPLE__
+                g_active_browser_layer = active_browser;
+#endif
                 window_state.add(active_browser);
                 active_browser->onFocusGained();
                 overlay_fade_start = now;
@@ -2355,6 +2374,8 @@ int main(int argc, char* argv[]) {
 #endif
 #ifdef __APPLE__
     SDL_RemoveEventWatch(liveResizeCallback, &live_resize_ctx);
+    setMacNativeScrollHandler(nullptr);
+    g_active_browser_layer = nullptr;
 #elif defined(_WIN32)
     SDL_RemoveEventWatch(winLiveResizeCallback, &win_live_resize_ctx);
 #endif

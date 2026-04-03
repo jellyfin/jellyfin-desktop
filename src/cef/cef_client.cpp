@@ -6,6 +6,7 @@
 #include "include/cef_parser.h"
 #include <SDL3/SDL.h>
 #include "logging.h"
+#include <cmath>
 #include <mutex>
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <unistd.h>  // For dup()
@@ -718,6 +719,8 @@ void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifi
     scroll_x_ = x;
     scroll_y_ = y;
     scroll_mods_ = modifiers;
+    scroll_precise_ = true;
+    scroll_animated_ = false;
     accum_scroll_x_ += deltaX * 10.0f;
     accum_scroll_y_ += deltaY * 10.0f;
     has_pending_scroll_ = true;
@@ -732,18 +735,76 @@ void Client::sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifi
     int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+    return;
+#endif
+
+    return;
+}
+
+void Client::sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, bool precise, int modifiers) {
+#ifdef __APPLE__
+    if (!precise) {
+        constexpr float kPixelsPerCocoaTick = 40.0f;
+        scroll_x_ = x;
+        scroll_y_ = y;
+        scroll_mods_ = modifiers;
+        scroll_precise_ = false;
+        scroll_animated_ = true;
+        accum_scroll_x_ += deltaX * kPixelsPerCocoaTick;
+        accum_scroll_y_ += deltaY * kPixelsPerCocoaTick;
+        has_pending_scroll_ = true;
+        return;
+    }
+
+    accum_scroll_x_ += deltaX;
+    accum_scroll_y_ += deltaY;
+    const int pixelX = static_cast<int>(std::lround(accum_scroll_x_));
+    const int pixelY = static_cast<int>(std::lround(accum_scroll_y_));
+    accum_scroll_x_ -= pixelX;
+    accum_scroll_y_ -= pixelY;
+    auto b = browser();
+    if (!b) return;
+
+    if (pixelX == 0 && pixelY == 0) return;
+
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = modifiers;
+    if (precise)
+        event.modifiers |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+#else
+    sendMouseWheel(x, y, deltaX, deltaY, modifiers);
 #endif
 }
 
 #ifdef __APPLE__
 void Client::flushScroll() {
     if (!has_pending_scroll_) return;
-    has_pending_scroll_ = false;
 
-    int pixelX = static_cast<int>(accum_scroll_x_);
-    int pixelY = static_cast<int>(accum_scroll_y_);
-    accum_scroll_x_ -= pixelX;
-    accum_scroll_y_ -= pixelY;
+    int pixelX = 0;
+    int pixelY = 0;
+    if (scroll_animated_) {
+        constexpr float kDrainFraction = 0.45f;
+        pixelX = static_cast<int>(std::lround(accum_scroll_x_ * kDrainFraction));
+        pixelY = static_cast<int>(std::lround(accum_scroll_y_ * kDrainFraction));
+        if (pixelX == 0 && std::fabs(accum_scroll_x_) >= 1.0f)
+            pixelX = accum_scroll_x_ > 0 ? 1 : -1;
+        if (pixelY == 0 && std::fabs(accum_scroll_y_) >= 1.0f)
+            pixelY = accum_scroll_y_ > 0 ? 1 : -1;
+        accum_scroll_x_ -= pixelX;
+        accum_scroll_y_ -= pixelY;
+        if (std::fabs(accum_scroll_x_) < 0.5f) accum_scroll_x_ = 0.0f;
+        if (std::fabs(accum_scroll_y_) < 0.5f) accum_scroll_y_ = 0.0f;
+        has_pending_scroll_ = (accum_scroll_x_ != 0.0f || accum_scroll_y_ != 0.0f);
+    } else {
+        has_pending_scroll_ = false;
+        pixelX = static_cast<int>(accum_scroll_x_);
+        pixelY = static_cast<int>(accum_scroll_y_);
+        accum_scroll_x_ -= pixelX;
+        accum_scroll_y_ -= pixelY;
+    }
     if (pixelX == 0 && pixelY == 0) return;
 
     auto b = browser();
@@ -752,7 +813,9 @@ void Client::flushScroll() {
     CefMouseEvent event;
     event.x = scroll_x_;
     event.y = scroll_y_;
-    event.modifiers = scroll_mods_ | EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    event.modifiers = scroll_mods_;
+    if (scroll_precise_)
+        event.modifiers |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
 }
 #endif
@@ -1202,6 +1265,8 @@ void OverlayClient::sendMouseWheel(int x, int y, float deltaX, float deltaY, int
     scroll_x_ = x;
     scroll_y_ = y;
     scroll_mods_ = modifiers;
+    scroll_precise_ = true;
+    scroll_animated_ = false;
     accum_scroll_x_ += deltaX * 10.0f;
     accum_scroll_y_ += deltaY * 10.0f;
     has_pending_scroll_ = true;
@@ -1215,18 +1280,76 @@ void OverlayClient::sendMouseWheel(int x, int y, float deltaX, float deltaY, int
     int pixelX = static_cast<int>(deltaX * 53.0f);
     int pixelY = static_cast<int>(deltaY * 53.0f);
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+    return;
+#endif
+
+    return;
+}
+
+void OverlayClient::sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, bool precise, int modifiers) {
+#ifdef __APPLE__
+    if (!precise) {
+        constexpr float kPixelsPerCocoaTick = 40.0f;
+        scroll_x_ = x;
+        scroll_y_ = y;
+        scroll_mods_ = modifiers;
+        scroll_precise_ = false;
+        scroll_animated_ = true;
+        accum_scroll_x_ += deltaX * kPixelsPerCocoaTick;
+        accum_scroll_y_ += deltaY * kPixelsPerCocoaTick;
+        has_pending_scroll_ = true;
+        return;
+    }
+
+    accum_scroll_x_ += deltaX;
+    accum_scroll_y_ += deltaY;
+    const int pixelX = static_cast<int>(std::lround(accum_scroll_x_));
+    const int pixelY = static_cast<int>(std::lround(accum_scroll_y_));
+    accum_scroll_x_ -= pixelX;
+    accum_scroll_y_ -= pixelY;
+    auto b = browser();
+    if (!b) return;
+
+    if (pixelX == 0 && pixelY == 0) return;
+
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = modifiers;
+    if (precise)
+        event.modifiers |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
+#else
+    sendMouseWheel(x, y, deltaX, deltaY, modifiers);
 #endif
 }
 
 #ifdef __APPLE__
 void OverlayClient::flushScroll() {
     if (!has_pending_scroll_) return;
-    has_pending_scroll_ = false;
 
-    int pixelX = static_cast<int>(accum_scroll_x_);
-    int pixelY = static_cast<int>(accum_scroll_y_);
-    accum_scroll_x_ -= pixelX;
-    accum_scroll_y_ -= pixelY;
+    int pixelX = 0;
+    int pixelY = 0;
+    if (scroll_animated_) {
+        constexpr float kDrainFraction = 0.45f;
+        pixelX = static_cast<int>(std::lround(accum_scroll_x_ * kDrainFraction));
+        pixelY = static_cast<int>(std::lround(accum_scroll_y_ * kDrainFraction));
+        if (pixelX == 0 && std::fabs(accum_scroll_x_) >= 1.0f)
+            pixelX = accum_scroll_x_ > 0 ? 1 : -1;
+        if (pixelY == 0 && std::fabs(accum_scroll_y_) >= 1.0f)
+            pixelY = accum_scroll_y_ > 0 ? 1 : -1;
+        accum_scroll_x_ -= pixelX;
+        accum_scroll_y_ -= pixelY;
+        if (std::fabs(accum_scroll_x_) < 0.5f) accum_scroll_x_ = 0.0f;
+        if (std::fabs(accum_scroll_y_) < 0.5f) accum_scroll_y_ = 0.0f;
+        has_pending_scroll_ = (accum_scroll_x_ != 0.0f || accum_scroll_y_ != 0.0f);
+    } else {
+        has_pending_scroll_ = false;
+        pixelX = static_cast<int>(accum_scroll_x_);
+        pixelY = static_cast<int>(accum_scroll_y_);
+        accum_scroll_x_ -= pixelX;
+        accum_scroll_y_ -= pixelY;
+    }
     if (pixelX == 0 && pixelY == 0) return;
 
     auto b = browser();
@@ -1235,7 +1358,9 @@ void OverlayClient::flushScroll() {
     CefMouseEvent event;
     event.x = scroll_x_;
     event.y = scroll_y_;
-    event.modifiers = scroll_mods_ | EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    event.modifiers = scroll_mods_;
+    if (scroll_precise_)
+        event.modifiers |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
     b->GetHost()->SendMouseWheelEvent(event, pixelX, pixelY);
 }
 #endif
