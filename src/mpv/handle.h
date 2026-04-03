@@ -47,17 +47,17 @@ public:
     // Options (must be set before Initialize)
     // =====================================================================
 
-    void SetOptionString(const std::string& name, const std::string& value) {
-        mpv_set_option_string(handle_, name.c_str(), value.c_str());
+    int SetOptionString(const std::string& name, const std::string& value) {
+        return mpv_set_option_string(handle_, name.c_str(), value.c_str());
     }
 
-    void SetOptionInt(const std::string& name, int64_t value) {
-        mpv_set_option(handle_, name.c_str(), MPV_FORMAT_INT64, &value);
+    int SetOptionInt(const std::string& name, int64_t value) {
+        return mpv_set_option(handle_, name.c_str(), MPV_FORMAT_INT64, &value);
     }
 
-    void SetOptionFlag(const std::string& name, bool value) {
+    int SetOptionFlag(const std::string& name, bool value) {
         int flag = value ? 1 : 0;
-        mpv_set_option(handle_, name.c_str(), MPV_FORMAT_FLAG, &flag);
+        return mpv_set_option(handle_, name.c_str(), MPV_FORMAT_FLAG, &flag);
     }
 
     // Typed option setters (must be called before Initialize)
