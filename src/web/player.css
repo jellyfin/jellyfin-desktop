@@ -1,0 +1,187 @@
+/* Reset */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+/* Idle screen — opaque black + centered logo */
+body {
+    background: #000;
+    color: #fff;
+}
+
+body.playing {
+    background: transparent;
+}
+
+#idle-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+}
+
+#idle-screen .logo {
+    width: 200px;
+    opacity: 0.8;
+}
+
+body.playing #idle-screen {
+    display: none;
+}
+
+/* OSD container */
+#osd {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(0deg, rgba(16, 16, 16, 0.75) 0%, rgba(16, 16, 16, 0) 100%);
+    padding: 7.5em 0 0 0;
+    color: #fff;
+    pointer-events: none;
+    user-select: none;
+    will-change: opacity;
+    transition: opacity 0.3s ease-out;
+}
+
+#osd.osd-hidden {
+    opacity: 0;
+}
+
+.osd-controls {
+    pointer-events: all;
+    padding: 0 0.8em;
+}
+
+/* Title */
+.osd-title {
+    padding: 0 0.5em;
+    margin-bottom: 0.5em;
+    font-size: 1.1em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Progress row */
+.osd-progress-row {
+    display: flex;
+    align-items: center;
+    margin: 0.5em 0 0.25em;
+    gap: 0.8em;
+    padding: 0 0.5em;
+}
+
+.osd-time {
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5em;
+    text-align: center;
+}
+
+.osd-slider-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+}
+
+/* Slider shared styles */
+.osd-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 0.2em;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 0.1em;
+    outline: none;
+    cursor: pointer;
+}
+
+.osd-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1.08em;
+    height: 1.08em;
+    border-radius: 50%;
+    background: #00a4dc;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.osd-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.3);
+}
+
+.osd-seek-slider {
+    background: linear-gradient(to right, #00a4dc var(--progress, 0%), rgba(255, 255, 255, 0.3) var(--progress, 0%));
+}
+
+.osd-volume-slider {
+    background: linear-gradient(to right, #00a4dc var(--progress, 100%), rgba(255, 255, 255, 0.3) var(--progress, 100%));
+}
+
+/* Button row */
+.osd-buttons {
+    display: flex;
+    align-items: center;
+    padding: 0.25em 0;
+    gap: 0.2em;
+}
+
+.osd-spacer {
+    flex: 1;
+}
+
+.osd-btn {
+    background: none;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    padding: 0.5em;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+
+.osd-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.osd-btn svg {
+    width: 1.8em;
+    height: 1.8em;
+    fill: currentColor;
+}
+
+.osd-btn-play svg {
+    width: 2.2em;
+    height: 2.2em;
+}
+
+/* Hide prev/next when single item */
+body.single-item .osd-btn-nav {
+    display: none;
+}
+
+/* Volume container */
+.osd-volume-container {
+    width: 7em;
+    display: flex;
+    align-items: center;
+    margin: 0 0.3em;
+}
+
+/* Responsive: hide volume slider on narrow screens */
+@media (max-width: 43em) {
+    .osd-volume-container { display: none; }
+}
+
+/* Responsive: hide rewind/forward on narrow screens */
+@media (max-width: 30em) {
+    #btn-rewind, #btn-forward { display: none; }
+}
