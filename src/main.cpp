@@ -15,7 +15,9 @@
 #include <atomic>
 #include <memory>
 
+#include "cjson/cJSON.h"
 #include "include/cef_app.h"
+#include "include/cef_parser.h"
 #include "include/cef_version.h"
 #include "include/cef_version_info.h"
 #include "include/cef_browser.h"
@@ -320,6 +322,9 @@ int main(int argc, char* argv[]) {
     std::string audio_passthrough_str;
     bool audio_exclusive = false;
     std::string audio_channels_str;
+    bool player_mode = false;
+    std::vector<std::string> player_playlist;
+    std::string player_url;
     if (!is_cef_subprocess) {
         // Load persisted settings as defaults
         Settings::instance().load();
@@ -338,6 +343,7 @@ int main(int argc, char* argv[]) {
         for (int i = 1; i < argc; i++) {
             if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
                 printf("Usage: jellyfin-desktop [options]\n"
+                       "       jellyfin-desktop --player [options] <file|url>...\n"
                        "\nOptions:\n"
                        "  -h, --help              Show this help message\n"
                        "  -v, --version           Show version information\n"
@@ -352,6 +358,7 @@ int main(int argc, char* argv[]) {
                        "  --audio-exclusive       Use exclusive audio output mode\n"
                        "  --audio-channels <layout>  Set audio channel layout (e.g. stereo, 5.1, 7.1)\n"
                        "  --remote-debug-port <port>  Enable Chrome remote debugging on port (1024-65535)\n"
+                       "  --player                Standalone player mode (play files/URLs directly)\n"
                        );
                 return 0;
             } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -390,9 +397,14 @@ int main(int argc, char* argv[]) {
                 remote_debugging_port = atoi(val);
             } else if (strncmp(argv[i], "--remote-debug-port=", 20) == 0) {
                 remote_debugging_port = atoi(argv[i] + 20);
+            } else if (strcmp(argv[i], "--player") == 0) {
+                player_mode = true;
             } else if (argv[i][0] == '-') {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
                 return 1;
+            } else {
+                // Positional argument — treat as playlist item in player mode
+                player_playlist.push_back(argv[i]);
             }
         }
 
@@ -411,6 +423,31 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "Failed to open log file: %s\n", log_file_path);
                 return 1;
             }
+        }
+        if (player_mode && player_playlist.empty()) {
+            fprintf(stderr, "Error: --player requires at least one file or URL\n");
+            return 1;
+        }
+        if (!player_playlist.empty() && !player_mode) {
+            fprintf(stderr, "Unknown arguments. See --help for usage.\n");
+            return 1;
+        }
+
+        if (player_mode) {
+            cJSON* arr = cJSON_CreateArray();
+            for (const auto& item : player_playlist) {
+                cJSON_AddItemToArray(arr, cJSON_CreateString(item.c_str()));
+            }
+            char* json = cJSON_PrintUnformatted(arr);
+            if (!json) {
+                cJSON_Delete(arr);
+                fprintf(stderr, "Error: failed to serialize playlist\n");
+                return 1;
+            }
+            CefString encoded = CefURIEncode(json, false);
+            player_url = "app://resources/player.html#" + encoded.ToString();
+            cJSON_free(json);
+            cJSON_Delete(arr);
         }
 
         initLogging(log_level);
@@ -551,7 +588,8 @@ int main(int argc, char* argv[]) {
 #endif
 
     // Single-instance check: signal existing instance to raise, then exit
-    if (trySignalExisting()) {
+    // Skip in player mode — allow multiple instances for testing
+    if (!player_mode && trySignalExisting()) {
         return 0;
     }
 
@@ -597,12 +635,14 @@ int main(int argc, char* argv[]) {
     std::mutex raise_mutex;
     std::string pending_activation_token;
     bool raise_requested = false;
-    startListener([&raise_mutex, &pending_activation_token, &raise_requested, &wakeMainLoop](const std::string& token) {
-        std::lock_guard<std::mutex> lock(raise_mutex);
-        pending_activation_token = token;
-        raise_requested = true;
-        wakeMainLoop();
-    });
+    if (!player_mode) {
+        startListener([&raise_mutex, &pending_activation_token, &raise_requested, &wakeMainLoop](const std::string& token) {
+            std::lock_guard<std::mutex> lock(raise_mutex);
+            pending_activation_token = token;
+            raise_requested = true;
+            wakeMainLoop();
+        });
+    }
 
     // Create window at saved geometry to avoid resize flash on startup
     const auto& saved_geom = Settings::instance().windowGeometry();
@@ -908,7 +948,7 @@ int main(int argc, char* argv[]) {
         cache_path = std::filesystem::path(home) / ".cache" / "jellyfin-desktop";
     }
 #endif
-    if (!cache_path.empty()) {
+    if (!cache_path.empty() && !player_mode) {
         std::filesystem::create_directories(cache_path);
         // Canonicalize after creating to resolve symlinks (CEF compares paths strictly)
         std::error_code ec;
@@ -924,9 +964,12 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
     // Pre-create Metal compositors BEFORE CefInitialize to avoid startup delay
     // Metal device/pipeline/texture creation takes time; do it while CEF init runs
-    auto overlay_compositor = std::make_unique<MetalCompositor>();
-    overlay_compositor->init(window, physical_width, physical_height);
-    LOG_DEBUG(LOG_COMPOSITOR, "Pre-created overlay Metal compositor");
+    std::unique_ptr<MetalCompositor> overlay_compositor;
+    if (!player_mode) {
+        overlay_compositor = std::make_unique<MetalCompositor>();
+        overlay_compositor->init(window, physical_width, physical_height);
+        LOG_DEBUG(LOG_COMPOSITOR, "Pre-created overlay Metal compositor");
+    }
 
     auto main_compositor = std::make_unique<MetalCompositor>();
     main_compositor->init(window, physical_width, physical_height);
@@ -1001,7 +1044,11 @@ int main(int argc, char* argv[]) {
 #elif defined(_WIN32)
     mediaSession.addBackend(createWindowsMediaBackend(&mediaSession, window));
 #else
-    mediaSession.addBackend(createMprisBackend(&mediaSession));
+    std::string mpris_suffix;
+    if (player_mode) {
+        mpris_suffix = ".player" + std::to_string(getpid());
+    }
+    mediaSession.addBackend(createMprisBackend(&mediaSession, mpris_suffix));
 #endif
     MediaSessionThread mediaSessionThread;
     mediaSessionThread.start(&mediaSession);
@@ -1043,10 +1090,10 @@ int main(int argc, char* argv[]) {
 
     // Overlay browser state
     enum class OverlayState { SHOWING, WAITING, FADING, HIDDEN };
-    OverlayState overlay_state = OverlayState::SHOWING;
+    OverlayState overlay_state = player_mode ? OverlayState::HIDDEN : OverlayState::SHOWING;
     std::chrono::steady_clock::time_point overlay_fade_start;
     float overlay_browser_alpha = 1.0f;
-    float clear_color = 16.0f / 255.0f;  // #101010 until fade begins
+    float clear_color = player_mode ? 0.0f : 16.0f / 255.0f;  // #101010 until fade begins (player mode: black immediately)
     std::string pending_server_url;
 
     // Titlebar color is locked to #101010 until the overlay fade begins,
@@ -1106,78 +1153,83 @@ int main(int argc, char* argv[]) {
         SDL_GetWindowSizeInPixels(window, &w, &h);
     };
 
-    // Create overlay browser entry
-    auto overlay_entry = std::make_unique<BrowserEntry>();
-    BrowserEntry* overlay_ptr = overlay_entry.get();  // save pointer before move
+    // Create overlay browser entry (not used in player mode)
+    CefRefPtr<OverlayClient> overlay_client;
+    BrowserEntry* overlay_ptr = nullptr;
+    std::unique_ptr<BrowserEntry> overlay_entry;
+    if (!player_mode) {
+        overlay_entry = std::make_unique<BrowserEntry>();
+        overlay_ptr = overlay_entry.get();  // save pointer before move
 #ifdef __APPLE__
-    // Use pre-created Metal compositor (avoids startup delay)
-    overlay_ptr->setCompositor(std::move(overlay_compositor));
+        // Use pre-created Metal compositor (avoids startup delay)
+        overlay_ptr->setCompositor(std::move(overlay_compositor));
 #else
-    if (!overlay_ptr->initCompositor(compositor_ctx, physical_width, physical_height)) {
-        LOG_ERROR(LOG_OVERLAY, "Overlay compositor init failed");
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
+        if (!overlay_ptr->initCompositor(compositor_ctx, physical_width, physical_height)) {
+            LOG_ERROR(LOG_OVERLAY, "Overlay compositor init failed");
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return 1;
+        }
 #endif
-    auto overlay_paint_cb = overlay_ptr->makePaintCallback();
+        auto overlay_paint_cb = overlay_ptr->makePaintCallback();
 
-    // Overlay browser client (for loading UI)
-    CefRefPtr<OverlayClient> overlay_client(new OverlayClient(width, height,
-        [overlay_paint_cb](const void* buffer, int w, int h) {
-            static bool first_overlay_paint = true;
-            if (first_overlay_paint) {
-                LOG_DEBUG(LOG_OVERLAY, "first paint callback: %dx%d", w, h);
-                first_overlay_paint = false;
-            }
-            overlay_paint_cb(buffer, w, h);
-        },
-        [&](const std::string& url) {
-            // loadServer callback - start loading main browser
-            LOG_INFO(LOG_OVERLAY, "loadServer callback: %s", url.c_str());
-            {
-                std::lock_guard<std::mutex> lock(cmd_mutex);
-                pending_server_url = url;
-            }
-            wakeMainLoop();
-        },
-        getPhysicalSize,
+        // Overlay browser client (for loading UI)
+        overlay_client = new OverlayClient(width, height,
+            [overlay_paint_cb](const void* buffer, int w, int h) {
+                static bool first_overlay_paint = true;
+                if (first_overlay_paint) {
+                    LOG_DEBUG(LOG_OVERLAY, "first paint callback: %dx%d", w, h);
+                    first_overlay_paint = false;
+                }
+                overlay_paint_cb(buffer, w, h);
+            },
+            [&](const std::string& url) {
+                // loadServer callback - start loading main browser
+                LOG_INFO(LOG_OVERLAY, "loadServer callback: %s", url.c_str());
+                {
+                    std::lock_guard<std::mutex> lock(cmd_mutex);
+                    pending_server_url = url;
+                }
+                wakeMainLoop();
+            },
+            getPhysicalSize,
 #if !defined(__APPLE__) && !defined(_WIN32)
-        // Accelerated paint callback for overlay
-        [overlay_ptr, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
-            overlay_ptr->compositor->queueDmabuf(fd, stride, modifier, w, h);
-            wakeMainLoop();
-        }
+            // Accelerated paint callback for overlay
+            [overlay_ptr, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+                overlay_ptr->compositor->queueDmabuf(fd, stride, modifier, w, h);
+                wakeMainLoop();
+            }
 #else
-        nullptr
+            nullptr
 #endif
 #ifdef __APPLE__
-        // IOSurface callback for macOS accelerated paint - queue for import on main thread
-        , [overlay_ptr, wakeMainLoop](void* surface, int format, int w, int h) {
-            overlay_ptr->compositor->queueIOSurface(surface, format, w, h);
-            wakeMainLoop();
-        }
+            // IOSurface callback for macOS accelerated paint - queue for import on main thread
+            , [overlay_ptr, wakeMainLoop](void* surface, int format, int w, int h) {
+                overlay_ptr->compositor->queueIOSurface(surface, format, w, h);
+                wakeMainLoop();
+            }
 #endif
 #ifdef _WIN32
-        // Windows: DComp shared texture callback for overlay browser
-        , has_dcomp_browsers ?
-            WinSharedTexturePaintCallback([&overlayBrowserLayer](void* handle, int type, int w, int h) {
-                if (type == PET_VIEW) {
-                    overlayBrowserLayer.onPaintView(static_cast<HANDLE>(handle), w, h);
-                }
-                // Overlay browser has no popups (no dropdowns in settings UI)
-            }) : nullptr
+            // Windows: DComp shared texture callback for overlay browser
+            , has_dcomp_browsers ?
+                WinSharedTexturePaintCallback([&overlayBrowserLayer](void* handle, int type, int w, int h) {
+                    if (type == PET_VIEW) {
+                        overlayBrowserLayer.onPaintView(static_cast<HANDLE>(handle), w, h);
+                    }
+                    // Overlay browser has no popups (no dropdowns in settings UI)
+                }) : nullptr
 #endif
-    ));
-    overlay_ptr->client = overlay_client;
-    overlay_ptr->getBrowser = [overlay_client]() { return overlay_client->browser(); };
-    overlay_ptr->resizeBrowser = [overlay_client](int w, int h, int pw, int ph) { overlay_client->resize(w, h, pw, ph); };
-    overlay_ptr->getInputReceiver = [overlay_client]() -> InputReceiver* { return overlay_client.get(); };
-    overlay_ptr->isClosed = [overlay_client]() { return overlay_client->isClosed(); };
-    overlay_ptr->input_layer = std::make_unique<BrowserLayer>(overlay_client.get());
-    overlay_ptr->input_layer->setWindowSize(width, height);
-    overlay_ptr->wake_main_loop = wakeMainLoop;
-    // overlay_entry add is deferred until after main, so overlay composites on top
+        );
+        overlay_ptr->client = overlay_client;
+        overlay_ptr->getBrowser = [overlay_client]() { return overlay_client->browser(); };
+        overlay_ptr->resizeBrowser = [overlay_client](int w, int h, int pw, int ph) { overlay_client->resize(w, h, pw, ph); };
+        overlay_ptr->getInputReceiver = [overlay_client]() -> InputReceiver* { return overlay_client.get(); };
+        overlay_ptr->isClosed = [overlay_client]() { return overlay_client->isClosed(); };
+        overlay_ptr->input_layer = std::make_unique<BrowserLayer>(overlay_client.get());
+        overlay_ptr->input_layer->setWindowSize(width, height);
+        overlay_ptr->wake_main_loop = wakeMainLoop;
+        // overlay_entry add is deferred until after main, so overlay composites on top
+    }
 
     // Track who initiated fullscreen (only changes from NONE, returns to NONE on exit)
     enum class FullscreenSource { NONE, WM, CEF };
@@ -1348,8 +1400,10 @@ int main(int argc, char* argv[]) {
     main_ptr->input_layer->setWindowSize(width, height);
     main_ptr->wake_main_loop = wakeMainLoop;
     browsers.add("main", std::move(main_entry));
-    browsers.add("overlay", std::move(overlay_entry));  // overlay on top for fade
-    LOG_DEBUG(LOG_MAIN, "Browser entries added (main behind, overlay on top)");
+    if (!player_mode) {
+        browsers.add("overlay", std::move(overlay_entry));  // overlay on top for fade
+    }
+    LOG_DEBUG(LOG_MAIN, "Browser entries added%s", player_mode ? " (player mode, no overlay)" : " (main behind, overlay on top)");
 
     CefWindowInfo window_info;
     window_info.SetAsWindowless(0);
@@ -1377,46 +1431,59 @@ int main(int argc, char* argv[]) {
     }
 
     // Create overlay browser loading index.html
-    CefWindowInfo overlay_window_info;
-    overlay_window_info.SetAsWindowless(0);
+    if (!player_mode) {
+        CefWindowInfo overlay_window_info;
+        overlay_window_info.SetAsWindowless(0);
 #ifdef __APPLE__
-    overlay_window_info.shared_texture_enabled = true;  // macOS: use IOSurface zero-copy
+        overlay_window_info.shared_texture_enabled = true;  // macOS: use IOSurface zero-copy
 #elif defined(_WIN32)
-    overlay_window_info.shared_texture_enabled = has_dcomp_browsers;  // Windows: use DComp zero-copy
+        overlay_window_info.shared_texture_enabled = has_dcomp_browsers;  // Windows: use DComp zero-copy
 #else
-    overlay_window_info.shared_texture_enabled = use_dmabuf;  // Linux: dmabuf zero-copy
+        overlay_window_info.shared_texture_enabled = use_dmabuf;  // Linux: dmabuf zero-copy
 #endif
-    CefBrowserSettings overlay_browser_settings;
-    overlay_browser_settings.background_color = 0;
-    overlay_browser_settings.windowless_frame_rate = browser_settings.windowless_frame_rate;
+        CefBrowserSettings overlay_browser_settings;
+        overlay_browser_settings.background_color = 0;
+        overlay_browser_settings.windowless_frame_rate = browser_settings.windowless_frame_rate;
 
-    std::string overlay_html_path = "app://resources/index.html";
-    bool overlay_created = CefBrowserHost::CreateBrowser(overlay_window_info, overlay_client, overlay_html_path, overlay_browser_settings, nullptr, nullptr);
-    LOG_INFO(LOG_CEF, "Overlay CreateBrowser: %s", overlay_created ? "ok" : "FAILED");
+        std::string overlay_html_path = "app://resources/index.html";
+        bool overlay_created = CefBrowserHost::CreateBrowser(overlay_window_info, overlay_client, overlay_html_path, overlay_browser_settings, nullptr, nullptr);
+        LOG_INFO(LOG_CEF, "Overlay CreateBrowser: %s", overlay_created ? "ok" : "FAILED");
+    }
 
     // State tracking
     using Clock = std::chrono::steady_clock;
 
-    // Main browser: load saved server immediately, or wait for overlay IPC
-    std::string saved_url = Settings::instance().serverUrl();
-    if (saved_url.empty()) {
-        // No saved server - create with blank, wait for overlay loadServer IPC
-        LOG_INFO(LOG_MAIN, "Waiting for overlay to provide server URL");
-        CefBrowserHost::CreateBrowser(window_info, client, "about:blank", browser_settings, nullptr, nullptr);
+    // Main browser: load player URL, saved server, or wait for overlay IPC
+    if (player_mode) {
+        // Player mode: load bundled OSD directly
+        LOG_INFO(LOG_MAIN, "Player mode: loading %s", player_url.c_str());
+        CefBrowserHost::CreateBrowser(window_info, client, player_url, browser_settings, nullptr, nullptr);
     } else {
-        // Have saved server - start loading immediately, begin overlay fade
-        overlay_state = OverlayState::WAITING;
-        overlay_fade_start = Clock::now();
-        LOG_INFO(LOG_MAIN, "Loading saved server: %s", saved_url.c_str());
-        CefBrowserHost::CreateBrowser(window_info, client, saved_url, browser_settings, nullptr, nullptr);
+        // Normal mode: load saved server or wait for overlay
+        std::string saved_url = Settings::instance().serverUrl();
+        if (saved_url.empty()) {
+            LOG_INFO(LOG_MAIN, "Waiting for overlay to provide server URL");
+            CefBrowserHost::CreateBrowser(window_info, client, "about:blank", browser_settings, nullptr, nullptr);
+        } else {
+            overlay_state = OverlayState::WAITING;
+            overlay_fade_start = Clock::now();
+            LOG_INFO(LOG_MAIN, "Loading saved server: %s", saved_url.c_str());
+            CefBrowserHost::CreateBrowser(window_info, client, saved_url, browser_settings, nullptr, nullptr);
+        }
     }
     // Input routing stack - use BrowserStack for input layers
     MenuLayer menu_layer(&menu);
     InputStack input_stack;
-    input_stack.push(browsers.getInputLayer("overlay"));  // Start with overlay
+    if (player_mode) {
+        input_stack.push(browsers.getInputLayer("main"));
+    } else {
+        input_stack.push(browsers.getInputLayer("overlay"));
+    }
 
     // Track which browser layer is active (for WindowStateNotifier)
-    BrowserLayer* active_browser = browsers.getInputLayer("overlay");
+    BrowserLayer* active_browser = player_mode
+        ? browsers.getInputLayer("main")
+        : browsers.getInputLayer("overlay");
 
     // Push/pop menu layer on open/close
     menu.setOnOpen([&]() { input_stack.push(&menu_layer); });
@@ -1942,7 +2009,8 @@ int main(int argc, char* argv[]) {
         // combined wheel event per frame instead of one per SDL event,
         // eliminating stutter from uneven event distribution across frames.
         client->flushScroll();
-        overlay_client->flushScroll();
+        if (overlay_client)
+            overlay_client->flushScroll();
 #endif
 
 #ifndef _WIN32

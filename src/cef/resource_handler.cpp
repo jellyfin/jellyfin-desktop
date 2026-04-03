@@ -16,6 +16,12 @@ CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(
         url = url.substr(pos + 3);
     }
 
+    // Strip query string and fragment (e.g. "?foo=bar" or "#playlist-data")
+    pos = url.find_first_of("?#");
+    if (pos != std::string::npos) {
+        url = url.substr(0, pos);
+    }
+
     auto it = embedded_resources.find(url);
     if (it != embedded_resources.end()) {
         return new EmbeddedResourceHandler(it->second);

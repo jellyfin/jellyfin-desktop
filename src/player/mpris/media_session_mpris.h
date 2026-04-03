@@ -5,7 +5,7 @@
 
 class MprisBackend : public MediaSessionBackend {
 public:
-    explicit MprisBackend(MediaSession* session);
+    MprisBackend(MediaSession* session, const std::string& service_suffix = "");
     ~MprisBackend() override;
 
     void setMetadata(const MediaMetadata& meta) override;
@@ -37,6 +37,7 @@ private:
     void syncRate();  // Apply pending_rate_ or 0 based on seeking_/buffering_
 
     MediaSession* session_;
+    std::string service_name_;
     sd_bus* bus_ = nullptr;
     sd_bus_slot* slot_root_ = nullptr;
     sd_bus_slot* slot_player_ = nullptr;
@@ -53,4 +54,4 @@ private:
     bool can_go_previous_ = false;
 };
 
-std::unique_ptr<MediaSessionBackend> createMprisBackend(MediaSession* session);
+std::unique_ptr<MediaSessionBackend> createMprisBackend(MediaSession* session, const std::string& service_suffix = "");

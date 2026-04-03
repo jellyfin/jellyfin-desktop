@@ -1,12 +1,13 @@
 #include "player/mpris/media_session_mpris.h"
 #include <cstring>
+#include <string>
 #include "logging.h"
 
 // D-Bus object path
 static const char* MPRIS_PATH = "/org/mpris/MediaPlayer2";
 static const char* MPRIS_ROOT_IFACE = "org.mpris.MediaPlayer2";
 static const char* MPRIS_PLAYER_IFACE = "org.mpris.MediaPlayer2.Player";
-static const char* SERVICE_NAME = "org.mpris.MediaPlayer2.JellyfinDesktop";
+static const char* BASE_SERVICE_NAME = "org.mpris.MediaPlayer2.JellyfinDesktop";
 
 // Root interface property getters
 static int prop_get_identity(sd_bus* bus, const char* path, const char* interface,
@@ -357,14 +358,16 @@ static const sd_bus_vtable player_vtable[] = {
     SD_BUS_VTABLE_END
 };
 
-MprisBackend::MprisBackend(MediaSession* session) : session_(session) {
+MprisBackend::MprisBackend(MediaSession* session, const std::string& service_suffix)
+    : session_(session)
+    , service_name_(std::string(BASE_SERVICE_NAME) + service_suffix) {
     int r = sd_bus_open_user(&bus_);
     if (r < 0) {
         LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to connect to session bus: %s", strerror(-r));
         return;
     }
 
-    r = sd_bus_request_name(bus_, SERVICE_NAME, 0);
+    r = sd_bus_request_name(bus_, service_name_.c_str(), 0);
     if (r < 0) {
         LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to acquire service name: %s", strerror(-r));
         sd_bus_unref(bus_);
@@ -372,7 +375,7 @@ MprisBackend::MprisBackend(MediaSession* session) : session_(session) {
         return;
     }
 
-    LOG_INFO(LOG_MEDIA, "MPRIS: Registered as %s", SERVICE_NAME);
+    LOG_INFO(LOG_MEDIA, "MPRIS: Registered as %s", service_name_.c_str());
 
     r = sd_bus_add_object_vtable(bus_, &slot_root_, MPRIS_PATH,
                                   MPRIS_ROOT_IFACE, root_vtable, this);
@@ -391,7 +394,7 @@ MprisBackend::~MprisBackend() {
     if (slot_player_) sd_bus_slot_unref(slot_player_);
     if (slot_root_) sd_bus_slot_unref(slot_root_);
     if (bus_) {
-        sd_bus_release_name(bus_, SERVICE_NAME);
+        sd_bus_release_name(bus_, service_name_.c_str());
         sd_bus_unref(bus_);
     }
 }
@@ -510,6 +513,6 @@ void MprisBackend::emitPropertiesChanged(const char* interface, const char* prop
     sd_bus_emit_properties_changed(bus_, MPRIS_PATH, interface, property, nullptr);
 }
 
-std::unique_ptr<MediaSessionBackend> createMprisBackend(MediaSession* session) {
-    return std::make_unique<MprisBackend>(session);
+std::unique_ptr<MediaSessionBackend> createMprisBackend(MediaSession* session, const std::string& service_suffix) {
+    return std::make_unique<MprisBackend>(session, service_suffix);
 }
