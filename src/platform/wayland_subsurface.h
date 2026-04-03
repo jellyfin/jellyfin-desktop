@@ -47,10 +47,19 @@ public:
     void presentBuffer(DmabufBuffer* buf);
     void destroyDmabufPool();
 
-    // Color management — set image description on parent surface.
+    // Color management — image description on mpv_surface_ (video).
+    // Feedback on parent_surface_ (KWin only sends preferred_changed to top-level).
     void activateColorManagement();
     void setHdrImageDescription(uint32_t max_luma = 0, uint32_t ref_luma = 0);
+    void setHdrImageDescriptionFromContent();
     void setSdrImageDescription();
+
+    // CEF subsurface — presents CEF dmabuf directly to compositor.
+    // Replaces GL compositing on Wayland (Option E architecture).
+    bool createCefSubsurface();
+    void presentCefDmabuf(int fd, uint32_t stride, uint64_t modifier, int w, int h);
+    void hideCef();
+    bool hasCefSubsurface() const { return cef_surface_ != nullptr; }
 
     // Called after render — reads content_peak from display_profile and
     // updates the surface image description if the peak changed.
@@ -129,6 +138,8 @@ private:
     wl_subsurface* mpv_subsurface_ = nullptr;
     wl_surface* cef_surface_ = nullptr;
     wl_subsurface* cef_subsurface_ = nullptr;
+    wp_viewport* cef_viewport_ = nullptr;
+    wl_buffer* cef_buffer_ = nullptr;  // current CEF wl_buffer (destroyed on next present)
 
     wp_viewporter* viewporter_ = nullptr;
     wp_viewport* viewport_ = nullptr;

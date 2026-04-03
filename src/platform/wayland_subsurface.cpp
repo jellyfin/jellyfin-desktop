@@ -624,11 +624,13 @@ void WaylandSubsurface::destroyDmabufPool() {
 }
 
 void WaylandSubsurface::activateColorManagement() {
-    if (!color_manager_ || !parent_surface_) return;
+    if (!color_manager_ || !mpv_surface_) return;
+    // Image description goes on the VIDEO surface (mpv_surface_), not the
+    // parent — the parent hosts CEF's sRGB content. Feedback stays on the
+    // parent (setupColorFeedback) because KWin only sends preferred_changed
+    // to top-level surfaces. Read from parent, write to child.
     if (!color_surface_)
-        color_surface_ = wp_color_manager_v1_get_surface(color_manager_, parent_surface_);
-    // Set initial image description so KWin starts sending
-    // preferred_changed events for this surface.
+        color_surface_ = wp_color_manager_v1_get_surface(color_manager_, mpv_surface_);
     if (color_surface_) {
         if (output_is_hdr_)
             setHdrImageDescription();
@@ -707,6 +709,71 @@ void WaylandSubsurface::setHdrImageDescription(uint32_t, uint32_t) {
     wp_image_description_v1_destroy(img_desc);
 }
 
+void WaylandSubsurface::setHdrImageDescriptionFromContent() {
+    uint32_t wl_prim = primaries_map_[PL_COLOR_PRIM_BT_2020];
+    uint32_t wl_tf = transfer_map_[PL_COLOR_TRC_PQ];
+    if (!supports_parametric_ || !wl_prim || !wl_tf || !color_manager_)
+        return;
+    if (!color_surface_) return;
+
+    // Send content mastering metadata — what the rendered pixels actually are.
+    // Matches standalone mpv: vo_gpu_next sets target_params.color = source hint,
+    // then set_color_management sends source metadata via the protocol.
+    auto* creator = wp_color_manager_v1_create_parametric_creator(color_manager_);
+    wp_image_description_creator_params_v1_set_primaries_named(creator, wl_prim);
+    wp_image_description_creator_params_v1_set_tf_named(creator, wl_tf);
+
+    float cll = display_profile_.content_max_cll;
+    if (cll <= 0) cll = display_profile_.content_peak;
+    if (cll > 0) {
+        wp_image_description_creator_params_v1_set_max_cll(creator, lrintf(cll));
+        wp_image_description_creator_params_v1_set_max_fall(creator, 0);
+    }
+
+    // Use display's mastering primaries for mastering_display_primaries
+    // (content primaries aren't in display_profile_ — the display's preferred
+    // primaries describe the rendering target, which is what we rendered to).
+    struct pl_hdr_metadata hdr = preferred_csp_.hdr;
+    if (pl_primaries_valid(&hdr.prim) && display_profile_.content_peak > 0) {
+        wp_image_description_creator_params_v1_set_mastering_display_primaries(
+            creator,
+            lrintf(hdr.prim.red.x   * WAYLAND_COLOR_FACTOR),
+            lrintf(hdr.prim.red.y   * WAYLAND_COLOR_FACTOR),
+            lrintf(hdr.prim.green.x * WAYLAND_COLOR_FACTOR),
+            lrintf(hdr.prim.green.y * WAYLAND_COLOR_FACTOR),
+            lrintf(hdr.prim.blue.x  * WAYLAND_COLOR_FACTOR),
+            lrintf(hdr.prim.blue.y  * WAYLAND_COLOR_FACTOR),
+            lrintf(hdr.prim.white.x * WAYLAND_COLOR_FACTOR),
+            lrintf(hdr.prim.white.y * WAYLAND_COLOR_FACTOR));
+        // Content mastering luminance from the source stream
+        wp_image_description_creator_params_v1_set_mastering_luminance(
+            creator,
+            lrintf(display_profile_.content_min_luma * WAYLAND_MIN_LUM_FACTOR),
+            lrintf(display_profile_.content_peak));
+    }
+
+    auto* img_desc = wp_image_description_creator_params_v1_create(creator);
+
+    ImageDescContext dc{};
+    auto* dq = wl_display_create_queue(wl_display_);
+    wl_proxy_set_queue((wl_proxy*)img_desc, dq);
+    wp_image_description_v1_add_listener(img_desc, &s_descListener, &dc);
+    while (wl_display_dispatch_queue(wl_display_, dq) > 0)
+        if (dc.ready) break;
+
+    wl_proxy_set_queue((wl_proxy*)img_desc, nullptr);
+    wl_event_queue_destroy(dq);
+
+    if (dc.ready) {
+        wp_color_management_surface_v1_set_image_description(
+            color_surface_, img_desc, WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
+        wl_display_flush(wl_display_);
+        LOG_INFO(LOG_PLATFORM, "Set content HDR description: cll=%ld peak=%.0f",
+                 lrintf(cll), display_profile_.content_peak);
+    }
+    wp_image_description_v1_destroy(img_desc);
+}
+
 void WaylandSubsurface::setSdrImageDescription() {
     uint32_t wl_prim = primaries_map_[PL_COLOR_PRIM_BT_709];
     uint32_t wl_tf = transfer_map_[PL_COLOR_TRC_SRGB];
@@ -746,8 +813,95 @@ void WaylandSubsurface::setSdrImageDescription() {
 }
 
 void WaylandSubsurface::updateContentPeak() {
-    // No-op: image description is now updated from dispatchColorEvents
-    // when the compositor's preferred_csp changes.
+    if (!color_surface_ || !output_is_hdr_)
+        return;
+
+    // video.c writes the content's mastering metadata to display_profile_
+    // per-frame (PQ passthrough mode). Use it to update the surface image
+    // description — the compositor needs the CONTENT's metadata (what the
+    // pixels actually are), not the display's preferred metadata.
+    // Matches standalone mpv: vo_gpu_next sets target_params.color = hint
+    // (source color), then set_color_management sends those values.
+    float cll = display_profile_.content_max_cll;
+    if (cll <= 0)
+        cll = display_profile_.content_peak;
+    if (cll <= 0)
+        return;  // no content metadata yet
+
+    long cll_i = lrintf(cll);
+    if (cll_i == last_sent_cll_)
+        return;  // unchanged
+
+    last_sent_cll_ = cll_i;
+    // Rebuild image description with content metadata
+    setHdrImageDescriptionFromContent();
+}
+
+bool WaylandSubsurface::createCefSubsurface() {
+    if (cef_surface_ || !wl_compositor_ || !wl_subcompositor_ || !parent_surface_)
+        return false;
+
+    cef_surface_ = wl_compositor_create_surface(wl_compositor_);
+    if (!cef_surface_) return false;
+
+    cef_subsurface_ = wl_subcompositor_get_subsurface(
+        wl_subcompositor_, cef_surface_, parent_surface_);
+    if (!cef_subsurface_) return false;
+
+    // CEF above parent (video is below parent, CEF is above)
+    wl_subsurface_place_above(cef_subsurface_, parent_surface_);
+    wl_subsurface_set_desync(cef_subsurface_);
+
+    // CEF surface gets input — it's the interactive UI layer.
+    // Don't set an empty input region (unlike mpv_surface_ which is click-through).
+
+    if (viewporter_)
+        cef_viewport_ = wp_viewporter_get_viewport(viewporter_, cef_surface_);
+
+    wl_surface_commit(cef_surface_);
+    LOG_INFO(LOG_PLATFORM, "CEF subsurface created (above parent)");
+    return true;
+}
+
+void WaylandSubsurface::presentCefDmabuf(int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+    if (!cef_surface_ || !dmabuf_) {
+        close(fd);
+        return;
+    }
+
+    // Create wl_buffer from CEF's dmabuf fd
+    auto* params = zwp_linux_dmabuf_v1_create_params(dmabuf_);
+    zwp_linux_buffer_params_v1_add(params, fd, 0, 0, stride,
+        modifier >> 32, modifier & 0xffffffff);
+    auto* buf = zwp_linux_buffer_params_v1_create_immed(
+        params, w, h, DRM_FORMAT_ARGB8888, 0);
+    zwp_linux_buffer_params_v1_destroy(params);
+    close(fd);
+
+    if (!buf) return;
+
+    // Destroy previous buffer (compositor holds its own reference until release)
+    if (cef_buffer_)
+        wl_buffer_destroy(cef_buffer_);
+    cef_buffer_ = buf;
+
+    // Apply pending viewport destination (HiDPI logical size)
+    // CEF subsurface uses the same destination size as the window
+    if (cef_viewport_ && dest_pending_.load(std::memory_order_acquire)) {
+        wp_viewport_set_destination(cef_viewport_,
+            pending_dest_width_.load(std::memory_order_relaxed),
+            pending_dest_height_.load(std::memory_order_relaxed));
+    }
+
+    wl_surface_attach(cef_surface_, buf, 0, 0);
+    wl_surface_damage_buffer(cef_surface_, 0, 0, w, h);
+    wl_surface_commit(cef_surface_);
+}
+
+void WaylandSubsurface::hideCef() {
+    if (!cef_surface_) return;
+    wl_surface_attach(cef_surface_, nullptr, 0, 0);
+    wl_surface_commit(cef_surface_);
 }
 
 void WaylandSubsurface::commit() {
@@ -787,6 +941,8 @@ void WaylandSubsurface::cleanup() {
     if (instance_) { vkDestroyInstance(instance_, nullptr); instance_ = VK_NULL_HANDLE; }
     if (viewport_) { wp_viewport_destroy(viewport_); viewport_ = nullptr; }
     if (viewporter_) { wp_viewporter_destroy(viewporter_); viewporter_ = nullptr; }
+    if (cef_buffer_) { wl_buffer_destroy(cef_buffer_); cef_buffer_ = nullptr; }
+    if (cef_viewport_) { wp_viewport_destroy(cef_viewport_); cef_viewport_ = nullptr; }
     if (cef_subsurface_) { wl_subsurface_destroy(cef_subsurface_); cef_subsurface_ = nullptr; }
     if (cef_surface_) { wl_surface_destroy(cef_surface_); cef_surface_ = nullptr; }
     if (mpv_subsurface_) { wl_subsurface_destroy(mpv_subsurface_); mpv_subsurface_ = nullptr; }

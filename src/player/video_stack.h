@@ -12,6 +12,8 @@ class EGLContext_;
 
 #ifdef _WIN32
 class WindowsVideoLayer;
+#elif !defined(__APPLE__)
+class WaylandSubsurface;
 #endif
 
 struct AudioConfig {
@@ -26,6 +28,8 @@ struct VideoStack {
     std::unique_ptr<VideoRenderer> renderer;
 #ifdef _WIN32
     WindowsVideoLayer* video_layer = nullptr;  // non-owning, for adapter LUID access
+#elif !defined(__APPLE__)
+    WaylandSubsurface* wayland_surface = nullptr;  // non-owning, for CEF subsurface access
 #endif
 
     // Factory - creates platform-appropriate video stack

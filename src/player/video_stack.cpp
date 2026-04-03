@@ -346,10 +346,15 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
         // No Vulkan swapchain — we own the surface image description.
         bool use_dmabuf = will_dmabuf && g_wayland_subsurface->initDmabufPool(physical_w, physical_h);
         if (use_dmabuf) {
-            // Activate color management on the parent surface so KWin sends
-            // preferred_changed events when EDR/HDR mode toggles.
+            // Activate color management on the video surface so the compositor
+            // knows the video layer's color space. Feedback stays on the parent
+            // (KWin sends preferred_changed to top-level surfaces only).
             g_wayland_subsurface->activateColorManagement();
-            LOG_INFO(LOG_PLATFORM, "Using dmabuf presentation (%s)", use_hdr ? "HDR" : "SDR");
+            // Create CEF subsurface above parent — CEF dmabuf goes here
+            // instead of GL compositing on the parent EGL surface.
+            g_wayland_subsurface->createCefSubsurface();
+            LOG_INFO(LOG_PLATFORM, "Using dmabuf presentation (%s) + CEF subsurface",
+                     use_hdr ? "HDR" : "SDR");
             if (!createFboRenderContext(player.get(), g_wayland_subsurface.get())) {
                 return stack;
             }
@@ -363,6 +368,7 @@ VideoStack VideoStack::create(SDL_Window* window, int width, int height, EGLCont
 
         stack.renderer = std::make_unique<VulkanSubsurfaceRenderer>(player.get(), g_wayland_subsurface.get());
         stack.player = std::move(player);
+        stack.wayland_surface = g_wayland_subsurface.get();
     } else {
         // X11: OpenGL composition with threaded rendering
         auto player = std::make_unique<MpvPlayer>();

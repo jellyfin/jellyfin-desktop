@@ -54,6 +54,7 @@ void setMacTrafficLightsVisible(bool visible);
 #include "player/windows/media_session_windows.h"
 #else
 #include "context/egl_context.h"
+#include "platform/wayland_subsurface.h"
 #include "context/opengl_frame_context.h"
 #include "player/mpris/media_session_mpris.h"
 #include <unistd.h>  // For close()
@@ -877,6 +878,9 @@ int main(int argc, char* argv[]) {
     }
     MpvPlayer* mpv = videoStack.player.get();
     VideoRenderer& videoRenderer = *videoStack.renderer;
+    // On Wayland with dmabuf: CEF goes to its own subsurface (Option E).
+    // Null on X11 or when compositor lacks parametric color management.
+    WaylandSubsurface* wl_cef_surface = videoStack.wayland_surface;
     bool has_video = false;
     bool video_needs_rerender = false;
     double current_playback_rate = 1.0;
@@ -1200,8 +1204,12 @@ int main(int argc, char* argv[]) {
             getPhysicalSize,
 #if !defined(__APPLE__) && !defined(_WIN32)
             // Accelerated paint callback for overlay
-            [overlay_ptr, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
-                overlay_ptr->compositor->queueDmabuf(fd, stride, modifier, w, h);
+            [overlay_ptr, wl_cef_surface, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+                if (wl_cef_surface && wl_cef_surface->hasCefSubsurface()) {
+                    wl_cef_surface->presentCefDmabuf(fd, stride, modifier, w, h);
+                } else {
+                    overlay_ptr->compositor->queueDmabuf(fd, stride, modifier, w, h);
+                }
                 wakeMainLoop();
             }
 #else
@@ -1307,9 +1315,13 @@ int main(int argc, char* argv[]) {
             wakeMainLoop();  // Wake from idle wait to process command
         },
 #if !defined(__APPLE__) && !defined(_WIN32)
-        // Accelerated paint callback - queue dmabuf for import on main thread
-        [main_ptr, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
-            main_ptr->compositor->queueDmabuf(fd, stride, modifier, w, h);
+        // Accelerated paint callback - direct to CEF subsurface (Wayland) or GL compositor (X11)
+        [main_ptr, wl_cef_surface, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+            if (wl_cef_surface && wl_cef_surface->hasCefSubsurface()) {
+                wl_cef_surface->presentCefDmabuf(fd, stride, modifier, w, h);
+            } else {
+                main_ptr->compositor->queueDmabuf(fd, stride, modifier, w, h);
+            }
             wakeMainLoop();
         },
 #else
@@ -2326,8 +2338,12 @@ int main(int argc, char* argv[]) {
         // Composite video texture (for threaded OpenGL renderers like X11)
         videoRenderer.composite(viewport_w, viewport_h);
 
-        // Flush and composite all browsers (back-to-front order)
-        browsers.renderAll(viewport_w, viewport_h);
+        if (!wl_cef_surface || !wl_cef_surface->hasCefSubsurface()) {
+            // X11 or no CEF subsurface: composite browsers via GL
+            browsers.renderAll(viewport_w, viewport_h);
+        }
+        // Wayland with CEF subsurface: CEF dmabuf goes directly to compositor
+        // via presentCefDmabuf() in the accel paint callback — no GL needed.
 
         frameContext.endFrame();
 #endif
