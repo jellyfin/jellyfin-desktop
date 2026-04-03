@@ -9,6 +9,9 @@ third_party/*
 !third_party/GL
 !third_party/KHR
 
+# Project-scoped MCP
+.mcp.json
+
 # IDE
 .vscode/
 .idea/
