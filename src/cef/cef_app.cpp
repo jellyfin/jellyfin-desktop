@@ -7,6 +7,7 @@
 #include "include/cef_frame.h"
 #include <cmath>
 #include <cstring>
+#include <regex>
 #include "logging.h"
 
 void App::OnBeforeCommandLineProcessing(const CefString& process_type,
@@ -113,6 +114,11 @@ void App::DoWork() {
     // iteration, the main loop needs to see it to avoid sleeping.
 }
 
+std::string escapeString(const std::string& str) {
+    std::regex pattern("\\\\|\\\"");
+    return std::regex_replace(str, pattern, "\\$&");
+}
+
 void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefFrame> frame,
                            CefRefPtr<CefV8Context> context) {
@@ -162,14 +168,14 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     std::string placeholder = "__SERVER_URL__";
     size_t pos = shim_str.find(placeholder);
     if (pos != std::string::npos) {
-        shim_str.replace(pos, placeholder.length(), Settings::instance().serverUrl());
+        shim_str.replace(pos, placeholder.length(), escapeString(Settings::instance().serverUrl()));
     }
 
     // Replace placeholder with saved settings JSON
     std::string settings_placeholder = "__SETTINGS_JSON__";
     pos = shim_str.find(settings_placeholder);
     if (pos != std::string::npos) {
-        shim_str.replace(pos, settings_placeholder.length(), Settings::instance().cliSettingsJson());
+        shim_str.replace(pos, settings_placeholder.length(), escapeString(Settings::instance().cliSettingsJson()));
     }
 
     frame->ExecuteJavaScript(shim_str, frame->GetURL(), 0);
