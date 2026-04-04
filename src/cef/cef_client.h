@@ -135,6 +135,22 @@ public:
                             const RectList& dirtyRects,
                             const CefAcceleratedPaintInfo& info) override;
 
+    // Intercepts popup creation to route external links to the system browser
+    // and block creation of additional in-app CEF windows.
+    bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame,
+                       int popup_id,
+                       const CefString& target_url,
+                       const CefString& target_frame_name,
+                       WindowOpenDisposition target_disposition,
+                       bool user_gesture,
+                       const CefPopupFeatures& popupFeatures,
+                       CefWindowInfo& windowInfo,
+                       CefRefPtr<CefClient>& client,
+                       CefBrowserSettings& settings,
+                       CefRefPtr<CefDictionaryValue>& extra_info,
+                       bool* no_javascript_access) override;
+
     // CefLifeSpanHandler
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
@@ -289,6 +305,22 @@ public:
     void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                             const RectList& dirtyRects,
                             const CefAcceleratedPaintInfo& info) override;
+
+    // Intercepts popup creation to route external links to the system browser
+    // and block creation of additional in-app CEF windows.
+    bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame,
+                       int popup_id,
+                       const CefString& target_url,
+                       const CefString& target_frame_name,
+                       WindowOpenDisposition target_disposition,
+                       bool user_gesture,
+                       const CefPopupFeatures& popupFeatures,
+                       CefWindowInfo& windowInfo,
+                       CefRefPtr<CefClient>& client,
+                       CefBrowserSettings& settings,
+                       CefRefPtr<CefDictionaryValue>& extra_info,
+                       bool* no_javascript_access) override;
 
     // CefLifeSpanHandler
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
