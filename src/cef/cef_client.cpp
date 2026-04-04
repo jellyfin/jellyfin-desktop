@@ -23,6 +23,7 @@ void applySettingValue(const std::string& section, const std::string& key, const
     else if (key == "titlebarThemeColor") s.setTitlebarThemeColor(value == "true");
     else if (key == "transparentTitlebar") s.setTransparentTitlebar(value == "true");
     else if (key == "logLevel") s.setLogLevel(value);
+    else if (key == "customMpvConfig") s.setCustomMpvConfig(value);
     else LOG_WARN(LOG_CEF, "Unknown setting key: %s.%s", section.c_str(), key.c_str());
     s.saveAsync();
 }

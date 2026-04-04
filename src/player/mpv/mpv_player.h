@@ -91,6 +91,7 @@ private:
     static void onMpvRedraw(void* ctx);
     static void onMpvWakeup(void* ctx);
     void handleMpvEvent(struct mpv_event* event);
+    void applyCustomConfig();
 
     mpv_handle* mpv_ = nullptr;
     mpv_render_context* render_ctx_ = nullptr;
