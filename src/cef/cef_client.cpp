@@ -412,6 +412,9 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
     } else if (name == "getClipboard") {
         handleGetClipboard(browser, args);
         return true;
+    } else if (name == "playerTogglePiP") {
+        on_player_msg_("togglePiP", "", 0, "");
+        return true;
     } else if (name == "appExit") {
         LOG_INFO(LOG_CEF, "App exit requested from web UI");
         SDL_Event qe{};

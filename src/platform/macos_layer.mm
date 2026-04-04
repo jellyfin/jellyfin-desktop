@@ -457,4 +457,50 @@ void MacOSVideoLayer::setPosition(int x, int y) {
     }
 }
 
+void* MacOSVideoLayer::getVideoView() {
+    return (__bridge void*)video_view_;
+}
+
+void MacOSVideoLayer::restoreVideoView() {
+    if (!video_view_) return;
+
+    SDL_PropertiesID props = SDL_GetWindowProperties(window_);
+    NSWindow* ns_window = (__bridge NSWindow*)SDL_GetPointerProperty(
+        props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+    if (!ns_window) return;
+
+    NSView* contentView = ns_window.contentView;
+
+    // Tear down swapchain and surface before reparenting
+    vkDeviceWaitIdle(device_);
+    destroySwapchain();
+
+    if (surface_ != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+    }
+
+    // Move view back to main window
+    video_view_.frame = contentView.bounds;
+    metal_layer_.frame = contentView.bounds;
+    metal_layer_.contentsScale = ns_window.backingScaleFactor;
+    [contentView addSubview:video_view_ positioned:NSWindowBelow relativeTo:nil];
+
+    // Recreate VkSurfaceKHR for the layer in its new window context
+    VkMetalSurfaceCreateInfoEXT surfaceCreateInfo = {};
+    surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
+    surfaceCreateInfo.pLayer = metal_layer_;
+
+    PFN_vkCreateMetalSurfaceEXT vkCreateMetalSurfaceEXT =
+        (PFN_vkCreateMetalSurfaceEXT)vkGetInstanceProcAddr(instance_, "vkCreateMetalSurfaceEXT");
+    if (vkCreateMetalSurfaceEXT) {
+        vkCreateMetalSurfaceEXT(instance_, &surfaceCreateInfo, nullptr, &surface_);
+    }
+
+    CGFloat scale = ns_window.backingScaleFactor;
+    width_ = (uint32_t)(contentView.bounds.size.width * scale);
+    height_ = (uint32_t)(contentView.bounds.size.height * scale);
+    needs_swapchain_recreate_ = true;
+}
+
 #endif // __APPLE__

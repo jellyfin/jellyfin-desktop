@@ -23,4 +23,8 @@ public:
 
     // HDR query
     virtual bool isHdr() const = 0;
+
+    // PiP support (macOS only)
+    virtual void* getVideoView() { return nullptr; }
+    virtual void restoreVideoView() {}
 };

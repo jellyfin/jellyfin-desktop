@@ -303,7 +303,13 @@
         getDeviceProfile(item, options) {
             return this.appHost.getDeviceProfile ? this.appHost.getDeviceProfile(item, options) : Promise.resolve({});
         }
-        static getSupportedFeatures() { return ['PlaybackRate', 'SetAspectRatio']; }
+        static getSupportedFeatures() {
+            const features = ['PlaybackRate', 'SetAspectRatio'];
+            if (window.jmpNative && window.jmpNative.isPiPSupported && window.jmpNative.isPiPSupported()) {
+                features.push('PictureInPicture');
+            }
+            return features;
+        }
         supports(feature) { return mpvVideoPlayer.getSupportedFeatures().includes(feature); }
         isFullscreen() { return window._isFullscreen === true; }
         toggleFullscreen() {
@@ -360,7 +366,11 @@
         }
         isMuted() { return this._core.isMuted(); }
 
-        togglePictureInPicture() {}
+        togglePictureInPicture() {
+            if (window.jmpNative && window.jmpNative.togglePiP) {
+                window.jmpNative.togglePiP();
+            }
+        }
         toggleAirPlay() {}
         getStats() { return Promise.resolve({ categories: [] }); }
         getSupportedAspectRatios() { return []; }

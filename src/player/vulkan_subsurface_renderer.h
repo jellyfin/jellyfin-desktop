@@ -23,6 +23,10 @@ public:
     void cleanup() override;
     float getClearAlpha(bool video_ready) const override;
     bool isHdr() const override;
+#ifdef __APPLE__
+    void* getVideoView() override;
+    void restoreVideoView() override;
+#endif
 private:
     MpvPlayer* player_;
     VideoSurface* surface_;

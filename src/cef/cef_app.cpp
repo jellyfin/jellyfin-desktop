@@ -153,6 +153,8 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("setSettingValue", CefV8Value::CreateFunction("setSettingValue", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("themeColor", CefV8Value::CreateFunction("themeColor", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("setOsdVisible", CefV8Value::CreateFunction("setOsdVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("togglePiP", CefV8Value::CreateFunction("togglePiP", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("isPiPSupported", CefV8Value::CreateFunction("isPiPSupported", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject the JavaScript shim that creates window.api, window.NativeShell, etc.
@@ -526,6 +528,21 @@ bool NativeV8Handler::Execute(const CefString& name,
             msg->GetArgumentList()->SetBool(0, arguments[0]->GetBoolValue());
             browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
         }
+        return true;
+    }
+
+    if (name == "togglePiP") {
+        CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerTogglePiP");
+        browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
+        return true;
+    }
+
+    if (name == "isPiPSupported") {
+#ifdef __APPLE__
+        retval = CefV8Value::CreateBool(true);
+#else
+        retval = CefV8Value::CreateBool(false);
+#endif
         return true;
     }
 

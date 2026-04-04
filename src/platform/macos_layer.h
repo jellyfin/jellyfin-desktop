@@ -59,6 +59,11 @@ public:
     void setColorspace() {}  // macOS EDR is automatic
     void setDestinationSize(int, int) {}  // no-op on macOS
 
+    // PiP: get the video NSView (reparented into PiP window)
+    void* getVideoView();
+    // Restore video view to the main window after PiP closes
+    void restoreVideoView();
+
     // For mpv render context
 #ifdef __OBJC__
     void* getMetalLayer() { return (__bridge void*)metal_layer_; }
