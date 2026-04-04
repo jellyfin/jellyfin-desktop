@@ -316,6 +316,25 @@ void MpvPlayer::setSpeed(double speed) {
     mpv_set_property_async(mpv_, 0, "speed", MPV_FORMAT_DOUBLE, &speed);
 }
 
+void MpvPlayer::setAspectMode(const std::string& mode) {
+    if (!mpv_) return;
+
+    int keepAspect = 1;
+    double panscan = 0.0;
+
+    if (mode == "zoom") {
+        panscan = 1.0;
+    } else if (mode == "stretch") {
+        keepAspect = 0;
+    }
+
+    int unscaled = 0;
+    mpv_set_property_async(mpv_, 0, "video-unscaled", MPV_FORMAT_FLAG, &unscaled);
+    mpv_set_property_string(mpv_, "video-aspect-override", "no");
+    mpv_set_property_async(mpv_, 0, "keepaspect", MPV_FORMAT_FLAG, &keepAspect);
+    mpv_set_property_async(mpv_, 0, "panscan", MPV_FORMAT_DOUBLE, &panscan);
+}
+
 void MpvPlayer::setNormalizationGain(double gainDb) {
     if (!mpv_) return;
     if (gainDb == 0.0) {

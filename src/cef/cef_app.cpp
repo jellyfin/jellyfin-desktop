@@ -134,6 +134,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("playerSetVolume", CefV8Value::CreateFunction("playerSetVolume", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetMuted", CefV8Value::CreateFunction("playerSetMuted", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetSpeed", CefV8Value::CreateFunction("playerSetSpeed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("playerSetAspectRatio", CefV8Value::CreateFunction("playerSetAspectRatio", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetSubtitle", CefV8Value::CreateFunction("playerSetSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetAudio", CefV8Value::CreateFunction("playerSetAudio", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetAudioDelay", CefV8Value::CreateFunction("playerSetAudioDelay", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
@@ -319,6 +320,17 @@ bool NativeV8Handler::Execute(const CefString& name,
             LOG_DEBUG(LOG_CEF, "V8 playerSetSpeed: %d", rateX1000);
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetSpeed");
             msg->GetArgumentList()->SetInt(0, rateX1000);
+            browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
+        }
+        return true;
+    }
+
+    if (name == "playerSetAspectRatio") {
+        if (arguments.size() >= 1 && arguments[0]->IsString()) {
+            std::string mode = arguments[0]->GetStringValue().ToString();
+            LOG_DEBUG(LOG_CEF, "V8 playerSetAspectRatio: %s", mode.c_str());
+            CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("playerSetAspectRatio");
+            msg->GetArgumentList()->SetString(0, mode);
             browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
         }
         return true;
