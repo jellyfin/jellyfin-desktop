@@ -55,6 +55,7 @@ void setMacTrafficLightsVisible(bool visible);
 #include "player/mpris/media_session_mpris.h"
 #include <unistd.h>  // For close()
 #include "platform/event_loop_linux.h"
+#include "platform/wayland_browser_surface.h"
 #ifdef HAVE_KDE_DECORATION_PALETTE
 #include "platform/kde_decoration_palette.h"
 #endif
@@ -836,11 +837,28 @@ int main(int argc, char* argv[]) {
     bool video_needs_rerender = false;
     double current_playback_rate = 1.0;
 
+    // Wayland: create browser subsurface for direct dmabuf attach (bypasses EGL compositing)
+    const char* videoDriver = SDL_GetCurrentVideoDriver();
+    bool isWayland = videoDriver && strcmp(videoDriver, "wayland") == 0;
+    std::unique_ptr<WaylandBrowserSurface> browserSurface;
+    if (isWayland && use_dmabuf) {
+        browserSurface = std::make_unique<WaylandBrowserSurface>();
+        if (!browserSurface->init(window)) {
+            LOG_WARN(LOG_PLATFORM, "WaylandBrowserSurface init failed, falling back to EGL compositing");
+            browserSurface.reset();
+        }
+    }
+
     // Frame context (same for both Wayland and X11 - both use EGL)
     OpenGLFrameContext frameContext(&egl);
 
-    // Render an initial #101010 frame so the window doesn't flash the default background
-    frameContext.beginFrame(16.0f / 255.0f, 1.0f);
+    // Render an initial frame — transparent if using browser subsurface
+    // (parent must be see-through for subsurfaces), opaque otherwise.
+    if (browserSurface) {
+        frameContext.beginFrame(0.0f, 0.0f);
+    } else {
+        frameContext.beginFrame(16.0f / 255.0f, 1.0f);
+    }
     frameContext.endFrame();
 
     // Compositor context for BrowserEntry init
@@ -1251,8 +1269,12 @@ int main(int argc, char* argv[]) {
         },
 #if !defined(__APPLE__) && !defined(_WIN32)
         // Accelerated paint callback - queue dmabuf for import on main thread
-        [main_ptr, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
-            main_ptr->compositor->queueDmabuf(fd, stride, modifier, w, h);
+        [main_ptr, &browserSurface, wakeMainLoop](int fd, uint32_t stride, uint64_t modifier, int w, int h) {
+            if (browserSurface) {
+                browserSurface->queueDmabuf(fd, stride, modifier, w, h);
+            } else {
+                main_ptr->compositor->queueDmabuf(fd, stride, modifier, w, h);
+            }
             wakeMainLoop();
         },
 #else
@@ -1300,15 +1322,11 @@ int main(int argc, char* argv[]) {
             pending_cmds.push_back({"theme_color", color, 0, 0.0});
             wakeMainLoop();
         },
-#ifdef __APPLE__
         [&cmd_mutex, &pending_cmds, &wakeMainLoop](bool visible) {
             std::lock_guard<std::mutex> lock(cmd_mutex);
             pending_cmds.push_back({"osd_visible", "", visible ? 1 : 0, 0.0});
             wakeMainLoop();
         },
-#else
-        nullptr,
-#endif
         popup_show_cb,
         popup_size_cb,
         accel_popup_cb
@@ -1713,7 +1731,13 @@ int main(int argc, char* argv[]) {
         SDL_Event event;
         bool have_event;
         if (needs_render || has_video || has_pending || has_pending_cmds || !paint_size_matched) {
-            have_event = SDL_PollEvent(&event);
+            // With browser subsurface, no eglSwapBuffers throttles the loop.
+            // Always use a short wait to prevent busy-spinning.
+            if (browserSurface) {
+                have_event = SDL_WaitEventTimeout(&event, 2);
+            } else {
+                have_event = SDL_PollEvent(&event);
+            }
         } else {
 #ifdef _WIN32
             if (overlay_state == OverlayState::WAITING) {
@@ -1882,6 +1906,8 @@ int main(int argc, char* argv[]) {
                 egl.resize(physical_w, physical_h);
                 videoController.requestResize(physical_w, physical_h);
                 videoRenderer.setDestinationSize(current_width, current_height);
+                if (browserSurface)
+                    browserSurface->setDestinationSize(current_width, current_height);
                 last_resize_time = Clock::now();
 #endif
 #endif
@@ -2098,9 +2124,10 @@ int main(int argc, char* argv[]) {
                     } else {
                         pending_titlebar_color = cmd.url;
                     }
+                } else if (cmd.cmd == "osd_visible") {
 #ifdef __APPLE__
-                } else if (cmd.cmd == "osd_visible" && transparent_titlebar) {
-                    setMacTrafficLightsVisible(cmd.intArg != 0);
+                    if (transparent_titlebar)
+                        setMacTrafficLightsVisible(cmd.intArg != 0);
 #endif
                 }
             }
@@ -2239,24 +2266,37 @@ int main(int argc, char* argv[]) {
             frameContext.endFrame();
         }
 #else
-        // Linux: Get physical dimensions for viewport (HiDPI)
-        // Use SDL_GetWindowSizeInPixels instead of int(logical * scale) to avoid
-        // truncation rounding mismatch — the EGL surface uses ceil() internally,
-        // so truncating can leave a 1px unrendered strip at the right/bottom edge.
         int viewport_w, viewport_h;
         SDL_GetWindowSizeInPixels(window, &viewport_w, &viewport_h);
-        glViewport(0, 0, viewport_w, viewport_h);
 
-        frameContext.beginFrame(clear_color, videoController.getClearAlpha());
-        videoController.render(viewport_w, viewport_h);
+        if (browserSurface) {
+            // Wayland subsurface path: CEF dmabufs go directly to compositor.
+            browserSurface->commitQueued();
+            videoController.render(viewport_w, viewport_h);
 
-        // Composite video texture (for threaded OpenGL renderers like X11)
-        videoRenderer.composite(viewport_w, viewport_h);
+            // Swap a transparent EGL frame on resize so the compositor
+            // acknowledges the new parent surface size.
+            if (!paint_size_matched) {
+                glViewport(0, 0, viewport_w, viewport_h);
+                frameContext.beginFrame(0.0f, 0.0f);
+                frameContext.endFrame();
+                paint_size_matched = true;
+            }
+        } else {
+            // X11 / fallback: EGL compositing path
+            glViewport(0, 0, viewport_w, viewport_h);
 
-        // Flush and composite all browsers (back-to-front order)
-        browsers.renderAll(viewport_w, viewport_h);
+            frameContext.beginFrame(clear_color, videoController.getClearAlpha());
+            videoController.render(viewport_w, viewport_h);
 
-        frameContext.endFrame();
+            // Composite video texture (for threaded OpenGL renderers like X11)
+            videoRenderer.composite(viewport_w, viewport_h);
+
+            // Flush and composite all browsers (back-to-front order)
+            browsers.renderAll(viewport_w, viewport_h);
+
+            frameContext.endFrame();
+        }
 #endif
         // If CEF painted at stale size during resize, re-request repaint.
         // During rapid resize, WasResized()+Invalidate() from the resize handler
@@ -2338,6 +2378,7 @@ int main(int argc, char* argv[]) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     browsers.cleanupCompositors();
+    browserSurface.reset();
     videoRenderer.cleanup();
     VideoStack::cleanupStatics();
     egl.cleanup();
