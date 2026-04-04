@@ -20,6 +20,7 @@ public:
     virtual void sendMouseMove(int x, int y, int modifiers) = 0;
     virtual void sendMouseClick(int x, int y, bool down, int button, int clickCount, int modifiers) = 0;
     virtual void sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) = 0;
+    virtual void sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, bool precise, int modifiers) = 0;
     virtual void sendKeyEvent(int key, bool down, int modifiers) = 0;
     virtual void sendChar(int charCode, int modifiers) = 0;
     virtual void sendTouch(int id, float x, float y, float radiusX, float radiusY,
@@ -159,6 +160,7 @@ public:
     void sendMouseMove(int x, int y, int modifiers) override;
     void sendMouseClick(int x, int y, bool down, int button, int clickCount, int modifiers) override;
     void sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) override;
+    void sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, bool precise, int modifiers) override;
     void sendKeyEvent(int key, bool down, int modifiers) override;
     void sendChar(int charCode, int modifiers) override;
     void sendTouch(int id, float x, float y, float radiusX, float radiusY,
@@ -230,6 +232,8 @@ private:
     float accum_scroll_y_ = 0.0f;
     int scroll_x_ = 0, scroll_y_ = 0;  // Last scroll position for coalesced event
     int scroll_mods_ = 0;
+    bool scroll_precise_ = true;
+    bool scroll_animated_ = false;
     bool has_pending_scroll_ = false;
 #endif
     mutable std::mutex browser_mutex_;  // Protects browser_ across threads
@@ -308,6 +312,7 @@ public:
     void sendMouseMove(int x, int y, int modifiers) override;
     void sendMouseClick(int x, int y, bool down, int button, int clickCount, int modifiers) override;
     void sendMouseWheel(int x, int y, float deltaX, float deltaY, int modifiers) override;
+    void sendNativeMouseWheel(int x, int y, float deltaX, float deltaY, bool precise, int modifiers) override;
     void sendKeyEvent(int key, bool down, int modifiers) override;
     void sendChar(int charCode, int modifiers) override;
     void sendTouch(int id, float x, float y, float radiusX, float radiusY,
@@ -342,6 +347,8 @@ private:
     float accum_scroll_y_ = 0.0f;
     int scroll_x_ = 0, scroll_y_ = 0;
     int scroll_mods_ = 0;
+    bool scroll_precise_ = true;
+    bool scroll_animated_ = false;
     bool has_pending_scroll_ = false;
 #endif
     mutable std::mutex browser_mutex_;  // Protects browser_ across threads
