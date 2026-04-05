@@ -34,6 +34,11 @@ struct Platform {
     void (*set_expected_size)(int w, int h);
 
     float (*get_scale)();
+
+    // Query logical content dimensions from the window system.
+    // Returns false if unavailable (caller should use mpv osd-dimensions / scale).
+    bool (*query_logical_content_size)(int* w, int* h);
+
     void (*pump)();
 
     // Titlebar color (KDE/KWin only, no-op on other compositors)
@@ -42,4 +47,8 @@ struct Platform {
 
 #ifdef __linux__
 Platform make_wayland_platform();
+#endif
+
+#ifdef __APPLE__
+Platform make_macos_platform();
 #endif

@@ -60,12 +60,12 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/CEF_VERSION")
 endif()
 
 # SDL3 (not needed on Linux -- mpv owns the window)
-if(NOT (UNIX AND NOT APPLE))
+if(WIN32)
     find_package(SDL3 REQUIRED)
 endif()
 
 # Vulkan (not needed on Linux -- mpv manages Vulkan internally via gpu-next)
-if(NOT (UNIX AND NOT APPLE))
+if(WIN32)
     # On Windows ARM64, hint the correct Vulkan library path
     if(WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" AND DEFINED ENV{VULKAN_SDK})
         set(Vulkan_LIBRARY "$ENV{VULKAN_SDK}/Lib/vulkan-1.lib")
@@ -75,8 +75,6 @@ endif()
 
 # Platform-specific dependencies
 if(APPLE)
-    # macOS: OpenGL via CGL, Metal frameworks
-    find_package(OpenGL REQUIRED)
     find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(METAL_FRAMEWORK Metal REQUIRED)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
@@ -84,13 +82,11 @@ if(APPLE)
     find_library(MEDIAPLAYER_FRAMEWORK MediaPlayer REQUIRED)
 
     set(PLATFORM_SOURCES
-        src/platform/macos_layer.mm
-        src/platform/macos_app.mm
-        src/compositor/metal_compositor.mm
+        src/platform_macos.mm
+        src/wake_event_macos.cpp
         src/player/media_session.cpp
         src/player/macos/media_session_macos.mm
-        src/player/mpv/mpv_player.cpp
-        src/player/vulkan_subsurface_renderer.cpp
+        src/player/media_session_thread.cpp
     )
 
     # LetsMove - prompts user to move app to /Applications (clears quarantine)
@@ -103,7 +99,6 @@ if(APPLE)
         ${QUARTZCORE_FRAMEWORK}
         ${IOSURFACE_FRAMEWORK}
         ${MEDIAPLAYER_FRAMEWORK}
-        letsmove
     )
 elseif(WIN32)
     # Windows: WGL for CEF compositor, Vulkan for video (gpu-next via DComp)
@@ -228,11 +223,8 @@ else()
     endif()
 
     set(PLATFORM_SOURCES
-        src/main_linux.cpp
         src/platform_wayland.cpp
         src/wake_event_linux.cpp
-        src/cef/cef_app_linux.cpp
-        src/cef/cef_client_linux.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
         src/player/media_session_thread.cpp
@@ -368,24 +360,15 @@ add_custom_command(
 add_custom_target(embedded_resources DEPENDS ${EMBEDDED_RESOURCES_HEADER})
 
 # Common sources
-if(UNIX AND NOT APPLE)
-    # Linux: minimal common sources (main, CEF, platform in PLATFORM_SOURCES)
+if(WIN32)
     set(COMMON_SOURCES
-        src/single_instance.cpp
-        src/cef/resource_handler.cpp
-        src/settings.cpp
-        src/cjson/cJSON.c
-    )
-else()
-    # macOS/Windows: full SDL-based common sources
-    set(COMMON_SOURCES
-        src/main.cpp
+        src/main_sdl.cpp
         src/logging.cpp
         src/single_instance.cpp
         src/window_activation.cpp
         src/browser/browser_stack.cpp
-        src/cef/cef_app.cpp
-        src/cef/cef_client.cpp
+        src/cef/cef_app_sdl.cpp
+        src/cef/cef_client_sdl.cpp
         src/cef/cef_thread.cpp
         src/cef/resource_handler.cpp
         src/context/vulkan_context.cpp
@@ -397,6 +380,17 @@ else()
         src/settings.cpp
         src/window_geometry.cpp
         src/ui/menu_overlay.cpp
+    )
+else()
+    # Linux + macOS: shared main with platform abstraction
+    set(COMMON_SOURCES
+        src/main.cpp
+        src/cef/cef_app.cpp
+        src/cef/cef_client.cpp
+        src/cef/resource_handler.cpp
+        src/single_instance.cpp
+        src/settings.cpp
+        src/cjson/cJSON.c
     )
 endif()
 
@@ -426,11 +420,11 @@ target_include_directories(jellyfin-desktop PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_BINARY_DIR}/generated
 )
-if(NOT (UNIX AND NOT APPLE))
+if(WIN32)
     target_include_directories(jellyfin-desktop PRIVATE ${Vulkan_INCLUDE_DIRS})
 endif()
 
-if(UNIX AND NOT APPLE)
+if(NOT WIN32)
     target_link_libraries(jellyfin-desktop PRIVATE
         ${CEF_LIBRARIES}
         ${MPV_LIBRARIES}
@@ -456,9 +450,7 @@ endif()
 # Enable ARC for Objective-C++ files on macOS
 if(APPLE)
     set_source_files_properties(
-        src/platform/macos_layer.mm
-        src/platform/macos_app.mm
-        src/compositor/metal_compositor.mm
+        src/platform_macos.mm
         src/player/macos/media_session_macos.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )

@@ -2,7 +2,7 @@
 #define LOGGING_H
 
 // Linux rewrite: no SDL dependency
-#if defined(__linux__) && !defined(JELLYFIN_USE_SDL_LOGGING)
+#if (defined(__linux__) || defined(__APPLE__)) && !defined(JELLYFIN_USE_SDL_LOGGING)
 #include "logging_linux.h"
 #else
 

@@ -1,5 +1,5 @@
 #include "common.h"
-#include "cef/cef_client_linux.h"
+#include "cef/cef_client.h"
 
 #include <wayland-client.h>
 #include "linux-dmabuf-v1-client.h"
@@ -1072,6 +1072,7 @@ Platform make_wayland_platform() {
         .in_transition = wl_in_transition,
         .set_expected_size = wl_set_expected_size,
         .get_scale = wl_get_scale,
+        .query_logical_content_size = [](int*, int*) -> bool { return false; },
         .pump = wl_pump,
         .set_titlebar_color = wl_set_titlebar_color,
     };

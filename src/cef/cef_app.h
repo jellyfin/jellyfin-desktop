@@ -3,27 +3,12 @@
 #include "include/cef_app.h"
 #include "include/cef_render_process_handler.h"
 #include "include/cef_v8.h"
-#include <SDL3/SDL.h>
-#include <atomic>
-#include <functional>
 
 class App : public CefApp,
             public CefBrowserProcessHandler,
             public CefRenderProcessHandler {
 public:
     App() = default;
-
-    // Set device scale factor before CefInitialize
-    void SetDeviceScaleFactor(float scale) { device_scale_factor_ = scale; }
-    void SetDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
-
-    // Set wake callback for external_message_pump mode (macOS/Linux)
-    // Must be called before CefInitialize
-    static void SetWakeCallback(std::function<void()> callback) { wake_callback_ = std::move(callback); }
-
-    // External message pump interface (macOS/Linux)
-    // Call when wake event received - pumps CEF work
-    static void DoWork();
 
     // CefApp
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
@@ -40,22 +25,19 @@ public:
                                   CefProcessId source_process,
                                   CefRefPtr<CefProcessMessage> message) override;
 
+#ifdef __APPLE__
+    // external_message_pump support (macOS only)
+    static void InitWakePipe();
+    static int WakeFd();
+    static void DoWork();
+#endif
+
     // CefRenderProcessHandler
     void OnContextCreated(CefRefPtr<CefBrowser> browser,
                          CefRefPtr<CefFrame> frame,
                          CefRefPtr<CefV8Context> context) override;
 
 private:
-    // External message pump state (macOS/Linux)
-    static inline std::function<void()> wake_callback_;
-    static inline std::atomic<bool> is_active_{false};  // Re-entrancy guard
-    static inline std::atomic<bool> work_pending_{false};  // Immediate work pending
-    static inline std::atomic<SDL_TimerID> timer_id_{0};  // For delayed work
-    static Uint32 TimerCallback(void* userdata, SDL_TimerID id, Uint32 interval);
-
-    float device_scale_factor_ = 1.0f;
-    bool disable_gpu_compositing_ = false;
-
     IMPLEMENT_REFCOUNTING(App);
     DISALLOW_COPY_AND_ASSIGN(App);
 };
