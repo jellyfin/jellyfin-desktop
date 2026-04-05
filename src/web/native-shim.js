@@ -22,6 +22,28 @@
         }
     });
 
+    // Double-click on video area toggles fullscreen.
+    // Detected in JS because Wayland doesn't provide click count natively.
+    (function() {
+        let lastTime = 0, lastX = 0, lastY = 0;
+        document.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;  // left button only
+            const now = Date.now();
+            const dx = e.clientX - lastX;
+            const dy = e.clientY - lastY;
+            if ((now - lastTime) < 500 && (dx * dx + dy * dy) < 25) {
+                if (document.querySelector('.videoPlayerContainer')) {
+                    if (window.jmpNative) window.jmpNative.toggleFullscreen();
+                }
+                lastTime = 0;
+            } else {
+                lastTime = now;
+                lastX = e.clientX;
+                lastY = e.clientY;
+            }
+        }, true);  // capture phase — before jellyfin-web can stopPropagation
+    })();
+
     // Buffered ranges storage (updated by native code)
     window._bufferedRanges = [];
     window._nativeUpdateBufferedRanges = function(ranges) {
@@ -280,6 +302,13 @@
             window.api.player[signal](...args);
         } else {
             console.error('[Media] Signal not found:', signal, 'api exists:', !!window.api);
+        }
+    };
+    window._nativeFullscreenChanged = function(fullscreen) {
+        window._isFullscreen = fullscreen;
+        const player = window._mpvVideoPlayerInstance;
+        if (player && player.events) {
+            player.events.trigger(player, 'fullscreenchange');
         }
     };
     window._nativeUpdatePosition = function(ms) {

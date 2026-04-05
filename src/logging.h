@@ -1,6 +1,11 @@
 #ifndef LOGGING_H
 #define LOGGING_H
 
+// Linux rewrite: no SDL dependency
+#if defined(__linux__) && !defined(JELLYFIN_USE_SDL_LOGGING)
+#include "logging_linux.h"
+#else
+
 #include <SDL3/SDL_log.h>
 #include <cstring>
 #include <string>
@@ -124,4 +129,5 @@ inline void initLogging(SDL_LogPriority priority = SDL_LOG_PRIORITY_INFO) {
     SDL_SetLogOutputFunction(logCallback, nullptr);
 }
 
+#endif // !__linux__
 #endif // LOGGING_H

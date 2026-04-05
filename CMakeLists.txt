@@ -59,15 +59,19 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/CEF_VERSION")
     endif()
 endif()
 
-# SDL3
-find_package(SDL3 REQUIRED)
-
-# Vulkan (for video subsurface)
-# On Windows ARM64, hint the correct Vulkan library path
-if(WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" AND DEFINED ENV{VULKAN_SDK})
-    set(Vulkan_LIBRARY "$ENV{VULKAN_SDK}/Lib/vulkan-1.lib")
+# SDL3 (not needed on Linux -- mpv owns the window)
+if(NOT (UNIX AND NOT APPLE))
+    find_package(SDL3 REQUIRED)
 endif()
-find_package(Vulkan REQUIRED)
+
+# Vulkan (not needed on Linux -- mpv manages Vulkan internally via gpu-next)
+if(NOT (UNIX AND NOT APPLE))
+    # On Windows ARM64, hint the correct Vulkan library path
+    if(WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" AND DEFINED ENV{VULKAN_SDK})
+        set(Vulkan_LIBRARY "$ENV{VULKAN_SDK}/Lib/vulkan-1.lib")
+    endif()
+    find_package(Vulkan REQUIRED)
+endif()
 
 # Platform-specific dependencies
 if(APPLE)
@@ -130,16 +134,16 @@ elseif(WIN32)
     )
     set(PLATFORM_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/third_party")
 else()
-    # Linux: OpenGL/EGL, Wayland, X11
-    find_package(OpenGL REQUIRED COMPONENTS EGL OpenGL)
+    # Linux: native Wayland (mpv owns window, CEF on subsurfaces via dmabuf)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(WAYLAND_EGL REQUIRED wayland-egl)
     pkg_check_modules(LIBDRM REQUIRED libdrm)
     pkg_check_modules(WAYLAND REQUIRED wayland-client)
     pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
-    pkg_check_modules(LIBPLACEBO REQUIRED libplacebo)
     pkg_check_modules(SYSTEMD REQUIRED libsystemd)
-    pkg_check_modules(X11 REQUIRED x11)
+    pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
+
+    # EGL (minimal init for CEF shared texture support)
+    find_package(OpenGL REQUIRED COMPONENTS EGL)
 
     # Find wayland-scanner
     find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
@@ -149,21 +153,20 @@ else()
     set(WAYLAND_GENERATED_DIR "${CMAKE_BINARY_DIR}/wayland-protocols")
     file(MAKE_DIRECTORY ${WAYLAND_GENERATED_DIR})
 
-    set(COLOR_MGMT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/color-management/color-management-v1.xml")
-    set(COLOR_MGMT_CLIENT_H "${WAYLAND_GENERATED_DIR}/color-management-v1-client.h")
-    set(COLOR_MGMT_CODE_C "${WAYLAND_GENERATED_DIR}/color-management-v1-code.c")
+    set(LINUX_DMABUF_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml")
+    set(LINUX_DMABUF_CLIENT_H "${WAYLAND_GENERATED_DIR}/linux-dmabuf-v1-client.h")
+    set(LINUX_DMABUF_CODE_C "${WAYLAND_GENERATED_DIR}/linux-dmabuf-v1-code.c")
 
     set(VIEWPORTER_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/stable/viewporter/viewporter.xml")
     set(VIEWPORTER_CLIENT_H "${WAYLAND_GENERATED_DIR}/viewporter-client.h")
     set(VIEWPORTER_CODE_C "${WAYLAND_GENERATED_DIR}/viewporter-code.c")
 
-    set(XDG_ACTIVATION_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/xdg-activation/xdg-activation-v1.xml")
-    set(XDG_ACTIVATION_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-activation-v1-client.h")
-    set(XDG_ACTIVATION_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-activation-v1-code.c")
+    set(ALPHA_MODIFIER_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/alpha-modifier/alpha-modifier-v1.xml")
+    set(ALPHA_MODIFIER_CLIENT_H "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-client.h")
+    set(ALPHA_MODIFIER_CODE_C "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-code.c")
 
-    # KDE server decoration palette — per-window titlebar colors on KWin.
-    # Required by default; pass -DENABLE_KDE_PALETTE=OFF to disable.
-    option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support (requires plasma-wayland-protocols at build time)" ON)
+    # KDE server decoration palette (per-window titlebar colors on KWin)
+    option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support" ON)
     if(ENABLE_KDE_PALETTE)
         find_file(DECO_PALETTE_PROTOCOL server-decoration-palette.xml
             PATHS /usr/share/plasma-wayland-protocols
@@ -174,16 +177,16 @@ else()
     endif()
 
     add_custom_command(
-        OUTPUT ${COLOR_MGMT_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${COLOR_MGMT_PROTOCOL} ${COLOR_MGMT_CLIENT_H}
-        DEPENDS ${COLOR_MGMT_PROTOCOL}
-        COMMENT "Generating color-management-v1 client header"
+        OUTPUT ${LINUX_DMABUF_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${LINUX_DMABUF_PROTOCOL} ${LINUX_DMABUF_CLIENT_H}
+        DEPENDS ${LINUX_DMABUF_PROTOCOL}
+        COMMENT "Generating linux-dmabuf-v1 client header"
     )
     add_custom_command(
-        OUTPUT ${COLOR_MGMT_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${COLOR_MGMT_PROTOCOL} ${COLOR_MGMT_CODE_C}
-        DEPENDS ${COLOR_MGMT_PROTOCOL}
-        COMMENT "Generating color-management-v1 code"
+        OUTPUT ${LINUX_DMABUF_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${LINUX_DMABUF_PROTOCOL} ${LINUX_DMABUF_CODE_C}
+        DEPENDS ${LINUX_DMABUF_PROTOCOL}
+        COMMENT "Generating linux-dmabuf-v1 code"
     )
     add_custom_command(
         OUTPUT ${VIEWPORTER_CLIENT_H}
@@ -198,16 +201,16 @@ else()
         COMMENT "Generating viewporter code"
     )
     add_custom_command(
-        OUTPUT ${XDG_ACTIVATION_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${XDG_ACTIVATION_PROTOCOL} ${XDG_ACTIVATION_CLIENT_H}
-        DEPENDS ${XDG_ACTIVATION_PROTOCOL}
-        COMMENT "Generating xdg-activation-v1 client header"
+        OUTPUT ${ALPHA_MODIFIER_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${ALPHA_MODIFIER_PROTOCOL} ${ALPHA_MODIFIER_CLIENT_H}
+        DEPENDS ${ALPHA_MODIFIER_PROTOCOL}
+        COMMENT "Generating alpha-modifier-v1 client header"
     )
     add_custom_command(
-        OUTPUT ${XDG_ACTIVATION_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${XDG_ACTIVATION_PROTOCOL} ${XDG_ACTIVATION_CODE_C}
-        DEPENDS ${XDG_ACTIVATION_PROTOCOL}
-        COMMENT "Generating xdg-activation-v1 code"
+        OUTPUT ${ALPHA_MODIFIER_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${ALPHA_MODIFIER_PROTOCOL} ${ALPHA_MODIFIER_CODE_C}
+        DEPENDS ${ALPHA_MODIFIER_PROTOCOL}
+        COMMENT "Generating alpha-modifier-v1 code"
     )
     if(ENABLE_KDE_PALETTE)
         add_custom_command(
@@ -225,27 +228,23 @@ else()
     endif()
 
     set(PLATFORM_SOURCES
-        src/context/egl_context.cpp
-        src/context/opengl_frame_context.cpp
-        src/platform/wayland_subsurface.cpp
-        src/platform/x11_video_layer.cpp
-        src/platform/event_loop_linux.cpp
-        src/compositor/opengl_compositor.cpp
+        src/main_linux.cpp
+        src/platform_wayland.cpp
+        src/wake_event_linux.cpp
+        src/cef/cef_app_linux.cpp
+        src/cef/cef_client_linux.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
-        src/player/mpv/mpv_player.cpp
-        src/player/vulkan_subsurface_renderer.cpp
-        src/player/opengl_renderer.cpp
-        ${COLOR_MGMT_CODE_C}
-        ${COLOR_MGMT_CLIENT_H}
+        src/player/media_session_thread.cpp
+        ${LINUX_DMABUF_CODE_C}
+        ${LINUX_DMABUF_CLIENT_H}
         ${VIEWPORTER_CODE_C}
         ${VIEWPORTER_CLIENT_H}
-        ${XDG_ACTIVATION_CODE_C}
-        ${XDG_ACTIVATION_CLIENT_H}
+        ${ALPHA_MODIFIER_CODE_C}
+        ${ALPHA_MODIFIER_CLIENT_H}
     )
     if(ENABLE_KDE_PALETTE)
         list(APPEND PLATFORM_SOURCES
-            src/platform/kde_decoration_palette.cpp
             ${DECO_PALETTE_CODE_C}
             ${DECO_PALETTE_CLIENT_H}
         )
@@ -253,22 +252,17 @@ else()
     endif()
     set(PLATFORM_LIBRARIES
         ${WAYLAND_LIBRARIES}
-        ${WAYLAND_EGL_LIBRARIES}
-        ${LIBPLACEBO_LIBRARIES}
         ${SYSTEMD_LIBRARIES}
-        ${X11_LIBRARIES}
+        ${XKBCOMMON_LIBRARIES}
         OpenGL::EGL
-        OpenGL::OpenGL
         ${CMAKE_DL_LIBS}
     )
     set(PLATFORM_INCLUDE_DIRS
         ${WAYLAND_INCLUDE_DIRS}
-        ${WAYLAND_EGL_INCLUDE_DIRS}
-        ${LIBPLACEBO_INCLUDE_DIRS}
         ${LIBDRM_INCLUDE_DIRS}
         ${SYSTEMD_INCLUDE_DIRS}
-        ${X11_INCLUDE_DIRS}
-        ${CMAKE_BINARY_DIR}
+        ${XKBCOMMON_INCLUDE_DIRS}
+        ${WAYLAND_GENERATED_DIR}
     )
 endif()
 
@@ -373,27 +367,38 @@ add_custom_command(
 )
 add_custom_target(embedded_resources DEPENDS ${EMBEDDED_RESOURCES_HEADER})
 
-# Common sources for all platforms
-set(COMMON_SOURCES
-    src/main.cpp
-    src/logging.cpp
-    src/single_instance.cpp
-    src/window_activation.cpp
-    src/browser/browser_stack.cpp
-    src/cef/cef_app.cpp
-    src/cef/cef_client.cpp
-    src/cef/cef_thread.cpp
-    src/cef/resource_handler.cpp
-    src/context/vulkan_context.cpp
-    src/player/video_stack.cpp
-    src/player/mpv_event_thread.cpp
-    src/player/video_render_controller.cpp
-    src/player/media_session_thread.cpp
-    src/cjson/cJSON.c
-    src/settings.cpp
-    src/window_geometry.cpp
-    src/ui/menu_overlay.cpp
-)
+# Common sources
+if(UNIX AND NOT APPLE)
+    # Linux: minimal common sources (main, CEF, platform in PLATFORM_SOURCES)
+    set(COMMON_SOURCES
+        src/single_instance.cpp
+        src/cef/resource_handler.cpp
+        src/settings.cpp
+        src/cjson/cJSON.c
+    )
+else()
+    # macOS/Windows: full SDL-based common sources
+    set(COMMON_SOURCES
+        src/main.cpp
+        src/logging.cpp
+        src/single_instance.cpp
+        src/window_activation.cpp
+        src/browser/browser_stack.cpp
+        src/cef/cef_app.cpp
+        src/cef/cef_client.cpp
+        src/cef/cef_thread.cpp
+        src/cef/resource_handler.cpp
+        src/context/vulkan_context.cpp
+        src/player/video_stack.cpp
+        src/player/mpv_event_thread.cpp
+        src/player/video_render_controller.cpp
+        src/player/media_session_thread.cpp
+        src/cjson/cJSON.c
+        src/settings.cpp
+        src/window_geometry.cpp
+        src/ui/menu_overlay.cpp
+    )
+endif()
 
 add_executable(jellyfin-desktop
     ${COMMON_SOURCES}
@@ -417,19 +422,29 @@ add_dependencies(jellyfin-desktop embedded_js embedded_resources generate_versio
 target_include_directories(jellyfin-desktop PRIVATE
     ${CEF_INCLUDE_DIRS}
     ${MPV_INCLUDE_DIRS}
-    ${Vulkan_INCLUDE_DIRS}
     ${PLATFORM_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_BINARY_DIR}/generated
 )
+if(NOT (UNIX AND NOT APPLE))
+    target_include_directories(jellyfin-desktop PRIVATE ${Vulkan_INCLUDE_DIRS})
+endif()
 
-target_link_libraries(jellyfin-desktop PRIVATE
-    ${CEF_LIBRARIES}
-    SDL3::SDL3
-    ${MPV_LIBRARIES}
-    Vulkan::Vulkan
-    ${PLATFORM_LIBRARIES}
-)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(jellyfin-desktop PRIVATE
+        ${CEF_LIBRARIES}
+        ${MPV_LIBRARIES}
+        ${PLATFORM_LIBRARIES}
+    )
+else()
+    target_link_libraries(jellyfin-desktop PRIVATE
+        ${CEF_LIBRARIES}
+        SDL3::SDL3
+        ${MPV_LIBRARIES}
+        Vulkan::Vulkan
+        ${PLATFORM_LIBRARIES}
+    )
+endif()
 
 # When using external CEF, tell the app where to find resources
 if(EXTERNAL_CEF_DIR)
