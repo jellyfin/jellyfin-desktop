@@ -75,7 +75,8 @@
             },
             advanced: {
                 transparentTitlebar: _savedSettings.transparentTitlebar !== false,
-                logLevel: _savedSettings.logLevel || ''
+                logLevel: _savedSettings.logLevel || '',
+                customMpvConfig: _savedSettings.customMpvConfig || ''
             }
         },
         settingsDescriptions: {
@@ -108,7 +109,8 @@
                     { value: 'debug', title: 'Debug' },
                     { value: 'warn', title: 'Warning' },
                     { value: 'error', title: 'Error' }
-                ]}
+                ]},
+                { key: 'customMpvConfig', displayName: 'Custom MPV Configuration', help: 'Configuration must be supplied in the same format as mpv.conf. E.g. \"video-rotate=90\"', inputType: 'textarea' }
             ]
         },
         settingsUpdate: [],
