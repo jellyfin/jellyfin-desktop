@@ -600,6 +600,12 @@ int main(int argc, char* argv[]) {
 
     SDL_SetAppMetadata("Jellyfin Desktop", nullptr, "org.jellyfin.JellyfinDesktop");
 
+#ifdef __APPLE__
+    // Allow the macOS menu bar to be revealed by moving the mouse to the top
+    // of the screen during fullscreen
+    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY, "1");
+#endif
+
     // SDL initialization with OpenGL (for main surface CEF overlay)
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         LOG_ERROR(LOG_MAIN, "SDL_Init failed: %s", SDL_GetError());
