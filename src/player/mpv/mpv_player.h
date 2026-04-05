@@ -51,6 +51,7 @@ public:
     void setVolume(int volume);
     void setMuted(bool muted);
     void setSpeed(double speed);
+    void setAspectMode(const std::string& mode);
     void setNormalizationGain(double gainDb);
     void setSubtitleTrack(int sid);
     void setAudioTrack(int aid);
