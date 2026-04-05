@@ -30,6 +30,7 @@ public:
     static void InitWakePipe();
     static int WakeFd();
     static void DoWork();
+    static void ScheduleWork();
 #endif
 
     // CefRenderProcessHandler

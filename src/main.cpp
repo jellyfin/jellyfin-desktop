@@ -216,39 +216,17 @@ static bool g_was_maximized_before_fullscreen = false;
 static void cef_consumer_thread() {
     int wake_fd = g_cef_queue.wake().fd();
     int shutdown_fd = g_shutdown_event.fd();
-#ifdef __APPLE__
-    int cef_fd = App::WakeFd();
-    struct pollfd fds[3] = {
-        {wake_fd, POLLIN, 0},
-        {shutdown_fd, POLLIN, 0},
-        {cef_fd, POLLIN, 0},
-    };
-    const int nfds = 3;
-#else
     struct pollfd fds[2] = {
         {wake_fd, POLLIN, 0},
         {shutdown_fd, POLLIN, 0},
     };
-    const int nfds = 2;
-#endif
 
     // Wait for main browser to load before processing events
-#ifdef __APPLE__
-    while (!g_client->isLoaded() && !g_client->isClosed()) {
-        App::DoWork();
-        g_platform.pump();
-    }
-#else
     g_client->waitForLoad();
-#endif
 
     while (true) {
-        poll(fds, nfds, -1);
+        poll(fds, 2, -1);
         if (fds[1].revents & POLLIN) break;
-#ifdef __APPLE__
-        if (fds[2].revents & POLLIN)
-            App::DoWork();
-#endif
 
         g_cef_queue.drain_wake();
         MpvEvent ev;
@@ -649,7 +627,6 @@ int main(int argc, char* argv[]) {
     auto app_contents = exe.parent_path().parent_path();
     auto fw_path = (app_contents / "Frameworks" / "Chromium Embedded Framework.framework").string();
     CefString(&settings.framework_dir_path).FromString(fw_path);
-    CefString(&settings.resources_dir_path).FromString(fw_path + "/Resources");
     CefString(&settings.browser_subprocess_path).FromString(exe.string());
     auto home = std::string(getenv("HOME"));
     CefString(&settings.root_cache_path).FromString(home + "/Library/Caches/jellyfin-desktop");
@@ -728,6 +705,9 @@ int main(int argc, char* argv[]) {
         main_url = "app://resources/index.html";
     }
 
+#ifdef __APPLE__
+    App::DoWork();
+#endif
     CefBrowserHost::CreateBrowser(wi, g_client, main_url, bs, nullptr, nullptr);
 
     // Overlay browser (server selection UI) -- only in full app mode
@@ -747,10 +727,7 @@ int main(int argc, char* argv[]) {
     }
 
 #ifdef __APPLE__
-    while (!g_client->isLoaded() && !g_client->isClosed()) {
-        App::DoWork();
-        g_platform.pump();
-    }
+    // nothing — main thread pump happens below
 #else
     g_client->waitForLoad();
 #endif
@@ -808,9 +785,35 @@ int main(int argc, char* argv[]) {
     LOG_INFO(LOG_MAIN, "Running");
 
     // --- Wait for shutdown ---
+#ifdef __APPLE__
+    // macOS: main thread must pump both GCD (for mpv VO DispatchQueue.main.sync)
+    // and CEF (CefDoMessageLoopWork must run on the init thread = main).
+    //
+    // poll() on CEF wake pipe + shutdown fd. CEF work wakes immediately via pipe.
+    // GCD has no pollable fd in Apple's SDK, so poll() uses a timeout as fallback
+    // for GCD dispatch processing (mpv VO init, fullscreen transitions — rare
+    // events where up to 100ms latency is imperceptible).
+    {
+        int cef_fd = App::WakeFd();
+        int shutdown_fd = g_shutdown_event.fd();
+        struct pollfd fds[2] = {
+            {cef_fd, POLLIN, 0},
+            {shutdown_fd, POLLIN, 0},
+        };
+        App::ScheduleWork();
+        while (true) {
+            g_platform.pump();
+            int ret = poll(fds, 2, 100);
+            if (fds[1].revents & POLLIN) break;
+            if (fds[0].revents & POLLIN || ret == 0)
+                App::DoWork();
+        }
+    }
+#else
     g_client->waitForClose();
     if (g_overlay_client)
         g_overlay_client->waitForClose();
+#endif
 
     // --- Cleanup ---
     // Stop our threads first (they don't depend on CEF/mpv shutdown order)

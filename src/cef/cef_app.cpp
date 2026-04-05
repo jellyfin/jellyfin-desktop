@@ -11,7 +11,7 @@
 #ifdef __APPLE__
 #include <unistd.h>
 #include <fcntl.h>
-#include <atomic>
+#include <CoreFoundation/CoreFoundation.h>
 #endif
 
 void App::OnBeforeCommandLineProcessing(const CefString& process_type,
@@ -39,9 +39,7 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-id", "");
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
-#ifdef __APPLE__
-    command_line->AppendSwitch("single-process");
-#else
+#ifndef __APPLE__
     // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues
     command_line->AppendSwitchWithValue("ozone-platform", "x11");
 #endif
@@ -222,10 +220,24 @@ bool NativeV8Handler::Execute(const CefString& name,
 }
 
 #ifdef __APPLE__
-// Wake pipe for external_message_pump (macOS only)
+// Wake pipe for external_message_pump (macOS only).
+// Immediate work (delay_ms == 0) writes to the pipe, waking CFRunLoop.
+// Delayed work (delay_ms > 0) uses a CFRunLoopTimer.
 static int g_wake_pipe[2] = {-1, -1};
-static std::atomic<bool> g_cef_work_pending{false};
-static std::atomic<bool> g_cef_work_active{false};
+static CFRunLoopTimerRef g_delayed_timer = nullptr;
+
+static void cancel_delayed_timer() {
+    if (g_delayed_timer) {
+        CFRunLoopTimerInvalidate(g_delayed_timer);
+        CFRelease(g_delayed_timer);
+        g_delayed_timer = nullptr;
+    }
+}
+
+static void delayed_timer_callback(CFRunLoopTimerRef, void*) {
+    g_delayed_timer = nullptr;  // one-shot, already invalidated by firing
+    App::DoWork();
+}
 
 void App::InitWakePipe() {
     pipe(g_wake_pipe);
@@ -235,25 +247,34 @@ void App::InitWakePipe() {
 
 int App::WakeFd() { return g_wake_pipe[0]; }
 
-void App::OnScheduleMessagePumpWork(int64_t) {
-    if (g_cef_work_active.load(std::memory_order_relaxed)) return;
-    bool expected = false;
-    if (g_cef_work_pending.compare_exchange_strong(expected, true, std::memory_order_release)) {
+void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
+    if (delay_ms <= 0) {
+        // Immediate work — wake the pipe so CFRunLoop fires
         char c = 1;
         (void)write(g_wake_pipe[1], &c, 1);
+    } else {
+        // Delayed work — schedule a one-shot CFRunLoopTimer
+        cancel_delayed_timer();
+        CFAbsoluteTime fire_time = CFAbsoluteTimeGetCurrent() + delay_ms / 1000.0;
+        CFRunLoopTimerContext ctx = {0, nullptr, nullptr, nullptr, nullptr};
+        g_delayed_timer = CFRunLoopTimerCreate(
+            kCFAllocatorDefault, fire_time, 0, 0, 0,
+            delayed_timer_callback, &ctx);
+        CFRunLoopAddTimer(CFRunLoopGetMain(), g_delayed_timer, kCFRunLoopDefaultMode);
     }
 }
 
 void App::DoWork() {
-    g_cef_work_active.store(true, std::memory_order_relaxed);
-    for (int i = 0; i < 5; i++) {
-        g_cef_work_pending.store(false, std::memory_order_relaxed);
-        CefDoMessageLoopWork();
-        if (!g_cef_work_pending.load(std::memory_order_acquire)) break;
-    }
-    g_cef_work_active.store(false, std::memory_order_relaxed);
+    cancel_delayed_timer();
+    // Drain wake pipe
     char buf[64];
     while (read(g_wake_pipe[0], buf, sizeof(buf)) > 0) {}
+    CefDoMessageLoopWork();
+}
+
+void App::ScheduleWork() {
+    char c = 1;
+    (void)write(g_wake_pipe[1], &c, 1);
 }
 #else
 void App::OnScheduleMessagePumpWork(int64_t) {

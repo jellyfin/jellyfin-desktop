@@ -586,6 +586,13 @@ static void macos_cleanup() {
 
 static void macos_early_init() {
     [JellyfinApplication sharedApplication];
+
+    // Subprocesses (GPU, renderer) only need CefAppProtocol — hide from dock
+    if (getenv("JELLYFIN_CEF_SUBPROCESS")) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        return;
+    }
+
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
     // Menu bar with Quit
