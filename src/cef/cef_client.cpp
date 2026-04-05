@@ -1,6 +1,6 @@
 #include "cef_client.h"
 #include "../settings.h"
-#include "../logging_linux.h"
+#include "../logging.h"
 #include "../player/media_session.h"
 #include "../player/media_session_thread.h"
 #include "../cjson/cJSON.h"

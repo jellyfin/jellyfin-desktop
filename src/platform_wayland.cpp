@@ -28,7 +28,7 @@ struct wl_configure_cb {
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include "wake_event.h"
-#include "logging_linux.h"
+#include "logging.h"
 
 // =====================================================================
 // Wayland state (file-static)

@@ -2,7 +2,7 @@
 #include "resource_handler.h"
 #include "../settings.h"
 #include "embedded_js.h"
-#include "../logging_linux.h"
+#include "../logging.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"

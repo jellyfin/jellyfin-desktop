@@ -20,29 +20,15 @@
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
 
+#include "logging.h"
+
 #ifdef __APPLE__
 #include "include/wrapper/cef_library_loader.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
 #else
 #include "single_instance.h"
-#include "logging_linux.h"
 #include "player/mpris/media_session_mpris.h"
-#endif
-
-#ifdef __APPLE__
-// Minimal logging macros for macOS (matches logging_linux.h interface)
-#define LOG_ERROR(cat, fmt, ...) fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
-#define LOG_WARN(cat, fmt, ...)  fprintf(stderr, "[WARN] " fmt "\n", ##__VA_ARGS__)
-#define LOG_INFO(cat, fmt, ...)  fprintf(stderr, "[INFO] " fmt "\n", ##__VA_ARGS__)
-#define LOG_DEBUG(cat, fmt, ...) fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__)
-#define LOG_VERBOSE(cat, fmt, ...) ((void)0)
-#define LOG_MAIN 0
-#define LOG_MPV 0
-#define LOG_CEF 0
-static void initLogging(int = 0) {}
-static int parseLogLevel(const char*) { return -1; }
-static FILE* g_log_file = nullptr;
 #endif
 
 #include "include/cef_parser.h"
