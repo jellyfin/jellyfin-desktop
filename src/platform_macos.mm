@@ -243,10 +243,7 @@ static uint32_t ns_to_cef_modifiers(NSEventModifierFlags flags) {
     // Fullscreen: f (0x03) or F11 (0x67)
     if (kc == 0x03 || kc == 0x67) {
         g_platform.begin_transition();
-        if (g_mpv) {
-            const char* c[] = {"cycle", "fullscreen", NULL};
-            mpv_command_async(g_mpv, 0, c);
-        }
+        g_mpv.ToggleFullscreen();
         return;
     }
     // Quit: q (0x0C) or Escape (0x35)
@@ -515,15 +512,13 @@ static void macos_fade_overlay(float duration_sec) {
 }
 
 static void macos_set_fullscreen(bool fullscreen) {
-    if (!g_mpv) return;
-    int flag = fullscreen ? 1 : 0;
-    mpv_set_property_async(g_mpv, 0, "fullscreen", MPV_FORMAT_FLAG, &flag);
+    if (!g_mpv.IsValid()) return;
+    g_mpv.SetFullscreen(fullscreen);
 }
 
 static void macos_toggle_fullscreen() {
-    if (!g_mpv) return;
-    const char* c[] = {"cycle", "fullscreen", NULL};
-    mpv_command_async(g_mpv, 0, c);
+    if (!g_mpv.IsValid()) return;
+    g_mpv.ToggleFullscreen();
 }
 
 static void macos_begin_transition() {

@@ -533,9 +533,9 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
 // =====================================================================
 
 static bool wl_init(mpv_handle* mpv) {
-    int64_t dp = 0, sp = 0;
-    mpv_get_property(mpv, "wayland-display", MPV_FORMAT_INT64, &dp);
-    mpv_get_property(mpv, "wayland-surface", MPV_FORMAT_INT64, &sp);
+    intptr_t dp = 0, sp = 0;
+    g_mpv.GetWaylandDisplay(dp);
+    g_mpv.GetWaylandSurface(sp);
     if (!dp || !sp) {
         fprintf(stderr, "Failed to get Wayland display/surface from mpv\n");
         return false;
@@ -596,8 +596,8 @@ static bool wl_init(mpv_handle* mpv) {
 
     // Register mpv configure callback
     {
-        int64_t cb_ptr = 0;
-        mpv_get_property(mpv, "wayland-configure-cb-ptr", MPV_FORMAT_INT64, &cb_ptr);
+        intptr_t cb_ptr = 0;
+        g_mpv.GetWaylandConfigureCbPtr(cb_ptr);
         if (cb_ptr) {
             auto* fn = reinterpret_cast<void(**)(void*, int, int, bool)>(cb_ptr);
             auto* data = reinterpret_cast<void**>(cb_ptr + sizeof(void*));
@@ -608,8 +608,8 @@ static bool wl_init(mpv_handle* mpv) {
 
     // Register close callback -- intercepts xdg_toplevel close before mpv sees it
     {
-        int64_t cb_ptr = 0;
-        mpv_get_property(mpv, "wayland-close-cb-ptr", MPV_FORMAT_INT64, &cb_ptr);
+        intptr_t cb_ptr = 0;
+        g_mpv.GetWaylandCloseCbPtr(cb_ptr);
         if (cb_ptr) {
             auto* fn = reinterpret_cast<void(**)(void*)>(cb_ptr);
             auto* data = reinterpret_cast<void**>(cb_ptr + sizeof(void*));
@@ -633,9 +633,9 @@ static bool wl_init(mpv_handle* mpv) {
 }
 
 static float wl_get_scale() {
-    if (!g_mpv) return 1.0f;
+    if (!g_mpv.IsValid()) return 1.0f;
     double scale = 0;
-    if (mpv_get_property(g_mpv, "display-hidpi-scale", MPV_FORMAT_DOUBLE, &scale) >= 0 && scale > 0) {
+    if (g_mpv.GetDisplayScale(scale) >= 0 && scale > 0) {
         g_wl.cached_scale = static_cast<float>(scale);
         return g_wl.cached_scale;
     }
@@ -733,20 +733,19 @@ static void wl_end_transition_locked() {
 }
 
 static void wl_set_fullscreen(bool fullscreen) {
-    if (!g_mpv) return;
-    int flag = fullscreen ? 1 : 0;
+    if (!g_mpv.IsValid()) return;
     // Only transition if state actually changes
-    int current = 0;
     // Safe to call from CEF thread: this is cached in mpv's option struct,
     // not a VO property — no VO lock contention.
-    if (mpv_get_property(g_mpv, "fullscreen", MPV_FORMAT_FLAG, &current) >= 0) {
-        if ((current != 0) == fullscreen) return;  // already in desired state
+    bool current = false;
+    if (g_mpv.GetFullscreen(current) >= 0) {
+        if (current == fullscreen) return;  // already in desired state
     }
     {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
         wl_begin_transition_locked();
     }
-    mpv_set_property_async(g_mpv, 0, "fullscreen", MPV_FORMAT_FLAG, &flag);
+    g_mpv.SetFullscreen(fullscreen);
 }
 
 static void wl_toggle_fullscreen() {
@@ -754,9 +753,8 @@ static void wl_toggle_fullscreen() {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
         wl_begin_transition_locked();
     }
-    if (g_mpv) {
-        const char* c[] = {"cycle", "fullscreen", NULL};
-        mpv_command_async(g_mpv, 0, c);
+    if (g_mpv.IsValid()) {
+        g_mpv.ToggleFullscreen();
     }
 }
 

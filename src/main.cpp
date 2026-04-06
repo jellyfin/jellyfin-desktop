@@ -57,7 +57,7 @@
 // Globals
 // =====================================================================
 
-mpv_handle* g_mpv = nullptr;
+MpvHandle g_mpv;
 std::atomic<bool> g_shutting_down{false};
 WakeEvent g_shutdown_event;
 Platform g_platform{};
@@ -100,13 +100,13 @@ static void signal_handler(int) {
 
 static EventQueue<MpvEvent> g_cef_queue;
 
-static MpvEvent digest_property(mpv_event_property* p, mpv_handle* mpv) {
+static MpvEvent digest_property(mpv_event_property* p) {
     MpvEvent ev{};
     if (strcmp(p->name, "osd-dimensions") == 0) {
         ev.type = MpvEventType::OSD_DIMS;
         int64_t w = 0, h = 0;
-        mpv_get_property(mpv, "osd-width", MPV_FORMAT_INT64, &w);
-        mpv_get_property(mpv, "osd-height", MPV_FORMAT_INT64, &h);
+        g_mpv.GetPropertyInt("osd-width", w);
+        g_mpv.GetPropertyInt("osd-height", h);
         ev.pw = static_cast<int>(w);
         ev.ph = static_cast<int>(h);
         float scale = g_platform.get_scale();
@@ -146,9 +146,9 @@ static void publish(const MpvEvent& ev) {
     g_cef_queue.try_push(ev);
 }
 
-static void mpv_digest_thread(mpv_handle* mpv) {
+static void mpv_digest_thread() {
     while (!g_shutting_down.load(std::memory_order_relaxed)) {
-        mpv_event* ev = mpv_wait_event(mpv, -1);
+        mpv_event* ev = g_mpv.WaitEvent(-1);
         if (ev->event_id == MPV_EVENT_NONE) continue;
 
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
@@ -186,7 +186,7 @@ static void mpv_digest_thread(mpv_handle* mpv) {
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
             auto* p = static_cast<mpv_event_property*>(ev->data);
             if (!p->name) continue;
-            MpvEvent me = digest_property(p, mpv);
+            MpvEvent me = digest_property(p);
             if (me.type == MpvEventType::NONE) continue;
             if (me.type == MpvEventType::OSD_DIMS) {
                 if (me.lw <= 0 || me.lh <= 0) continue;
@@ -260,10 +260,9 @@ static void cef_consumer_thread() {
             case MpvEventType::FULLSCREEN:
                 if (ev.flag) {
                     // Entering fullscreen: capture maximized state for save/restore
-                    int maximized = 0;
-                    if (g_mpv)
-                        mpv_get_property(g_mpv, "window-maximized", MPV_FORMAT_FLAG, &maximized);
-                    g_was_maximized_before_fullscreen = (maximized != 0);
+                    bool maximized = false;
+                    g_mpv.GetWindowMaximized(maximized);
+                    g_was_maximized_before_fullscreen = maximized;
                 } else {
                     g_was_maximized_before_fullscreen = false;
                 }
@@ -473,27 +472,26 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- mpv setup ---
-    mpv_handle* mpv = mpv_create();
-    if (!mpv) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
-    g_mpv = mpv;
+    g_mpv = MpvHandle::Create();
+    if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
 
 #ifdef __APPLE__
     setenv("MPVBUNDLE", "true", 1);
 #endif
 
-    mpv_set_option_string(mpv, "vo", "gpu-next");
-    mpv_set_option_string(mpv, "gpu-api", "vulkan");
-    mpv_set_option_string(mpv, "hwdec", hwdec_str.c_str());
-    mpv_set_option_string(mpv, "target-colorspace-hint", "yes");
-    mpv_set_option_string(mpv, "osd-level", "0");
-    mpv_set_option_string(mpv, "osc", "no");
-    mpv_set_option_string(mpv, "input-default-bindings", "no");
-    mpv_set_option_string(mpv, "input-vo-keyboard", "no");
-    mpv_set_option_string(mpv, "cursor-autohide", "no");
-    mpv_set_option_string(mpv, "keepaspect-window", "no");
-    mpv_set_option_string(mpv, "auto-window-resize", "no");
-    mpv_set_option_string(mpv, "border", "yes");
-    mpv_set_option_string(mpv, "title", "Jellyfin Desktop");
+    g_mpv.SetOptionString("vo", "gpu-next");
+    g_mpv.SetOptionString("gpu-api", "vulkan");
+    g_mpv.SetOptionString("hwdec", hwdec_str);
+    g_mpv.SetOptionString("target-colorspace-hint", "yes");
+    g_mpv.SetOptionString("osd-level", "0");
+    g_mpv.SetOptionString("osc", "no");
+    g_mpv.SetOptionString("input-default-bindings", "no");
+    g_mpv.SetOptionString("input-vo-keyboard", "no");
+    g_mpv.SetOptionString("cursor-autohide", "no");
+    g_mpv.SetOptionString("keepaspect-window", "no");
+    g_mpv.SetOptionString("auto-window-resize", "no");
+    g_mpv.SetOptionString("border", "yes");
+    g_mpv.SetOptionString("title", "Jellyfin Desktop");
 #ifdef _WIN32
     // Tell mpv to load window icon from our exe resources (read at class
     // registration time, before any window is created — no icon flash)
@@ -510,10 +508,10 @@ int main(int argc, char* argv[]) {
     // handle_force_window(mpctx, true) from the core thread. By that point,
     // main has returned from mpv_initialize and is pumping GCD in the VO
     // wait loop — DispatchQueue.main.sync succeeds.
-    mpv_set_option_string(mpv, "force-window", "yes");
-    mpv_set_option_string(mpv, "idle", "yes");
+    g_mpv.SetOptionString("force-window", "yes");
+    g_mpv.SetOptionString("idle", "yes");
 #else
-    mpv_set_option_string(mpv, "force-window", "yes");
+    g_mpv.SetOptionString("force-window", "yes");
 #endif
 
 #ifndef __APPLE__
@@ -523,9 +521,9 @@ int main(int argc, char* argv[]) {
         int w = saved_geom.width > 0 ? saved_geom.width : 1280;
         int h = saved_geom.height > 0 ? saved_geom.height : 720;
         std::string geom_str = std::to_string(w) + "x" + std::to_string(h);
-        mpv_set_option_string(mpv, "geometry", geom_str.c_str());
+        g_mpv.SetOptionString("geometry", geom_str);
         if (saved_geom.maximized)
-            mpv_set_option_string(mpv, "window-maximized", "yes");
+            g_mpv.SetOptionString("window-maximized", "yes");
     }
 #endif
 
@@ -546,36 +544,35 @@ int main(int argc, char* argv[]) {
             }
             audio_passthrough_str = filtered;
         }
-        mpv_set_option_string(mpv, "audio-spdif", audio_passthrough_str.c_str());
+        g_mpv.SetOptionString("audio-spdif", audio_passthrough_str);
     }
     if (audio_exclusive)
-        mpv_set_option_string(mpv, "audio-exclusive", "yes");
+        g_mpv.SetOptionString("audio-exclusive", "yes");
     if (!audio_channels_str.empty())
-        mpv_set_option_string(mpv, "audio-channels", audio_channels_str.c_str());
+        g_mpv.SetOptionString("audio-channels", audio_channels_str);
 
     // Register property observations before mpv_initialize. On macOS,
     // core_thread races to DispatchQueue.main.sync immediately after init
     // returns — main must enter the GCD pump loop without delay.
-    mpv_set_wakeup_callback(mpv, [](void*) {}, nullptr);
-    mpv_observe_property(mpv, 1, "video-params", MPV_FORMAT_NODE);
-    mpv_observe_property(mpv, 2, "osd-dimensions", MPV_FORMAT_NODE);
-    mpv_observe_property(mpv, 3, "fullscreen", MPV_FORMAT_FLAG);
-    mpv_observe_property(mpv, 4, "pause", MPV_FORMAT_FLAG);
-    mpv_observe_property(mpv, 5, "time-pos", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(mpv, 6, "duration", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(mpv, 7, "speed", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(mpv, 8, "seeking", MPV_FORMAT_FLAG);
+    g_mpv.SetWakeupCallback([](void*) {}, nullptr);
+    g_mpv.ObservePropertyNode(1, "video-params");
+    g_mpv.ObservePropertyNode(2, "osd-dimensions");
+    g_mpv.ObservePropertyFlag(3, "fullscreen");
+    g_mpv.ObservePropertyFlag(4, "pause");
+    g_mpv.ObservePropertyDouble(5, "time-pos");
+    g_mpv.ObservePropertyDouble(6, "duration");
+    g_mpv.ObservePropertyDouble(7, "speed");
+    g_mpv.ObservePropertyFlag(8, "seeking");
 
     // Load file if in player mode (before init so it's in the playlist)
     if (player_mode) {
-        const char* loadcmd[] = {"loadfile", player_playlist[0].c_str(), NULL};
-        mpv_command(mpv, loadcmd);
+        g_mpv.LoadFile(player_playlist[0]);
     }
 
-    int init_err = mpv_initialize(mpv);
+    int init_err = g_mpv.Initialize();
     if (init_err < 0) {
         LOG_ERROR(LOG_MAIN, "mpv_initialize failed: %d", init_err);
-        mpv_destroy(mpv);
+        g_mpv.TerminateDestroy();
         return 1;
     }
 
@@ -588,7 +585,7 @@ int main(int argc, char* argv[]) {
     // Wait for osd-dimensions property change event instead.
     while (true) {
         g_platform.pump();
-        mpv_event* ev = mpv_wait_event(mpv, 0);
+        mpv_event* ev = g_mpv.WaitEvent(0);
         if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             auto* msg = static_cast<mpv_event_log_message*>(ev->data);
@@ -596,7 +593,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
-            mpv_terminate_destroy(mpv); return 0;
+            g_mpv.TerminateDestroy(); return 0;
         }
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
             auto* p = static_cast<mpv_event_property*>(ev->data);
@@ -606,23 +603,23 @@ int main(int argc, char* argv[]) {
     }
 #else
     while (true) {
-        mpv_event* ev = mpv_wait_event(mpv, 1.0);
-        if (ev->event_id == MPV_EVENT_SHUTDOWN) { mpv_terminate_destroy(mpv); return 0; }
-        if (ev->event_id == MPV_EVENT_END_FILE) { mpv_terminate_destroy(mpv); return 0; }
+        mpv_event* ev = g_mpv.WaitEvent(1.0);
+        if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
+        if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
             auto* p = static_cast<mpv_event_property*>(ev->data);
             if (p->name && strcmp(p->name, "video-params") == 0 && p->data) break;
         }
         int64_t ow = 0;
-        mpv_get_property(mpv, "osd-width", MPV_FORMAT_INT64, &ow);
+        g_mpv.GetPropertyInt("osd-width", ow);
         if (ow > 0) break;
     }
 #endif
 
     // --- Platform init ---
-    if (!g_platform.init(mpv)) {
+    if (!g_platform.init(g_mpv.Get())) {
         LOG_ERROR(LOG_MAIN, "Platform init failed");
-        mpv_terminate_destroy(mpv);
+        g_mpv.TerminateDestroy();
         return 1;
     }
     LOG_INFO(LOG_MAIN, "Platform init ok");
@@ -631,8 +628,8 @@ int main(int argc, char* argv[]) {
     int64_t mw = 1280, mh = 720;
 #else
     int64_t mw = 0, mh = 0;
-    mpv_get_property(mpv, "osd-width", MPV_FORMAT_INT64, &mw);
-    mpv_get_property(mpv, "osd-height", MPV_FORMAT_INT64, &mh);
+    g_mpv.GetPropertyInt("osd-width", mw);
+    g_mpv.GetPropertyInt("osd-height", mh);
     if (mw <= 0 || mh <= 0) { mw = 1280; mh = 720; }
 #endif
 
@@ -702,7 +699,7 @@ int main(int argc, char* argv[]) {
     if (!CefInitialize(main_args, settings, app, nullptr)) {
         LOG_ERROR(LOG_MAIN, "CefInitialize failed");
         g_platform.cleanup();
-        mpv_terminate_destroy(mpv);
+        g_mpv.TerminateDestroy();
         return 1;
     }
     LOG_INFO(LOG_MAIN, "CefInitialize ok");
@@ -783,28 +780,24 @@ int main(int argc, char* argv[]) {
     // --- Windows SMTC media session ---
     MediaSession media_session_obj;
     int64_t wid = 0;
-    mpv_get_property(mpv, "window-id", MPV_FORMAT_INT64, &wid);
+    g_mpv.GetPropertyInt("window-id", wid);
     auto win_backend = createWindowsMediaBackend(&media_session_obj, (HWND)(intptr_t)wid);
     media_session_obj.addBackend(std::move(win_backend));
 
     // Wire transport controls.
     // Play/pause/stop go directly to mpv (authoritative source).
     // Next/previous/seek go through JS (jellyfin-web manages the playlist).
-    media_session_obj.onPlay = [mpv]() {
-        int flag = 0;
-        mpv_set_property_async(mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+    media_session_obj.onPlay = []() {
+        g_mpv.Play();
     };
-    media_session_obj.onPause = [mpv]() {
-        int flag = 1;
-        mpv_set_property_async(mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+    media_session_obj.onPause = []() {
+        g_mpv.Pause();
     };
-    media_session_obj.onPlayPause = [mpv]() {
-        const char* c[] = {"cycle", "pause", NULL};
-        mpv_command_async(mpv, 0, c);
+    media_session_obj.onPlayPause = []() {
+        g_mpv.TogglePause();
     };
-    media_session_obj.onStop = [mpv]() {
-        const char* c[] = {"stop", NULL};
-        mpv_command_async(mpv, 0, c);
+    media_session_obj.onStop = []() {
+        g_mpv.Stop();
     };
     media_session_obj.onNext = []() {
         if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");
@@ -816,9 +809,9 @@ int main(int argc, char* argv[]) {
         int ms = static_cast<int>(position_us / 1000);
         if (g_client) g_client->execJs("if(window._nativeSeek) window._nativeSeek(" + std::to_string(ms) + ");");
     };
-    media_session_obj.onSetRate = [mpv](double rate) {
+    media_session_obj.onSetRate = [](double rate) {
         double clamped = rate < 0.25 ? 0.25 : (rate > 2.0 ? 2.0 : rate);
-        mpv_set_property_async(mpv, 0, "speed", MPV_FORMAT_DOUBLE, &clamped);
+        g_mpv.SetSpeed(clamped);
     };
 
     MediaSessionThread media_session_thread;
@@ -833,21 +826,17 @@ int main(int argc, char* argv[]) {
     // Wire MPRIS transport controls.
     // Play/pause/stop go directly to mpv (authoritative source).
     // Next/previous/seek go through JS (jellyfin-web manages the playlist).
-    media_session_obj.onPlay = [mpv]() {
-        int flag = 0;
-        mpv_set_property_async(mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+    media_session_obj.onPlay = []() {
+        g_mpv.Play();
     };
-    media_session_obj.onPause = [mpv]() {
-        int flag = 1;
-        mpv_set_property_async(mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+    media_session_obj.onPause = []() {
+        g_mpv.Pause();
     };
-    media_session_obj.onPlayPause = [mpv]() {
-        const char* c[] = {"cycle", "pause", NULL};
-        mpv_command_async(mpv, 0, c);
+    media_session_obj.onPlayPause = []() {
+        g_mpv.TogglePause();
     };
-    media_session_obj.onStop = [mpv]() {
-        const char* c[] = {"stop", NULL};
-        mpv_command_async(mpv, 0, c);
+    media_session_obj.onStop = []() {
+        g_mpv.Stop();
     };
     media_session_obj.onNext = []() {
         if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");
@@ -859,9 +848,9 @@ int main(int argc, char* argv[]) {
         int ms = static_cast<int>(position_us / 1000);
         if (g_client) g_client->execJs("if(window._nativeSeek) window._nativeSeek(" + std::to_string(ms) + ");");
     };
-    media_session_obj.onSetRate = [mpv](double rate) {
+    media_session_obj.onSetRate = [](double rate) {
         double clamped = rate < 0.25 ? 0.25 : (rate > 2.0 ? 2.0 : rate);
-        mpv_set_property_async(mpv, 0, "speed", MPV_FORMAT_DOUBLE, &clamped);
+        g_mpv.SetSpeed(clamped);
     };
 
     MediaSessionThread media_session_thread;
@@ -870,7 +859,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- Start threads ---
-    std::thread digest_thread(mpv_digest_thread, mpv);
+    std::thread digest_thread(mpv_digest_thread);
     std::thread cef_thread(cef_consumer_thread);
 
     LOG_INFO(LOG_MAIN, "Running");
@@ -914,7 +903,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     cef_thread.join();
-    mpv_wakeup(mpv);
+    g_mpv.Wakeup();
     digest_thread.join();
 
 #ifndef __APPLE__
@@ -924,17 +913,17 @@ int main(int argc, char* argv[]) {
     //   Maximized:  zero out size (sentinel), set maximized=true
     //   Normal:     save current logical size
     {
-        int is_fullscreen = 0, is_maximized = 0;
-        mpv_get_property(mpv, "fullscreen", MPV_FORMAT_FLAG, &is_fullscreen);
-        mpv_get_property(mpv, "window-maximized", MPV_FORMAT_FLAG, &is_maximized);
+        bool fs = false, max = false;
+        g_mpv.GetFullscreen(fs);
+        g_mpv.GetWindowMaximized(max);
 
-        if (is_fullscreen) {
+        if (fs) {
             // Preserve previous saved geometry; only update the maximized flag
             // to reflect whether the user was maximized before entering fullscreen.
             auto geom = Settings::instance().windowGeometry();
             geom.maximized = g_was_maximized_before_fullscreen;
             Settings::instance().setWindowGeometry(geom);
-        } else if (is_maximized) {
+        } else if (max) {
             // Preserve the previous saved windowed size (don't save the
             // maximized dimensions — they're the monitor size). On next
             // launch the window opens maximized; on unmaximize, the
@@ -945,8 +934,8 @@ int main(int argc, char* argv[]) {
         } else {
             // Normal windowed: save current logical size.
             int64_t pw = 0, ph = 0;
-            mpv_get_property(mpv, "osd-width", MPV_FORMAT_INT64, &pw);
-            mpv_get_property(mpv, "osd-height", MPV_FORMAT_INT64, &ph);
+            g_mpv.GetOsdWidth(pw);
+            g_mpv.GetOsdHeight(ph);
             if (pw > 0 && ph > 0) {
                 float scale = g_platform.get_scale();
                 Settings::WindowGeometry geom;
@@ -969,7 +958,7 @@ int main(int argc, char* argv[]) {
     // Must happen after CefShutdown (CEF may still present during shutdown)
     // but before mpv_terminate_destroy (mpv destroys the parent surface)
     g_platform.cleanup();
-    mpv_terminate_destroy(mpv);
+    g_mpv.TerminateDestroy();
 
     if (g_log_file) fclose(g_log_file);
     return 0;

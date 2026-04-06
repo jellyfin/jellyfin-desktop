@@ -212,7 +212,7 @@ void Client::execJs(const std::string& js) {
 
 bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
                                       CefProcessId, CefRefPtr<CefProcessMessage> message) {
-    if (!g_mpv) return false;
+    if (!g_mpv.IsValid()) return false;
     auto name = message->GetName().ToString();
     auto args = message->GetArgumentList();
     // All mpv calls are async -- never block CEF's thread.
@@ -221,54 +221,30 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
         int startMs = args->GetSize() > 1 ? args->GetInt(1) : 0;
         int audioIdx = args->GetSize() > 2 ? args->GetInt(2) : -1;
         int subIdx = args->GetSize() > 3 ? args->GetInt(3) : -1;
-        const char* c[] = {"loadfile", url.c_str(), NULL};
-        mpv_command_async(g_mpv, 0, c);
-        if (startMs > 0) {
-            double pos = startMs / 1000.0;
-            mpv_set_property_async(g_mpv, 0, "start", MPV_FORMAT_DOUBLE, &pos);
-        }
-        if (audioIdx >= 0) {
-            int64_t aid = audioIdx;  // already 1-indexed from JS
-            mpv_set_property_async(g_mpv, 0, "aid", MPV_FORMAT_INT64, &aid);
-        }
-        if (subIdx >= 0) {
-            int64_t sid = subIdx;  // already 1-indexed from JS
-            mpv_set_property_async(g_mpv, 0, "sid", MPV_FORMAT_INT64, &sid);
-        }
+        g_mpv.LoadFile(url, startMs / 1000.0, audioIdx, subIdx);
     } else if (name == "playerStop") {
-        const char* c[] = {"stop", NULL};
-        mpv_command_async(g_mpv, 0, c);
+        g_mpv.Stop();
         // Exit fullscreen when player stops — return to windowed library view
         g_platform.set_fullscreen(false);
     } else if (name == "playerPause") {
-        int flag = 1;
-        mpv_set_property_async(g_mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+        g_mpv.Pause();
     } else if (name == "playerPlay") {
-        int flag = 0;
-        mpv_set_property_async(g_mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+        g_mpv.Play();
     } else if (name == "playerSeek") {
         double pos = args->GetInt(0) / 1000.0;
-        std::string pos_str = std::to_string(pos);
-        const char* c[] = {"seek", pos_str.c_str(), "absolute", NULL};
-        mpv_command_async(g_mpv, 0, c);
+        g_mpv.SeekAbsolute(pos);
     } else if (name == "playerSetVolume") {
-        double vol = args->GetInt(0);
-        mpv_set_property_async(g_mpv, 0, "volume", MPV_FORMAT_DOUBLE, &vol);
+        g_mpv.SetVolume(args->GetInt(0));
     } else if (name == "playerSetMuted") {
-        int flag = args->GetInt(0);
-        mpv_set_property_async(g_mpv, 0, "mute", MPV_FORMAT_FLAG, &flag);
+        g_mpv.SetMuted(args->GetInt(0) != 0);
     } else if (name == "playerSetSpeed") {
-        double speed = args->GetInt(0) / 1000.0;
-        mpv_set_property_async(g_mpv, 0, "speed", MPV_FORMAT_DOUBLE, &speed);
+        g_mpv.SetSpeed(args->GetInt(0) / 1000.0);
     } else if (name == "playerSetSubtitle") {
-        int64_t sid = args->GetInt(0);
-        mpv_set_property_async(g_mpv, 0, "sid", MPV_FORMAT_INT64, &sid);
+        g_mpv.SetSubtitleTrack(args->GetInt(0));
     } else if (name == "playerSetAudio") {
-        int64_t aid = args->GetInt(0);
-        mpv_set_property_async(g_mpv, 0, "aid", MPV_FORMAT_INT64, &aid);
+        g_mpv.SetAudioTrack(args->GetInt(0));
     } else if (name == "playerSetAudioDelay") {
-        double delay = args->GetDouble(0);
-        mpv_set_property_async(g_mpv, 0, "audio-delay", MPV_FORMAT_DOUBLE, &delay);
+        g_mpv.SetAudioDelay(args->GetDouble(0));
     } else if (name == "toggleFullscreen") {
         g_platform.toggle_fullscreen();
     } else if (name == "saveServerUrl") {

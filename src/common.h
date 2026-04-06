@@ -1,11 +1,11 @@
 #pragma once
 
-#include <mpv/client.h>
 #include <atomic>
 
 #include "include/cef_base.h"
 
 #include "platform.h"
+#include "mpv_handle.h"
 
 class Client;
 class OverlayClient;
@@ -13,7 +13,7 @@ class WakeEvent;
 
 extern CefRefPtr<Client> g_client;
 extern CefRefPtr<OverlayClient> g_overlay_client;
-extern mpv_handle* g_mpv;
+extern MpvHandle g_mpv;
 extern Platform g_platform;
 
 class MediaSessionThread;

@@ -7,7 +7,6 @@
 #include "common.h"
 #include "cef/cef_client.h"
 #include "logging.h"
-#include <mpv/client.h>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -453,17 +452,16 @@ static void win_set_expected_size(int w, int h) {
 // =====================================================================
 
 static void win_set_fullscreen(bool fullscreen) {
-    if (!g_mpv) return;
-    int flag = fullscreen ? 1 : 0;
-    int current = 0;
-    if (mpv_get_property(g_mpv, "fullscreen", MPV_FORMAT_FLAG, &current) >= 0) {
-        if ((current != 0) == fullscreen) return;
+    if (!g_mpv.IsValid()) return;
+    bool current = false;
+    if (g_mpv.GetFullscreen(current) >= 0) {
+        if (current == fullscreen) return;
     }
     {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
         win_begin_transition_locked();
     }
-    mpv_set_property_async(g_mpv, 0, "fullscreen", MPV_FORMAT_FLAG, &flag);
+    g_mpv.SetFullscreen(fullscreen);
 }
 
 static void win_toggle_fullscreen() {
@@ -471,9 +469,8 @@ static void win_toggle_fullscreen() {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
         win_begin_transition_locked();
     }
-    if (g_mpv) {
-        const char* c[] = {"cycle", "fullscreen", NULL};
-        mpv_command_async(g_mpv, 0, c);
+    if (g_mpv.IsValid()) {
+        g_mpv.ToggleFullscreen();
     }
 }
 
@@ -482,9 +479,9 @@ static void win_toggle_fullscreen() {
 // =====================================================================
 
 static float win_get_scale() {
-    if (!g_mpv) return 1.0f;
+    if (!g_mpv.IsValid()) return 1.0f;
     double scale = 0;
-    if (mpv_get_property(g_mpv, "display-hidpi-scale", MPV_FORMAT_DOUBLE, &scale) >= 0 && scale > 0) {
+    if (g_mpv.GetDisplayScale(scale) >= 0 && scale > 0) {
         g_win.cached_scale = static_cast<float>(scale);
         return g_win.cached_scale;
     }
@@ -796,7 +793,7 @@ static void win_early_init() {
 static bool win_init(mpv_handle* mpv) {
     // Get HWND from mpv
     int64_t wid = 0;
-    if (mpv_get_property(mpv, "window-id", MPV_FORMAT_INT64, &wid) < 0 || !wid) {
+    if (g_mpv.GetWindowId(wid) < 0 || !wid) {
         LOG_ERROR(LOG_PLATFORM, "Failed to get window-id from mpv");
         return false;
     }
