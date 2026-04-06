@@ -36,6 +36,8 @@ public:
 
     // CefDisplayHandler
     void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override;
+    bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle,
+                        cef_cursor_type_t type, const CefCursorInfo&) override;
 
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                   CefProcessId, CefRefPtr<CefProcessMessage> message) override;

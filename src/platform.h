@@ -38,6 +38,9 @@ struct Platform {
 
     void (*pump)();
 
+    // Cursor visibility (driven by CEF OnCursorChange)
+    void (*set_cursor_visible)(bool visible);
+
     // Titlebar color (KDE/KWin only, no-op on other compositors)
     void (*set_titlebar_color)(uint8_t r, uint8_t g, uint8_t b);
 };

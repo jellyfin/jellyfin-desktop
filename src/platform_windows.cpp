@@ -881,6 +881,7 @@ Platform make_windows_platform() {
         .get_scale = win_get_scale,
         .query_logical_content_size = win_query_logical_content_size,
         .pump = win_pump,
+        .set_cursor_visible = [](bool) {},
         .set_titlebar_color = win_set_titlebar_color,
     };
 }

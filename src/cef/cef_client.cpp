@@ -205,6 +205,12 @@ void Client::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {
     g_platform.set_fullscreen(fullscreen);
 }
 
+bool Client::OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle,
+                            cef_cursor_type_t type, const CefCursorInfo&) {
+    g_platform.set_cursor_visible(type != CT_NONE);
+    return true;
+}
+
 void Client::execJs(const std::string& js) {
     if (browser_ && browser_->GetMainFrame())
         browser_->GetMainFrame()->ExecuteJavaScript(js, "", 0);
@@ -296,6 +302,8 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
         int posMs = args->GetInt(0);
         if (g_media_session)
             g_media_session->emitSeeked(static_cast<int64_t>(posMs) * 1000);
+    } else if (name == "setCursorVisible") {
+        g_platform.set_cursor_visible(args->GetBool(0));
     } else if (name == "appExit") {
         initiate_shutdown();
     } else {

@@ -627,6 +627,7 @@ Platform make_macos_platform() {
         .get_scale = macos_get_scale,
         .query_logical_content_size = macos_query_logical_content_size,
         .pump = macos_pump,
+        .set_cursor_visible = [](bool) {},
         .set_titlebar_color = macos_set_titlebar_color,
     };
 }

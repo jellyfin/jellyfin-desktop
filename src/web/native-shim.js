@@ -473,6 +473,13 @@
         style.textContent = css;
         document.head.appendChild(style);
 
+        // Watch for mouseIdle class on body and tell native to hide/show cursor.
+        // Direct IPC is more reliable than CSS cursor:none → OnCursorChange in OSR mode.
+        new MutationObserver(() => {
+            const idle = document.body.classList.contains('mouseIdle');
+            window.jmpNative.setCursorVisible(!idle);
+        }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
         // Sync titlebar color with theme-color meta tag
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) {

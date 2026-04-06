@@ -5,6 +5,7 @@
 #include "linux-dmabuf-v1-client.h"
 #include "viewporter-client.h"
 #include "alpha-modifier-v1-client.h"
+#include "cursor-shape-v1-client.h"
 // Callback fields in mpv's vo_wayland_state -- set via wayland-state property.
 // Must match the struct layout in wayland_common.h.
 struct wl_configure_cb {
@@ -60,6 +61,8 @@ struct WlState {
     wp_viewporter* viewporter = nullptr;
     wp_alpha_modifier_v1* alpha_modifier = nullptr;
     wp_alpha_modifier_surface_v1* overlay_alpha = nullptr;
+    wp_cursor_shape_manager_v1* cursor_shape_manager = nullptr;
+    wp_cursor_shape_device_v1* cursor_shape_device = nullptr;
 
     float cached_scale = 1.0f;
     int mpv_pw = 0, mpv_ph = 0;      // mpv's current physical size
@@ -75,6 +78,7 @@ struct WlState {
     wl_pointer* pointer = nullptr;
     wl_keyboard* keyboard = nullptr;
     double ptr_x = 0, ptr_y = 0;
+    uint32_t pointer_serial = 0;
     xkb_context* xkb_ctx = nullptr;
     xkb_keymap* xkb_kmap = nullptr;
     xkb_state* xkb_st = nullptr;
@@ -324,7 +328,8 @@ static int keysym_to_vkey(xkb_keysym_t sym) {
 }
 
 // Pointer
-static void ptr_enter(void*, wl_pointer*, uint32_t, wl_surface*, wl_fixed_t x, wl_fixed_t y) {
+static void ptr_enter(void*, wl_pointer*, uint32_t serial, wl_surface*, wl_fixed_t x, wl_fixed_t y) {
+    g_wl.pointer_serial = serial;
     g_wl.ptr_x = wl_fixed_to_double(x); g_wl.ptr_y = wl_fixed_to_double(y);
     auto b = active_browser();
     if (!b) return;
@@ -487,6 +492,8 @@ static void reg_global(void*, wl_registry* reg, uint32_t name, const char* iface
         g_wl.viewporter = static_cast<wp_viewporter*>(wl_registry_bind(reg, name, &wp_viewporter_interface, 1));
     else if (strcmp(iface, wp_alpha_modifier_v1_interface.name) == 0)
         g_wl.alpha_modifier = static_cast<wp_alpha_modifier_v1*>(wl_registry_bind(reg, name, &wp_alpha_modifier_v1_interface, 1));
+    else if (strcmp(iface, wp_cursor_shape_manager_v1_interface.name) == 0)
+        g_wl.cursor_shape_manager = static_cast<wp_cursor_shape_manager_v1*>(wl_registry_bind(reg, name, &wp_cursor_shape_manager_v1_interface, 1));
     else if (strcmp(iface, wl_seat_interface.name) == 0 && !g_wl.seat) {
         g_wl.seat = static_cast<wl_seat*>(wl_registry_bind(reg, name, &wl_seat_interface, std::min(ver, 5u)));
         wl_seat_add_listener(g_wl.seat, &s_seat, nullptr);
@@ -645,6 +652,7 @@ static float wl_get_scale() {
 static void wl_cleanup() {
     wl_cleanup_kde_palette();
     if (g_wl.input_thread.joinable()) g_wl.input_thread.join();
+    if (g_wl.cursor_shape_device) wp_cursor_shape_device_v1_destroy(g_wl.cursor_shape_device);
     if (g_wl.pointer) wl_pointer_destroy(g_wl.pointer);
     if (g_wl.keyboard) wl_keyboard_destroy(g_wl.keyboard);
     if (g_wl.seat) wl_seat_destroy(g_wl.seat);
@@ -663,6 +671,7 @@ static void wl_cleanup() {
     if (g_wl.cef_subsurface) wl_subsurface_destroy(g_wl.cef_subsurface);
     if (g_wl.cef_surface) wl_surface_destroy(g_wl.cef_surface);
     // Globals (must be destroyed before queue — they were bound to it)
+    if (g_wl.cursor_shape_manager) { wp_cursor_shape_manager_v1_destroy(g_wl.cursor_shape_manager); g_wl.cursor_shape_manager = nullptr; }
     if (g_wl.alpha_modifier) { wp_alpha_modifier_v1_destroy(g_wl.alpha_modifier); g_wl.alpha_modifier = nullptr; }
     if (g_wl.dmabuf) { zwp_linux_dmabuf_v1_destroy(g_wl.dmabuf); g_wl.dmabuf = nullptr; }
     if (g_wl.viewporter) { wp_viewporter_destroy(g_wl.viewporter); g_wl.viewporter = nullptr; }
@@ -809,6 +818,21 @@ static void input_thread_func() {
 }
 
 static void wl_pump() {}
+
+static void wl_set_cursor_visible(bool visible) {
+    if (!g_wl.pointer || !g_wl.pointer_serial) return;
+    if (visible) {
+        if (!g_wl.cursor_shape_device && g_wl.cursor_shape_manager)
+            g_wl.cursor_shape_device = wp_cursor_shape_manager_v1_get_pointer(
+                g_wl.cursor_shape_manager, g_wl.pointer);
+        if (g_wl.cursor_shape_device)
+            wp_cursor_shape_device_v1_set_shape(g_wl.cursor_shape_device,
+                g_wl.pointer_serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
+    } else {
+        wl_pointer_set_cursor(g_wl.pointer, g_wl.pointer_serial, nullptr, 0, 0);
+    }
+    wl_display_flush(g_wl.display);
+}
 
 // =====================================================================
 // KDE titlebar color
@@ -1072,6 +1096,7 @@ Platform make_wayland_platform() {
         .get_scale = wl_get_scale,
         .query_logical_content_size = [](int*, int*) -> bool { return false; },
         .pump = wl_pump,
+        .set_cursor_visible = wl_set_cursor_visible,
         .set_titlebar_color = wl_set_titlebar_color,
     };
 }

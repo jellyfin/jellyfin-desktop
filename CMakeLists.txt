@@ -135,6 +135,15 @@ else()
     set(ALPHA_MODIFIER_CLIENT_H "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-client.h")
     set(ALPHA_MODIFIER_CODE_C "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-code.c")
 
+    set(CURSOR_SHAPE_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/cursor-shape/cursor-shape-v1.xml")
+    set(CURSOR_SHAPE_CLIENT_H "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-client.h")
+    set(CURSOR_SHAPE_CODE_C "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-code.c")
+
+    # tablet-v2 interface symbols are referenced by cursor-shape-v1 generated code
+    set(TABLET_V2_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/stable/tablet/tablet-v2.xml")
+    set(TABLET_V2_CLIENT_H "${WAYLAND_GENERATED_DIR}/tablet-v2-client.h")
+    set(TABLET_V2_CODE_C "${WAYLAND_GENERATED_DIR}/tablet-v2-code.c")
+
     # KDE server decoration palette (per-window titlebar colors on KWin)
     option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support" ON)
     if(ENABLE_KDE_PALETTE)
@@ -182,6 +191,30 @@ else()
         DEPENDS ${ALPHA_MODIFIER_PROTOCOL}
         COMMENT "Generating alpha-modifier-v1 code"
     )
+    add_custom_command(
+        OUTPUT ${CURSOR_SHAPE_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${CURSOR_SHAPE_PROTOCOL} ${CURSOR_SHAPE_CLIENT_H}
+        DEPENDS ${CURSOR_SHAPE_PROTOCOL}
+        COMMENT "Generating cursor-shape-v1 client header"
+    )
+    add_custom_command(
+        OUTPUT ${CURSOR_SHAPE_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${CURSOR_SHAPE_PROTOCOL} ${CURSOR_SHAPE_CODE_C}
+        DEPENDS ${CURSOR_SHAPE_PROTOCOL}
+        COMMENT "Generating cursor-shape-v1 code"
+    )
+    add_custom_command(
+        OUTPUT ${TABLET_V2_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${TABLET_V2_PROTOCOL} ${TABLET_V2_CLIENT_H}
+        DEPENDS ${TABLET_V2_PROTOCOL}
+        COMMENT "Generating tablet-v2 client header"
+    )
+    add_custom_command(
+        OUTPUT ${TABLET_V2_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${TABLET_V2_PROTOCOL} ${TABLET_V2_CODE_C}
+        DEPENDS ${TABLET_V2_PROTOCOL}
+        COMMENT "Generating tablet-v2 code"
+    )
     if(ENABLE_KDE_PALETTE)
         add_custom_command(
             OUTPUT ${DECO_PALETTE_CLIENT_H}
@@ -209,6 +242,10 @@ else()
         ${VIEWPORTER_CLIENT_H}
         ${ALPHA_MODIFIER_CODE_C}
         ${ALPHA_MODIFIER_CLIENT_H}
+        ${CURSOR_SHAPE_CODE_C}
+        ${CURSOR_SHAPE_CLIENT_H}
+        ${TABLET_V2_CODE_C}
+        ${TABLET_V2_CLIENT_H}
     )
     if(ENABLE_KDE_PALETTE)
         list(APPEND PLATFORM_SOURCES
