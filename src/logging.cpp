@@ -25,10 +25,7 @@
 // Global for log callback to use original stderr
 int g_original_stderr_fd = -1;
 
-// Global log file handle (nullptr = stderr only)
-FILE* g_log_file = nullptr;
-
-void writeLogLine(const char* tag, const char* message, const char* level) {
+void writeLogLine(const char* tag, const char* message, const char* level = nullptr) {
     // Write to stderr first (no timestamp)
     if (g_original_stderr_fd >= 0) {
 #ifdef _WIN32

@@ -7,7 +7,9 @@
 #include "include/cef_parser.h"
 #include "include/cef_urlrequest.h"
 #include <cstdio>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 // =====================================================================
 // Settings helper (shared between Client and OverlayClient)
@@ -162,6 +164,10 @@ void Client::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);
+    #ifdef _WIN32
+    extern void platform_push_input(CefRefPtr<CefBrowser> b);
+    platform_push_input(browser);
+    #endif
 }
 
 void Client::OnBeforeClose(CefRefPtr<CefBrowser>) {
@@ -370,6 +376,10 @@ void OverlayClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);
+    #ifdef _WIN32
+    extern void platform_push_input(CefRefPtr<CefBrowser> b);
+    platform_push_input(browser);
+    #endif
 }
 
 void OverlayClient::OnBeforeClose(CefRefPtr<CefBrowser>) {

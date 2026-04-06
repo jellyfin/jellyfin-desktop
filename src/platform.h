@@ -3,9 +3,6 @@
 #include "include/cef_render_handler.h"
 #include <mpv/client.h>
 
-class Client;
-class OverlayClient;
-
 struct Platform {
     void (*early_init)();
     bool (*init)(mpv_handle* mpv);
@@ -45,10 +42,10 @@ struct Platform {
     void (*set_titlebar_color)(uint8_t r, uint8_t g, uint8_t b);
 };
 
-#ifdef __linux__
-Platform make_wayland_platform();
-#endif
-
-#ifdef __APPLE__
+#ifdef _WIN32
+Platform make_windows_platform();
+#elif defined(__APPLE__)
 Platform make_macos_platform();
+#elif defined(__linux__)
+Platform make_wayland_platform();
 #endif

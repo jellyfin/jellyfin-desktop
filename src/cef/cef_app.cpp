@@ -39,7 +39,7 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-id", "");
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
-#ifndef __APPLE__
+#ifdef __linux__
     // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues
     command_line->AppendSwitchWithValue("ozone-platform", "x11");
 #endif

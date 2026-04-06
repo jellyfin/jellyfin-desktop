@@ -59,19 +59,6 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/CEF_VERSION")
     endif()
 endif()
 
-# SDL3 (not needed on Linux -- mpv owns the window)
-if(WIN32)
-    find_package(SDL3 REQUIRED)
-endif()
-
-# Vulkan (not needed on Linux -- mpv manages Vulkan internally via gpu-next)
-if(WIN32)
-    # On Windows ARM64, hint the correct Vulkan library path
-    if(WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" AND DEFINED ENV{VULKAN_SDK})
-        set(Vulkan_LIBRARY "$ENV{VULKAN_SDK}/Lib/vulkan-1.lib")
-    endif()
-    find_package(Vulkan REQUIRED)
-endif()
 
 # Platform-specific dependencies
 if(APPLE)
@@ -101,25 +88,14 @@ if(APPLE)
         ${MEDIAPLAYER_FRAMEWORK}
     )
 elseif(WIN32)
-    # Windows: WGL for CEF compositor, Vulkan for video (gpu-next via DComp)
-    find_package(OpenGL REQUIRED)
-
     set(PLATFORM_SOURCES
-        src/context/wgl_context.cpp
-        src/context/gl_loader.cpp
-        src/context/opengl_frame_context.cpp
-        src/platform/windows_video_surface.cpp
-        src/platform/windows_overlay_layer.cpp
-        src/platform/dcomp_browser_layer.cpp
-        src/compositor/opengl_compositor.cpp
+        src/platform_windows.cpp
         src/player/media_session.cpp
-        src/player/mpv/mpv_player.cpp
-        src/player/vulkan_subsurface_renderer.cpp
         src/player/windows/media_session_windows.cpp
+        src/player/media_session_thread.cpp
         ${CMAKE_SOURCE_DIR}/resources/win/iconres.rc
     )
     set(PLATFORM_LIBRARIES
-        OpenGL::GL
         dwmapi
         d3d11
         dxgi
@@ -127,7 +103,6 @@ elseif(WIN32)
         crypt32
         windowsapp
     )
-    set(PLATFORM_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/third_party")
 else()
     # Linux: native Wayland (mpv owns window, CEF on subsurfaces via dmabuf)
     find_package(PkgConfig REQUIRED)
@@ -362,24 +337,15 @@ add_custom_target(embedded_resources DEPENDS ${EMBEDDED_RESOURCES_HEADER})
 # Common sources
 if(WIN32)
     set(COMMON_SOURCES
-        src/main_sdl.cpp
+        src/main.cpp
         src/logging.cpp
         src/single_instance.cpp
-        src/window_activation.cpp
-        src/browser/browser_stack.cpp
-        src/cef/cef_app_sdl.cpp
-        src/cef/cef_client_sdl.cpp
-        src/cef/cef_thread.cpp
+        src/cef/cef_app.cpp
+        src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
-        src/context/vulkan_context.cpp
-        src/player/video_stack.cpp
-        src/player/mpv_event_thread.cpp
-        src/player/video_render_controller.cpp
-        src/player/media_session_thread.cpp
         src/cjson/cJSON.c
         src/settings.cpp
-        src/window_geometry.cpp
-        src/ui/menu_overlay.cpp
+        src/wake_event_windows.cpp
     )
 else()
     # Linux + macOS: shared main with platform abstraction
@@ -420,25 +386,12 @@ target_include_directories(jellyfin-desktop PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_BINARY_DIR}/generated
 )
-if(WIN32)
-    target_include_directories(jellyfin-desktop PRIVATE ${Vulkan_INCLUDE_DIRS})
-endif()
 
-if(NOT WIN32)
-    target_link_libraries(jellyfin-desktop PRIVATE
-        ${CEF_LIBRARIES}
-        ${MPV_LIBRARIES}
-        ${PLATFORM_LIBRARIES}
-    )
-else()
-    target_link_libraries(jellyfin-desktop PRIVATE
-        ${CEF_LIBRARIES}
-        SDL3::SDL3
-        ${MPV_LIBRARIES}
-        Vulkan::Vulkan
-        ${PLATFORM_LIBRARIES}
-    )
-endif()
+target_link_libraries(jellyfin-desktop PRIVATE
+    ${CEF_LIBRARIES}
+    ${MPV_LIBRARIES}
+    ${PLATFORM_LIBRARIES}
+)
 
 # When using external CEF, tell the app where to find resources
 if(EXTERNAL_CEF_DIR)
@@ -566,13 +519,6 @@ if(WIN32)
     install(DIRECTORY "${CEF_RESOURCE_DIR}/" DESTINATION .
         FILES_MATCHING PATTERN "*.pak" PATTERN "*.dat")
     install(DIRECTORY "${CEF_RESOURCE_DIR}/locales" DESTINATION .)
-
-    # SDL3
-    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
-        install(FILES "${CMAKE_SOURCE_DIR}/third_party/SDL/lib/arm64/SDL3.dll" DESTINATION .)
-    else()
-        install(FILES "${CMAKE_SOURCE_DIR}/third_party/SDL/lib/x64/SDL3.dll" DESTINATION .)
-    endif()
 
     # libmpv and its runtime dependencies
     if(EXTERNAL_MPV_DIR)

@@ -26,6 +26,9 @@
 #include "include/wrapper/cef_library_loader.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
+#elif defined(_WIN32)
+#include "single_instance.h"
+#include "player/windows/media_session_windows.h"
 #else
 #include "single_instance.h"
 #include "player/mpris/media_session_mpris.h"
@@ -37,14 +40,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifndef _WIN32
 #include <unistd.h>
 #include <signal.h>
+#endif
 #include <string>
 #include <vector>
 #include <thread>
 #include <filesystem>
 #include <atomic>
+#ifndef _WIN32
 #include <poll.h>
+#endif
 
 // =====================================================================
 // Globals
@@ -200,19 +207,32 @@ MediaSessionThread* g_media_session = nullptr;
 static bool g_was_maximized_before_fullscreen = false;
 
 static void cef_consumer_thread() {
+    // Wait for main browser to load before processing events
+    g_client->waitForLoad();
+
+#ifdef _WIN32
+    HANDLE handles[2] = {
+        g_cef_queue.wake_handle(),
+        g_shutdown_event.handle()
+    };
+#else
     int wake_fd = g_cef_queue.wake().fd();
     int shutdown_fd = g_shutdown_event.fd();
     struct pollfd fds[2] = {
         {wake_fd, POLLIN, 0},
         {shutdown_fd, POLLIN, 0},
     };
-
-    // Wait for main browser to load before processing events
-    g_client->waitForLoad();
+#endif
 
     while (true) {
+#ifdef _WIN32
+        WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+        // Check shutdown
+        if (WaitForSingleObject(handles[1], 0) == WAIT_OBJECT_0) break;
+#else
         poll(fds, 2, -1);
         if (fds[1].revents & POLLIN) break;
+#endif
 
         g_cef_queue.drain_wake();
         MpvEvent ev;
@@ -306,7 +326,9 @@ int main(int argc, char* argv[]) {
     // Must be first: CEF subprocesses (GPU, renderer) re-execute this binary.
     // They must hit CefExecuteProcess immediately and exit — before CLI parsing,
     // settings, single instance, or anything else touches shared state.
-#ifdef __APPLE__
+#ifdef _WIN32
+    g_platform = make_windows_platform();
+#elif defined(__APPLE__)
     g_platform = make_macos_platform();
 #else
     g_platform = make_wayland_platform();
@@ -321,8 +343,16 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
+#ifdef _WIN32
+    SetEnvironmentVariableA("JELLYFIN_CEF_SUBPROCESS", "1");
+#else
     setenv("JELLYFIN_CEF_SUBPROCESS", "1", 1);
+#endif
+#ifdef _WIN32
+    CefMainArgs main_args(GetModuleHandle(NULL));
+#else
     CefMainArgs main_args(argc, argv);
+#endif
     CefRefPtr<App> app(new App());
     int exit_code = CefExecuteProcess(main_args, app, nullptr);
     if (exit_code >= 0) return exit_code;
@@ -414,12 +444,19 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING " (Linux/Wayland rewrite)");
+    LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING);
     LOG_INFO(LOG_MAIN, "CEF %s", CEF_VERSION);
 
     // --- Signal handlers ---
+#ifdef _WIN32
+    SetConsoleCtrlHandler([](DWORD) -> BOOL {
+        initiate_shutdown();
+        return TRUE;
+    }, TRUE);
+#else
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+#endif
 
 #ifndef __APPLE__
     // --- Single instance ---
@@ -457,6 +494,11 @@ int main(int argc, char* argv[]) {
     mpv_set_option_string(mpv, "auto-window-resize", "no");
     mpv_set_option_string(mpv, "border", "yes");
     mpv_set_option_string(mpv, "title", "Jellyfin Desktop");
+#ifdef _WIN32
+    // Tell mpv to load window icon from our exe resources (read at class
+    // registration time, before any window is created — no icon flash)
+    SetEnvironmentVariableW(L"MPV_WINDOW_ICON", L"IDI_ICON1");
+#endif
 #ifdef __APPLE__
     // macOS VO (mac_common.swift:37) uses DispatchQueue.main.sync for window
     // creation. mp_initialize (main.c:435) calls handle_force_window when
@@ -616,6 +658,22 @@ int main(int argc, char* argv[]) {
     CefString(&settings.browser_subprocess_path).FromString(exe.string());
     auto home = std::string(getenv("HOME"));
     CefString(&settings.root_cache_path).FromString(home + "/Library/Caches/jellyfin-desktop");
+#elif defined(_WIN32)
+    char exe_buf[MAX_PATH];
+    GetModuleFileNameA(NULL, exe_buf, MAX_PATH);
+    auto exe_path = std::filesystem::canonical(exe_buf);
+    auto exe_dir = exe_path.parent_path();
+    CefString(&settings.browser_subprocess_path).FromString(exe_path.string());
+    CefString(&settings.resources_dir_path).FromString(exe_dir.string());
+    CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
+    // Cache: %LOCALAPPDATA%\jellyfin-desktop
+    const char* localappdata = getenv("LOCALAPPDATA");
+    std::string cache_path;
+    if (localappdata && localappdata[0])
+        cache_path = std::string(localappdata) + "\\jellyfin-desktop";
+    else
+        cache_path = (exe_dir / "cache").string();
+    CefString(&settings.root_cache_path).FromString(cache_path);
 #else
     CefString(&settings.browser_subprocess_path).FromString(
         std::filesystem::canonical("/proc/self/exe").string());
@@ -719,7 +777,54 @@ int main(int argc, char* argv[]) {
 #endif
     LOG_INFO(LOG_MAIN, "Main browser loaded");
 
-#ifndef __APPLE__
+#ifdef __APPLE__
+    // nothing -- macOS media session not yet implemented in new arch
+#elif defined(_WIN32)
+    // --- Windows SMTC media session ---
+    MediaSession media_session_obj;
+    int64_t wid = 0;
+    mpv_get_property(mpv, "window-id", MPV_FORMAT_INT64, &wid);
+    auto win_backend = createWindowsMediaBackend(&media_session_obj, (HWND)(intptr_t)wid);
+    media_session_obj.addBackend(std::move(win_backend));
+
+    // Wire transport controls.
+    // Play/pause/stop go directly to mpv (authoritative source).
+    // Next/previous/seek go through JS (jellyfin-web manages the playlist).
+    media_session_obj.onPlay = [mpv]() {
+        int flag = 0;
+        mpv_set_property_async(mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+    };
+    media_session_obj.onPause = [mpv]() {
+        int flag = 1;
+        mpv_set_property_async(mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+    };
+    media_session_obj.onPlayPause = [mpv]() {
+        const char* c[] = {"cycle", "pause", NULL};
+        mpv_command_async(mpv, 0, c);
+    };
+    media_session_obj.onStop = [mpv]() {
+        const char* c[] = {"stop", NULL};
+        mpv_command_async(mpv, 0, c);
+    };
+    media_session_obj.onNext = []() {
+        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");
+    };
+    media_session_obj.onPrevious = []() {
+        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['previous']);");
+    };
+    media_session_obj.onSeek = [](int64_t position_us) {
+        int ms = static_cast<int>(position_us / 1000);
+        if (g_client) g_client->execJs("if(window._nativeSeek) window._nativeSeek(" + std::to_string(ms) + ");");
+    };
+    media_session_obj.onSetRate = [mpv](double rate) {
+        double clamped = rate < 0.25 ? 0.25 : (rate > 2.0 ? 2.0 : rate);
+        mpv_set_property_async(mpv, 0, "speed", MPV_FORMAT_DOUBLE, &clamped);
+    };
+
+    MediaSessionThread media_session_thread;
+    media_session_thread.start(&media_session_obj);
+    g_media_session = &media_session_thread;
+#else
     // --- MPRIS media session ---
     MediaSession media_session_obj;
     auto mpris_backend = std::make_unique<MprisBackend>(&media_session_obj);

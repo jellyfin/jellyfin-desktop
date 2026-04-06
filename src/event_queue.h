@@ -33,8 +33,12 @@ public:
 
     WakeEvent& wake() { return wake_; }
 
-    // Drain the wake event so poll() blocks on next call.
-    // Call after draining the queue, before re-entering poll.
+#ifdef _WIN32
+    void* wake_handle() { return wake_.handle(); }
+#endif
+
+    // Drain the wake event so poll()/WaitForMultipleObjects blocks on next call.
+    // Call after draining the queue, before re-entering wait.
     void drain_wake() { wake_.drain(); }
 
 private:
