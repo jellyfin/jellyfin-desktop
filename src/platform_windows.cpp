@@ -626,6 +626,22 @@ static void win_set_cursor(cef_cursor_type_t type) {
     }
 }
 
+static void win_set_idle_inhibit(IdleInhibitLevel level) {
+    UINT flags = ES_CONTINUOUS;
+    switch (level) {
+    case IdleInhibitLevel::Display:
+        flags |= ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED;
+        break;
+    case IdleInhibitLevel::System:
+        flags |= ES_SYSTEM_REQUIRED;
+        break;
+    case IdleInhibitLevel::None:
+        // ES_CONTINUOUS alone releases the inhibit
+        break;
+    }
+    SetThreadExecutionState(flags);
+}
+
 static LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_SETCURSOR:
@@ -943,6 +959,7 @@ Platform make_windows_platform() {
         .query_logical_content_size = win_query_logical_content_size,
         .pump = win_pump,
         .set_cursor = win_set_cursor,
+        .set_idle_inhibit = win_set_idle_inhibit,
         .set_titlebar_color = win_set_titlebar_color,
     };
 }

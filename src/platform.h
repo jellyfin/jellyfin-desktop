@@ -4,6 +4,8 @@
 #include "include/internal/cef_types.h"
 #include <mpv/client.h>
 
+enum class IdleInhibitLevel { None, System, Display };
+
 struct Platform {
     void (*early_init)();
     bool (*init)(mpv_handle* mpv);
@@ -41,6 +43,9 @@ struct Platform {
 
     // Cursor shape/visibility (CT_NONE hides, others show with shape)
     void (*set_cursor)(cef_cursor_type_t type);
+
+    // Idle inhibit: None = release, System = prevent sleep, Display = prevent sleep + display off
+    void (*set_idle_inhibit)(IdleInhibitLevel level);
 
     // Titlebar color (KDE/KWin only, no-op on other compositors)
     void (*set_titlebar_color)(uint8_t r, uint8_t g, uint8_t b);

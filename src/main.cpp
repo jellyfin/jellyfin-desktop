@@ -60,6 +60,19 @@
 MpvHandle g_mpv;
 std::atomic<bool> g_shutting_down{false};
 WakeEvent g_shutdown_event;
+
+MediaType g_media_type = MediaType::Unknown;
+static PlaybackState g_playback_state = PlaybackState::Stopped;
+
+void update_idle_inhibit() {
+    if (g_playback_state != PlaybackState::Playing) {
+        g_platform.set_idle_inhibit(IdleInhibitLevel::None);
+    } else if (g_media_type == MediaType::Audio) {
+        g_platform.set_idle_inhibit(IdleInhibitLevel::System);
+    } else {
+        g_platform.set_idle_inhibit(IdleInhibitLevel::Display);
+    }
+}
 Platform g_platform{};
 CefRefPtr<Client> g_client;
 CefRefPtr<OverlayClient> g_overlay_client;
@@ -240,6 +253,8 @@ static void cef_consumer_thread() {
             if (!g_client) continue;
             switch (ev.type) {
             case MpvEventType::PAUSE:
+                g_playback_state = ev.flag ? PlaybackState::Paused : PlaybackState::Playing;
+                update_idle_inhibit();
                 g_client->execJs(ev.flag ? "window._nativeEmit('paused')" : "window._nativeEmit('playing')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(ev.flag ? PlaybackState::Paused : PlaybackState::Playing);
@@ -280,21 +295,29 @@ static void cef_consumer_thread() {
                 }
                 break;
             case MpvEventType::FILE_LOADED:
+                g_playback_state = PlaybackState::Playing;
+                update_idle_inhibit();
                 g_client->execJs("window._nativeEmit('playing')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Playing);
                 break;
             case MpvEventType::END_FILE_EOF:
+                g_playback_state = PlaybackState::Stopped;
+                update_idle_inhibit();
                 g_client->execJs("window._nativeEmit('finished')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
             case MpvEventType::END_FILE_ERROR:
+                g_playback_state = PlaybackState::Stopped;
+                update_idle_inhibit();
                 g_client->execJs("window._nativeEmit('error','Playback error')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
             case MpvEventType::END_FILE_CANCEL:
+                g_playback_state = PlaybackState::Stopped;
+                update_idle_inhibit();
                 g_client->execJs("window._nativeEmit('canceled')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
@@ -488,6 +511,7 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("input-default-bindings", "no");
     g_mpv.SetOptionString("input-vo-keyboard", "no");
     g_mpv.SetOptionString("input-vo-cursor", "no");
+    g_mpv.SetOptionString("stop-screensaver", "no");
     g_mpv.SetOptionString("keepaspect-window", "no");
     g_mpv.SetOptionString("auto-window-resize", "no");
     g_mpv.SetOptionString("border", "yes");
@@ -901,6 +925,7 @@ int main(int argc, char* argv[]) {
 #ifndef __APPLE__
     g_media_session = nullptr;
     media_session_thread.stop();
+    g_platform.set_idle_inhibit(IdleInhibitLevel::None);
 #endif
 
     cef_thread.join();

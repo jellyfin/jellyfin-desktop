@@ -6,6 +6,7 @@
 #include "viewporter-client.h"
 #include "alpha-modifier-v1-client.h"
 #include "cursor-shape-v1-client.h"
+#include <systemd/sd-bus.h>
 // Callback fields in mpv's vo_wayland_state -- set via wayland-state property.
 // Must match the struct layout in wayland_common.h.
 struct wl_configure_cb {
@@ -64,6 +65,10 @@ struct WlState {
     wp_cursor_shape_manager_v1* cursor_shape_manager = nullptr;
     wp_cursor_shape_device_v1* cursor_shape_device = nullptr;
 
+    // Idle inhibit (systemd login1 D-Bus)
+    sd_bus* system_bus = nullptr;
+    int systemd_inhibit_fd = -1;
+
     float cached_scale = 1.0f;
     int mpv_pw = 0, mpv_ph = 0;      // mpv's current physical size
     int transition_pw = 0, transition_ph = 0;
@@ -97,6 +102,7 @@ static WlState g_wl;
 
 static void input_thread_func();
 static void wl_set_cursor(cef_cursor_type_t type);
+static void wl_release_idle_inhibit();
 static void update_surface_size_locked(int lw, int lh, int pw, int ph);
 static void wl_begin_transition_locked();
 static void wl_end_transition_locked();
@@ -655,6 +661,8 @@ static float wl_get_scale() {
 
 static void wl_cleanup() {
     wl_cleanup_kde_palette();
+    wl_release_idle_inhibit();
+    if (g_wl.system_bus) { sd_bus_unref(g_wl.system_bus); g_wl.system_bus = nullptr; }
     if (g_wl.input_thread.joinable()) g_wl.input_thread.join();
     if (g_wl.cursor_shape_device) wp_cursor_shape_device_v1_destroy(g_wl.cursor_shape_device);
     if (g_wl.pointer) wl_pointer_destroy(g_wl.pointer);
@@ -878,6 +886,47 @@ static void wl_set_cursor(cef_cursor_type_t type) {
                 g_wl.pointer_serial, cef_cursor_to_wl_shape(type));
     }
     wl_display_flush(g_wl.display);
+}
+
+static void wl_release_idle_inhibit() {
+    if (g_wl.systemd_inhibit_fd >= 0) {
+        close(g_wl.systemd_inhibit_fd);
+        g_wl.systemd_inhibit_fd = -1;
+    }
+}
+
+static void wl_set_idle_inhibit(IdleInhibitLevel level) {
+    wl_release_idle_inhibit();
+    if (level == IdleInhibitLevel::None) return;
+
+    if (!g_wl.system_bus) {
+        if (sd_bus_open_system(&g_wl.system_bus) < 0) {
+            g_wl.system_bus = nullptr;
+            return;
+        }
+    }
+
+    sd_bus_message* reply = nullptr;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    int r = sd_bus_call_method(
+        g_wl.system_bus,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+        "Inhibit",
+        &error, &reply,
+        "ssss",
+        level == IdleInhibitLevel::Display ? "idle:sleep" : "sleep",
+        "Jellyfin Desktop",
+        "Media playback",
+        "block");
+    if (r >= 0 && reply) {
+        int fd = -1;
+        if (sd_bus_message_read(reply, "h", &fd) >= 0 && fd >= 0)
+            g_wl.systemd_inhibit_fd = dup(fd);
+        sd_bus_message_unref(reply);
+    }
+    sd_bus_error_free(&error);
 }
 
 // =====================================================================
@@ -1143,6 +1192,7 @@ Platform make_wayland_platform() {
         .query_logical_content_size = [](int*, int*) -> bool { return false; },
         .pump = wl_pump,
         .set_cursor = wl_set_cursor,
+        .set_idle_inhibit = wl_set_idle_inhibit,
         .set_titlebar_color = wl_set_titlebar_color,
     };
 }

@@ -11,6 +11,9 @@
 #include <unistd.h>
 #endif
 
+extern MediaType g_media_type;
+extern void update_idle_inhibit();
+
 // =====================================================================
 // Settings helper (shared between Client and OverlayClient)
 // =====================================================================
@@ -277,10 +280,11 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
         }
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
-        if (g_media_session) {
-            MediaMetadata meta = parseMetadataJson(json);
+        MediaMetadata meta = parseMetadataJson(json);
+        g_media_type = meta.media_type;
+        update_idle_inhibit();
+        if (g_media_session)
             g_media_session->setMetadata(meta);
-        }
     } else if (name == "notifyArtwork") {
         std::string artworkUri = args->GetString(0).ToString();
         if (g_media_session) g_media_session->setArtwork(artworkUri);

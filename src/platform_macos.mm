@@ -12,6 +12,7 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 #import <IOSurface/IOSurface.h>
+#include <IOKit/pwr_mgt/IOPMLib.h>
 
 // =====================================================================
 // Forward declarations
@@ -606,6 +607,7 @@ static void macos_early_init() {
 }
 
 static bool g_cursor_hidden = false;
+static IOPMAssertionID g_idle_assertion = kIOPMNullAssertionID;
 
 static NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
     switch (type) {
@@ -650,6 +652,33 @@ static void macos_set_cursor(cef_cursor_type_t type) {
     });
 }
 
+static void macos_set_idle_inhibit(IdleInhibitLevel level) {
+    // Release existing assertion if one is active
+    if (g_idle_assertion != kIOPMNullAssertionID) {
+        IOPMAssertionRelease(g_idle_assertion);
+        g_idle_assertion = kIOPMNullAssertionID;
+    }
+
+    // If level is None, just return after releasing
+    if (level == IdleInhibitLevel::None) {
+        return;
+    }
+
+    // Determine assertion type based on level
+    CFStringRef type = nullptr;
+    if (level == IdleInhibitLevel::Display) {
+        type = kIOPMAssertionTypePreventUserIdleDisplaySleep;
+    } else if (level == IdleInhibitLevel::System) {
+        type = kIOPMAssertionTypePreventUserIdleSystemSleep;
+    }
+
+    if (type) {
+        IOPMAssertionCreateWithName(type, kIOPMAssertionLevelOn,
+                                    CFSTR("Jellyfin Desktop media playback"),
+                                    &g_idle_assertion);
+    }
+}
+
 Platform make_macos_platform() {
     return Platform{
         .early_init = macos_early_init,
@@ -673,6 +702,7 @@ Platform make_macos_platform() {
         .query_logical_content_size = macos_query_logical_content_size,
         .pump = macos_pump,
         .set_cursor = macos_set_cursor,
+        .set_idle_inhibit = macos_set_idle_inhibit,
         .set_titlebar_color = macos_set_titlebar_color,
     };
 }
