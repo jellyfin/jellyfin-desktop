@@ -317,6 +317,7 @@ int main(int argc, char* argv[]) {
     SDL_LogPriority log_level = SDL_LOG_PRIORITY_DEBUG;
     bool use_dmabuf = true;
     bool disable_gpu_compositing = false;
+    bool start_fullscreen = false;
     int remote_debugging_port = 0;
     std::string hwdec_str = "auto-safe";
     std::string audio_passthrough_str;
@@ -357,6 +358,7 @@ int main(int argc, char* argv[]) {
                        "  --audio-passthrough <codecs>  Enable audio passthrough (e.g. ac3,dts-hd,eac3,truehd)\n"
                        "  --audio-exclusive       Use exclusive audio output mode\n"
                        "  --audio-channels <layout>  Set audio channel layout (e.g. stereo, 5.1, 7.1)\n"
+                       "  --fullscreen            Start in fullscreen mode\n"
                        "  --remote-debug-port <port>  Enable Chrome remote debugging on port (1024-65535)\n"
                        "  --player                Standalone player mode (play files/URLs directly)\n"
                        );
@@ -392,6 +394,8 @@ int main(int argc, char* argv[]) {
                 audio_channels_str = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
             } else if (strncmp(argv[i], "--audio-channels=", 17) == 0) {
                 audio_channels_str = argv[i] + 17;
+            } else if (strcmp(argv[i], "--fullscreen") == 0) {
+                start_fullscreen = true;
             } else if (strcmp(argv[i], "--remote-debug-port") == 0) {
                 const char* val = (i + 1 < argc && argv[i+1][0] != '-') ? argv[++i] : "";
                 remote_debugging_port = atoi(val);
@@ -705,6 +709,17 @@ int main(int argc, char* argv[]) {
 
     // Restore saved window geometry (settings already loaded during init)
     restoreWindowGeometry(window);
+
+    bool started_fullscreen = false;
+    if (start_fullscreen) {
+        if (SDL_SetWindowFullscreen(window, true)) {
+            started_fullscreen = true;
+            LOG_INFO(LOG_WINDOW, "Starting in fullscreen mode (--fullscreen)");
+        } else {
+            LOG_WARN(LOG_WINDOW, "Failed to enter fullscreen at startup: %s", SDL_GetError());
+        }
+    }
+
     SDL_GetWindowSize(window, &width, &height);
 
 #ifdef __APPLE__
@@ -1233,7 +1248,7 @@ int main(int argc, char* argv[]) {
 
     // Track who initiated fullscreen (only changes from NONE, returns to NONE on exit)
     enum class FullscreenSource { NONE, WM, CEF };
-    FullscreenSource fullscreen_source = FullscreenSource::NONE;
+    FullscreenSource fullscreen_source = started_fullscreen ? FullscreenSource::WM : FullscreenSource::NONE;
     bool was_maximized_before_fullscreen = false;
 
     // Create main browser entry
