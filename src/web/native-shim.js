@@ -239,6 +239,11 @@
             openExternalUrl(url) {
                 window.open(url, '_blank');
             },
+            setCursorVisibility(visible) {
+                if (window.jmpNative && window.jmpNative.setCursorVisibility) {
+                    window.jmpNative.setCursorVisibility(!!visible);
+                }
+            },
             exit() {
                 if (window.jmpNative) window.jmpNative.appExit();
             },
@@ -268,7 +273,9 @@
             executeActions() {}
         },
         window: {
-            setCursorVisibility(visible) {}
+            setCursorVisibility(visible) {
+                window.api.system.setCursorVisibility(visible);
+            }
         }
     };
 
@@ -411,11 +418,24 @@
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        // Inject CSS to hide cursor when jellyfin-web signals mouse idle.
-        // jellyfin-web adds 'mouseIdle' to body after inactivity during video playback.
-        // This CSS makes CEF report CT_NONE so the native side can hide the OS cursor.
+        // Let jellyfin-web own cursor auto-hide during playback.
+        // It toggles body.mouseIdle when the video OSD should hide/show.
+        const syncCursorVisibility = () => {
+            window.api.system.setCursorVisibility(!document.body.classList.contains('mouseIdle'));
+        };
+        const cursorObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.attributeName === 'class') {
+                    syncCursorVisibility();
+                    break;
+                }
+            }
+        });
+        cursorObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+        syncCursorVisibility();
+
         const style = document.createElement('style');
-        let css = 'body.mouseIdle, body.mouseIdle * { cursor: none !important; }';
+        let css = '';
 
         // macOS: offset UI elements so traffic lights don't overlap content
         if (navigator.platform.startsWith('Mac') && jmpInfo.settings.advanced.transparentTitlebar) {
