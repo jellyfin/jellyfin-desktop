@@ -7,6 +7,7 @@
 #include "include/cef_frame.h"
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include "logging.h"
 
 void App::OnBeforeCommandLineProcessing(const CefString& process_type,
@@ -44,8 +45,18 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
 #endif
 
 #if !defined(__APPLE__) && !defined(_WIN32)
-    // Force X11 mode on Linux - Wayland OSR has scaling issues
-    command_line->AppendSwitchWithValue("ozone-platform", "x11");
+    // Prefer X11 mode on Linux - Wayland OSR has scaling issues; fall back to Wayland if X11 is unavailable.
+    bool x11_available = false;
+    if (const char* display = std::getenv("DISPLAY")) {
+        x11_available = display[0] != '\0';
+    }
+    const char* ozone_platform = x11_available ? "x11" : "wayland";
+    command_line->AppendSwitchWithValue("ozone-platform", ozone_platform);
+    if (!x11_available) {
+        LOG_INFO(LOG_CEF, "DISPLAY unavailable; falling back to Wayland (ozone-platform=wayland)");
+    } else {
+        LOG_INFO(LOG_CEF, "Using X11 backend (ozone-platform=x11)");
+    }
 #endif
 
     if (disable_gpu_compositing_) {
