@@ -388,6 +388,7 @@ else()
     # Linux + macOS: shared main with platform abstraction
     set(COMMON_SOURCES
         src/main.cpp
+        src/logging.cpp
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp

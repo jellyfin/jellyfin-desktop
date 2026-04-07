@@ -51,11 +51,19 @@ inline const char* getCategoryTag(int category) {
 // Log file handle (nullptr = stderr only)
 inline FILE* g_log_file = nullptr;
 
-#define LOG_ERROR(cat, fmt, ...)   do { fprintf(stderr, "%s ERROR: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); if (g_log_file) { fprintf(g_log_file, "%s ERROR: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); fflush(g_log_file); } } while(0)
-#define LOG_WARN(cat, fmt, ...)    do { fprintf(stderr, "%s WARN: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); if (g_log_file) { fprintf(g_log_file, "%s WARN: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); fflush(g_log_file); } } while(0)
-#define LOG_INFO(cat, fmt, ...)    do { fprintf(stderr, "%s INFO: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); if (g_log_file) { fprintf(g_log_file, "%s INFO: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); fflush(g_log_file); } } while(0)
-#define LOG_DEBUG(cat, fmt, ...)   do { fprintf(stderr, "%s DEBUG: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); if (g_log_file) { fprintf(g_log_file, "%s DEBUG: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); fflush(g_log_file); } } while(0)
-#define LOG_VERBOSE(cat, fmt, ...) do { fprintf(stderr, "%s VERBOSE: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); if (g_log_file) { fprintf(g_log_file, "%s VERBOSE: " fmt "\n", getCategoryTag(cat), ##__VA_ARGS__); fflush(g_log_file); } } while(0)
+// Single logging path — all macros route through this
+#ifdef _MSC_VER
+void logWrite(int category, const char* level, _Printf_format_string_ const char* fmt, ...);
+#else
+void logWrite(int category, const char* level, const char* fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+#endif
+
+#define LOG_ERROR(cat, fmt, ...)   logWrite(cat, "ERROR",   fmt, ##__VA_ARGS__)
+#define LOG_WARN(cat, fmt, ...)    logWrite(cat, "WARN",    fmt, ##__VA_ARGS__)
+#define LOG_INFO(cat, fmt, ...)    logWrite(cat, "INFO",    fmt, ##__VA_ARGS__)
+#define LOG_DEBUG(cat, fmt, ...)   logWrite(cat, "DEBUG",   fmt, ##__VA_ARGS__)
+#define LOG_VERBOSE(cat, fmt, ...) logWrite(cat, "VERBOSE", fmt, ##__VA_ARGS__)
 
 inline int parseLogLevel(const char* level) {
     if (strcmp(level, "verbose") == 0) return 0;

@@ -166,7 +166,7 @@ static void mpv_digest_thread() {
 
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             auto* msg = static_cast<mpv_event_log_message*>(ev->data);
-            LOG_DEBUG(LOG_MPV, "[%s] %s", msg->prefix, msg->text);
+            LOG_DEBUG(LOG_MPV, "%s: %s", msg->prefix, msg->text);
             continue;
         }
 
@@ -591,7 +591,7 @@ int main(int argc, char* argv[]) {
 
     // Load file if in player mode (before init so it's in the playlist)
     if (player_mode) {
-        g_mpv.LoadFile(player_playlist[0]);
+        g_mpv.LoadFile(player_playlist[0], {});
     }
 
     int init_err = g_mpv.Initialize();
@@ -600,6 +600,7 @@ int main(int argc, char* argv[]) {
         g_mpv.TerminateDestroy();
         return 1;
     }
+    g_mpv.RequestLogMessages("info");
 
     // --- Wait for VO (mpv needs a window before we can get platform handles) ---
     LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
@@ -614,7 +615,7 @@ int main(int argc, char* argv[]) {
         if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             auto* msg = static_cast<mpv_event_log_message*>(ev->data);
-            LOG_DEBUG(LOG_MPV, "[%s] %s", msg->prefix, msg->text);
+            LOG_DEBUG(LOG_MPV, "%s: %s", msg->prefix, msg->text);
             continue;
         }
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
