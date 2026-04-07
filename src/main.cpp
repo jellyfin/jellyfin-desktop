@@ -492,6 +492,7 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("auto-window-resize", "no");
     g_mpv.SetOptionString("border", "yes");
     g_mpv.SetOptionString("title", "Jellyfin Desktop");
+    g_mpv.SetOptionString("wayland-app-id", "org.jellyfin.JellyfinDesktop");
 #ifdef _WIN32
     // Tell mpv to load window icon from our exe resources (read at class
     // registration time, before any window is created — no icon flash)
