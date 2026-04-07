@@ -358,7 +358,7 @@ int main(int argc, char* argv[]) {
                        "  --audio-passthrough <codecs>  Enable audio passthrough (e.g. ac3,dts-hd,eac3,truehd)\n"
                        "  --audio-exclusive       Use exclusive audio output mode\n"
                        "  --audio-channels <layout>  Set audio channel layout (e.g. stereo, 5.1, 7.1)\n"
-                      "  --fullscreen            Start in fullscreen mode\n"
+                       "  --fullscreen            Start in fullscreen mode\n"
                        "  --remote-debug-port <port>  Enable Chrome remote debugging on port (1024-65535)\n"
                        "  --player                Standalone player mode (play files/URLs directly)\n"
                        );
