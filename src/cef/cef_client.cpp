@@ -225,6 +225,7 @@ Client::Client(int width, int height, PaintCallback on_paint, PlayerMessageCallb
                AcceleratedPaintCallback on_accel_paint, MenuOverlay* menu,
                CursorChangeCallback on_cursor_change, FullscreenChangeCallback on_fullscreen_change,
                PhysicalSizeCallback physical_size_cb, ThemeColorCallback on_theme_color,
+               CursorVisibilityCallback on_cursor_visibility,
                OsdVisibleCallback on_osd_visible,
                PopupShowCallback on_popup_show, PopupSizeCallback on_popup_size,
                AcceleratedPaintCallback on_accel_popup_paint
@@ -250,6 +251,7 @@ Client::Client(int width, int height, PaintCallback on_paint, PlayerMessageCallb
       menu_(menu), on_cursor_change_(std::move(on_cursor_change)),
       on_fullscreen_change_(std::move(on_fullscreen_change)),
       on_theme_color_(std::move(on_theme_color)),
+      on_cursor_visibility_(std::move(on_cursor_visibility)),
       on_osd_visible_(std::move(on_osd_visible)),
       physical_size_cb_(std::move(physical_size_cb)) {}
 
@@ -293,6 +295,14 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
         std::string color = args->GetString(0).ToString();
         if (on_theme_color_) {
             on_theme_color_(color);
+        }
+        return true;
+    }
+
+    if (name == "cursorVisibility") {
+        bool visible = args->GetBool(0);
+        if (on_cursor_visibility_) {
+            on_cursor_visibility_(visible);
         }
         return true;
     }

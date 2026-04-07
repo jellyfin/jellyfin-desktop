@@ -152,6 +152,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("appExit", CefV8Value::CreateFunction("appExit", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("setSettingValue", CefV8Value::CreateFunction("setSettingValue", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("themeColor", CefV8Value::CreateFunction("themeColor", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("setCursorVisibility", CefV8Value::CreateFunction("setCursorVisibility", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("setOsdVisible", CefV8Value::CreateFunction("setOsdVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
@@ -515,6 +516,15 @@ bool NativeV8Handler::Execute(const CefString& name,
             std::string color = arguments[0]->GetStringValue().ToString();
             CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("themeColor");
             msg->GetArgumentList()->SetString(0, color);
+            browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
+        }
+        return true;
+    }
+
+    if (name == "setCursorVisibility") {
+        if (arguments.size() >= 1 && arguments[0]->IsBool()) {
+            CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("cursorVisibility");
+            msg->GetArgumentList()->SetBool(0, arguments[0]->GetBoolValue());
             browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
         }
         return true;

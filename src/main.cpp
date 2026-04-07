@@ -1139,13 +1139,27 @@ int main(int argc, char* argv[]) {
 
     // Cursor state
     SDL_Cursor* current_cursor = nullptr;
-    // Blank cursor for hiding (1x1 transparent) - used when CEF reports CT_NONE
+    bool cursor_visible = true;
+    bool cursor_hidden_by_content = false;
+    // Blank cursor for explicit hiding (mouseIdle) or content-requested cursor:none
     SDL_Cursor* blank_cursor = nullptr;
     if (SDL_Surface* s = SDL_CreateSurface(1, 1, SDL_PIXELFORMAT_ARGB8888)) {
         SDL_memset(s->pixels, 0, s->pitch * s->h);
         blank_cursor = SDL_CreateColorCursor(s, 0, 0);
         SDL_DestroySurface(s);
     }
+    auto applyCursor = [&]() {
+        if ((cursor_hidden_by_content || !cursor_visible) && blank_cursor) {
+            SDL_SetCursor(blank_cursor);
+            return;
+        }
+        if (!current_cursor) {
+            current_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+        }
+        if (current_cursor) {
+            SDL_SetCursor(current_cursor);
+        }
+    };
 
     // Physical pixel size callback for HiDPI support
     // Use SDL_GetWindowSizeInPixels - reliable after first frame
@@ -1312,21 +1326,15 @@ int main(int argc, char* argv[]) {
 #endif
         &menu,
         [&](cef_cursor_type_t type) {
-            if (type == CT_NONE && blank_cursor) {
-                // Web content set cursor: none (e.g. mouseIdle during video playback)
-                if (current_cursor) {
-                    SDL_DestroyCursor(current_cursor);
-                    current_cursor = nullptr;
-                }
-                SDL_SetCursor(blank_cursor);
-            } else if (type != CT_NONE) {
+            cursor_hidden_by_content = (type == CT_NONE);
+            if (type != CT_NONE) {
                 SDL_SystemCursor sdl_type = cefCursorToSDL(type);
                 if (current_cursor) {
                     SDL_DestroyCursor(current_cursor);
                 }
                 current_cursor = SDL_CreateSystemCursor(sdl_type);
-                SDL_SetCursor(current_cursor);
             }
+            applyCursor();
         },
         [&](bool fullscreen) {
             // Web content requested fullscreen change via JS Fullscreen API
@@ -1350,6 +1358,11 @@ int main(int argc, char* argv[]) {
         [&cmd_mutex, &pending_cmds, &wakeMainLoop](const std::string& color) {
             std::lock_guard<std::mutex> lock(cmd_mutex);
             pending_cmds.push_back({"theme_color", color, 0, 0.0});
+            wakeMainLoop();
+        },
+        [&cmd_mutex, &pending_cmds, &wakeMainLoop](bool visible) {
+            std::lock_guard<std::mutex> lock(cmd_mutex);
+            pending_cmds.push_back({"cursor_visible", "", visible ? 1 : 0, 0.0});
             wakeMainLoop();
         },
 #ifdef __APPLE__
@@ -2166,6 +2179,9 @@ int main(int argc, char* argv[]) {
                     } else {
                         pending_titlebar_color = cmd.url;
                     }
+                } else if (cmd.cmd == "cursor_visible") {
+                    cursor_visible = cmd.intArg != 0;
+                    applyCursor();
 #ifdef __APPLE__
                 } else if (cmd.cmd == "osd_visible" && transparent_titlebar) {
                     setMacTrafficLightsVisible(cmd.intArg != 0);

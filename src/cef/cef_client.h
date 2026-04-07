@@ -48,6 +48,9 @@ using FullscreenChangeCallback = std::function<void(bool fullscreen)>;
 // Theme color change callback (web content updated <meta name="theme-color">)
 using ThemeColorCallback = std::function<void(const std::string& color)>;
 
+// Cursor visibility change callback (web content toggled mouse idle state)
+using CursorVisibilityCallback = std::function<void(bool visible)>;
+
 // OSD visibility change callback (video player OSD shown/hidden)
 using OsdVisibleCallback = std::function<void(bool visible)>;
 
@@ -87,6 +90,7 @@ public:
            FullscreenChangeCallback on_fullscreen_change = nullptr,
            PhysicalSizeCallback physical_size_cb = nullptr,
            ThemeColorCallback on_theme_color = nullptr,
+           CursorVisibilityCallback on_cursor_visibility = nullptr,
            OsdVisibleCallback on_osd_visible = nullptr,
            PopupShowCallback on_popup_show = nullptr,
            PopupSizeCallback on_popup_size = nullptr,
@@ -220,6 +224,7 @@ private:
     CursorChangeCallback on_cursor_change_;
     FullscreenChangeCallback on_fullscreen_change_;
     ThemeColorCallback on_theme_color_;
+    CursorVisibilityCallback on_cursor_visibility_;
     OsdVisibleCallback on_osd_visible_;
     PhysicalSizeCallback physical_size_cb_;
     float scale_override_ = 0.0f;  // 0 = use physical/logical ratio
