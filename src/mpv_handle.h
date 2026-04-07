@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <optional>
 
 /**
  * Typed wrapper for mpv_handle. Encapsulates the mpv instance so it doesn't
@@ -106,13 +107,19 @@ public:
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
     void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
 
-    // Consolidated load with optional start position, audio/subtitle tracks
-    void LoadFile(const std::string& path, double startSecs = 0,
-                  int64_t audioTrack = -1, int64_t subTrack = -1) {
-        LoadFileAsync(path);
-        if (startSecs > 0) SetStartPosition(startSecs);
-        if (audioTrack >= 0) SetAudioTrack(audioTrack);
-        if (subTrack >= 0) SetSubtitleTrack(subTrack);
+    struct LoadOptions {
+        double startSecs = 0;
+        std::optional<int64_t> audioTrack;   // 0 = off, 1+ = track number
+        std::optional<int64_t> subTrack;     // 0 = off, 1+ = track number
+    };
+
+    void LoadFile(const std::string& path, const LoadOptions& opts) {
+        std::string optsStr = "start=" + std::to_string(opts.startSecs);
+        if (opts.audioTrack)
+            optsStr += ",aid=" + std::to_string(*opts.audioTrack);
+        if (opts.subTrack)
+            optsStr += ",sid=" + std::to_string(*opts.subTrack);
+        CommandAsync({"loadfile", path, "replace", "-1", optsStr});
     }
 
     // Window/display state
@@ -262,6 +269,10 @@ public:
 
     void SetWakeupCallback(void (*cb)(void*), void* data) {
         mpv_set_wakeup_callback(handle_, cb, data);
+    }
+
+    void RequestLogMessages(const char* level) {
+        mpv_request_log_messages(handle_, level);
     }
 
     mpv_event* WaitEvent(double timeout) {

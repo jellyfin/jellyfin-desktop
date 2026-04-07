@@ -228,9 +228,15 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     if (name == "playerLoad") {
         std::string url = args->GetString(0).ToString();
         int startMs = args->GetSize() > 1 ? args->GetInt(1) : 0;
-        int audioIdx = args->GetSize() > 2 ? args->GetInt(2) : -1;
-        int subIdx = args->GetSize() > 3 ? args->GetInt(3) : -1;
-        g_mpv.LoadFile(url, startMs / 1000.0, audioIdx, subIdx);
+        int audioIdx = args->GetSize() > 2 ? args->GetInt(2) : 0;
+        int subIdx = args->GetSize() > 3 ? args->GetInt(3) : 0;
+        LOG_INFO(LOG_CEF, "playerLoad: audio=%d sub=%d start=%dms url=%s",
+                 audioIdx, subIdx, startMs, url.c_str());
+        MpvHandle::LoadOptions opts;
+        opts.startSecs = startMs / 1000.0;
+        opts.audioTrack = audioIdx;
+        opts.subTrack = subIdx;
+        g_mpv.LoadFile(url, opts);
     } else if (name == "playerStop") {
         g_mpv.Stop();
         // Exit fullscreen when player stops — return to windowed library view
@@ -249,6 +255,7 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     } else if (name == "playerSetSpeed") {
         g_mpv.SetSpeed(args->GetInt(0) / 1000.0);
     } else if (name == "playerSetSubtitle") {
+        LOG_INFO(LOG_CEF, "playerSetSubtitle: %d", args->GetInt(0));
         g_mpv.SetSubtitleTrack(args->GetInt(0));
     } else if (name == "playerSetAudio") {
         g_mpv.SetAudioTrack(args->GetInt(0));
