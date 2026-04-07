@@ -75,6 +75,10 @@ struct WinState {
     std::thread input_thread;
     DWORD input_thread_id = 0;
     HWND input_hwnd = nullptr;
+
+    // Cursor
+    HCURSOR current_cursor = nullptr;
+    cef_cursor_type_t cursor_type = CT_POINTER;
 };
 
 static WinState g_win;
@@ -574,8 +578,65 @@ static bool is_button_up(UINT msg) {
     return msg == WM_LBUTTONUP || msg == WM_RBUTTONUP || msg == WM_MBUTTONUP;
 }
 
+static LPCTSTR cef_cursor_to_win(cef_cursor_type_t type) {
+    switch (type) {
+    case CT_CROSS:                      return IDC_CROSS;
+    case CT_HAND:                       return IDC_HAND;
+    case CT_IBEAM:                      return IDC_IBEAM;
+    case CT_WAIT:                       return IDC_WAIT;
+    case CT_HELP:                       return IDC_HELP;
+    case CT_EASTRESIZE:                 return IDC_SIZEWE;
+    case CT_NORTHRESIZE:                return IDC_SIZENS;
+    case CT_NORTHEASTRESIZE:            return IDC_SIZENESW;
+    case CT_NORTHWESTRESIZE:            return IDC_SIZENWSE;
+    case CT_SOUTHRESIZE:                return IDC_SIZENS;
+    case CT_SOUTHEASTRESIZE:            return IDC_SIZENWSE;
+    case CT_SOUTHWESTRESIZE:            return IDC_SIZENESW;
+    case CT_WESTRESIZE:                 return IDC_SIZEWE;
+    case CT_NORTHSOUTHRESIZE:           return IDC_SIZENS;
+    case CT_EASTWESTRESIZE:             return IDC_SIZEWE;
+    case CT_NORTHEASTSOUTHWESTRESIZE:   return IDC_SIZENESW;
+    case CT_NORTHWESTSOUTHEASTRESIZE:   return IDC_SIZENWSE;
+    case CT_COLUMNRESIZE:               return IDC_SIZEWE;
+    case CT_ROWRESIZE:                  return IDC_SIZENS;
+    case CT_MOVE:                       return IDC_SIZEALL;
+    case CT_PROGRESS:                   return IDC_APPSTARTING;
+    case CT_NODROP:                     return IDC_NO;
+    case CT_NOTALLOWED:                 return IDC_NO;
+    case CT_GRAB:                       return IDC_HAND;
+    case CT_GRABBING:                   return IDC_HAND;
+    case CT_MIDDLEPANNING:
+    case CT_MIDDLE_PANNING_VERTICAL:
+    case CT_MIDDLE_PANNING_HORIZONTAL:  return IDC_SIZEALL;
+    default:                            return IDC_ARROW;
+    }
+}
+
+static void win_set_cursor(cef_cursor_type_t type) {
+    g_win.cursor_type = type;
+    if (g_win.current_cursor) {
+        DestroyCursor(g_win.current_cursor);
+        g_win.current_cursor = nullptr;
+    }
+    if (type == CT_NONE) {
+        SetCursor(nullptr);
+    } else {
+        HCURSOR c = LoadCursor(nullptr, cef_cursor_to_win(type));
+        SetCursor(c);
+    }
+}
+
 static LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT) {
+            if (g_win.cursor_type == CT_NONE)
+                SetCursor(nullptr);
+            else
+                SetCursor(LoadCursor(nullptr, cef_cursor_to_win(g_win.cursor_type)));
+            return TRUE;
+        }
+        break;
     // --- Mouse ---
     case WM_MOUSEMOVE: {
         auto b = active_browser();
@@ -745,7 +806,7 @@ static void input_thread_func() {
     wc.hInstance = GetModuleHandle(nullptr);
     wc.lpszClassName = L"JellyfinCefInput";
     wc.style = CS_DBLCLKS;
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hCursor = nullptr;  // We manage cursor via WM_SETCURSOR
     RegisterClassExW(&wc);
 
     // Child window covering mpv's client area — captures all mouse and
@@ -881,7 +942,7 @@ Platform make_windows_platform() {
         .get_scale = win_get_scale,
         .query_logical_content_size = win_query_logical_content_size,
         .pump = win_pump,
-        .set_cursor = [](cef_cursor_type_t) {},
+        .set_cursor = win_set_cursor,
         .set_titlebar_color = win_set_titlebar_color,
     };
 }

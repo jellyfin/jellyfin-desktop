@@ -605,6 +605,51 @@ static void macos_early_init() {
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+static bool g_cursor_hidden = false;
+
+static NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
+    switch (type) {
+    case CT_CROSS:                      return [NSCursor crosshairCursor];
+    case CT_HAND:                       return [NSCursor pointingHandCursor];
+    case CT_IBEAM:                      return [NSCursor IBeamCursor];
+    case CT_VERTICALTEXT:               return [NSCursor IBeamCursorForVerticalLayout];
+    case CT_EASTRESIZE:                 return [NSCursor resizeRightCursor];
+    case CT_WESTRESIZE:                 return [NSCursor resizeLeftCursor];
+    case CT_NORTHRESIZE:                return [NSCursor resizeUpCursor];
+    case CT_SOUTHRESIZE:                return [NSCursor resizeDownCursor];
+    case CT_NORTHSOUTHRESIZE:           return [NSCursor resizeUpDownCursor];
+    case CT_EASTWESTRESIZE:             return [NSCursor resizeLeftRightCursor];
+    case CT_COLUMNRESIZE:               return [NSCursor resizeLeftRightCursor];
+    case CT_ROWRESIZE:                  return [NSCursor resizeUpDownCursor];
+    case CT_MOVE:                       return [NSCursor openHandCursor];
+    case CT_GRAB:                       return [NSCursor openHandCursor];
+    case CT_GRABBING:                   return [NSCursor closedHandCursor];
+    case CT_NODROP:                     return [NSCursor operationNotAllowedCursor];
+    case CT_NOTALLOWED:                 return [NSCursor operationNotAllowedCursor];
+    case CT_COPY:                       return [NSCursor dragCopyCursor];
+    case CT_ALIAS:                      return [NSCursor dragLinkCursor];
+    case CT_CONTEXTMENU:                return [NSCursor contextualMenuCursor];
+    default:                            return [NSCursor arrowCursor];
+    }
+}
+
+static void macos_set_cursor(cef_cursor_type_t type) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (type == CT_NONE) {
+            if (!g_cursor_hidden) {
+                [NSCursor hide];
+                g_cursor_hidden = true;
+            }
+        } else {
+            if (g_cursor_hidden) {
+                [NSCursor unhide];
+                g_cursor_hidden = false;
+            }
+            [cef_cursor_to_ns(type) set];
+        }
+    });
+}
+
 Platform make_macos_platform() {
     return Platform{
         .early_init = macos_early_init,
@@ -627,7 +672,7 @@ Platform make_macos_platform() {
         .get_scale = macos_get_scale,
         .query_logical_content_size = macos_query_logical_content_size,
         .pump = macos_pump,
-        .set_cursor = [](cef_cursor_type_t) {},
+        .set_cursor = macos_set_cursor,
         .set_titlebar_color = macos_set_titlebar_color,
     };
 }
