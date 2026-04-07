@@ -1,6 +1,7 @@
 #pragma once
 
 #include "include/cef_render_handler.h"
+#include "include/internal/cef_types.h"
 #include <mpv/client.h>
 
 struct Platform {
@@ -38,8 +39,8 @@ struct Platform {
 
     void (*pump)();
 
-    // Cursor visibility (driven by CEF OnCursorChange)
-    void (*set_cursor_visible)(bool visible);
+    // Cursor shape/visibility (CT_NONE hides, others show with shape)
+    void (*set_cursor)(cef_cursor_type_t type);
 
     // Titlebar color (KDE/KWin only, no-op on other compositors)
     void (*set_titlebar_color)(uint8_t r, uint8_t g, uint8_t b);

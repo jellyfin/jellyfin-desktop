@@ -487,7 +487,7 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("osc", "no");
     g_mpv.SetOptionString("input-default-bindings", "no");
     g_mpv.SetOptionString("input-vo-keyboard", "no");
-    g_mpv.SetOptionString("cursor-autohide", "no");
+    g_mpv.SetOptionString("input-vo-cursor", "no");
     g_mpv.SetOptionString("keepaspect-window", "no");
     g_mpv.SetOptionString("auto-window-resize", "no");
     g_mpv.SetOptionString("border", "yes");

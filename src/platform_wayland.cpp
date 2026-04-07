@@ -79,6 +79,7 @@ struct WlState {
     wl_keyboard* keyboard = nullptr;
     double ptr_x = 0, ptr_y = 0;
     uint32_t pointer_serial = 0;
+    cef_cursor_type_t cursor_type = CT_POINTER;
     xkb_context* xkb_ctx = nullptr;
     xkb_keymap* xkb_kmap = nullptr;
     xkb_state* xkb_st = nullptr;
@@ -95,6 +96,7 @@ struct WlState {
 static WlState g_wl;
 
 static void input_thread_func();
+static void wl_set_cursor(cef_cursor_type_t type);
 static void update_surface_size_locked(int lw, int lh, int pw, int ph);
 static void wl_begin_transition_locked();
 static void wl_end_transition_locked();
@@ -330,6 +332,8 @@ static int keysym_to_vkey(xkb_keysym_t sym) {
 // Pointer
 static void ptr_enter(void*, wl_pointer*, uint32_t serial, wl_surface*, wl_fixed_t x, wl_fixed_t y) {
     g_wl.pointer_serial = serial;
+    // Apply stored cursor state with the fresh serial.
+    wl_set_cursor(g_wl.cursor_type);
     g_wl.ptr_x = wl_fixed_to_double(x); g_wl.ptr_y = wl_fixed_to_double(y);
     auto b = active_browser();
     if (!b) return;
@@ -819,17 +823,59 @@ static void input_thread_func() {
 
 static void wl_pump() {}
 
-static void wl_set_cursor_visible(bool visible) {
+static uint32_t cef_cursor_to_wl_shape(cef_cursor_type_t type) {
+    switch (type) {
+    case CT_CROSS:                      return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
+    case CT_HAND:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
+    case CT_IBEAM:                      return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
+    case CT_WAIT:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
+    case CT_HELP:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
+    case CT_EASTRESIZE:                 return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE;
+    case CT_NORTHRESIZE:                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_N_RESIZE;
+    case CT_NORTHEASTRESIZE:            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NE_RESIZE;
+    case CT_NORTHWESTRESIZE:            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NW_RESIZE;
+    case CT_SOUTHRESIZE:                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_S_RESIZE;
+    case CT_SOUTHEASTRESIZE:            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SE_RESIZE;
+    case CT_SOUTHWESTRESIZE:            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SW_RESIZE;
+    case CT_WESTRESIZE:                 return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_W_RESIZE;
+    case CT_NORTHSOUTHRESIZE:           return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE;
+    case CT_EASTWESTRESIZE:             return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE;
+    case CT_NORTHEASTSOUTHWESTRESIZE:   return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NESW_RESIZE;
+    case CT_NORTHWESTSOUTHEASTRESIZE:   return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NWSE_RESIZE;
+    case CT_COLUMNRESIZE:               return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE;
+    case CT_ROWRESIZE:                  return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ROW_RESIZE;
+    case CT_MOVE:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE;
+    case CT_VERTICALTEXT:               return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_VERTICAL_TEXT;
+    case CT_CELL:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CELL;
+    case CT_CONTEXTMENU:                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CONTEXT_MENU;
+    case CT_ALIAS:                      return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALIAS;
+    case CT_PROGRESS:                   return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
+    case CT_NODROP:                     return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+    case CT_COPY:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY;
+    case CT_NOTALLOWED:                 return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NOT_ALLOWED;
+    case CT_ZOOMIN:                     return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_IN;
+    case CT_ZOOMOUT:                    return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_OUT;
+    case CT_GRAB:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
+    case CT_GRABBING:                   return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING;
+    case CT_MIDDLEPANNING:
+    case CT_MIDDLE_PANNING_VERTICAL:
+    case CT_MIDDLE_PANNING_HORIZONTAL:  return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_SCROLL;
+    default:                            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+    }
+}
+
+static void wl_set_cursor(cef_cursor_type_t type) {
+    g_wl.cursor_type = type;
     if (!g_wl.pointer || !g_wl.pointer_serial) return;
-    if (visible) {
+    if (type == CT_NONE) {
+        wl_pointer_set_cursor(g_wl.pointer, g_wl.pointer_serial, nullptr, 0, 0);
+    } else {
         if (!g_wl.cursor_shape_device && g_wl.cursor_shape_manager)
             g_wl.cursor_shape_device = wp_cursor_shape_manager_v1_get_pointer(
                 g_wl.cursor_shape_manager, g_wl.pointer);
         if (g_wl.cursor_shape_device)
             wp_cursor_shape_device_v1_set_shape(g_wl.cursor_shape_device,
-                g_wl.pointer_serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
-    } else {
-        wl_pointer_set_cursor(g_wl.pointer, g_wl.pointer_serial, nullptr, 0, 0);
+                g_wl.pointer_serial, cef_cursor_to_wl_shape(type));
     }
     wl_display_flush(g_wl.display);
 }
@@ -1096,7 +1142,7 @@ Platform make_wayland_platform() {
         .get_scale = wl_get_scale,
         .query_logical_content_size = [](int*, int*) -> bool { return false; },
         .pump = wl_pump,
-        .set_cursor_visible = wl_set_cursor_visible,
+        .set_cursor = wl_set_cursor,
         .set_titlebar_color = wl_set_titlebar_color,
     };
 }
