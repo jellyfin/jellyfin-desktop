@@ -1139,7 +1139,10 @@ static void wl_cleanup_kde_palette() {
         org_kde_kwin_server_decoration_palette_release(g_wl.palette);
         g_wl.palette = nullptr;
     }
-    g_wl.palette_manager = nullptr;
+    if (g_wl.palette_manager) {
+        org_kde_kwin_server_decoration_palette_manager_destroy(g_wl.palette_manager);
+        g_wl.palette_manager = nullptr;
+    }
     if (!g_wl.colors_path.empty()) {
         remove(g_wl.colors_path.c_str());
         g_wl.colors_path.clear();
@@ -1147,6 +1150,7 @@ static void wl_cleanup_kde_palette() {
 }
 
 static void wl_set_titlebar_color(uint8_t r, uint8_t g, uint8_t b) {
+    LOG_DEBUG(LOG_PLATFORM, "set_titlebar_color(%02x,%02x,%02x) palette=%p", r, g, b, (void*)g_wl.palette);
     if (!g_wl.palette) return;
 
     char filename[64];

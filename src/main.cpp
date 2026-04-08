@@ -16,6 +16,7 @@
 #include "event_queue.h"
 #include "wake_event.h"
 #include "settings.h"
+#include "titlebar_color.h"
 
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
@@ -63,6 +64,7 @@ WakeEvent g_shutdown_event;
 
 MediaType g_media_type = MediaType::Unknown;
 static PlaybackState g_playback_state = PlaybackState::Stopped;
+TitlebarColor* g_titlebar_color = nullptr;
 
 void update_idle_inhibit() {
     if (g_playback_state != PlaybackState::Playing) {
@@ -802,6 +804,9 @@ int main(int argc, char* argv[]) {
 #endif
     LOG_INFO(LOG_MAIN, "Main browser loaded");
 
+    TitlebarColor titlebar_color_obj(g_platform, Settings::instance().titlebarThemeColor());
+    g_titlebar_color = &titlebar_color_obj;
+
 #ifdef __APPLE__
     // nothing -- macOS media session not yet implemented in new arch
 #elif defined(_WIN32)
@@ -927,6 +932,7 @@ int main(int argc, char* argv[]) {
     // Stop our threads first (they don't depend on CEF/mpv shutdown order)
 #ifndef __APPLE__
     g_media_session = nullptr;
+    g_titlebar_color = nullptr;
     media_session_thread.stop();
     g_platform.set_idle_inhibit(IdleInhibitLevel::None);
 #endif

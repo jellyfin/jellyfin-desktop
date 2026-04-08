@@ -178,6 +178,7 @@
             // Methods
             load(url, options, streamdata, audioStream, subtitleStream, callback) {
                 console.log('[Media] player.load:', url);
+                window._jmpVideoActive = streamdata?.type === 'video';
                 if (callback) {
                     // Wait for playing signal before calling callback
                     const onPlaying = () => {
@@ -201,6 +202,7 @@
             },
             stop() {
                 console.log('[Media] player.stop');
+                restoreThemeColor();
                 if (window.jmpNative) window.jmpNative.playerStop();
             },
             pause() {
@@ -434,6 +436,11 @@
         }
     }
 
+    function restoreThemeColor() {
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) sendThemeColor(meta.content);
+    }
+
     function observeThemeColorMeta(meta) {
         sendThemeColor(meta.content);
         new MutationObserver(() => sendThemeColor(meta.content))
@@ -473,6 +480,15 @@
 
         style.textContent = css;
         document.head.appendChild(style);
+
+        // Titlebar black during video playback, restore theme color when done
+        window.api.player.playing.connect(() => {
+            if (window._jmpVideoActive) sendThemeColor('#000000');
+        });
+        window.api.player.finished.connect(() => { window._jmpVideoActive = false; restoreThemeColor(); });
+        window.api.player.stopped.connect(() => { window._jmpVideoActive = false; restoreThemeColor(); });
+        window.api.player.canceled.connect(() => { window._jmpVideoActive = false; restoreThemeColor(); });
+        window.api.player.error.connect(() => { window._jmpVideoActive = false; restoreThemeColor(); });
 
         // Watch for mouseIdle class on body and tell native to hide/show cursor.
         // Direct IPC is more reliable than CSS cursor:none → OnCursorChange in OSR mode.

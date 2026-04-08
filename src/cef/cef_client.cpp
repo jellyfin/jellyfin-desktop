@@ -5,6 +5,7 @@
 #include "../player/media_session_thread.h"
 #include "../cjson/cJSON.h"
 #include "include/cef_parser.h"
+#include "../titlebar_color.h"
 #include "include/cef_urlrequest.h"
 #include <cstdio>
 #ifndef _WIN32
@@ -274,17 +275,7 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
         applySettingValue(section, key, value);
     } else if (name == "themeColor") {
         std::string color = args->GetString(0).ToString();
-        // Parse "#RRGGBB" or "#RGB" hex color
-        if (color.size() >= 4 && color[0] == '#') {
-            unsigned r = 0, g = 0, b = 0;
-            if (color.size() == 7) {
-                sscanf(color.c_str() + 1, "%02x%02x%02x", &r, &g, &b);
-            } else if (color.size() == 4) {
-                sscanf(color.c_str() + 1, "%1x%1x%1x", &r, &g, &b);
-                r *= 0x11; g *= 0x11; b *= 0x11;
-            }
-            g_platform.set_titlebar_color(r, g, b);
-        }
+        if (g_titlebar_color) g_titlebar_color->onThemeColor(color);
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);
@@ -424,6 +415,7 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         // wp_alpha_modifier, then hide and close. Same visual effect as the
         // old OpenGL compositor alpha blending.
         g_platform.fade_overlay(0.5f);
+        if (g_titlebar_color) g_titlebar_color->onOverlayDismissed();
         if (browser)
             browser->GetHost()->CloseBrowser(false);
         return true;
