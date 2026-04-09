@@ -377,6 +377,7 @@ if(WIN32)
         src/main.cpp
         src/logging.cpp
         src/single_instance.cpp
+        src/mpv/event.cpp
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
@@ -389,6 +390,7 @@ else()
     set(COMMON_SOURCES
         src/main.cpp
         src/logging.cpp
+        src/mpv/event.cpp
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp

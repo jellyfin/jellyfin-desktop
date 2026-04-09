@@ -12,7 +12,7 @@
 #include "common.h"
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
-#include "mpv_event.h"
+#include "mpv/event.h"
 #include "event_queue.h"
 #include "wake_event.h"
 #include "settings.h"
@@ -40,7 +40,6 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #ifndef _WIN32
 #include <unistd.h>
 #include <signal.h>
@@ -116,54 +115,6 @@ static void signal_handler(int) {
 
 static EventQueue<MpvEvent> g_cef_queue;
 
-static MpvEvent digest_property(mpv_event_property* p) {
-    MpvEvent ev{};
-    if (strcmp(p->name, "osd-dimensions") == 0) {
-        ev.type = MpvEventType::OSD_DIMS;
-        int64_t w = 0, h = 0;
-        g_mpv.GetPropertyInt("osd-width", w);
-        g_mpv.GetPropertyInt("osd-height", h);
-        ev.pw = static_cast<int>(w);
-        ev.ph = static_cast<int>(h);
-        float scale = g_platform.get_scale();
-        ev.lw = static_cast<int>(ev.pw / scale);
-        ev.lh = static_cast<int>(ev.ph / scale);
-#ifdef __APPLE__
-        int qlw = 0, qlh = 0;
-        if (g_platform.query_logical_content_size(&qlw, &qlh) && qlw > 0 && qlh > 0) {
-            ev.lw = qlw; ev.lh = qlh;
-            ev.pw = static_cast<int>(qlw * scale);
-            ev.ph = static_cast<int>(qlh * scale);
-        }
-#endif
-    } else if (strcmp(p->name, "pause") == 0 && p->format == MPV_FORMAT_FLAG) {
-        ev.type = MpvEventType::PAUSE;
-        ev.flag = *static_cast<int*>(p->data) != 0;
-    } else if (strcmp(p->name, "time-pos") == 0 && p->format == MPV_FORMAT_DOUBLE) {
-        ev.type = MpvEventType::TIME_POS;
-        ev.dbl = *static_cast<double*>(p->data);
-    } else if (strcmp(p->name, "duration") == 0 && p->format == MPV_FORMAT_DOUBLE) {
-        ev.type = MpvEventType::DURATION;
-        ev.dbl = *static_cast<double*>(p->data);
-    } else if (strcmp(p->name, "fullscreen") == 0 && p->format == MPV_FORMAT_FLAG) {
-        ev.type = MpvEventType::FULLSCREEN;
-        ev.flag = *static_cast<int*>(p->data) != 0;
-    } else if (strcmp(p->name, "speed") == 0 && p->format == MPV_FORMAT_DOUBLE) {
-        ev.type = MpvEventType::SPEED;
-        ev.dbl = *static_cast<double*>(p->data);
-    } else if (strcmp(p->name, "seeking") == 0 && p->format == MPV_FORMAT_FLAG) {
-        ev.type = MpvEventType::SEEKING;
-        ev.flag = *static_cast<int*>(p->data) != 0;
-    } else if (strcmp(p->name, "display-fps") == 0 && p->format == MPV_FORMAT_DOUBLE) {
-        double fps = *static_cast<double*>(p->data);
-        int hz = (fps > 0) ? static_cast<int>(fps + 0.5) : 60;
-        if (hz != g_display_hz.load(std::memory_order_relaxed)) {
-            g_display_hz.store(hz, std::memory_order_relaxed);
-            ev.type = MpvEventType::DISPLAY_FPS;
-        }
-    }
-    return ev;
-}
 
 static void publish(const MpvEvent& ev) {
     g_cef_queue.try_push(ev);
@@ -208,8 +159,7 @@ static void mpv_digest_thread() {
 
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
             auto* p = static_cast<mpv_event_property*>(ev->data);
-            if (!p->name) continue;
-            MpvEvent me = digest_property(p);
+            MpvEvent me = digest_property(ev->reply_userdata, p);
             if (me.type == MpvEventType::NONE) continue;
             if (me.type == MpvEventType::OSD_DIMS) {
                 if (me.lw <= 0 || me.lh <= 0) continue;
@@ -601,15 +551,7 @@ int main(int argc, char* argv[]) {
     // core_thread races to DispatchQueue.main.sync immediately after init
     // returns — main must enter the GCD pump loop without delay.
     g_mpv.SetWakeupCallback([](void*) {}, nullptr);
-    g_mpv.ObservePropertyNode(1, "video-params");
-    g_mpv.ObservePropertyNode(2, "osd-dimensions");
-    g_mpv.ObservePropertyFlag(3, "fullscreen");
-    g_mpv.ObservePropertyFlag(4, "pause");
-    g_mpv.ObservePropertyDouble(5, "time-pos");
-    g_mpv.ObservePropertyDouble(6, "duration");
-    g_mpv.ObservePropertyDouble(7, "speed");
-    g_mpv.ObservePropertyFlag(8, "seeking");
-    g_mpv.ObservePropertyDouble(9, "display-fps");
+    observe_properties(g_mpv);
 
     // Load file if in player mode (before init so it's in the playlist)
     if (player_mode) {
@@ -644,9 +586,10 @@ int main(int argc, char* argv[]) {
             g_mpv.TerminateDestroy(); return 0;
         }
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            auto* p = static_cast<mpv_event_property*>(ev->data);
-            if (p->name && strcmp(p->name, "video-params") == 0 && p->data) break;
-            if (p->name && strcmp(p->name, "osd-dimensions") == 0 && p->data) break;
+            if ((ev->reply_userdata == MPV_OBSERVE_VIDEO_PARAMS ||
+                 ev->reply_userdata == MPV_OBSERVE_OSD_DIMS) &&
+                static_cast<mpv_event_property*>(ev->data)->data)
+                break;
         }
     }
 #else
@@ -654,10 +597,10 @@ int main(int argc, char* argv[]) {
         mpv_event* ev = g_mpv.WaitEvent(1.0);
         if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
         if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
-        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            auto* p = static_cast<mpv_event_property*>(ev->data);
-            if (p->name && strcmp(p->name, "video-params") == 0 && p->data) break;
-        }
+        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE &&
+            ev->reply_userdata == MPV_OBSERVE_VIDEO_PARAMS &&
+            static_cast<mpv_event_property*>(ev->data)->data)
+            break;
         int64_t ow = 0;
         g_mpv.GetPropertyInt("osd-width", ow);
         if (ow > 0) break;

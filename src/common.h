@@ -5,7 +5,7 @@
 #include "include/cef_base.h"
 
 #include "platform.h"
-#include "mpv_handle.h"
+#include "mpv/handle.h"
 
 class Client;
 class OverlayClient;
