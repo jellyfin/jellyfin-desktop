@@ -24,3 +24,7 @@ extern std::atomic<bool> g_shutting_down;
 extern WakeEvent g_shutdown_event;
 extern MediaSessionThread* g_media_session;
 extern TitlebarColor* g_titlebar_color;
+
+// Display refresh rate (Hz) — updated from mpv's display-fps property observation.
+// Defaults to 60 until mpv reports the actual value.
+extern std::atomic<int> g_display_hz;

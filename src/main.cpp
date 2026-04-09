@@ -65,6 +65,7 @@ WakeEvent g_shutdown_event;
 MediaType g_media_type = MediaType::Unknown;
 static PlaybackState g_playback_state = PlaybackState::Stopped;
 TitlebarColor* g_titlebar_color = nullptr;
+std::atomic<int> g_display_hz{60};
 
 void update_idle_inhibit() {
     if (g_playback_state != PlaybackState::Playing) {
@@ -153,6 +154,13 @@ static MpvEvent digest_property(mpv_event_property* p) {
     } else if (strcmp(p->name, "seeking") == 0 && p->format == MPV_FORMAT_FLAG) {
         ev.type = MpvEventType::SEEKING;
         ev.flag = *static_cast<int*>(p->data) != 0;
+    } else if (strcmp(p->name, "display-fps") == 0 && p->format == MPV_FORMAT_DOUBLE) {
+        double fps = *static_cast<double*>(p->data);
+        int hz = (fps > 0) ? static_cast<int>(fps + 0.5) : 60;
+        if (hz != g_display_hz.load(std::memory_order_relaxed)) {
+            g_display_hz.store(hz, std::memory_order_relaxed);
+            ev.type = MpvEventType::DISPLAY_FPS;
+        }
     }
     return ev;
 }
@@ -332,6 +340,15 @@ static void cef_consumer_thread() {
                     g_platform.overlay_resize(ev.lw, ev.lh, ev.pw, ev.ph);
                 }
                 break;
+            case MpvEventType::DISPLAY_FPS: {
+                int hz = g_display_hz.load(std::memory_order_relaxed);
+                LOG_INFO(LOG_MAIN, "Display refresh rate changed: %d Hz", hz);
+                if (g_client && g_client->browser())
+                    g_client->browser()->GetHost()->SetWindowlessFrameRate(hz);
+                if (g_overlay_client && g_overlay_client->browser())
+                    g_overlay_client->browser()->GetHost()->SetWindowlessFrameRate(hz);
+                break;
+            }
             case MpvEventType::SHUTDOWN:
                 return;
             default:
@@ -592,6 +609,7 @@ int main(int argc, char* argv[]) {
     g_mpv.ObservePropertyDouble(6, "duration");
     g_mpv.ObservePropertyDouble(7, "speed");
     g_mpv.ObservePropertyFlag(8, "seeking");
+    g_mpv.ObservePropertyDouble(9, "display-fps");
 
     // Load file if in player mode (before init so it's in the playlist)
     if (player_mode) {
@@ -749,7 +767,7 @@ int main(int argc, char* argv[]) {
     wi.external_begin_frame_enabled = false;
     CefBrowserSettings bs;
     bs.background_color = 0;
-    bs.windowless_frame_rate = 60;
+    bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
 
     // Main browser
     g_client = new Client();
@@ -793,7 +811,7 @@ int main(int argc, char* argv[]) {
         owi.external_begin_frame_enabled = false;
         CefBrowserSettings obs;
         obs.background_color = 0;
-        obs.windowless_frame_rate = 60;
+        obs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
         CefBrowserHost::CreateBrowser(owi, g_overlay_client, "app://resources/index.html", obs, nullptr, nullptr);
     }
 

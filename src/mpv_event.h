@@ -14,6 +14,7 @@ enum class MpvEventType {
     OSD_DIMS,
     SPEED,
     SEEKING,
+    DISPLAY_FPS,
 };
 
 struct MpvEvent {

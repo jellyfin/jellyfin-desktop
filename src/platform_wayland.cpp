@@ -333,7 +333,7 @@ static void wl_fade_overlay(float delay_sec, float fade_sec,
             std::this_thread::sleep_for(std::chrono::duration<float>(delay_sec));
         if (on_fade_start) on_fade_start();
 
-        constexpr int fps = 60;
+        int fps = g_display_hz.load(std::memory_order_relaxed);
         int total_frames = static_cast<int>(fade_sec * fps);
         if (total_frames < 1) total_frames = 1;
         auto frame_duration = std::chrono::microseconds(1000000 / fps);
