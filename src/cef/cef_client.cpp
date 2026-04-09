@@ -12,6 +12,11 @@
 #include <unistd.h>
 #endif
 
+// Overlay fade timing — delay lets the main browser start loading behind
+// the overlay, then a snappy fade-out hides it.
+constexpr float OVERLAY_FADE_DELAY_SEC    = 1.0f;
+constexpr float OVERLAY_FADE_DURATION_SEC = 0.25f;
+
 extern MediaType g_media_type;
 extern void update_idle_inhibit();
 
@@ -411,13 +416,17 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         // Navigate main browser to the server
         if (g_client && g_client->browser())
             g_client->browser()->GetMainFrame()->LoadURL(url);
-        // Fade entire overlay subsurface from opaque to transparent via
-        // wp_alpha_modifier, then hide and close. Same visual effect as the
-        // old OpenGL compositor alpha blending.
-        g_platform.fade_overlay(0.5f);
-        if (g_titlebar_color) g_titlebar_color->onOverlayDismissed();
-        if (browser)
-            browser->GetHost()->CloseBrowser(false);
+        // Close the browser after the fade so CEF keeps rendering frames
+        // throughout the animation.
+        CefRefPtr<CefBrowser> overlay_browser = browser;
+        g_platform.fade_overlay(OVERLAY_FADE_DELAY_SEC, OVERLAY_FADE_DURATION_SEC,
+            // on_fade_start: delay elapsed, fade animation is about to begin
+            []() { if (g_titlebar_color) g_titlebar_color->onOverlayDismissed(); },
+            // on_complete: fade finished, safe to tear down the browser
+            [overlay_browser]() {
+                if (overlay_browser)
+                    overlay_browser->GetHost()->CloseBrowser(false);
+            });
         return true;
     } else if (name == "saveServerUrl") {
         std::string url = args->GetString(0).ToString();

@@ -56,8 +56,10 @@ struct WlState {
     wl_buffer* overlay_buffer = nullptr;
     wp_viewport* overlay_viewport = nullptr;
     bool overlay_visible = false;
+    bool overlay_placeholder = false;  // true while showing solid-color placeholder
 
     // Shared globals
+    wl_shm* shm = nullptr;
     zwp_linux_dmabuf_v1* dmabuf = nullptr;
     wp_viewporter* viewporter = nullptr;
     wp_alpha_modifier_v1* alpha_modifier = nullptr;
@@ -111,6 +113,26 @@ static void wl_toggle_fullscreen();
 static void wl_init_kde_palette();
 static void wl_cleanup_kde_palette();
 static void wl_set_titlebar_color(uint8_t r, uint8_t g, uint8_t b);
+
+// Create a 1x1 ARGB8888 wl_buffer filled with a solid color.
+// Uses an anonymous shm fd — the buffer is self-contained.
+static wl_buffer* create_solid_color_buffer(uint8_t r, uint8_t g, uint8_t b) {
+    if (!g_wl.shm) return nullptr;
+    const int stride = 4, size = stride;  // 1x1 pixel, 4 bytes
+    int fd = memfd_create("solid-color", MFD_CLOEXEC);
+    if (fd < 0) return nullptr;
+    if (ftruncate(fd, size) < 0) { close(fd); return nullptr; }
+    auto* data = static_cast<uint8_t*>(mmap(nullptr, size, PROT_WRITE, MAP_SHARED, fd, 0));
+    if (data == MAP_FAILED) { close(fd); return nullptr; }
+    // ARGB8888: [B, G, R, A]
+    data[0] = b; data[1] = g; data[2] = r; data[3] = 0xFF;
+    munmap(data, size);
+    auto* pool = wl_shm_create_pool(g_wl.shm, fd, size);
+    auto* buf = wl_shm_pool_create_buffer(pool, 0, 1, 1, stride, WL_SHM_FORMAT_ARGB8888);
+    wl_shm_pool_destroy(pool);
+    close(fd);
+    return buf;
+}
 
 // Helper: get the active browser for input routing
 static CefRefPtr<CefBrowser> active_browser() {
@@ -220,6 +242,7 @@ static void wl_overlay_present(const CefAcceleratedPaintInfo& info) {
 
     if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
     g_wl.overlay_buffer = buf;
+    g_wl.overlay_placeholder = false;
     if (g_wl.overlay_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
@@ -240,9 +263,12 @@ static void wl_overlay_present(const CefAcceleratedPaintInfo& info) {
 static void wl_overlay_resize(int lw, int lh, int pw, int ph) {
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
     if (!g_wl.overlay_surface || !g_wl.overlay_viewport) return;
-    wp_viewport_set_source(g_wl.overlay_viewport,
-        wl_fixed_from_int(0), wl_fixed_from_int(0),
-        wl_fixed_from_int(pw), wl_fixed_from_int(ph));
+    // Don't update source while placeholder is active — it's 1x1, not pw×ph.
+    // Destination is safe to update either way.
+    if (!g_wl.overlay_placeholder)
+        wp_viewport_set_source(g_wl.overlay_viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(pw), wl_fixed_from_int(ph));
     wp_viewport_set_destination(g_wl.overlay_viewport, lw, lh);
     wl_surface_commit(g_wl.overlay_surface);
     wl_display_flush(g_wl.display);
@@ -253,7 +279,25 @@ static void wl_set_overlay_visible(bool visible) {
     if (g_wl.overlay_visible == visible) return;
     g_wl.overlay_visible = visible;
     if (!g_wl.overlay_surface) return;
-    if (!visible) {
+    if (visible) {
+        // Attach a solid #101010 placeholder so the user sees the correct
+        // background color immediately, before CEF renders its first frame.
+        auto* buf = create_solid_color_buffer(0x10, 0x10, 0x10);
+        if (buf) {
+            if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
+            g_wl.overlay_buffer = buf;
+            g_wl.overlay_placeholder = true;
+            // Source covers the whole 1x1 buffer; destination set by overlay_resize.
+            if (g_wl.overlay_viewport)
+                wp_viewport_set_source(g_wl.overlay_viewport,
+                    wl_fixed_from_int(0), wl_fixed_from_int(0),
+                    wl_fixed_from_int(1), wl_fixed_from_int(1));
+            wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
+            wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, 1, 1);
+            wl_surface_commit(g_wl.overlay_surface);
+            wl_display_flush(g_wl.display);
+        }
+    } else {
         // Reset alpha to fully opaque for next time
         if (g_wl.overlay_alpha) {
             wp_alpha_modifier_surface_v1_set_multiplier(g_wl.overlay_alpha, UINT32_MAX);
@@ -265,21 +309,32 @@ static void wl_set_overlay_visible(bool visible) {
             wl_buffer_destroy(g_wl.overlay_buffer);
             g_wl.overlay_buffer = nullptr;
         }
+        g_wl.overlay_placeholder = false;
     }
 }
 
-// Animate overlay alpha from opaque to transparent over duration_sec, then hide.
-// Runs on a detached thread — this is a finite UI animation, not a poll loop.
-static void wl_fade_overlay(float duration_sec) {
+// Wait delay_sec, then animate overlay alpha from opaque to transparent over
+// fade_sec, then hide.  Runs on a detached thread — finite UI animation.
+static void wl_fade_overlay(float delay_sec, float fade_sec,
+                            std::function<void()> on_fade_start,
+                            std::function<void()> on_complete) {
     if (!g_wl.overlay_alpha || !g_wl.overlay_surface) {
         // No alpha modifier support — just hide immediately
         wl_set_overlay_visible(false);
+        if (on_fade_start) on_fade_start();
+        if (on_complete) on_complete();
         return;
     }
 
-    std::thread([duration_sec]() {
+    std::thread([delay_sec, fade_sec,
+                 on_fade_start = std::move(on_fade_start),
+                 on_complete = std::move(on_complete)]() {
+        if (delay_sec > 0)
+            std::this_thread::sleep_for(std::chrono::duration<float>(delay_sec));
+        if (on_fade_start) on_fade_start();
+
         constexpr int fps = 60;
-        int total_frames = static_cast<int>(duration_sec * fps);
+        int total_frames = static_cast<int>(fade_sec * fps);
         if (total_frames < 1) total_frames = 1;
         auto frame_duration = std::chrono::microseconds(1000000 / fps);
 
@@ -298,6 +353,7 @@ static void wl_fade_overlay(float duration_sec) {
         }
 
         wl_set_overlay_visible(false);
+        if (on_complete) on_complete();
     }).detach();
 }
 
@@ -494,6 +550,8 @@ static const wl_seat_listener s_seat = { .capabilities = seat_caps, .name = seat
 static void reg_global(void*, wl_registry* reg, uint32_t name, const char* iface, uint32_t ver) {
     if (strcmp(iface, wl_compositor_interface.name) == 0)
         g_wl.compositor = static_cast<wl_compositor*>(wl_registry_bind(reg, name, &wl_compositor_interface, 4));
+    else if (strcmp(iface, wl_shm_interface.name) == 0)
+        g_wl.shm = static_cast<wl_shm*>(wl_registry_bind(reg, name, &wl_shm_interface, 1));
     else if (strcmp(iface, wl_subcompositor_interface.name) == 0)
         g_wl.subcompositor = static_cast<wl_subcompositor*>(wl_registry_bind(reg, name, &wl_subcompositor_interface, 1));
     else if (strcmp(iface, zwp_linux_dmabuf_v1_interface.name) == 0)

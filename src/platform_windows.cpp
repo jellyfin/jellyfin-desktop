@@ -339,18 +339,28 @@ static void win_set_overlay_visible(bool visible) {
     }
 }
 
-// Animate overlay opacity from 1.0 to 0.0 over duration_sec, then hide.
-// Runs on a detached thread -- finite UI animation, not a poll loop.
-static void win_fade_overlay(float duration_sec) {
+// Wait delay_sec, then animate overlay opacity from 1.0 to 0.0 over fade_sec,
+// then hide.  Runs on a detached thread -- finite UI animation.
+static void win_fade_overlay(float delay_sec, float fade_sec,
+                             std::function<void()> on_fade_start,
+                             std::function<void()> on_complete) {
     if (!g_win.dcomp_overlay_visual) {
         pop_input();
         win_set_overlay_visible(false);
+        if (on_fade_start) on_fade_start();
+        if (on_complete) on_complete();
         return;
     }
 
-    std::thread([duration_sec]() {
+    std::thread([delay_sec, fade_sec,
+                 on_fade_start = std::move(on_fade_start),
+                 on_complete = std::move(on_complete)]() {
+        if (delay_sec > 0)
+            std::this_thread::sleep_for(std::chrono::duration<float>(delay_sec));
+        if (on_fade_start) on_fade_start();
+
         constexpr int fps = 60;
-        int total_frames = static_cast<int>(duration_sec * fps);
+        int total_frames = static_cast<int>(fade_sec * fps);
         if (total_frames < 1) total_frames = 1;
         auto frame_duration = std::chrono::microseconds(1000000 / fps);
 
@@ -378,6 +388,7 @@ static void win_fade_overlay(float duration_sec) {
                 g_win.dcomp_device->Commit();
             }
         }
+        if (on_complete) on_complete();
     }).detach();
 }
 

@@ -494,22 +494,40 @@ static void macos_set_overlay_visible(bool visible) {
     [g_overlay_view setHidden:!visible];
 }
 
-static void macos_fade_overlay(float duration_sec) {
-    if (!g_overlay_view || !g_overlay_view.layer) return;
-    CABasicAnimation* fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
-    fade.fromValue = @1.0;
-    fade.toValue = @0.0;
-    fade.duration = duration_sec;
-    fade.removedOnCompletion = NO;
-    fade.fillMode = kCAFillModeForwards;
-    [CATransaction begin];
-    [CATransaction setCompletionBlock:^{
-        macos_set_overlay_visible(false);
-        [g_overlay_view.layer removeAllAnimations];
-        g_overlay_view.layer.opacity = 1.0;
-    }];
-    [g_overlay_view.layer addAnimation:fade forKey:@"fadeOut"];
-    [CATransaction commit];
+static void macos_fade_overlay(float delay_sec, float fade_sec,
+                               std::function<void()> on_fade_start,
+                               std::function<void()> on_complete) {
+    if (!g_overlay_view || !g_overlay_view.layer) {
+        if (on_fade_start) on_fade_start();
+        if (on_complete) on_complete();
+        return;
+    }
+    // Copy into block-friendly shared_ptrs so the callbacks survive into the block chain.
+    auto start_cb = std::make_shared<std::function<void()>>(std::move(on_fade_start));
+    auto done_cb = std::make_shared<std::function<void()>>(std::move(on_complete));
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay_sec * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (*start_cb) (*start_cb)();
+        if (!g_overlay_view || !g_overlay_view.layer) {
+            if (*done_cb) (*done_cb)();
+            return;
+        }
+        CABasicAnimation* fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
+        fade.fromValue = @1.0;
+        fade.toValue = @0.0;
+        fade.duration = fade_sec;
+        fade.removedOnCompletion = NO;
+        fade.fillMode = kCAFillModeForwards;
+        [CATransaction begin];
+        [CATransaction setCompletionBlock:^{
+            macos_set_overlay_visible(false);
+            [g_overlay_view.layer removeAllAnimations];
+            g_overlay_view.layer.opacity = 1.0;
+            if (*done_cb) (*done_cb)();
+        }];
+        [g_overlay_view.layer addAnimation:fade forKey:@"fadeOut"];
+        [CATransaction commit];
+    });
 }
 
 static void macos_set_fullscreen(bool fullscreen) {

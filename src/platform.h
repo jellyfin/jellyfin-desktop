@@ -2,6 +2,7 @@
 
 #include "include/cef_render_handler.h"
 #include "include/internal/cef_types.h"
+#include <functional>
 #include <mpv/client.h>
 
 enum class IdleInhibitLevel { None, System, Display };
@@ -21,7 +22,12 @@ struct Platform {
     void (*overlay_present_software)(const void* buffer, int w, int h);
     void (*overlay_resize)(int lw, int lh, int pw, int ph);
     void (*set_overlay_visible)(bool visible);
-    void (*fade_overlay)(float duration_sec);  // fade overlay from opaque to transparent, then hide
+    // Delay, then fade overlay from opaque to transparent, then hide.
+    // on_fade_start is called after the delay, just before the fade begins.
+    // on_complete is called after the fade finishes.  Both may fire on any thread.
+    void (*fade_overlay)(float delay_sec, float fade_sec,
+                         std::function<void()> on_fade_start,
+                         std::function<void()> on_complete);
 
     // Fullscreen
     void (*set_fullscreen)(bool fullscreen);
