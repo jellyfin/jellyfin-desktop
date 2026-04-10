@@ -928,15 +928,14 @@ int main(int argc, char* argv[]) {
             geom.maximized = true;
             Settings::instance().setWindowGeometry(geom);
         } else {
-            // Normal windowed: save current logical size.
+            // Normal windowed: save current size.
             int64_t pw = 0, ph = 0;
             g_mpv.GetOsdWidth(pw);
             g_mpv.GetOsdHeight(ph);
             if (pw > 0 && ph > 0) {
-                float scale = g_platform.get_scale();
                 Settings::WindowGeometry geom;
-                geom.width = static_cast<int>(pw / scale);
-                geom.height = static_cast<int>(ph / scale);
+                geom.width = static_cast<int>(pw);
+                geom.height = static_cast<int>(ph);
                 geom.maximized = false;
                 Settings::instance().setWindowGeometry(geom);
             }
