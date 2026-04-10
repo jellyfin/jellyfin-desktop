@@ -86,6 +86,7 @@ struct WlState {
     wl_keyboard* keyboard = nullptr;
     double ptr_x = 0, ptr_y = 0;
     uint32_t pointer_serial = 0;
+    uint32_t mouse_button_modifiers = 0;  // EVENTFLAG_*_MOUSE_BUTTON
     cef_cursor_type_t cursor_type = CT_POINTER;
     xkb_context* xkb_ctx = nullptr;
     xkb_keymap* xkb_kmap = nullptr;
@@ -391,6 +392,11 @@ static int keysym_to_vkey(xkb_keysym_t sym) {
     }
 }
 
+// Combined keyboard + mouse button modifiers for CEF events
+static uint32_t cef_modifiers() {
+    return g_wl.modifiers | g_wl.mouse_button_modifiers;
+}
+
 // Pointer
 static void ptr_enter(void*, wl_pointer*, uint32_t serial, wl_surface*, wl_fixed_t x, wl_fixed_t y) {
     g_wl.pointer_serial = serial;
@@ -399,33 +405,38 @@ static void ptr_enter(void*, wl_pointer*, uint32_t serial, wl_surface*, wl_fixed
     g_wl.ptr_x = wl_fixed_to_double(x); g_wl.ptr_y = wl_fixed_to_double(y);
     auto b = active_browser();
     if (!b) return;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = g_wl.modifiers;
+    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
     b->GetHost()->SendMouseMoveEvent(e, false);
 }
 static void ptr_leave(void*, wl_pointer*, uint32_t, wl_surface*) {
     auto b = active_browser();
     if (!b) return;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = g_wl.modifiers;
+    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
     b->GetHost()->SendMouseMoveEvent(e, true);
 }
 static void ptr_motion(void*, wl_pointer*, uint32_t, wl_fixed_t x, wl_fixed_t y) {
     g_wl.ptr_x = wl_fixed_to_double(x); g_wl.ptr_y = wl_fixed_to_double(y);
     auto b = active_browser();
     if (!b) return;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = g_wl.modifiers;
+    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
     b->GetHost()->SendMouseMoveEvent(e, false);
 }
 static void ptr_button(void*, wl_pointer*, uint32_t, uint32_t, uint32_t button, uint32_t state) {
     auto b = active_browser();
     if (!b) return;
     cef_mouse_button_type_t btn;
+    uint32_t flag;
     switch (button) {
-    case BTN_LEFT: btn = MBT_LEFT; break;
-    case BTN_RIGHT: btn = MBT_RIGHT; break;
-    case BTN_MIDDLE: btn = MBT_MIDDLE; break;
+    case BTN_LEFT:   btn = MBT_LEFT;   flag = EVENTFLAG_LEFT_MOUSE_BUTTON;   break;
+    case BTN_RIGHT:  btn = MBT_RIGHT;  flag = EVENTFLAG_RIGHT_MOUSE_BUTTON;  break;
+    case BTN_MIDDLE: btn = MBT_MIDDLE; flag = EVENTFLAG_MIDDLE_MOUSE_BUTTON; break;
     default: return;
     }
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = g_wl.modifiers;
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+        g_wl.mouse_button_modifiers |= flag;
+    else
+        g_wl.mouse_button_modifiers &= ~flag;
+    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
     b->GetHost()->SendMouseClickEvent(e, btn, state == WL_POINTER_BUTTON_STATE_RELEASED, 1);
 }
 static void ptr_axis(void*, wl_pointer*, uint32_t, uint32_t axis, wl_fixed_t value) {
