@@ -6,6 +6,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
+#include "include/cef_v8.h"
 #include <cmath>
 
 #ifdef __APPLE__
@@ -113,13 +114,25 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     if (pos != std::string::npos)
         shim_str.replace(pos, settings_placeholder.length(), Settings::instance().cliSettingsJson());
 
+    // Append player plugins to shim and execute all JS in one call
+    shim_str += '\n';
+    shim_str += embedded_js.at("mpv-player-core.js");
+    shim_str += '\n';
+    shim_str += embedded_js.at("mpv-video-player.js");
+    shim_str += '\n';
+    shim_str += embedded_js.at("mpv-audio-player.js");
+    shim_str += '\n';
+    shim_str += embedded_js.at("input-plugin.js");
     frame->ExecuteJavaScript(shim_str, frame->GetURL(), 0);
+}
 
-    // Inject player plugins
-    frame->ExecuteJavaScript(embedded_js.at("mpv-player-core.js"), frame->GetURL(), 0);
-    frame->ExecuteJavaScript(embedded_js.at("mpv-video-player.js"), frame->GetURL(), 0);
-    frame->ExecuteJavaScript(embedded_js.at("mpv-audio-player.js"), frame->GetURL(), 0);
-    frame->ExecuteJavaScript(embedded_js.at("input-plugin.js"), frame->GetURL(), 0);
+static void callJsGlobal(CefRefPtr<CefFrame> frame, const char* fn_name,
+                         const CefV8ValueList& v8args) {
+    CefRefPtr<CefV8Context> ctx = frame->GetV8Context();
+    if (!ctx || !ctx->Enter()) return;
+    CefRefPtr<CefV8Value> fn = ctx->GetGlobal()->GetValue(fn_name);
+    if (fn && fn->IsFunction()) fn->ExecuteFunction(nullptr, v8args);
+    ctx->Exit();
 }
 
 bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
@@ -127,28 +140,22 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                    CefProcessId source_process,
                                    CefRefPtr<CefProcessMessage> message) {
     std::string name = message->GetName().ToString();
+    CefRefPtr<CefListValue> args = message->GetArgumentList();
 
     if (name == "serverConnectivityResult") {
-        CefRefPtr<CefListValue> args = message->GetArgumentList();
-        std::string url = args->GetString(0).ToString();
-        bool success = args->GetBool(1);
-        std::string resolved_url = args->GetString(2).ToString();
-        std::string js = "if (window._onServerConnectivityResult) {"
-                        "  window._onServerConnectivityResult('" + url + "', " +
-                        (success ? "true" : "false") + ", '" + resolved_url + "');"
-                        "}";
-        frame->ExecuteJavaScript(js, frame->GetURL(), 0);
+        CefV8ValueList v8args;
+        v8args.push_back(CefV8Value::CreateString(args->GetString(0)));
+        v8args.push_back(CefV8Value::CreateBool(args->GetBool(1)));
+        v8args.push_back(CefV8Value::CreateString(args->GetString(2)));
+        callJsGlobal(frame, "_onServerConnectivityResult", v8args);
         return true;
     }
 
     if (name == "clipboardResult") {
-        CefRefPtr<CefListValue> args = message->GetArgumentList();
-        std::string mimeType = args->GetString(0).ToString();
-        std::string base64Data = args->GetString(1).ToString();
-        std::string js = "if (window._onClipboardResult) {"
-                        "  window._onClipboardResult('" + mimeType + "', '" + base64Data + "');"
-                        "}";
-        frame->ExecuteJavaScript(js, frame->GetURL(), 0);
+        CefV8ValueList v8args;
+        v8args.push_back(CefV8Value::CreateString(args->GetString(0)));
+        v8args.push_back(CefV8Value::CreateString(args->GetString(1)));
+        callJsGlobal(frame, "_onClipboardResult", v8args);
         return true;
     }
 
