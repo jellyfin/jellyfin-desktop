@@ -478,6 +478,14 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- mpv setup ---
+    std::string mpv_home = Settings::getConfigDir() + "/mpv";
+    std::filesystem::create_directories(mpv_home);
+#ifdef _WIN32
+    SetEnvironmentVariableA("MPV_HOME", mpv_home.c_str());
+#else
+    setenv("MPV_HOME", mpv_home.c_str(), 1);
+#endif
+
     g_mpv = MpvHandle::Create();
     if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
 
