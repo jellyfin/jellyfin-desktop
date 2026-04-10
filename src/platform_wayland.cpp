@@ -88,6 +88,11 @@ struct WlState {
     uint32_t pointer_serial = 0;
     uint32_t mouse_button_modifiers = 0;  // EVENTFLAG_*_MOUSE_BUTTON
     cef_cursor_type_t cursor_type = CT_POINTER;
+
+    // Scroll accumulation per pointer frame
+    double scroll_dx = 0, scroll_dy = 0;  // from wl_pointer.axis (surface pixels)
+    int scroll_v120_x = 0, scroll_v120_y = 0;  // from wl_pointer.axis_value120
+    bool scroll_have_v120 = false;  // true if axis_value120 was received this frame
     xkb_context* xkb_ctx = nullptr;
     xkb_keymap* xkb_kmap = nullptr;
     xkb_state* xkb_st = nullptr;
@@ -440,18 +445,51 @@ static void ptr_button(void*, wl_pointer*, uint32_t, uint32_t, uint32_t button, 
     b->GetHost()->SendMouseClickEvent(e, btn, state == WL_POINTER_BUTTON_STATE_RELEASED, 1);
 }
 static void ptr_axis(void*, wl_pointer*, uint32_t, uint32_t axis, wl_fixed_t value) {
+    double v = wl_fixed_to_double(value);
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) g_wl.scroll_dy += v;
+    else g_wl.scroll_dx += v;
+}
+static void ptr_frame(void*, wl_pointer*) {
+    int dx = 0, dy = 0;
+    if (g_wl.scroll_have_v120) {
+        // axis_value120: 120 units = one notch, matches CEF convention directly
+        dx = -g_wl.scroll_v120_x;
+        dy = -g_wl.scroll_v120_y;
+        g_wl.scroll_dx = g_wl.scroll_dy = 0;  // discrete event; discard any smooth state
+    } else if (g_wl.scroll_dx != 0.0 || g_wl.scroll_dy != 0.0) {
+        // Continuous/smooth scroll (touchpad): surface-local pixels, scale to CEF units.
+        // ~10px per notch typical, CEF expects 120 per notch → multiply by 12.
+        double scaled_x = -g_wl.scroll_dx * 12.0;
+        double scaled_y = -g_wl.scroll_dy * 12.0;
+        dx = (int)scaled_x;
+        dy = (int)scaled_y;
+        // Keep fractional remainder so sub-pixel deltas accumulate across frames
+        // instead of being silently dropped by integer truncation.
+        g_wl.scroll_dx = -(scaled_x - dx) / 12.0;
+        g_wl.scroll_dy = -(scaled_y - dy) / 12.0;
+    } else {
+        g_wl.scroll_dx = g_wl.scroll_dy = 0;
+    }
+    g_wl.scroll_v120_x = g_wl.scroll_v120_y = 0;
+    g_wl.scroll_have_v120 = false;
+    if (dx == 0 && dy == 0) return;
     auto b = active_browser();
     if (!b) return;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = g_wl.modifiers;
-    int d = -wl_fixed_to_int(value) * 3;
-    if (axis == 0) b->GetHost()->SendMouseWheelEvent(e, 0, d);
-    else b->GetHost()->SendMouseWheelEvent(e, d, 0);
+    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
+    b->GetHost()->SendMouseWheelEvent(e, dx, dy);
 }
-static void ptr_frame(void*, wl_pointer*) {}
 static void ptr_axis_source(void*, wl_pointer*, uint32_t) {}
-static void ptr_axis_stop(void*, wl_pointer*, uint32_t, uint32_t) {}
+static void ptr_axis_stop(void*, wl_pointer*, uint32_t, uint32_t axis) {
+    // Finger lifted from touchpad — clear fractional remainder to prevent ghost scroll.
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) g_wl.scroll_dy = 0;
+    else g_wl.scroll_dx = 0;
+}
 static void ptr_axis_discrete(void*, wl_pointer*, uint32_t, int32_t) {}
-static void ptr_axis_value120(void*, wl_pointer*, uint32_t, int32_t) {}
+static void ptr_axis_value120(void*, wl_pointer*, uint32_t axis, int32_t v120) {
+    g_wl.scroll_have_v120 = true;
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) g_wl.scroll_v120_y += v120;
+    else g_wl.scroll_v120_x += v120;
+}
 static void ptr_axis_relative(void*, wl_pointer*, uint32_t, uint32_t) {}
 
 static const wl_pointer_listener s_ptr = {
