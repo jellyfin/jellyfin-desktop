@@ -281,41 +281,57 @@ static void wl_overlay_resize(int lw, int lh, int pw, int ph) {
 }
 
 static void wl_set_overlay_visible(bool visible) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (g_wl.overlay_visible == visible) return;
-    g_wl.overlay_visible = visible;
-    if (!g_wl.overlay_surface) return;
-    if (visible) {
-        // Attach a solid #101010 placeholder so the user sees the correct
-        // background color immediately, before CEF renders its first frame.
-        auto* buf = create_solid_color_buffer(0x10, 0x10, 0x10);
-        if (buf) {
-            if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
-            g_wl.overlay_buffer = buf;
-            g_wl.overlay_placeholder = true;
-            // Source covers the whole 1x1 buffer; destination set by overlay_resize.
-            if (g_wl.overlay_viewport)
-                wp_viewport_set_source(g_wl.overlay_viewport,
-                    wl_fixed_from_int(0), wl_fixed_from_int(0),
-                    wl_fixed_from_int(1), wl_fixed_from_int(1));
-            wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
-            wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, 1, 1);
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (g_wl.overlay_visible == visible) return;
+        g_wl.overlay_visible = visible;
+        if (!g_wl.overlay_surface) return;
+        if (visible) {
+            // Attach a solid #101010 placeholder so the user sees the correct
+            // background color immediately, before CEF renders its first frame.
+            auto* buf = create_solid_color_buffer(0x10, 0x10, 0x10);
+            if (buf) {
+                if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
+                g_wl.overlay_buffer = buf;
+                g_wl.overlay_placeholder = true;
+                // Source covers the whole 1x1 buffer; destination set by overlay_resize.
+                if (g_wl.overlay_viewport)
+                    wp_viewport_set_source(g_wl.overlay_viewport,
+                        wl_fixed_from_int(0), wl_fixed_from_int(0),
+                        wl_fixed_from_int(1), wl_fixed_from_int(1));
+                wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
+                wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, 1, 1);
+                wl_surface_commit(g_wl.overlay_surface);
+                wl_display_flush(g_wl.display);
+            }
+        } else {
+            // Reset alpha to fully opaque for next time
+            if (g_wl.overlay_alpha) {
+                wp_alpha_modifier_surface_v1_set_multiplier(g_wl.overlay_alpha, UINT32_MAX);
+            }
+            wl_surface_attach(g_wl.overlay_surface, nullptr, 0, 0);
             wl_surface_commit(g_wl.overlay_surface);
             wl_display_flush(g_wl.display);
+            if (g_wl.overlay_buffer) {
+                wl_buffer_destroy(g_wl.overlay_buffer);
+                g_wl.overlay_buffer = nullptr;
+            }
+            g_wl.overlay_placeholder = false;
         }
+    }
+
+    // Route keyboard focus to the newly-active browser. Without this, CEF
+    // thinks the just-activated browser has no window focus, so text inputs
+    // don't show a caret and focus rings don't render. Matches the "active
+    // tab" semantics: only one browser at a time holds focus.
+    auto main = g_client ? g_client->browser() : nullptr;
+    auto ovl  = g_overlay_client ? g_overlay_client->browser() : nullptr;
+    if (visible) {
+        if (main) main->GetHost()->SetFocus(false);
+        if (ovl)  ovl->GetHost()->SetFocus(true);
     } else {
-        // Reset alpha to fully opaque for next time
-        if (g_wl.overlay_alpha) {
-            wp_alpha_modifier_surface_v1_set_multiplier(g_wl.overlay_alpha, UINT32_MAX);
-        }
-        wl_surface_attach(g_wl.overlay_surface, nullptr, 0, 0);
-        wl_surface_commit(g_wl.overlay_surface);
-        wl_display_flush(g_wl.display);
-        if (g_wl.overlay_buffer) {
-            wl_buffer_destroy(g_wl.overlay_buffer);
-            g_wl.overlay_buffer = nullptr;
-        }
-        g_wl.overlay_placeholder = false;
+        if (ovl)  ovl->GetHost()->SetFocus(false);
+        if (main) main->GetHost()->SetFocus(true);
     }
 }
 
