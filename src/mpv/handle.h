@@ -114,7 +114,8 @@ public:
     };
 
     void LoadFile(const std::string& path, const LoadOptions& opts) {
-        std::string optsStr = "start=" + std::to_string(opts.startSecs);
+        std::string optsStr = "start=" + std::to_string(opts.startSecs)
+                            + ",pause=no";
         if (opts.audioTrack)
             optsStr += ",aid=" + std::to_string(*opts.audioTrack);
         if (opts.subTrack)
