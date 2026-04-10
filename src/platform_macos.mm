@@ -1,10 +1,11 @@
 // platform_macos.mm — macOS platform layer.
 // Two CAMetalLayers composite CEF IOSurfaces (main + overlay) onto mpv's window.
-// CefInputView routes input to the active browser.
+// Input is owned by src/input/input_macos.mm.
 
 #include "platform.h"
 #include "common.h"
 #include "cef/cef_client.h"
+#include "input/input_macos.h"
 
 #include "include/cef_application_mac.h"
 
@@ -18,7 +19,6 @@
 // Forward declarations
 // =====================================================================
 
-@class CefInputView;
 static void macos_pump();
 
 // =====================================================================
@@ -84,8 +84,8 @@ static id<MTLTexture> g_overlay_texture = nil;
 static IOSurfaceRef g_overlay_cached_surface = nullptr;
 static bool g_overlay_visible = false;
 
-// Input overlay
-static CefInputView* g_input_view = nil;
+// Input NSView (owned by input::macos)
+static NSView* g_input_view = nil;
 
 // Window + transition state
 static NSWindow* g_window = nullptr;
@@ -119,196 +119,6 @@ fragment float4 fragmentShader(VertexOut in [[stage_in]],
     return color;
 }
 )";
-
-// =====================================================================
-// CefInputView — transparent NSView that captures input for CEF
-// =====================================================================
-
-static uint32_t ns_to_cef_modifiers(NSEventModifierFlags flags) {
-    uint32_t m = 0;
-    if (flags & NSEventModifierFlagShift)   m |= EVENTFLAG_SHIFT_DOWN;
-    if (flags & NSEventModifierFlagControl) m |= EVENTFLAG_CONTROL_DOWN;
-    if (flags & NSEventModifierFlagOption)  m |= EVENTFLAG_ALT_DOWN;
-    if (flags & NSEventModifierFlagCommand) m |= EVENTFLAG_COMMAND_DOWN;
-    return m;
-}
-
-@interface CefInputView : NSView
-@property (nonatomic) NSTrackingArea* trackingArea;
-@end
-
-@implementation CefInputView
-
-- (BOOL)isFlipped { return YES; }
-- (BOOL)acceptsFirstResponder { return YES; }
-- (BOOL)isOpaque { return NO; }
-
-- (void)updateTrackingAreas {
-    [super updateTrackingAreas];
-    if (_trackingArea) [self removeTrackingArea:_trackingArea];
-    _trackingArea = [[NSTrackingArea alloc]
-        initWithRect:self.bounds
-        options:(NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
-                 NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect)
-        owner:self
-        userInfo:nil];
-    [self addTrackingArea:_trackingArea];
-}
-
-- (NSPoint)mouseLocInView:(NSEvent*)event {
-    return [self convertPoint:[event locationInWindow] fromView:nil];
-}
-
-- (CefRefPtr<CefBrowserHost>)browserHost {
-    if (g_overlay_visible && g_overlay_client && g_overlay_client->browser())
-        return g_overlay_client->browser()->GetHost();
-    if (g_client && g_client->browser())
-        return g_client->browser()->GetHost();
-    return nullptr;
-}
-
-// --- Mouse events ---
-- (void)mouseDown:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseClickEvent(e, MBT_LEFT, false, (int)[event clickCount]);
-}
-- (void)mouseUp:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseClickEvent(e, MBT_LEFT, true, (int)[event clickCount]);
-}
-- (void)rightMouseDown:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseClickEvent(e, MBT_RIGHT, false, (int)[event clickCount]);
-}
-- (void)rightMouseUp:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseClickEvent(e, MBT_RIGHT, true, (int)[event clickCount]);
-}
-- (void)otherMouseDown:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseClickEvent(e, MBT_MIDDLE, false, (int)[event clickCount]);
-}
-- (void)otherMouseUp:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseClickEvent(e, MBT_MIDDLE, true, (int)[event clickCount]);
-}
-- (void)mouseMoved:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseMoveEvent(e, false);
-}
-- (void)mouseDragged:(NSEvent*)event { [self mouseMoved:event]; }
-- (void)rightMouseDragged:(NSEvent*)event { [self mouseMoved:event]; }
-- (void)otherMouseDragged:(NSEvent*)event { [self mouseMoved:event]; }
-- (void)mouseEntered:(NSEvent*)event { [self mouseMoved:event]; }
-- (void)mouseExited:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseMoveEvent(e, true);
-}
-- (void)scrollWheel:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    NSPoint loc = [self mouseLocInView:event];
-    int dx = (int)([event scrollingDeltaX] * 10);
-    int dy = (int)([event scrollingDeltaY] * 10);
-    CefMouseEvent e; e.x = (int)loc.x; e.y = (int)loc.y;
-    e.modifiers = ns_to_cef_modifiers([event modifierFlags]);
-    host->SendMouseWheelEvent(e, dx, dy);
-}
-
-// --- Keyboard events ---
-- (void)keyDown:(NSEvent*)event {
-    unsigned short kc = [event keyCode];
-    // Fullscreen: f (0x03) or F11 (0x67)
-    if (kc == 0x03 || kc == 0x67) {
-        g_platform.begin_transition();
-        g_mpv.ToggleFullscreen();
-        return;
-    }
-    // Quit: q (0x0C) or Escape (0x35)
-    if (kc == 0x0C || kc == 0x35) {
-        initiate_shutdown();
-        return;
-    }
-    auto host = [self browserHost]; if (!host) return;
-    NSString* chars = [event characters];
-    NSString* charsNoMod = [event charactersIgnoringModifiers];
-    uint32_t mods = ns_to_cef_modifiers([event modifierFlags]);
-    int wkc = (charsNoMod.length > 0) ? [charsNoMod characterAtIndex:0] : 0;
-    int character = (chars.length > 0) ? [chars characterAtIndex:0] : 0;
-    CefKeyEvent ev;
-    ev.native_key_code = kc;
-    ev.modifiers = mods;
-    ev.is_system_key = false;
-    ev.windows_key_code = wkc;
-    ev.type = KEYEVENT_RAWKEYDOWN;
-    host->SendKeyEvent(ev);
-    if (character > 0) {
-        ev.type = KEYEVENT_CHAR;
-        ev.character = character;
-        ev.windows_key_code = character;
-        host->SendKeyEvent(ev);
-    }
-}
-- (void)keyUp:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    unsigned short kc = [event keyCode];
-    NSString* charsNoMod = [event charactersIgnoringModifiers];
-    uint32_t mods = ns_to_cef_modifiers([event modifierFlags]);
-    int wkc = (charsNoMod.length > 0) ? [charsNoMod characterAtIndex:0] : 0;
-    CefKeyEvent ev;
-    ev.native_key_code = kc;
-    ev.modifiers = mods;
-    ev.is_system_key = false;
-    ev.windows_key_code = wkc;
-    ev.type = KEYEVENT_KEYUP;
-    host->SendKeyEvent(ev);
-}
-- (void)flagsChanged:(NSEvent*)event {
-    auto host = [self browserHost]; if (!host) return;
-    unsigned short kc = [event keyCode];
-    uint32_t mods = ns_to_cef_modifiers([event modifierFlags]);
-    NSEventModifierFlags flag = 0;
-    switch (kc) {
-        case 56: case 60: flag = NSEventModifierFlagShift; break;
-        case 59: case 62: flag = NSEventModifierFlagControl; break;
-        case 58: case 61: flag = NSEventModifierFlagOption; break;
-        case 54: case 55: flag = NSEventModifierFlagCommand; break;
-        case 57: flag = NSEventModifierFlagCapsLock; break;
-    }
-    bool pressed = ([event modifierFlags] & flag) != 0;
-    CefKeyEvent ev;
-    ev.native_key_code = kc;
-    ev.modifiers = mods;
-    ev.is_system_key = false;
-    ev.windows_key_code = 0;
-    ev.type = pressed ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
-    host->SendKeyEvent(ev);
-}
-
-@end
 
 // =====================================================================
 // Metal rendering helper (shared by main + overlay layers)
@@ -446,7 +256,8 @@ static bool macos_init(mpv_handle* mpv) {
     create_metal_layer(contentView, frame, scale, g_overlay_view, g_overlay_layer, g_main_view);
     [g_overlay_view setHidden:YES];
 
-    g_input_view = [[CefInputView alloc] initWithFrame:contentView.bounds];
+    g_input_view = input::macos::create_input_view();
+    g_input_view.frame = contentView.bounds;
     g_input_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [contentView addSubview:g_input_view positioned:NSWindowAbove relativeTo:g_overlay_view];
 
@@ -624,51 +435,7 @@ static void macos_early_init() {
     [NSApp activateIgnoringOtherApps:YES];
 }
 
-static bool g_cursor_hidden = false;
 static IOPMAssertionID g_idle_assertion = kIOPMNullAssertionID;
-
-static NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
-    switch (type) {
-    case CT_CROSS:                      return [NSCursor crosshairCursor];
-    case CT_HAND:                       return [NSCursor pointingHandCursor];
-    case CT_IBEAM:                      return [NSCursor IBeamCursor];
-    case CT_VERTICALTEXT:               return [NSCursor IBeamCursorForVerticalLayout];
-    case CT_EASTRESIZE:                 return [NSCursor resizeRightCursor];
-    case CT_WESTRESIZE:                 return [NSCursor resizeLeftCursor];
-    case CT_NORTHRESIZE:                return [NSCursor resizeUpCursor];
-    case CT_SOUTHRESIZE:                return [NSCursor resizeDownCursor];
-    case CT_NORTHSOUTHRESIZE:           return [NSCursor resizeUpDownCursor];
-    case CT_EASTWESTRESIZE:             return [NSCursor resizeLeftRightCursor];
-    case CT_COLUMNRESIZE:               return [NSCursor resizeLeftRightCursor];
-    case CT_ROWRESIZE:                  return [NSCursor resizeUpDownCursor];
-    case CT_MOVE:                       return [NSCursor openHandCursor];
-    case CT_GRAB:                       return [NSCursor openHandCursor];
-    case CT_GRABBING:                   return [NSCursor closedHandCursor];
-    case CT_NODROP:                     return [NSCursor operationNotAllowedCursor];
-    case CT_NOTALLOWED:                 return [NSCursor operationNotAllowedCursor];
-    case CT_COPY:                       return [NSCursor dragCopyCursor];
-    case CT_ALIAS:                      return [NSCursor dragLinkCursor];
-    case CT_CONTEXTMENU:                return [NSCursor contextualMenuCursor];
-    default:                            return [NSCursor arrowCursor];
-    }
-}
-
-static void macos_set_cursor(cef_cursor_type_t type) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (type == CT_NONE) {
-            if (!g_cursor_hidden) {
-                [NSCursor hide];
-                g_cursor_hidden = true;
-            }
-        } else {
-            if (g_cursor_hidden) {
-                [NSCursor unhide];
-                g_cursor_hidden = false;
-            }
-            [cef_cursor_to_ns(type) set];
-        }
-    });
-}
 
 static void macos_set_idle_inhibit(IdleInhibitLevel level) {
     // Release existing assertion if one is active
@@ -719,7 +486,7 @@ Platform make_macos_platform() {
         .get_scale = macos_get_scale,
         .query_logical_content_size = macos_query_logical_content_size,
         .pump = macos_pump,
-        .set_cursor = macos_set_cursor,
+        .set_cursor = input::macos::set_cursor,
         .set_idle_inhibit = macos_set_idle_inhibit,
         .set_titlebar_color = macos_set_titlebar_color,
     };

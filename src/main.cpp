@@ -61,15 +61,15 @@ MpvHandle g_mpv;
 std::atomic<bool> g_shutting_down{false};
 WakeEvent g_shutdown_event;
 
-MediaType g_media_type = MediaType::Unknown;
-static PlaybackState g_playback_state = PlaybackState::Stopped;
+std::atomic<MediaType> g_media_type{MediaType::Unknown};
+std::atomic<PlaybackState> g_playback_state{PlaybackState::Stopped};
 TitlebarColor* g_titlebar_color = nullptr;
 std::atomic<int> g_display_hz{60};
 
 void update_idle_inhibit() {
-    if (g_playback_state != PlaybackState::Playing) {
+    if (g_playback_state.load(std::memory_order_relaxed) != PlaybackState::Playing) {
         g_platform.set_idle_inhibit(IdleInhibitLevel::None);
-    } else if (g_media_type == MediaType::Audio) {
+    } else if (g_media_type.load(std::memory_order_relaxed) == MediaType::Audio) {
         g_platform.set_idle_inhibit(IdleInhibitLevel::System);
     } else {
         g_platform.set_idle_inhibit(IdleInhibitLevel::Display);

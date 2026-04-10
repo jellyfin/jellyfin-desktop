@@ -6,6 +6,7 @@
 #include "platform.h"
 #include "common.h"
 #include "cef/cef_client.h"
+#include "input/input_windows.h"
 #include "logging.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -56,10 +57,6 @@ struct WinState {
     int overlay_sw = 0, overlay_sh = 0;
     bool overlay_visible = false;
 
-    // Input stack: always route to top.
-    CefRefPtr<CefBrowser> input_stack[2];
-    int input_top = -1;
-
     // Window state
     float cached_scale = 1.0f;
     int mpv_pw = 0, mpv_ph = 0;  // mpv's current physical size
@@ -71,40 +68,14 @@ struct WinState {
     bool transitioning = false;
     bool was_fullscreen = false;
 
-    // Input thread
+    // Input thread (body lives in input::windows::run_input_thread)
     std::thread input_thread;
-    DWORD input_thread_id = 0;
-    HWND input_hwnd = nullptr;
-
-    // Cursor
-    HCURSOR current_cursor = nullptr;
-    cef_cursor_type_t cursor_type = CT_POINTER;
 };
 
 static WinState g_win;
 
-static void input_thread_func();
 static void win_begin_transition_locked();
 static void win_end_transition_locked();
-
-static CefRefPtr<CefBrowser> active_browser() {
-    if (g_win.input_top >= 0)
-        return g_win.input_stack[g_win.input_top];
-    return nullptr;
-}
-
-void platform_push_input(CefRefPtr<CefBrowser> b) {
-    if (g_win.input_top < 1) {
-        g_win.input_stack[++g_win.input_top] = b;
-    }
-}
-
-static void pop_input() {
-    if (g_win.input_top >= 0) {
-        g_win.input_stack[g_win.input_top] = nullptr;
-        g_win.input_top--;
-    }
-}
 
 // =====================================================================
 // D3D11 / DXGI / DComp initialization
@@ -518,125 +489,6 @@ static bool win_query_logical_content_size(int* w, int* h) {
 // Input thread: transparent child HWND -> CEF events
 // =====================================================================
 
-static bool IsKeyDown(WPARAM wp) {
-    return (GetKeyState(static_cast<int>(wp)) & 0x8000) != 0;
-}
-
-static uint32_t GetCefMouseModifiers(WPARAM wp) {
-    uint32_t m = 0;
-    if (wp & MK_CONTROL) m |= EVENTFLAG_CONTROL_DOWN;
-    if (wp & MK_SHIFT)   m |= EVENTFLAG_SHIFT_DOWN;
-    if (IsKeyDown(VK_MENU)) m |= EVENTFLAG_ALT_DOWN;
-    if (wp & MK_LBUTTON) m |= EVENTFLAG_LEFT_MOUSE_BUTTON;
-    if (wp & MK_RBUTTON) m |= EVENTFLAG_RIGHT_MOUSE_BUTTON;
-    if (wp & MK_MBUTTON) m |= EVENTFLAG_MIDDLE_MOUSE_BUTTON;
-    return m;
-}
-
-// From cefclient/tests/shared/browser/util_win.cc
-static int GetCefKeyboardModifiers(WPARAM wp, LPARAM lp) {
-    int m = 0;
-    if (IsKeyDown(VK_SHIFT))   m |= EVENTFLAG_SHIFT_DOWN;
-    if (IsKeyDown(VK_CONTROL)) m |= EVENTFLAG_CONTROL_DOWN;
-    if (IsKeyDown(VK_MENU))    m |= EVENTFLAG_ALT_DOWN;
-    if (::GetKeyState(VK_NUMLOCK) & 1) m |= EVENTFLAG_NUM_LOCK_ON;
-    if (::GetKeyState(VK_CAPITAL) & 1) m |= EVENTFLAG_CAPS_LOCK_ON;
-
-    switch (wp) {
-    case VK_RETURN:
-        if ((lp >> 16) & KF_EXTENDED) m |= EVENTFLAG_IS_KEY_PAD;
-        break;
-    case VK_INSERT: case VK_DELETE: case VK_HOME: case VK_END:
-    case VK_PRIOR: case VK_NEXT: case VK_UP: case VK_DOWN:
-    case VK_LEFT: case VK_RIGHT:
-        if (!((lp >> 16) & KF_EXTENDED)) m |= EVENTFLAG_IS_KEY_PAD;
-        break;
-    case VK_NUMLOCK: case VK_NUMPAD0: case VK_NUMPAD1: case VK_NUMPAD2:
-    case VK_NUMPAD3: case VK_NUMPAD4: case VK_NUMPAD5: case VK_NUMPAD6:
-    case VK_NUMPAD7: case VK_NUMPAD8: case VK_NUMPAD9:
-    case VK_DIVIDE: case VK_MULTIPLY: case VK_SUBTRACT: case VK_ADD:
-    case VK_DECIMAL: case VK_CLEAR:
-        m |= EVENTFLAG_IS_KEY_PAD;
-        break;
-    case VK_SHIFT:
-        if (IsKeyDown(VK_LSHIFT)) m |= EVENTFLAG_IS_LEFT;
-        else if (IsKeyDown(VK_RSHIFT)) m |= EVENTFLAG_IS_RIGHT;
-        break;
-    case VK_CONTROL:
-        if (IsKeyDown(VK_LCONTROL)) m |= EVENTFLAG_IS_LEFT;
-        else if (IsKeyDown(VK_RCONTROL)) m |= EVENTFLAG_IS_RIGHT;
-        break;
-    case VK_MENU:
-        if (IsKeyDown(VK_LMENU)) m |= EVENTFLAG_IS_LEFT;
-        else if (IsKeyDown(VK_RMENU)) m |= EVENTFLAG_IS_RIGHT;
-        break;
-    case VK_LWIN: m |= EVENTFLAG_IS_LEFT; break;
-    case VK_RWIN: m |= EVENTFLAG_IS_RIGHT; break;
-    }
-    return m;
-}
-
-static cef_mouse_button_type_t msg_to_button(UINT msg) {
-    switch (msg) {
-    case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK: return MBT_LEFT;
-    case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK: return MBT_RIGHT;
-    case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK: return MBT_MIDDLE;
-    default: return MBT_LEFT;
-    }
-}
-
-static bool is_button_up(UINT msg) {
-    return msg == WM_LBUTTONUP || msg == WM_RBUTTONUP || msg == WM_MBUTTONUP;
-}
-
-static LPCTSTR cef_cursor_to_win(cef_cursor_type_t type) {
-    switch (type) {
-    case CT_CROSS:                      return IDC_CROSS;
-    case CT_HAND:                       return IDC_HAND;
-    case CT_IBEAM:                      return IDC_IBEAM;
-    case CT_WAIT:                       return IDC_WAIT;
-    case CT_HELP:                       return IDC_HELP;
-    case CT_EASTRESIZE:                 return IDC_SIZEWE;
-    case CT_NORTHRESIZE:                return IDC_SIZENS;
-    case CT_NORTHEASTRESIZE:            return IDC_SIZENESW;
-    case CT_NORTHWESTRESIZE:            return IDC_SIZENWSE;
-    case CT_SOUTHRESIZE:                return IDC_SIZENS;
-    case CT_SOUTHEASTRESIZE:            return IDC_SIZENWSE;
-    case CT_SOUTHWESTRESIZE:            return IDC_SIZENESW;
-    case CT_WESTRESIZE:                 return IDC_SIZEWE;
-    case CT_NORTHSOUTHRESIZE:           return IDC_SIZENS;
-    case CT_EASTWESTRESIZE:             return IDC_SIZEWE;
-    case CT_NORTHEASTSOUTHWESTRESIZE:   return IDC_SIZENESW;
-    case CT_NORTHWESTSOUTHEASTRESIZE:   return IDC_SIZENWSE;
-    case CT_COLUMNRESIZE:               return IDC_SIZEWE;
-    case CT_ROWRESIZE:                  return IDC_SIZENS;
-    case CT_MOVE:                       return IDC_SIZEALL;
-    case CT_PROGRESS:                   return IDC_APPSTARTING;
-    case CT_NODROP:                     return IDC_NO;
-    case CT_NOTALLOWED:                 return IDC_NO;
-    case CT_GRAB:                       return IDC_HAND;
-    case CT_GRABBING:                   return IDC_HAND;
-    case CT_MIDDLEPANNING:
-    case CT_MIDDLE_PANNING_VERTICAL:
-    case CT_MIDDLE_PANNING_HORIZONTAL:  return IDC_SIZEALL;
-    default:                            return IDC_ARROW;
-    }
-}
-
-static void win_set_cursor(cef_cursor_type_t type) {
-    g_win.cursor_type = type;
-    if (g_win.current_cursor) {
-        DestroyCursor(g_win.current_cursor);
-        g_win.current_cursor = nullptr;
-    }
-    if (type == CT_NONE) {
-        SetCursor(nullptr);
-    } else {
-        HCURSOR c = LoadCursor(nullptr, cef_cursor_to_win(type));
-        SetCursor(c);
-    }
-}
-
 static void win_set_idle_inhibit(IdleInhibitLevel level) {
     UINT flags = ES_CONTINUOUS;
     switch (level) {
@@ -653,137 +505,6 @@ static void win_set_idle_inhibit(IdleInhibitLevel level) {
     SetThreadExecutionState(flags);
 }
 
-static LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    switch (msg) {
-    case WM_SETCURSOR:
-        if (LOWORD(lp) == HTCLIENT) {
-            if (g_win.cursor_type == CT_NONE)
-                SetCursor(nullptr);
-            else
-                SetCursor(LoadCursor(nullptr, cef_cursor_to_win(g_win.cursor_type)));
-            return TRUE;
-        }
-        break;
-    // --- Mouse ---
-    case WM_MOUSEMOVE: {
-        auto b = active_browser();
-        if (!b) break;
-        CefMouseEvent e;
-        e.x = GET_X_LPARAM(lp);
-        e.y = GET_Y_LPARAM(lp);
-        e.modifiers = GetCefMouseModifiers(wp);
-        b->GetHost()->SendMouseMoveEvent(e, false);
-        return 0;
-    }
-    case WM_MOUSELEAVE: {
-        auto b = active_browser();
-        if (!b) break;
-        CefMouseEvent e;
-        e.x = -1; e.y = -1;
-        e.modifiers = GetCefMouseModifiers(wp);
-        b->GetHost()->SendMouseMoveEvent(e, true);
-        return 0;
-    }
-    case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:
-    case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP:
-    case WM_LBUTTONDBLCLK: case WM_RBUTTONDBLCLK: case WM_MBUTTONDBLCLK: {
-        auto b = active_browser();
-        if (!b) break;
-        if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN) {
-            SetFocus(hwnd);
-            b->GetHost()->SetFocus(true);
-        }
-        CefMouseEvent e;
-        e.x = GET_X_LPARAM(lp);
-        e.y = GET_Y_LPARAM(lp);
-        e.modifiers = GetCefMouseModifiers(wp);
-        bool up = is_button_up(msg);
-        int click_count = (msg == WM_LBUTTONDBLCLK || msg == WM_RBUTTONDBLCLK ||
-                           msg == WM_MBUTTONDBLCLK) ? 2 : 1;
-        b->GetHost()->SendMouseClickEvent(e, msg_to_button(msg), up, click_count);
-        return 0;
-    }
-    case WM_MOUSEWHEEL: {
-        auto b = active_browser();
-        if (!b) break;
-        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        ScreenToClient(hwnd, &pt);
-        CefMouseEvent e;
-        e.x = pt.x; e.y = pt.y;
-        e.modifiers = GetCefMouseModifiers(wp);
-        int delta = GET_WHEEL_DELTA_WPARAM(wp);
-        b->GetHost()->SendMouseWheelEvent(e, 0, delta);
-        return 0;
-    }
-    case WM_MOUSEHWHEEL: {
-        auto b = active_browser();
-        if (!b) break;
-        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        ScreenToClient(hwnd, &pt);
-        CefMouseEvent e;
-        e.x = pt.x; e.y = pt.y;
-        e.modifiers = GetCefMouseModifiers(wp);
-        int delta = GET_WHEEL_DELTA_WPARAM(wp);
-        b->GetHost()->SendMouseWheelEvent(e, delta, 0);
-        return 0;
-    }
-
-    // --- Keyboard (matches cefclient/browser/osr_window_win.cc exactly) ---
-    case WM_KEYDOWN:
-    case WM_SYSKEYDOWN: {
-        // Hotkeys (only when overlay is not visible)
-        if (!g_win.overlay_visible) {
-            int vk = static_cast<int>(wp);
-            if (vk == 'F' || vk == VK_F11) { win_toggle_fullscreen(); return 0; }
-            if (vk == 'Q' || vk == VK_ESCAPE) { initiate_shutdown(); return 0; }
-        }
-    }
-    [[fallthrough]];
-    case WM_KEYUP:
-    case WM_SYSKEYUP:
-    case WM_CHAR:
-    case WM_SYSCHAR: {
-        auto b = active_browser();
-        if (!b) break;
-        b->GetHost()->SetFocus(true);
-
-        CefKeyEvent event;
-        event.windows_key_code = static_cast<int>(wp);
-        event.native_key_code = static_cast<int>(lp);
-        event.is_system_key = (msg == WM_SYSCHAR || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP);
-
-        if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
-            event.type = KEYEVENT_RAWKEYDOWN;
-        else if (msg == WM_KEYUP || msg == WM_SYSKEYUP)
-            event.type = KEYEVENT_KEYUP;
-        else
-            event.type = KEYEVENT_CHAR;
-
-        event.modifiers = GetCefKeyboardModifiers(wp, lp);
-        b->GetHost()->SendKeyEvent(event);
-        return 0;
-    }
-
-    // --- Focus ---
-    case WM_SETFOCUS: {
-        auto b = active_browser();
-        if (b) b->GetHost()->SetFocus(true);
-        return 0;
-    }
-
-    // --- Resize: match parent ---
-    case WM_SIZE: {
-        // Handled by parent monitoring -- nothing needed here
-        return 0;
-    }
-
-    default:
-        break;
-    }
-
-    return DefWindowProc(hwnd, msg, wp, lp);
-}
-
 // Monitor mpv's HWND for size/fullscreen changes.
 static HHOOK g_wndproc_hook = nullptr;
 
@@ -795,9 +516,7 @@ static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
                 int pw = LOWORD(msg->lParam);
                 int ph = HIWORD(msg->lParam);
                 if (pw > 0 && ph > 0) {
-                    if (g_win.input_hwnd)
-                        SetWindowPos(g_win.input_hwnd, nullptr, 0, 0, pw, ph,
-                            SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
+                    input::windows::resize_to_parent(pw, ph);
 
                     float scale = g_win.cached_scale > 0 ? g_win.cached_scale : 1.0f;
                     int lw = static_cast<int>(pw / scale);
@@ -823,51 +542,6 @@ static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
         }
     }
     return CallNextHookEx(g_wndproc_hook, nCode, wp, lp);
-}
-
-static void input_thread_func() {
-    // Register window class
-    WNDCLASSEXW wc = {};
-    wc.cbSize = sizeof(wc);
-    wc.lpfnWndProc = input_wndproc;
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.lpszClassName = L"JellyfinCefInput";
-    wc.style = CS_DBLCLKS;
-    wc.hCursor = nullptr;  // We manage cursor via WM_SETCURSOR
-    RegisterClassExW(&wc);
-
-    // Child window covering mpv's client area — captures all mouse and
-    // keyboard for CEF. AttachThreadInput lets our cross-thread child
-    // receive keyboard focus (mpv's wndproc never sees keyboard messages
-    // because focus is on our child, not mpv's HWND).
-    RECT rc;
-    GetClientRect(g_win.mpv_hwnd, &rc);
-
-    g_win.input_hwnd = CreateWindowExW(
-        0,
-        L"JellyfinCefInput", L"",
-        WS_CHILD | WS_VISIBLE,
-        0, 0, rc.right - rc.left, rc.bottom - rc.top,
-        g_win.mpv_hwnd, nullptr, GetModuleHandle(nullptr), nullptr);
-
-    DWORD mpv_tid = GetWindowThreadProcessId(g_win.mpv_hwnd, nullptr);
-    AttachThreadInput(GetCurrentThreadId(), mpv_tid, TRUE);
-    SetFocus(g_win.input_hwnd);
-
-    // Install hook to monitor mpv's HWND for size/fullscreen/close
-    g_wndproc_hook = SetWindowsHookEx(WH_CALLWNDPROC, mpv_wndproc_hook,
-        nullptr, mpv_tid);
-
-    // Message loop
-    MSG m;
-    while (GetMessage(&m, nullptr, 0, 0) > 0) {
-        TranslateMessage(&m);
-        DispatchMessage(&m);
-    }
-
-    if (g_wndproc_hook) { UnhookWindowsHookEx(g_wndproc_hook); g_wndproc_hook = nullptr; }
-    if (g_win.input_hwnd) { DestroyWindow(g_win.input_hwnd); g_win.input_hwnd = nullptr; }
-    UnregisterClassW(L"JellyfinCefInput", GetModuleHandle(nullptr));
 }
 
 // =====================================================================
@@ -897,10 +571,17 @@ static bool win_init(mpv_handle* mpv) {
     if (!init_d3d()) return false;
     if (!init_dcomp()) return false;
 
-    // Start input thread
-    g_win.input_thread = std::thread([]() {
-        g_win.input_thread_id = GetCurrentThreadId();
-        input_thread_func();
+    // Install hook to monitor mpv's HWND for size/fullscreen/close
+    DWORD mpv_tid = GetWindowThreadProcessId(g_win.mpv_hwnd, nullptr);
+    g_wndproc_hook = SetWindowsHookEx(WH_CALLWNDPROC, mpv_wndproc_hook,
+        nullptr, mpv_tid);
+
+    // Start input thread (body lives in input::windows::run_input_thread).
+    // The thread owns its own child HWND, cursor state, and WndProc; it
+    // runs a Windows message loop until we post WM_QUIT in cleanup.
+    HWND mpv_hwnd = g_win.mpv_hwnd;
+    g_win.input_thread = std::thread([mpv_hwnd]() {
+        input::windows::run_input_thread(mpv_hwnd);
     });
 
     LOG_INFO(LOG_PLATFORM, "Windows DirectComposition compositor initialized");
@@ -909,11 +590,10 @@ static bool win_init(mpv_handle* mpv) {
 
 static void win_cleanup() {
     // Signal input thread to quit
-    if (g_win.input_thread_id)
-        PostThreadMessage(g_win.input_thread_id, WM_QUIT, 0, 0);
+    input::windows::stop_input_thread();
     if (g_win.input_thread.joinable())
         g_win.input_thread.join();
-    g_win.input_thread_id = 0;
+    if (g_wndproc_hook) { UnhookWindowsHookEx(g_wndproc_hook); g_wndproc_hook = nullptr; }
 
     // Release swap chains
     if (g_win.main_swap_chain) { g_win.main_swap_chain->Release(); g_win.main_swap_chain = nullptr; }
@@ -969,7 +649,7 @@ Platform make_windows_platform() {
         .get_scale = win_get_scale,
         .query_logical_content_size = win_query_logical_content_size,
         .pump = win_pump,
-        .set_cursor = win_set_cursor,
+        .set_cursor = input::windows::set_cursor,
         .set_idle_inhibit = win_set_idle_inhibit,
         .set_titlebar_color = win_set_titlebar_color,
     };

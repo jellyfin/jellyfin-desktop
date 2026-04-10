@@ -1,5 +1,6 @@
 #include "common.h"
 #include "cef/cef_client.h"
+#include "input/input_wayland.h"
 
 #include <wayland-client.h>
 #include "linux-dmabuf-v1-client.h"
@@ -13,8 +14,6 @@ struct wl_configure_cb {
     void (*fn)(void *data, int width, int height, bool fullscreen);
     void *data;
 };
-#include <xkbcommon/xkbcommon.h>
-#include <linux/input-event-codes.h>
 #include <drm/drm_fourcc.h>
 #include <EGL/egl.h>
 #ifdef HAVE_KDE_DECORATION_PALETTE
@@ -26,10 +25,8 @@ struct wl_configure_cb {
 #include <unistd.h>
 #include <mutex>
 #include <thread>
-#include <poll.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include "wake_event.h"
 #include "logging.h"
 
 // =====================================================================
@@ -64,8 +61,6 @@ struct WlState {
     wp_viewporter* viewporter = nullptr;
     wp_alpha_modifier_v1* alpha_modifier = nullptr;
     wp_alpha_modifier_surface_v1* overlay_alpha = nullptr;
-    wp_cursor_shape_manager_v1* cursor_shape_manager = nullptr;
-    wp_cursor_shape_device_v1* cursor_shape_device = nullptr;
 
     // Idle inhibit (systemd login1 D-Bus)
     sd_bus* system_bus = nullptr;
@@ -79,25 +74,6 @@ struct WlState {
     bool transitioning = false;
     bool was_fullscreen = false;
 
-    // Input
-    std::thread input_thread;
-    wl_seat* seat = nullptr;
-    wl_pointer* pointer = nullptr;
-    wl_keyboard* keyboard = nullptr;
-    double ptr_x = 0, ptr_y = 0;
-    uint32_t pointer_serial = 0;
-    uint32_t mouse_button_modifiers = 0;  // EVENTFLAG_*_MOUSE_BUTTON
-    cef_cursor_type_t cursor_type = CT_POINTER;
-
-    // Scroll accumulation per pointer frame
-    double scroll_dx = 0, scroll_dy = 0;  // from wl_pointer.axis (surface pixels)
-    int scroll_v120_x = 0, scroll_v120_y = 0;  // from wl_pointer.axis_value120
-    bool scroll_have_v120 = false;  // true if axis_value120 was received this frame
-    xkb_context* xkb_ctx = nullptr;
-    xkb_keymap* xkb_kmap = nullptr;
-    xkb_state* xkb_st = nullptr;
-    uint32_t modifiers = 0;
-
 #ifdef HAVE_KDE_DECORATION_PALETTE
     org_kde_kwin_server_decoration_palette_manager* palette_manager = nullptr;
     org_kde_kwin_server_decoration_palette* palette = nullptr;
@@ -108,8 +84,6 @@ struct WlState {
 
 static WlState g_wl;
 
-static void input_thread_func();
-static void wl_set_cursor(cef_cursor_type_t type);
 static void wl_release_idle_inhibit();
 static void update_surface_size_locked(int lw, int lh, int pw, int ph);
 static void wl_begin_transition_locked();
@@ -138,15 +112,6 @@ static wl_buffer* create_solid_color_buffer(uint8_t r, uint8_t g, uint8_t b) {
     wl_shm_pool_destroy(pool);
     close(fd);
     return buf;
-}
-
-// Helper: get the active browser for input routing
-static CefRefPtr<CefBrowser> active_browser() {
-    if (g_wl.overlay_visible && g_overlay_client && g_overlay_client->browser())
-        return g_overlay_client->browser();
-    if (g_client && g_client->browser())
-        return g_client->browser();
-    return nullptr;
 }
 
 // =====================================================================
@@ -380,235 +345,6 @@ static void wl_fade_overlay(float delay_sec, float fade_sec,
 }
 
 // =====================================================================
-// Input: wl_pointer + wl_keyboard -> CEF
-// =====================================================================
-
-static uint32_t xkb_to_cef_mods() {
-    uint32_t m = 0;
-    if (!g_wl.xkb_st) return m;
-    if (xkb_state_mod_name_is_active(g_wl.xkb_st, XKB_MOD_NAME_SHIFT, XKB_STATE_MODS_EFFECTIVE)) m |= EVENTFLAG_SHIFT_DOWN;
-    if (xkb_state_mod_name_is_active(g_wl.xkb_st, XKB_MOD_NAME_CTRL, XKB_STATE_MODS_EFFECTIVE))  m |= EVENTFLAG_CONTROL_DOWN;
-    if (xkb_state_mod_name_is_active(g_wl.xkb_st, XKB_MOD_NAME_ALT, XKB_STATE_MODS_EFFECTIVE))   m |= EVENTFLAG_ALT_DOWN;
-    return m;
-}
-
-static int keysym_to_vkey(xkb_keysym_t sym) {
-    if (sym >= XKB_KEY_a && sym <= XKB_KEY_z) return 'A' + (sym - XKB_KEY_a);
-    if (sym >= XKB_KEY_A && sym <= XKB_KEY_Z) return sym;
-    if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) return sym;
-    switch (sym) {
-    case XKB_KEY_Return: return 0x0D; case XKB_KEY_Escape: return 0x1B;
-    case XKB_KEY_Tab: return 0x09; case XKB_KEY_BackSpace: return 0x08;
-    case XKB_KEY_space: return 0x20;
-    case XKB_KEY_Left: return 0x25; case XKB_KEY_Up: return 0x26;
-    case XKB_KEY_Right: return 0x27; case XKB_KEY_Down: return 0x28;
-    case XKB_KEY_Home: return 0x24; case XKB_KEY_End: return 0x23;
-    case XKB_KEY_Page_Up: return 0x21; case XKB_KEY_Page_Down: return 0x22;
-    case XKB_KEY_Delete: return 0x2E;
-    case XKB_KEY_F1: case XKB_KEY_F2: case XKB_KEY_F3: case XKB_KEY_F4:
-    case XKB_KEY_F5: case XKB_KEY_F6: case XKB_KEY_F7: case XKB_KEY_F8:
-    case XKB_KEY_F9: case XKB_KEY_F10: case XKB_KEY_F11: case XKB_KEY_F12:
-        return 0x70 + (sym - XKB_KEY_F1);
-    default: return 0;
-    }
-}
-
-// Combined keyboard + mouse button modifiers for CEF events
-static uint32_t cef_modifiers() {
-    return g_wl.modifiers | g_wl.mouse_button_modifiers;
-}
-
-// Pointer
-static void ptr_enter(void*, wl_pointer*, uint32_t serial, wl_surface*, wl_fixed_t x, wl_fixed_t y) {
-    g_wl.pointer_serial = serial;
-    // Apply stored cursor state with the fresh serial.
-    wl_set_cursor(g_wl.cursor_type);
-    g_wl.ptr_x = wl_fixed_to_double(x); g_wl.ptr_y = wl_fixed_to_double(y);
-    auto b = active_browser();
-    if (!b) return;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
-    b->GetHost()->SendMouseMoveEvent(e, false);
-}
-static void ptr_leave(void*, wl_pointer*, uint32_t, wl_surface*) {
-    auto b = active_browser();
-    if (!b) return;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
-    b->GetHost()->SendMouseMoveEvent(e, true);
-}
-static void ptr_motion(void*, wl_pointer*, uint32_t, wl_fixed_t x, wl_fixed_t y) {
-    g_wl.ptr_x = wl_fixed_to_double(x); g_wl.ptr_y = wl_fixed_to_double(y);
-    auto b = active_browser();
-    if (!b) return;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
-    b->GetHost()->SendMouseMoveEvent(e, false);
-}
-static void ptr_button(void*, wl_pointer*, uint32_t, uint32_t, uint32_t button, uint32_t state) {
-    auto b = active_browser();
-    if (!b) return;
-    cef_mouse_button_type_t btn;
-    uint32_t flag;
-    switch (button) {
-    case BTN_LEFT:   btn = MBT_LEFT;   flag = EVENTFLAG_LEFT_MOUSE_BUTTON;   break;
-    case BTN_RIGHT:  btn = MBT_RIGHT;  flag = EVENTFLAG_RIGHT_MOUSE_BUTTON;  break;
-    case BTN_MIDDLE: btn = MBT_MIDDLE; flag = EVENTFLAG_MIDDLE_MOUSE_BUTTON; break;
-    default: return;
-    }
-    if (state == WL_POINTER_BUTTON_STATE_PRESSED)
-        g_wl.mouse_button_modifiers |= flag;
-    else
-        g_wl.mouse_button_modifiers &= ~flag;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
-    b->GetHost()->SendMouseClickEvent(e, btn, state == WL_POINTER_BUTTON_STATE_RELEASED, 1);
-}
-static void ptr_axis(void*, wl_pointer*, uint32_t, uint32_t axis, wl_fixed_t value) {
-    double v = wl_fixed_to_double(value);
-    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) g_wl.scroll_dy += v;
-    else g_wl.scroll_dx += v;
-}
-static void ptr_frame(void*, wl_pointer*) {
-    int dx = 0, dy = 0;
-    if (g_wl.scroll_have_v120) {
-        // axis_value120: 120 units = one notch, matches CEF convention directly
-        dx = -g_wl.scroll_v120_x;
-        dy = -g_wl.scroll_v120_y;
-        g_wl.scroll_dx = g_wl.scroll_dy = 0;  // discrete event; discard any smooth state
-    } else if (g_wl.scroll_dx != 0.0 || g_wl.scroll_dy != 0.0) {
-        // Continuous/smooth scroll (touchpad): surface-local pixels, scale to CEF units.
-        // ~10px per notch typical, CEF expects 120 per notch → multiply by 12.
-        double scaled_x = -g_wl.scroll_dx * 12.0;
-        double scaled_y = -g_wl.scroll_dy * 12.0;
-        dx = (int)scaled_x;
-        dy = (int)scaled_y;
-        // Keep fractional remainder so sub-pixel deltas accumulate across frames
-        // instead of being silently dropped by integer truncation.
-        g_wl.scroll_dx = -(scaled_x - dx) / 12.0;
-        g_wl.scroll_dy = -(scaled_y - dy) / 12.0;
-    } else {
-        g_wl.scroll_dx = g_wl.scroll_dy = 0;
-    }
-    g_wl.scroll_v120_x = g_wl.scroll_v120_y = 0;
-    g_wl.scroll_have_v120 = false;
-    if (dx == 0 && dy == 0) return;
-    auto b = active_browser();
-    if (!b) return;
-    CefMouseEvent e; e.x = (int)g_wl.ptr_x; e.y = (int)g_wl.ptr_y; e.modifiers = cef_modifiers();
-    b->GetHost()->SendMouseWheelEvent(e, dx, dy);
-}
-static void ptr_axis_source(void*, wl_pointer*, uint32_t) {}
-static void ptr_axis_stop(void*, wl_pointer*, uint32_t, uint32_t axis) {
-    // Finger lifted from touchpad — clear fractional remainder to prevent ghost scroll.
-    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) g_wl.scroll_dy = 0;
-    else g_wl.scroll_dx = 0;
-}
-static void ptr_axis_discrete(void*, wl_pointer*, uint32_t, int32_t) {}
-static void ptr_axis_value120(void*, wl_pointer*, uint32_t axis, int32_t v120) {
-    g_wl.scroll_have_v120 = true;
-    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) g_wl.scroll_v120_y += v120;
-    else g_wl.scroll_v120_x += v120;
-}
-static void ptr_axis_relative(void*, wl_pointer*, uint32_t, uint32_t) {}
-
-static const wl_pointer_listener s_ptr = {
-    .enter = ptr_enter, .leave = ptr_leave, .motion = ptr_motion,
-    .button = ptr_button, .axis = ptr_axis, .frame = ptr_frame,
-    .axis_source = ptr_axis_source, .axis_stop = ptr_axis_stop,
-    .axis_discrete = ptr_axis_discrete, .axis_value120 = ptr_axis_value120,
-    .axis_relative_direction = ptr_axis_relative,
-};
-
-// Keyboard
-static void kb_keymap(void*, wl_keyboard*, uint32_t fmt, int fd, uint32_t size) {
-    if (fmt != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) { close(fd); return; }
-    char* map = static_cast<char*>(mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0));
-    close(fd);
-    if (map == MAP_FAILED) return;
-    if (g_wl.xkb_st) xkb_state_unref(g_wl.xkb_st);
-    if (g_wl.xkb_kmap) xkb_keymap_unref(g_wl.xkb_kmap);
-    g_wl.xkb_kmap = xkb_keymap_new_from_buffer(g_wl.xkb_ctx, map, size - 1,
-        XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
-    munmap(map, size);
-    if (g_wl.xkb_kmap) g_wl.xkb_st = xkb_state_new(g_wl.xkb_kmap);
-}
-static void kb_enter(void*, wl_keyboard*, uint32_t, wl_surface*, wl_array*) {
-    auto b = active_browser();
-    if (b) b->GetHost()->SetFocus(true);
-}
-static void kb_leave(void*, wl_keyboard*, uint32_t, wl_surface*) {
-    auto b = active_browser();
-    if (b) b->GetHost()->SetFocus(false);
-}
-static void kb_key(void*, wl_keyboard*, uint32_t, uint32_t, uint32_t key, uint32_t state) {
-    if (!g_wl.xkb_st) return;
-    uint32_t kc = key + 8;
-    xkb_keysym_t sym = xkb_state_key_get_one_sym(g_wl.xkb_st, kc);
-    uint32_t cp = xkb_state_key_get_utf32(g_wl.xkb_st, kc);
-    int vk = keysym_to_vkey(sym);
-
-    // Only handle hotkeys when overlay is not visible
-    if (state == WL_KEYBOARD_KEY_STATE_PRESSED && !g_wl.overlay_visible) {
-        // Fullscreen: f or F11
-        if (sym == XKB_KEY_f || sym == XKB_KEY_F11) {
-            wl_toggle_fullscreen();
-            return;
-        }
-        // Quit: q or Escape
-        if (sym == XKB_KEY_q || sym == XKB_KEY_Escape) {
-            initiate_shutdown();
-            return;
-        }
-    }
-
-    // Forward to active browser
-    auto b = active_browser();
-    if (!b) return;
-    CefKeyEvent ev;
-    ev.windows_key_code = vk;
-    ev.native_key_code = key;
-    ev.modifiers = g_wl.modifiers;
-    ev.is_system_key = false;
-
-    if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-        ev.type = KEYEVENT_RAWKEYDOWN;
-        b->GetHost()->SendKeyEvent(ev);
-        if (cp > 0 && cp < 0x10FFFF) {
-            ev.type = KEYEVENT_CHAR;
-            ev.character = cp;
-            ev.windows_key_code = cp;
-            b->GetHost()->SendKeyEvent(ev);
-        }
-    } else {
-        ev.type = KEYEVENT_KEYUP;
-        b->GetHost()->SendKeyEvent(ev);
-    }
-}
-static void kb_modifiers(void*, wl_keyboard*, uint32_t, uint32_t dep, uint32_t lat, uint32_t lock, uint32_t grp) {
-    if (g_wl.xkb_st) {
-        xkb_state_update_mask(g_wl.xkb_st, dep, lat, lock, 0, 0, grp);
-        g_wl.modifiers = xkb_to_cef_mods();
-    }
-}
-static void kb_repeat(void*, wl_keyboard*, int32_t, int32_t) {}
-
-static const wl_keyboard_listener s_kb = {
-    .keymap = kb_keymap, .enter = kb_enter, .leave = kb_leave,
-    .key = kb_key, .modifiers = kb_modifiers, .repeat_info = kb_repeat,
-};
-
-// Seat
-static void seat_caps(void*, wl_seat* seat, uint32_t caps) {
-    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !g_wl.pointer) {
-        g_wl.pointer = wl_seat_get_pointer(seat);
-        wl_pointer_add_listener(g_wl.pointer, &s_ptr, nullptr);
-    }
-    if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !g_wl.keyboard) {
-        g_wl.keyboard = wl_seat_get_keyboard(seat);
-        wl_keyboard_add_listener(g_wl.keyboard, &s_kb, nullptr);
-    }
-}
-static void seat_name(void*, wl_seat*, const char*) {}
-static const wl_seat_listener s_seat = { .capabilities = seat_caps, .name = seat_name };
-
-// =====================================================================
 // Registry
 // =====================================================================
 
@@ -625,11 +361,13 @@ static void reg_global(void*, wl_registry* reg, uint32_t name, const char* iface
         g_wl.viewporter = static_cast<wp_viewporter*>(wl_registry_bind(reg, name, &wp_viewporter_interface, 1));
     else if (strcmp(iface, wp_alpha_modifier_v1_interface.name) == 0)
         g_wl.alpha_modifier = static_cast<wp_alpha_modifier_v1*>(wl_registry_bind(reg, name, &wp_alpha_modifier_v1_interface, 1));
-    else if (strcmp(iface, wp_cursor_shape_manager_v1_interface.name) == 0)
-        g_wl.cursor_shape_manager = static_cast<wp_cursor_shape_manager_v1*>(wl_registry_bind(reg, name, &wp_cursor_shape_manager_v1_interface, 1));
-    else if (strcmp(iface, wl_seat_interface.name) == 0 && !g_wl.seat) {
-        g_wl.seat = static_cast<wl_seat*>(wl_registry_bind(reg, name, &wl_seat_interface, std::min(ver, 5u)));
-        wl_seat_add_listener(g_wl.seat, &s_seat, nullptr);
+    else if (strcmp(iface, wp_cursor_shape_manager_v1_interface.name) == 0) {
+        auto* mgr = static_cast<wp_cursor_shape_manager_v1*>(wl_registry_bind(reg, name, &wp_cursor_shape_manager_v1_interface, 1));
+        input::wayland::attach_cursor_shape_manager(mgr);
+    }
+    else if (strcmp(iface, wl_seat_interface.name) == 0) {
+        auto* seat = static_cast<wl_seat*>(wl_registry_bind(reg, name, &wl_seat_interface, std::min(ver, 5u)));
+        input::wayland::attach_seat(seat);
     }
 #ifdef HAVE_KDE_DECORATION_PALETTE
     else if (strcmp(iface, org_kde_kwin_server_decoration_palette_manager_interface.name) == 0) {
@@ -686,10 +424,13 @@ static bool wl_init(mpv_handle* mpv) {
 
     g_wl.display = display;
     g_wl.parent = parent;
-    g_wl.xkb_ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 
     // Dedicated event queue: all our objects live here, isolated from mpv's VO queue
     g_wl.queue = wl_display_create_queue(display);
+
+    // Prepare the input layer so its xkb context is ready before the registry
+    // callbacks land (seat_caps wires up keyboard listeners that need xkb).
+    input::wayland::init(display, g_wl.queue);
 
     auto* reg = wl_display_get_registry(display);
     wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(reg), g_wl.queue);
@@ -766,8 +507,8 @@ static bool wl_init(mpv_handle* mpv) {
     wl_init_kde_palette();
     wl_set_titlebar_color(0x10, 0x10, 0x10);
 
-    // Start input thread
-    g_wl.input_thread = std::thread(input_thread_func);
+    // Start input thread (input layer owns it)
+    input::wayland::start_input_thread();
 
     return true;
 }
@@ -786,14 +527,8 @@ static void wl_cleanup() {
     wl_cleanup_kde_palette();
     wl_release_idle_inhibit();
     if (g_wl.system_bus) { sd_bus_unref(g_wl.system_bus); g_wl.system_bus = nullptr; }
-    if (g_wl.input_thread.joinable()) g_wl.input_thread.join();
-    if (g_wl.cursor_shape_device) wp_cursor_shape_device_v1_destroy(g_wl.cursor_shape_device);
-    if (g_wl.pointer) wl_pointer_destroy(g_wl.pointer);
-    if (g_wl.keyboard) wl_keyboard_destroy(g_wl.keyboard);
-    if (g_wl.seat) wl_seat_destroy(g_wl.seat);
-    if (g_wl.xkb_st) xkb_state_unref(g_wl.xkb_st);
-    if (g_wl.xkb_kmap) xkb_keymap_unref(g_wl.xkb_kmap);
-    if (g_wl.xkb_ctx) xkb_context_unref(g_wl.xkb_ctx);
+    // Input layer owns seat/pointer/keyboard/xkb/cursor-shape-device.
+    input::wayland::cleanup();
     // Overlay
     if (g_wl.overlay_alpha) { wp_alpha_modifier_surface_v1_destroy(g_wl.overlay_alpha); g_wl.overlay_alpha = nullptr; }
     if (g_wl.overlay_viewport) wp_viewport_destroy(g_wl.overlay_viewport);
@@ -805,8 +540,8 @@ static void wl_cleanup() {
     if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
     if (g_wl.cef_subsurface) wl_subsurface_destroy(g_wl.cef_subsurface);
     if (g_wl.cef_surface) wl_surface_destroy(g_wl.cef_surface);
-    // Globals (must be destroyed before queue — they were bound to it)
-    if (g_wl.cursor_shape_manager) { wp_cursor_shape_manager_v1_destroy(g_wl.cursor_shape_manager); g_wl.cursor_shape_manager = nullptr; }
+    // Globals (must be destroyed before queue — they were bound to it).
+    // Cursor shape manager is owned by input::wayland — destroyed in its cleanup.
     if (g_wl.alpha_modifier) { wp_alpha_modifier_v1_destroy(g_wl.alpha_modifier); g_wl.alpha_modifier = nullptr; }
     if (g_wl.dmabuf) { zwp_linux_dmabuf_v1_destroy(g_wl.dmabuf); g_wl.dmabuf = nullptr; }
     if (g_wl.viewporter) { wp_viewporter_destroy(g_wl.viewporter); g_wl.viewporter = nullptr; }
@@ -924,92 +659,7 @@ static void wl_end_transition() {
     wl_end_transition_locked();
 }
 
-static void input_thread_func() {
-    int display_fd = wl_display_get_fd(g_wl.display);
-    struct pollfd fds[2] = {
-        {display_fd, POLLIN, 0},
-        {g_shutdown_event.fd(), POLLIN, 0},
-    };
-    while (true) {
-        while (wl_display_prepare_read_queue(g_wl.display, g_wl.queue) != 0)
-            wl_display_dispatch_queue_pending(g_wl.display, g_wl.queue);
-        wl_display_flush(g_wl.display);
-
-        poll(fds, 2, -1);
-
-        if (fds[0].revents & POLLIN) {
-            wl_display_read_events(g_wl.display);
-        } else {
-            wl_display_cancel_read(g_wl.display);
-        }
-
-        if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
-            break;
-        if (fds[1].revents & POLLIN)
-            break;
-
-        wl_display_dispatch_queue_pending(g_wl.display, g_wl.queue);
-    }
-}
-
 static void wl_pump() {}
-
-static uint32_t cef_cursor_to_wl_shape(cef_cursor_type_t type) {
-    switch (type) {
-    case CT_CROSS:                      return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
-    case CT_HAND:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
-    case CT_IBEAM:                      return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
-    case CT_WAIT:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
-    case CT_HELP:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
-    case CT_EASTRESIZE:                 return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE;
-    case CT_NORTHRESIZE:                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_N_RESIZE;
-    case CT_NORTHEASTRESIZE:            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NE_RESIZE;
-    case CT_NORTHWESTRESIZE:            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NW_RESIZE;
-    case CT_SOUTHRESIZE:                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_S_RESIZE;
-    case CT_SOUTHEASTRESIZE:            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SE_RESIZE;
-    case CT_SOUTHWESTRESIZE:            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SW_RESIZE;
-    case CT_WESTRESIZE:                 return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_W_RESIZE;
-    case CT_NORTHSOUTHRESIZE:           return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE;
-    case CT_EASTWESTRESIZE:             return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE;
-    case CT_NORTHEASTSOUTHWESTRESIZE:   return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NESW_RESIZE;
-    case CT_NORTHWESTSOUTHEASTRESIZE:   return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NWSE_RESIZE;
-    case CT_COLUMNRESIZE:               return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE;
-    case CT_ROWRESIZE:                  return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ROW_RESIZE;
-    case CT_MOVE:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE;
-    case CT_VERTICALTEXT:               return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_VERTICAL_TEXT;
-    case CT_CELL:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CELL;
-    case CT_CONTEXTMENU:                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CONTEXT_MENU;
-    case CT_ALIAS:                      return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALIAS;
-    case CT_PROGRESS:                   return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
-    case CT_NODROP:                     return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
-    case CT_COPY:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY;
-    case CT_NOTALLOWED:                 return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NOT_ALLOWED;
-    case CT_ZOOMIN:                     return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_IN;
-    case CT_ZOOMOUT:                    return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_OUT;
-    case CT_GRAB:                       return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
-    case CT_GRABBING:                   return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING;
-    case CT_MIDDLEPANNING:
-    case CT_MIDDLE_PANNING_VERTICAL:
-    case CT_MIDDLE_PANNING_HORIZONTAL:  return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_SCROLL;
-    default:                            return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
-    }
-}
-
-static void wl_set_cursor(cef_cursor_type_t type) {
-    g_wl.cursor_type = type;
-    if (!g_wl.pointer || !g_wl.pointer_serial) return;
-    if (type == CT_NONE) {
-        wl_pointer_set_cursor(g_wl.pointer, g_wl.pointer_serial, nullptr, 0, 0);
-    } else {
-        if (!g_wl.cursor_shape_device && g_wl.cursor_shape_manager)
-            g_wl.cursor_shape_device = wp_cursor_shape_manager_v1_get_pointer(
-                g_wl.cursor_shape_manager, g_wl.pointer);
-        if (g_wl.cursor_shape_device)
-            wp_cursor_shape_device_v1_set_shape(g_wl.cursor_shape_device,
-                g_wl.pointer_serial, cef_cursor_to_wl_shape(type));
-    }
-    wl_display_flush(g_wl.display);
-}
 
 static void wl_release_idle_inhibit() {
     if (g_wl.systemd_inhibit_fd >= 0) {
@@ -1318,7 +968,7 @@ Platform make_wayland_platform() {
         .get_scale = wl_get_scale,
         .query_logical_content_size = [](int*, int*) -> bool { return false; },
         .pump = wl_pump,
-        .set_cursor = wl_set_cursor,
+        .set_cursor = input::wayland::set_cursor,
         .set_idle_inhibit = wl_set_idle_inhibit,
         .set_titlebar_color = wl_set_titlebar_color,
     };

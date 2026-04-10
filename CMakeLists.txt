@@ -70,6 +70,7 @@ if(APPLE)
 
     set(PLATFORM_SOURCES
         src/platform_macos.mm
+        src/input/input_macos.mm
         src/wake_event_macos.cpp
         src/player/media_session.cpp
         src/player/macos/media_session_macos.mm
@@ -90,6 +91,7 @@ if(APPLE)
 elseif(WIN32)
     set(PLATFORM_SOURCES
         src/platform_windows.cpp
+        src/input/input_windows.cpp
         src/player/media_session.cpp
         src/player/windows/media_session_windows.cpp
         src/player/media_session_thread.cpp
@@ -232,6 +234,7 @@ else()
 
     set(PLATFORM_SOURCES
         src/platform_wayland.cpp
+        src/input/input_wayland.cpp
         src/wake_event_linux.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
@@ -382,6 +385,8 @@ if(WIN32)
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/input/dispatch.cpp
+        src/input/hotkeys.cpp
         src/cjson/cJSON.c
         src/settings.cpp
         src/wake_event_windows.cpp
@@ -395,6 +400,8 @@ else()
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/input/dispatch.cpp
+        src/input/hotkeys.cpp
         src/single_instance.cpp
         src/settings.cpp
         src/cjson/cJSON.c
@@ -445,6 +452,7 @@ endif()
 if(APPLE)
     set_source_files_properties(
         src/platform_macos.mm
+        src/input/input_macos.mm
         src/player/macos/media_session_macos.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )

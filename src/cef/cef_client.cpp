@@ -5,6 +5,7 @@
 #include "../player/media_session_thread.h"
 #include "../cjson/cJSON.h"
 #include "../titlebar_color.h"
+#include "../input/dispatch.h"
 #include "include/cef_urlrequest.h"
 #include <cstdio>
 #ifndef _WIN32
@@ -16,7 +17,6 @@
 constexpr float OVERLAY_FADE_DELAY_SEC    = 1.0f;
 constexpr float OVERLAY_FADE_DURATION_SEC = 0.25f;
 
-extern MediaType g_media_type;
 extern void update_idle_inhibit();
 
 // =====================================================================
@@ -172,10 +172,11 @@ void Client::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);
-    #ifdef _WIN32
-    extern void platform_push_input(CefRefPtr<CefBrowser> b);
-    platform_push_input(browser);
-    #endif
+    // Main browser takes input only if the overlay isn't currently active.
+    // The overlay's OnAfterCreated runs after ours (CreateBrowser order) and
+    // will override this if it's coming up.
+    if (!g_overlay_client || !g_overlay_client->browser())
+        input::set_active_browser(browser);
 }
 
 void Client::OnBeforeClose(CefRefPtr<CefBrowser>) {
@@ -464,10 +465,8 @@ void OverlayClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);
-    #ifdef _WIN32
-    extern void platform_push_input(CefRefPtr<CefBrowser> b);
-    platform_push_input(browser);
-    #endif
+    // Overlay wins input whenever it's created.
+    input::set_active_browser(browser);
 }
 
 void OverlayClient::OnBeforeClose(CefRefPtr<CefBrowser>) {
@@ -513,6 +512,9 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         // Navigate main browser to the server
         if (g_client && g_client->browser())
             g_client->browser()->GetMainFrame()->LoadURL(url);
+        // Hand input back to the main browser immediately so the user can
+        // start interacting with it while the overlay fades out.
+        input::set_active_browser(g_client ? g_client->browser() : nullptr);
         // Close the browser after the fade so CEF keeps rendering frames
         // throughout the animation.
         CefRefPtr<CefBrowser> overlay_browser = browser;

@@ -6,6 +6,7 @@
 
 #include "platform.h"
 #include "mpv/handle.h"
+#include "player/media_session.h"
 
 class Client;
 class OverlayClient;
@@ -15,6 +16,10 @@ extern CefRefPtr<Client> g_client;
 extern CefRefPtr<OverlayClient> g_overlay_client;
 extern MpvHandle g_mpv;
 extern Platform g_platform;
+// Cross-thread state: written from mpv event loop / CEF IPC thread,
+// read from input and rendering threads.
+extern std::atomic<MediaType> g_media_type;
+extern std::atomic<PlaybackState> g_playback_state;
 
 class MediaSessionThread;
 class TitlebarColor;
