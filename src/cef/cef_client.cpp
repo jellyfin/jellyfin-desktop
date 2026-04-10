@@ -257,7 +257,7 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     } else if (name == "playerSetVolume") {
         g_mpv.SetVolume(args->GetInt(0));
     } else if (name == "playerSetMuted") {
-        g_mpv.SetMuted(args->GetInt(0) != 0);
+        g_mpv.SetMuted(args->GetBool(0));
     } else if (name == "playerSetSpeed") {
         g_mpv.SetSpeed(args->GetInt(0) / 1000.0);
     } else if (name == "playerSetSubtitle") {
