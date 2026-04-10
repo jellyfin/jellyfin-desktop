@@ -98,6 +98,8 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("setOsdVisible", CefV8Value::CreateFunction("setOsdVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("setCursorVisible", CefV8Value::CreateFunction("setCursorVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("toggleFullscreen", CefV8Value::CreateFunction("toggleFullscreen", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("menuItemSelected", CefV8Value::CreateFunction("menuItemSelected", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("menuDismissed", CefV8Value::CreateFunction("menuDismissed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("overlayFadeComplete", CefV8Value::CreateFunction("overlayFadeComplete", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
@@ -123,6 +125,8 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     shim_str += embedded_js.at("mpv-audio-player.js");
     shim_str += '\n';
     shim_str += embedded_js.at("input-plugin.js");
+    shim_str += '\n';
+    shim_str += embedded_js.at("context-menu.js");
     frame->ExecuteJavaScript(shim_str, frame->GetURL(), 0);
 }
 
@@ -222,8 +226,10 @@ bool NativeV8Handler::Execute(const CefString& name,
         if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
     } else if (name == "setCursorVisible") {
         if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
+    } else if (name == "menuItemSelected") {
+        if (arguments.size() >= 1) args->SetInt(0, v8ToInt(arguments[0], 0));
     }
-    // playerStop, playerPause, playerPlay, appExit: no args needed
+    // playerStop, playerPause, playerPlay, appExit, menuDismissed: no args needed
 
     browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
     return true;

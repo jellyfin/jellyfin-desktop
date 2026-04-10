@@ -42,13 +42,12 @@ public:
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                   CefProcessId, CefRefPtr<CefProcessMessage> message) override;
 
-    // Suppress context menu
+    void OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                             CefRefPtr<CefContextMenuParams>,
+                             CefRefPtr<CefMenuModel> model) override;
     bool RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                         CefRefPtr<CefContextMenuParams>, CefRefPtr<CefMenuModel>,
-                        CefRefPtr<CefRunContextMenuCallback> callback) override {
-        callback->Cancel();
-        return true;
-    }
+                        CefRefPtr<CefRunContextMenuCallback>) override;
 
     void resize(int w, int h, int physical_w, int physical_h);
     bool isClosed() const { return closed_; }
@@ -70,17 +69,20 @@ private:
     std::condition_variable close_cv_;
     std::mutex load_mtx_;
     std::condition_variable load_cv_;
+    CefRefPtr<CefRunContextMenuCallback> pending_menu_callback_;
     IMPLEMENT_REFCOUNTING(Client);
 };
 
 // Overlay browser client -- handles server selection/loading UI.
 // OnAcceleratedPaint sends dmabuf to overlay Wayland subsurface via g_platform.overlay_present().
 class OverlayClient : public CefClient, public CefRenderHandler,
-                      public CefLifeSpanHandler, public CefLoadHandler {
+                      public CefLifeSpanHandler, public CefLoadHandler,
+                      public CefContextMenuHandler {
 public:
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
 
     void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override;
     bool GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) override;
@@ -94,6 +96,13 @@ public:
 
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                   CefProcessId, CefRefPtr<CefProcessMessage> message) override;
+
+    void OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                             CefRefPtr<CefContextMenuParams>,
+                             CefRefPtr<CefMenuModel> model) override;
+    bool RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                        CefRefPtr<CefContextMenuParams>, CefRefPtr<CefMenuModel>,
+                        CefRefPtr<CefRunContextMenuCallback>) override;
 
     void resize(int w, int h, int physical_w, int physical_h);
     bool isClosed() const { return closed_; }
@@ -114,5 +123,6 @@ private:
     std::condition_variable close_cv_;
     std::mutex load_mtx_;
     std::condition_variable load_cv_;
+    CefRefPtr<CefRunContextMenuCallback> pending_menu_callback_;
     IMPLEMENT_REFCOUNTING(OverlayClient);
 };

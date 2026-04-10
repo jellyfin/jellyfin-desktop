@@ -340,6 +340,7 @@ set(JS_SHIMS
     ${CMAKE_SOURCE_DIR}/src/web/mpv-video-player.js
     ${CMAKE_SOURCE_DIR}/src/web/mpv-audio-player.js
     ${CMAKE_SOURCE_DIR}/src/web/input-plugin.js
+    ${CMAKE_SOURCE_DIR}/src/web/context-menu.js
 )
 set(EMBEDDED_JS_HEADER ${CMAKE_BINARY_DIR}/generated/embedded_js.h)
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated)

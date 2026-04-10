@@ -4,7 +4,6 @@
 #include "../player/media_session.h"
 #include "../player/media_session_thread.h"
 #include "../cjson/cJSON.h"
-#include "include/cef_parser.h"
 #include "../titlebar_color.h"
 #include "include/cef_urlrequest.h"
 #include <cstdio>
@@ -210,6 +209,73 @@ void Client::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
               failedUrl.ToString().c_str(), errorCode, errorText.ToString().c_str());
 }
 
+static std::string stripAccelerator(const std::string& label) {
+    std::string out;
+    out.reserve(label.size());
+    for (size_t i = 0; i < label.size(); i++) {
+        if (label[i] == '&') continue;
+        out += label[i];
+    }
+    return out;
+}
+
+static cJSON* serializeMenuModel(CefRefPtr<CefMenuModel> model) {
+    cJSON* arr = cJSON_CreateArray();
+    for (size_t i = 0; i < model->GetCount(); i++) {
+        cJSON* item = cJSON_CreateObject();
+        auto type = model->GetTypeAt(i);
+        if (type == MENUITEMTYPE_SEPARATOR) {
+            cJSON_AddBoolToObject(item, "sep", 1);
+        } else {
+            int id = model->GetCommandIdAt(i);
+            std::string label = stripAccelerator(model->GetLabelAt(i).ToString());
+            cJSON_AddNumberToObject(item, "id", id);
+            cJSON_AddStringToObject(item, "label", label.c_str());
+            cJSON_AddBoolToObject(item, "enabled", model->IsEnabledAt(i));
+        }
+        cJSON_AddItemToArray(arr, item);
+    }
+    return arr;
+}
+
+void Client::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                                 CefRefPtr<CefContextMenuParams>,
+                                 CefRefPtr<CefMenuModel> model) {
+    model->Remove(MENU_ID_PRINT);
+    model->Remove(MENU_ID_VIEW_SOURCE);
+    if (model->GetIndexOf(MENU_ID_RELOAD) < 0)
+        model->AddItem(MENU_ID_RELOAD, "Reload");
+    // Strip trailing separators left behind
+    while (model->GetCount() > 0 &&
+           model->GetTypeAt(model->GetCount() - 1) == MENUITEMTYPE_SEPARATOR)
+        model->RemoveAt(model->GetCount() - 1);
+}
+
+bool Client::RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
+                            CefRefPtr<CefContextMenuParams> params,
+                            CefRefPtr<CefMenuModel> model,
+                            CefRefPtr<CefRunContextMenuCallback> callback) {
+    if (model->GetCount() == 0) {
+        callback->Cancel();
+        return true;
+    }
+    if (pending_menu_callback_)
+        pending_menu_callback_->Cancel();
+    pending_menu_callback_ = callback;
+
+    cJSON* call_args = cJSON_CreateArray();
+    cJSON_AddItemToArray(call_args, serializeMenuModel(model));
+    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetXCoord()));
+    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetYCoord()));
+    char* json = cJSON_PrintUnformatted(call_args);
+    browser->GetMainFrame()->ExecuteJavaScript(
+        "window._showContextMenu.apply(null," + std::string(json) + ")",
+        "", 0);
+    cJSON_free(json);
+    cJSON_Delete(call_args);
+    return true;
+}
+
 void Client::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {
     g_platform.set_fullscreen(fullscreen);
 }
@@ -313,6 +379,37 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
         g_platform.set_cursor(args->GetBool(0) ? CT_POINTER : CT_NONE);
     } else if (name == "appExit") {
         initiate_shutdown();
+    } else if (name == "menuItemSelected") {
+        int cmd = args->GetInt(0);
+        if (pending_menu_callback_) {
+            pending_menu_callback_->Cancel();
+            pending_menu_callback_ = nullptr;
+        }
+        // Execute commands directly — the callback path doesn't work
+        // because CEF's menu manager state (IsShowingContextMenu) is false.
+        if (browser_) {
+            auto frame = browser_->GetFocusedFrame();
+            if (!frame) frame = browser_->GetMainFrame();
+            switch (cmd) {
+            case MENU_ID_BACK: browser_->GoBack(); break;
+            case MENU_ID_FORWARD: browser_->GoForward(); break;
+            case MENU_ID_RELOAD: browser_->Reload(); break;
+            case MENU_ID_RELOAD_NOCACHE: browser_->ReloadIgnoreCache(); break;
+            case MENU_ID_STOPLOAD: browser_->StopLoad(); break;
+            case MENU_ID_UNDO: frame->Undo(); break;
+            case MENU_ID_REDO: frame->Redo(); break;
+            case MENU_ID_CUT: frame->Cut(); break;
+            case MENU_ID_COPY: frame->Copy(); break;
+            case MENU_ID_PASTE: frame->Paste(); break;
+            case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
+            default: break;
+            }
+        }
+    } else if (name == "menuDismissed") {
+        if (pending_menu_callback_) {
+            pending_menu_callback_->Cancel();
+            pending_menu_callback_ = nullptr;
+        }
     } else {
         return false;
     }
@@ -449,7 +546,75 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         request->SetMethod("GET");
         CefURLRequest::Create(request, new ConnectivityURLRequestClient(browser, url), nullptr);
         return true;
+    } else if (name == "menuItemSelected") {
+        int cmd = args->GetInt(0);
+        if (pending_menu_callback_) {
+            pending_menu_callback_->Cancel();
+            pending_menu_callback_ = nullptr;
+        }
+        if (browser_) {
+            auto frame = browser_->GetFocusedFrame();
+            if (!frame) frame = browser_->GetMainFrame();
+            switch (cmd) {
+            case MENU_ID_BACK: browser_->GoBack(); break;
+            case MENU_ID_FORWARD: browser_->GoForward(); break;
+            case MENU_ID_RELOAD: browser_->Reload(); break;
+            case MENU_ID_RELOAD_NOCACHE: browser_->ReloadIgnoreCache(); break;
+            case MENU_ID_STOPLOAD: browser_->StopLoad(); break;
+            case MENU_ID_UNDO: frame->Undo(); break;
+            case MENU_ID_REDO: frame->Redo(); break;
+            case MENU_ID_CUT: frame->Cut(); break;
+            case MENU_ID_COPY: frame->Copy(); break;
+            case MENU_ID_PASTE: frame->Paste(); break;
+            case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
+            default: break;
+            }
+        }
+        return true;
+    } else if (name == "menuDismissed") {
+        if (pending_menu_callback_) {
+            pending_menu_callback_->Cancel();
+            pending_menu_callback_ = nullptr;
+        }
+        return true;
     }
 
     return false;
+}
+
+void OverlayClient::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                                        CefRefPtr<CefContextMenuParams>,
+                                        CefRefPtr<CefMenuModel> model) {
+    model->Remove(MENU_ID_PRINT);
+    model->Remove(MENU_ID_VIEW_SOURCE);
+    if (model->GetIndexOf(MENU_ID_RELOAD) < 0)
+        model->AddItem(MENU_ID_RELOAD, "Reload");
+    while (model->GetCount() > 0 &&
+           model->GetTypeAt(model->GetCount() - 1) == MENUITEMTYPE_SEPARATOR)
+        model->RemoveAt(model->GetCount() - 1);
+}
+
+bool OverlayClient::RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
+                                   CefRefPtr<CefContextMenuParams> params,
+                                   CefRefPtr<CefMenuModel> model,
+                                   CefRefPtr<CefRunContextMenuCallback> callback) {
+    if (model->GetCount() == 0) {
+        callback->Cancel();
+        return true;
+    }
+    if (pending_menu_callback_)
+        pending_menu_callback_->Cancel();
+    pending_menu_callback_ = callback;
+
+    cJSON* call_args = cJSON_CreateArray();
+    cJSON_AddItemToArray(call_args, serializeMenuModel(model));
+    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetXCoord()));
+    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetYCoord()));
+    char* json = cJSON_PrintUnformatted(call_args);
+    browser->GetMainFrame()->ExecuteJavaScript(
+        "window._showContextMenu.apply(null," + std::string(json) + ")",
+        "", 0);
+    cJSON_free(json);
+    cJSON_Delete(call_args);
+    return true;
 }
