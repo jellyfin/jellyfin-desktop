@@ -18,6 +18,14 @@ enum class MpvEventType {
     SPEED,
     SEEKING,
     DISPLAY_FPS,
+    BUFFERED_RANGES,
+};
+
+static constexpr int MAX_BUFFERED_RANGES = 8;
+
+struct BufferedRange {
+    int64_t start_ticks;    // 100ns units (ticks)
+    int64_t end_ticks;
 };
 
 struct MpvEvent {
@@ -25,6 +33,8 @@ struct MpvEvent {
     bool flag;              // PAUSE, FULLSCREEN, SEEKING
     double dbl;             // TIME_POS, DURATION, SPEED
     int pw, ph, lw, lh;    // OSD_DIMS
+    int range_count;                            // BUFFERED_RANGES
+    BufferedRange ranges[MAX_BUFFERED_RANGES];  // BUFFERED_RANGES
 };
 
 // Observation IDs passed as reply_userdata to mpv_observe_property.
@@ -39,6 +49,7 @@ enum MpvObserveId : uint64_t {
     MPV_OBSERVE_SPEED         = 7,
     MPV_OBSERVE_SEEKING       = 8,
     MPV_OBSERVE_DISPLAY_FPS   = 9,
+    MPV_OBSERVE_CACHE_STATE   = 10,
 };
 
 class MpvHandle;

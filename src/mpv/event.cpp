@@ -1,6 +1,7 @@
 #include "event.h"
 #include "handle.h"
 #include "../common.h"
+#include <cstring>
 
 void observe_properties(MpvHandle& mpv) {
     mpv.ObservePropertyNode(MPV_OBSERVE_VIDEO_PARAMS, "video-params");
@@ -12,6 +13,7 @@ void observe_properties(MpvHandle& mpv) {
     mpv.ObservePropertyDouble(MPV_OBSERVE_SPEED, "speed");
     mpv.ObservePropertyFlag(MPV_OBSERVE_SEEKING, "seeking");
     mpv.ObservePropertyDouble(MPV_OBSERVE_DISPLAY_FPS, "display-fps");
+    mpv.ObservePropertyNode(MPV_OBSERVE_CACHE_STATE, "demuxer-cache-state");
 }
 
 MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
@@ -74,6 +76,37 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         if (hz != g_display_hz.load(std::memory_order_relaxed)) {
             g_display_hz.store(hz, std::memory_order_relaxed);
             ev.type = MpvEventType::DISPLAY_FPS;
+        }
+        break;
+    }
+    case MPV_OBSERVE_CACHE_STATE: {
+        if (p->format != MPV_FORMAT_NODE) break;
+        auto* node = static_cast<mpv_node*>(p->data);
+        if (!node || node->format != MPV_FORMAT_NODE_MAP) break;
+        ev.type = MpvEventType::BUFFERED_RANGES;
+        ev.range_count = 0;
+        for (int i = 0; i < node->u.list->num; i++) {
+            if (strcmp(node->u.list->keys[i], "seekable-ranges") != 0) continue;
+            mpv_node* arr = &node->u.list->values[i];
+            if (arr->format != MPV_FORMAT_NODE_ARRAY) break;
+            for (int j = 0; j < arr->u.list->num && ev.range_count < MAX_BUFFERED_RANGES; j++) {
+                mpv_node* range = &arr->u.list->values[j];
+                if (range->format != MPV_FORMAT_NODE_MAP) continue;
+                double start = 0, end = 0;
+                for (int k = 0; k < range->u.list->num; k++) {
+                    if (strcmp(range->u.list->keys[k], "start") == 0 &&
+                        range->u.list->values[k].format == MPV_FORMAT_DOUBLE)
+                        start = range->u.list->values[k].u.double_;
+                    else if (strcmp(range->u.list->keys[k], "end") == 0 &&
+                             range->u.list->values[k].format == MPV_FORMAT_DOUBLE)
+                        end = range->u.list->values[k].u.double_;
+                }
+                ev.ranges[ev.range_count++] = {
+                    static_cast<int64_t>(start * 10000000.0),
+                    static_cast<int64_t>(end * 10000000.0)
+                };
+            }
+            break;
         }
         break;
     }

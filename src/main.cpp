@@ -290,6 +290,20 @@ static void cef_consumer_thread() {
                     g_platform.overlay_resize(ev.lw, ev.lh, ev.pw, ev.ph);
                 }
                 break;
+            case MpvEventType::BUFFERED_RANGES: {
+                auto list = CefListValue::Create();
+                for (int i = 0; i < ev.range_count; i++) {
+                    auto range = CefDictionaryValue::Create();
+                    range->SetDouble("start", static_cast<double>(ev.ranges[i].start_ticks));
+                    range->SetDouble("end", static_cast<double>(ev.ranges[i].end_ticks));
+                    list->SetDictionary(static_cast<size_t>(i), range);
+                }
+                auto val = CefValue::Create();
+                val->SetList(list);
+                auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
+                g_client->execJs("window._nativeUpdateBufferedRanges(" + json.ToString() + ")");
+                break;
+            }
             case MpvEventType::DISPLAY_FPS: {
                 int hz = g_display_hz.load(std::memory_order_relaxed);
                 LOG_INFO(LOG_MAIN, "Display refresh rate changed: %d Hz", hz);
