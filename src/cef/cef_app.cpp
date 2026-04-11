@@ -90,8 +90,6 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("notifyArtwork", CefV8Value::CreateFunction("notifyArtwork", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("notifyQueueChange", CefV8Value::CreateFunction("notifyQueueChange", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("notifyRateChange", CefV8Value::CreateFunction("notifyRateChange", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("setClipboard", CefV8Value::CreateFunction("setClipboard", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("getClipboard", CefV8Value::CreateFunction("getClipboard", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("appExit", CefV8Value::CreateFunction("appExit", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("setSettingValue", CefV8Value::CreateFunction("setSettingValue", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("themeColor", CefV8Value::CreateFunction("themeColor", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
@@ -155,14 +153,6 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
         return true;
     }
 
-    if (name == "clipboardResult") {
-        CefV8ValueList v8args;
-        v8args.push_back(CefV8Value::CreateString(args->GetString(0)));
-        v8args.push_back(CefV8Value::CreateString(args->GetString(1)));
-        callJsGlobal(frame, "_onClipboardResult", v8args);
-        return true;
-    }
-
     return false;
 }
 
@@ -214,14 +204,6 @@ bool NativeV8Handler::Execute(const CefString& name,
             args->SetString(1, arguments[1]->GetStringValue());
             args->SetString(2, arguments[2]->GetStringValue());
         }
-    } else if (name == "setClipboard") {
-        if (arguments.size() >= 2) {
-            args->SetString(0, arguments[0]->GetStringValue());
-            args->SetString(1, arguments[1]->GetStringValue());
-        }
-    } else if (name == "getClipboard") {
-        args->SetString(0, arguments.size() >= 1 && arguments[0]->IsString()
-            ? arguments[0]->GetStringValue() : "text/plain");
     } else if (name == "setOsdVisible") {
         if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
     } else if (name == "setCursorVisible") {

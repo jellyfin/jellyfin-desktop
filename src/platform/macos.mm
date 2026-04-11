@@ -2,7 +2,7 @@
 // Two CAMetalLayers composite CEF IOSurfaces (main + overlay) onto mpv's window.
 // Input is owned by src/input/input_macos.mm.
 
-#include "platform.h"
+#include "platform/platform.h"
 #include "common.h"
 #include "cef/cef_client.h"
 #include "input/input_macos.h"
@@ -464,6 +464,20 @@ static void macos_set_idle_inhibit(IdleInhibitLevel level) {
     }
 }
 
+// =====================================================================
+// Clipboard (NSPasteboard) — read only; writes go through CEF's own
+// frame->Copy() path which works correctly on macOS.
+// =====================================================================
+
+static void macos_clipboard_read_text_async(std::function<void(std::string)> on_done) {
+    if (!on_done) return;
+    // NSPasteboard reads are synchronous on macOS; fire the callback inline.
+    NSPasteboard* pb = [NSPasteboard generalPasteboard];
+    NSString* ns = [pb stringForType:NSPasteboardTypeString];
+    const char* utf8 = ns ? [ns UTF8String] : nullptr;
+    on_done(utf8 ? std::string(utf8) : std::string());
+}
+
 Platform make_macos_platform() {
     return Platform{
         .early_init = macos_early_init,
@@ -489,5 +503,6 @@ Platform make_macos_platform() {
         .set_cursor = input::macos::set_cursor,
         .set_idle_inhibit = macos_set_idle_inhibit,
         .set_titlebar_color = macos_set_titlebar_color,
+        .clipboard_read_text_async = macos_clipboard_read_text_async,
     };
 }

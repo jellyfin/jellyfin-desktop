@@ -2,7 +2,7 @@
 
 #include "input.h"
 #include "../common.h"
-#include "../platform.h"
+#include "../platform/platform.h"
 
 namespace input {
 namespace {

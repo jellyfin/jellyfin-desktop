@@ -7,6 +7,7 @@
 #include "include/cef_load_handler.h"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_display_handler.h"
+#include "include/cef_keyboard_handler.h"
 #include <condition_variable>
 #include <mutex>
 
@@ -14,13 +15,21 @@
 // OnAcceleratedPaint sends dmabuf to main Wayland subsurface via g_platform.present().
 class Client : public CefClient, public CefRenderHandler,
                public CefLifeSpanHandler, public CefLoadHandler,
-               public CefContextMenuHandler, public CefDisplayHandler {
+               public CefContextMenuHandler, public CefDisplayHandler,
+               public CefKeyboardHandler {
 public:
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
+
+    // CefKeyboardHandler — we only override Ctrl/Cmd+V on compositors
+    // where our platform clipboard is active (ext-data-control-v1). Other
+    // shortcuts (Copy, Cut, Select-All, etc.) fall through to CEF.
+    bool OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent&,
+                       CefEventHandle, bool* is_keyboard_shortcut) override;
 
     void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override;
     bool GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) override;
@@ -77,12 +86,17 @@ private:
 // OnAcceleratedPaint sends dmabuf to overlay Wayland subsurface via g_platform.overlay_present().
 class OverlayClient : public CefClient, public CefRenderHandler,
                       public CefLifeSpanHandler, public CefLoadHandler,
-                      public CefContextMenuHandler {
+                      public CefContextMenuHandler,
+                      public CefKeyboardHandler {
 public:
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
+    CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
+
+    bool OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent&,
+                       CefEventHandle, bool* is_keyboard_shortcut) override;
 
     void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override;
     bool GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) override;

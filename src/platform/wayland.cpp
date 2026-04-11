@@ -1,5 +1,6 @@
 #include "common.h"
 #include "cef/cef_client.h"
+#include "clipboard/wayland.h"
 #include "input/input_wayland.h"
 
 #include <wayland-client.h>
@@ -510,6 +511,16 @@ static bool wl_init(mpv_handle* mpv) {
     // Start input thread (input layer owns it)
     input::wayland::start_input_thread();
 
+    // Clipboard worker runs on its own wl_display connection + thread and
+    // uses ext-data-control-v1. On compositors that don't advertise the
+    // protocol (notably Mutter/GNOME) this initializes to a no-op and we
+    // clear the Platform hook so the context menu falls back to CEF's
+    // native frame->Paste() — Mutter's XWayland clipboard bridge handles
+    // external paste correctly there.
+    clipboard_wayland::init();
+    if (!clipboard_wayland::available())
+        g_platform.clipboard_read_text_async = nullptr;
+
     return true;
 }
 
@@ -527,6 +538,9 @@ static void wl_cleanup() {
     wl_cleanup_kde_palette();
     wl_release_idle_inhibit();
     if (g_wl.system_bus) { sd_bus_unref(g_wl.system_bus); g_wl.system_bus = nullptr; }
+    // Clipboard worker owns its own thread + wl_event_queue; must shut
+    // down before input::wayland::cleanup destroys the seat it borrowed.
+    clipboard_wayland::cleanup();
     // Input layer owns seat/pointer/keyboard/xkb/cursor-shape-device.
     input::wayland::cleanup();
     // Overlay
@@ -971,5 +985,6 @@ Platform make_wayland_platform() {
         .set_cursor = input::wayland::set_cursor,
         .set_idle_inhibit = wl_set_idle_inhibit,
         .set_titlebar_color = wl_set_titlebar_color,
+        .clipboard_read_text_async = clipboard_wayland::read_text_async,
     };
 }

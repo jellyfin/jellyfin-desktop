@@ -3,6 +3,7 @@
 #include "include/cef_render_handler.h"
 #include "include/internal/cef_types.h"
 #include <functional>
+#include <string>
 #include <mpv/client.h>
 
 enum class IdleInhibitLevel { None, System, Display };
@@ -55,6 +56,19 @@ struct Platform {
 
     // Titlebar color (KDE/KWin only, no-op on other compositors)
     void (*set_titlebar_color)(uint8_t r, uint8_t g, uint8_t b);
+
+    // Read the system clipboard as UTF-8 text. Used by the context menu's
+    // Paste action — CEF's frame->Paste() can't see external Wayland
+    // selections under our forced --ozone-platform=x11 config, so we read
+    // directly from the OS and inject via document.execCommand('insertText').
+    //
+    // Asynchronous: the callback fires when the text is available (or with
+    // an empty string if the clipboard has no compatible text). On Wayland
+    // this is driven by the input thread's existing poll loop — the pipe
+    // fd from wl_data_offer_receive becomes a regular poll source. On
+    // macOS/Windows the OS API is synchronous and the callback runs inline
+    // on the calling thread. Callbacks may run on any thread.
+    void (*clipboard_read_text_async)(std::function<void(std::string)> on_done);
 };
 
 #ifdef _WIN32

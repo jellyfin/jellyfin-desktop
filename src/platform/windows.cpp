@@ -3,7 +3,7 @@
 // D3D11 + DirectComposition composites CEF shared textures (main + overlay)
 // onto mpv's HWND. A transparent child HWND captures input for CEF.
 
-#include "platform.h"
+#include "platform/platform.h"
 #include "common.h"
 #include "cef/cef_client.h"
 #include "input/input_windows.h"
@@ -624,6 +624,33 @@ static void win_set_titlebar_color(uint8_t, uint8_t, uint8_t) {
 }
 
 // =====================================================================
+// Clipboard (Win32 CF_UNICODETEXT) — read only; writes go through CEF's
+// own frame->Copy() path which works correctly on Windows.
+// =====================================================================
+
+static void win_clipboard_read_text_async(std::function<void(std::string)> on_done) {
+    if (!on_done) return;
+    // Win32 clipboard is synchronous; fire the callback inline.
+    std::string result;
+    if (OpenClipboard(nullptr)) {
+        HANDLE h = GetClipboardData(CF_UNICODETEXT);
+        if (h) {
+            auto* wbuf = static_cast<const wchar_t*>(GlobalLock(h));
+            if (wbuf) {
+                int bytes = WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, nullptr, 0, nullptr, nullptr);
+                if (bytes > 1) {  // includes terminator
+                    result.resize(bytes - 1);
+                    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, result.data(), bytes, nullptr, nullptr);
+                }
+                GlobalUnlock(h);
+            }
+        }
+        CloseClipboard();
+    }
+    on_done(std::move(result));
+}
+
+// =====================================================================
 // make_windows_platform
 // =====================================================================
 
@@ -652,6 +679,7 @@ Platform make_windows_platform() {
         .set_cursor = input::windows::set_cursor,
         .set_idle_inhibit = win_set_idle_inhibit,
         .set_titlebar_color = win_set_titlebar_color,
+        .clipboard_read_text_async = win_clipboard_read_text_async,
     };
 }
 

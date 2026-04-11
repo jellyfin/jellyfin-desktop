@@ -239,6 +239,81 @@ static cJSON* serializeMenuModel(CefRefPtr<CefMenuModel> model) {
     return arr;
 }
 
+// The "action modifier" for clipboard shortcuts: Cmd on macOS, Ctrl elsewhere.
+#ifdef __APPLE__
+constexpr uint32_t kActionModifier = EVENTFLAG_COMMAND_DOWN;
+#else
+constexpr uint32_t kActionModifier = EVENTFLAG_CONTROL_DOWN;
+#endif
+
+// Returns true if `e` is the "paste" keyboard shortcut and should be
+// intercepted. Matches only the press (RawKeyDown), with the platform
+// action modifier held and no Alt, so we don't hijack e.g. Ctrl+Alt+V.
+static bool is_paste_shortcut(const CefKeyEvent& e) {
+    if (e.type != KEYEVENT_RAWKEYDOWN) return false;
+    if ((e.modifiers & kActionModifier) == 0) return false;
+    if (e.modifiers & EVENTFLAG_ALT_DOWN) return false;
+    return e.windows_key_code == 'V';
+}
+
+// Encode a UTF-8 string as a JavaScript string literal (including quotes).
+// JSON strings are valid JS strings, so cJSON handles all the escaping —
+// satisfies the "no hand-rolled JSON" rule.
+static std::string js_string_literal(const std::string& text) {
+    cJSON* j = cJSON_CreateString(text.c_str());
+    if (!j) return "\"\"";
+    char* s = cJSON_PrintUnformatted(j);
+    std::string result = s ? s : "\"\"";
+    if (s) cJSON_free(s);
+    cJSON_Delete(j);
+    return result;
+}
+
+// Async paste via the platform clipboard + JS injection. Reads the
+// system clipboard (may complete on any thread) and posts the text into
+// the focused frame with document.execCommand('insertText', …), which
+// dispatches synthetic input events so controlled inputs (React etc.)
+// see the change.
+static void paste_via_platform_clipboard(CefRefPtr<CefBrowser> browser) {
+    if (!browser) return;
+    auto frame = browser->GetFocusedFrame();
+    if (!frame) frame = browser->GetMainFrame();
+    if (!frame) return;
+    g_platform.clipboard_read_text_async([frame](std::string text) {
+        if (text.empty()) return;
+        std::string js = "document.execCommand('insertText',false," +
+                         js_string_literal(text) + ");";
+        frame->ExecuteJavaScript(js, frame->GetURL(), 0);
+    });
+}
+
+// Route paste through our ext-data-control-v1 path when g_platform
+// advertises it (wlroots/KWin). On compositors without the hook
+// (Mutter/GNOME, etc.) CEF's own XWayland clipboard bridge works, so we
+// fall back to frame->Paste().
+static void do_paste(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame) {
+    if (g_platform.clipboard_read_text_async)
+        paste_via_platform_clipboard(browser);
+    else
+        frame->Paste();
+}
+
+// Shared Ctrl+V intercept logic — both Client and OverlayClient route
+// paste through our path only when the platform hook is active. When it
+// isn't, we return false and let CEF handle Ctrl+V natively.
+static bool try_intercept_paste(CefRefPtr<CefBrowser> browser,
+                                const CefKeyEvent& e) {
+    if (!g_platform.clipboard_read_text_async) return false;
+    if (!is_paste_shortcut(e)) return false;
+    paste_via_platform_clipboard(browser);
+    return true;
+}
+
+bool Client::OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& e,
+                           CefEventHandle, bool* /*is_keyboard_shortcut*/) {
+    return try_intercept_paste(browser, e);
+}
+
 void Client::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                  CefRefPtr<CefContextMenuParams>,
                                  CefRefPtr<CefMenuModel> model) {
@@ -401,7 +476,7 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
             case MENU_ID_REDO: frame->Redo(); break;
             case MENU_ID_CUT: frame->Cut(); break;
             case MENU_ID_COPY: frame->Copy(); break;
-            case MENU_ID_PASTE: frame->Paste(); break;
+            case MENU_ID_PASTE: do_paste(browser_, frame); break;
             case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
             default: break;
             }
@@ -567,7 +642,7 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
             case MENU_ID_REDO: frame->Redo(); break;
             case MENU_ID_CUT: frame->Cut(); break;
             case MENU_ID_COPY: frame->Copy(); break;
-            case MENU_ID_PASTE: frame->Paste(); break;
+            case MENU_ID_PASTE: do_paste(browser_, frame); break;
             case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
             default: break;
             }
@@ -582,6 +657,11 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
     }
 
     return false;
+}
+
+bool OverlayClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& e,
+                                  CefEventHandle, bool* /*is_keyboard_shortcut*/) {
+    return try_intercept_paste(browser, e);
 }
 
 void OverlayClient::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,

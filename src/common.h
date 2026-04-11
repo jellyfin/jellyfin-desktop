@@ -4,7 +4,7 @@
 
 #include "include/cef_base.h"
 
-#include "platform.h"
+#include "platform/platform.h"
 #include "mpv/handle.h"
 #include "player/media_session.h"
 

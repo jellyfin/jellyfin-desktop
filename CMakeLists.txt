@@ -69,7 +69,7 @@ if(APPLE)
     find_library(MEDIAPLAYER_FRAMEWORK MediaPlayer REQUIRED)
 
     set(PLATFORM_SOURCES
-        src/platform_macos.mm
+        src/platform/macos.mm
         src/input/input_macos.mm
         src/wake_event_macos.cpp
         src/player/media_session.cpp
@@ -90,7 +90,7 @@ if(APPLE)
     )
 elseif(WIN32)
     set(PLATFORM_SOURCES
-        src/platform_windows.cpp
+        src/platform/windows.cpp
         src/input/input_windows.cpp
         src/player/media_session.cpp
         src/player/windows/media_session_windows.cpp
@@ -140,6 +140,10 @@ else()
     set(CURSOR_SHAPE_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/cursor-shape/cursor-shape-v1.xml")
     set(CURSOR_SHAPE_CLIENT_H "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-client.h")
     set(CURSOR_SHAPE_CODE_C "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-code.c")
+
+    set(EXT_DATA_CONTROL_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/ext-data-control/ext-data-control-v1.xml")
+    set(EXT_DATA_CONTROL_CLIENT_H "${WAYLAND_GENERATED_DIR}/ext-data-control-v1-client.h")
+    set(EXT_DATA_CONTROL_CODE_C "${WAYLAND_GENERATED_DIR}/ext-data-control-v1-code.c")
 
     # tablet-v2 interface symbols are referenced by cursor-shape-v1 generated code
     set(TABLET_V2_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/stable/tablet/tablet-v2.xml")
@@ -206,6 +210,18 @@ else()
         COMMENT "Generating cursor-shape-v1 code"
     )
     add_custom_command(
+        OUTPUT ${EXT_DATA_CONTROL_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${EXT_DATA_CONTROL_PROTOCOL} ${EXT_DATA_CONTROL_CLIENT_H}
+        DEPENDS ${EXT_DATA_CONTROL_PROTOCOL}
+        COMMENT "Generating ext-data-control-v1 client header"
+    )
+    add_custom_command(
+        OUTPUT ${EXT_DATA_CONTROL_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${EXT_DATA_CONTROL_PROTOCOL} ${EXT_DATA_CONTROL_CODE_C}
+        DEPENDS ${EXT_DATA_CONTROL_PROTOCOL}
+        COMMENT "Generating ext-data-control-v1 code"
+    )
+    add_custom_command(
         OUTPUT ${TABLET_V2_CLIENT_H}
         COMMAND ${WAYLAND_SCANNER} client-header ${TABLET_V2_PROTOCOL} ${TABLET_V2_CLIENT_H}
         DEPENDS ${TABLET_V2_PROTOCOL}
@@ -233,7 +249,8 @@ else()
     endif()
 
     set(PLATFORM_SOURCES
-        src/platform_wayland.cpp
+        src/platform/wayland.cpp
+        src/clipboard/wayland.cpp
         src/input/input_wayland.cpp
         src/wake_event_linux.cpp
         src/player/media_session.cpp
@@ -247,6 +264,8 @@ else()
         ${ALPHA_MODIFIER_CLIENT_H}
         ${CURSOR_SHAPE_CODE_C}
         ${CURSOR_SHAPE_CLIENT_H}
+        ${EXT_DATA_CONTROL_CODE_C}
+        ${EXT_DATA_CONTROL_CLIENT_H}
         ${TABLET_V2_CODE_C}
         ${TABLET_V2_CLIENT_H}
     )
@@ -451,7 +470,7 @@ endif()
 # Enable ARC for Objective-C++ files on macOS
 if(APPLE)
     set_source_files_properties(
-        src/platform_macos.mm
+        src/platform/macos.mm
         src/input/input_macos.mm
         src/player/macos/media_session_macos.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
