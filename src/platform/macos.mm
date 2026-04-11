@@ -383,9 +383,11 @@ static bool macos_query_logical_content_size(int* w, int* h) {
 
 static void macos_pump() {
     @autoreleasepool {
+        // distantPast = return immediately if no event. `nil` means distantFuture
+        // (block forever), which would freeze the main loop between poll() iterations.
         NSEvent* event;
         while ((event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                                           untilDate:nil
+                                           untilDate:[NSDate distantPast]
                                               inMode:NSDefaultRunLoopMode
                                              dequeue:YES])) {
             [NSApp sendEvent:event];

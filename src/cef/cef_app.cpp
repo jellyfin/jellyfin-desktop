@@ -44,6 +44,15 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues
     command_line->AppendSwitchWithValue("ozone-platform", "x11");
 #endif
+
+#ifdef __APPLE__
+    // OSCrypt on macOS otherwise prompts for the login keychain on every
+    // launch (unsigned/ad-hoc app has no stable keychain ACL). use-mock-keychain
+    // bypasses the keychain entirely; password-store=basic also keeps the
+    // password manager from reaching for the encryption key.
+    command_line->AppendSwitch("use-mock-keychain");
+    command_line->AppendSwitchWithValue("password-store", "basic");
+#endif
 }
 
 void App::OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) {
