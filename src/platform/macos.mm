@@ -612,6 +612,21 @@ static void macos_overlay_resize(int, int, int, int) {}
 static void macos_set_overlay_visible(bool visible) {
     g_overlay_visible = visible;
     [g_overlay.view setHidden:!visible];
+
+    // Route keyboard focus to the newly-active browser. Without this, CEF
+    // thinks the just-activated browser has no window focus, so text inputs
+    // don't show a caret and focus rings don't render. Matches the "active
+    // tab" semantics: only one browser at a time holds focus. Mirrors the
+    // Wayland path in wl_set_overlay_visible.
+    auto main = g_client ? g_client->browser() : nullptr;
+    auto ovl  = g_overlay_client ? g_overlay_client->browser() : nullptr;
+    if (visible) {
+        if (main) main->GetHost()->SetFocus(false);
+        if (ovl)  ovl->GetHost()->SetFocus(true);
+    } else {
+        if (ovl)  ovl->GetHost()->SetFocus(false);
+        if (main) main->GetHost()->SetFocus(true);
+    }
 }
 
 static void macos_fade_overlay(float delay_sec, float fade_sec,
