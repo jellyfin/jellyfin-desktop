@@ -54,10 +54,12 @@ void dispatch_key(const KeyEvent& e) {
     if (!b) return;
 
     CefKeyEvent ce{};
-    ce.windows_key_code = e.windows_key_code;
-    ce.native_key_code  = e.native_key_code;
-    ce.modifiers        = e.modifiers;
-    ce.is_system_key    = e.is_system_key;
+    ce.windows_key_code     = e.windows_key_code;
+    ce.native_key_code      = e.native_key_code;
+    ce.modifiers            = e.modifiers;
+    ce.is_system_key        = e.is_system_key;
+    ce.character            = e.character;
+    ce.unmodified_character = e.unmodified_character;
     ce.type = (e.action == KeyAction::Down) ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
     b->GetHost()->SendKeyEvent(ce);
 }

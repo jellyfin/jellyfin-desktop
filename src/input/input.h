@@ -46,14 +46,24 @@ enum class KeyAction { Down, Up };
 // their native source (WPARAM on Windows, a VK lookup on Wayland/macOS)
 // so dispatch never has to re-derive it.
 //
-// Character input is a separate concern delivered via dispatch_char().
+// Character input is normally a separate concern delivered via
+// dispatch_char(), but `character` / `unmodified_character` MUST also be
+// populated on every keydown/keyup on macOS. CEF's macOS TranslateWebKey-
+// Event builds a synthetic NSEvent from these fields; if both are zero it
+// falls through to NSEventTypeFlagsChanged (a modifier-key event), which
+// Blink then processes through a different editor path and causes keys
+// like Backspace and Tab to fire their default action twice. Translators
+// on other platforms may leave these at 0 — CEF's non-mac paths derive
+// character data from native_key_code / windows_key_code instead.
 struct KeyEvent {
     KeyCode   code;
     int       windows_key_code;
     KeyAction action;
     uint32_t  modifiers;
-    int       native_key_code; // forwarded to CefKeyEvent.native_key_code
-    bool      is_system_key;   // Windows WM_SYSKEY*; false on Wayland/macOS
+    int       native_key_code;       // forwarded to CefKeyEvent.native_key_code
+    bool      is_system_key;         // Windows WM_SYSKEY*; false on Wayland/macOS
+    uint16_t  character;             // CefKeyEvent.character (required on macOS)
+    uint16_t  unmodified_character;  // CefKeyEvent.unmodified_character (required on macOS)
 };
 
 enum class MouseButton { Left, Right, Middle };

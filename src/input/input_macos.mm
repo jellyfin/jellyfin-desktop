@@ -230,6 +230,29 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
 // JellyfinInputView — transparent NSView that captures input for CEF
 // =====================================================================
 
+// Populate a platform-agnostic KeyEvent from an NSEvent, including the
+// character / unmodified_character fields. These MUST be set so CEF's
+// TranslateWebKeyEvent on macOS builds a NSEventTypeKeyDown synthetic
+// NSEvent instead of NSEventTypeFlagsChanged (which is what happens when
+// both fields are 0, and is what caused keys like Backspace and Tab to
+// fire their default action twice). CEF applies FilterSpecialCharacter
+// on its end, so passing AppKit's raw DEL (0x7f) for Backspace etc. is
+// fine — Chromium will map it to 0x08 in the WebKeyboardEvent.text field.
+static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
+    unsigned short kc = [event keyCode];
+    e.code             = input::macos::ns_keycode_to_keycode(kc);
+    e.windows_key_code = input::macos::ns_keycode_to_vkey(kc);
+    e.modifiers        = input::macos::ns_to_cef_modifiers([event modifierFlags]);
+    e.native_key_code  = kc;
+    e.is_system_key    = false;
+    if ([event type] == NSEventTypeKeyDown || [event type] == NSEventTypeKeyUp) {
+        NSString* chars      = [event characters];
+        NSString* charsNoMod = [event charactersIgnoringModifiers];
+        if (chars.length > 0)      e.character            = [chars characterAtIndex:0];
+        if (charsNoMod.length > 0) e.unmodified_character = [charsNoMod characterAtIndex:0];
+    }
+}
+
 @interface JellyfinInputView : NSView
 @property (nonatomic) NSTrackingArea* trackingArea;
 @end
@@ -345,32 +368,34 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
     unsigned short kc = [event keyCode];
     g_last_keydown_mach.store(mach_absolute_time(), std::memory_order_release);
     LOG_INFO(LOG_PLATFORM, "[INPUT] keyDown kc=0x%x", (unsigned)kc);
-    uint32_t mods = input::macos::ns_to_cef_modifiers([event modifierFlags]);
 
     input::KeyEvent e{};
-    e.code             = input::macos::ns_keycode_to_keycode(kc);
-    e.windows_key_code = input::macos::ns_keycode_to_vkey(kc);
-    e.action           = input::KeyAction::Down;
-    e.modifiers        = mods;
-    e.native_key_code  = kc;
-    e.is_system_key    = false;
+    fill_key_event_from_nsevent(e, event);
+    e.action = input::KeyAction::Down;
     input::dispatch_key(e);
 
-    NSString* chars = [event characters];
-    if (chars.length > 0) {
-        input::dispatch_char([chars characterAtIndex:0], mods, kc, false);
+    // Forward typed characters for text input. dispatch_key above already
+    // produced the raw keydown Blink needs; this CHAR event is only for
+    // Blink's editor to insert printable characters into focused text
+    // controls, plus Enter (where Blink needs the explicit CHAR event to
+    // trigger form submission — matches the old third_party/old/src path).
+    // Skip everything else — Tab, Backspace, Escape, arrow / function keys
+    // — because they're already handled from the RAWKEYDOWN side and a
+    // paired CHAR would produce a second editor action.
+    if (e.character) {
+        uint16_t c = e.character;
+        bool forward = c == 0x0d /* Return */
+                    || (c >= 0x20 && c != 0x7f && !(c >= 0xF700 && c <= 0xF7FF));
+        if (forward) {
+            input::dispatch_char(c, e.modifiers, kc, false);
+        }
     }
 }
 
 - (void)keyUp:(NSEvent*)event {
-    unsigned short kc = [event keyCode];
     input::KeyEvent e{};
-    e.code             = input::macos::ns_keycode_to_keycode(kc);
-    e.windows_key_code = input::macos::ns_keycode_to_vkey(kc);
-    e.action           = input::KeyAction::Up;
-    e.modifiers        = input::macos::ns_to_cef_modifiers([event modifierFlags]);
-    e.native_key_code  = kc;
-    e.is_system_key    = false;
+    fill_key_event_from_nsevent(e, event);
+    e.action = input::KeyAction::Up;
     input::dispatch_key(e);
 }
 
@@ -386,12 +411,11 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
     }
     bool pressed = ([event modifierFlags] & flag) != 0;
     input::KeyEvent e{};
-    e.code             = input::macos::ns_keycode_to_keycode(kc);
-    e.windows_key_code = input::macos::ns_keycode_to_vkey(kc);
-    e.action           = pressed ? input::KeyAction::Down : input::KeyAction::Up;
-    e.modifiers        = input::macos::ns_to_cef_modifiers([event modifierFlags]);
-    e.native_key_code  = kc;
-    e.is_system_key    = false;
+    // NSEventTypeFlagsChanged: leave character/unmodified_character at 0.
+    // That is exactly the NSEventTypeFlagsChanged synthetic path CEF takes
+    // when both are 0 — which is correct for modifier-key transitions.
+    fill_key_event_from_nsevent(e, event);
+    e.action = pressed ? input::KeyAction::Down : input::KeyAction::Up;
     input::dispatch_key(e);
 }
 
