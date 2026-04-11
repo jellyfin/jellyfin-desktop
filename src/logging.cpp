@@ -27,31 +27,37 @@
 int g_original_stderr_fd = -1;
 
 static void writeLogLine(const char* tag, const char* level, const char* message) {
-    // Write to stderr (no timestamp)
+    // Format timestamp as HH:MM:SS.mmm so gaps in the log are easy to spot.
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()) % 1000;
+    tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &time_t_now);
+#else
+    localtime_r(&time_t_now, &tm_buf);
+#endif
+    char ts[16];
+    std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%03d",
+                  tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+                  static_cast<int>(ms.count()));
+
+    // Write to stderr with short timestamp
     if (g_original_stderr_fd >= 0) {
 #ifdef _WIN32
         char buf[4096];
-        int n = snprintf(buf, sizeof(buf), "%s %s: %s\n", tag, level, message);
+        int n = snprintf(buf, sizeof(buf), "%s %s %s: %s\n", ts, tag, level, message);
         if (n > 0) _write(g_original_stderr_fd, buf, static_cast<unsigned>(n));
 #else
-        dprintf(g_original_stderr_fd, "%s %s: %s\n", tag, level, message);
+        dprintf(g_original_stderr_fd, "%s %s %s: %s\n", ts, tag, level, message);
 #endif
     } else {
-        fprintf(stderr, "%s %s: %s\n", tag, level, message);
+        fprintf(stderr, "%s %s %s: %s\n", ts, tag, level, message);
     }
 
-    // Write to log file with timestamp
+    // Write to log file with full ISO timestamp
     if (g_log_file) {
-        auto now = std::chrono::system_clock::now();
-        auto time_t_now = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()) % 1000;
-        tm tm_buf;
-#ifdef _WIN32
-        localtime_s(&tm_buf, &time_t_now);
-#else
-        localtime_r(&time_t_now, &tm_buf);
-#endif
         char time_buf[32];
         std::snprintf(time_buf, sizeof(time_buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03d",
                       tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,

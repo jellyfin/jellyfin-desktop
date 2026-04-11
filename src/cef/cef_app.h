@@ -26,11 +26,27 @@ public:
                                   CefRefPtr<CefProcessMessage> message) override;
 
 #ifdef __APPLE__
-    // external_message_pump support (macOS only)
-    static void InitWakePipe();
-    static int WakeFd();
-    static void DoWork();
-    static void ScheduleWork();
+    // external_message_pump support (macOS only). InitPump() installs a
+    // CFRunLoopSource and CFRunLoopTimer in the main runloop's common modes;
+    // OnScheduleMessagePumpWork signals the source (immediate) or sets the
+    // timer's next fire date (delayed). Both are serviced by [NSApp run]'s
+    // CFRunLoopRun loop. Must be called once after [NSApplication
+    // sharedApplication] and before CefInitialize. Call ShutdownPump() after
+    // the post-run CEF drain completes (and before CefShutdown) to invalidate
+    // the source/timer and gate any racing wakes.
+    static void InitPump();
+    static void ShutdownPump();
+    // Diagnostic: snapshot of pump counters for heartbeat logging. Thread-safe.
+    struct PumpStats {
+        uint64_t sched_imm;
+        uint64_t sched_delayed;
+        uint64_t source_fired;
+        uint64_t timer_fired;
+        uint64_t dmlw_calls;
+        bool     source_pending;       // OnSched(imm) signaled, source not yet serviced
+        double   timer_next_fire_sec;  // seconds from now; negative = overdue; +inf = not armed
+    };
+    static PumpStats GetPumpStats();
 #endif
 
     // CefRenderProcessHandler

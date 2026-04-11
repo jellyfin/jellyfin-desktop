@@ -2,6 +2,7 @@
 
 #include "input.h"
 #include "hotkeys.h"
+#include "../logging.h"
 
 #include "include/cef_browser.h"
 
@@ -37,6 +38,8 @@ void set_active_browser(CefRefPtr<CefBrowser> browser) {
         prev = g_active;
         g_active = browser;
     }
+    LOG_INFO(LOG_PLATFORM, "[INPUT] set_active_browser prev=%p new=%p",
+             prev.get(), browser.get());
     if (prev)    prev->GetHost()->SetFocus(false);
     if (browser) browser->GetHost()->SetFocus(true);
 }
@@ -45,6 +48,9 @@ void dispatch_key(const KeyEvent& e) {
     if (e.action == KeyAction::Down && hotkey_try_consume(e)) return;
 
     auto b = active_browser();
+    LOG_INFO(LOG_PLATFORM, "[INPUT] dispatch_key action=%s active_browser=%p id=%d",
+             e.action == KeyAction::Down ? "down" : "up",
+             b.get(), b ? b->GetIdentifier() : -1);
     if (!b) return;
 
     CefKeyEvent ce{};

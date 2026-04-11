@@ -2,12 +2,20 @@
 
 #include "input.h"
 #include "dispatch.h"
+#include "../logging.h"
 
 #import <Cocoa/Cocoa.h>
+#include <mach/mach_time.h>
 
 #include "include/internal/cef_types.h"
 
+#include <atomic>
 #include <cstdint>
+
+// Diagnostic: capture the mach_absolute_time of the most recent keyDown
+// event. OnAcceleratedPaint in cef_client.cpp reads this and logs the
+// key→paint latency for the next frame after each keystroke.
+std::atomic<uint64_t> g_last_keydown_mach{0};
 
 namespace input::macos {
 namespace {
@@ -229,8 +237,22 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
 @implementation JellyfinInputView
 
 - (BOOL)isFlipped { return YES; }
-- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)acceptsFirstResponder {
+    LOG_INFO(LOG_PLATFORM, "[INPUT] acceptsFirstResponder -> YES");
+    return YES;
+}
 - (BOOL)isOpaque { return NO; }
+
+- (NSView*)hitTest:(NSPoint)point {
+    NSView* hit = [super hitTest:point];
+    static std::atomic<uint64_t> n{0};
+    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (k <= 5 || k % 200 == 0) {
+        LOG_INFO(LOG_PLATFORM, "[INPUT] hitTest #%llu (%.0f,%.0f) -> %p (self=%p)",
+                 (unsigned long long)k, point.x, point.y, hit, self);
+    }
+    return hit;
+}
 
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
@@ -242,6 +264,8 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
         owner:self
         userInfo:nil];
     [self addTrackingArea:_trackingArea];
+    LOG_INFO(LOG_PLATFORM, "[INPUT] updateTrackingAreas bounds=%.0fx%.0f",
+             self.bounds.size.width, self.bounds.size.height);
 }
 
 - (NSPoint)mouseLocInView:(NSEvent*)event {
@@ -252,6 +276,8 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
                      button:(input::MouseButton)button
                     pressed:(bool)pressed {
     NSPoint loc = [self mouseLocInView:event];
+    LOG_INFO(LOG_PLATFORM, "[INPUT] mouseButton btn=%d pressed=%d (%.0f,%.0f)",
+             (int)button, pressed ? 1 : 0, loc.x, loc.y);
     input::dispatch_mouse_button({
         .button      = button,
         .pressed     = pressed,
@@ -284,6 +310,12 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
 
 - (void)dispatchMouseMove:(NSEvent*)event leave:(bool)leave {
     NSPoint loc = [self mouseLocInView:event];
+    static std::atomic<uint64_t> n{0};
+    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (k <= 5 || k % 60 == 0) {
+        LOG_INFO(LOG_PLATFORM, "[INPUT] mouseMove #%llu (%.0f,%.0f) leave=%d",
+                 (unsigned long long)k, loc.x, loc.y, leave ? 1 : 0);
+    }
     input::dispatch_mouse_move({
         .x = (int)loc.x, .y = (int)loc.y,
         .modifiers = input::macos::ns_to_cef_modifiers([event modifierFlags]),
@@ -311,6 +343,8 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
 // --- Keyboard events ---
 - (void)keyDown:(NSEvent*)event {
     unsigned short kc = [event keyCode];
+    g_last_keydown_mach.store(mach_absolute_time(), std::memory_order_release);
+    LOG_INFO(LOG_PLATFORM, "[INPUT] keyDown kc=0x%x", (unsigned)kc);
     uint32_t mods = input::macos::ns_to_cef_modifiers([event modifierFlags]);
 
     input::KeyEvent e{};
@@ -363,11 +397,13 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
 
 // --- Focus ---
 - (BOOL)becomeFirstResponder {
+    LOG_INFO(LOG_PLATFORM, "[INPUT] becomeFirstResponder");
     input::dispatch_keyboard_focus(true);
     return [super becomeFirstResponder];
 }
 
 - (BOOL)resignFirstResponder {
+    LOG_INFO(LOG_PLATFORM, "[INPUT] resignFirstResponder");
     input::dispatch_keyboard_focus(false);
     return [super resignFirstResponder];
 }

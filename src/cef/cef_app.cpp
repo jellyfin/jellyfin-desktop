@@ -10,9 +10,16 @@
 #include <cmath>
 
 #ifdef __APPLE__
-#include <unistd.h>
-#include <fcntl.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <atomic>
+#include <limits>
+#include <pthread.h>
+#include <mach/mach_time.h>
+static inline uint64_t tid_u64() {
+    uint64_t t = 0;
+    pthread_threadid_np(nullptr, &t);
+    return t;
+}
 #endif
 
 void App::OnBeforeCommandLineProcessing(const CefString& process_type,
@@ -233,61 +240,242 @@ bool NativeV8Handler::Execute(const CefString& name,
 }
 
 #ifdef __APPLE__
-// Wake pipe for external_message_pump (macOS only).
-// Immediate work (delay_ms == 0) writes to the pipe, waking CFRunLoop.
-// Delayed work (delay_ms > 0) uses a CFRunLoopTimer.
-static int g_wake_pipe[2] = {-1, -1};
-static CFRunLoopTimerRef g_delayed_timer = nullptr;
+// external_message_pump integration on macOS, mirroring what
+// MessagePumpCFRunLoopBase does internally (which CEF's MessagePumpExternal
+// declines to do). The wake mechanism is a CFRunLoopSource for immediate
+// work and a CFRunLoopTimer for delayed work, both installed in the main
+// runloop's common modes. [NSApp run] services them as part of its normal
+// CFRunLoopRun loop — fully event-driven, no fixed tick.
+//
+// Why we drain CefDoMessageLoopWork in a loop inside the source/timer
+// callback:
+//
+// CEF's MessagePumpExternal::Run (libcef/browser/browser_message_loop.cc)
+// breaks out of its drain when wall-clock elapsed exceeds max_time_slice_
+// (10ms), even when DoWork's last NextWorkInfo was is_immediate(). That
+// violates base::MessagePump::ScheduleWork's documented contract
+// (base/message_loop/message_pump.h:247-256: "Once this call is made, DoWork
+// is guaranteed to be called repeatedly at least until it returns a
+// non-immediate NextWorkInfo"), and it leaves the WorkDeduplicator state at
+// kDoWorkPending — see thread_controller_with_message_pump_impl.cc:355-360
+// and work_deduplicator.cc:62-64. While state is kDoWorkPending, every
+// subsequent ScheduleWork call from another thread is suppressed by
+// WorkDeduplicator::OnWorkRequested (work_deduplicator.cc:29-34: only
+// returns kScheduleImmediate when previous state was kIdle), so
+// OnScheduleMessagePumpWork is never called and the pump wedges.
+//
+// Calling CefDoMessageLoopWork() again clears the wedge: each new call's
+// OnWorkStarted unconditionally resets state to kInDoWork
+// (work_deduplicator.cc:44-49), draining any tasks queued during the wedge
+// window. We loop until a CefDoMessageLoopWork call returns at or below
+// the time slice ceiling, which means MessagePumpExternal::Run did not
+// have to break early — there's no wedge.
+//
+// g_pump_shutdown gates the callbacks. Set it via App::ShutdownPump after
+// the post-run CEF drain completes to stop any racing wakes from touching
+// torn-down CEF state between then and CefShutdown().
 
-static void cancel_delayed_timer() {
+static CFRunLoopSourceRef g_work_source = nullptr;
+static CFRunLoopTimerRef  g_delayed_timer = nullptr;
+static std::atomic<bool>  g_pump_shutdown{false};
+
+// True between OnSched(imm) calling CFRunLoopSourceSignal and the source
+// callback actually running. CFRunLoop has no public API to read the
+// signaled bit, so we shadow it ourselves. Diagnostic only.
+static std::atomic<bool>  g_work_source_pending{false};
+
+// Counters for pump activity, dumped at shutdown.
+static std::atomic<uint64_t> g_pump_sched_imm_calls{0};
+static std::atomic<uint64_t> g_pump_sched_delayed_calls{0};
+static std::atomic<uint64_t> g_pump_source_fired{0};
+static std::atomic<uint64_t> g_pump_timer_fired{0};
+static std::atomic<uint64_t> g_pump_dmlw_calls{0};
+
+static double mach_ms(uint64_t t0, uint64_t t1) {
+    static mach_timebase_info_data_t tb = {0, 0};
+    if (tb.denom == 0) mach_timebase_info(&tb);
+    return (double)(t1 - t0) * tb.numer / tb.denom / 1e6;
+}
+
+// CEF's MessagePumpExternal::Run (libcef/browser/browser_message_loop.cc)
+// caps each Run() at max_time_slice_ = 0.01f (10ms). If DoWork is still
+// returning is_immediate at that point, Run breaks with the WorkDeduplicator
+// state stuck at kDoWorkPending (see
+// base/task/sequence_manager/work_deduplicator.cc:62 and
+// thread_controller_with_message_pump_impl.cc:355). In that state,
+// WorkDeduplicator::OnWorkRequested silently drops subsequent cross-thread
+// ScheduleWork calls, so OnScheduleMessagePumpWork stops firing and the
+// pump wedges even though CEF has more work queued.
+//
+// The way out: re-enter CefDoMessageLoopWork. ThreadController::OnWorkStarted
+// unconditionally transitions state to kInDoWork (clearing kPendingDoWorkFlag)
+// and drains more work. Once a DoWork call completes within the time slice,
+// Run returns naturally with state == kIdle and subsequent cross-thread
+// schedule calls will notify us again.
+//
+// We detect the wedge from outside by measuring wall-clock time. CEF's
+// max_time_slice_ is 0.01f = 10.0ms (libcef/browser/browser_message_loop.cc
+// hardcodes this at the MessagePumpExternal construction site). Run's break
+// condition is `delta.InSecondsF() > max_time_slice_`, strict inequality —
+// the smallest elapsed that could possibly produce a break is just over
+// 10.0ms. Anything at or below 10.0ms means Run returned naturally (either
+// no more immediate work, or a delayed deadline > 10ms in the future) and
+// state is *not* wedged. Anything over 10.0ms means Run was cut short and
+// state is kDoWorkPending.
+//
+// The response is to re-signal our CFRunLoopSource and yield to the
+// runloop: the next runloop turn re-enters us, we call DoWork again,
+// state gets unstuck. Cooperative (runloop services NSEvents and other
+// sources between iterations) and self-terminating (when elapsed drops
+// to or below the threshold, we stop re-arming).
+//
+// The Metal present path is now non-blocking (IOSurface pool + completion
+// handler, not CAMetalLayer nextDrawable), so typical steady-state dmlw
+// calls run in well under 1ms and this heuristic never fires outside of
+// startup and heavy-work bursts.
+//
+// If a future CEF version changes max_time_slice_, update this value to
+// match.
+constexpr double kCefMaxTimeSliceMs = 10.0;
+
+static void pump_drain(const char* trigger) {
+    if (g_pump_shutdown.load(std::memory_order_acquire)) {
+        LOG_INFO(LOG_CEF, "[PUMP] drain(%s) skipped (shutdown)", trigger);
+        return;
+    }
+
+    // Clear the shadow pending bit. Re-entrant OnSched(imm) from any thread
+    // during CefDoMessageLoopWork sets it back to true; we use it to tell
+    // whether new work has already signaled the source while we were busy.
+    g_work_source_pending.store(false, std::memory_order_release);
+    uint64_t n = g_pump_dmlw_calls.fetch_add(1, std::memory_order_relaxed) + 1;
+    uint64_t t0 = mach_absolute_time();
+    CefDoMessageLoopWork();
+    uint64_t t1 = mach_absolute_time();
+    double ms = mach_ms(t0, t1);
+    bool pending = g_work_source_pending.load(std::memory_order_acquire);
+
+    bool wedged = ms > kCefMaxTimeSliceMs;
+    LOG_INFO(LOG_CEF, "[PUMP] drain(%s) dmlw #%llu elapsed=%.2fms pending=%d wedged=%d",
+             trigger, (unsigned long long)n, ms, pending ? 1 : 0, wedged ? 1 : 0);
+
+    // Two reasons to come back:
+    //  - `pending` was set by a cross-thread OnSched(imm) during the call:
+    //    CEF has more work and the source is already signaled by our
+    //    OnScheduleMessagePumpWork handler. Nothing to do here — the runloop
+    //    will re-fire us on its next turn.
+    //  - `wedged`: dmlw was cut short on CEF's internal time-slice. State is
+    //    kDoWorkPending and cross-thread schedule calls will be silently
+    //    dropped until we re-enter. Signal the source ourselves so the
+    //    runloop comes back to us after servicing any other pending work.
+    if (wedged && !pending) {
+        if (g_work_source) {
+            g_work_source_pending.store(true, std::memory_order_release);
+            CFRunLoopSourceSignal(g_work_source);
+            CFRunLoopWakeUp(CFRunLoopGetMain());
+        }
+    }
+}
+
+static void work_source_perform(void* /*info*/) {
+    uint64_t n = g_pump_source_fired.fetch_add(1, std::memory_order_relaxed) + 1;
+    LOG_INFO(LOG_CEF, "[PUMP] work_source_perform #%llu", (unsigned long long)n);
+    pump_drain("source");
+}
+
+static void delayed_timer_fire(CFRunLoopTimerRef /*t*/, void* /*info*/) {
+    uint64_t n = g_pump_timer_fired.fetch_add(1, std::memory_order_relaxed) + 1;
+    LOG_INFO(LOG_CEF, "[PUMP] delayed_timer_fire #%llu", (unsigned long long)n);
+    pump_drain("timer");
+}
+
+void App::InitPump() {
+    LOG_INFO(LOG_CEF, "[PUMP] InitPump: installing CFRunLoopSource + CFRunLoopTimer");
+    CFRunLoopSourceContext src_ctx = {};
+    src_ctx.perform = work_source_perform;
+    g_work_source = CFRunLoopSourceCreate(kCFAllocatorDefault, /*order=*/1, &src_ctx);
+    CFRunLoopAddSource(CFRunLoopGetMain(), g_work_source, kCFRunLoopCommonModes);
+
+    // Initial fire date in the far future; armed by OnScheduleMessagePumpWork.
+    g_delayed_timer = CFRunLoopTimerCreate(
+        kCFAllocatorDefault,
+        /*fireDate=*/CFAbsoluteTimeGetCurrent() + 1e10,
+        /*interval=*/0, /*flags=*/0, /*order=*/0,
+        delayed_timer_fire, /*context=*/nullptr);
+    CFRunLoopAddTimer(CFRunLoopGetMain(), g_delayed_timer, kCFRunLoopCommonModes);
+}
+
+void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
+    if (g_pump_shutdown.load(std::memory_order_acquire)) {
+        LOG_INFO(LOG_CEF, "[PUMP] OnSched(%lld) SKIP(shutdown) tid=%llu",
+                 (long long)delay_ms, (unsigned long long)tid_u64());
+        return;
+    }
+    if (delay_ms <= 0) {
+        uint64_t n = g_pump_sched_imm_calls.fetch_add(1, std::memory_order_relaxed) + 1;
+        LOG_INFO(LOG_CEF, "[PUMP] OnSched(imm) #%llu tid=%llu",
+                 (unsigned long long)n, (unsigned long long)tid_u64());
+        if (g_work_source) {
+            g_work_source_pending.store(true, std::memory_order_release);
+            // Both calls are documented thread-safe.
+            CFRunLoopSourceSignal(g_work_source);
+            CFRunLoopWakeUp(CFRunLoopGetMain());
+        }
+    } else {
+        uint64_t n = g_pump_sched_delayed_calls.fetch_add(1, std::memory_order_relaxed) + 1;
+        LOG_INFO(LOG_CEF, "[PUMP] OnSched(delay=%lld) #%llu tid=%llu",
+                 (long long)delay_ms, (unsigned long long)n, (unsigned long long)tid_u64());
+        if (g_delayed_timer) {
+            // CFRunLoopTimerSetNextFireDate is thread-safe and *replaces*
+            // the previous fire date — exactly the "any currently pending
+            // scheduled call should be cancelled" semantics CEF specifies
+            // in cef_browser_process_handler.h:135.
+            CFRunLoopTimerSetNextFireDate(
+                g_delayed_timer,
+                CFAbsoluteTimeGetCurrent() + delay_ms / 1000.0);
+        }
+    }
+}
+
+App::PumpStats App::GetPumpStats() {
+    PumpStats s{};
+    s.sched_imm      = g_pump_sched_imm_calls.load(std::memory_order_relaxed);
+    s.sched_delayed  = g_pump_sched_delayed_calls.load(std::memory_order_relaxed);
+    s.source_fired   = g_pump_source_fired.load(std::memory_order_relaxed);
+    s.timer_fired    = g_pump_timer_fired.load(std::memory_order_relaxed);
+    s.dmlw_calls     = g_pump_dmlw_calls.load(std::memory_order_relaxed);
+    s.source_pending = g_work_source_pending.load(std::memory_order_acquire);
+    if (g_delayed_timer) {
+        // Seconds from now until the timer's next fire date. Our "parked"
+        // far-future value comes back as a huge positive number; a pending
+        // wake comes back as a small positive or negative (overdue) number.
+        CFAbsoluteTime next = CFRunLoopTimerGetNextFireDate(g_delayed_timer);
+        s.timer_next_fire_sec = next - CFAbsoluteTimeGetCurrent();
+    } else {
+        s.timer_next_fire_sec = std::numeric_limits<double>::infinity();
+    }
+    return s;
+}
+
+void App::ShutdownPump() {
+    LOG_INFO(LOG_CEF, "[PUMP] ShutdownPump: sched_imm=%llu sched_delayed=%llu "
+             "source_fired=%llu timer_fired=%llu dmlw_calls=%llu",
+             (unsigned long long)g_pump_sched_imm_calls.load(),
+             (unsigned long long)g_pump_sched_delayed_calls.load(),
+             (unsigned long long)g_pump_source_fired.load(),
+             (unsigned long long)g_pump_timer_fired.load(),
+             (unsigned long long)g_pump_dmlw_calls.load());
+    g_pump_shutdown.store(true, std::memory_order_release);
     if (g_delayed_timer) {
         CFRunLoopTimerInvalidate(g_delayed_timer);
         CFRelease(g_delayed_timer);
         g_delayed_timer = nullptr;
     }
-}
-
-static void delayed_timer_callback(CFRunLoopTimerRef, void*) {
-    g_delayed_timer = nullptr;  // one-shot, already invalidated by firing
-    App::DoWork();
-}
-
-void App::InitWakePipe() {
-    pipe(g_wake_pipe);
-    fcntl(g_wake_pipe[0], F_SETFL, O_NONBLOCK);
-    fcntl(g_wake_pipe[1], F_SETFL, O_NONBLOCK);
-}
-
-int App::WakeFd() { return g_wake_pipe[0]; }
-
-void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
-    if (delay_ms <= 0) {
-        // Immediate work — wake the pipe so CFRunLoop fires
-        char c = 1;
-        (void)write(g_wake_pipe[1], &c, 1);
-    } else {
-        // Delayed work — schedule a one-shot CFRunLoopTimer
-        cancel_delayed_timer();
-        CFAbsoluteTime fire_time = CFAbsoluteTimeGetCurrent() + delay_ms / 1000.0;
-        CFRunLoopTimerContext ctx = {0, nullptr, nullptr, nullptr, nullptr};
-        g_delayed_timer = CFRunLoopTimerCreate(
-            kCFAllocatorDefault, fire_time, 0, 0, 0,
-            delayed_timer_callback, &ctx);
-        CFRunLoopAddTimer(CFRunLoopGetMain(), g_delayed_timer, kCFRunLoopDefaultMode);
+    if (g_work_source) {
+        CFRunLoopSourceInvalidate(g_work_source);
+        CFRelease(g_work_source);
+        g_work_source = nullptr;
     }
-}
-
-void App::DoWork() {
-    cancel_delayed_timer();
-    // Drain wake pipe
-    char buf[64];
-    while (read(g_wake_pipe[0], buf, sizeof(buf)) > 0) {}
-    CefDoMessageLoopWork();
-}
-
-void App::ScheduleWork() {
-    char c = 1;
-    (void)write(g_wake_pipe[1], &c, 1);
 }
 #else
 void App::OnScheduleMessagePumpWork(int64_t) {

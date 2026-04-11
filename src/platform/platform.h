@@ -48,6 +48,16 @@ struct Platform {
 
     void (*pump)();
 
+    // macOS only — null elsewhere.
+    // Block on the NSApplication run loop ([NSApp run]) until wake_main_loop
+    // is called from initiate_shutdown. Drives NSEvents, GCD main-queue
+    // blocks (mpv VO DispatchQueue.main.sync), the CEF wake source, and
+    // CFRunLoopTimers — all event-driven, no polling.
+    void (*run_main_loop)();
+    // Stop the NSApplication run loop. Thread-safe; called from
+    // initiate_shutdown to break out of run_main_loop.
+    void (*wake_main_loop)();
+
     // Cursor shape/visibility (CT_NONE hides, others show with shape)
     void (*set_cursor)(cef_cursor_type_t type);
 

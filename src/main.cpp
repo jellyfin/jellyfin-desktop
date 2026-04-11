@@ -103,6 +103,9 @@ void initiate_shutdown() {
     close_or_mark(g_client);
     close_or_mark(g_overlay_client);
     g_shutdown_event.signal();
+    // macOS main thread is parked in nextEventMatchingMask — post a sentinel
+    // NSEvent so it returns and re-checks g_shutting_down.
+    if (g_platform.wake_main_loop) g_platform.wake_main_loop();
 }
 
 static void signal_handler(int) {
@@ -180,8 +183,10 @@ MediaSessionThread* g_media_session = nullptr;
 static bool g_was_maximized_before_fullscreen = false;
 
 static void cef_consumer_thread() {
+    LOG_INFO(LOG_MAIN, "[FLOW] cef_consumer_thread: waitForLoad() start");
     // Wait for main browser to load before processing events
     g_client->waitForLoad();
+    LOG_INFO(LOG_MAIN, "[FLOW] cef_consumer_thread: waitForLoad() returned");
 
 #ifdef _WIN32
     HANDLE handles[2] = {
@@ -709,17 +714,23 @@ int main(int argc, char* argv[]) {
     if (remote_debugging_port > 0)
         settings.remote_debugging_port = remote_debugging_port;
 
+#ifdef __APPLE__
+    // Install the CFRunLoopSource + CFRunLoopTimer that drive the external
+    // message pump. Must happen before CefInitialize so the very first
+    // OnScheduleMessagePumpWork callback (which fires synchronously during
+    // CefInitialize on the calling thread) finds the source/timer ready.
+    LOG_INFO(LOG_MAIN, "[FLOW] App::InitPump");
+    App::InitPump();
+#endif
+
+    LOG_INFO(LOG_MAIN, "[FLOW] calling CefInitialize...");
     if (!CefInitialize(main_args, settings, app, nullptr)) {
         LOG_ERROR(LOG_MAIN, "CefInitialize failed");
         g_platform.cleanup();
         g_mpv.TerminateDestroy();
         return 1;
     }
-    LOG_INFO(LOG_MAIN, "CefInitialize ok");
-
-#ifdef __APPLE__
-    App::InitWakePipe();
-#endif
+    LOG_INFO(LOG_MAIN, "[FLOW] CefInitialize returned ok");
 
     // --- Create browsers ---
     float scale = g_platform.get_scale();
@@ -729,7 +740,14 @@ int main(int argc, char* argv[]) {
     CefWindowInfo wi;
     wi.SetAsWindowless(0);
     wi.shared_texture_enabled = true;
+#ifdef __APPLE__
+    // macOS: drive BeginFrames from CVDisplayLink, aligned with display
+    // vsync. Eliminates the phase lag from CEF's internal 60Hz BeginFrame
+    // timer. See platform/macos.mm:g_display_link setup.
+    wi.external_begin_frame_enabled = true;
+#else
     wi.external_begin_frame_enabled = false;
+#endif
     CefBrowserSettings bs;
     bs.background_color = 0;
     bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
@@ -759,10 +777,10 @@ int main(int argc, char* argv[]) {
         main_url = "app://resources/index.html";
     }
 
-#ifdef __APPLE__
-    App::DoWork();
-#endif
+    LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) url=%s lw=%d lh=%d pw=%lld ph=%lld",
+             main_url.c_str(), lw, lh, (long long)mw, (long long)mh);
     CefBrowserHost::CreateBrowser(wi, g_client, main_url, bs, nullptr, nullptr);
+    LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
 
     // Overlay browser (server selection UI) -- only in full app mode
     if (!player_mode) {
@@ -773,11 +791,17 @@ int main(int argc, char* argv[]) {
         CefWindowInfo owi;
         owi.SetAsWindowless(0);
         owi.shared_texture_enabled = true;
+#ifdef __APPLE__
+        owi.external_begin_frame_enabled = true;
+#else
         owi.external_begin_frame_enabled = false;
+#endif
         CefBrowserSettings obs;
         obs.background_color = 0;
         obs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
+        LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay)");
         CefBrowserHost::CreateBrowser(owi, g_overlay_client, "app://resources/index.html", obs, nullptr, nullptr);
+        LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay) call returned");
     }
 
 #ifdef __APPLE__
@@ -875,36 +899,40 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- Start threads ---
+    LOG_INFO(LOG_MAIN, "[FLOW] starting digest + cef_consumer threads");
     std::thread digest_thread(mpv_digest_thread);
     std::thread cef_thread(cef_consumer_thread);
 
-    LOG_INFO(LOG_MAIN, "Running");
+    LOG_INFO(LOG_MAIN, "[FLOW] Running — about to enter run_main_loop");
 
     // --- Wait for shutdown ---
 #ifdef __APPLE__
-    // macOS: main thread must pump both GCD (for mpv VO DispatchQueue.main.sync)
-    // and CEF (CefDoMessageLoopWork must run on the init thread = main).
-    //
-    // poll() on CEF wake pipe + shutdown fd. CEF work wakes immediately via pipe.
-    // GCD has no pollable fd in Apple's SDK, so poll() uses a timeout as fallback
-    // for GCD dispatch processing (mpv VO init, fullscreen transitions — rare
-    // events where up to 100ms latency is imperceptible).
-    {
-        int cef_fd = App::WakeFd();
-        int shutdown_fd = g_shutdown_event.fd();
-        struct pollfd fds[2] = {
-            {cef_fd, POLLIN, 0},
-            {shutdown_fd, POLLIN, 0},
-        };
-        App::ScheduleWork();
-        while (true) {
-            g_platform.pump();
-            int ret = poll(fds, 2, 100);
-            if (fds[1].revents & POLLIN) break;
-            if (fds[0].revents & POLLIN || ret == 0)
-                App::DoWork();
-        }
+    // macOS: block on the NSApplication run loop. Returns when
+    // initiate_shutdown calls wake_main_loop ([NSApp stop:nil] from main).
+    // Everything that needs the main thread fires from inside this call,
+    // event-driven, no polling:
+    //   - NSEvents → [NSApp sendEvent:]
+    //   - GCD main-queue blocks: mpv VO's DispatchQueue.main.sync, and
+    //     CEF pump work enqueued by App::OnScheduleMessagePumpWork via
+    //     dispatch_async_f / dispatch_after_f
+    g_platform.run_main_loop();
+    LOG_INFO(LOG_MAIN, "[FLOW] run_main_loop returned — entering post-run drain");
+
+    // After shutdown breaks the main run loop, CEF may still have browser-
+    // close work in flight (IO/Network cleanup posting back to the UI
+    // thread). Keep the pump alive and spin the runloop until both browsers
+    // report closed; dispatch blocks queued by OnScheduleMessagePumpWork
+    // keep running CefDoMessageLoopWork as CEF posts new tasks. Event-
+    // driven — CFRunLoopRunInMode wakes on any source firing.
+    while (!g_client->isClosed() ||
+           (g_overlay_client && !g_overlay_client->isClosed())) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, true);
     }
+
+    // Gate further pump dispatches so any blocks that race into the main
+    // queue after this point become no-ops instead of calling into CEF
+    // state that's about to be torn down by CefShutdown().
+    App::ShutdownPump();
 #else
     g_client->waitForClose();
     if (g_overlay_client)
