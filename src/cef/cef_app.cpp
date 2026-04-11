@@ -46,6 +46,12 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
 #endif
 
 #ifdef __APPLE__
+    // macOS 26: CEF renderer/GPU subprocesses fail to bootstrap due to a
+    // MachPortRendezvous incompatibility, leaving the browser process stuck
+    // waiting for a child that never finishes handshaking. Run everything
+    // in-process instead. Matches third_party/cef-mpv.
+    command_line->AppendSwitch("single-process");
+
     // OSCrypt on macOS otherwise prompts for the login keychain on every
     // launch (unsigned/ad-hoc app has no stable keychain ACL). use-mock-keychain
     // bypasses the keychain entirely; password-store=basic also keeps the
