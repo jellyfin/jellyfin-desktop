@@ -66,6 +66,7 @@ if(APPLE)
     find_library(METAL_FRAMEWORK Metal REQUIRED)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
     find_library(IOSURFACE_FRAMEWORK IOSurface REQUIRED)
+    find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
     find_library(MEDIAPLAYER_FRAMEWORK MediaPlayer REQUIRED)
 
     set(PLATFORM_SOURCES
@@ -86,6 +87,7 @@ if(APPLE)
         ${METAL_FRAMEWORK}
         ${QUARTZCORE_FRAMEWORK}
         ${IOSURFACE_FRAMEWORK}
+        ${IOKIT_FRAMEWORK}
         ${MEDIAPLAYER_FRAMEWORK}
     )
 elseif(WIN32)
