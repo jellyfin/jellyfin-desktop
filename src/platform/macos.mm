@@ -20,7 +20,6 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 #import <IOSurface/IOSurface.h>
-#import <CoreVideo/CoreVideo.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
 #include <mach/mach_time.h>
 #include <objc/runtime.h>
@@ -149,13 +148,12 @@ static NSWindow* g_window = nullptr;
 static int g_expected_w = 0, g_expected_h = 0;
 static bool g_transitioning = false;
 
-// CVDisplayLink drives CEF BeginFrame production synchronized with the
-// real display refresh. The callback runs on a CoreVideo-owned high-
-// priority thread just before each vsync; we hop to the main queue and
-// call SendExternalBeginFrame on each browser whose host is ready. CEF
-// produces a frame immediately if its compositor has invalidation, or
-// does nothing if not — no polling, no wasted work.
-static CVDisplayLinkRef g_display_link = nullptr;
+// CADisplayLink drives CEF BeginFrame production synchronized with the
+// real display refresh. The callback fires on the main runloop each
+// vsync and calls SendExternalBeginFrame on each browser whose host is
+// ready. CEF produces a frame immediately if its compositor has
+// invalidation, or does nothing if not — no polling, no wasted work.
+static CADisplayLink* g_display_link = nil;
 
 // Metal shaders (fullscreen triangle, straight→premultiplied alpha).
 // Output target is a plain BGRA8 render texture backed by our IOSurface;
@@ -373,75 +371,51 @@ static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scal
 }
 
 // =====================================================================
-// CVDisplayLink → CEF BeginFrame
+// CADisplayLink → CEF BeginFrame
 // =====================================================================
 
 extern CefRefPtr<Client>        g_client;
 extern CefRefPtr<OverlayClient> g_overlay_client;
+// CADisplayLink target — fires on the main runloop at the display's
+// refresh rate, driving CEF's external BeginFrame production.
+@interface DisplayLinkTarget : NSObject
+- (void)tick:(CADisplayLink*)link;
+@end
 
-// CoreVideo calls this just before each display vsync on its own
-// high-priority thread. We can't call SendExternalBeginFrame from here
-// directly — CEF requires it on the UI thread (our main thread) — so
-// we hop via the main dispatch queue. The queue block runs inside
-// [NSApp run]'s runloop, dispatched by our CFRunLoopSource / main-queue
-// integration the same way the pump callbacks do.
-static CVReturn display_link_cb(CVDisplayLinkRef /*link*/,
-                                const CVTimeStamp* /*inNow*/,
-                                const CVTimeStamp* /*inOutputTime*/,
-                                CVOptionFlags /*flagsIn*/,
-                                CVOptionFlags* /*flagsOut*/,
-                                void* /*ctx*/) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        // Null checks: CVDisplayLink may fire before either browser's
-        // OnAfterCreated has run and populated g_client->browser() /
-        // g_overlay_client->browser(). A call before the host exists is
-        // unsafe. Once a browser is ready it stays ready until close, so
-        // these checks only matter during startup and can later be
-        // replaced with a pair of atomic "ready" flags if the branch
-        // cost turns out to matter.
-        if (g_client) {
-            CefRefPtr<CefBrowser> b = g_client->browser();
-            if (b) b->GetHost()->SendExternalBeginFrame();
-        }
-        if (g_overlay_client) {
-            CefRefPtr<CefBrowser> b = g_overlay_client->browser();
-            if (b) b->GetHost()->SendExternalBeginFrame();
-        }
-    });
-    return kCVReturnSuccess;
+@implementation DisplayLinkTarget
+- (void)tick:(CADisplayLink*)link {
+    (void)link;
+    if (g_client) {
+        CefRefPtr<CefBrowser> b = g_client->browser();
+        if (b) b->GetHost()->SendExternalBeginFrame();
+    }
+    if (g_overlay_client) {
+        CefRefPtr<CefBrowser> b = g_overlay_client->browser();
+        if (b) b->GetHost()->SendExternalBeginFrame();
+    }
 }
+@end
+
+static DisplayLinkTarget* g_display_link_target = nil;
 
 static bool start_display_link() {
-    CVReturn rv = CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &g_display_link);
-    if (rv != kCVReturnSuccess || !g_display_link) {
-        LOG_ERROR(LOG_PLATFORM, "[CVDL] CVDisplayLinkCreateWithCGDisplay failed: %d", (int)rv);
+    g_display_link_target = [[DisplayLinkTarget alloc] init];
+    g_display_link = [[g_window screen] displayLinkWithTarget:g_display_link_target
+                                                     selector:@selector(tick:)];
+    if (!g_display_link) {
+        LOG_ERROR(LOG_PLATFORM, "[CVDL] displayLinkWithTarget failed");
         return false;
     }
-    rv = CVDisplayLinkSetOutputCallback(g_display_link, display_link_cb, nullptr);
-    if (rv != kCVReturnSuccess) {
-        LOG_ERROR(LOG_PLATFORM, "[CVDL] SetOutputCallback failed: %d", (int)rv);
-        CVDisplayLinkRelease(g_display_link);
-        g_display_link = nullptr;
-        return false;
-    }
-    rv = CVDisplayLinkStart(g_display_link);
-    if (rv != kCVReturnSuccess) {
-        LOG_ERROR(LOG_PLATFORM, "[CVDL] Start failed: %d", (int)rv);
-        CVDisplayLinkRelease(g_display_link);
-        g_display_link = nullptr;
-        return false;
-    }
-    double period = CVDisplayLinkGetActualOutputVideoRefreshPeriod(g_display_link);
-    LOG_INFO(LOG_PLATFORM, "[CVDL] started, refresh period=%.4fs (~%.1f Hz)",
-             period, period > 0 ? 1.0 / period : 0.0);
+    [g_display_link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    LOG_INFO(LOG_PLATFORM, "[CVDL] started");
     return true;
 }
 
 static void stop_display_link() {
     if (!g_display_link) return;
-    CVDisplayLinkStop(g_display_link);
-    CVDisplayLinkRelease(g_display_link);
-    g_display_link = nullptr;
+    [g_display_link invalidate];
+    g_display_link = nil;
+    g_display_link_target = nil;
     LOG_INFO(LOG_PLATFORM, "[CVDL] stopped");
 }
 
@@ -585,7 +559,7 @@ static bool macos_init(mpv_handle* mpv) {
     // the display's real refresh rate; without it (external_begin_frame
     // = true but no caller) CEF produces no frames at all.
     if (!start_display_link()) {
-        LOG_ERROR(LOG_PLATFORM, "[INIT] failed to start CVDisplayLink");
+        LOG_ERROR(LOG_PLATFORM, "[INIT] failed to start CADisplayLink");
         return false;
     }
 
