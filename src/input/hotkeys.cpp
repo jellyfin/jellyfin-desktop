@@ -20,6 +20,12 @@ bool video_player_active() {
 bool hotkey_try_consume(const KeyEvent& e) {
     if (e.action != KeyAction::Down) return false;
 
+    // Alt+F4: close window
+    if (e.code == KeyCode::F4 && (e.modifiers & EVENTFLAG_ALT_DOWN)) {
+        initiate_shutdown();
+        return true;
+    }
+
     if (e.code == KeyCode::F || e.code == KeyCode::F11) {
         if (!video_player_active()) return false;
         g_platform.toggle_fullscreen();

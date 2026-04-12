@@ -9,10 +9,10 @@ RUN pacman -Syu --noconfirm && \
     pacman -S --noconfirm --needed \
     base-devel cmake git ninja meson python \
     alsa-lib at-spi2-core cairo libcups libxcomposite libxdamage \
-    libxkbcommon libxrandr nss nspr pango \
+    libxkbcommon libxkbcommon-x11 libxrandr nss nspr pango \
     ffmpeg libplacebo libass wayland libxpresent libxss \
     vulkan-headers wayland-protocols python-docutils \
-    systemd-libs libdrm libx11 \
+    systemd-libs libdrm libx11 xcb-util-cursor \
     wget file patchelf desktop-file-utils && \
     pacman -Scc --noconfirm
 

@@ -15,12 +15,14 @@ struct Platform {
 
     // Main browser subsurface
     void (*present)(const CefAcceleratedPaintInfo& info);
-    void (*present_software)(const void* buffer, int w, int h);
+    void (*present_software)(const CefRenderHandler::RectList& dirty,
+                             const void* buffer, int w, int h);
     void (*resize)(int lw, int lh, int pw, int ph);
 
     // Overlay browser subsurface
     void (*overlay_present)(const CefAcceleratedPaintInfo& info);
-    void (*overlay_present_software)(const void* buffer, int w, int h);
+    void (*overlay_present_software)(const CefRenderHandler::RectList& dirty,
+                                     const void* buffer, int w, int h);
     void (*overlay_resize)(int lw, int lh, int pw, int ph);
     void (*set_overlay_visible)(bool visible);
     // Delay, then fade overlay from opaque to transparent, then hide.
@@ -108,4 +110,7 @@ Platform make_windows_platform();
 Platform make_macos_platform();
 #elif defined(__linux__)
 Platform make_wayland_platform();
+#ifdef HAVE_X11
+Platform make_x11_platform();
+#endif
 #endif

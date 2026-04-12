@@ -50,8 +50,15 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
 #ifdef __linux__
     // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues.
     // Can be overridden via --ozone-platform CLI flag.
+    // Without X11 support, default to wayland.
+    const char* default_ozone =
+#ifdef HAVE_X11
+        "x11";
+#else
+        "wayland";
+#endif
     command_line->AppendSwitchWithValue("ozone-platform",
-        ozone_platform_.empty() ? "x11" : ozone_platform_);
+        ozone_platform_.empty() ? default_ozone : ozone_platform_);
 #endif
 
     if (disable_gpu_compositing_) {

@@ -1,6 +1,7 @@
 #include "common.h"
 #include "cef/cef_client.h"
 #include "clipboard/wayland.h"
+#include "idle_inhibit_linux.h"
 #include "input/input_wayland.h"
 
 #include <wayland-client.h>
@@ -8,7 +9,6 @@
 #include "viewporter-client.h"
 #include "alpha-modifier-v1-client.h"
 #include "cursor-shape-v1-client.h"
-#include <systemd/sd-bus.h>
 // Callback fields in mpv's vo_wayland_state -- set via wayland-state property.
 // Must match the struct layout in wayland_common.h.
 struct wl_configure_cb {
@@ -67,10 +67,6 @@ struct WlState {
     wp_alpha_modifier_v1* alpha_modifier = nullptr;
     wp_alpha_modifier_surface_v1* overlay_alpha = nullptr;
 
-    // Idle inhibit (systemd login1 D-Bus)
-    sd_bus* system_bus = nullptr;
-    int systemd_inhibit_fd = -1;
-
     float cached_scale = 1.0f;
     int mpv_pw = 0, mpv_ph = 0;      // mpv's current physical size
     int transition_pw = 0, transition_ph = 0;
@@ -89,7 +85,6 @@ struct WlState {
 
 static WlState g_wl;
 
-static void wl_release_idle_inhibit();
 static void update_surface_size_locked(int lw, int lh, int pw, int ph);
 static void wl_begin_transition_locked();
 static void wl_end_transition_locked();
@@ -258,7 +253,8 @@ static wl_buffer* create_shm_buffer(const void* pixels, int w, int h) {
     return buf;
 }
 
-static void wl_present_software(const void* buffer, int w, int h) {
+static void wl_present_software(const CefRenderHandler::RectList&,
+                                const void* buffer, int w, int h) {
     auto* buf = create_shm_buffer(buffer, w, h);
     if (!buf) return;
 
@@ -288,7 +284,8 @@ static void wl_present_software(const void* buffer, int w, int h) {
     wl_display_flush(g_wl.display);
 }
 
-static void wl_overlay_present_software(const void* buffer, int w, int h) {
+static void wl_overlay_present_software(const CefRenderHandler::RectList&,
+                                        const void* buffer, int w, int h) {
     auto* buf = create_shm_buffer(buffer, w, h);
     if (!buf) return;
 
@@ -905,8 +902,7 @@ static float wl_get_scale() {
 
 static void wl_cleanup() {
     wl_cleanup_kde_palette();
-    wl_release_idle_inhibit();
-    if (g_wl.system_bus) { sd_bus_unref(g_wl.system_bus); g_wl.system_bus = nullptr; }
+    idle_inhibit::cleanup();
     // Clipboard worker owns its own thread + wl_event_queue; must shut
     // down before input::wayland::cleanup destroys the seat it borrowed.
     clipboard_wayland::cleanup();
@@ -1045,45 +1041,8 @@ static void wl_end_transition() {
 
 static void wl_pump() {}
 
-static void wl_release_idle_inhibit() {
-    if (g_wl.systemd_inhibit_fd >= 0) {
-        close(g_wl.systemd_inhibit_fd);
-        g_wl.systemd_inhibit_fd = -1;
-    }
-}
-
 static void wl_set_idle_inhibit(IdleInhibitLevel level) {
-    wl_release_idle_inhibit();
-    if (level == IdleInhibitLevel::None) return;
-
-    if (!g_wl.system_bus) {
-        if (sd_bus_open_system(&g_wl.system_bus) < 0) {
-            g_wl.system_bus = nullptr;
-            return;
-        }
-    }
-
-    sd_bus_message* reply = nullptr;
-    sd_bus_error error = SD_BUS_ERROR_NULL;
-    int r = sd_bus_call_method(
-        g_wl.system_bus,
-        "org.freedesktop.login1",
-        "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager",
-        "Inhibit",
-        &error, &reply,
-        "ssss",
-        level == IdleInhibitLevel::Display ? "idle:sleep" : "sleep",
-        "Jellyfin Desktop",
-        "Media playback",
-        "block");
-    if (r >= 0 && reply) {
-        int fd = -1;
-        if (sd_bus_message_read(reply, "h", &fd) >= 0 && fd >= 0)
-            g_wl.systemd_inhibit_fd = dup(fd);
-        sd_bus_message_unref(reply);
-    }
-    sd_bus_error_free(&error);
+    idle_inhibit::set(level);
 }
 
 // =====================================================================

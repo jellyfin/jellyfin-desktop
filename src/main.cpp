@@ -124,6 +124,7 @@ static void mpv_digest_thread() {
         }
 
         if (ev->event_id == MPV_EVENT_SHUTDOWN) {
+            LOG_INFO(LOG_MAIN, "MPV_EVENT_SHUTDOWN received");
             MpvEvent se{MpvEventType::SHUTDOWN};
             publish(se);
             initiate_shutdown();
@@ -327,12 +328,15 @@ int main(int argc, char* argv[]) {
     // settings, single instance, or anything else touches shared state.
 #ifdef _WIN32
     g_platform = make_windows_platform();
+    g_platform.early_init();
 #elif defined(__APPLE__)
     g_platform = make_macos_platform();
-#else
-    g_platform = make_wayland_platform();
-#endif
     g_platform.early_init();
+#else
+    // Linux: runtime detection, overridable with --platform.
+    // Deferred to after CLI parsing. Both platforms' early_init are no-ops,
+    // and CEF subprocesses exit at CefExecuteProcess before any platform use.
+#endif
 
 #ifdef __APPLE__
     CefScopedLibraryLoader library_loader;
@@ -364,6 +368,7 @@ int main(int argc, char* argv[]) {
     bool player_mode = false;
     bool disable_gpu_compositing = false;
     std::string ozone_platform;
+    std::string platform_override;
     std::vector<std::string> player_playlist;
     int remote_debugging_port = 0;
     const char* log_level_str = nullptr;
@@ -393,7 +398,16 @@ int main(int argc, char* argv[]) {
                    "  --audio-channels <layout> e.g. stereo, 5.1, 7.1\n"
                    "  --remote-debug-port <port> Chrome remote debugging\n"
                    "  --disable-gpu-compositing Disable CEF GPU compositing\n"
-                   "  --ozone-platform <plat>   CEF ozone platform (default: x11)\n"
+                   "  --ozone-platform <plat>   CEF ozone platform (default: "
+#ifdef HAVE_X11
+                   "x11"
+#else
+                   "wayland"
+#endif
+                   ")\n"
+#ifdef HAVE_X11
+                   "  --platform <wayland|x11>  Force display backend (Linux only)\n"
+#endif
                    "  --player                  Standalone player mode\n");
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -431,6 +445,10 @@ int main(int argc, char* argv[]) {
             ozone_platform = argv[++i];
         } else if (strncmp(argv[i], "--ozone-platform=", 17) == 0) {
             ozone_platform = argv[i] + 17;
+        } else if (strcmp(argv[i], "--platform") == 0 && i + 1 < argc) {
+            platform_override = argv[++i];
+        } else if (strncmp(argv[i], "--platform=", 11) == 0) {
+            platform_override = argv[i] + 11;
         } else if (strcmp(argv[i], "--player") == 0) {
             player_mode = true;
         } else if (argv[i][0] != '-') {
@@ -455,6 +473,35 @@ int main(int argc, char* argv[]) {
 
     LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING);
     LOG_INFO(LOG_MAIN, "CEF %s", CEF_VERSION);
+
+    // --- Linux platform selection ---
+#if !defined(_WIN32) && !defined(__APPLE__)
+    bool use_wayland;
+    {
+        if (platform_override == "wayland")
+            use_wayland = true;
+        else if (platform_override == "x11")
+            use_wayland = false;
+        else if (!platform_override.empty()) {
+            fprintf(stderr, "Unknown platform: %s (expected wayland or x11)\n",
+                    platform_override.c_str());
+            return 1;
+        } else {
+            use_wayland = getenv("WAYLAND_DISPLAY") != nullptr;
+        }
+#ifdef HAVE_X11
+        g_platform = use_wayland ? make_wayland_platform() : make_x11_platform();
+#else
+        if (!use_wayland) {
+            fprintf(stderr, "X11 detected but X11 support not compiled in\n");
+            return 1;
+        }
+        g_platform = make_wayland_platform();
+#endif
+        g_platform.early_init();
+        LOG_INFO(LOG_MAIN, "Display backend: %s", use_wayland ? "wayland" : "x11");
+    }
+#endif
 
     // --- Signal handlers ---
 #ifdef _WIN32
@@ -507,7 +554,14 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("input-vo-keyboard", "no");
     g_mpv.SetOptionString("input-vo-cursor", "no");
     g_mpv.SetOptionString("input-cursor", "no");
+    // X11's WM_DELETE_WINDOW routes through mpv's input system as
+    // CLOSE_WIN — input-keyboard=no drops it, breaking the close button.
+#if defined(_WIN32) || defined(__APPLE__)
     g_mpv.SetOptionString("input-keyboard", "no");
+#else
+    if (use_wayland)
+        g_mpv.SetOptionString("input-keyboard", "no");
+#endif
     g_mpv.SetOptionString("stop-screensaver", "no");
     g_mpv.SetOptionString("keepaspect-window", "no");
     g_mpv.SetOptionString("auto-window-resize", "no");
@@ -534,6 +588,7 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("idle", "yes");
 #else
     g_mpv.SetOptionString("force-window", "yes");
+    g_mpv.SetOptionString("idle", "yes");
 #endif
     g_mpv.SetOptionString("background-color", kBgColor.hex);
 
@@ -600,6 +655,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     g_mpv.RequestLogMessages("info");
+
+    // input-default-bindings=no removes all builtin bindings including
+    // CLOSE_WIN → quit.  Re-bind it so the WM close button works.
+    {
+        const char* cmd[] = {"keybind", "CLOSE_WIN", "quit", nullptr};
+        mpv_command(g_mpv.Get(), cmd);
+    }
 
     // --- Wait for VO (mpv needs a window before we can get platform handles) ---
     LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
