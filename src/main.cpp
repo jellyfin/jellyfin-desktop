@@ -537,8 +537,10 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("force-window", "yes");
 #endif
 
-#ifndef __APPLE__
-    // Restore saved window geometry
+    // Restore saved window geometry. mpv's macOS VO honors the --geometry
+    // and --window-maximized options at init-time via vo_calc_window_geometry
+    // / window.setMaximized (third_party/mpv/video/out/mac/common.swift:100-104),
+    // so the same code path works cross-platform.
     {
         auto saved_geom = Settings::instance().windowGeometry();
         int w = saved_geom.width > 0 ? saved_geom.width : 1280;
@@ -548,7 +550,6 @@ int main(int argc, char* argv[]) {
         if (saved_geom.maximized)
             g_mpv.SetOptionString("window-maximized", "yes");
     }
-#endif
 
     if (!audio_passthrough_str.empty()) {
         // Normalize: dts-hd subsumes dts
@@ -952,12 +953,16 @@ int main(int argc, char* argv[]) {
     g_mpv.Wakeup();
     digest_thread.join();
 
-#ifndef __APPLE__
     // Save window geometry while mpv is still alive.
     // Three paths match old SDL implementation:
     //   Fullscreen: preserve previous saved geometry, update only maximized flag
     //   Maximized:  zero out size (sentinel), set maximized=true
     //   Normal:     save current logical size
+    // Safe on macOS: all four properties read here are core-cached and
+    // resolve without a VO roundtrip (mpv's command.c:3113-3138 reads
+    // osd_get_vo_res; fullscreen/window-maximized are option-backed
+    // properties). Neither needs main-thread dispatch, so a sync read from
+    // the shutdown path after run_main_loop returned will not deadlock.
     {
         bool fs = false, max = false;
         g_mpv.GetFullscreen(fs);
@@ -992,7 +997,6 @@ int main(int argc, char* argv[]) {
         }
         Settings::instance().save();
     }
-#endif
 
     // CEF shutdown: all browsers must be closed first (guaranteed by waitForClose above)
     g_client = nullptr;
