@@ -111,7 +111,7 @@ public:
         } else if (mode == "stretch") {
             SetPropertyFlagAsync("keepaspect", false);
             SetPropertyStringAsync("video-aspect-override", "no");
-        } else if (mode == "original") {
+        } else if (mode == "normal") {
             SetPropertyFlagAsync("keepaspect", true);
             SetPropertyStringAsync("video-aspect-override", "no");
         }
