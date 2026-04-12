@@ -172,7 +172,7 @@ def extract_tarball(tarball_path, extract_dir):
 
 def create_symlink(target_dir, link_path):
     """Create or update symlink (uses directory junction on Windows)."""
-    if link_path.is_symlink() or link_path.is_junction():
+    if link_path.is_symlink() or (hasattr(link_path, 'is_junction') and link_path.is_junction()):
         link_path.unlink()
     elif link_path.exists():
         shutil.rmtree(link_path)
@@ -304,7 +304,8 @@ def main():
     versioned_dir = args.output_dir / versioned_dir_name
 
     # Check if already at correct version
-    if cef_link.is_symlink() or cef_link.is_junction():
+    is_link = cef_link.is_symlink() or (hasattr(cef_link, 'is_junction') and cef_link.is_junction())
+    if is_link:
         current_target = os.readlink(cef_link)
         if current_target == versioned_dir_name and versioned_dir.exists():
             log.info("Skipping, already set up")
