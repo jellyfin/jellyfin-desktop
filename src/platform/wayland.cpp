@@ -981,6 +981,8 @@ Platform make_wayland_platform() {
         .set_expected_size = wl_set_expected_size,
         .get_scale = wl_get_scale,
         .query_logical_content_size = [](int*, int*) -> bool { return false; },
+        .query_window_position = [](int*, int*) -> bool { return false; },
+        .clamp_window_geometry = nullptr,
         .pump = wl_pump,
         .set_cursor = input::wayland::set_cursor,
         .set_idle_inhibit = wl_set_idle_inhibit,

@@ -46,6 +46,17 @@ struct Platform {
     // Returns false if unavailable (caller should use mpv osd-dimensions / scale).
     bool (*query_logical_content_size)(int* w, int* h);
 
+    // Query the window's top-left screen position in logical pixels.
+    // Returns false if unavailable. Used to save/restore window position.
+    bool (*query_window_position)(int* x, int* y);
+
+    // Clamp saved window geometry so it fits within the primary screen's
+    // visible area. Called before mpv init so the window never appears
+    // oversized or off-screen. Values are in the same coordinate system
+    // as the --geometry option (backing pixels for size+position on macOS).
+    // Implementations may be null (no clamping).
+    void (*clamp_window_geometry)(int* w, int* h, int* x, int* y);
+
     void (*pump)();
 
     // macOS only — null elsewhere.

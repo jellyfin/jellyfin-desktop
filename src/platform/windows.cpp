@@ -675,6 +675,8 @@ Platform make_windows_platform() {
         .set_expected_size = win_set_expected_size,
         .get_scale = win_get_scale,
         .query_logical_content_size = win_query_logical_content_size,
+        .query_window_position = [](int*, int*) -> bool { return false; },
+        .clamp_window_geometry = nullptr,
         .pump = win_pump,
         .set_cursor = input::windows::set_cursor,
         .set_idle_inhibit = win_set_idle_inhibit,

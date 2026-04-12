@@ -546,7 +546,14 @@ int main(int argc, char* argv[]) {
         auto saved_geom = Settings::instance().windowGeometry();
         int w = saved_geom.width > 0 ? saved_geom.width : 1280;
         int h = saved_geom.height > 0 ? saved_geom.height : 720;
+        int x = saved_geom.x, y = saved_geom.y;
+        if (g_platform.clamp_window_geometry)
+            g_platform.clamp_window_geometry(&w, &h, &x, &y);
         std::string geom_str = std::to_string(w) + "x" + std::to_string(h);
+        if (x >= 0 && y >= 0) {
+            geom_str += "+" + std::to_string(x) + "+" + std::to_string(y);
+            g_mpv.SetOptionString("force-window-position", "yes");
+        }
         g_mpv.SetOptionString("geometry", geom_str);
         if (saved_geom.maximized)
             g_mpv.SetOptionString("window-maximized", "yes");
@@ -984,7 +991,7 @@ int main(int argc, char* argv[]) {
             geom.maximized = true;
             Settings::instance().setWindowGeometry(geom);
         } else {
-            // Normal windowed: save current size.
+            // Normal windowed: save current size and position.
             int64_t pw = 0, ph = 0;
             g_mpv.GetOsdWidth(pw);
             g_mpv.GetOsdHeight(ph);
@@ -993,6 +1000,12 @@ int main(int argc, char* argv[]) {
                 geom.width = static_cast<int>(pw);
                 geom.height = static_cast<int>(ph);
                 geom.maximized = false;
+                int wx, wy;
+                if (g_platform.query_window_position &&
+                    g_platform.query_window_position(&wx, &wy)) {
+                    geom.x = wx;
+                    geom.y = wy;
+                }
                 Settings::instance().setWindowGeometry(geom);
             }
         }

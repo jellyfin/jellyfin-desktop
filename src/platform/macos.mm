@@ -478,6 +478,11 @@ static bool macos_init(mpv_handle* mpv) {
     }
     LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: got window=%p", g_window);
 
+    // The first reconfig already applied --geometry (including position via
+    // --force-window-position). Clear it so subsequent reconfigs (video
+    // start/stop) don't reposition+resize the window.
+    g_mpv.SetForceWindowPosition(false);
+
     // Dock icon
     NSString* iconPath = [[[NSBundle mainBundle] resourcePath]
         stringByAppendingPathComponent:@"AppIcon.icns"];
@@ -767,6 +772,41 @@ static bool macos_query_logical_content_size(int* w, int* h) {
     return *w > 0 && *h > 0;
 }
 
+static bool macos_query_window_position(int* x, int* y) {
+    if (!g_window || ![g_window screen]) return false;
+    // mpv's --geometry +X+Y is in backing pixels, relative to the screen's
+    // visible frame (excluding menu bar / dock), with Y measured from the
+    // top. Match that coordinate system exactly so save→restore is lossless.
+    NSScreen* screen = [g_window screen];
+    NSRect frame = [g_window frame];
+    NSRect visible = [screen visibleFrame];
+    CGFloat scale = [screen backingScaleFactor];
+    // Logical offset within the visible frame, then convert to backing pixels.
+    CGFloat lx = frame.origin.x - visible.origin.x;
+    CGFloat ly = (visible.origin.y + visible.size.height)
+               - (frame.origin.y + frame.size.height);
+    *x = static_cast<int>(lx * scale);
+    *y = static_cast<int>(ly * scale);
+    return true;
+}
+
+static void macos_clamp_window_geometry(int* w, int* h, int* x, int* y) {
+    NSScreen* screen = [NSScreen mainScreen];
+    if (!screen) return;
+    NSRect visible = [screen visibleFrame];
+    CGFloat scale = [screen backingScaleFactor];
+    int vw = static_cast<int>(visible.size.width * scale);
+    int vh = static_cast<int>(visible.size.height * scale);
+    // Shrink to fit
+    if (*w > vw) *w = vw;
+    if (*h > vh) *h = vh;
+    // Clamp position so the window stays fully on-screen
+    if (*x >= 0 && *x + *w > vw) *x = vw - *w;
+    if (*y >= 0 && *y + *h > vh) *y = vh - *h;
+    if (*x < 0) *x = -1;  // preserve "not set" sentinel
+    if (*y < 0) *y = -1;
+}
+
 static void macos_pump() {
     @autoreleasepool {
         // distantPast = return immediately if no event. `nil` means distantFuture
@@ -972,6 +1012,8 @@ Platform make_macos_platform() {
         .set_expected_size = macos_set_expected_size,
         .get_scale = macos_get_scale,
         .query_logical_content_size = macos_query_logical_content_size,
+        .query_window_position = macos_query_window_position,
+        .clamp_window_geometry = macos_clamp_window_geometry,
         .pump = macos_pump,
         .run_main_loop = macos_run_main_loop,
         .wake_main_loop = macos_wake_main_loop,

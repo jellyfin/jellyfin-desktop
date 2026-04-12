@@ -127,6 +127,7 @@ public:
     void SetFullscreen(bool fs)          { SetPropertyFlagAsync("fullscreen", fs); }
     void ToggleFullscreen()              { CycleFullscreenAsync(); }
     void SetBackgroundColor(const std::string& color) { SetPropertyStringAsync("background-color", color); }
+    void SetForceWindowPosition(bool v)  { SetPropertyFlagAsync("force-window-position", v); }
 
     int GetFullscreen(bool& out)         { return GetPropertyFlag("fullscreen", out); }
     int GetOsdWidth(int64_t& out)        { return GetPropertyInt("osd-width", out); }
