@@ -17,7 +17,7 @@ dev/macos/run.sh     # Run
 - CMake, Ninja, Meson
 - FFmpeg, libplacebo, libass, LuaJIT
 - Vulkan (vulkan-loader, vulkan-headers, MoltenVK)
-- SDL3, lcms2, libunibreak, zimg
+- lcms2, libunibreak, zimg
 - create-dmg
 
 ## Directory Structure
