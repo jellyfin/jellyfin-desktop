@@ -21,8 +21,9 @@ sync_to_remote() {
         --exclude '/compile_commands.json' \
         --exclude '/out' \
         --exclude '/app.log' \
-        --exclude '/wayland-protocols/**' \
-        --exclude '/generated/**' \
+        --exclude '.mcp.json' \
+        --exclude '.flatpak-builder/**' \
+        --exclude 'build-dir/**' \
         --filter '- /third_party/mpv/build/**' \
         --filter '+ /third_party/mpv/**' \
         --filter '+ /third_party/letsmove/**' \

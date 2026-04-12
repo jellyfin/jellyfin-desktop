@@ -1,13 +1,14 @@
 #pragma once
 #ifdef _WIN32
 
-#include <SDL3/SDL.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include "player/media_session.h"
 #include <chrono>
 
 class WindowsMediaBackend : public MediaSessionBackend {
 public:
-    explicit WindowsMediaBackend(MediaSession* session, SDL_Window* window);
+    explicit WindowsMediaBackend(MediaSession* session, HWND hwnd);
     ~WindowsMediaBackend() override;
 
     void setMetadata(const MediaMetadata& meta) override;
@@ -42,6 +43,6 @@ private:
 };
 
 std::unique_ptr<MediaSessionBackend> createWindowsMediaBackend(
-    MediaSession* session, SDL_Window* window);
+    MediaSession* session, HWND hwnd);
 
 #endif // _WIN32

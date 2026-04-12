@@ -32,7 +32,6 @@ brew install \
     vulkan-loader \
     vulkan-headers \
     molten-vk \
-    sdl3 \
     lcms2 \
     libunibreak \
     zimg \

@@ -3,9 +3,7 @@
 
 param(
     [switch]$SkipMpv,
-    [switch]$SkipCef,
-    [switch]$SkipSdl,
-    [switch]$SkipVulkan
+    [switch]$SkipCef
 )
 
 $ErrorActionPreference = "Stop"
@@ -103,67 +101,6 @@ if (-not $SkipMpv) {
     Write-Host ""
     Write-Host "=== libmpv ===" -ForegroundColor Cyan
     & (Join-Path $PSScriptRoot "build_mpv_source.ps1")
-}
-
-# SDL3 setup - download prebuilt VC package
-if (-not $SkipSdl) {
-    Write-Host ""
-    Write-Host "=== SDL3 ===" -ForegroundColor Cyan
-    $SdlDir = Join-Path $RepoRoot "third_party\SDL"
-    if ((Test-Path (Join-Path $SdlDir "cmake")) -and (Test-Path (Join-Path $SdlDir "lib"))) {
-        Write-Host "SDL3 already set up at $SdlDir" -ForegroundColor Green
-    } else {
-        $SdlVersion = "3.4.0"
-        $SdlUrl = "https://github.com/libsdl-org/SDL/releases/download/release-$SdlVersion/SDL3-devel-$SdlVersion-VC.zip"
-        $SdlZip = Join-Path $RepoRoot "third_party\SDL3-VC.zip"
-        $SdlExtracted = Join-Path $RepoRoot "third_party\SDL3-$SdlVersion"
-
-        Write-Host "Downloading SDL3 $SdlVersion..."
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $SdlUrl -OutFile $SdlZip -UseBasicParsing
-        $ProgressPreference = 'Continue'
-
-        Write-Host "Extracting..."
-        & 7z x $SdlZip -o"$(Join-Path $RepoRoot "third_party")" -y | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "SDL3 extraction failed" }
-
-        # Rename to third_party/SDL
-        if (Test-Path $SdlDir) { Remove-Item -Recurse -Force $SdlDir }
-        Rename-Item $SdlExtracted $SdlDir
-
-        # Clean up zip
-        Remove-Item $SdlZip -ErrorAction SilentlyContinue
-
-        Write-Host "SDL3 installed to $SdlDir" -ForegroundColor Green
-    }
-}
-
-# Vulkan SDK
-if (-not $SkipVulkan) {
-    Write-Host ""
-    Write-Host "=== Vulkan SDK ===" -ForegroundColor Cyan
-    $VulkanSdk = $env:VULKAN_SDK
-    if (-not $VulkanSdk -or -not (Test-Path $VulkanSdk)) {
-        # Check default install location
-        $VulkanBase = "C:\VulkanSDK"
-        if (Test-Path $VulkanBase) {
-            $Latest = Get-ChildItem $VulkanBase -Directory | Sort-Object Name -Descending | Select-Object -First 1
-            if ($Latest) { $VulkanSdk = $Latest.FullName }
-        }
-    }
-    if ($VulkanSdk -and (Test-Path $VulkanSdk)) {
-        Write-Host "Vulkan SDK: $VulkanSdk" -ForegroundColor Green
-    } else {
-        Write-Host "Vulkan SDK not found, installing via winget..." -ForegroundColor Yellow
-        & winget install --source winget --accept-package-agreements --accept-source-agreements KhronosGroup.VulkanSDK
-        $VulkanBase = "C:\VulkanSDK"
-        if (Test-Path $VulkanBase) {
-            $Latest = Get-ChildItem $VulkanBase -Directory | Sort-Object Name -Descending | Select-Object -First 1
-            if ($Latest) {
-                Write-Host "Vulkan SDK: $($Latest.FullName)" -ForegroundColor Green
-            }
-        }
-    }
 }
 
 Write-Host ""

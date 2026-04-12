@@ -41,7 +41,10 @@ public:
 
 class MediaSession {
 public:
-    explicit MediaSession(std::unique_ptr<MediaSessionBackend> backend = nullptr);
+    // Creates a MediaSession with the platform backend and transport callbacks wired up.
+    static std::unique_ptr<MediaSession> create();
+
+    MediaSession();
     ~MediaSession();
 
     void setMetadata(const MediaMetadata& meta);
@@ -60,7 +63,10 @@ public:
     void update();
     int getFd();  // File descriptor for poll, -1 if none
 
-    // Control callbacks (set by main.cpp)
+    // Wire all transport callbacks to mpv/JS. Call after adding backends.
+    void wireTransportCallbacks();
+
+    // Control callbacks
     std::function<void()> onPlay;
     std::function<void()> onPause;
     std::function<void()> onPlayPause;
