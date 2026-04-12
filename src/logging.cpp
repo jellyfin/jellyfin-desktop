@@ -119,7 +119,7 @@ void stderrCaptureThread() {
             std::string line = partial_line.substr(0, pos);
             partial_line = partial_line.substr(pos + 1);
             if (line.empty()) continue;
-            writeLogLine("[CEF] ", line.c_str());
+            logWrite(LOG_CEF, "DEBUG", "%s", line.c_str());
         }
     }
 #else
@@ -146,7 +146,7 @@ void stderrCaptureThread() {
                 std::string line = partial_line.substr(0, pos);
                 partial_line = partial_line.substr(pos + 1);
                 if (line.empty()) continue;
-                writeLogLine("[CEF]", "DEBUG", line.c_str());
+                logWrite(LOG_CEF, "DEBUG", "%s", line.c_str());
             }
         }
     }
