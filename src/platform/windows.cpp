@@ -133,7 +133,7 @@ static bool init_dcomp() {
     g_win.dcomp_overlay_visual->SetEffect(g_win.dcomp_overlay_effect);
 
     g_win.dcomp_root->AddVisual(g_win.dcomp_main_visual, TRUE, nullptr);
-    g_win.dcomp_root->AddVisual(g_win.dcomp_overlay_visual, FALSE, g_win.dcomp_main_visual);
+    g_win.dcomp_root->AddVisual(g_win.dcomp_overlay_visual, TRUE, g_win.dcomp_main_visual);
     g_win.dcomp_target->SetRoot(g_win.dcomp_root);
     g_win.dcomp_device->Commit();
 
@@ -308,6 +308,20 @@ static void win_set_overlay_visible(bool visible) {
             g_win.dcomp_device->Commit();
         }
     }
+
+    // Route keyboard focus to the newly-active browser. Without this, CEF
+    // thinks the just-activated browser has no window focus, so text inputs
+    // don't show a caret and focus rings don't render. Matches the "active
+    // tab" semantics: only one browser at a time holds focus.
+    auto main = g_client ? g_client->browser() : nullptr;
+    auto ovl  = g_overlay_client ? g_overlay_client->browser() : nullptr;
+    if (visible) {
+        if (main) main->GetHost()->SetFocus(false);
+        if (ovl)  ovl->GetHost()->SetFocus(true);
+    } else {
+        if (ovl)  ovl->GetHost()->SetFocus(false);
+        if (main) main->GetHost()->SetFocus(true);
+    }
 }
 
 // Wait delay_sec, then animate overlay opacity from 1.0 to 0.0 over fade_sec,
@@ -316,7 +330,6 @@ static void win_fade_overlay(float delay_sec, float fade_sec,
                              std::function<void()> on_fade_start,
                              std::function<void()> on_complete) {
     if (!g_win.dcomp_overlay_visual) {
-        pop_input();
         win_set_overlay_visible(false);
         if (on_fade_start) on_fade_start();
         if (on_complete) on_complete();
@@ -348,7 +361,6 @@ static void win_fade_overlay(float delay_sec, float fade_sec,
             std::this_thread::sleep_for(frame_duration);
         }
 
-        pop_input();
         win_set_overlay_visible(false);
 
         // Reset opacity for next show
