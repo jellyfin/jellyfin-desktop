@@ -75,7 +75,6 @@
             },
             advanced: {
                 transparentTitlebar: _savedSettings.transparentTitlebar !== false,
-                disableGpuCompositing: _savedSettings.disableGpuCompositing || false,
                 logLevel: _savedSettings.logLevel || ''
             }
         },
@@ -103,7 +102,6 @@
                 ]}
             ],
             advanced: [
-                { key: 'disableGpuCompositing', displayName: 'Disable GPU Compositing', help: 'Disable Chromium GPU compositing. May help with rendering issues on some systems.' },
                 { key: 'logLevel', displayName: 'Log Level', help: 'Set the application log verbosity level.', options: [
                     { value: '', title: 'Default (Info)' },
                     { value: 'verbose', title: 'Verbose' },

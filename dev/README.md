@@ -1,6 +1,6 @@
 # Development
 
-## Quick Start (Linux/macOS)
+## Quick Start (Linux)
 
 ```sh
 git clone https://github.com/jellyfin/jellyfin-desktop
@@ -10,6 +10,18 @@ python3 dev/download_cef.py
 cmake -B build -G Ninja
 cmake --build build
 ./build/jellyfin-desktop
+```
+
+## Quick Start (macOS)
+
+```sh
+git clone https://github.com/jellyfin/jellyfin-desktop
+cd jellyfin-desktop
+git submodule update --init --recursive
+python3 dev/download_cef.py
+cmake -B build -G Ninja
+cmake --build build
+dev/macos/run.sh
 ```
 
 ## Quick Start (Windows)
