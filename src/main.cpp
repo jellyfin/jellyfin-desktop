@@ -358,6 +358,7 @@ int main(int argc, char* argv[]) {
 
     // --- Parse CLI ---
     std::string hwdec_str = "auto-safe";
+    std::string aspect_ratio_str = "normal";
     std::string audio_passthrough_str;
     bool audio_exclusive = false;
     std::string audio_channels_str;
@@ -372,6 +373,7 @@ int main(int argc, char* argv[]) {
     Settings::instance().load();
     auto& saved = Settings::instance();
     if (!saved.hwdec().empty()) hwdec_str = saved.hwdec();
+    if (!saved.aspectRatio().empty()) {aspect_ratio_str = saved.aspectRatio(); }
     if (!saved.audioPassthrough().empty()) audio_passthrough_str = saved.audioPassthrough();
     audio_exclusive = saved.audioExclusive();
     if (!saved.audioChannels().empty()) audio_channels_str = saved.audioChannels();

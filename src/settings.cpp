@@ -92,6 +92,7 @@ bool Settings::load() {
     window_geometry_.maximized = jsonBool(root, "windowMaximized", false);
 
     hwdec_ = jsonStr(root, "hwdec");
+    aspect_ratio_ = jsonStr(root, "aspectRatio");
     audio_passthrough_ = jsonStr(root, "audioPassthrough");
     audio_exclusive_ = jsonBool(root, "audioExclusive", false);
     audio_channels_ = jsonStr(root, "audioChannels");
@@ -121,6 +122,7 @@ static std::string buildSettingsJson(const Settings& s, bool pretty) {
     cJSON_AddBoolToObject(root, "windowMaximized", geom.maximized);
 
     if (!s.hwdec().empty()) cJSON_AddStringToObject(root, "hwdec", s.hwdec().c_str());
+    if (!s.aspectRatio().empty()) cJSON_AddStringToObject(root, "aspectRatio", s.aspectRatio().c_str());
     if (!s.audioPassthrough().empty()) cJSON_AddStringToObject(root, "audioPassthrough", s.audioPassthrough().c_str());
     if (s.audioExclusive()) cJSON_AddBoolToObject(root, "audioExclusive", true);
     if (!s.audioChannels().empty()) cJSON_AddStringToObject(root, "audioChannels", s.audioChannels().c_str());
@@ -162,6 +164,7 @@ std::string Settings::cliSettingsJson() const {
     cJSON* root = cJSON_CreateObject();
 
     if (!hwdec_.empty()) cJSON_AddStringToObject(root, "hwdec", hwdec_.c_str());
+    if (!aspect_ratio_.empty()) cJSON_AddStringToObject(root, "aspectRatio", aspect_ratio_.c_str());
     if (!audio_passthrough_.empty()) cJSON_AddStringToObject(root, "audioPassthrough", audio_passthrough_.c_str());
     if (audio_exclusive_) cJSON_AddBoolToObject(root, "audioExclusive", true);
     if (!audio_channels_.empty()) cJSON_AddStringToObject(root, "audioChannels", audio_channels_.c_str());

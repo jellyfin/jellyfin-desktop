@@ -29,6 +29,9 @@ public:
     const std::string& hwdec() const { return hwdec_; }
     void setHwdec(const std::string& v) { hwdec_ = v; }
 
+    const std::string& aspectRatio() const { return aspect_ratio_; }
+    void setAspectRatio(const std::string& v) { aspect_ratio_ = v; }
+
     const std::string& audioPassthrough() const { return audio_passthrough_; }
     void setAudioPassthrough(const std::string& v) { audio_passthrough_ = v; }
 
@@ -64,6 +67,7 @@ private:
 
     // CLI-equivalent settings
     std::string hwdec_;
+    std::string aspect_ratio_;
     std::string audio_passthrough_;
     bool audio_exclusive_ = false;
     std::string audio_channels_;
