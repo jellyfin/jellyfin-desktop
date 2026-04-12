@@ -418,6 +418,10 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     } else if (name == "playerSetSubtitle") {
         LOG_INFO(LOG_CEF, "playerSetSubtitle: %d", args->GetInt(0));
         g_mpv.SetSubtitleTrack(args->GetInt(0));
+    } else if (name == "playerAddSubtitle") {
+        std::string url = args->GetString(0).ToString();
+        LOG_INFO(LOG_CEF, "playerAddSubtitle: %s", url.c_str());
+        g_mpv.SubAdd(url);
     } else if (name == "playerSetAudio") {
         g_mpv.SetAudioTrack(args->GetInt(0));
     } else if (name == "playerSetAudioDelay") {
