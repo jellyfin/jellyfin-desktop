@@ -63,21 +63,6 @@ static void macos_pump();
 - (BOOL)isHandlingSendEvent { return handlingSendEvent_; }
 - (void)setHandlingSendEvent:(BOOL)v { handlingSendEvent_ = v; }
 - (void)sendEvent:(NSEvent*)event {
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-    NSEventType t = [event type];
-    // Log every event in the interesting range (keys, clicks, scrolls),
-    // and every 10th for mouse movement / gestures to keep volume bounded.
-    bool interesting = (t == NSEventTypeKeyDown || t == NSEventTypeKeyUp ||
-                        t == NSEventTypeFlagsChanged ||
-                        t == NSEventTypeLeftMouseDown || t == NSEventTypeLeftMouseUp ||
-                        t == NSEventTypeRightMouseDown || t == NSEventTypeRightMouseUp ||
-                        t == NSEventTypeOtherMouseDown || t == NSEventTypeOtherMouseUp ||
-                        t == NSEventTypeScrollWheel);
-    if (interesting || k <= 20 || k % 10 == 0) {
-        LOG_INFO(LOG_PLATFORM, "[NSAPP] sendEvent #%llu type=%ld",
-                 (unsigned long long)k, (long)t);
-    }
     CefScopedSendingEvent sendingEventScoper;
     [super sendEvent:event];
 }
@@ -605,9 +590,6 @@ static void reset_background_to_black() {
 }
 
 static void macos_present(const CefAcceleratedPaintInfo& info) {
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-    uint64_t t0 = mach_absolute_time();
     if (g_transitioning) return;
     present_iosurface(g_main, info);
     // Player mode only: no overlay will ever paint, so the first main
@@ -618,12 +600,6 @@ static void macos_present(const CefAcceleratedPaintInfo& info) {
         [g_main.view setHidden:NO];
         reset_background_to_black();
     }
-    uint64_t t1 = mach_absolute_time();
-    static mach_timebase_info_data_t tb = {0, 0};
-    if (tb.denom == 0) mach_timebase_info(&tb);
-    double ms = (double)(t1 - t0) * tb.numer / tb.denom / 1e6;
-    LOG_INFO(LOG_PLATFORM, "[PRESENT] macos_present #%llu elapsed=%.2fms",
-             (unsigned long long)k, ms);
     if (g_expected_w > 0) {
         IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
         if (surface && (int)IOSurfaceGetWidth(surface) == g_expected_w &&
@@ -637,16 +613,7 @@ static void macos_present(const CefAcceleratedPaintInfo& info) {
 static void macos_present_software(const void*, int, int) {}
 
 static void macos_overlay_present(const CefAcceleratedPaintInfo& info) {
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-    uint64_t t0 = mach_absolute_time();
     present_iosurface(g_overlay, info);
-    uint64_t t1 = mach_absolute_time();
-    static mach_timebase_info_data_t tb = {0, 0};
-    if (tb.denom == 0) mach_timebase_info(&tb);
-    double ms = (double)(t1 - t0) * tb.numer / tb.denom / 1e6;
-    LOG_INFO(LOG_PLATFORM, "[PRESENT] macos_overlay_present #%llu visible=%d elapsed=%.2fms",
-             (unsigned long long)k, g_overlay_visible ? 1 : 0, ms);
 }
 
 static void macos_overlay_present_software(const void*, int, int) {}
@@ -833,43 +800,9 @@ static void macos_pump() {
 // DispatchQueue.main.sync) all fire from inside this call without polling.
 // Mirrors cefclient's MainMessageLoopExternalPumpMac::Run.
 static void macos_run_main_loop() {
-    // Diagnostic: install a 1Hz CFRunLoopTimer so we can prove the runloop
-    // is actually processing sources/timers in NSDefaultRunLoopMode inside
-    // [NSApp run]. Each tick also dumps a snapshot of the CEF pump counters
-    // as deltas-since-last-tick — a stuck state shows as all zeros with
-    // source_signaled=1 (CEF work pending, source waiting, runloop alive).
-    CFRunLoopTimerRef heartbeat = CFRunLoopTimerCreateWithHandler(
-        kCFAllocatorDefault,
-        CFAbsoluteTimeGetCurrent() + 1.0,
-        1.0, 0, 0,
-        ^(CFRunLoopTimerRef /*t*/) {
-            static uint64_t n = 0;
-            static App::PumpStats prev = {};
-            ++n;
-            App::PumpStats s = App::GetPumpStats();
-            LOG_INFO(LOG_PLATFORM,
-                "[NSAPP] hb #%llu sched_imm+=%llu sched_delayed+=%llu "
-                "source_fired+=%llu timer_fired+=%llu dmlw+=%llu "
-                "src_pending=%d timer_in=%.3fs firstResp=%p",
-                (unsigned long long)n,
-                (unsigned long long)(s.sched_imm     - prev.sched_imm),
-                (unsigned long long)(s.sched_delayed - prev.sched_delayed),
-                (unsigned long long)(s.source_fired  - prev.source_fired),
-                (unsigned long long)(s.timer_fired   - prev.timer_fired),
-                (unsigned long long)(s.dmlw_calls    - prev.dmlw_calls),
-                s.source_pending ? 1 : 0,
-                s.timer_next_fire_sec,
-                [g_window firstResponder]);
-            prev = s;
-        });
-    CFRunLoopAddTimer(CFRunLoopGetMain(), heartbeat, kCFRunLoopCommonModes);
-
     LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_run_main_loop: entering [NSApp run]");
     [NSApp run];
     LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_run_main_loop: [NSApp run] returned");
-
-    CFRunLoopTimerInvalidate(heartbeat);
-    CFRelease(heartbeat);
 }
 
 // Stop the NSApplication run loop from any thread. dispatch_async hops to

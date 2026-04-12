@@ -12,11 +12,6 @@
 #include <atomic>
 #include <cstdint>
 
-// Diagnostic: capture the mach_absolute_time of the most recent keyDown
-// event. OnAcceleratedPaint in cef_client.cpp reads this and logs the
-// key→paint latency for the next frame after each keystroke.
-std::atomic<uint64_t> g_last_keydown_mach{0};
-
 static bool g_cursor_hidden = false;
 static bool g_mouse_inside = false;
 static cef_cursor_type_t g_pending_cursor = CT_POINTER;
@@ -278,21 +273,11 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
 @implementation JellyfinInputView
 
 - (BOOL)isFlipped { return YES; }
-- (BOOL)acceptsFirstResponder {
-    LOG_INFO(LOG_PLATFORM, "[INPUT] acceptsFirstResponder -> YES");
-    return YES;
-}
+- (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)isOpaque { return NO; }
 
 - (NSView*)hitTest:(NSPoint)point {
-    NSView* hit = [super hitTest:point];
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (k <= 5 || k % 200 == 0) {
-        LOG_INFO(LOG_PLATFORM, "[INPUT] hitTest #%llu (%.0f,%.0f) -> %p (self=%p)",
-                 (unsigned long long)k, point.x, point.y, hit, self);
-    }
-    return hit;
+    return [super hitTest:point];
 }
 
 - (void)updateTrackingAreas {
@@ -351,12 +336,6 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
 
 - (void)dispatchMouseMove:(NSEvent*)event leave:(bool)leave {
     NSPoint loc = [self mouseLocInView:event];
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (k <= 5 || k % 60 == 0) {
-        LOG_INFO(LOG_PLATFORM, "[INPUT] mouseMove #%llu (%.0f,%.0f) leave=%d",
-                 (unsigned long long)k, loc.x, loc.y, leave ? 1 : 0);
-    }
     input::dispatch_mouse_move({
         .x = (int)loc.x, .y = (int)loc.y,
         .modifiers = input::macos::ns_to_cef_modifiers([event modifierFlags]),
@@ -392,8 +371,6 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
 // --- Keyboard events ---
 - (void)keyDown:(NSEvent*)event {
     unsigned short kc = [event keyCode];
-    g_last_keydown_mach.store(mach_absolute_time(), std::memory_order_release);
-    LOG_INFO(LOG_PLATFORM, "[INPUT] keyDown kc=0x%x", (unsigned)kc);
 
     input::KeyEvent e{};
     fill_key_event_from_nsevent(e, event);

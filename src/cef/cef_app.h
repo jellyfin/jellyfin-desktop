@@ -36,17 +36,6 @@ public:
     // the source/timer and gate any racing wakes.
     static void InitPump();
     static void ShutdownPump();
-    // Diagnostic: snapshot of pump counters for heartbeat logging. Thread-safe.
-    struct PumpStats {
-        uint64_t sched_imm;
-        uint64_t sched_delayed;
-        uint64_t source_fired;
-        uint64_t timer_fired;
-        uint64_t dmlw_calls;
-        bool     source_pending;       // OnSched(imm) signaled, source not yet serviced
-        double   timer_next_fire_sec;  // seconds from now; negative = overdue; +inf = not armed
-    };
-    static PumpStats GetPumpStats();
 #endif
 
     // CefRenderProcessHandler

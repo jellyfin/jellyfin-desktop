@@ -48,9 +48,6 @@ void dispatch_key(const KeyEvent& e) {
     if (e.action == KeyAction::Down && hotkey_try_consume(e)) return;
 
     auto b = active_browser();
-    LOG_INFO(LOG_PLATFORM, "[INPUT] dispatch_key action=%s active_browser=%p id=%d",
-             e.action == KeyAction::Down ? "down" : "up",
-             b.get(), b ? b->GetIdentifier() : -1);
     if (!b) return;
 
     CefKeyEvent ce{};

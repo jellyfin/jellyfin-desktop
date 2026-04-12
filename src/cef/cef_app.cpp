@@ -348,7 +348,7 @@ static void pump_drain(const char* trigger) {
     // during CefDoMessageLoopWork sets it back to true; we use it to tell
     // whether new work has already signaled the source while we were busy.
     g_work_source_pending.store(false, std::memory_order_release);
-    uint64_t n = g_pump_dmlw_calls.fetch_add(1, std::memory_order_relaxed) + 1;
+    g_pump_dmlw_calls.fetch_add(1, std::memory_order_relaxed);
     uint64_t t0 = mach_absolute_time();
     CefDoMessageLoopWork();
     uint64_t t1 = mach_absolute_time();
@@ -356,9 +356,6 @@ static void pump_drain(const char* trigger) {
     bool pending = g_work_source_pending.load(std::memory_order_acquire);
 
     bool wedged = ms > kCefMaxTimeSliceMs;
-    LOG_INFO(LOG_CEF, "[PUMP] drain(%s) dmlw #%llu elapsed=%.2fms pending=%d wedged=%d",
-             trigger, (unsigned long long)n, ms, pending ? 1 : 0, wedged ? 1 : 0);
-
     // Two reasons to come back:
     //  - `pending` was set by a cross-thread OnSched(imm) during the call:
     //    CEF has more work and the source is already signaled by our
@@ -378,14 +375,12 @@ static void pump_drain(const char* trigger) {
 }
 
 static void work_source_perform(void* /*info*/) {
-    uint64_t n = g_pump_source_fired.fetch_add(1, std::memory_order_relaxed) + 1;
-    LOG_INFO(LOG_CEF, "[PUMP] work_source_perform #%llu", (unsigned long long)n);
+    g_pump_source_fired.fetch_add(1, std::memory_order_relaxed);
     pump_drain("source");
 }
 
 static void delayed_timer_fire(CFRunLoopTimerRef /*t*/, void* /*info*/) {
-    uint64_t n = g_pump_timer_fired.fetch_add(1, std::memory_order_relaxed) + 1;
-    LOG_INFO(LOG_CEF, "[PUMP] delayed_timer_fire #%llu", (unsigned long long)n);
+    g_pump_timer_fired.fetch_add(1, std::memory_order_relaxed);
     pump_drain("timer");
 }
 
@@ -412,9 +407,7 @@ void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
         return;
     }
     if (delay_ms <= 0) {
-        uint64_t n = g_pump_sched_imm_calls.fetch_add(1, std::memory_order_relaxed) + 1;
-        LOG_INFO(LOG_CEF, "[PUMP] OnSched(imm) #%llu tid=%llu",
-                 (unsigned long long)n, (unsigned long long)tid_u64());
+        g_pump_sched_imm_calls.fetch_add(1, std::memory_order_relaxed);
         if (g_work_source) {
             g_work_source_pending.store(true, std::memory_order_release);
             // Both calls are documented thread-safe.
@@ -422,9 +415,7 @@ void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
             CFRunLoopWakeUp(CFRunLoopGetMain());
         }
     } else {
-        uint64_t n = g_pump_sched_delayed_calls.fetch_add(1, std::memory_order_relaxed) + 1;
-        LOG_INFO(LOG_CEF, "[PUMP] OnSched(delay=%lld) #%llu tid=%llu",
-                 (long long)delay_ms, (unsigned long long)n, (unsigned long long)tid_u64());
+        g_pump_sched_delayed_calls.fetch_add(1, std::memory_order_relaxed);
         if (g_delayed_timer) {
             // CFRunLoopTimerSetNextFireDate is thread-safe and *replaces*
             // the previous fire date — exactly the "any currently pending
@@ -437,25 +428,6 @@ void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
     }
 }
 
-App::PumpStats App::GetPumpStats() {
-    PumpStats s{};
-    s.sched_imm      = g_pump_sched_imm_calls.load(std::memory_order_relaxed);
-    s.sched_delayed  = g_pump_sched_delayed_calls.load(std::memory_order_relaxed);
-    s.source_fired   = g_pump_source_fired.load(std::memory_order_relaxed);
-    s.timer_fired    = g_pump_timer_fired.load(std::memory_order_relaxed);
-    s.dmlw_calls     = g_pump_dmlw_calls.load(std::memory_order_relaxed);
-    s.source_pending = g_work_source_pending.load(std::memory_order_acquire);
-    if (g_delayed_timer) {
-        // Seconds from now until the timer's next fire date. Our "parked"
-        // far-future value comes back as a huge positive number; a pending
-        // wake comes back as a small positive or negative (overdue) number.
-        CFAbsoluteTime next = CFRunLoopTimerGetNextFireDate(g_delayed_timer);
-        s.timer_next_fire_sec = next - CFAbsoluteTimeGetCurrent();
-    } else {
-        s.timer_next_fire_sec = std::numeric_limits<double>::infinity();
-    }
-    return s;
-}
 
 void App::ShutdownPump() {
     LOG_INFO(LOG_CEF, "[PUMP] ShutdownPump: sched_imm=%llu sched_delayed=%llu "

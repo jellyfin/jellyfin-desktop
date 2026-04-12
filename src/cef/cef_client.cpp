@@ -129,12 +129,6 @@ private:
 // =====================================================================
 
 void Client::GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) {
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (k <= 5 || k % 60 == 0) {
-        LOG_INFO(LOG_CEF, "[CLIENT] GetViewRect #%llu %dx%d",
-                 (unsigned long long)k, width_, height_);
-    }
     rect.Set(0, 0, width_, height_);
 }
 
@@ -164,45 +158,13 @@ void Client::resize(int w, int h, int physical_w, int physical_h) {
 
 void Client::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList&,
                      const void* buffer, int w, int h) {
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-    LOG_INFO(LOG_CEF, "[CLIENT] OnPaint #%llu type=%d %dx%d buffer=%p",
-             (unsigned long long)k, (int)type, w, h, buffer);
     if (type != PET_VIEW) return;
     if (g_platform.present_software)
         g_platform.present_software(buffer, w, h);
 }
 
-#ifdef __APPLE__
-#include <mach/mach_time.h>
-extern std::atomic<uint64_t> g_last_keydown_mach;
-#endif
-
 void Client::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
                                 const RectList&, const CefAcceleratedPaintInfo& info) {
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-#ifdef __APPLE__
-    // Diagnostic: measure key→paint latency. When a keyDown recently fired,
-    // log the elapsed mach time between it and this paint. Only log once
-    // per keyDown so we see one latency number per keystroke, not one per
-    // subsequent paint.
-    uint64_t kd = g_last_keydown_mach.exchange(0, std::memory_order_acq_rel);
-    if (kd != 0) {
-        uint64_t now = mach_absolute_time();
-        static mach_timebase_info_data_t tb = {0, 0};
-        if (tb.denom == 0) mach_timebase_info(&tb);
-        double ms = (double)(now - kd) * tb.numer / tb.denom / 1e6;
-        LOG_INFO(LOG_CEF, "[CLIENT] OnAcceleratedPaint #%llu type=%d key_to_paint=%.2fms",
-                 (unsigned long long)k, (int)type, ms);
-    } else {
-        LOG_INFO(LOG_CEF, "[CLIENT] OnAcceleratedPaint #%llu type=%d",
-                 (unsigned long long)k, (int)type);
-    }
-#else
-    LOG_INFO(LOG_CEF, "[CLIENT] OnAcceleratedPaint #%llu type=%d",
-             (unsigned long long)k, (int)type);
-#endif
     if (type != PET_VIEW) return;
     g_platform.present(info);
 }
@@ -576,25 +538,6 @@ void OverlayClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const 
 
 void OverlayClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
                                        const RectList&, const CefAcceleratedPaintInfo& info) {
-    static std::atomic<uint64_t> n{0};
-    uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
-#ifdef __APPLE__
-    uint64_t kd = g_last_keydown_mach.exchange(0, std::memory_order_acq_rel);
-    if (kd != 0) {
-        uint64_t now = mach_absolute_time();
-        static mach_timebase_info_data_t tb = {0, 0};
-        if (tb.denom == 0) mach_timebase_info(&tb);
-        double ms = (double)(now - kd) * tb.numer / tb.denom / 1e6;
-        LOG_INFO(LOG_CEF, "[OVERLAY] OnAcceleratedPaint #%llu type=%d key_to_paint=%.2fms",
-                 (unsigned long long)k, (int)type, ms);
-    } else {
-        LOG_INFO(LOG_CEF, "[OVERLAY] OnAcceleratedPaint #%llu type=%d",
-                 (unsigned long long)k, (int)type);
-    }
-#else
-    LOG_INFO(LOG_CEF, "[OVERLAY] OnAcceleratedPaint #%llu type=%d",
-             (unsigned long long)k, (int)type);
-#endif
     if (type != PET_VIEW) return;
     g_platform.overlay_present(info);
 }
