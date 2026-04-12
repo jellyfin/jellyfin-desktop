@@ -15,6 +15,7 @@
 static bool g_cursor_hidden = false;
 static bool g_mouse_inside = false;
 static cef_cursor_type_t g_pending_cursor = CT_POINTER;
+static uint32_t g_mouse_button_modifiers = 0;
 
 namespace input::macos {
 namespace {
@@ -301,6 +302,15 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
 - (void)dispatchMouseButton:(NSEvent*)event
                      button:(input::MouseButton)button
                     pressed:(bool)pressed {
+    uint32_t flag = 0;
+    switch (button) {
+    case input::MouseButton::Left:   flag = EVENTFLAG_LEFT_MOUSE_BUTTON; break;
+    case input::MouseButton::Right:  flag = EVENTFLAG_RIGHT_MOUSE_BUTTON; break;
+    case input::MouseButton::Middle: flag = EVENTFLAG_MIDDLE_MOUSE_BUTTON; break;
+    }
+    if (pressed) g_mouse_button_modifiers |= flag;
+    else         g_mouse_button_modifiers &= ~flag;
+
     NSPoint loc = [self mouseLocInView:event];
     LOG_INFO(LOG_PLATFORM, "[INPUT] mouseButton btn=%d pressed=%d (%.0f,%.0f)",
              (int)button, pressed ? 1 : 0, loc.x, loc.y);
@@ -310,7 +320,7 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
         .x           = (int)loc.x,
         .y           = (int)loc.y,
         .click_count = (int)[event clickCount],
-        .modifiers   = input::macos::ns_to_cef_modifiers([event modifierFlags]),
+        .modifiers   = input::macos::ns_to_cef_modifiers([event modifierFlags]) | g_mouse_button_modifiers,
     });
 }
 
@@ -338,7 +348,7 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
     NSPoint loc = [self mouseLocInView:event];
     input::dispatch_mouse_move({
         .x = (int)loc.x, .y = (int)loc.y,
-        .modifiers = input::macos::ns_to_cef_modifiers([event modifierFlags]),
+        .modifiers = input::macos::ns_to_cef_modifiers([event modifierFlags]) | g_mouse_button_modifiers,
         .leave = leave,
     });
 }
