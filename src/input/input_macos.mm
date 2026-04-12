@@ -17,10 +17,12 @@
 // key→paint latency for the next frame after each keystroke.
 std::atomic<uint64_t> g_last_keydown_mach{0};
 
+static bool g_cursor_hidden = false;
+static bool g_mouse_inside = false;
+static cef_cursor_type_t g_pending_cursor = CT_POINTER;
+
 namespace input::macos {
 namespace {
-
-bool g_cursor_hidden = false;
 
 uint32_t ns_to_cef_modifiers(NSEventModifierFlags flags) {
     uint32_t m = 0;
@@ -197,7 +199,10 @@ int ns_keycode_to_vkey(unsigned short kc) {
     }
 }
 
-NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
+}  // namespace
+}  // namespace input::macos
+
+static NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
     switch (type) {
     case CT_CROSS:                      return [NSCursor crosshairCursor];
     case CT_HAND:                       return [NSCursor pointingHandCursor];
@@ -223,8 +228,21 @@ NSCursor* cef_cursor_to_ns(cef_cursor_type_t type) {
     }
 }
 
-}  // namespace
-}  // namespace input::macos
+static void apply_cursor_state() {
+    if (g_pending_cursor == CT_NONE && g_mouse_inside) {
+        if (!g_cursor_hidden) {
+            [NSCursor hide];
+            g_cursor_hidden = true;
+        }
+    } else {
+        if (g_cursor_hidden) {
+            [NSCursor unhide];
+            g_cursor_hidden = false;
+        }
+        if (g_mouse_inside && g_pending_cursor != CT_NONE)
+            [cef_cursor_to_ns(g_pending_cursor) set];
+    }
+}
 
 // =====================================================================
 // JellyfinInputView — transparent NSView that captures input for CEF
@@ -350,8 +368,16 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
 - (void)mouseDragged:(NSEvent*)event    { [self dispatchMouseMove:event leave:false]; }
 - (void)rightMouseDragged:(NSEvent*)event { [self dispatchMouseMove:event leave:false]; }
 - (void)otherMouseDragged:(NSEvent*)event { [self dispatchMouseMove:event leave:false]; }
-- (void)mouseEntered:(NSEvent*)event    { [self dispatchMouseMove:event leave:false]; }
-- (void)mouseExited:(NSEvent*)event     { [self dispatchMouseMove:event leave:true];  }
+- (void)mouseEntered:(NSEvent*)event {
+    g_mouse_inside = true;
+    apply_cursor_state();
+    [self dispatchMouseMove:event leave:false];
+}
+- (void)mouseExited:(NSEvent*)event {
+    g_mouse_inside = false;
+    apply_cursor_state();
+    [self dispatchMouseMove:event leave:true];
+}
 
 - (void)scrollWheel:(NSEvent*)event {
     NSPoint loc = [self mouseLocInView:event];
@@ -442,18 +468,8 @@ NSView* create_input_view() {
 
 void set_cursor(cef_cursor_type_t type) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (type == CT_NONE) {
-            if (!g_cursor_hidden) {
-                [NSCursor hide];
-                g_cursor_hidden = true;
-            }
-        } else {
-            if (g_cursor_hidden) {
-                [NSCursor unhide];
-                g_cursor_hidden = false;
-            }
-            [cef_cursor_to_ns(type) set];
-        }
+        g_pending_cursor = type;
+        apply_cursor_state();
     });
 }
 
