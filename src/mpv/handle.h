@@ -113,6 +113,7 @@ public:
             SetPropertyStringAsync("video-aspect-override", "no");
         } else if (mode == "normal") {
             SetPropertyFlagAsync("keepaspect", true);
+            SetPropertyDoubleAsync("panscan", 0.0);
             SetPropertyStringAsync("video-aspect-override", "no");
         }
      }
