@@ -259,10 +259,6 @@
             this._core.stopTimeUpdateTimer();
             this.removeMediaDialog();
             this._core.disconnectSignals();
-            // Exit fullscreen when player is destroyed
-            if (window._isFullscreen) {
-                document.exitFullscreen().catch(() => {});
-            }
         }
 
         createMediaElement(options) {
@@ -307,11 +303,7 @@
         supports(feature) { return mpvVideoPlayer.getSupportedFeatures().includes(feature); }
         isFullscreen() { return window._isFullscreen === true; }
         toggleFullscreen() {
-            if (window._isFullscreen) {
-                document.exitFullscreen().catch(() => {});
-            } else {
-                document.documentElement.requestFullscreen().catch(() => {});
-            }
+            if (window.jmpNative) window.jmpNative.toggleFullscreen();
         }
 
         // Delegate to core
