@@ -1,10 +1,51 @@
 #include "player/media_session.h"
+#include "common.h"
+#include "cef/cef_client.h"
 
-MediaSession::MediaSession(std::unique_ptr<MediaSessionBackend> backend) {
-    if (backend) backends_.push_back(std::move(backend));
-}
+#ifdef __APPLE__
+#include "player/macos/media_session_macos.h"
+#elif defined(_WIN32)
+#include "player/windows/media_session_windows.h"
+#else
+#include "player/mpris/media_session_mpris.h"
+#endif
+
+MediaSession::MediaSession() = default;
 
 MediaSession::~MediaSession() = default;
+
+std::unique_ptr<MediaSession> MediaSession::create() {
+    auto session = std::make_unique<MediaSession>();
+#ifdef __APPLE__
+    session->addBackend(createMacOSMediaBackend(session.get()));
+#elif defined(_WIN32)
+    int64_t wid = 0;
+    g_mpv.GetPropertyInt("window-id", wid);
+    session->addBackend(createWindowsMediaBackend(session.get(), (HWND)(intptr_t)wid));
+#else
+    session->addBackend(std::make_unique<MprisBackend>(session.get()));
+#endif
+    session->wireTransportCallbacks();
+    return session;
+}
+
+void MediaSession::wireTransportCallbacks() {
+    onPlay = []() { g_mpv.Play(); };
+    onPause = []() { g_mpv.Pause(); };
+    onPlayPause = []() { g_mpv.TogglePause(); };
+    onStop = []() { g_mpv.Stop(); };
+    onSetRate = [](double rate) { g_mpv.SetSpeed(rate); };
+    onNext = []() {
+        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");
+    };
+    onPrevious = []() {
+        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['previous']);");
+    };
+    onSeek = [](int64_t position_us) {
+        int ms = static_cast<int>(position_us / 1000);
+        if (g_client) g_client->execJs("if(window._nativeSeek) window._nativeSeek(" + std::to_string(ms) + ");");
+    };
+}
 
 void MediaSession::setMetadata(const MediaMetadata& meta) {
     for (auto& b : backends_) b->setMetadata(meta);

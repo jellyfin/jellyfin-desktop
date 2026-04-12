@@ -29,10 +29,8 @@
 #include <mach-o/dyld.h>
 #elif defined(_WIN32)
 #include "single_instance.h"
-#include "player/windows/media_session_windows.h"
 #else
 #include "single_instance.h"
-#include "player/mpris/media_session_mpris.h"
 #endif
 
 #include "include/cef_parser.h"
@@ -823,89 +821,11 @@ int main(int argc, char* argv[]) {
     TitlebarColor titlebar_color_obj(g_platform, Settings::instance().titlebarThemeColor());
     g_titlebar_color = &titlebar_color_obj;
 
-#ifdef __APPLE__
-    // nothing -- macOS media session not yet implemented in new arch
-#elif defined(_WIN32)
-    // --- Windows SMTC media session ---
-    MediaSession media_session_obj;
-    int64_t wid = 0;
-    g_mpv.GetPropertyInt("window-id", wid);
-    auto win_backend = createWindowsMediaBackend(&media_session_obj, (HWND)(intptr_t)wid);
-    media_session_obj.addBackend(std::move(win_backend));
-
-    // Wire transport controls.
-    // Play/pause/stop go directly to mpv (authoritative source).
-    // Next/previous/seek go through JS (jellyfin-web manages the playlist).
-    media_session_obj.onPlay = []() {
-        g_mpv.Play();
-    };
-    media_session_obj.onPause = []() {
-        g_mpv.Pause();
-    };
-    media_session_obj.onPlayPause = []() {
-        g_mpv.TogglePause();
-    };
-    media_session_obj.onStop = []() {
-        g_mpv.Stop();
-    };
-    media_session_obj.onNext = []() {
-        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");
-    };
-    media_session_obj.onPrevious = []() {
-        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['previous']);");
-    };
-    media_session_obj.onSeek = [](int64_t position_us) {
-        int ms = static_cast<int>(position_us / 1000);
-        if (g_client) g_client->execJs("if(window._nativeSeek) window._nativeSeek(" + std::to_string(ms) + ");");
-    };
-    media_session_obj.onSetRate = [](double rate) {
-        double clamped = rate < 0.25 ? 0.25 : (rate > 2.0 ? 2.0 : rate);
-        g_mpv.SetSpeed(clamped);
-    };
+    auto media_session_obj = MediaSession::create();
 
     MediaSessionThread media_session_thread;
-    media_session_thread.start(&media_session_obj);
+    media_session_thread.start(media_session_obj.get());
     g_media_session = &media_session_thread;
-#else
-    // --- MPRIS media session ---
-    MediaSession media_session_obj;
-    auto mpris_backend = std::make_unique<MprisBackend>(&media_session_obj);
-    media_session_obj.addBackend(std::move(mpris_backend));
-
-    // Wire MPRIS transport controls.
-    // Play/pause/stop go directly to mpv (authoritative source).
-    // Next/previous/seek go through JS (jellyfin-web manages the playlist).
-    media_session_obj.onPlay = []() {
-        g_mpv.Play();
-    };
-    media_session_obj.onPause = []() {
-        g_mpv.Pause();
-    };
-    media_session_obj.onPlayPause = []() {
-        g_mpv.TogglePause();
-    };
-    media_session_obj.onStop = []() {
-        g_mpv.Stop();
-    };
-    media_session_obj.onNext = []() {
-        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");
-    };
-    media_session_obj.onPrevious = []() {
-        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['previous']);");
-    };
-    media_session_obj.onSeek = [](int64_t position_us) {
-        int ms = static_cast<int>(position_us / 1000);
-        if (g_client) g_client->execJs("if(window._nativeSeek) window._nativeSeek(" + std::to_string(ms) + ");");
-    };
-    media_session_obj.onSetRate = [](double rate) {
-        double clamped = rate < 0.25 ? 0.25 : (rate > 2.0 ? 2.0 : rate);
-        g_mpv.SetSpeed(clamped);
-    };
-
-    MediaSessionThread media_session_thread;
-    media_session_thread.start(&media_session_obj);
-    g_media_session = &media_session_thread;
-#endif
 
     // --- Start threads ---
     LOG_INFO(LOG_MAIN, "[FLOW] starting digest + cef_consumer threads");
@@ -950,12 +870,10 @@ int main(int argc, char* argv[]) {
 
     // --- Cleanup ---
     // Stop our threads first (they don't depend on CEF/mpv shutdown order)
-#ifndef __APPLE__
     g_media_session = nullptr;
     g_titlebar_color = nullptr;
     media_session_thread.stop();
     g_platform.set_idle_inhibit(IdleInhibitLevel::None);
-#endif
 
     cef_thread.join();
     g_mpv.Wakeup();
