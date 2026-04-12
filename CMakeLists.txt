@@ -52,10 +52,18 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/CEF_VERSION")
     file(READ "${CMAKE_SOURCE_DIR}/CEF_VERSION" _EXPECTED_CEF_VERSION)
     string(STRIP "${_EXPECTED_CEF_VERSION}" _EXPECTED_CEF_VERSION)
     if(NOT CEF_VERSION STREQUAL _EXPECTED_CEF_VERSION)
-        message(FATAL_ERROR
-            "CEF version mismatch:\n"
-            "  CEF_VERSION file: ${_EXPECTED_CEF_VERSION}\n"
-            "  Found CEF:        ${CEF_VERSION}")
+        if(CEF_IS_SYSTEM)
+            message(WARNING
+                "System CEF version does not match CEF_VERSION file:\n"
+                "  CEF_VERSION file: ${_EXPECTED_CEF_VERSION}\n"
+                "  System CEF:       ${CEF_VERSION}\n"
+                "  This may cause build failures or runtime issues.")
+        else()
+            message(FATAL_ERROR
+                "CEF version mismatch:\n"
+                "  CEF_VERSION file: ${_EXPECTED_CEF_VERSION}\n"
+                "  Found CEF:        ${CEF_VERSION}")
+        endif()
     endif()
 endif()
 
@@ -462,8 +470,8 @@ target_link_libraries(jellyfin-desktop PRIVATE
     ${PLATFORM_LIBRARIES}
 )
 
-# When using external CEF, tell the app where to find resources
-if(EXTERNAL_CEF_DIR)
+# When using external/system CEF, tell the app where to find resources
+if(EXTERNAL_CEF_DIR OR USE_SYSTEM_CEF)
     target_compile_definitions(jellyfin-desktop PRIVATE
         CEF_RESOURCES_DIR="${CEF_RESOURCE_DIR}"
     )
@@ -485,8 +493,8 @@ if(UNIX AND NOT APPLE)
     if(EXTERNAL_MPV_DIR)
         list(APPEND RPATH_DIRS "${EXTERNAL_MPV_DIR}/lib")
     endif()
-    if(EXTERNAL_CEF_DIR)
-        list(APPEND RPATH_DIRS "${EXTERNAL_CEF_DIR}/lib")
+    if(USE_SYSTEM_CEF OR EXTERNAL_CEF_DIR)
+        list(APPEND RPATH_DIRS "${CEF_RELEASE_DIR}")
     endif()
     list(JOIN RPATH_DIRS ";" RPATH_STRING)
     set_target_properties(jellyfin-desktop PROPERTIES
@@ -495,8 +503,8 @@ if(UNIX AND NOT APPLE)
     )
 endif()
 
-# Copy CEF resources to build directory (only when not using external CEF)
-if(NOT EXTERNAL_CEF_DIR)
+# Copy CEF resources to build directory (only when not using external/system CEF)
+if(NOT EXTERNAL_CEF_DIR AND NOT USE_SYSTEM_CEF)
     if(APPLE)
         # macOS: Copy framework to build/Frameworks/ and fix install_name paths
         # CEF ships with @executable_path/../Frameworks/... but we want @executable_path/Frameworks/...
