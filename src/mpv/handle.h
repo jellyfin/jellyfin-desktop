@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 #include <cstring>
-#include <optional>
 
 /**
  * Typed wrapper for mpv_handle. Encapsulates the mpv instance so it doesn't
@@ -107,19 +106,23 @@ public:
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
     void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
 
+    // mpv track selection: -1 = auto, 0 = disable, 1+ = specific track
+    static constexpr int64_t kTrackAuto    = -1;
+    static constexpr int64_t kTrackDisable =  0;
+
     struct LoadOptions {
         double startSecs = 0;
-        std::optional<int64_t> audioTrack;   // 0 = off, 1+ = track number
-        std::optional<int64_t> subTrack;     // 0 = off, 1+ = track number
+        int64_t audioTrack = kTrackAuto;
+        int64_t subTrack = kTrackAuto;
     };
 
     void LoadFile(const std::string& path, const LoadOptions& opts) {
         std::string optsStr = "start=" + std::to_string(opts.startSecs)
                             + ",pause=no";
-        if (opts.audioTrack)
-            optsStr += ",aid=" + std::to_string(*opts.audioTrack);
-        if (opts.subTrack)
-            optsStr += ",sid=" + std::to_string(*opts.subTrack);
+        if (opts.audioTrack != kTrackAuto)
+            optsStr += ",aid=" + std::to_string(opts.audioTrack);
+        if (opts.subTrack != kTrackAuto)
+            optsStr += ",sid=" + std::to_string(opts.subTrack);
         CommandAsync({"loadfile", path, "replace", "-1", optsStr});
     }
 

@@ -196,8 +196,7 @@
                 }
                 if (window.jmpNative && window.jmpNative.playerLoad) {
                     const metadataJson = streamdata?.metadata ? JSON.stringify(streamdata.metadata) : '{}';
-                    // Track indices: 0 = off/default, 1+ = track number. Never send -1 (mpv auto-select).
-                    window.jmpNative.playerLoad(url, options?.startMilliseconds || 0, Math.max(audioStream || 0, 0), Math.max(subtitleStream || 0, 0), metadataJson);
+                    window.jmpNative.playerLoad(url, options.startMilliseconds, audioStream, subtitleStream, metadataJson);
                 }
             },
             stop() {
@@ -235,11 +234,11 @@
             },
             setSubtitleStream(index) {
                 console.log('[Media] player.setSubtitleStream:', index);
-                if (window.jmpNative) window.jmpNative.playerSetSubtitle(index != null && index >= 0 ? index : 0);
+                if (window.jmpNative) window.jmpNative.playerSetSubtitle(index);
             },
             setAudioStream(index) {
                 console.log('[Media] player.setAudioStream:', index);
-                if (window.jmpNative) window.jmpNative.playerSetAudio(index != null ? index : -1);
+                if (window.jmpNative) window.jmpNative.playerSetAudio(index);
             },
             setSubtitleDelay(ms) {
                 console.log('[Media] player.setSubtitleDelay:', ms);

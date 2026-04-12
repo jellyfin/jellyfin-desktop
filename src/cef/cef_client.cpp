@@ -383,8 +383,8 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     if (name == "playerLoad") {
         std::string url = args->GetString(0).ToString();
         int startMs = args->GetSize() > 1 ? args->GetInt(1) : 0;
-        int audioIdx = args->GetSize() > 2 ? args->GetInt(2) : 0;
-        int subIdx = args->GetSize() > 3 ? args->GetInt(3) : 0;
+        int audioIdx = args->GetInt(2);
+        int subIdx = args->GetInt(3);
         LOG_INFO(LOG_CEF, "playerLoad: audio=%d sub=%d start=%dms url=%s",
                  audioIdx, subIdx, startMs, url.c_str());
         MpvHandle::LoadOptions opts;

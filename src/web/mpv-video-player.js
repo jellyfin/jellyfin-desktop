@@ -155,21 +155,21 @@
                 const defaultSubIdx = options.mediaSource.DefaultSubtitleStreamIndex ?? -1;
 
                 // Convert audio index from Jellyfin global stream index to mpv 1-based audio track index
-                let audioParam = -1;
+                let audioParam = MpvPlayerCore.TRACK_DISABLE;
                 if (defaultAudioIdx >= 0) {
                     const relIdx = getRelativeIndexByType(streams, defaultAudioIdx, 'Audio');
-                    audioParam = relIdx != null ? relIdx : -1;
+                    audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
                 }
 
                 // Convert subtitle index to relative
-                let subParam = -1;
+                let subParam = MpvPlayerCore.TRACK_DISABLE;
                 if (defaultSubIdx >= 0) {
                     const subStream = getStreamByIndex(streams, defaultSubIdx);
                     if (subStream && subStream.DeliveryMethod === 'External' && subStream.DeliveryUrl) {
-                        subParam = -1;  // External not supported yet
+                        subParam = MpvPlayerCore.TRACK_AUTO;  // External not supported yet
                     } else {
                         const relIdx = getRelativeIndexByType(streams, defaultSubIdx, 'Subtitle');
-                        subParam = relIdx != null ? relIdx : -1;
+                        subParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
                     }
                 }
 
@@ -184,7 +184,7 @@
 
         setSubtitleStreamIndex(index) {
             if (index == null || index < 0) {
-                window.api.player.setSubtitleStream(-1);
+                window.api.player.setSubtitleStream(MpvPlayerCore.TRACK_DISABLE);
                 return;
             }
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
@@ -194,7 +194,7 @@
                 return;
             }
             const relIdx = getRelativeIndexByType(streams, index, 'Subtitle');
-            window.api.player.setSubtitleStream(relIdx != null ? relIdx : -1);
+            window.api.player.setSubtitleStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE);
         }
 
         setSecondarySubtitleStreamIndex(index) {}
@@ -211,12 +211,12 @@
 
         setAudioStreamIndex(index) {
             if (index == null || index < 0) {
-                window.api.player.setAudioStream(-1);
+                window.api.player.setAudioStream(MpvPlayerCore.TRACK_AUTO);
                 return;
             }
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
             const relIdx = getRelativeIndexByType(streams, index, 'Audio');
-            window.api.player.setAudioStream(relIdx != null ? relIdx : -1);
+            window.api.player.setAudioStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO);
         }
 
         onEndedInternal() {
