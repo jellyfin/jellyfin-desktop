@@ -23,6 +23,7 @@
 #import <CoreVideo/CoreVideo.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
 #include <mach/mach_time.h>
+#include <objc/runtime.h>
 
 // =====================================================================
 // Forward declarations
@@ -462,6 +463,19 @@ static bool macos_init(mpv_handle* mpv) {
         return false;
     }
     LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: got window=%p", g_window);
+
+    // mpv's Window.windowShouldClose sends MP_KEY_CLOSE_WIN into mpv's
+    // input system, which we've disabled. Swizzle it to call our shutdown.
+    {
+        Class cls = [g_window class];
+        SEL sel = @selector(windowShouldClose:);
+        IMP newImp = imp_implementationWithBlock(^BOOL(id, NSWindow*) {
+            initiate_shutdown();
+            return NO;
+        });
+        Method m = class_getInstanceMethod(cls, sel);
+        method_setImplementation(m, newImp);
+    }
 
     // The first reconfig already applied --geometry (including position via
     // --force-window-position). Clear it so subsequent reconfigs (video
