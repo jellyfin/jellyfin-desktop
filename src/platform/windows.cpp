@@ -545,6 +545,8 @@ static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
                         else
                             win_end_transition_locked();
                         g_win.was_fullscreen = fs;
+                    } else if (g_win.transitioning) {
+                        win_end_transition_locked();
                     }
                     update_surface_size_locked(lw, lh, pw, ph);
                 }
@@ -582,6 +584,13 @@ static bool win_init(mpv_handle* mpv) {
 
     if (!init_d3d()) return false;
     if (!init_dcomp()) return false;
+
+    // Seed was_fullscreen before installing the hook so the first WM_SIZE
+    // doesn't start a spurious transition if already fullscreen.
+    {
+        LONG_PTR style = GetWindowLongPtr(g_win.mpv_hwnd, GWL_STYLE);
+        g_win.was_fullscreen = !(style & WS_OVERLAPPEDWINDOW);
+    }
 
     // Install hook to monitor mpv's HWND for size/fullscreen/close
     DWORD mpv_tid = GetWindowThreadProcessId(g_win.mpv_hwnd, nullptr);
