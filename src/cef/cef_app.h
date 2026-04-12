@@ -10,6 +10,9 @@ class App : public CefApp,
 public:
     App() = default;
 
+    void SetDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
+    void SetOzonePlatform(const std::string& p) { ozone_platform_ = p; }
+
     // CefApp
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
     CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
@@ -44,6 +47,9 @@ public:
                          CefRefPtr<CefV8Context> context) override;
 
 private:
+    bool disable_gpu_compositing_ = false;
+    std::string ozone_platform_;
+
     IMPLEMENT_REFCOUNTING(App);
     DISALLOW_COPY_AND_ASSIGN(App);
 };

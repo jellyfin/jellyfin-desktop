@@ -362,6 +362,8 @@ int main(int argc, char* argv[]) {
     bool audio_exclusive = false;
     std::string audio_channels_str;
     bool player_mode = false;
+    bool disable_gpu_compositing = false;
+    std::string ozone_platform;
     std::vector<std::string> player_playlist;
     int remote_debugging_port = 0;
     const char* log_level_str = nullptr;
@@ -390,6 +392,8 @@ int main(int argc, char* argv[]) {
                    "  --audio-exclusive         Exclusive audio output\n"
                    "  --audio-channels <layout> e.g. stereo, 5.1, 7.1\n"
                    "  --remote-debug-port <port> Chrome remote debugging\n"
+                   "  --disable-gpu-compositing Disable CEF GPU compositing\n"
+                   "  --ozone-platform <plat>   CEF ozone platform (default: x11)\n"
                    "  --player                  Standalone player mode\n");
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -421,6 +425,12 @@ int main(int argc, char* argv[]) {
             remote_debugging_port = atoi(argv[++i]);
         } else if (strncmp(argv[i], "--remote-debug-port=", 20) == 0) {
             remote_debugging_port = atoi(argv[i] + 20);
+        } else if (strcmp(argv[i], "--disable-gpu-compositing") == 0) {
+            disable_gpu_compositing = true;
+        } else if (strcmp(argv[i], "--ozone-platform") == 0 && i + 1 < argc) {
+            ozone_platform = argv[++i];
+        } else if (strncmp(argv[i], "--ozone-platform=", 17) == 0) {
+            ozone_platform = argv[i] + 17;
         } else if (strcmp(argv[i], "--player") == 0) {
             player_mode = true;
         } else if (argv[i][0] != '-') {
@@ -633,6 +643,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- Platform init ---
+    g_platform.cef_ozone_platform = ozone_platform;
     if (!g_platform.init(g_mpv.Get())) {
         LOG_ERROR(LOG_MAIN, "Platform init failed");
         g_mpv.TerminateDestroy();
@@ -721,6 +732,13 @@ int main(int argc, char* argv[]) {
     App::InitPump();
 #endif
 
+    // Disable GPU compositing if probe failed or CLI flag set
+    bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;
+    if (!use_shared_textures)
+        app->SetDisableGpuCompositing(true);
+    if (!ozone_platform.empty())
+        app->SetOzonePlatform(ozone_platform);
+
     LOG_INFO(LOG_MAIN, "[FLOW] calling CefInitialize...");
     if (!CefInitialize(main_args, settings, app, nullptr)) {
         LOG_ERROR(LOG_MAIN, "CefInitialize failed");
@@ -737,7 +755,7 @@ int main(int argc, char* argv[]) {
 
     CefWindowInfo wi;
     wi.SetAsWindowless(0);
-    wi.shared_texture_enabled = true;
+    wi.shared_texture_enabled = use_shared_textures;
 #ifdef __APPLE__
     // macOS: drive BeginFrames from CVDisplayLink, aligned with display
     // vsync. Eliminates the phase lag from CEF's internal 60Hz BeginFrame
@@ -788,7 +806,7 @@ int main(int argc, char* argv[]) {
 
         CefWindowInfo owi;
         owi.SetAsWindowless(0);
-        owi.shared_texture_enabled = true;
+        owi.shared_texture_enabled = use_shared_textures;
 #ifdef __APPLE__
         owi.external_begin_frame_enabled = true;
 #else

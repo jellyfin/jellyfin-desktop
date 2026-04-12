@@ -48,9 +48,15 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
 #ifdef __linux__
-    // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues
-    command_line->AppendSwitchWithValue("ozone-platform", "x11");
+    // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues.
+    // Can be overridden via --ozone-platform CLI flag.
+    command_line->AppendSwitchWithValue("ozone-platform",
+        ozone_platform_.empty() ? "x11" : ozone_platform_);
 #endif
+
+    if (disable_gpu_compositing_) {
+        command_line->AppendSwitch("disable-gpu-compositing");
+    }
 
 #ifdef __APPLE__
     // macOS 26: CEF renderer/GPU subprocesses fail to bootstrap due to a

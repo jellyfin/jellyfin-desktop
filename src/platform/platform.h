@@ -78,6 +78,16 @@ struct Platform {
     // Titlebar color (KDE/KWin only, no-op on other compositors)
     void (*set_titlebar_color)(uint8_t r, uint8_t g, uint8_t b);
 
+    // Whether the GPU can produce shared textures (dmabufs). Set during init.
+    // When false, CEF should use software rendering (OnPaint) instead of
+    // OnAcceleratedPaint, and present_software / overlay_present_software
+    // must be non-null.
+    bool shared_texture_supported = true;
+
+    // CEF ozone platform override (empty = default "x11").
+    // Set from CLI before init(); the dmabuf probe tests GL on this display.
+    std::string cef_ozone_platform;
+
     // Read the system clipboard as UTF-8 text. Used by the context menu's
     // Paste action — CEF's frame->Paste() can't see external Wayland
     // selections under our forced --ozone-platform=x11 config, so we read
