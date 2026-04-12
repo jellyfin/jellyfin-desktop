@@ -337,9 +337,11 @@ void resize_to_parent(int pw, int ph) {
 
 void set_cursor(cef_cursor_type_t type) {
     g.cursor_type = type;
-    // Actual cursor update happens next WM_SETCURSOR. For an immediate
-    // refresh when the pointer is inside our client area, Windows
-    // automatically re-posts WM_SETCURSOR on cursor move.
+    // SetCursor is thread-affine — must run on the input thread.
+    // Post a synthetic WM_SETCURSOR so our WndProc applies it immediately.
+    if (g.input_hwnd)
+        PostMessage(g.input_hwnd, WM_SETCURSOR, (WPARAM)g.input_hwnd,
+                    MAKELPARAM(HTCLIENT, 0));
 }
 
 }  // namespace input::windows
