@@ -358,6 +358,7 @@ int main(int argc, char* argv[]) {
                        "  --audio-exclusive       Use exclusive audio output mode\n"
                        "  --audio-channels <layout>  Set audio channel layout (e.g. stereo, 5.1, 7.1)\n"
                        "  --remote-debug-port <port>  Enable Chrome remote debugging on port (1024-65535)\n"
+                       "  --tv                        Start in TV mode (fullscreen)\n"
                        "  --player                Standalone player mode (play files/URLs directly)\n"
                        );
                 return 0;
@@ -397,6 +398,8 @@ int main(int argc, char* argv[]) {
                 remote_debugging_port = atoi(val);
             } else if (strncmp(argv[i], "--remote-debug-port=", 20) == 0) {
                 remote_debugging_port = atoi(argv[i] + 20);
+            } else if (strcmp(argv[i], "--tv") == 0) {
+                Settings::instance().setTvMode(true);
             } else if (strcmp(argv[i], "--player") == 0) {
                 player_mode = true;
             } else if (argv[i][0] == '-') {
@@ -668,6 +671,10 @@ int main(int argc, char* argv[]) {
             win_flags |= SDL_WINDOW_TRANSPARENT;
     }
 #endif
+
+    if (Settings::instance().tvMode()) {
+        win_flags |= SDL_WINDOW_FULLSCREEN;
+    }
 
     SDL_Window* window = SDL_CreateWindow(
         "Jellyfin Desktop",

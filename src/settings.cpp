@@ -165,6 +165,7 @@ std::string Settings::cliSettingsJson() const {
     if (!titlebar_theme_color_) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
     if (!transparent_titlebar_) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
     if (!log_level_.empty()) cJSON_AddStringToObject(root, "logLevel", log_level_.c_str());
+    if (tv_mode_) cJSON_AddBoolToObject(root, "tvMode", true);
 
     char* str = cJSON_PrintUnformatted(root);
     std::string result(str);
