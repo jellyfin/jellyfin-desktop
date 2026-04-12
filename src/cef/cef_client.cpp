@@ -664,7 +664,10 @@ bool OverlayClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
         CefRefPtr<CefBrowser> overlay_browser = browser;
         g_platform.fade_overlay(OVERLAY_FADE_DELAY_SEC, OVERLAY_FADE_DURATION_SEC,
             // on_fade_start: delay elapsed, fade animation is about to begin
-            []() { if (g_titlebar_color) g_titlebar_color->onOverlayDismissed(); },
+            []() {
+                g_mpv.SetBackgroundColor(kVideoBgColor.hex);
+                if (g_titlebar_color) g_titlebar_color->onOverlayDismissed();
+            },
             // on_complete: fade finished, safe to tear down the browser
             [overlay_browser]() {
                 if (overlay_browser)

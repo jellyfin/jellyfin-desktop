@@ -536,7 +536,7 @@ int main(int argc, char* argv[]) {
 #else
     g_mpv.SetOptionString("force-window", "yes");
 #endif
-    g_mpv.SetOptionString("background-color", "#101010");
+    g_mpv.SetOptionString("background-color", kBgColor.hex);
 
     // Restore saved window geometry. mpv's macOS VO honors the --geometry
     // and --window-maximized options at init-time via vo_calc_window_geometry

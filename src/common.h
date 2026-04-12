@@ -1,8 +1,32 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 
 #include "include/cef_base.h"
+
+constexpr char hexdigit(uint32_t c, int i) {
+    uint8_t n = (c >> (20 - i * 4)) & 0xF;
+    return n < 10 ? '0' + n : 'a' + (n - 10);
+}
+
+struct Color {
+    uint32_t rgb;
+    uint8_t r, g, b;
+    char hex[8];
+    constexpr Color(uint32_t c) :
+        rgb(c),
+        r((c >> 16) & 0xFF),
+        g((c >> 8) & 0xFF),
+        b(c & 0xFF),
+        hex{'#', hexdigit(c,0), hexdigit(c,1), hexdigit(c,2),
+            hexdigit(c,3), hexdigit(c,4), hexdigit(c,5), '\0'} {}
+};
+
+// Startup background color (loading screen / overlay).
+constexpr Color kBgColor{0x101010};
+// Playback background color (behind video).
+constexpr Color kVideoBgColor{0x000000};
 
 #include "platform/platform.h"
 #include "mpv/handle.h"

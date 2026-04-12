@@ -497,7 +497,7 @@ static bool macos_init(mpv_handle* mpv) {
     NSView* contentView = [g_window contentView];
     if (!contentView.layer) [contentView setWantsLayer:YES];
 
-    // Paint a solid #101010 fill at every layer we can reach so the user
+    // Paint a solid dark fill at every layer we can reach so the user
     // never sees uninitialized CAMetalLayer drawable content during the
     // gap between mpv creating the window and CEF delivering the first
     // overlay frame. Three levels of coverage:
@@ -509,7 +509,7 @@ static bool macos_init(mpv_handle* mpv) {
     //      sticks until a real frame is drawn on top of it.
     //   3. g_main / g_overlay layer backgroundColor — our own subview
     //      layers, set below, so that even while their CEF contents are
-    //      still nil they fill with #101010 instead of exposing whatever
+    //      still nil they fill with the startup color instead of exposing whatever
     //      is under them.
     NSColor* startup_bg = [NSColor colorWithSRGBRed:0x10/255.0
                                               green:0x10/255.0
@@ -547,7 +547,7 @@ static bool macos_init(mpv_handle* mpv) {
     // Both CEF content views start hidden so nothing from their fresh
     // (empty) CALayer sublayers can leak stale window-server snapshot
     // content before CEF has actually painted. The user sees mpv's
-    // contentView backing (which we've set to #101010) until the
+    // contentView backing (which we've set to the startup color) until the
     // first-frame paths unhide these below. macos_overlay_present
     // unhides both in normal mode (overlay covers main as they appear
     // together); macos_present unhides g_main in player mode.
@@ -596,10 +596,10 @@ static bool macos_init(mpv_handle* mpv) {
     return true;
 }
 
-// Reset all background colors from the startup #101010 fill to black.
+// Reset all background colors from the startup fill to black.
 // Called once when the first real content is about to be revealed.
 static void reset_background_to_black() {
-    g_mpv.SetBackgroundColor("#000000");
+    g_mpv.SetBackgroundColor(kVideoBgColor.hex);
     g_window.backgroundColor = [NSColor blackColor];
     [[g_window contentView] layer].backgroundColor = [NSColor blackColor].CGColor;
 }
@@ -700,7 +700,7 @@ static void macos_fade_overlay(float delay_sec, float fade_sec,
         // opaque at this point, so g_main is occluded until the fade
         // actually drops overlay opacity below 1.0 a few lines down.
         // Also reset mpv's clear color back to black — during startup
-        // it was #101010 to match the app's dark fill, but from here on
+        // it was set to match the app's dark fill, but from here on
         // the video layer should use black as the default background.
         if ([g_main.view isHidden]) {
             [g_main.view setHidden:NO];

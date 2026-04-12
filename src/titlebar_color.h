@@ -5,7 +5,7 @@
 #include <cstdio>
 
 // Follows <meta name="theme-color"> from web content.
-// Locked to #101010 while overlay is visible, then tracks the meta tag.
+// Locked while overlay is visible, then tracks the meta tag.
 class TitlebarColor {
 public:
     TitlebarColor(Platform& platform, bool enabled)

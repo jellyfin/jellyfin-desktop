@@ -30,6 +30,7 @@ struct wl_configure_cb {
 #include <sys/stat.h>
 #include "logging.h"
 
+
 // =====================================================================
 // Wayland state (file-static)
 // =====================================================================
@@ -253,9 +254,9 @@ static void wl_set_overlay_visible(bool visible) {
         g_wl.overlay_visible = visible;
         if (!g_wl.overlay_surface) return;
         if (visible) {
-            // Attach a solid #101010 placeholder so the user sees the correct
+            // Attach a solid placeholder so the user sees the correct
             // background color immediately, before CEF renders its first frame.
-            auto* buf = create_solid_color_buffer(0x10, 0x10, 0x10);
+            auto* buf = create_solid_color_buffer(kBgColor.r, kBgColor.g, kBgColor.b);
             if (buf) {
                 if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
                 g_wl.overlay_buffer = buf;
@@ -504,9 +505,9 @@ static bool wl_init(mpv_handle* mpv) {
     EGLDisplay egl_dpy = eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(g_wl.display));
     if (egl_dpy != EGL_NO_DISPLAY) eglInitialize(egl_dpy, nullptr, nullptr);
 
-    // KDE titlebar color — #101010 matches the loading screen background
+    // KDE titlebar color — matches the loading screen background
     wl_init_kde_palette();
-    wl_set_titlebar_color(0x10, 0x10, 0x10);
+    wl_set_titlebar_color(kBgColor.r, kBgColor.g, kBgColor.b);
 
     // Start input thread (input layer owns it)
     input::wayland::start_input_thread();
