@@ -926,6 +926,7 @@ static void wl_cleanup() {
     // Globals (must be destroyed before queue — they were bound to it).
     // Cursor shape manager is owned by input::wayland — destroyed in its cleanup.
     if (g_wl.alpha_modifier) { wp_alpha_modifier_v1_destroy(g_wl.alpha_modifier); g_wl.alpha_modifier = nullptr; }
+    if (g_wl.shm) { wl_shm_destroy(g_wl.shm); g_wl.shm = nullptr; }
     if (g_wl.dmabuf) { zwp_linux_dmabuf_v1_destroy(g_wl.dmabuf); g_wl.dmabuf = nullptr; }
     if (g_wl.viewporter) { wp_viewporter_destroy(g_wl.viewporter); g_wl.viewporter = nullptr; }
     if (g_wl.subcompositor) { wl_subcompositor_destroy(g_wl.subcompositor); g_wl.subcompositor = nullptr; }
