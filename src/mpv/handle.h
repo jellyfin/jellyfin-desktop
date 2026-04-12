@@ -126,6 +126,7 @@ public:
     // Window/display state
     void SetFullscreen(bool fs)          { SetPropertyFlagAsync("fullscreen", fs); }
     void ToggleFullscreen()              { CycleFullscreenAsync(); }
+    void SetBackgroundColor(const std::string& color) { SetPropertyStringAsync("background-color", color); }
 
     int GetFullscreen(bool& out)         { return GetPropertyFlag("fullscreen", out); }
     int GetOsdWidth(int64_t& out)        { return GetPropertyInt("osd-width", out); }
@@ -166,8 +167,8 @@ private:
     // =====================================================================
 
     void SetPropertyStringAsync(const std::string& name, const std::string& value) {
-        mpv_set_property_async(handle_, 0, name.c_str(), MPV_FORMAT_OSD_STRING,
-                               const_cast<char*>(value.c_str()));
+        const char* v = value.c_str();
+        mpv_set_property_async(handle_, 0, name.c_str(), MPV_FORMAT_STRING, &v);
     }
 
     void SetPropertyIntAsync(const std::string& name, int64_t value) {

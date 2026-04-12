@@ -492,6 +492,27 @@ static bool macos_init(mpv_handle* mpv) {
     NSView* contentView = [g_window contentView];
     if (!contentView.layer) [contentView setWantsLayer:YES];
 
+    // Paint a solid #101010 fill at every layer we can reach so the user
+    // never sees uninitialized CAMetalLayer drawable content during the
+    // gap between mpv creating the window and CEF delivering the first
+    // overlay frame. Three levels of coverage:
+    //   1. NSWindow.backgroundColor  — shows through anywhere the content-
+    //      View ends up transparent.
+    //   2. contentView.layer.backgroundColor — this is mpv's MetalLayer;
+    //      mpv only resets it from its `isOpaque` setter (metal_layer.swift:
+    //      87), which doesn't fire during normal operation, so the override
+    //      sticks until a real frame is drawn on top of it.
+    //   3. g_main / g_overlay layer backgroundColor — our own subview
+    //      layers, set below, so that even while their CEF contents are
+    //      still nil they fill with #101010 instead of exposing whatever
+    //      is under them.
+    NSColor* startup_bg = [NSColor colorWithSRGBRed:0x10/255.0
+                                              green:0x10/255.0
+                                               blue:0x10/255.0
+                                              alpha:1.0];
+    g_window.backgroundColor = startup_bg;
+    contentView.layer.backgroundColor = startup_bg.CGColor;
+
     // Metal setup
     g_mtl_device = MTLCreateSystemDefaultDevice();
     if (!g_mtl_device) { fprintf(stderr, "Metal device creation failed\n"); return false; }
@@ -518,6 +539,14 @@ static bool macos_init(mpv_handle* mpv) {
 
     create_content_layer(contentView, frame, scale, g_main.view, g_main.layer, nil);
     create_content_layer(contentView, frame, scale, g_overlay.view, g_overlay.layer, g_main.view);
+    // Both CEF content views start hidden so nothing from their fresh
+    // (empty) CALayer sublayers can leak stale window-server snapshot
+    // content before CEF has actually painted. The user sees mpv's
+    // contentView backing (which we've set to #101010) until the
+    // first-frame paths unhide these below. macos_overlay_present
+    // unhides both in normal mode (overlay covers main as they appear
+    // together); macos_present unhides g_main in player mode.
+    [g_main.view setHidden:YES];
     [g_overlay.view setHidden:YES];
 
     g_input_view = input::macos::create_input_view();
@@ -562,12 +591,28 @@ static bool macos_init(mpv_handle* mpv) {
     return true;
 }
 
+// Reset all background colors from the startup #101010 fill to black.
+// Called once when the first real content is about to be revealed.
+static void reset_background_to_black() {
+    g_mpv.SetBackgroundColor("#000000");
+    g_window.backgroundColor = [NSColor blackColor];
+    [[g_window contentView] layer].backgroundColor = [NSColor blackColor].CGColor;
+}
+
 static void macos_present(const CefAcceleratedPaintInfo& info) {
     static std::atomic<uint64_t> n{0};
     uint64_t k = n.fetch_add(1, std::memory_order_relaxed) + 1;
     uint64_t t0 = mach_absolute_time();
     if (g_transitioning) return;
     present_iosurface(g_main, info);
+    // Player mode only: no overlay will ever paint, so the first main
+    // frame is the reveal trigger. In normal mode this branch is a
+    // no-op — macos_fade_overlay is responsible for unhiding the main
+    // view when the overlay starts its fade-out.
+    if (!g_overlay_client && [g_main.view isHidden]) {
+        [g_main.view setHidden:NO];
+        reset_background_to_black();
+    }
     uint64_t t1 = mach_absolute_time();
     static mach_timebase_info_data_t tb = {0, 0};
     if (tb.denom == 0) mach_timebase_info(&tb);
@@ -602,10 +647,10 @@ static void macos_overlay_present(const CefAcceleratedPaintInfo& info) {
 static void macos_overlay_present_software(const void*, int, int) {}
 
 // The CALayer's frame tracks its hosting NSView via autoresizing. The
-// IOSurface pool is recreated automatically inside present_iosurface when
-// CEF starts delivering frames at a new pixel size, so there is nothing
-// to do here. These entry points remain so the Platform dispatch table
-// stays non-null.
+// IOSurface pool is recreated automatically inside present_iosurface
+// when CEF starts delivering frames at a new pixel size, so there is
+// nothing to do here. These entry points remain so the Platform
+// dispatch table stays non-null.
 static void macos_resize(int, int, int, int) {}
 static void macos_overlay_resize(int, int, int, int) {}
 
@@ -642,6 +687,20 @@ static void macos_fade_overlay(float delay_sec, float fade_sec,
     auto done_cb = std::make_shared<std::function<void()>>(std::move(on_complete));
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay_sec * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
+        // Reveal the main browser view now — the delay has elapsed, the
+        // fade is about to start, and g_main has had the full delay
+        // duration to load content into its layer. Holds until this
+        // moment so the user never sees the main browser before we've
+        // committed to hiding the overlay. g_overlay is still fully
+        // opaque at this point, so g_main is occluded until the fade
+        // actually drops overlay opacity below 1.0 a few lines down.
+        // Also reset mpv's clear color back to black — during startup
+        // it was #101010 to match the app's dark fill, but from here on
+        // the video layer should use black as the default background.
+        if ([g_main.view isHidden]) {
+            [g_main.view setHidden:NO];
+            reset_background_to_black();
+        }
         if (*start_cb) (*start_cb)();
         if (!g_overlay.view || !g_overlay.view.layer) {
             if (*done_cb) (*done_cb)();
