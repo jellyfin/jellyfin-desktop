@@ -95,13 +95,11 @@ modules:
         sources:
           - type: git
             url: https://github.com/haasn/libplacebo.git
-            tag: v7.351.0
-            commit: 3188549fba13bbdf3a5a98de2a38c2e71f04e21e
+            tag: v7.360.1
+            commit: cee9b076f2c63104ccfd497fa79c39a867293ec4
             x-checker-data:
               type: git
               tag-pattern: ^v([\d.]+)$
-          - type: patch
-            path: vulkan-python-xml.patch
 
       - name: libXpresent
         buildsystem: autotools

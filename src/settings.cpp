@@ -17,7 +17,7 @@ Settings& Settings::instance() {
     return instance;
 }
 
-std::string Settings::getConfigPath() {
+std::string Settings::getConfigDir() {
     std::string config_dir;
 
 #ifdef _WIN32
@@ -45,7 +45,11 @@ std::string Settings::getConfigPath() {
 
     MKDIR(config_dir.c_str());
 
-    return config_dir + "/settings.json";
+    return config_dir;
+}
+
+std::string Settings::getConfigPath() {
+    return getConfigDir() + "/settings.json";
 }
 
 static const char* jsonStr(const cJSON* root, const char* key, const char* fallback = "") {

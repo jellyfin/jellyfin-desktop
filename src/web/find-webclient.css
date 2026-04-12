@@ -2,7 +2,7 @@
     box-sizing: border-box;
 }
 body {
-    background-color: #101010;
+    background: var(--bg-color);
     color: #ddd;
     color: rgba(255, 255, 255, 0.8);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

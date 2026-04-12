@@ -1,6 +1,18 @@
 #include "cef/resource_handler.h"
+#include <cstdio>
 #include <cstring>
+#include "common.h"
 #include "logging.h"
+
+// Generated at startup from kBgColor; served as app://resources/theme.css.
+static char g_theme_css[64];
+static size_t g_theme_css_len = 0;
+
+static void init_theme_css() {
+    if (g_theme_css_len == 0)
+        g_theme_css_len = snprintf(g_theme_css, sizeof(g_theme_css),
+            ":root{--bg-color:#%06x}", kBgColor.rgb);
+}
 
 CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(
     CefRefPtr<CefBrowser> browser,
@@ -20,6 +32,15 @@ CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(
     pos = url.find_first_of("?#");
     if (pos != std::string::npos) {
         url = url.substr(0, pos);
+    }
+
+    if (url == "resources/theme.css") {
+        init_theme_css();
+        static const EmbeddedResource theme = {
+            reinterpret_cast<const uint8_t*>(g_theme_css),
+            g_theme_css_len, "text/css"
+        };
+        return new EmbeddedResourceHandler(theme);
     }
 
     auto it = embedded_resources.find(url);
