@@ -176,11 +176,12 @@
                     { type: 'video', metadata: options.item },
                     audioParam,
                     subParam,
-                    resolve);
-
-                if (externalSubUrl) {
-                    window.api.player.addSubtitleStream(externalSubUrl);
-                }
+                    () => {
+                        if (externalSubUrl) {
+                            window.api.player.addSubtitleStream(externalSubUrl);
+                        }
+                        resolve();
+                    });
             });
         }
 
