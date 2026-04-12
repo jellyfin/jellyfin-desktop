@@ -385,6 +385,7 @@ extern CefRefPtr<OverlayClient> g_overlay_client;
 @implementation DisplayLinkTarget
 - (void)tick:(CADisplayLink*)link {
     (void)link;
+    if (g_shutting_down.load(std::memory_order_relaxed)) return;
     if (g_client) {
         CefRefPtr<CefBrowser> b = g_client->browser();
         if (b) b->GetHost()->SendExternalBeginFrame();

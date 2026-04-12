@@ -77,29 +77,20 @@ Platform g_platform{};
 CefRefPtr<Client> g_client;
 CefRefPtr<OverlayClient> g_overlay_client;
 
-// Close a browser if it has one, or mark it closed if it was never created.
-// Either way, waitForClose() will return.
-static void close_or_mark(CefRefPtr<Client> c) {
-    if (!c) return;
-    if (c->browser()) c->browser()->GetHost()->CloseBrowser(true);
-    else if (!c->isClosed()) {
-        // Browser was never created — unblock waitForClose manually
-        c->markClosed();
-    }
+// Close a browser if it exists. If browser() is still null, CreateBrowser
+// is in flight — OnAfterCreated will see g_shutting_down and close it.
+static void try_close(CefRefPtr<Client> c) {
+    if (c && c->browser()) c->browser()->GetHost()->CloseBrowser(true);
 }
-static void close_or_mark(CefRefPtr<OverlayClient> c) {
-    if (!c) return;
-    if (c->browser()) c->browser()->GetHost()->CloseBrowser(true);
-    else if (!c->isClosed()) {
-        c->markClosed();
-    }
+static void try_close(CefRefPtr<OverlayClient> c) {
+    if (c && c->browser()) c->browser()->GetHost()->CloseBrowser(true);
 }
 
 void initiate_shutdown() {
     bool expected = false;
     if (!g_shutting_down.compare_exchange_strong(expected, true)) return;
-    close_or_mark(g_client);
-    close_or_mark(g_overlay_client);
+    try_close(g_client);
+    try_close(g_overlay_client);
     g_shutdown_event.signal();
     // macOS main thread is parked in nextEventMatchingMask — post a sentinel
     // NSEvent so it returns and re-checks g_shutting_down.
@@ -939,7 +930,51 @@ int main(int argc, char* argv[]) {
     // Must happen after CefShutdown (CEF may still present during shutdown)
     // but before mpv_terminate_destroy (mpv destroys the parent surface)
     g_platform.cleanup();
+
+#ifdef __APPLE__
+    // mpv's macOS VO uninit (mac_common.swift:84) calls
+    // DispatchQueue.main.sync to close its window. That blocks the VO
+    // thread until the main thread services the GCD block. If we call
+    // mpv_terminate_destroy synchronously here, the main thread is
+    // blocked waiting for mpv to finish while mpv is blocked waiting for
+    // the main thread — classic deadlock.
+    //
+    // Fix: run mpv teardown on a separate thread and keep the main
+    // thread pumping the runloop so GCD blocks dispatch normally.
+    // mpv's VO teardown needs the main thread for two reasons:
+    //   1. DispatchQueue.main.sync in mac_common.swift:84 (window close)
+    //   2. PreciseTimer.terminate() sends pthread_kill(SIGALRM) — CefInitialize
+    //      reset SIGALRM to SIG_DFL (content_main.cc:108), so restore a no-op
+    //      handler before mpv tears down the timer.
+    //
+    // CFRunLoopSourceSignal latches: if the teardown thread finishes before
+    // CFRunLoopRun enters, the signal is pending and fires immediately on
+    // entry — no race with CFRunLoopStop (which is a no-op if the runloop
+    // isn't running yet).
+    // mpv's VO teardown (mac_common.swift:84) uses DispatchQueue.main.sync
+    // to close its window — the main thread must service GCD blocks.
+    // Loop CFRunLoopRunInMode until mpv is done (same pattern as Chromium's
+    // MessagePumpCFRunLoop::DoRun in message_pump_apple.mm:676-680).
+    // Each iteration blocks until a source fires (event-driven); we check
+    // the done flag after each wake.
+    std::atomic<bool> mpv_done{false};
+    std::thread mpv_teardown([&mpv_done]{
+        // CefInitialize reset SIGALRM to SIG_DFL (content_main.cc:108).
+        // mpv's PreciseTimer.terminate() sends pthread_kill(SIGALRM) to
+        // wake its timer thread — restore a no-op handler so the default
+        // action (terminate process) doesn't fire.
+        signal(SIGALRM, [](int){});
+        g_mpv.TerminateDestroy();
+        mpv_done.store(true, std::memory_order_release);
+        CFRunLoopWakeUp(CFRunLoopGetMain());
+    });
+    while (!mpv_done.load(std::memory_order_acquire))
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode,
+                           std::numeric_limits<CFTimeInterval>::max(), true);
+    mpv_teardown.join();
+#else
     g_mpv.TerminateDestroy();
+#endif
 
     if (g_log_file) fclose(g_log_file);
     return 0;

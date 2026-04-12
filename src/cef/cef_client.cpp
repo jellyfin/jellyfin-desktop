@@ -173,6 +173,12 @@ void Client::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     LOG_INFO(LOG_CEF, "[CLIENT] Client::OnAfterCreated browser=%p id=%d",
              browser.get(), browser ? browser->GetIdentifier() : -1);
     browser_ = browser;
+    if (g_shutting_down.load(std::memory_order_relaxed)) {
+        // CreateBrowser was in flight when initiate_shutdown() ran.
+        // Close immediately so CefShutdown doesn't find a live browser.
+        browser->GetHost()->CloseBrowser(true);
+        return;
+    }
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);
@@ -546,6 +552,10 @@ void OverlayClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     LOG_INFO(LOG_CEF, "[OVERLAY] OverlayClient::OnAfterCreated browser=%p id=%d",
              browser.get(), browser ? browser->GetIdentifier() : -1);
     browser_ = browser;
+    if (g_shutting_down.load(std::memory_order_relaxed)) {
+        browser->GetHost()->CloseBrowser(true);
+        return;
+    }
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);

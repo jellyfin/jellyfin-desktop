@@ -65,8 +65,6 @@ public:
     void waitForClose();
     void waitForLoad();
     void execJs(const std::string& js);
-    // Unblock waiters when browser was never created or died early
-    void markClosed() { closed_ = true; loaded_ = true; close_cv_.notify_all(); load_cv_.notify_all(); }
 
 private:
     int width_ = 1280, height_ = 720;
@@ -125,7 +123,6 @@ public:
     void waitForClose();
     void waitForLoad();
     void execJs(const std::string& js);
-    void markClosed() { closed_ = true; loaded_ = true; close_cv_.notify_all(); load_cv_.notify_all(); }
 
 private:
     int width_ = 1280, height_ = 720;
