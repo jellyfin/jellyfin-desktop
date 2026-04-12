@@ -65,7 +65,7 @@
             this._timeUpdated = false;
             this._currentPlayOptions = undefined;
             this._endedPending = false;
-            this._aspectRatio = normalizeAspectMode(window.jmpInfo?.settings?.video?.aspect);
+            this._aspectRatio = normalizeAspectMode(window.jmpInfo?.settings?.video?.aspectRatio);
 
             // Set up video-specific event handlers
             this._core.handlers.onPlaying = () => {
@@ -367,8 +367,8 @@
         toggleAirPlay() {}
         getStats() { return Promise.resolve({ categories: [] }); }
         getSupportedAspectRatios() {
-            const fallbackOptions = ASPECT_MODES.map(value => ({ value, title: `video.aspect.${value}` }));
-            const options = window.jmpInfo?.settingsDescriptions?.video?.find(x => x.key === 'aspect')?.options || fallbackOptions;
+            const fallbackOptions = ASPECT_MODES.map(value => ({ value, title: `video.aspectRatio.${value}` }));
+            const options = window.jmpInfo?.settingsDescriptions?.video?.find(x => x.key === 'aspectRatio')?.options || fallbackOptions;
             const current = this.getAspectRatio();
             const labels = {
                 normal: 'Auto',
@@ -378,7 +378,7 @@
             return options
                 .filter(option => ASPECT_MODES.includes(option.value))
                 .map(option => {
-                    const raw = String(option.title || option.value).replace('video.aspect.', '');
+                    const raw = String(option.title || option.value).replace('video.aspectRatio.', '');
                     const translationKey = labels[raw];
                     const name = translationKey && this.globalize?.translate ? this.globalize.translate(translationKey) : raw;
                     return {
@@ -390,13 +390,13 @@
                 });
         }
         getAspectRatio() {
-            return normalizeAspectMode(window.jmpInfo?.settings?.video?.aspect || this._aspectRatio);
+            return normalizeAspectMode(window.jmpInfo?.settings?.video?.aspectRatio || this._aspectRatio);
         }
         setAspectRatio(value) {
             const normalized = normalizeAspectMode(value);
             this._aspectRatio = normalized;
             if (window.jmpInfo?.settings?.video) {
-                window.jmpInfo.settings.video.aspect = normalized;
+                window.jmpInfo.settings.video.aspectRatio = normalized;
             }
             window.api.player.setAspectRatio(normalized);
         }

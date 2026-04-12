@@ -82,8 +82,9 @@
         scriptPath: '',
         sections: [
             { key: 'playback', order: 0 },
-            { key: 'audio', order: 1 },
-            { key: 'advanced', order: 2 }
+            { key: 'video', order: 1 },
+            { key: 'audio', order: 2 },
+            { key: 'advanced', order: 3 }
         ],
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
@@ -91,7 +92,7 @@
                 hwdec: _savedSettings.hwdec || 'auto-safe'
             },
             video: {
-                aspect: _savedSettings.aspect || 'normal'
+                aspectRatio: _savedSettings.aspectRatio || 'normal'
             },
             audio: {
                 audioPassthrough: _savedSettings.audioPassthrough || '',
@@ -117,10 +118,10 @@
                 ]}
             ],
             video: [
-                { key: 'aspect', displayName: 'Aspect Ratio', help: 'Video aspect behavior used by the mpv renderer.', options: [
-                    { value: 'normal', title: 'video.aspect.normal' },
-                    { value: 'zoom', title: 'video.aspect.zoom' },
-                    { value: 'stretch', title: 'video.aspect.stretch' },
+                { key: 'aspectRatio', displayName: 'Default Aspect Ratio', help: 'Default video aspect ratio behavior.', options: [
+                    { value: 'normal', title: 'Normal' },
+                    { value: 'zoom', title: 'Zoom' },
+                    { value: 'stretch', title: 'Stretch' },
                 ]}
             ],
             audio: [
