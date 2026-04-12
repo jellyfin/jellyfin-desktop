@@ -206,18 +206,14 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     // --- Mouse buttons ---
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:
-    case WM_LBUTTONUP:   case WM_RBUTTONUP:   case WM_MBUTTONUP:
-    case WM_LBUTTONDBLCLK: case WM_RBUTTONDBLCLK: case WM_MBUTTONDBLCLK: {
+    case WM_LBUTTONUP:   case WM_RBUTTONUP:   case WM_MBUTTONUP: {
         if (is_button_down(msg)) SetFocus(hwnd);
-        int click_count = (msg == WM_LBUTTONDBLCLK || msg == WM_RBUTTONDBLCLK ||
-                           msg == WM_MBUTTONDBLCLK) ? 2 : 1;
         dispatch_mouse_button({
             .button      = msg_to_button(msg),
-            .pressed     = is_button_down(msg) || msg == WM_LBUTTONDBLCLK ||
-                           msg == WM_RBUTTONDBLCLK || msg == WM_MBUTTONDBLCLK,
+            .pressed     = is_button_down(msg),
             .x           = GET_X_LPARAM(lp),
             .y           = GET_Y_LPARAM(lp),
-            .click_count = click_count,
+            .click_count = 1,
             .modifiers   = mouse_modifiers(wp),
         });
         return 0;
@@ -300,7 +296,7 @@ void run_input_thread(HWND mpv_hwnd) {
     wc.lpfnWndProc  = input_wndproc;
     wc.hInstance    = GetModuleHandle(nullptr);
     wc.lpszClassName = L"JellyfinCefInput";
-    wc.style        = CS_DBLCLKS;
+    wc.style        = 0;
     wc.hCursor      = nullptr;  // managed via WM_SETCURSOR
     RegisterClassExW(&wc);
 
