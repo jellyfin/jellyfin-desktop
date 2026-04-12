@@ -248,6 +248,11 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // --- Keyboard ---
     case WM_KEYDOWN: case WM_SYSKEYDOWN:
     case WM_KEYUP:   case WM_SYSKEYUP: {
+        // Alt+F4: initiate shutdown (child HWNDs don't get WM_CLOSE from DefWindowProc)
+        if (wp == VK_F4 && msg == WM_SYSKEYDOWN && IsKeyDown(VK_MENU)) {
+            PostMessage(g.mpv_hwnd, WM_CLOSE, 0, 0);
+            return 0;
+        }
         KeyEvent e{};
         e.code             = vk_to_keycode(static_cast<int>(wp));
         e.windows_key_code = static_cast<int>(wp);
