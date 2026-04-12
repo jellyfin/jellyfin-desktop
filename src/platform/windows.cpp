@@ -662,6 +662,37 @@ static void win_clipboard_read_text_async(std::function<void(std::string)> on_do
     on_done(std::move(result));
 }
 
+// Query window position relative to the monitor's working area (excludes
+// taskbar), in physical pixels. Matches mpv's --geometry +X+Y coordinate
+// system on Windows (vo_calc_window_geometry uses the working area).
+static bool win_query_window_position(int* x, int* y) {
+    if (!g_win.mpv_hwnd) return false;
+    RECT wr;
+    if (!GetWindowRect(g_win.mpv_hwnd, &wr)) return false;
+    HMONITOR mon = MonitorFromWindow(g_win.mpv_hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfo(mon, &mi)) return false;
+    *x = wr.left - mi.rcWork.left;
+    *y = wr.top - mi.rcWork.top;
+    return true;
+}
+
+// Clamp saved geometry to the primary monitor's working area so the window
+// never opens larger than the screen (or off-screen).
+static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
+    RECT work;
+    if (!SystemParametersInfo(SPI_GETWORKAREA, 0, &work, 0)) return;
+    int vw = work.right - work.left;
+    int vh = work.bottom - work.top;
+    if (*w > vw) *w = vw;
+    if (*h > vh) *h = vh;
+    if (*x >= 0 && *x + *w > vw) *x = vw - *w;
+    if (*y >= 0 && *y + *h > vh) *y = vh - *h;
+    if (*x < 0) *x = -1;
+    if (*y < 0) *y = -1;
+}
+
 // =====================================================================
 // make_windows_platform
 // =====================================================================
@@ -687,8 +718,8 @@ Platform make_windows_platform() {
         .set_expected_size = win_set_expected_size,
         .get_scale = win_get_scale,
         .query_logical_content_size = win_query_logical_content_size,
-        .query_window_position = [](int*, int*) -> bool { return false; },
-        .clamp_window_geometry = nullptr,
+        .query_window_position = win_query_window_position,
+        .clamp_window_geometry = win_clamp_window_geometry,
         .pump = win_pump,
         .set_cursor = input::windows::set_cursor,
         .set_idle_inhibit = win_set_idle_inhibit,
