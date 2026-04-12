@@ -163,10 +163,11 @@
 
                 // Convert subtitle index to relative
                 let subParam = MpvPlayerCore.TRACK_DISABLE;
+                let externalSubUrl = null;
                 if (defaultSubIdx >= 0) {
                     const subStream = getStreamByIndex(streams, defaultSubIdx);
                     if (subStream && subStream.DeliveryMethod === 'External' && subStream.DeliveryUrl) {
-                        subParam = MpvPlayerCore.TRACK_AUTO;  // External not supported yet
+                        externalSubUrl = subStream.DeliveryUrl;
                     } else {
                         const relIdx = getRelativeIndexByType(streams, defaultSubIdx, 'Subtitle');
                         subParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
@@ -179,6 +180,10 @@
                     audioParam,
                     subParam,
                     resolve);
+
+                if (externalSubUrl) {
+                    window.api.player.addSubtitleStream(externalSubUrl);
+                }
             });
         }
 
@@ -190,7 +195,7 @@
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
             const stream = getStreamByIndex(streams, index);
             if (stream && stream.DeliveryMethod === 'External' && stream.DeliveryUrl) {
-                console.log('[Media] External subtitles not supported yet');
+                window.api.player.addSubtitleStream(stream.DeliveryUrl);
                 return;
             }
             const relIdx = getRelativeIndexByType(streams, index, 'Subtitle');

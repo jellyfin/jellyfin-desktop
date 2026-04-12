@@ -106,6 +106,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("playerSetMuted", CefV8Value::CreateFunction("playerSetMuted", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetSpeed", CefV8Value::CreateFunction("playerSetSpeed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetSubtitle", CefV8Value::CreateFunction("playerSetSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("playerAddSubtitle", CefV8Value::CreateFunction("playerAddSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetAudio", CefV8Value::CreateFunction("playerSetAudio", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetAudioDelay", CefV8Value::CreateFunction("playerSetAudioDelay", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("saveServerUrl", CefV8Value::CreateFunction("saveServerUrl", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
@@ -219,7 +220,7 @@ bool NativeV8Handler::Execute(const CefString& name,
         if (arguments.size() >= 1 && arguments[0]->IsDouble()) args->SetDouble(0, arguments[0]->GetDoubleValue());
     } else if (name == "saveServerUrl" || name == "loadServer" || name == "checkServerConnectivity" ||
                name == "notifyMetadata" || name == "notifyPlaybackState" || name == "notifyArtwork" ||
-               name == "themeColor") {
+               name == "themeColor" || name == "playerAddSubtitle") {
         if (arguments.size() >= 1 && arguments[0]->IsString()) args->SetString(0, arguments[0]->GetStringValue());
     } else if (name == "notifyQueueChange") {
         if (arguments.size() >= 2 && arguments[0]->IsBool() && arguments[1]->IsBool()) {
