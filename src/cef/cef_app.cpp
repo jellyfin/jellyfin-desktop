@@ -48,27 +48,18 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
 #ifdef __linux__
-    // Default to X11 for CEF's internal rendering -- Wayland OSR has scaling
-    // issues. Fall back to wayland when DISPLAY is not set (pure Wayland
-    // session) or when X11 support is not compiled in.
-    // Can be overridden via --ozone-platform CLI flag.
-    const char* default_ozone =
-#ifdef HAVE_X11
-        getenv("DISPLAY") ? "x11" : "wayland";
-#else
-        "wayland";
-#endif
-    command_line->AppendSwitchWithValue("ozone-platform",
-        ozone_platform_.empty() ? default_ozone : ozone_platform_);
+    // Only the browser process sets ozone platform; CEF propagates to subprocesses.
+    if (process_type.empty()) {
+        command_line->AppendSwitchWithValue("ozone-platform", ozone_platform_);
 
-    // Disable fractional scale protocol when using ozone-platform=wayland.
-    // CEF's OSR has no native window, so Chromium's per-window scaling override
-    // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
-    // from GetScreenInfo. Without this, HiDPI content scaling breaks in OSR.
-    const std::string ozone = ozone_platform_.empty() ? default_ozone : ozone_platform_;
-    if (ozone == "wayland") {
-        command_line->AppendSwitchWithValue(
-            "disable-features", "WaylandFractionalScaleV1");
+        // Disable fractional scale protocol when using ozone-platform=wayland.
+        // CEF's OSR has no native window, so Chromium's per-window scaling override
+        // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
+        // from GetScreenInfo. Without this, HiDPI content scaling breaks in OSR.
+        if (ozone_platform_ == "wayland") {
+            command_line->AppendSwitchWithValue(
+                "disable-features", "WaylandFractionalScaleV1");
+        }
     }
 #endif
 

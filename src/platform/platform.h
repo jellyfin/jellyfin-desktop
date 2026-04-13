@@ -86,8 +86,8 @@ struct Platform {
     // must be non-null.
     bool shared_texture_supported = true;
 
-    // CEF ozone platform override (empty = default "x11" if DISPLAY set, else "wayland").
-    // Set from CLI before init(); the dmabuf probe tests GL on this display.
+    // CEF ozone platform. Resolved once in main() from use_wayland / --ozone-platform.
+    // The dmabuf probe tests GL on this display.
     std::string cef_ozone_platform;
 
     // Read the system clipboard as UTF-8 text. Used by the context menu's
