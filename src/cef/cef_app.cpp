@@ -48,12 +48,13 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
 #ifdef __linux__
-    // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues.
+    // Default to X11 for CEF's internal rendering -- Wayland OSR has scaling
+    // issues. Fall back to wayland when DISPLAY is not set (pure Wayland
+    // session) or when X11 support is not compiled in.
     // Can be overridden via --ozone-platform CLI flag.
-    // Without X11 support, default to wayland.
     const char* default_ozone =
 #ifdef HAVE_X11
-        "x11";
+        getenv("DISPLAY") ? "x11" : "wayland";
 #else
         "wayland";
 #endif

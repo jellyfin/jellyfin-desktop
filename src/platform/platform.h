@@ -86,7 +86,7 @@ struct Platform {
     // must be non-null.
     bool shared_texture_supported = true;
 
-    // CEF ozone platform override (empty = default "x11").
+    // CEF ozone platform override (empty = default "x11" if DISPLAY set, else "wayland").
     // Set from CLI before init(); the dmabuf probe tests GL on this display.
     std::string cef_ozone_platform;
 

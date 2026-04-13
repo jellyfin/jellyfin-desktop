@@ -400,7 +400,7 @@ int main(int argc, char* argv[]) {
                    "  --disable-gpu-compositing Disable CEF GPU compositing\n"
                    "  --ozone-platform <plat>   CEF ozone platform (default: "
 #ifdef HAVE_X11
-                   "x11"
+                   "x11 if $DISPLAY set, else wayland"
 #else
                    "wayland"
 #endif
