@@ -4,10 +4,21 @@ window.jmpCheckServerConnectivity = (() => {
     let pendingReject = null;
     let pendingUrl = null;
 
+    const normalizeServerUrl = (url) => {
+        let normalized = String(url || '').trim();
+        if (!/^https?:\/\//i.test(normalized)) {
+            normalized = 'http://' + normalized;
+        }
+        while (normalized.length > 0 && normalized.endsWith('/')) {
+            normalized = normalized.slice(0, -1);
+        }
+        return normalized;
+    };
+
     // Called by native code when result is ready
     window._onServerConnectivityResult = (url, success, resolvedUrl) => {
         console.log('Connectivity result:', url, success, resolvedUrl);
-        if (pendingUrl === url) {
+        if (pendingUrl === normalizeServerUrl(url)) {
             if (success) {
                 pendingResolve(resolvedUrl);
             } else {
@@ -33,15 +44,10 @@ window.jmpCheckServerConnectivity = (() => {
         return new Promise((resolve, reject) => {
             pendingResolve = resolve;
             pendingReject = reject;
-            pendingUrl = url;
+            pendingUrl = normalizeServerUrl(url);
 
-            // Normalize URL
-            if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                url = 'http://' + url;
-            }
-
-            console.log('Checking connectivity:', url);
-            window.jmpNative.checkServerConnectivity(url);
+            console.log('Checking connectivity:', pendingUrl);
+            window.jmpNative.checkServerConnectivity(pendingUrl);
         });
     };
 
