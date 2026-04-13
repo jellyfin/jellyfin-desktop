@@ -44,13 +44,13 @@ git submodule update --init --recursive
 python dev\download_cef.py
 ```
 
-### 3. libmpv
+### 3. mpv
 
 ```powershell
 .\dev\windows\build_mpv_source.ps1
 ```
 
-This builds libmpv from the mpv submodule source using MSYS2, and generates an MSVC import library.
+This builds mpv from the submodule source using MSYS2, and generates an MSVC import library.
 
 ## Building
 

@@ -157,11 +157,10 @@ void Client::resize(int w, int h, int physical_w, int physical_h) {
     }
 }
 
-void Client::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList&,
+void Client::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                      const void* buffer, int w, int h) {
     if (type != PET_VIEW) return;
-    if (g_platform.present_software)
-        g_platform.present_software(buffer, w, h);
+    g_platform.present_software(dirty, buffer, w, h);
 }
 
 void Client::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
@@ -422,6 +421,10 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     } else if (name == "playerSetSubtitle") {
         LOG_INFO(LOG_CEF, "playerSetSubtitle: %d", args->GetInt(0));
         g_mpv.SetSubtitleTrack(args->GetInt(0));
+    } else if (name == "playerAddSubtitle") {
+        std::string url = args->GetString(0).ToString();
+        LOG_INFO(LOG_CEF, "playerAddSubtitle: %s", url.c_str());
+        g_mpv.SubAdd(url);
     } else if (name == "playerSetAudio") {
         g_mpv.SetAudioTrack(args->GetInt(0));
     } else if (name == "playerSetAudioDelay") {
@@ -539,11 +542,10 @@ void OverlayClient::resize(int w, int h, int physical_w, int physical_h) {
     }
 }
 
-void OverlayClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList&,
+void OverlayClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                             const void* buffer, int w, int h) {
     if (type != PET_VIEW) return;
-    if (g_platform.overlay_present_software)
-        g_platform.overlay_present_software(buffer, w, h);
+    g_platform.overlay_present_software(dirty, buffer, w, h);
 }
 
 void OverlayClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,

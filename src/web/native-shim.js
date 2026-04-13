@@ -251,6 +251,10 @@
                 console.log('[Media] player.setSubtitleStream:', index);
                 if (window.jmpNative) window.jmpNative.playerSetSubtitle(index);
             },
+            addSubtitleStream(url) {
+                console.log('[Media] player.addSubtitleStream:', url);
+                if (window.jmpNative) window.jmpNative.playerAddSubtitle(url);
+            },
             setAudioStream(index) {
                 console.log('[Media] player.setAudioStream:', index);
                 if (window.jmpNative) window.jmpNative.playerSetAudio(index);

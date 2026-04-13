@@ -118,8 +118,7 @@ public:
         }
      }
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
-    void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
-
+    void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }    void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
     // mpv track selection: -1 = auto, 0 = disable, 1+ = specific track
     static constexpr int64_t kTrackAuto    = -1;
     static constexpr int64_t kTrackDisable =  0;

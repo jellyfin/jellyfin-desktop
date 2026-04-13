@@ -3,14 +3,12 @@
 > [!WARNING]
 > This client is still under active development and may have bugs or missing features.
 
-A [Jellyfin](https://jellyfin.org) desktop client built on [CEF](https://bitbucket.org/chromiumembedded/cef). A complete rewrite of the previous [Qt-based client](https://github.com/jellyfin-archive/jellyfin-desktop-qt/).
-
-- **CEF** - embedded Chromium browser
-- **mpv** - forked libmpv: gpu-next, Vulkan, HDR passthrough (Linux Wayland, macOS, Windows)
-- **SDL3** - cross-platform window management and input
+A [Jellyfin](https://jellyfin.org) desktop client built on [CEF](https://bitbucket.org/chromiumembedded/cef) and [mpv](https://mpv.io/). A complete rewrite of the previous [Qt-based client](https://github.com/jellyfin-archive/jellyfin-desktop-qt/).
 
 ## Downloads
-### Linux (X11 and Wayland)
+### Linux
+**Note:** Wayland only for now; see https://github.com/jellyfin/jellyfin-desktop/issues/140
+
 - [AppImage](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-appimage/main/linux-appimage-x86_64.zip)
 - Arch Linux (AUR): [jellyfin-desktop-git](https://aur.archlinux.org/packages/jellyfin-desktop-git)
 - [Flatpak (non-Flathub bundle)](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-flatpak/main/linux-flatpak.zip)
@@ -32,4 +30,3 @@ sudo xattr -cr /Applications/Jellyfin\ Desktop.app
 ## Building
 
 See [dev/](dev/README.md) for build instructions.
-

@@ -48,10 +48,19 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
 #ifdef __linux__
-    // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues.
-    // Can be overridden via --ozone-platform CLI flag.
-    command_line->AppendSwitchWithValue("ozone-platform",
-        ozone_platform_.empty() ? "x11" : ozone_platform_);
+    // Only the browser process sets ozone platform; CEF propagates to subprocesses.
+    if (process_type.empty()) {
+        command_line->AppendSwitchWithValue("ozone-platform", ozone_platform_);
+
+        // Disable fractional scale protocol when using ozone-platform=wayland.
+        // CEF's OSR has no native window, so Chromium's per-window scaling override
+        // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
+        // from GetScreenInfo. Without this, HiDPI content scaling breaks in OSR.
+        if (ozone_platform_ == "wayland") {
+            command_line->AppendSwitchWithValue(
+                "disable-features", "WaylandFractionalScaleV1");
+        }
+    }
 #endif
 
     if (disable_gpu_compositing_) {
@@ -107,6 +116,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("playerSetSpeed", CefV8Value::CreateFunction("playerSetSpeed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetAspectRatio", CefV8Value::CreateFunction("playerSetAspectRatio", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetSubtitle", CefV8Value::CreateFunction("playerSetSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    jmpNative->SetValue("playerAddSubtitle", CefV8Value::CreateFunction("playerAddSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetAudio", CefV8Value::CreateFunction("playerSetAudio", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("playerSetAudioDelay", CefV8Value::CreateFunction("playerSetAudioDelay", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("saveServerUrl", CefV8Value::CreateFunction("saveServerUrl", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
@@ -220,7 +230,7 @@ bool NativeV8Handler::Execute(const CefString& name,
         if (arguments.size() >= 1 && arguments[0]->IsDouble()) args->SetDouble(0, arguments[0]->GetDoubleValue());
     } else if (name == "saveServerUrl" || name == "loadServer" || name == "checkServerConnectivity" ||
                name == "notifyMetadata" || name == "notifyPlaybackState" || name == "notifyArtwork" ||
-               name == "themeColor" || name == "playerSetAspectRatio") {
+               name == "themeColor" || name == "playerAddSubtitle" || name == "playerSetAspectRatio") {
         if (arguments.size() >= 1 && arguments[0]->IsString()) args->SetString(0, arguments[0]->GetStringValue());
     } else if (name == "notifyQueueChange") {
         if (arguments.size() >= 2 && arguments[0]->IsBool() && arguments[1]->IsBool()) {

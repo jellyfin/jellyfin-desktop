@@ -599,13 +599,13 @@ static void macos_present(const CefAcceleratedPaintInfo& info) {
     }
 }
 
-static void macos_present_software(const void*, int, int) {}
+static void macos_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
 
 static void macos_overlay_present(const CefAcceleratedPaintInfo& info) {
     present_iosurface(g_overlay, info);
 }
 
-static void macos_overlay_present_software(const void*, int, int) {}
+static void macos_overlay_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
 
 // The CALayer's frame tracks its hosting NSView via autoresizing. The
 // IOSurface pool is recreated automatically inside present_iosurface

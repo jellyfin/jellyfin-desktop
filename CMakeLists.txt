@@ -52,10 +52,18 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/CEF_VERSION")
     file(READ "${CMAKE_SOURCE_DIR}/CEF_VERSION" _EXPECTED_CEF_VERSION)
     string(STRIP "${_EXPECTED_CEF_VERSION}" _EXPECTED_CEF_VERSION)
     if(NOT CEF_VERSION STREQUAL _EXPECTED_CEF_VERSION)
-        message(FATAL_ERROR
-            "CEF version mismatch:\n"
-            "  CEF_VERSION file: ${_EXPECTED_CEF_VERSION}\n"
-            "  Found CEF:        ${CEF_VERSION}")
+        if(CEF_IS_SYSTEM)
+            message(WARNING
+                "System CEF version does not match CEF_VERSION file:\n"
+                "  CEF_VERSION file: ${_EXPECTED_CEF_VERSION}\n"
+                "  System CEF:       ${CEF_VERSION}\n"
+                "  This may cause build failures or runtime issues.")
+        else()
+            message(FATAL_ERROR
+                "CEF version mismatch:\n"
+                "  CEF_VERSION file: ${_EXPECTED_CEF_VERSION}\n"
+                "  Found CEF:        ${CEF_VERSION}")
+        endif()
     endif()
 endif()
 
@@ -108,16 +116,29 @@ elseif(WIN32)
         windowsapp
     )
 else()
-    # Linux: native Wayland (mpv owns window, CEF on subsurfaces via dmabuf)
+    # Linux: Wayland + X11 backends (runtime selection)
     find_package(PkgConfig REQUIRED)
+
+    # Shared Linux deps
+    pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+    pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
+    find_package(OpenGL REQUIRED COMPONENTS EGL)
+
+    # Wayland deps
     pkg_check_modules(LIBDRM REQUIRED libdrm)
     pkg_check_modules(WAYLAND REQUIRED wayland-client)
     pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
-    pkg_check_modules(SYSTEMD REQUIRED libsystemd)
-    pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
 
-    # EGL (minimal init for CEF shared texture support)
-    find_package(OpenGL REQUIRED COMPONENTS EGL)
+    # X11 (optional)
+    option(ENABLE_X11 "X11 backend support" ON)
+    if(ENABLE_X11)
+        pkg_check_modules(XCB REQUIRED xcb)
+        pkg_check_modules(XCB_SHM REQUIRED xcb-shm)
+        pkg_check_modules(XCB_SHAPE REQUIRED xcb-shape)
+        pkg_check_modules(XCB_CURSOR REQUIRED xcb-cursor)
+        pkg_check_modules(XCB_XKB REQUIRED xcb-xkb)
+        pkg_check_modules(XKBCOMMON_X11 REQUIRED xkbcommon-x11)
+    endif()
 
     # Find wayland-scanner
     find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
@@ -251,13 +272,17 @@ else()
     endif()
 
     set(PLATFORM_SOURCES
-        src/platform/wayland.cpp
-        src/clipboard/wayland.cpp
-        src/input/input_wayland.cpp
+        # Shared Linux
+        src/platform/idle_inhibit_linux.cpp
         src/wake_event_linux.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
         src/player/media_session_thread.cpp
+        # Wayland
+        src/platform/wayland.cpp
+        src/clipboard/wayland.cpp
+        src/input/input_wayland.cpp
+        # Generated Wayland protocols
         ${LINUX_DMABUF_CODE_C}
         ${LINUX_DMABUF_CLIENT_H}
         ${VIEWPORTER_CODE_C}
@@ -278,6 +303,13 @@ else()
         )
         add_compile_definitions(HAVE_KDE_DECORATION_PALETTE)
     endif()
+    if(ENABLE_X11)
+        list(APPEND PLATFORM_SOURCES
+            src/platform/x11.cpp
+            src/input/input_x11.cpp
+        )
+        add_compile_definitions(HAVE_X11)
+    endif()
     set(PLATFORM_LIBRARIES
         ${WAYLAND_LIBRARIES}
         ${SYSTEMD_LIBRARIES}
@@ -285,6 +317,16 @@ else()
         OpenGL::EGL
         ${CMAKE_DL_LIBS}
     )
+    if(ENABLE_X11)
+        list(APPEND PLATFORM_LIBRARIES
+            ${XCB_LIBRARIES}
+            ${XCB_SHM_LIBRARIES}
+            ${XCB_SHAPE_LIBRARIES}
+            ${XCB_CURSOR_LIBRARIES}
+            ${XCB_XKB_LIBRARIES}
+            ${XKBCOMMON_X11_LIBRARIES}
+        )
+    endif()
     set(PLATFORM_INCLUDE_DIRS
         ${WAYLAND_INCLUDE_DIRS}
         ${LIBDRM_INCLUDE_DIRS}
@@ -292,6 +334,16 @@ else()
         ${XKBCOMMON_INCLUDE_DIRS}
         ${WAYLAND_GENERATED_DIR}
     )
+    if(ENABLE_X11)
+        list(APPEND PLATFORM_INCLUDE_DIRS
+            ${XCB_INCLUDE_DIRS}
+            ${XCB_SHM_INCLUDE_DIRS}
+            ${XCB_SHAPE_INCLUDE_DIRS}
+            ${XCB_CURSOR_INCLUDE_DIRS}
+            ${XCB_XKB_INCLUDE_DIRS}
+            ${XKBCOMMON_X11_INCLUDE_DIRS}
+        )
+    endif()
 endif()
 
 # mpv configuration
@@ -462,8 +514,8 @@ target_link_libraries(jellyfin-desktop PRIVATE
     ${PLATFORM_LIBRARIES}
 )
 
-# When using external CEF, tell the app where to find resources
-if(EXTERNAL_CEF_DIR)
+# When using external/system CEF, tell the app where to find resources
+if(EXTERNAL_CEF_DIR OR USE_SYSTEM_CEF)
     target_compile_definitions(jellyfin-desktop PRIVATE
         CEF_RESOURCES_DIR="${CEF_RESOURCE_DIR}"
     )
@@ -485,8 +537,8 @@ if(UNIX AND NOT APPLE)
     if(EXTERNAL_MPV_DIR)
         list(APPEND RPATH_DIRS "${EXTERNAL_MPV_DIR}/lib")
     endif()
-    if(EXTERNAL_CEF_DIR)
-        list(APPEND RPATH_DIRS "${EXTERNAL_CEF_DIR}/lib")
+    if(USE_SYSTEM_CEF OR EXTERNAL_CEF_DIR)
+        list(APPEND RPATH_DIRS "${CEF_RELEASE_DIR}")
     endif()
     list(JOIN RPATH_DIRS ";" RPATH_STRING)
     set_target_properties(jellyfin-desktop PROPERTIES
@@ -495,8 +547,8 @@ if(UNIX AND NOT APPLE)
     )
 endif()
 
-# Copy CEF resources to build directory (only when not using external CEF)
-if(NOT EXTERNAL_CEF_DIR)
+# Copy CEF resources to build directory (only when not using external/system CEF)
+if(NOT EXTERNAL_CEF_DIR AND NOT USE_SYSTEM_CEF)
     if(APPLE)
         # macOS: Copy framework to build/Frameworks/ and fix install_name paths
         # CEF ships with @executable_path/../Frameworks/... but we want @executable_path/Frameworks/...
