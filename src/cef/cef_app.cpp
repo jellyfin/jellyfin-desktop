@@ -60,6 +60,16 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
 #endif
     command_line->AppendSwitchWithValue("ozone-platform",
         ozone_platform_.empty() ? default_ozone : ozone_platform_);
+
+    // Disable fractional scale protocol when using ozone-platform=wayland.
+    // CEF's OSR has no native window, so Chromium's per-window scaling override
+    // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
+    // from GetScreenInfo. Without this, HiDPI content scaling breaks in OSR.
+    const std::string ozone = ozone_platform_.empty() ? default_ozone : ozone_platform_;
+    if (ozone == "wayland") {
+        command_line->AppendSwitchWithValue(
+            "disable-features", "WaylandFractionalScaleV1");
+    }
 #endif
 
     if (disable_gpu_compositing_) {
