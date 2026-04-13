@@ -80,6 +80,21 @@ uint32_t cef_modifiers() {
 using input::keysym_to_keycode;
 using input::keysym_to_vkey;
 
+// Convert surface-local (logical) pointer coordinates to CEF view coordinates.
+// When CEF uses ozone-platform=wayland, the view rect is in physical pixels,
+// so pointer coordinates must be scaled up to match.
+int cef_x(double logical) {
+    if (g_platform.cef_ozone_platform == "wayland") {
+        float scale = g_platform.get_scale();
+        return static_cast<int>(logical * scale);
+    }
+    return static_cast<int>(logical);
+}
+
+int cef_y(double logical) {
+    return cef_x(logical);  // same scale for both axes
+}
+
 // --- Pointer listener -------------------------------------------------------
 
 void ptr_enter(void*, wl_pointer*, uint32_t serial, wl_surface*,
@@ -90,7 +105,7 @@ void ptr_enter(void*, wl_pointer*, uint32_t serial, wl_surface*,
     g.ptr_x = wl_fixed_to_double(x);
     g.ptr_y = wl_fixed_to_double(y);
     input::dispatch_mouse_move({
-        .x = (int)g.ptr_x, .y = (int)g.ptr_y,
+        .x = cef_x(g.ptr_x), .y = cef_y(g.ptr_y),
         .modifiers = cef_modifiers(),
         .leave = false,
     });
@@ -98,7 +113,7 @@ void ptr_enter(void*, wl_pointer*, uint32_t serial, wl_surface*,
 
 void ptr_leave(void*, wl_pointer*, uint32_t, wl_surface*) {
     input::dispatch_mouse_move({
-        .x = (int)g.ptr_x, .y = (int)g.ptr_y,
+        .x = cef_x(g.ptr_x), .y = cef_y(g.ptr_y),
         .modifiers = cef_modifiers(),
         .leave = true,
     });
@@ -108,7 +123,7 @@ void ptr_motion(void*, wl_pointer*, uint32_t, wl_fixed_t x, wl_fixed_t y) {
     g.ptr_x = wl_fixed_to_double(x);
     g.ptr_y = wl_fixed_to_double(y);
     input::dispatch_mouse_move({
-        .x = (int)g.ptr_x, .y = (int)g.ptr_y,
+        .x = cef_x(g.ptr_x), .y = cef_y(g.ptr_y),
         .modifiers = cef_modifiers(),
         .leave = false,
     });
@@ -130,7 +145,7 @@ void ptr_button(void*, wl_pointer*, uint32_t, uint32_t, uint32_t button, uint32_
     input::dispatch_mouse_button({
         .button = btn,
         .pressed = pressed,
-        .x = (int)g.ptr_x, .y = (int)g.ptr_y,
+        .x = cef_x(g.ptr_x), .y = cef_y(g.ptr_y),
         .click_count = 1,
         .modifiers = cef_modifiers(),
     });
@@ -168,7 +183,7 @@ void ptr_frame(void*, wl_pointer*) {
     if (dx == 0 && dy == 0) return;
 
     input::dispatch_scroll({
-        .x = (int)g.ptr_x, .y = (int)g.ptr_y,
+        .x = cef_x(g.ptr_x), .y = cef_y(g.ptr_y),
         .dx = dx, .dy = dy,
         .modifiers = cef_modifiers(),
     });

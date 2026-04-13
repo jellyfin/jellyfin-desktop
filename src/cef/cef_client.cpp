@@ -129,15 +129,26 @@ private:
 // =====================================================================
 
 void Client::GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) {
-    rect.Set(0, 0, width_, height_);
+    // When CEF uses ozone-platform=wayland it handles the compositor scale
+    // internally, so report physical pixels with device_scale_factor=1.
+    bool wayland_ozone = g_platform.cef_ozone_platform == "wayland";
+    int w = wayland_ozone ? physical_w_ : width_;
+    int h = wayland_ozone ? physical_h_ : height_;
+    rect.Set(0, 0, w, h);
 }
 
 bool Client::GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) {
-    float scale = (physical_w_ > 0 && width_ > 0)
-        ? static_cast<float>(physical_w_) / width_
-        : 1.0f;
-    info.device_scale_factor = scale;
-    info.rect = CefRect(0, 0, width_, height_);
+    bool wayland_ozone = g_platform.cef_ozone_platform == "wayland";
+    if (wayland_ozone) {
+        info.device_scale_factor = 1.0f;
+        info.rect = CefRect(0, 0, physical_w_, physical_h_);
+    } else {
+        float scale = (physical_w_ > 0 && width_ > 0)
+            ? static_cast<float>(physical_w_) / width_
+            : 1.0f;
+        info.device_scale_factor = scale;
+        info.rect = CefRect(0, 0, width_, height_);
+    }
     info.available_rect = info.rect;
     return true;
 }
@@ -513,15 +524,24 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
 // =====================================================================
 
 void OverlayClient::GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) {
-    rect.Set(0, 0, width_, height_);
+    bool wayland_ozone = g_platform.cef_ozone_platform == "wayland";
+    int w = wayland_ozone ? physical_w_ : width_;
+    int h = wayland_ozone ? physical_h_ : height_;
+    rect.Set(0, 0, w, h);
 }
 
 bool OverlayClient::GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) {
-    float scale = (physical_w_ > 0 && width_ > 0)
-        ? static_cast<float>(physical_w_) / width_
-        : 1.0f;
-    info.device_scale_factor = scale;
-    info.rect = CefRect(0, 0, width_, height_);
+    bool wayland_ozone = g_platform.cef_ozone_platform == "wayland";
+    if (wayland_ozone) {
+        info.device_scale_factor = 1.0f;
+        info.rect = CefRect(0, 0, physical_w_, physical_h_);
+    } else {
+        float scale = (physical_w_ > 0 && width_ > 0)
+            ? static_cast<float>(physical_w_) / width_
+            : 1.0f;
+        info.device_scale_factor = scale;
+        info.rect = CefRect(0, 0, width_, height_);
+    }
     info.available_rect = info.rect;
     return true;
 }

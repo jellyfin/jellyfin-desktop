@@ -705,6 +705,14 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- Platform init ---
+    // Resolve effective ozone platform so CEF clients can check it.
+    if (ozone_platform.empty()) {
+#ifdef HAVE_X11
+        ozone_platform = getenv("DISPLAY") ? "x11" : "wayland";
+#else
+        ozone_platform = "wayland";
+#endif
+    }
     g_platform.cef_ozone_platform = ozone_platform;
     if (!g_platform.init(g_mpv.Get())) {
         LOG_ERROR(LOG_MAIN, "Platform init failed");
