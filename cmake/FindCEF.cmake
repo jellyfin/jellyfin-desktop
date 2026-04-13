@@ -255,7 +255,9 @@ add_subdirectory(libcef_dll)
 ")
         execute_process(
             COMMAND ${CMAKE_COMMAND} -B build -DCMAKE_BUILD_TYPE=Release
-                "-DCMAKE_C_FLAGS=-fPIC" "-DCMAKE_CXX_FLAGS=-fPIC" -DCMAKE_CXX_STANDARD=20
+                "-DCMAKE_C_FLAGS=-fPIC -ffile-prefix-map=${_WRAPPER_SRC_DIR}=cef_wrapper"
+                "-DCMAKE_CXX_FLAGS=-fPIC -ffile-prefix-map=${_WRAPPER_SRC_DIR}=cef_wrapper"
+                -DCMAKE_CXX_STANDARD=20
             WORKING_DIRECTORY "${_WRAPPER_SRC_DIR}"
             RESULT_VARIABLE _WRAPPER_CONFIG_RESULT
         )
