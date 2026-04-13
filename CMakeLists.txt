@@ -116,16 +116,29 @@ elseif(WIN32)
         windowsapp
     )
 else()
-    # Linux: native Wayland (mpv owns window, CEF on subsurfaces via dmabuf)
+    # Linux: Wayland + X11 backends (runtime selection)
     find_package(PkgConfig REQUIRED)
+
+    # Shared Linux deps
+    pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+    pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
+    find_package(OpenGL REQUIRED COMPONENTS EGL)
+
+    # Wayland deps
     pkg_check_modules(LIBDRM REQUIRED libdrm)
     pkg_check_modules(WAYLAND REQUIRED wayland-client)
     pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
-    pkg_check_modules(SYSTEMD REQUIRED libsystemd)
-    pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
 
-    # EGL (minimal init for CEF shared texture support)
-    find_package(OpenGL REQUIRED COMPONENTS EGL)
+    # X11 (optional)
+    option(ENABLE_X11 "X11 backend support" ON)
+    if(ENABLE_X11)
+        pkg_check_modules(XCB REQUIRED xcb)
+        pkg_check_modules(XCB_SHM REQUIRED xcb-shm)
+        pkg_check_modules(XCB_SHAPE REQUIRED xcb-shape)
+        pkg_check_modules(XCB_CURSOR REQUIRED xcb-cursor)
+        pkg_check_modules(XCB_XKB REQUIRED xcb-xkb)
+        pkg_check_modules(XKBCOMMON_X11 REQUIRED xkbcommon-x11)
+    endif()
 
     # Find wayland-scanner
     find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
@@ -259,13 +272,17 @@ else()
     endif()
 
     set(PLATFORM_SOURCES
-        src/platform/wayland.cpp
-        src/clipboard/wayland.cpp
-        src/input/input_wayland.cpp
+        # Shared Linux
+        src/platform/idle_inhibit_linux.cpp
         src/wake_event_linux.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
         src/player/media_session_thread.cpp
+        # Wayland
+        src/platform/wayland.cpp
+        src/clipboard/wayland.cpp
+        src/input/input_wayland.cpp
+        # Generated Wayland protocols
         ${LINUX_DMABUF_CODE_C}
         ${LINUX_DMABUF_CLIENT_H}
         ${VIEWPORTER_CODE_C}
@@ -286,6 +303,13 @@ else()
         )
         add_compile_definitions(HAVE_KDE_DECORATION_PALETTE)
     endif()
+    if(ENABLE_X11)
+        list(APPEND PLATFORM_SOURCES
+            src/platform/x11.cpp
+            src/input/input_x11.cpp
+        )
+        add_compile_definitions(HAVE_X11)
+    endif()
     set(PLATFORM_LIBRARIES
         ${WAYLAND_LIBRARIES}
         ${SYSTEMD_LIBRARIES}
@@ -293,6 +317,16 @@ else()
         OpenGL::EGL
         ${CMAKE_DL_LIBS}
     )
+    if(ENABLE_X11)
+        list(APPEND PLATFORM_LIBRARIES
+            ${XCB_LIBRARIES}
+            ${XCB_SHM_LIBRARIES}
+            ${XCB_SHAPE_LIBRARIES}
+            ${XCB_CURSOR_LIBRARIES}
+            ${XCB_XKB_LIBRARIES}
+            ${XKBCOMMON_X11_LIBRARIES}
+        )
+    endif()
     set(PLATFORM_INCLUDE_DIRS
         ${WAYLAND_INCLUDE_DIRS}
         ${LIBDRM_INCLUDE_DIRS}
@@ -300,6 +334,16 @@ else()
         ${XKBCOMMON_INCLUDE_DIRS}
         ${WAYLAND_GENERATED_DIR}
     )
+    if(ENABLE_X11)
+        list(APPEND PLATFORM_INCLUDE_DIRS
+            ${XCB_INCLUDE_DIRS}
+            ${XCB_SHM_INCLUDE_DIRS}
+            ${XCB_SHAPE_INCLUDE_DIRS}
+            ${XCB_CURSOR_INCLUDE_DIRS}
+            ${XCB_XKB_INCLUDE_DIRS}
+            ${XKBCOMMON_X11_INCLUDE_DIRS}
+        )
+    endif()
 endif()
 
 # mpv configuration

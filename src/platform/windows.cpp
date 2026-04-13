@@ -240,7 +240,7 @@ static void win_present(const CefAcceleratedPaintInfo& info) {
     g_win.dcomp_device->Commit();
 }
 
-static void win_present_software(const void*, int, int) {
+static void win_present_software(const CefRenderHandler::RectList&, const void*, int, int) {
     // Software fallback not implemented for Windows
 }
 
@@ -279,7 +279,7 @@ static void win_overlay_present(const CefAcceleratedPaintInfo& info) {
     g_win.dcomp_device->Commit();
 }
 
-static void win_overlay_present_software(const void*, int, int) {}
+static void win_overlay_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
 
 static void win_overlay_resize(int, int, int pw, int ph) {
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);

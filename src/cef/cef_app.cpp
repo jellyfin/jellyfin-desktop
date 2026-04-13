@@ -48,10 +48,19 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
 #ifdef __linux__
-    // Force X11 for CEF's internal rendering -- Wayland OSR has scaling issues.
-    // Can be overridden via --ozone-platform CLI flag.
-    command_line->AppendSwitchWithValue("ozone-platform",
-        ozone_platform_.empty() ? "x11" : ozone_platform_);
+    // Only the browser process sets ozone platform; CEF propagates to subprocesses.
+    if (process_type.empty()) {
+        command_line->AppendSwitchWithValue("ozone-platform", ozone_platform_);
+
+        // Disable fractional scale protocol when using ozone-platform=wayland.
+        // CEF's OSR has no native window, so Chromium's per-window scaling override
+        // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
+        // from GetScreenInfo. Without this, HiDPI content scaling breaks in OSR.
+        if (ozone_platform_ == "wayland") {
+            command_line->AppendSwitchWithValue(
+                "disable-features", "WaylandFractionalScaleV1");
+        }
+    }
 #endif
 
     if (disable_gpu_compositing_) {

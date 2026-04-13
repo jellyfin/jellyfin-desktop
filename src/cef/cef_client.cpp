@@ -156,11 +156,10 @@ void Client::resize(int w, int h, int physical_w, int physical_h) {
     }
 }
 
-void Client::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList&,
+void Client::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                      const void* buffer, int w, int h) {
     if (type != PET_VIEW) return;
-    if (g_platform.present_software)
-        g_platform.present_software(buffer, w, h);
+    g_platform.present_software(dirty, buffer, w, h);
 }
 
 void Client::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
@@ -539,11 +538,10 @@ void OverlayClient::resize(int w, int h, int physical_w, int physical_h) {
     }
 }
 
-void OverlayClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList&,
+void OverlayClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                             const void* buffer, int w, int h) {
     if (type != PET_VIEW) return;
-    if (g_platform.overlay_present_software)
-        g_platform.overlay_present_software(buffer, w, h);
+    g_platform.overlay_present_software(dirty, buffer, w, h);
 }
 
 void OverlayClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
