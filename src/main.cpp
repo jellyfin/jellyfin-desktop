@@ -12,6 +12,9 @@
 #include "common.h"
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
+#include "browser/browsers.h"
+#include "browser/web_browser.h"
+#include "browser/overlay_browser.h"
 #include "mpv/event.h"
 #include "event_queue.h"
 #include "wake_event.h"
@@ -74,23 +77,18 @@ void update_idle_inhibit() {
     }
 }
 Platform g_platform{};
-CefRefPtr<Client> g_client;
-CefRefPtr<OverlayClient> g_overlay_client;
+WebBrowser* g_web_browser = nullptr;
+OverlayBrowser* g_overlay_browser = nullptr;
 
-// Close a browser if it exists. If browser() is still null, CreateBrowser
-// is in flight — OnAfterCreated will see g_shutting_down and close it.
-static void try_close(CefRefPtr<Client> c) {
-    if (c && c->browser()) c->browser()->GetHost()->CloseBrowser(true);
-}
-static void try_close(CefRefPtr<OverlayClient> c) {
-    if (c && c->browser()) c->browser()->GetHost()->CloseBrowser(true);
+static void try_close_browser(auto* b) {
+    if (b && b->browser()) b->browser()->GetHost()->CloseBrowser(true);
 }
 
 void initiate_shutdown() {
     bool expected = false;
     if (!g_shutting_down.compare_exchange_strong(expected, true)) return;
-    try_close(g_client);
-    try_close(g_overlay_client);
+    try_close_browser(g_web_browser);
+    try_close_browser(g_overlay_browser);
     g_shutdown_event.signal();
     // macOS main thread is parked in nextEventMatchingMask — post a sentinel
     // NSEvent so it returns and re-checks g_shutting_down.
@@ -178,7 +176,7 @@ static bool g_was_maximized_before_fullscreen = false;
 static void cef_consumer_thread() {
     LOG_INFO(LOG_MAIN, "[FLOW] cef_consumer_thread: waitForLoad() start");
     // Wait for main browser to load before processing events
-    g_client->waitForLoad();
+    g_web_browser->waitForLoad();
     LOG_INFO(LOG_MAIN, "[FLOW] cef_consumer_thread: waitForLoad() returned");
 
 #ifdef _WIN32
@@ -208,25 +206,25 @@ static void cef_consumer_thread() {
         g_cef_queue.drain_wake();
         MpvEvent ev;
         while (g_cef_queue.try_pop(ev)) {
-            if (!g_client) continue;
+            if (!g_web_browser) continue;
             switch (ev.type) {
             case MpvEventType::PAUSE:
                 g_playback_state = ev.flag ? PlaybackState::Paused : PlaybackState::Playing;
                 update_idle_inhibit();
-                g_client->execJs(ev.flag ? "window._nativeEmit('paused')" : "window._nativeEmit('playing')");
+                g_web_browser->execJs(ev.flag ? "window._nativeEmit('paused')" : "window._nativeEmit('playing')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(ev.flag ? PlaybackState::Paused : PlaybackState::Playing);
                 break;
             case MpvEventType::TIME_POS: {
                 int ms = static_cast<int>(ev.dbl * 1000);
-                g_client->execJs("window._nativeUpdatePosition(" + std::to_string(ms) + ")");
+                g_web_browser->execJs("window._nativeUpdatePosition(" + std::to_string(ms) + ")");
                 if (g_media_session)
                     g_media_session->setPosition(static_cast<int64_t>(ev.dbl * 1000000));
                 break;
             }
             case MpvEventType::DURATION: {
                 int ms = static_cast<int>(ev.dbl * 1000);
-                g_client->execJs("window._nativeUpdateDuration(" + std::to_string(ms) + ")");
+                g_web_browser->execJs("window._nativeUpdateDuration(" + std::to_string(ms) + ")");
                 // Duration is set via metadata, not a separate call
                 break;
             }
@@ -239,52 +237,52 @@ static void cef_consumer_thread() {
                 } else {
                     g_was_maximized_before_fullscreen = false;
                 }
-                g_client->execJs("window._nativeFullscreenChanged(" + std::string(ev.flag ? "true" : "false") + ")");
+                g_web_browser->execJs("window._nativeFullscreenChanged(" + std::string(ev.flag ? "true" : "false") + ")");
                 break;
             case MpvEventType::SPEED:
-                g_client->execJs("window._nativeSetRate(" + std::to_string(ev.dbl) + ")");
+                g_web_browser->execJs("window._nativeSetRate(" + std::to_string(ev.dbl) + ")");
                 if (g_media_session)
                     g_media_session->setRate(ev.dbl);
                 break;
             case MpvEventType::SEEKING:
                 if (ev.flag) {
-                    g_client->execJs("window._nativeEmit('seeking')");
+                    g_web_browser->execJs("window._nativeEmit('seeking')");
                     if (g_media_session) g_media_session->emitSeeking();
                 }
                 break;
             case MpvEventType::FILE_LOADED:
                 g_playback_state = PlaybackState::Playing;
                 update_idle_inhibit();
-                g_client->execJs("window._nativeEmit('playing')");
+                g_web_browser->execJs("window._nativeEmit('playing')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Playing);
                 break;
             case MpvEventType::END_FILE_EOF:
                 g_playback_state = PlaybackState::Stopped;
                 update_idle_inhibit();
-                g_client->execJs("window._nativeEmit('finished')");
+                g_web_browser->execJs("window._nativeEmit('finished')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
             case MpvEventType::END_FILE_ERROR:
                 g_playback_state = PlaybackState::Stopped;
                 update_idle_inhibit();
-                g_client->execJs("window._nativeEmit('error','Playback error')");
+                g_web_browser->execJs("window._nativeEmit('error','Playback error')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
             case MpvEventType::END_FILE_CANCEL:
                 g_playback_state = PlaybackState::Stopped;
                 update_idle_inhibit();
-                g_client->execJs("window._nativeEmit('canceled')");
+                g_web_browser->execJs("window._nativeEmit('canceled')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
             case MpvEventType::OSD_DIMS:
-                if (g_client->browser())
-                    g_client->resize(ev.lw, ev.lh, ev.pw, ev.ph);
-                if (g_overlay_client && g_overlay_client->browser()) {
-                    g_overlay_client->resize(ev.lw, ev.lh, ev.pw, ev.ph);
+                if (g_web_browser->browser())
+                    g_web_browser->resize(ev.lw, ev.lh, ev.pw, ev.ph);
+                if (g_overlay_browser && g_overlay_browser->browser()) {
+                    g_overlay_browser->resize(ev.lw, ev.lh, ev.pw, ev.ph);
                     g_platform.overlay_resize(ev.lw, ev.lh, ev.pw, ev.ph);
                 }
                 break;
@@ -299,16 +297,16 @@ static void cef_consumer_thread() {
                 auto val = CefValue::Create();
                 val->SetList(list);
                 auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-                g_client->execJs("window._nativeUpdateBufferedRanges(" + json.ToString() + ")");
+                g_web_browser->execJs("window._nativeUpdateBufferedRanges(" + json.ToString() + ")");
                 break;
             }
             case MpvEventType::DISPLAY_FPS: {
                 int hz = g_display_hz.load(std::memory_order_relaxed);
                 LOG_INFO(LOG_MAIN, "Display refresh rate changed: %d Hz", hz);
-                if (g_client && g_client->browser())
-                    g_client->browser()->GetHost()->SetWindowlessFrameRate(hz);
-                if (g_overlay_client && g_overlay_client->browser())
-                    g_overlay_client->browser()->GetHost()->SetWindowlessFrameRate(hz);
+                if (g_web_browser && g_web_browser->browser())
+                    g_web_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
+                if (g_overlay_browser && g_overlay_browser->browser())
+                    g_overlay_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
                 break;
             }
             case MpvEventType::SHUTDOWN:
@@ -831,8 +829,9 @@ int main(int argc, char* argv[]) {
     bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
 
     // Main browser
-    g_client = new Client();
-    g_client->resize(lw, lh, (int)mw, (int)mh);
+    RenderTarget main_target{g_platform.present, g_platform.present_software};
+    g_web_browser = new WebBrowser(main_target);
+    g_web_browser->resize(lw, lh, (int)mw, (int)mh);
     g_platform.resize(lw, lh, (int)mw, (int)mh);
 
     std::string server_url = Settings::instance().serverUrl();
@@ -857,13 +856,14 @@ int main(int argc, char* argv[]) {
 
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) url=%s lw=%d lh=%d pw=%lld ph=%lld",
              main_url.c_str(), lw, lh, (long long)mw, (long long)mh);
-    CefBrowserHost::CreateBrowser(wi, g_client, main_url, bs, nullptr, nullptr);
+    CefBrowserHost::CreateBrowser(wi, g_web_browser->client(), main_url, bs, nullptr, nullptr);
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
 
     // Overlay browser (server selection UI) -- only in full app mode
     if (!player_mode) {
-        g_overlay_client = new OverlayClient();
-        g_overlay_client->resize(lw, lh, (int)mw, (int)mh);
+        RenderTarget overlay_target{g_platform.overlay_present, g_platform.overlay_present_software};
+        g_overlay_browser = new OverlayBrowser(overlay_target, *g_web_browser);
+        g_overlay_browser->resize(lw, lh, (int)mw, (int)mh);
         g_platform.set_overlay_visible(true);
 
         CefWindowInfo owi;
@@ -878,14 +878,14 @@ int main(int argc, char* argv[]) {
         obs.background_color = 0;
         obs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
         LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay)");
-        CefBrowserHost::CreateBrowser(owi, g_overlay_client, "app://resources/index.html", obs, nullptr, nullptr);
+        CefBrowserHost::CreateBrowser(owi, g_overlay_browser->client(), "app://resources/index.html", obs, nullptr, nullptr);
         LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay) call returned");
     }
 
 #ifdef __APPLE__
     // nothing — main thread pump happens below
 #else
-    g_client->waitForLoad();
+    g_web_browser->waitForLoad();
 #endif
     LOG_INFO(LOG_MAIN, "Main browser loaded");
 
@@ -924,8 +924,8 @@ int main(int argc, char* argv[]) {
     // report closed; dispatch blocks queued by OnScheduleMessagePumpWork
     // keep running CefDoMessageLoopWork as CEF posts new tasks. Event-
     // driven — CFRunLoopRunInMode wakes on any source firing.
-    while (!g_client->isClosed() ||
-           (g_overlay_client && !g_overlay_client->isClosed())) {
+    while (!g_web_browser->isClosed() ||
+           (g_overlay_browser && !g_overlay_browser->isClosed())) {
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, true);
     }
 
@@ -934,9 +934,9 @@ int main(int argc, char* argv[]) {
     // state that's about to be torn down by CefShutdown().
     App::ShutdownPump();
 #else
-    g_client->waitForClose();
-    if (g_overlay_client)
-        g_overlay_client->waitForClose();
+    g_web_browser->waitForClose();
+    if (g_overlay_browser)
+        g_overlay_browser->waitForClose();
 #endif
 
     // --- Cleanup ---
@@ -1002,8 +1002,8 @@ int main(int argc, char* argv[]) {
     }
 
     // CEF shutdown: all browsers must be closed first (guaranteed by waitForClose above)
-    g_client = nullptr;
-    g_overlay_client = nullptr;
+    delete g_web_browser; g_web_browser = nullptr;
+    delete g_overlay_browser; g_overlay_browser = nullptr;
     CefShutdown();
 
     // Platform cleanup (joins input thread, destroys subsurfaces)

@@ -1,6 +1,7 @@
 #include "player/media_session.h"
 #include "common.h"
-#include "cef/cef_client.h"
+#include "browser/browsers.h"
+#include "browser/web_browser.h"
 
 #ifdef __APPLE__
 #include "player/macos/media_session_macos.h"
@@ -36,14 +37,14 @@ void MediaSession::wireTransportCallbacks() {
     onStop = []() { g_mpv.Stop(); };
     onSetRate = [](double rate) { g_mpv.SetSpeed(rate); };
     onNext = []() {
-        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");
+        if (g_web_browser) g_web_browser->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");
     };
     onPrevious = []() {
-        if (g_client) g_client->execJs("if(window._nativeHostInput) window._nativeHostInput(['previous']);");
+        if (g_web_browser) g_web_browser->execJs("if(window._nativeHostInput) window._nativeHostInput(['previous']);");
     };
     onSeek = [](int64_t position_us) {
         int ms = static_cast<int>(position_us / 1000);
-        if (g_client) g_client->execJs("if(window._nativeSeek) window._nativeSeek(" + std::to_string(ms) + ");");
+        if (g_web_browser) g_web_browser->execJs("if(window._nativeSeek) window._nativeSeek(" + std::to_string(ms) + ");");
     };
 }
 

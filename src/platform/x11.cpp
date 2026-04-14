@@ -1,5 +1,8 @@
 #include "common.h"
 #include "cef/cef_client.h"
+#include "browser/browsers.h"
+#include "browser/web_browser.h"
+#include "browser/overlay_browser.h"
 #include "idle_inhibit_linux.h"
 #include "input/input_x11.h"
 
@@ -342,8 +345,8 @@ static void x11_set_overlay_visible(bool visible) {
     }
 
     // Route keyboard focus to the active browser
-    auto main = g_client ? g_client->browser() : nullptr;
-    auto ovl  = g_overlay_client ? g_overlay_client->browser() : nullptr;
+    auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+    auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
     if (visible) {
         if (main) main->GetHost()->SetFocus(false);
         if (ovl)  ovl->GetHost()->SetFocus(true);

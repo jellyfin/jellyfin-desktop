@@ -9,6 +9,9 @@
 
 #include "platform/platform.h"
 #include "common.h"
+#include "browser/browsers.h"
+#include "browser/overlay_browser.h"
+#include "browser/web_browser.h"
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
 #include "input/input_macos.h"
@@ -374,8 +377,6 @@ static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scal
 // CADisplayLink → CEF BeginFrame
 // =====================================================================
 
-extern CefRefPtr<Client>        g_client;
-extern CefRefPtr<OverlayClient> g_overlay_client;
 // CADisplayLink target — fires on the main runloop at the display's
 // refresh rate, driving CEF's external BeginFrame production.
 @interface DisplayLinkTarget : NSObject
@@ -386,12 +387,12 @@ extern CefRefPtr<OverlayClient> g_overlay_client;
 - (void)tick:(CADisplayLink*)link {
     (void)link;
     if (g_shutting_down.load(std::memory_order_relaxed)) return;
-    if (g_client) {
-        CefRefPtr<CefBrowser> b = g_client->browser();
+    if (g_web_browser) {
+        CefRefPtr<CefBrowser> b = g_web_browser->browser();
         if (b) b->GetHost()->SendExternalBeginFrame();
     }
-    if (g_overlay_client) {
-        CefRefPtr<CefBrowser> b = g_overlay_client->browser();
+    if (g_overlay_browser) {
+        CefRefPtr<CefBrowser> b = g_overlay_browser->browser();
         if (b) b->GetHost()->SendExternalBeginFrame();
     }
 }
@@ -585,7 +586,7 @@ static void macos_present(const CefAcceleratedPaintInfo& info) {
     // frame is the reveal trigger. In normal mode this branch is a
     // no-op — macos_fade_overlay is responsible for unhiding the main
     // view when the overlay starts its fade-out.
-    if (!g_overlay_client && [g_main.view isHidden]) {
+    if (!g_overlay_browser && [g_main.view isHidden]) {
         [g_main.view setHidden:NO];
         reset_background_to_black();
     }
@@ -624,8 +625,8 @@ static void macos_set_overlay_visible(bool visible) {
     // don't show a caret and focus rings don't render. Matches the "active
     // tab" semantics: only one browser at a time holds focus. Mirrors the
     // Wayland path in wl_set_overlay_visible.
-    auto main = g_client ? g_client->browser() : nullptr;
-    auto ovl  = g_overlay_client ? g_overlay_client->browser() : nullptr;
+    auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+    auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
     if (visible) {
         if (main) main->GetHost()->SetFocus(false);
         if (ovl)  ovl->GetHost()->SetFocus(true);
