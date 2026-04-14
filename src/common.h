@@ -3,8 +3,6 @@
 #include <atomic>
 #include <cstdint>
 
-#include "include/cef_base.h"
-
 constexpr char hexdigit(uint32_t c, int i) {
     uint8_t n = (c >> (20 - i * 4)) & 0xF;
     return n < 10 ? '0' + n : 'a' + (n - 10);
@@ -32,12 +30,8 @@ constexpr Color kVideoBgColor{0x000000};
 #include "mpv/handle.h"
 #include "player/media_session.h"
 
-class Client;
-class OverlayClient;
 class WakeEvent;
 
-extern CefRefPtr<Client> g_client;
-extern CefRefPtr<OverlayClient> g_overlay_client;
 extern MpvHandle g_mpv;
 extern Platform g_platform;
 // Cross-thread state: written from mpv event loop / CEF IPC thread,
