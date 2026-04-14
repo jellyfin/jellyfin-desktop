@@ -3,7 +3,7 @@
 > [!WARNING]
 > This client is still under active development and may have bugs or missing features.
 
-A [Jellyfin](https://jellyfin.org) desktop client built on [CEF](https://bitbucket.org/chromiumembedded/cef) and [mpv](https://mpv.io/). A complete rewrite of the previous [Qt-based client](https://github.com/jellyfin-archive/jellyfin-desktop-qt/).
+A [Jellyfin](https://jellyfin.org) desktop client built on [CEF](https://github.com/chromiumembedded/cef) and [mpv](https://mpv.io/). A complete rewrite of the previous [Qt-based client](https://github.com/jellyfin-archive/jellyfin-desktop-qt/).
 
 ## Downloads
 ### Linux
