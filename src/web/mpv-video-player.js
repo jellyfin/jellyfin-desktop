@@ -155,21 +155,22 @@
                 const defaultSubIdx = options.mediaSource.DefaultSubtitleStreamIndex ?? -1;
 
                 // Convert audio index from Jellyfin global stream index to mpv 1-based audio track index
-                let audioParam = -1;
+                let audioParam = MpvPlayerCore.TRACK_DISABLE;
                 if (defaultAudioIdx >= 0) {
                     const relIdx = getRelativeIndexByType(streams, defaultAudioIdx, 'Audio');
-                    audioParam = relIdx != null ? relIdx : -1;
+                    audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
                 }
 
                 // Convert subtitle index to relative
-                let subParam = -1;
+                let subParam = MpvPlayerCore.TRACK_DISABLE;
+                let externalSubUrl = null;
                 if (defaultSubIdx >= 0) {
                     const subStream = getStreamByIndex(streams, defaultSubIdx);
                     if (subStream && subStream.DeliveryMethod === 'External' && subStream.DeliveryUrl) {
-                        subParam = -1;  // External not supported yet
+                        externalSubUrl = subStream.DeliveryUrl;
                     } else {
                         const relIdx = getRelativeIndexByType(streams, defaultSubIdx, 'Subtitle');
-                        subParam = relIdx != null ? relIdx : -1;
+                        subParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
                     }
                 }
 
@@ -179,22 +180,26 @@
                     audioParam,
                     subParam,
                     resolve);
+
+                if (externalSubUrl) {
+                    window.api.player.addSubtitleStream(externalSubUrl);
+                }
             });
         }
 
         setSubtitleStreamIndex(index) {
             if (index == null || index < 0) {
-                window.api.player.setSubtitleStream(-1);
+                window.api.player.setSubtitleStream(MpvPlayerCore.TRACK_DISABLE);
                 return;
             }
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
             const stream = getStreamByIndex(streams, index);
             if (stream && stream.DeliveryMethod === 'External' && stream.DeliveryUrl) {
-                console.log('[Media] External subtitles not supported yet');
+                window.api.player.addSubtitleStream(stream.DeliveryUrl);
                 return;
             }
             const relIdx = getRelativeIndexByType(streams, index, 'Subtitle');
-            window.api.player.setSubtitleStream(relIdx != null ? relIdx : -1);
+            window.api.player.setSubtitleStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE);
         }
 
         setSecondarySubtitleStreamIndex(index) {}
@@ -211,12 +216,12 @@
 
         setAudioStreamIndex(index) {
             if (index == null || index < 0) {
-                window.api.player.setAudioStream(-1);
+                window.api.player.setAudioStream(MpvPlayerCore.TRACK_AUTO);
                 return;
             }
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
             const relIdx = getRelativeIndexByType(streams, index, 'Audio');
-            window.api.player.setAudioStream(relIdx != null ? relIdx : -1);
+            window.api.player.setAudioStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO);
         }
 
         onEndedInternal() {
@@ -259,10 +264,6 @@
             this._core.stopTimeUpdateTimer();
             this.removeMediaDialog();
             this._core.disconnectSignals();
-            // Exit fullscreen when player is destroyed
-            if (window._isFullscreen) {
-                document.exitFullscreen().catch(() => {});
-            }
         }
 
         createMediaElement(options) {
@@ -307,11 +308,7 @@
         supports(feature) { return mpvVideoPlayer.getSupportedFeatures().includes(feature); }
         isFullscreen() { return window._isFullscreen === true; }
         toggleFullscreen() {
-            if (window._isFullscreen) {
-                document.exitFullscreen().catch(() => {});
-            } else {
-                document.documentElement.requestFullscreen().catch(() => {});
-            }
+            if (window.jmpNative) window.jmpNative.toggleFullscreen();
         }
 
         // Delegate to core

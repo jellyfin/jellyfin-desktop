@@ -8,6 +8,14 @@ endif()
 
 set(EXTERNAL_CEF_DIR "${_DEFAULT_EXTERNAL_CEF_DIR}" CACHE PATH "Path to external CEF installation (with prebuilt libcef_dll_wrapper.a)")
 
+# Auto-detect system CEF from the "cef" package (used as last resort)
+set(_DEFAULT_USE_SYSTEM_CEF OFF)
+if(EXISTS "/usr/include/cef/include/cef_version.h")
+    set(_DEFAULT_USE_SYSTEM_CEF ON)
+endif()
+
+option(USE_SYSTEM_CEF "Use system-installed CEF from the 'cef' package" ${_DEFAULT_USE_SYSTEM_CEF})
+
 if(EXTERNAL_CEF_DIR)
     # Use external CEF installation
     message(STATUS "Using external CEF from: ${EXTERNAL_CEF_DIR}")
@@ -70,15 +78,8 @@ if(EXTERNAL_CEF_DIR)
         )
     endif()
 
-else()
+elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
     # Build CEF wrapper from CEF_ROOT
-    if(NOT CEF_ROOT)
-        message(FATAL_ERROR "CEF_ROOT not set. Download CEF from https://cef-builds.spotifycdn.com/index.html and extract to third_party/cef/")
-    endif()
-
-    if(NOT EXISTS "${CEF_ROOT}/include/cef_version.h")
-        message(FATAL_ERROR "CEF not found at ${CEF_ROOT}. Ensure CEF binary distribution is extracted there.")
-    endif()
 
     # Read CEF version
     file(READ "${CEF_ROOT}/include/cef_version.h" CEF_VERSION_CONTENT)
@@ -97,18 +98,15 @@ else()
             "${CEF_ROOT}/build/libcef_dll_wrapper/libcef_dll_wrapper.lib"
             "${CEF_ROOT}/build/libcef_dll_wrapper/Release/libcef_dll_wrapper.lib"
         )
-        set(_WRAPPER_EXT ".lib")
     elseif(APPLE)
         set(_WRAPPER_SEARCH_PATHS
             "${CEF_ROOT}/build/libcef_dll_wrapper/libcef_dll_wrapper.a"
             "${CEF_ROOT}/build/libcef_dll_wrapper/Release/libcef_dll_wrapper.a"
         )
-        set(_WRAPPER_EXT ".a")
     else() # Linux
         set(_WRAPPER_SEARCH_PATHS
             "${CEF_ROOT}/build/libcef_dll_wrapper/libcef_dll_wrapper.a"
         )
-        set(_WRAPPER_EXT ".a")
     endif()
 
     # Find wrapper in search paths
@@ -185,6 +183,119 @@ else()
             "${CEF_WRAPPER_PATH}"
         )
     endif()
+
+elseif(USE_SYSTEM_CEF)
+    # Use system CEF from the "cef" package
+    message(STATUS "Using system CEF from /usr/include/cef")
+
+    if(NOT EXISTS "/usr/include/cef/include/cef_version.h")
+        message(FATAL_ERROR "System CEF not found. Install the 'cef' package or set USE_SYSTEM_CEF=OFF")
+    endif()
+
+    # Read CEF version
+    file(READ "/usr/include/cef/include/cef_version.h" CEF_VERSION_CONTENT)
+    string(REGEX MATCH "CEF_VERSION \"([^\"]+)\"" _ ${CEF_VERSION_CONTENT})
+    set(CEF_VERSION ${CMAKE_MATCH_1})
+    set(CEF_IS_SYSTEM TRUE)
+    message(STATUS "Found system CEF: ${CEF_VERSION}")
+
+    set(CEF_INCLUDE_DIRS "/usr/include/cef" "/usr/include/cef/include")
+    set(CEF_RESOURCE_DIR "/usr/lib/cef")
+    set(CEF_RELEASE_DIR "/usr/lib/cef")
+
+    # Build libcef_dll_wrapper from system sources.
+    # The wrapper CMakeLists.txt references ../include/ relative to its location,
+    # so we create a source tree with symlinks so those paths resolve correctly.
+    # Version is embedded in the path so a CEF package upgrade triggers a rebuild.
+    string(REGEX REPLACE "[^a-zA-Z0-9.]" "_" _CEF_VERSION_SAFE "${CEF_VERSION}")
+    set(_WRAPPER_BUILD_DIR "${CMAKE_BINARY_DIR}/cef_wrapper_${_CEF_VERSION_SAFE}")
+    set(_WRAPPER_SRC_DIR "${_WRAPPER_BUILD_DIR}/src")
+    set(_WRAPPER_SEARCH_PATHS
+        "${_WRAPPER_SRC_DIR}/build/libcef_dll/libcef_dll_wrapper.a"
+        "${_WRAPPER_SRC_DIR}/build/libcef_dll_wrapper/libcef_dll_wrapper.a"
+    )
+
+    # Check if already built and not stale (source newer than wrapper)
+    set(CEF_WRAPPER_PATH "")
+    foreach(_path ${_WRAPPER_SEARCH_PATHS})
+        if(EXISTS "${_path}")
+            file(TIMESTAMP "${_path}" _WRAPPER_TS)
+            file(TIMESTAMP "/usr/src/cef/libcef_dll" _SRC_TS)
+            if(_SRC_TS STRGREATER _WRAPPER_TS)
+                message(STATUS "System CEF sources are newer than cached wrapper, rebuilding...")
+            else()
+                set(CEF_WRAPPER_PATH "${_path}")
+            endif()
+            break()
+        endif()
+    endforeach()
+
+    if(NOT CEF_WRAPPER_PATH)
+        message(STATUS "Building libcef_dll_wrapper from system sources...")
+        file(MAKE_DIRECTORY "${_WRAPPER_SRC_DIR}")
+        file(CREATE_LINK "/usr/include/cef/include" "${_WRAPPER_SRC_DIR}/include"
+            SYMBOLIC RESULT _link_result)
+        if(_link_result)
+            message(FATAL_ERROR "Failed to symlink /usr/include/cef/include: ${_link_result}")
+        endif()
+        file(CREATE_LINK "/usr/src/cef/libcef_dll" "${_WRAPPER_SRC_DIR}/libcef_dll"
+            SYMBOLIC RESULT _link_result)
+        if(_link_result)
+            message(FATAL_ERROR "Failed to symlink /usr/src/cef/libcef_dll. "
+                "Is the 'cef' package fully installed?")
+        endif()
+        file(WRITE "${_WRAPPER_SRC_DIR}/CMakeLists.txt"
+"cmake_minimum_required(VERSION 3.16)
+project(cef_wrapper)
+# Provide the macro expected by CEF's wrapper CMakeLists.txt
+macro(SET_LIBRARY_TARGET_PROPERTIES target)
+    target_include_directories(\${target} PRIVATE \"${_WRAPPER_SRC_DIR}\")
+endmacro()
+add_subdirectory(libcef_dll)
+")
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -B build -DCMAKE_BUILD_TYPE=Release
+                "-DCMAKE_C_FLAGS=-fPIC -ffile-prefix-map=${_WRAPPER_SRC_DIR}=cef_wrapper"
+                "-DCMAKE_CXX_FLAGS=-fPIC -ffile-prefix-map=${_WRAPPER_SRC_DIR}=cef_wrapper"
+                -DCMAKE_CXX_STANDARD=20
+            WORKING_DIRECTORY "${_WRAPPER_SRC_DIR}"
+            RESULT_VARIABLE _WRAPPER_CONFIG_RESULT
+        )
+        if(NOT _WRAPPER_CONFIG_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to configure libcef_dll_wrapper from system sources")
+        endif()
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} --build build --target libcef_dll_wrapper -j2
+            WORKING_DIRECTORY "${_WRAPPER_SRC_DIR}"
+            RESULT_VARIABLE _WRAPPER_BUILD_RESULT
+        )
+        if(NOT _WRAPPER_BUILD_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to build libcef_dll_wrapper from system sources")
+        endif()
+        # Search again after build
+        foreach(_path ${_WRAPPER_SEARCH_PATHS})
+            if(EXISTS "${_path}")
+                set(CEF_WRAPPER_PATH "${_path}")
+                break()
+            endif()
+        endforeach()
+        if(NOT CEF_WRAPPER_PATH)
+            message(FATAL_ERROR "libcef_dll_wrapper not found after build. Searched: ${_WRAPPER_SEARCH_PATHS}")
+        endif()
+    endif()
+
+    message(STATUS "Using libcef_dll_wrapper: ${CEF_WRAPPER_PATH}")
+
+    set(CEF_LIBRARIES
+        "${CEF_RELEASE_DIR}/libcef.so"
+        "${CEF_WRAPPER_PATH}"
+    )
+
+else()
+    message(FATAL_ERROR "CEF not found. Either:\n"
+        "  - Install the 'cef' package (system CEF)\n"
+        "  - Set EXTERNAL_CEF_DIR to a CEF installation\n"
+        "  - Download CEF to third_party/cef/ (dev/download_cef.py)")
 endif()
 
 set(CEF_FOUND TRUE)

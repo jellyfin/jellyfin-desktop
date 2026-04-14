@@ -122,8 +122,8 @@
                 window.api.player.load(val,
                     { startMilliseconds: ms, autoplay: true },
                     { type: 'music', metadata: options.item },
-                    -1,
-                    -1,
+                    MpvPlayerCore.TRACK_AUTO,
+                    MpvPlayerCore.TRACK_AUTO,
                     resolve);
             });
         }

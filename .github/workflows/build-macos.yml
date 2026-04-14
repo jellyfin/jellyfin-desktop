@@ -102,7 +102,7 @@ jobs:
           ls -la "${DMG_NAME}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: macos-${{ matrix.arch }}
           path: JellyfinDesktop-*.dmg

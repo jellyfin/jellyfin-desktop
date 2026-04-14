@@ -9,7 +9,6 @@ Install the following:
 - **CMake**: `winget install Kitware.CMake`
 - **Ninja**: `winget install Ninja-build.Ninja`
 - **7-Zip**: `winget install 7zip.7zip`
-- **Vulkan SDK**: `winget install KhronosGroup.VulkanSDK`
 
 ## Quick Start
 
@@ -18,10 +17,10 @@ Install the following:
 git clone https://github.com/jellyfin/jellyfin-desktop
 cd jellyfin-desktop
 
-# Run setup (downloads CEF, SDL3, mpv)
+# Run setup (downloads CEF, builds mpv)
 .\dev\windows\setup.ps1
 
-# Build (auto-detects VS and Vulkan SDK)
+# Build (auto-detects VS)
 .\dev\windows\build.bat
 ```
 
@@ -45,22 +44,13 @@ git submodule update --init --recursive
 python dev\download_cef.py
 ```
 
-### 3. SDL3
-
-Downloaded automatically by `setup.ps1`, or manually:
-
-```powershell
-# Download SDL3 VC development package from GitHub releases
-# Extract to third_party\SDL
-```
-
-### 4. libmpv
+### 3. mpv
 
 ```powershell
 .\dev\windows\build_mpv_source.ps1
 ```
 
-This builds libmpv from the mpv submodule source using MSYS2, and generates an MSVC import library.
+This builds mpv from the submodule source using MSYS2, and generates an MSVC import library.
 
 ## Building
 
@@ -83,11 +73,10 @@ This builds libmpv from the mpv submodule source using MSYS2, and generates an M
 
 | Script | Description |
 |--------|-------------|
-| `setup.ps1` | Full environment setup (CEF, SDL3, mpv, checks prerequisites) |
+| `setup.ps1` | Full environment setup (CEF, mpv, checks prerequisites) |
 | `build.bat` | Entry point: loads VS environment and runs build.ps1 |
 | `build.ps1` | Configure and build with Ninja |
 | `build_cef.ps1` | Build CEF wrapper library |
-| `build_mpv.ps1` | Setup mpv import library (from MSYS2 or downloaded) |
 | `build_mpv_source.ps1` | Build mpv from submodule source using MSYS2 |
 
 ## Troubleshooting
@@ -95,11 +84,3 @@ This builds libmpv from the mpv submodule source using MSYS2, and generates an M
 ### "MSVC environment not detected"
 
 The scripts auto-detect VS installations (including Build Tools). If detection fails, run from "x64 Native Tools Command Prompt for VS 2022".
-
-### CMake can't find Vulkan
-
-`build.ps1` auto-detects `C:\VulkanSDK`. If installed elsewhere, set the `VULKAN_SDK` environment variable.
-
-### CMake can't find SDL3
-
-Ensure `third_party\SDL` exists with the prebuilt VC package. Re-run `setup.ps1` or download manually from [SDL releases](https://github.com/libsdl-org/SDL/releases).

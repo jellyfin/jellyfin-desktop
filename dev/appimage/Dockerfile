@@ -9,10 +9,10 @@ RUN pacman -Syu --noconfirm && \
     pacman -S --noconfirm --needed \
     base-devel cmake git ninja meson python \
     alsa-lib at-spi2-core cairo libcups libxcomposite libxdamage \
-    libxkbcommon libxrandr nss nspr pango \
+    libxkbcommon libxkbcommon-x11 libxrandr nss nspr pango \
     ffmpeg libplacebo libass wayland libxpresent libxss \
     vulkan-headers wayland-protocols python-docutils \
-    sdl3 systemd-libs libdrm libx11 \
+    systemd-libs libdrm libx11 xcb-util-cursor \
     wget file patchelf desktop-file-utils && \
     pacman -Scc --noconfirm
 
@@ -38,14 +38,14 @@ RUN mkdir -p /usr/share/plasma-wayland-protocols && \
     wget -q -O /usr/share/plasma-wayland-protocols/server-decoration-palette.xml \
     "https://invent.kde.org/libraries/plasma-wayland-protocols/-/raw/master/src/protocols/server-decoration-palette.xml"
 
-# Build mpv from submodule (custom fork with libmpv Vulkan gpu-next support)
+# Build mpv from submodule (cef-mpv branch: exposes wayland-display/wayland-surface properties)
 RUN cd third_party/mpv && \
     rm -rf build && \
     meson setup build --default-library=shared -Dlibmpv=true \
         -Dcdda=disabled -Ddvdnav=disabled -Djavascript=disabled \
         -Dlua=disabled -Dopenal=disabled -Drubberband=disabled \
         -Duchardet=disabled -Dvapoursynth=disabled \
-        -Dx11=enabled -Dwayland=enabled && \
+        -Dwayland=enabled && \
     meson compile -C build
 
 # Build jellyfin-desktop

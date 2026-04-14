@@ -2,6 +2,7 @@
 #include <thread>
 #include <atomic>
 #include <string>
+#include <cstdarg>
 #include <cstring>
 #include <chrono>
 #include <ctime>
@@ -25,50 +26,60 @@
 // Global for log callback to use original stderr
 int g_original_stderr_fd = -1;
 
-// Global log file handle (nullptr = stderr only)
-FILE* g_log_file = nullptr;
+static void writeLogLine(const char* tag, const char* level, const char* message) {
+    // Format timestamp as HH:MM:SS.mmm so gaps in the log are easy to spot.
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()) % 1000;
+    tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &time_t_now);
+#else
+    localtime_r(&time_t_now, &tm_buf);
+#endif
+    char ts[16];
+    std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%03d",
+                  tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+                  static_cast<int>(ms.count()));
 
-void writeLogLine(const char* tag, const char* message, const char* level) {
-    // Write to stderr first (no timestamp)
+    // Write to stderr with short timestamp
     if (g_original_stderr_fd >= 0) {
 #ifdef _WIN32
-        // Windows: _write doesn't support formatted output
         char buf[4096];
-        int len = snprintf(buf, sizeof(buf), "%s%s\n", tag, message);
-        if (len > 0) {
-            _write(g_original_stderr_fd, buf, static_cast<unsigned>(len));
-        }
+        int n = snprintf(buf, sizeof(buf), "%s %s %s: %s\n", ts, tag, level, message);
+        if (n > 0) _write(g_original_stderr_fd, buf, static_cast<unsigned>(n));
 #else
-        dprintf(g_original_stderr_fd, "%s%s\n", tag, message);
+        dprintf(g_original_stderr_fd, "%s %s %s: %s\n", ts, tag, level, message);
 #endif
     } else {
-        fprintf(stderr, "%s%s\n", tag, message);
+        fprintf(stderr, "%s %s %s: %s\n", ts, tag, level, message);
     }
 
-    // Write to log file with timestamp and level if enabled
+    // Write to log file with full ISO timestamp
     if (g_log_file) {
-        auto now = std::chrono::system_clock::now();
-        auto time_t_now = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()) % 1000;
-        tm tm_buf;
-#ifdef _WIN32
-        localtime_s(&tm_buf, &time_t_now);
-#else
-        localtime_r(&time_t_now, &tm_buf);
-#endif
         char time_buf[32];
         std::snprintf(time_buf, sizeof(time_buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03d",
                       tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
                       tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
                       static_cast<int>(ms.count()));
-        if (level) {
-            fprintf(g_log_file, "%s %-7s %s%s\n", time_buf, level, tag, message);
-        } else {
-            fprintf(g_log_file, "%s %s%s\n", time_buf, tag, message);
-        }
+        fprintf(g_log_file, "%s %-7s %s %s\n", time_buf, level, tag, message);
         fflush(g_log_file);
     }
+}
+
+void logWrite(int category, const char* level, const char* fmt, ...) {
+    char buf[4096];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    // Strip trailing newlines — external sources (mpv, CEF) often include them
+    size_t len = strlen(buf);
+    while (len > 0 && buf[len - 1] == '\n') buf[--len] = '\0';
+
+    writeLogLine(getCategoryTag(category), level, buf);
 }
 
 namespace {
@@ -108,7 +119,7 @@ void stderrCaptureThread() {
             std::string line = partial_line.substr(0, pos);
             partial_line = partial_line.substr(pos + 1);
             if (line.empty()) continue;
-            writeLogLine("[CEF] ", line.c_str());
+            logWrite(LOG_CEF, "DEBUG", "%s", line.c_str());
         }
     }
 #else
@@ -135,7 +146,7 @@ void stderrCaptureThread() {
                 std::string line = partial_line.substr(0, pos);
                 partial_line = partial_line.substr(pos + 1);
                 if (line.empty()) continue;
-                writeLogLine("[CEF] ", line.c_str());
+                logWrite(LOG_CEF, "DEBUG", "%s", line.c_str());
             }
         }
     }

@@ -38,18 +38,6 @@ if (-not $env:VSINSTALLDIR) {
     }
 }
 
-# Auto-detect Vulkan SDK if not set
-if (-not $env:VULKAN_SDK) {
-    $VulkanBase = "C:\VulkanSDK"
-    if (Test-Path $VulkanBase) {
-        $Latest = Get-ChildItem $VulkanBase -Directory | Sort-Object Name -Descending | Select-Object -First 1
-        if ($Latest) {
-            $env:VULKAN_SDK = $Latest.FullName
-            Write-Host "Detected Vulkan SDK: $($env:VULKAN_SDK)" -ForegroundColor Green
-        }
-    }
-}
-
 # Clean if requested
 if ($Clean -and (Test-Path $BuildDir)) {
     Write-Host "Cleaning build directory..."
@@ -73,12 +61,6 @@ if ($Configure -or -not (Test-Path (Join-Path $BuildDir "build.ninja"))) {
         $CmakeArgs += "-DEXTERNAL_MPV_DIR=$MpvInstallDir"
     } elseif (Test-Path (Join-Path $MpvDir "lib\mpv.lib")) {
         $CmakeArgs += "-DEXTERNAL_MPV_DIR=$MpvDir"
-    }
-
-    # Add SDL3 paths if present
-    $SdlDir = Join-Path $RepoRoot "third_party\SDL"
-    if (Test-Path (Join-Path $SdlDir "cmake")) {
-        $CmakeArgs += "-DSDL3_DIR=$SdlDir\cmake"
     }
 
     Push-Location $RepoRoot

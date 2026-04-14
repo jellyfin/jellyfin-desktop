@@ -9,9 +9,6 @@ on:
     tags:
       - 'v*'
 
-env:
-  SDL_VERSION: "3.4.0"
-
 jobs:
   build:
     strategy:
@@ -60,13 +57,6 @@ jobs:
         run: |
           python dev/download_cef.py --platform ${{ matrix.platform }}
 
-      - name: Download SDL3
-        shell: bash
-        run: |
-          curl -L "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL3-devel-${SDL_VERSION}-VC.zip" -o sdl3.zip
-          7z x sdl3.zip -othird_party
-          mv "third_party/SDL3-${SDL_VERSION}" third_party/SDL
-
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -88,21 +78,12 @@ jobs:
         run: |
           dev\windows\build_mpv_source.ps1 -Arch ${{ matrix.arch }} -Force
 
-      - name: Install Vulkan SDK
-        shell: pwsh
-        run: |
-          winget install KhronosGroup.VulkanSDK --accept-source-agreements --accept-package-agreements
-          $sdkPath = Get-ChildItem "C:\VulkanSDK" | Sort-Object Name -Descending | Select-Object -First 1
-          echo "VULKAN_SDK=$($sdkPath.FullName)" >> $env:GITHUB_ENV
-          echo "$($sdkPath.FullName)\Bin" >> $env:GITHUB_PATH
-
       - name: Configure and build
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
           cmake -B build -G Ninja ^
             -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
-            -DSDL3_DIR=%CD%\third_party\SDL\cmake ^
             -DEXTERNAL_MPV_DIR=%CD%\third_party\mpv-install
           cmake --build build
 
@@ -114,7 +95,7 @@ jobs:
           cpack -G ZIP
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
           path: build/jellyfin-desktop-*.zip

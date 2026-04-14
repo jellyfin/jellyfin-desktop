@@ -8,8 +8,6 @@
 #include <systemmediatransportcontrolsinterop.h>
 #include <wincrypt.h>
 
-#include <SDL3/SDL.h>
-
 #include "player/windows/media_session_windows.h"
 #include "logging.h"
 
@@ -26,7 +24,7 @@ struct WindowsMediaBackend::WinRTState {
     RandomAccessStreamReference cached_thumbnail{nullptr};
 };
 
-WindowsMediaBackend::WindowsMediaBackend(MediaSession* session, SDL_Window* window)
+WindowsMediaBackend::WindowsMediaBackend(MediaSession* session, HWND hwnd)
     : session_(session) {
     try {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -35,11 +33,8 @@ WindowsMediaBackend::WindowsMediaBackend(MediaSession* session, SDL_Window* wind
             throw;
     }
 
-    SDL_PropertiesID props = SDL_GetWindowProperties(window);
-    HWND hwnd = (HWND)SDL_GetPointerProperty(
-        props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
     if (!hwnd) {
-        LOG_ERROR(LOG_MEDIA, "[SMTC] Failed to get HWND from SDL window");
+        LOG_ERROR(LOG_MEDIA, "[SMTC] NULL HWND provided");
         return;
     }
 
@@ -285,8 +280,8 @@ void WindowsMediaBackend::updateTimeline() {
 }
 
 std::unique_ptr<MediaSessionBackend> createWindowsMediaBackend(
-    MediaSession* session, SDL_Window* window) {
-    return std::make_unique<WindowsMediaBackend>(session, window);
+    MediaSession* session, HWND hwnd) {
+    return std::make_unique<WindowsMediaBackend>(session, hwnd);
 }
 
 #endif // _WIN32

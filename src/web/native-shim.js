@@ -22,6 +22,28 @@
         }
     });
 
+    // Double-click on video area toggles fullscreen.
+    // Detected in JS because Wayland doesn't provide click count natively.
+    (function() {
+        let lastTime = 0, lastX = 0, lastY = 0;
+        document.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;  // left button only
+            const now = Date.now();
+            const dx = e.clientX - lastX;
+            const dy = e.clientY - lastY;
+            if ((now - lastTime) < 500 && (dx * dx + dy * dy) < 25) {
+                if (document.querySelector('.videoPlayerContainer')) {
+                    if (window.jmpNative) window.jmpNative.toggleFullscreen();
+                }
+                lastTime = 0;
+            } else {
+                lastTime = now;
+                lastX = e.clientX;
+                lastY = e.clientY;
+            }
+        }, true);  // capture phase — before jellyfin-web can stopPropagation
+    })();
+
     // Buffered ranges storage (updated by native code)
     window._bufferedRanges = [];
     window._nativeUpdateBufferedRanges = function(ranges) {
@@ -156,6 +178,7 @@
             // Methods
             load(url, options, streamdata, audioStream, subtitleStream, callback) {
                 console.log('[Media] player.load:', url);
+                window._jmpVideoActive = streamdata?.type === 'video';
                 if (callback) {
                     // Wait for playing signal before calling callback
                     const onPlaying = () => {
@@ -173,11 +196,12 @@
                 }
                 if (window.jmpNative && window.jmpNative.playerLoad) {
                     const metadataJson = streamdata?.metadata ? JSON.stringify(streamdata.metadata) : '{}';
-                    window.jmpNative.playerLoad(url, options?.startMilliseconds || 0, audioStream || -1, subtitleStream || -1, metadataJson);
+                    window.jmpNative.playerLoad(url, options.startMilliseconds, audioStream, subtitleStream, metadataJson);
                 }
             },
             stop() {
                 console.log('[Media] player.stop');
+                restoreThemeColor();
                 if (window.jmpNative) window.jmpNative.playerStop();
             },
             pause() {
@@ -210,11 +234,15 @@
             },
             setSubtitleStream(index) {
                 console.log('[Media] player.setSubtitleStream:', index);
-                if (window.jmpNative) window.jmpNative.playerSetSubtitle(index != null ? index : -1);
+                if (window.jmpNative) window.jmpNative.playerSetSubtitle(index);
+            },
+            addSubtitleStream(url) {
+                console.log('[Media] player.addSubtitleStream:', url);
+                if (window.jmpNative) window.jmpNative.playerAddSubtitle(url);
             },
             setAudioStream(index) {
                 console.log('[Media] player.setAudioStream:', index);
-                if (window.jmpNative) window.jmpNative.playerSetAudio(index != null ? index : -1);
+                if (window.jmpNative) window.jmpNative.playerSetAudio(index);
             },
             setSubtitleDelay(ms) {
                 console.log('[Media] player.setSubtitleDelay:', ms);
@@ -280,6 +308,13 @@
             window.api.player[signal](...args);
         } else {
             console.error('[Media] Signal not found:', signal, 'api exists:', !!window.api);
+        }
+    };
+    window._nativeFullscreenChanged = function(fullscreen) {
+        window._isFullscreen = fullscreen;
+        const player = window._mpvVideoPlayerInstance;
+        if (player && player.events) {
+            player.events.trigger(player, 'fullscreenchange');
         }
     };
     window._nativeUpdatePosition = function(ms) {
@@ -404,6 +439,11 @@
         }
     }
 
+    function restoreThemeColor() {
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) sendThemeColor(meta.content);
+    }
+
     function observeThemeColorMeta(meta) {
         sendThemeColor(meta.content);
         new MutationObserver(() => sendThemeColor(meta.content))
@@ -443,6 +483,22 @@
 
         style.textContent = css;
         document.head.appendChild(style);
+
+        // Titlebar black during video playback, restore theme color when done
+        window.api.player.playing.connect(() => {
+            if (window._jmpVideoActive) sendThemeColor('#000000');
+        });
+        window.api.player.finished.connect(() => { window._jmpVideoActive = false; restoreThemeColor(); });
+        window.api.player.stopped.connect(() => { window._jmpVideoActive = false; restoreThemeColor(); });
+        window.api.player.canceled.connect(() => { window._jmpVideoActive = false; restoreThemeColor(); });
+        window.api.player.error.connect(() => { window._jmpVideoActive = false; restoreThemeColor(); });
+
+        // Watch for mouseIdle class on body and tell native to hide/show cursor.
+        // Direct IPC is more reliable than CSS cursor:none → OnCursorChange in OSR mode.
+        new MutationObserver(() => {
+            const idle = document.body.classList.contains('mouseIdle');
+            window.jmpNative.setCursorVisible(!idle);
+        }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
         // Sync titlebar color with theme-color meta tag
         const meta = document.querySelector('meta[name="theme-color"]');
