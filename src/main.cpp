@@ -57,6 +57,8 @@
 // =====================================================================
 
 MpvHandle g_mpv;
+std::atomic<int> g_sub_add_pending{0};
+std::atomic<int64_t> g_sub_add_deferred_sid{0};
 std::atomic<bool> g_shutting_down{false};
 WakeEvent g_shutdown_event;
 
@@ -160,6 +162,11 @@ static void mpv_digest_thread() {
                 g_platform.set_fullscreen(me.flag);
             }
             publish(me);
+        }
+
+        if (ev->event_id == MPV_EVENT_COMMAND_REPLY &&
+            ev->reply_userdata == SUB_ADD_REPLY_BASE) {
+            MpvHandle::OnSubAddReply(g_mpv, g_sub_add_pending, g_sub_add_deferred_sid);
         }
     }
 }
