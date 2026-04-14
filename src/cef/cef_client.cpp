@@ -399,6 +399,10 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
         g_mpv.LoadFile(url, opts);
     } else if (name == "playerStop") {
         g_mpv.Stop();
+        // Exit fullscreen when player stops -- return to windowed library view.
+        if (!g_kiosk_mode.load(std::memory_order_relaxed)) {
+            g_platform.set_fullscreen(false);
+        }
     } else if (name == "playerPause") {
         g_mpv.Pause();
     } else if (name == "playerPlay") {
