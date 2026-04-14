@@ -61,6 +61,7 @@ WakeEvent g_shutdown_event;
 
 std::atomic<MediaType> g_media_type{MediaType::Unknown};
 std::atomic<PlaybackState> g_playback_state{PlaybackState::Stopped};
+std::atomic<bool> g_kiosk_mode{false};
 TitlebarColor* g_titlebar_color = nullptr;
 std::atomic<int> g_display_hz{60};
 
@@ -369,7 +370,7 @@ int main(int argc, char* argv[]) {
     bool audio_exclusive = false;
     std::string audio_channels_str;
     bool player_mode = false;
-    bool start_fullscreen = false;
+    bool kiosk_mode = false;
     bool disable_gpu_compositing = false;
     std::string ozone_platform;
     std::string platform_override;
@@ -400,7 +401,7 @@ int main(int argc, char* argv[]) {
                    "  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd\n"
                    "  --audio-exclusive         Exclusive audio output\n"
                    "  --audio-channels <layout> e.g. stereo, 5.1, 7.1\n"
-                   "  --fullscreen              Start in fullscreen mode\n"
+                   "  --kiosk                   Start in kiosk mode\n"
                    "  --remote-debug-port <port> Chrome remote debugging\n"
                    "  --disable-gpu-compositing Disable CEF GPU compositing\n"
                    "  --ozone-platform <plat>   CEF ozone platform (default: follows --platform)\n"
@@ -434,8 +435,8 @@ int main(int argc, char* argv[]) {
             audio_channels_str = argv[++i];
         } else if (strncmp(argv[i], "--audio-channels=", 17) == 0) {
             audio_channels_str = argv[i] + 17;
-        } else if (strcmp(argv[i], "--fullscreen") == 0) {
-            start_fullscreen = true;
+        } else if (strcmp(argv[i], "--kiosk") == 0) {
+            kiosk_mode = true;
         } else if (strcmp(argv[i], "--remote-debug-port") == 0 && i + 1 < argc) {
             remote_debugging_port = atoi(argv[++i]);
         } else if (strncmp(argv[i], "--remote-debug-port=", 20) == 0) {
@@ -612,9 +613,6 @@ int main(int argc, char* argv[]) {
             g_mpv.SetOptionString("window-maximized", "yes");
     }
 
-    if (start_fullscreen)
-        g_mpv.SetOptionString("fullscreen", "yes");
-
     if (!audio_passthrough_str.empty()) {
         // Normalize: dts-hd subsumes dts
         if (audio_passthrough_str.find("dts-hd") != std::string::npos) {
@@ -707,6 +705,8 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- Platform init ---
+    g_kiosk_mode.store(kiosk_mode, std::memory_order_relaxed);
+
     // Resolve effective ozone platform so CEF clients can check it.
 #if !defined(_WIN32) && !defined(__APPLE__)
     if (ozone_platform.empty())
@@ -719,6 +719,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     LOG_INFO(LOG_MAIN, "Platform init ok");
+
+    if (kiosk_mode) {
+        g_mpv.SetOptionString("fullscreen", "yes");
+        g_platform.set_fullscreen(true);
+        LOG_INFO(LOG_WINDOW, "Starting in kiosk mode (--kiosk)");
+    }
 
 #ifdef __APPLE__
     int64_t mw = 1280, mh = 720;
@@ -801,10 +807,12 @@ int main(int argc, char* argv[]) {
     App::InitPump();
 #endif
 
+    app->SetKioskMode(kiosk_mode);
     // Disable GPU compositing if probe failed or CLI flag set
     bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;
     if (!use_shared_textures)
         app->SetDisableGpuCompositing(true);
+    
     if (!ozone_platform.empty())
         app->SetOzonePlatform(ozone_platform);
 

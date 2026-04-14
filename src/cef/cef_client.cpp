@@ -399,8 +399,6 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
         g_mpv.LoadFile(url, opts);
     } else if (name == "playerStop") {
         g_mpv.Stop();
-        // Exit fullscreen when player stops — return to windowed library view
-        g_platform.set_fullscreen(false);
     } else if (name == "playerPause") {
         g_mpv.Pause();
     } else if (name == "playerPlay") {
@@ -426,6 +424,9 @@ bool Client::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<C
     } else if (name == "playerSetAudioDelay") {
         g_mpv.SetAudioDelay(args->GetDouble(0));
     } else if (name == "toggleFullscreen") {
+        if (g_kiosk_mode.load(std::memory_order_relaxed)) {
+            return true;
+        }
         g_platform.toggle_fullscreen();
     } else if (name == "saveServerUrl") {
         std::string url = args->GetString(0).ToString();

@@ -13,6 +13,8 @@ public:
 
     const std::string& serverUrl() const { return server_url_; }
     void setServerUrl(const std::string& url) { server_url_ = url; }
+    bool kioskMode() const { return kiosk_mode_; }
+    void setKioskMode(bool v) { kiosk_mode_ = v; }
 
     struct WindowGeometry {
         int x = -1;          // -1 = not set (use default centering)
@@ -71,6 +73,7 @@ private:
     bool titlebar_theme_color_ = true;
     bool transparent_titlebar_ = true;
     std::string log_level_;
+    bool kiosk_mode_ = false;
 
     std::mutex save_mutex_;  // Prevent concurrent saves
 };

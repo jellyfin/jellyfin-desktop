@@ -83,6 +83,12 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
 #endif
 }
 
+void App::OnBeforeChildProcessLaunch(CefRefPtr<CefCommandLine> command_line) {
+    if (kiosk_mode_) {
+        command_line->AppendSwitch("kiosk");
+    }
+}
+
 void App::OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) {
     registrar->AddCustomScheme("app",
         CEF_SCHEME_OPTION_STANDARD |
@@ -104,6 +110,13 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
 
     CefRefPtr<CefV8Value> window = context->GetGlobal();
     CefRefPtr<NativeV8Handler> handler = new NativeV8Handler(browser);
+
+    CefRefPtr<CefCommandLine> cl = CefCommandLine::GetGlobalCommandLine();
+    
+    const bool kiosk_mode = cl && cl->HasSwitch("kiosk");
+    if (kiosk_mode) {
+        LOG_INFO(LOG_CEF, "Kiosk mode enabled in renderer process");
+    }
 
     CefRefPtr<CefV8Value> jmpNative = CefV8Value::CreateObject(nullptr, nullptr);
     jmpNative->SetValue("playerLoad", CefV8Value::CreateFunction("playerLoad", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
@@ -138,6 +151,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     jmpNative->SetValue("menuDismissed", CefV8Value::CreateFunction("menuDismissed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     jmpNative->SetValue("overlayFadeComplete", CefV8Value::CreateFunction("overlayFadeComplete", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
+    window->SetValue("kioskMode", CefV8Value::CreateBool(kiosk_mode), V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject JS shim
     std::string shim_str(embedded_js.at("native-shim.js"));
@@ -163,6 +177,8 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     shim_str += embedded_js.at("input-plugin.js");
     shim_str += '\n';
     shim_str += embedded_js.at("context-menu.js");
+    shim_str += '\n';
+    shim_str += embedded_js.at("disable-fullscreen-button.js");
     frame->ExecuteJavaScript(shim_str, frame->GetURL(), 0);
 }
 

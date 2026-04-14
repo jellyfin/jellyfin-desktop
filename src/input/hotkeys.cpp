@@ -28,6 +28,7 @@ bool hotkey_try_consume(const KeyEvent& e) {
 
     if (e.code == KeyCode::F || e.code == KeyCode::F11) {
         if (!video_player_active()) return false;
+        if (g_kiosk_mode.load(std::memory_order_relaxed)) return true;
         g_platform.toggle_fullscreen();
         return true;
     }

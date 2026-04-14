@@ -44,6 +44,7 @@ extern Platform g_platform;
 // read from input and rendering threads.
 extern std::atomic<MediaType> g_media_type;
 extern std::atomic<PlaybackState> g_playback_state;
+extern std::atomic<bool> g_kiosk_mode;
 
 class MediaSessionThread;
 class TitlebarColor;
