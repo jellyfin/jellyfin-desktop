@@ -250,6 +250,7 @@
 
         removeMediaDialog() {
             window.api.player.stop();
+            if (window.jmpNative) window.jmpNative.playerOsdActive(false);
             window.api.player.setVideoRectangle(-1, 0, 0, 0);
             document.body.classList.remove('hide-scroll');
             const dlg = this._videoDialog;
@@ -269,6 +270,7 @@
         createMediaElement(options) {
             let dlg = document.querySelector('.videoPlayerContainer');
             if (!dlg) {
+                if (window.jmpNative) window.jmpNative.playerOsdActive(true);
                 dlg = document.createElement('div');
                 dlg.classList.add('videoPlayerContainer');
                 dlg.style.cssText = 'position:fixed;top:0;bottom:0;left:0;right:0;display:flex;align-items:center;background:transparent;';

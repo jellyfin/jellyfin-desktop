@@ -6,6 +6,9 @@
 #include "platform/platform.h"
 #include "common.h"
 #include "cef/cef_client.h"
+#include "browser/browsers.h"
+#include "browser/web_browser.h"
+#include "browser/overlay_browser.h"
 #include "input/input_windows.h"
 #include "logging.h"
 
@@ -313,8 +316,8 @@ static void win_set_overlay_visible(bool visible) {
     // thinks the just-activated browser has no window focus, so text inputs
     // don't show a caret and focus rings don't render. Matches the "active
     // tab" semantics: only one browser at a time holds focus.
-    auto main = g_client ? g_client->browser() : nullptr;
-    auto ovl  = g_overlay_client ? g_overlay_client->browser() : nullptr;
+    auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+    auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
     if (visible) {
         if (main) main->GetHost()->SetFocus(false);
         if (ovl)  ovl->GetHost()->SetFocus(true);

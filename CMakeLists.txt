@@ -458,6 +458,8 @@ if(WIN32)
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/browser/web_browser.cpp
+        src/browser/overlay_browser.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/cjson/cJSON.c
@@ -473,6 +475,8 @@ else()
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/browser/web_browser.cpp
+        src/browser/overlay_browser.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/single_instance.cpp

@@ -7,7 +7,7 @@
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
 #include "include/cef_v8.h"
-#include <cmath>
+
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
@@ -106,37 +106,21 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     CefRefPtr<NativeV8Handler> handler = new NativeV8Handler(browser);
 
     CefRefPtr<CefV8Value> jmpNative = CefV8Value::CreateObject(nullptr, nullptr);
-    jmpNative->SetValue("playerLoad", CefV8Value::CreateFunction("playerLoad", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerStop", CefV8Value::CreateFunction("playerStop", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerPause", CefV8Value::CreateFunction("playerPause", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerPlay", CefV8Value::CreateFunction("playerPlay", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSeek", CefV8Value::CreateFunction("playerSeek", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetVolume", CefV8Value::CreateFunction("playerSetVolume", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetMuted", CefV8Value::CreateFunction("playerSetMuted", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetSpeed", CefV8Value::CreateFunction("playerSetSpeed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetSubtitle", CefV8Value::CreateFunction("playerSetSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerAddSubtitle", CefV8Value::CreateFunction("playerAddSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetAudio", CefV8Value::CreateFunction("playerSetAudio", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetAudioDelay", CefV8Value::CreateFunction("playerSetAudioDelay", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("saveServerUrl", CefV8Value::CreateFunction("saveServerUrl", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("loadServer", CefV8Value::CreateFunction("loadServer", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("checkServerConnectivity", CefV8Value::CreateFunction("checkServerConnectivity", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyMetadata", CefV8Value::CreateFunction("notifyMetadata", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyPosition", CefV8Value::CreateFunction("notifyPosition", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifySeek", CefV8Value::CreateFunction("notifySeek", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyPlaybackState", CefV8Value::CreateFunction("notifyPlaybackState", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyArtwork", CefV8Value::CreateFunction("notifyArtwork", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyQueueChange", CefV8Value::CreateFunction("notifyQueueChange", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyRateChange", CefV8Value::CreateFunction("notifyRateChange", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("appExit", CefV8Value::CreateFunction("appExit", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("setSettingValue", CefV8Value::CreateFunction("setSettingValue", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("themeColor", CefV8Value::CreateFunction("themeColor", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("setOsdVisible", CefV8Value::CreateFunction("setOsdVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("setCursorVisible", CefV8Value::CreateFunction("setCursorVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("toggleFullscreen", CefV8Value::CreateFunction("toggleFullscreen", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("menuItemSelected", CefV8Value::CreateFunction("menuItemSelected", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("menuDismissed", CefV8Value::CreateFunction("menuDismissed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("overlayFadeComplete", CefV8Value::CreateFunction("overlayFadeComplete", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    static const char* const kFunctions[] = {
+        "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
+        "playerSetVolume", "playerSetMuted", "playerSetSpeed",
+        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
+        "playerSetAudioDelay", "playerOsdActive",
+        "saveServerUrl", "loadServer", "checkServerConnectivity",
+        "notifyMetadata", "notifyPosition", "notifySeek",
+        "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
+        "notifyRateChange",
+        "appExit", "setSettingValue", "themeColor",
+        "setOsdVisible", "setCursorVisible", "toggleFullscreen",
+        "menuItemSelected", "menuDismissed", "overlayFadeComplete",
+    };
+    for (const char* fn : kFunctions)
+        jmpNative->SetValue(fn, CefV8Value::CreateFunction(fn, handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject JS shim
@@ -194,62 +178,24 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
     return false;
 }
 
-// V8 handler -- sends IPC messages to browser process
-static int v8ToInt(const CefRefPtr<CefV8Value>& val, int fallback) {
-    if (val->IsInt()) return val->GetIntValue();
-    if (val->IsDouble()) return static_cast<int>(std::lround(val->GetDoubleValue()));
-    return fallback;
-}
-
+// V8 handler -- generic IPC relay to browser process.
+// Serializes V8 arguments by detected type; the receiving side handles
+// any coercion (e.g. JS numbers that should be ints).
 bool NativeV8Handler::Execute(const CefString& name,
                               CefRefPtr<CefV8Value>,
                               const CefV8ValueList& arguments,
                               CefRefPtr<CefV8Value>&,
                               CefString&) {
-    // Simple IPC relay: create message with same name and forward args
     CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create(name);
     CefRefPtr<CefListValue> args = msg->GetArgumentList();
 
-    if (name == "playerLoad") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
-            args->SetString(0, arguments[0]->GetStringValue());
-            args->SetInt(1, arguments.size() > 1 ? v8ToInt(arguments[1], 0) : 0);
-            args->SetInt(2, arguments.size() > 2 ? v8ToInt(arguments[2], -1) : -1);
-            args->SetInt(3, arguments.size() > 3 ? v8ToInt(arguments[3], -1) : -1);
-            args->SetString(4, arguments.size() > 4 && arguments[4]->IsString()
-                ? arguments[4]->GetStringValue() : "{}");
-        }
-    } else if (name == "playerSeek" || name == "playerSetVolume" || name == "playerSetSpeed" ||
-               name == "playerSetSubtitle" || name == "playerSetAudio" ||
-               name == "notifyPosition" || name == "notifySeek") {
-        if (arguments.size() >= 1) args->SetInt(0, v8ToInt(arguments[0], 0));
-    } else if (name == "playerSetMuted") {
-        if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
-    } else if (name == "playerSetAudioDelay" || name == "notifyRateChange") {
-        if (arguments.size() >= 1 && arguments[0]->IsDouble()) args->SetDouble(0, arguments[0]->GetDoubleValue());
-    } else if (name == "saveServerUrl" || name == "loadServer" || name == "checkServerConnectivity" ||
-               name == "notifyMetadata" || name == "notifyPlaybackState" || name == "notifyArtwork" ||
-               name == "themeColor" || name == "playerAddSubtitle") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) args->SetString(0, arguments[0]->GetStringValue());
-    } else if (name == "notifyQueueChange") {
-        if (arguments.size() >= 2 && arguments[0]->IsBool() && arguments[1]->IsBool()) {
-            args->SetBool(0, arguments[0]->GetBoolValue());
-            args->SetBool(1, arguments[1]->GetBoolValue());
-        }
-    } else if (name == "setSettingValue") {
-        if (arguments.size() >= 3) {
-            args->SetString(0, arguments[0]->GetStringValue());
-            args->SetString(1, arguments[1]->GetStringValue());
-            args->SetString(2, arguments[2]->GetStringValue());
-        }
-    } else if (name == "setOsdVisible") {
-        if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
-    } else if (name == "setCursorVisible") {
-        if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
-    } else if (name == "menuItemSelected") {
-        if (arguments.size() >= 1) args->SetInt(0, v8ToInt(arguments[0], 0));
+    for (size_t i = 0; i < arguments.size(); i++) {
+        auto& v = arguments[i];
+        if      (v->IsBool())   args->SetBool(i, v->GetBoolValue());
+        else if (v->IsInt())    args->SetInt(i, v->GetIntValue());
+        else if (v->IsDouble()) args->SetDouble(i, v->GetDoubleValue());
+        else if (v->IsString()) args->SetString(i, v->GetStringValue());
     }
-    // playerStop, playerPause, playerPlay, appExit, menuDismissed: no args needed
 
     browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
     return true;
