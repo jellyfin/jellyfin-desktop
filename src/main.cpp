@@ -160,6 +160,9 @@ static void mpv_digest_thread() {
                     g_platform.set_expected_size(me.pw, me.ph);
                 g_platform.resize(me.lw, me.lh, me.pw, me.ph);
             }
+            if (me.type == MpvEventType::FULLSCREEN) {
+                g_platform.set_fullscreen(me.flag);
+            }
             publish(me);
         }
     }

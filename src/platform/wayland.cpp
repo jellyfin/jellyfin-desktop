@@ -88,6 +88,7 @@ static WlState g_wl;
 static void update_surface_size_locked(int lw, int lh, int pw, int ph);
 static void wl_begin_transition_locked();
 static void wl_end_transition_locked();
+static void wl_set_expected_size_locked(int w, int h);
 static void wl_begin_transition();
 static void wl_toggle_fullscreen();
 static void wl_init_kde_palette();
@@ -480,10 +481,15 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
     int lh = static_cast<int>(ph / scale);
 
     if (fs != g_wl.was_fullscreen) {
-        if (!g_wl.transitioning)
+        if (!g_wl.transitioning) {
             wl_begin_transition_locked();
-        else
+            // Set expected size so the transition can end as soon as a
+            // correctly-sized frame arrives, without waiting for an
+            // OSD_DIMS event (which the init loop may have consumed).
+            wl_set_expected_size_locked(pw, ph);
+        } else {
             wl_end_transition_locked();
+        }
         g_wl.was_fullscreen = fs;
     }
 
@@ -773,6 +779,28 @@ static bool probe_shared_texture_support(const std::string& ozone_platform,
 }
 
 static bool wl_init(mpv_handle* mpv) {
+    // Seed was_fullscreen from mpv's current state so the first configure
+    // after callback registration doesn't start a spurious transition.
+    {
+        bool fs = false;
+        g_mpv.GetFullscreen(fs);
+        g_wl.was_fullscreen = fs;
+    }
+
+    // Register mpv configure callback early — mpv's VO thread is already
+    // processing configures in parallel, and we need to catch them all.
+    // on_mpv_configure is safe before surfaces exist (null checks throughout).
+    {
+        intptr_t cb_ptr = 0;
+        g_mpv.GetWaylandConfigureCbPtr(cb_ptr);
+        if (cb_ptr) {
+            auto* fn = reinterpret_cast<void(**)(void*, int, int, bool)>(cb_ptr);
+            auto* data = reinterpret_cast<void**>(cb_ptr + sizeof(void*));
+            *fn = [](void*, int w, int h, bool fs) { on_mpv_configure(nullptr, w, h, fs); };
+            *data = nullptr;
+        }
+    }
+
     intptr_t dp = 0, sp = 0;
     g_mpv.GetWaylandDisplay(dp);
     g_mpv.GetWaylandSurface(sp);
@@ -836,18 +864,6 @@ static bool wl_init(mpv_handle* mpv) {
     wl_surface_commit(g_wl.overlay_surface);
 
     wl_display_roundtrip_queue(display, g_wl.queue);
-
-    // Register mpv configure callback
-    {
-        intptr_t cb_ptr = 0;
-        g_mpv.GetWaylandConfigureCbPtr(cb_ptr);
-        if (cb_ptr) {
-            auto* fn = reinterpret_cast<void(**)(void*, int, int, bool)>(cb_ptr);
-            auto* data = reinterpret_cast<void**>(cb_ptr + sizeof(void*));
-            *fn = [](void*, int w, int h, bool fs) { on_mpv_configure(nullptr, w, h, fs); };
-            *data = nullptr;
-        }
-    }
 
     // Register close callback -- intercepts xdg_toplevel close before mpv sees it
     {
@@ -998,7 +1014,15 @@ static void wl_set_fullscreen(bool fullscreen) {
     // not a VO property — no VO lock contention.
     bool current = false;
     if (g_mpv.GetFullscreen(current) >= 0) {
-        if (current == fullscreen) return;  // already in desired state
+        if (current == fullscreen) {
+            // Compositor may have rejected our fullscreen change.
+            // If we're mid-transition and the state matches the pre-lock
+            // value (was_fullscreen), the compositor forced us back — cancel.
+            std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+            if (g_wl.transitioning && fullscreen == g_wl.was_fullscreen)
+                wl_end_transition_locked();
+            return;
+        }
     }
     {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
@@ -1026,12 +1050,16 @@ static bool wl_in_transition() {
     return g_wl.transitioning;
 }
 
-static void wl_set_expected_size(int w, int h) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+static void wl_set_expected_size_locked(int w, int h) {
     if (g_wl.transitioning && w == g_wl.transition_pw && h == g_wl.transition_ph)
         return;
     g_wl.expected_w = w;
     g_wl.expected_h = h;
+}
+
+static void wl_set_expected_size(int w, int h) {
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    wl_set_expected_size_locked(w, h);
 }
 
 static void wl_end_transition() {
