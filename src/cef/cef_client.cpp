@@ -365,6 +365,9 @@ bool Client::RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
 }
 
 void Client::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {
+    if (g_kiosk_mode.load(std::memory_order_relaxed) && !fullscreen) {
+        return;
+    }
     g_platform.set_fullscreen(fullscreen);
 }
 
