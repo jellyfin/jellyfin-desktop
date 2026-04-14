@@ -26,6 +26,10 @@ constexpr Color kBgColor{0x101010};
 // Playback background color (behind video).
 constexpr Color kVideoBgColor{0x000000};
 
+// reply_userdata base for tracked sub-add commands (see MpvHandle::AddSubtitlesAndSelect)
+static constexpr uint64_t SUB_ADD_REPLY_BASE = 0x12345678;
+
+
 #include "platform/platform.h"
 #include "mpv/handle.h"
 #include "player/media_session.h"
@@ -33,6 +37,8 @@ constexpr Color kVideoBgColor{0x000000};
 class WakeEvent;
 
 extern MpvHandle g_mpv;
+extern std::atomic<int> g_sub_add_pending;
+extern std::atomic<int64_t> g_sub_add_deferred_sid;
 extern Platform g_platform;
 // Cross-thread state: written from mpv event loop / CEF IPC thread,
 // read from input and rendering threads.
