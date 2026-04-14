@@ -173,10 +173,6 @@
                 const defaultAudioIdx = options.mediaSource.DefaultAudioStreamIndex ?? -1;
                 const defaultSubIdx = options.mediaSource.DefaultSubtitleStreamIndex ?? -1;
 
-                this._subStreamMap = createSubStreamMap(streams);
-                console.log('[Media] [MPV] MediaStreams:', streams);
-                console.log('[Media] [MPV] subStreamMap:', this._subStreamMap);
-
                 // Convert audio index from Jellyfin global stream index to mpv 1-based audio track index
                 let audioParam = MpvPlayerCore.TRACK_DISABLE;
                 if (defaultAudioIdx >= 0) {
@@ -184,7 +180,9 @@
                     audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
                 }
 
+                this._subStreamMap = createSubStreamMap(streams);
                 let externalSubs = streams.filter(s => s.Type === 'Subtitle' && s.IsExternal && s.DeliveryUrl).map(s => s.DeliveryUrl);
+
                 window.api.player.setAspectMode(this.getAspectRatio());
                 window.api.player.load(val,
                     { startMilliseconds: ms, autoplay: true },
@@ -192,7 +190,7 @@
                     audioParam,
                     MpvPlayerCore.TRACK_DISABLE, // we'll let the callback below select the subtitle track after adding the external subs
                     () => {
-                        // add external subs and select the default subtitle atomically —
+                        // add external subs and then select the default subtitle track
                         // mpv defers the sid selection until all sub-add commands complete.
                         const targetSid = this._subStreamMap[defaultSubIdx]?.mpvSid || MpvPlayerCore.TRACK_DISABLE;
                         window.api.player.addSubtitlesAndSelect(externalSubs, targetSid);
