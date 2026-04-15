@@ -3,7 +3,7 @@
 #include <cmath>
 #include "../common.h"
 #include "../settings.h"
-#include "../logging.h"
+#include "logging.h"
 #include "../player/media_session.h"
 #include "../player/media_session_thread.h"
 #include "../titlebar_color.h"
@@ -60,7 +60,7 @@ static void applySettingValue(const std::string& section, const std::string& key
     else if (key == "audioExclusive") s.setAudioExclusive(value == "true");
     else if (key == "audioChannels") s.setAudioChannels(value);
     else if (key == "logLevel") s.setLogLevel(value);
-    else LOG_WARN(LOG_CEF, "Unknown setting key: %s.%s", section.c_str(), key.c_str());
+    else LOG_WARN(LOG_CEF, "Unknown setting key: {}.{}", section.c_str(), key.c_str());
     s.saveAsync();
 }
 
@@ -100,7 +100,7 @@ bool WebBrowser::handleMessage(const std::string& name,
         int startMs = args->GetSize() > 1 ? getIntArg(args, 1) : 0;
         int audioIdx = getIntArg(args, 2);
         int subIdx = getIntArg(args, 3);
-        LOG_INFO(LOG_CEF, "playerLoad: audio=%d sub=%d start=%dms url=%s",
+        LOG_INFO(LOG_CEF, "playerLoad: audio={} sub={} start={}ms url={}",
                  audioIdx, subIdx, startMs, url.c_str());
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
@@ -123,11 +123,11 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "playerSetSpeed") {
         g_mpv.SetSpeed(getIntArg(args, 0) / 1000.0);
     } else if (name == "playerSetSubtitle") {
-        LOG_INFO(LOG_CEF, "playerSetSubtitle: %d", getIntArg(args, 0));
+        LOG_INFO(LOG_CEF, "playerSetSubtitle: {}", getIntArg(args, 0));
         g_mpv.SetSubtitleTrack(getIntArg(args, 0));
     } else if (name == "playerAddSubtitle") {
         std::string url = args->GetString(0).ToString();
-        LOG_INFO(LOG_CEF, "playerAddSubtitle: %s", url.c_str());
+        LOG_INFO(LOG_CEF, "playerAddSubtitle: {}", url.c_str());
         g_mpv.SubAdd(url);
     } else if (name == "playerSetAudio") {
         g_mpv.SetAudioTrack(getIntArg(args, 0));

@@ -1,5 +1,5 @@
 #include "cef_client.h"
-#include "../logging.h"
+#include "logging.h"
 #include "../cjson/cJSON.h"
 #include "../platform/platform.h"
 #include <cstdio>
@@ -110,8 +110,8 @@ bool CefLayer::GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) {
 }
 
 void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
-    LOG_INFO(LOG_CEF, "CefLayer::resize logical=%dx%d physical=%dx%d browser=%p",
-             w, h, physical_w, physical_h, browser_.get());
+    LOG_INFO(LOG_CEF, "CefLayer::resize logical={}x{} physical={}x{} browser={}",
+             w, h, physical_w, physical_h, static_cast<void*>(browser_.get()));
     width_ = w;
     height_ = h;
     physical_w_ = physical_w;
@@ -136,8 +136,8 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-    LOG_INFO(LOG_CEF, "CefLayer::OnAfterCreated browser=%p id=%d",
-             browser.get(), browser ? browser->GetIdentifier() : -1);
+    LOG_INFO(LOG_CEF, "CefLayer::OnAfterCreated browser={} id={}",
+             static_cast<void*>(browser.get()), browser ? browser->GetIdentifier() : -1);
     browser_ = browser;
     if (g_shutting_down.load(std::memory_order_relaxed)) {
         browser->GetHost()->CloseBrowser(true);
@@ -163,7 +163,7 @@ void CefLayer::waitForClose() {
 }
 
 void CefLayer::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int code) {
-    LOG_INFO(LOG_CEF, "CefLayer::OnLoadEnd main=%d code=%d url=%s",
+    LOG_INFO(LOG_CEF, "CefLayer::OnLoadEnd main={} code={} url={}",
              frame->IsMain() ? 1 : 0, code,
              frame->GetURL().ToString().c_str());
     if (frame->IsMain()) {
@@ -179,8 +179,8 @@ void CefLayer::waitForLoad() {
 
 void CefLayer::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                            ErrorCode errorCode, const CefString& errorText, const CefString& failedUrl) {
-    LOG_ERROR(LOG_CEF, "OnLoadError: %s error=%d %s",
-              failedUrl.ToString().c_str(), errorCode, errorText.ToString().c_str());
+    LOG_ERROR(LOG_CEF, "OnLoadError: {} error={} {}",
+              failedUrl.ToString(), static_cast<int>(errorCode), errorText.ToString());
 }
 
 void CefLayer::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {

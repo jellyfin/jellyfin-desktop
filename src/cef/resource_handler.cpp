@@ -48,7 +48,7 @@ CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(
         return new EmbeddedResourceHandler(it->second);
     }
 
-    LOG_WARN(LOG_RESOURCE, "EmbeddedScheme not found: %s", url.c_str());
+    LOG_WARN(LOG_RESOURCE, "EmbeddedScheme not found: {}", url.c_str());
     return nullptr;
 }
 

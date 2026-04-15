@@ -2,7 +2,7 @@
 
 #include "input.h"
 #include "hotkeys.h"
-#include "../logging.h"
+#include "logging.h"
 
 #include "include/cef_browser.h"
 
@@ -38,8 +38,8 @@ void set_active_browser(CefRefPtr<CefBrowser> browser) {
         prev = g_active;
         g_active = browser;
     }
-    LOG_INFO(LOG_PLATFORM, "[INPUT] set_active_browser prev=%p new=%p",
-             prev.get(), browser.get());
+    LOG_INFO(LOG_PLATFORM, "[INPUT] set_active_browser prev={} new={}",
+             static_cast<void*>(prev.get()), static_cast<void*>(browser.get()));
     if (prev)    prev->GetHost()->SetFocus(false);
     if (browser) browser->GetHost()->SetFocus(true);
 }

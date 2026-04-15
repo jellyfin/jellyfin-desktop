@@ -25,6 +25,10 @@ include_directories("${CMAKE_BINARY_DIR}/src")
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_compile_definitions(NOMINMAX)
+    # Conforming preprocessor: quill (and fmt) rely on standard ##__VA_ARGS__
+    # handling. MSVC's legacy preprocessor mis-expands the variadic, which
+    # leaks format args into MacroMetadata's constructor call.
+    add_compile_options(/Zc:preprocessor)
 endif()
 
 # Match CEF's compile flags for ABI compatibility
@@ -81,6 +85,7 @@ if(APPLE)
         src/platform/macos.mm
         src/input/input_macos.mm
         src/wake_event_macos.cpp
+        src/paths/macos.cpp
         src/player/media_session.cpp
         src/player/macos/media_session_macos.mm
         src/player/media_session_thread.cpp
@@ -102,6 +107,7 @@ elseif(WIN32)
     set(PLATFORM_SOURCES
         src/platform/windows.cpp
         src/input/input_windows.cpp
+        src/paths/windows.cpp
         src/player/media_session.cpp
         src/player/windows/media_session_windows.cpp
         src/player/media_session_thread.cpp
@@ -275,6 +281,7 @@ else()
         # Shared Linux
         src/platform/idle_inhibit_linux.cpp
         src/wake_event_linux.cpp
+        src/paths/linux.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
         src/player/media_session_thread.cpp
@@ -464,6 +471,7 @@ if(WIN32)
         src/input/hotkeys.cpp
         src/cjson/cJSON.c
         src/settings.cpp
+        src/paths/paths.cpp
         src/wake_event_windows.cpp
     )
 else()
@@ -481,6 +489,7 @@ else()
         src/input/hotkeys.cpp
         src/single_instance.cpp
         src/settings.cpp
+        src/paths/paths.cpp
         src/cjson/cJSON.c
     )
 endif()
@@ -501,6 +510,15 @@ if(WIN32)
     endif()
 endif()
 
+# quill (vendored, header-only). Disable quill's own LOG_* macros so they
+# don't collide with ours. Our pattern doesn't reference file/line/function
+# metadata, so strip it — also sidesteps MSVC's refusal to treat __FUNCTION__
+# as a constant expression in constexpr MacroMetadata initializers.
+set(QUILL_DISABLE_NON_PREFIXED_MACROS ON CACHE BOOL "" FORCE)
+set(QUILL_DISABLE_FUNCTION_NAME ON CACHE BOOL "" FORCE)
+set(QUILL_DISABLE_FILE_INFO ON CACHE BOOL "" FORCE)
+add_subdirectory(third_party/quill EXCLUDE_FROM_ALL)
+
 # Ensure JS shims are embedded before compiling cef_app.cpp
 add_dependencies(jellyfin-desktop embedded_js embedded_resources generate_version)
 
@@ -516,6 +534,7 @@ target_link_libraries(jellyfin-desktop PRIVATE
     ${CEF_LIBRARIES}
     ${MPV_LIBRARIES}
     ${PLATFORM_LIBRARIES}
+    quill::quill
 )
 
 # When using external/system CEF, tell the app where to find resources

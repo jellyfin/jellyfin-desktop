@@ -222,13 +222,13 @@ static void release_pool(LayerState& s) {
 static bool ensure_pool(LayerState& s, int w, int h) {
     if (s.pool_w == w && s.pool_h == h && s.pool[0] != nullptr) return true;
 
-    LOG_INFO(LOG_PLATFORM, "[POOL] resize %dx%d -> %dx%d", s.pool_w, s.pool_h, w, h);
+    LOG_INFO(LOG_PLATFORM, "[POOL] resize {}x{} -> {}x{}", s.pool_w, s.pool_h, w, h);
     release_pool(s);
 
     for (int i = 0; i < kPoolSize; i++) {
         s.pool[i] = create_premul_iosurface(w, h);
         if (!s.pool[i]) {
-            LOG_ERROR(LOG_PLATFORM, "[POOL] IOSurfaceCreate failed i=%d %dx%d", i, w, h);
+            LOG_ERROR(LOG_PLATFORM, "[POOL] IOSurfaceCreate failed i={} {}x{}", i, w, h);
             release_pool(s);
             return false;
         }
@@ -241,7 +241,7 @@ static bool ensure_pool(LayerState& s, int w, int h) {
                                                             iosurface:s.pool[i]
                                                                 plane:0];
         if (!s.pool_textures[i]) {
-            LOG_ERROR(LOG_PLATFORM, "[POOL] newTextureWithDescriptor:iosurface: failed i=%d", i);
+            LOG_ERROR(LOG_PLATFORM, "[POOL] newTextureWithDescriptor:iosurface: failed i={}", i);
             release_pool(s);
             return false;
         }
@@ -282,8 +282,8 @@ static bool wrap_input_surface(LayerState& s, IOSurfaceRef surface, int w, int h
 
 static void present_iosurface(LayerState& s, const CefAcceleratedPaintInfo& info) {
     if (!g_mtl_device || !s.layer) {
-        LOG_WARN(LOG_PLATFORM, "[METAL] present skipped: device=%p layer=%p",
-                 g_mtl_device, s.layer);
+        LOG_WARN(LOG_PLATFORM, "[METAL] present skipped: device={} layer={}",
+                 (__bridge void*)g_mtl_device, (__bridge void*)s.layer);
         return;
     }
 
@@ -438,7 +438,7 @@ static bool macos_init(mpv_handle* mpv) {
         LOG_ERROR(LOG_PLATFORM, "[INIT] mpv did not create a window");
         return false;
     }
-    LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: got window=%p", g_window);
+    LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: got window={}", (__bridge void*)g_window);
 
     // mpv's Window.windowShouldClose sends MP_KEY_CLOSE_WIN into mpv's
     // input system, which we've disabled. Swizzle it to call our shutdown.
@@ -553,7 +553,7 @@ static bool macos_init(mpv_handle* mpv) {
                      queue:nil
                 usingBlock:^(NSNotification* /*note*/) {
         NSRect b = [[g_window contentView] bounds];
-        LOG_INFO(LOG_PLATFORM, "[WINDOW] NSWindowDidResizeNotification contentView=%.0fx%.0f",
+        LOG_INFO(LOG_PLATFORM, "[WINDOW] NSWindowDidResizeNotification contentView={:.0f}x{:.0f}",
                  b.size.width, b.size.height);
     }];
 
@@ -565,9 +565,9 @@ static bool macos_init(mpv_handle* mpv) {
         return false;
     }
 
-    LOG_INFO(LOG_PLATFORM, "[INIT] Metal compositor initialized (2 layers) frame=%.0fx%.0f scale=%.2f window.firstResponder=%p input_view=%p",
+    LOG_INFO(LOG_PLATFORM, "[INIT] Metal compositor initialized (2 layers) frame={:.0f}x{:.0f} scale={:.2f} window.firstResponder={} input_view={}",
              frame.size.width, frame.size.height, scale,
-             [g_window firstResponder], g_input_view);
+             (__bridge void*)[g_window firstResponder], (__bridge void*)g_input_view);
     return true;
 }
 

@@ -2,7 +2,7 @@
 #include "resource_handler.h"
 #include "../settings.h"
 #include "embedded_js.h"
-#include "../logging.h"
+#include "logging.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
@@ -302,7 +302,7 @@ constexpr double kCefMaxTimeSliceMs = 10.0;
 
 static void pump_drain(const char* trigger) {
     if (g_pump_shutdown.load(std::memory_order_acquire)) {
-        LOG_INFO(LOG_CEF, "[PUMP] drain(%s) skipped (shutdown)", trigger);
+        LOG_INFO(LOG_CEF, "[PUMP] drain({}) skipped (shutdown)", trigger);
         return;
     }
 
@@ -364,7 +364,7 @@ void App::InitPump() {
 
 void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
     if (g_pump_shutdown.load(std::memory_order_acquire)) {
-        LOG_INFO(LOG_CEF, "[PUMP] OnSched(%lld) SKIP(shutdown) tid=%llu",
+        LOG_INFO(LOG_CEF, "[PUMP] OnSched({}) SKIP(shutdown) tid={}",
                  (long long)delay_ms, (unsigned long long)tid_u64());
         return;
     }
@@ -392,7 +392,7 @@ void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
 
 
 void App::ShutdownPump() {
-    LOG_INFO(LOG_CEF, "[PUMP] ShutdownPump: sched_imm=%llu sched_delayed=%llu "
+    LOG_INFO(LOG_CEF, "[PUMP] ShutdownPump: sched_imm={} sched_delayed={} "
              "source_fired=%llu timer_fired=%llu dmlw_calls=%llu",
              (unsigned long long)g_pump_sched_imm_calls.load(),
              (unsigned long long)g_pump_sched_delayed_calls.load(),

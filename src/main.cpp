@@ -18,6 +18,7 @@
 #include "mpv/event.h"
 #include "event_queue.h"
 #include "wake_event.h"
+#include "paths/paths.h"
 #include "settings.h"
 #include "titlebar_color.h"
 
@@ -117,7 +118,7 @@ static void mpv_digest_thread() {
 
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             auto* msg = static_cast<mpv_event_log_message*>(ev->data);
-            LOG_DEBUG(LOG_MPV, "%s: %s", msg->prefix, msg->text);
+            LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text);
             continue;
         }
 
@@ -302,7 +303,7 @@ static void cef_consumer_thread() {
             }
             case MpvEventType::DISPLAY_FPS: {
                 int hz = g_display_hz.load(std::memory_order_relaxed);
-                LOG_INFO(LOG_MAIN, "Display refresh rate changed: %d Hz", hz);
+                LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", hz);
                 if (g_web_browser && g_web_browser->browser())
                     g_web_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
                 if (g_overlay_browser && g_overlay_browser->browser())
@@ -391,8 +392,8 @@ int main(int argc, char* argv[]) {
                    "\nOptions:\n"
                    "  -h, --help                Show this help\n"
                    "  -v, --version             Show version\n"
-                   "  --log-level <level>       verbose|debug|info|warn|error\n"
-                   "  --log-file <path>         Write logs to file\n"
+                   "  --log-level <level>       trace|debug|info|warn|error\n"
+                   "  --log-file <path>         Write logs to file ('' to disable)\n"
                    "  --hwdec <mode>            Hardware decoding mode (default: auto-safe)\n"
                    "  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd\n"
                    "  --audio-exclusive         Exclusive audio output\n"
@@ -451,15 +452,28 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (log_level_str && log_level_str[0]) {
-        int level = parseLogLevel(log_level_str);
-        if (level >= 0) initLogging(static_cast<int>(level));
+    // --log-file overrides default; empty argument disables file logging entirely.
+    // Default to a platform log file on macOS/Windows (GUI apps have no
+    // user-visible stderr there). On Linux, stderr/journalctl is the norm,
+    // so file logging is opt-in via --log-file.
+    std::string log_path;
+    if (log_file_path) {
+        log_path = log_file_path;
     } else {
-        initLogging();
+#if !defined(__linux__)
+        log_path = paths::getLogPath();
+#endif
     }
-    if (log_file_path && log_file_path[0]) {
-        g_log_file = fopen(log_file_path, "w");
+    int log_level = -1;
+    if (log_level_str && log_level_str[0]) {
+        log_level = parseLogLevel(log_level_str);
+        if (log_level < 0) {
+            fprintf(stderr, "Invalid log level: '%s' (expected trace|debug|info|warn|error)\n",
+                    log_level_str);
+            return 1;
+        }
     }
+    initLogging(log_path.c_str(), log_level);
 
     if (player_mode && player_playlist.empty()) {
         fprintf(stderr, "Error: --player requires at least one file or URL\n");
@@ -467,7 +481,8 @@ int main(int argc, char* argv[]) {
     }
 
     LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING);
-    LOG_INFO(LOG_MAIN, "CEF %s", CEF_VERSION);
+    LOG_INFO(LOG_MAIN, "CEF {}", CEF_VERSION);
+    if (!log_path.empty()) LOG_INFO(LOG_MAIN, "Log file: {}", log_path.c_str());
 
     // --- Linux platform selection ---
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -493,7 +508,7 @@ int main(int argc, char* argv[]) {
     g_platform = make_wayland_platform();
 #endif
     g_platform.early_init();
-    LOG_INFO(LOG_MAIN, "Display backend: %s", use_wayland ? "wayland" : "x11");
+    LOG_INFO(LOG_MAIN, "Display backend: {}", use_wayland ? "wayland" : "x11");
 #endif
 
     // --- Signal handlers ---
@@ -522,8 +537,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- mpv setup ---
-    std::string mpv_home = Settings::getConfigDir() + "/mpv";
-    std::filesystem::create_directories(mpv_home);
+    std::string mpv_home = paths::getMpvHome();
 #ifdef _WIN32
     SetEnvironmentVariableA("MPV_HOME", mpv_home.c_str());
 #else
@@ -543,6 +557,7 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("target-colorspace-hint", "yes");
     g_mpv.SetOptionString("osd-level", "0");
     g_mpv.SetOptionString("osc", "no");
+    g_mpv.SetOptionString("display-tags", "");  // suppress "Title: ...", "Artist: ..." tag dump
     g_mpv.SetOptionString("input-default-bindings", "no");
     g_mpv.SetOptionString("input-vo-keyboard", "no");
     g_mpv.SetOptionString("input-vo-cursor", "no");
@@ -643,7 +658,7 @@ int main(int argc, char* argv[]) {
 
     int init_err = g_mpv.Initialize();
     if (init_err < 0) {
-        LOG_ERROR(LOG_MAIN, "mpv_initialize failed: %d", init_err);
+        LOG_ERROR(LOG_MAIN, "mpv_initialize failed: {}", init_err);
         g_mpv.TerminateDestroy();
         return 1;
     }
@@ -669,7 +684,7 @@ int main(int argc, char* argv[]) {
         if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             auto* msg = static_cast<mpv_event_log_message*>(ev->data);
-            LOG_DEBUG(LOG_MPV, "%s: %s", msg->prefix, msg->text);
+            LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text);
             continue;
         }
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
@@ -740,8 +755,6 @@ int main(int argc, char* argv[]) {
     auto fw_path = (app_contents / "Frameworks" / "Chromium Embedded Framework.framework").string();
     CefString(&settings.framework_dir_path).FromString(fw_path);
     CefString(&settings.browser_subprocess_path).FromString(exe.string());
-    auto home = std::string(getenv("HOME"));
-    CefString(&settings.root_cache_path).FromString(home + "/Library/Caches/jellyfin-desktop");
 #elif defined(_WIN32)
     char exe_buf[MAX_PATH];
     GetModuleFileNameA(NULL, exe_buf, MAX_PATH);
@@ -750,14 +763,6 @@ int main(int argc, char* argv[]) {
     CefString(&settings.browser_subprocess_path).FromString(exe_path.string());
     CefString(&settings.resources_dir_path).FromString(exe_dir.string());
     CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
-    // Cache: %LOCALAPPDATA%\jellyfin-desktop
-    const char* localappdata = getenv("LOCALAPPDATA");
-    std::string cache_path;
-    if (localappdata && localappdata[0])
-        cache_path = std::string(localappdata) + "\\jellyfin-desktop";
-    else
-        cache_path = (exe_dir / "cache").string();
-    CefString(&settings.root_cache_path).FromString(cache_path);
 #else
     CefString(&settings.browser_subprocess_path).FromString(
         std::filesystem::canonical("/proc/self/exe").string());
@@ -769,16 +774,8 @@ int main(int argc, char* argv[]) {
     CefString(&settings.resources_dir_path).FromString(exe_dir.string());
     CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
 #endif
-    const char* xdg_cache = getenv("XDG_CACHE_HOME");
-    std::string cache_path;
-    if (xdg_cache && xdg_cache[0]) {
-        cache_path = std::string(xdg_cache) + "/jellyfin-desktop";
-    } else {
-        const char* lhome = getenv("HOME");
-        cache_path = std::string(lhome ? lhome : "/tmp") + "/.cache/jellyfin-desktop";
-    }
-    CefString(&settings.root_cache_path).FromString(cache_path);
 #endif
+    CefString(&settings.root_cache_path).FromString(paths::getCacheDir());
 
     if (remote_debugging_port > 0)
         settings.remote_debugging_port = remote_debugging_port;
@@ -854,7 +851,7 @@ int main(int argc, char* argv[]) {
         main_url = "app://resources/index.html";
     }
 
-    LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) url=%s lw=%d lh=%d pw=%lld ph=%lld",
+    LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) url={} lw={} lh={} pw={} ph={}",
              main_url.c_str(), lw, lh, (long long)mw, (long long)mh);
     CefBrowserHost::CreateBrowser(wi, g_web_browser->client(), main_url, bs, nullptr, nullptr);
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
@@ -1056,6 +1053,6 @@ int main(int argc, char* argv[]) {
     g_mpv.TerminateDestroy();
 #endif
 
-    if (g_log_file) fclose(g_log_file);
+    shutdownLogging();
     return 0;
 }

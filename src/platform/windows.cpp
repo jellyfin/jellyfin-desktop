@@ -92,13 +92,13 @@ static bool init_d3d() {
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
         levels, 2, D3D11_SDK_VERSION, &base_device, nullptr, &g_win.d3d_context);
     if (FAILED(hr) || !base_device) {
-        LOG_ERROR(LOG_PLATFORM, "D3D11CreateDevice failed: 0x%08lx", hr);
+        LOG_ERROR(LOG_PLATFORM, "D3D11CreateDevice failed: 0x{:08x}", hr);
         return false;
     }
     hr = base_device->QueryInterface(__uuidof(ID3D11Device1), (void**)&g_win.d3d_device);
     base_device->Release();
     if (FAILED(hr)) {
-        LOG_ERROR(LOG_PLATFORM, "QueryInterface for ID3D11Device1 failed: 0x%08lx", hr);
+        LOG_ERROR(LOG_PLATFORM, "QueryInterface for ID3D11Device1 failed: 0x{:08x}", hr);
         return false;
     }
 
@@ -118,13 +118,13 @@ static bool init_dcomp() {
     HRESULT hr = DCompositionCreateDevice(nullptr, __uuidof(IDCompositionDevice),
         (void**)&g_win.dcomp_device);
     if (FAILED(hr)) {
-        LOG_ERROR(LOG_PLATFORM, "DCompositionCreateDevice failed: 0x%08lx", hr);
+        LOG_ERROR(LOG_PLATFORM, "DCompositionCreateDevice failed: 0x{:08x}", hr);
         return false;
     }
 
     hr = g_win.dcomp_device->CreateTargetForHwnd(g_win.mpv_hwnd, TRUE, &g_win.dcomp_target);
     if (FAILED(hr)) {
-        LOG_ERROR(LOG_PLATFORM, "CreateTargetForHwnd failed: 0x%08lx", hr);
+        LOG_ERROR(LOG_PLATFORM, "CreateTargetForHwnd failed: 0x{:08x}", hr);
         return false;
     }
 
@@ -160,7 +160,7 @@ static IDXGISwapChain1* create_swap_chain(int width, int height) {
     HRESULT hr = g_win.dxgi_factory->CreateSwapChainForComposition(
         g_win.d3d_device, &desc, nullptr, &sc);
     if (FAILED(hr)) {
-        LOG_ERROR(LOG_PLATFORM, "CreateSwapChainForComposition failed: 0x%08lx", hr);
+        LOG_ERROR(LOG_PLATFORM, "CreateSwapChainForComposition failed: 0x{:08x}", hr);
         return nullptr;
     }
     return sc;

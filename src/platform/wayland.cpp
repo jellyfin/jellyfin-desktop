@@ -691,7 +691,7 @@ static bool probe_shared_texture_support(const std::string& ozone_platform,
             if (node) {
                 drm_fd = open(node, O_RDWR | O_CLOEXEC);
                 if (drm_fd >= 0)
-                    LOG_INFO(LOG_PLATFORM, "dmabuf probe using render node: %s", node);
+                    LOG_INFO(LOG_PLATFORM, "dmabuf probe using render node: {}", node);
             }
         }
     }
@@ -747,7 +747,7 @@ static bool probe_shared_texture_support(const std::string& ozone_platform,
     EGLImageKHR image = fn_create_image(egl_dpy, EGL_NO_CONTEXT,
                                         EGL_LINUX_DMA_BUF_EXT, nullptr, img_attrs);
     if (!image) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: eglCreateImageKHR failed (0x%x)", eglGetError());
+        LOG_WARN(LOG_PLATFORM, "dmabuf probe: eglCreateImageKHR failed (0x{:x})", eglGetError());
     } else {
         // Full GL texture binding test — this is the step that fails on
         // affected systems and matches Chromium's Skia Ganesh code path.
@@ -759,7 +759,7 @@ static bool probe_shared_texture_support(const std::string& ozone_platform,
         if (err == JFD_GL_NO_ERROR) {
             result = true;
         } else {
-            LOG_WARN(LOG_PLATFORM, "dmabuf probe: glEGLImageTargetTexture2DOES failed (0x%x)", err);
+            LOG_WARN(LOG_PLATFORM, "dmabuf probe: glEGLImageTargetTexture2DOES failed (0x{:x})", err);
         }
         fn_del_tex(1, &tex);
         fn_destroy_image(egl_dpy, image);
@@ -1297,7 +1297,7 @@ static void wl_cleanup_kde_palette() {
 }
 
 static void wl_set_titlebar_color(uint8_t r, uint8_t g, uint8_t b) {
-    LOG_DEBUG(LOG_PLATFORM, "set_titlebar_color(%02x,%02x,%02x) palette=%p", r, g, b, (void*)g_wl.palette);
+    LOG_DEBUG(LOG_PLATFORM, "set_titlebar_color({:02x},{:02x},{:02x}) palette={}", r, g, b, (void*)g_wl.palette);
     if (!g_wl.palette) return;
 
     char filename[64];

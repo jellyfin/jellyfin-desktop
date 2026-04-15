@@ -2,7 +2,7 @@
 #include "web_browser.h"
 #include "../common.h"
 #include "../settings.h"
-#include "../logging.h"
+#include "logging.h"
 #include "../titlebar_color.h"
 #include "../input/dispatch.h"
 #include "include/cef_urlrequest.h"
@@ -71,7 +71,7 @@ static void applySettingValue(const std::string& section, const std::string& key
     else if (key == "audioExclusive") s.setAudioExclusive(value == "true");
     else if (key == "audioChannels") s.setAudioChannels(value);
     else if (key == "logLevel") s.setLogLevel(value);
-    else LOG_WARN(LOG_CEF, "Unknown setting key: %s.%s", section.c_str(), key.c_str());
+    else LOG_WARN(LOG_CEF, "Unknown setting key: {}.{}", section.c_str(), key.c_str());
     s.saveAsync();
 }
 
@@ -99,7 +99,7 @@ bool OverlayBrowser::handleMessage(const std::string& name,
                                    CefRefPtr<CefBrowser> browser) {
     if (name == "loadServer") {
         std::string url = args->GetString(0).ToString();
-        LOG_INFO(LOG_CEF, "Overlay: loadServer %s", url.c_str());
+        LOG_INFO(LOG_CEF, "Overlay: loadServer {}", url.c_str());
         Settings::instance().setServerUrl(url);
         Settings::instance().saveAsync();
         // Navigate main browser to the server

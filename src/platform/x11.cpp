@@ -568,7 +568,7 @@ static bool x11_init(mpv_handle*) {
 
     idle_inhibit::init();
 
-    LOG_INFO(LOG_PLATFORM, "X11 platform initialized (parent=0x%x)", g_x11.parent);
+    LOG_INFO(LOG_PLATFORM, "X11 platform initialized (parent=0x{:x})", g_x11.parent);
     return true;
 }
 
