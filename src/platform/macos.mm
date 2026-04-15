@@ -9,6 +9,9 @@
 
 #include "platform/platform.h"
 #include "common.h"
+#include "browser/browsers.h"
+#include "browser/overlay_browser.h"
+#include "browser/web_browser.h"
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
 #include "input/input_macos.h"
@@ -219,13 +222,13 @@ static void release_pool(LayerState& s) {
 static bool ensure_pool(LayerState& s, int w, int h) {
     if (s.pool_w == w && s.pool_h == h && s.pool[0] != nullptr) return true;
 
-    LOG_INFO(LOG_PLATFORM, "[POOL] resize %dx%d -> %dx%d", s.pool_w, s.pool_h, w, h);
+    LOG_INFO(LOG_PLATFORM, "[POOL] resize {}x{} -> {}x{}", s.pool_w, s.pool_h, w, h);
     release_pool(s);
 
     for (int i = 0; i < kPoolSize; i++) {
         s.pool[i] = create_premul_iosurface(w, h);
         if (!s.pool[i]) {
-            LOG_ERROR(LOG_PLATFORM, "[POOL] IOSurfaceCreate failed i=%d %dx%d", i, w, h);
+            LOG_ERROR(LOG_PLATFORM, "[POOL] IOSurfaceCreate failed i={} {}x{}", i, w, h);
             release_pool(s);
             return false;
         }
@@ -238,7 +241,7 @@ static bool ensure_pool(LayerState& s, int w, int h) {
                                                             iosurface:s.pool[i]
                                                                 plane:0];
         if (!s.pool_textures[i]) {
-            LOG_ERROR(LOG_PLATFORM, "[POOL] newTextureWithDescriptor:iosurface: failed i=%d", i);
+            LOG_ERROR(LOG_PLATFORM, "[POOL] newTextureWithDescriptor:iosurface: failed i={}", i);
             release_pool(s);
             return false;
         }
@@ -279,8 +282,8 @@ static bool wrap_input_surface(LayerState& s, IOSurfaceRef surface, int w, int h
 
 static void present_iosurface(LayerState& s, const CefAcceleratedPaintInfo& info) {
     if (!g_mtl_device || !s.layer) {
-        LOG_WARN(LOG_PLATFORM, "[METAL] present skipped: device=%p layer=%p",
-                 g_mtl_device, s.layer);
+        LOG_WARN(LOG_PLATFORM, "[METAL] present skipped: device={} layer={}",
+                 (__bridge void*)g_mtl_device, (__bridge void*)s.layer);
         return;
     }
 
@@ -374,8 +377,6 @@ static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scal
 // CADisplayLink → CEF BeginFrame
 // =====================================================================
 
-extern CefRefPtr<Client>        g_client;
-extern CefRefPtr<OverlayClient> g_overlay_client;
 // CADisplayLink target — fires on the main runloop at the display's
 // refresh rate, driving CEF's external BeginFrame production.
 @interface DisplayLinkTarget : NSObject
@@ -386,12 +387,12 @@ extern CefRefPtr<OverlayClient> g_overlay_client;
 - (void)tick:(CADisplayLink*)link {
     (void)link;
     if (g_shutting_down.load(std::memory_order_relaxed)) return;
-    if (g_client) {
-        CefRefPtr<CefBrowser> b = g_client->browser();
+    if (g_web_browser) {
+        CefRefPtr<CefBrowser> b = g_web_browser->browser();
         if (b) b->GetHost()->SendExternalBeginFrame();
     }
-    if (g_overlay_client) {
-        CefRefPtr<CefBrowser> b = g_overlay_client->browser();
+    if (g_overlay_browser) {
+        CefRefPtr<CefBrowser> b = g_overlay_browser->browser();
         if (b) b->GetHost()->SendExternalBeginFrame();
     }
 }
@@ -437,7 +438,7 @@ static bool macos_init(mpv_handle* mpv) {
         LOG_ERROR(LOG_PLATFORM, "[INIT] mpv did not create a window");
         return false;
     }
-    LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: got window=%p", g_window);
+    LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: got window={}", (__bridge void*)g_window);
 
     // mpv's Window.windowShouldClose sends MP_KEY_CLOSE_WIN into mpv's
     // input system, which we've disabled. Swizzle it to call our shutdown.
@@ -552,7 +553,7 @@ static bool macos_init(mpv_handle* mpv) {
                      queue:nil
                 usingBlock:^(NSNotification* /*note*/) {
         NSRect b = [[g_window contentView] bounds];
-        LOG_INFO(LOG_PLATFORM, "[WINDOW] NSWindowDidResizeNotification contentView=%.0fx%.0f",
+        LOG_INFO(LOG_PLATFORM, "[WINDOW] NSWindowDidResizeNotification contentView={:.0f}x{:.0f}",
                  b.size.width, b.size.height);
     }];
 
@@ -564,9 +565,9 @@ static bool macos_init(mpv_handle* mpv) {
         return false;
     }
 
-    LOG_INFO(LOG_PLATFORM, "[INIT] Metal compositor initialized (2 layers) frame=%.0fx%.0f scale=%.2f window.firstResponder=%p input_view=%p",
+    LOG_INFO(LOG_PLATFORM, "[INIT] Metal compositor initialized (2 layers) frame={:.0f}x{:.0f} scale={:.2f} window.firstResponder={} input_view={}",
              frame.size.width, frame.size.height, scale,
-             [g_window firstResponder], g_input_view);
+             (__bridge void*)[g_window firstResponder], (__bridge void*)g_input_view);
     return true;
 }
 
@@ -585,7 +586,7 @@ static void macos_present(const CefAcceleratedPaintInfo& info) {
     // frame is the reveal trigger. In normal mode this branch is a
     // no-op — macos_fade_overlay is responsible for unhiding the main
     // view when the overlay starts its fade-out.
-    if (!g_overlay_client && [g_main.view isHidden]) {
+    if (!g_overlay_browser && [g_main.view isHidden]) {
         [g_main.view setHidden:NO];
         reset_background_to_black();
     }
@@ -624,8 +625,8 @@ static void macos_set_overlay_visible(bool visible) {
     // don't show a caret and focus rings don't render. Matches the "active
     // tab" semantics: only one browser at a time holds focus. Mirrors the
     // Wayland path in wl_set_overlay_visible.
-    auto main = g_client ? g_client->browser() : nullptr;
-    auto ovl  = g_overlay_client ? g_overlay_client->browser() : nullptr;
+    auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+    auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
     if (visible) {
         if (main) main->GetHost()->SetFocus(false);
         if (ovl)  ovl->GetHost()->SetFocus(true);

@@ -1,12 +1,11 @@
 #pragma once
 
-// Standalone logging — no external dependencies.
-// Uses fprintf to stderr with optional file output.
-
-#include <cstdio>
 #include <cstring>
 
-// Log categories (values don't matter -- just used as tags)
+#include "quill/Logger.h"
+#include "quill/LogMacros.h"
+#include "include/internal/cef_types.h"
+
 enum LogCategory {
     LOG_MAIN       = 0,
     LOG_MPV        = 1,
@@ -24,49 +23,19 @@ enum LogCategory {
     LOG_JS_MAIN    = 13,
     LOG_JS_OVERLAY = 14,
     LOG_VIDEO      = 15,
+    LOG_CATEGORY_COUNT,
 };
 
-inline const char* getCategoryTag(int category) {
-    switch (category) {
-        case LOG_MAIN:       return "[Main]";
-        case LOG_MPV:        return "[mpv]";
-        case LOG_CEF:        return "[CEF]";
-        case LOG_GL:         return "[GL]";
-        case LOG_MEDIA:      return "[Media]";
-        case LOG_OVERLAY:    return "[Overlay]";
-        case LOG_MENU:       return "[Menu]";
-        case LOG_UI:         return "[UI]";
-        case LOG_WINDOW:     return "[Window]";
-        case LOG_PLATFORM:   return "[Platform]";
-        case LOG_COMPOSITOR: return "[Compositor]";
-        case LOG_RESOURCE:   return "[Resource]";
-        case LOG_TEST:       return "[Test]";
-        case LOG_JS_MAIN:    return "[JS:Main]";
-        case LOG_JS_OVERLAY: return "[JS:Overlay]";
-        case LOG_VIDEO:      return "[Video]";
-        default:             return "";
-    }
-}
+extern quill::Logger* g_loggers[LOG_CATEGORY_COUNT];
 
-// Log file handle (nullptr = stderr only)
-inline FILE* g_log_file = nullptr;
-
-// Single logging path — all macros route through this
-#ifdef _MSC_VER
-void logWrite(int category, const char* level, _Printf_format_string_ const char* fmt, ...);
-#else
-void logWrite(int category, const char* level, const char* fmt, ...)
-    __attribute__((format(printf, 3, 4)));
-#endif
-
-#define LOG_ERROR(cat, fmt, ...)   logWrite(cat, "ERROR",   fmt, ##__VA_ARGS__)
-#define LOG_WARN(cat, fmt, ...)    logWrite(cat, "WARN",    fmt, ##__VA_ARGS__)
-#define LOG_INFO(cat, fmt, ...)    logWrite(cat, "INFO",    fmt, ##__VA_ARGS__)
-#define LOG_DEBUG(cat, fmt, ...)   logWrite(cat, "DEBUG",   fmt, ##__VA_ARGS__)
-#define LOG_VERBOSE(cat, fmt, ...) logWrite(cat, "VERBOSE", fmt, ##__VA_ARGS__)
+#define LOG_ERROR(cat, ...)   QUILL_LOG_ERROR(g_loggers[cat],   __VA_ARGS__)
+#define LOG_WARN(cat, ...)    QUILL_LOG_WARNING(g_loggers[cat], __VA_ARGS__)
+#define LOG_INFO(cat, ...)    QUILL_LOG_INFO(g_loggers[cat],    __VA_ARGS__)
+#define LOG_DEBUG(cat, ...)   QUILL_LOG_DEBUG(g_loggers[cat],   __VA_ARGS__)
+#define LOG_TRACE(cat, ...)   QUILL_LOG_TRACE_L1(g_loggers[cat], __VA_ARGS__)
 
 inline int parseLogLevel(const char* level) {
-    if (strcmp(level, "verbose") == 0) return 0;
+    if (strcmp(level, "trace") == 0) return 0;
     if (strcmp(level, "debug") == 0)   return 1;
     if (strcmp(level, "info") == 0)    return 2;
     if (strcmp(level, "warn") == 0)    return 3;
@@ -74,6 +43,25 @@ inline int parseLogLevel(const char* level) {
     return -1;
 }
 
-inline void initLogging(int /*level*/ = 1) {
-    // Future: filter by level. For now, log everything.
+// Map our 0..4 log level (see parseLogLevel) to CEF's severity enum.
+inline cef_log_severity_t toCefSeverity(int parsed) {
+    switch (parsed) {
+        case 0: case 1: return LOGSEVERITY_VERBOSE;
+        case 2:         return LOGSEVERITY_INFO;
+        case 3:         return LOGSEVERITY_WARNING;
+        case 4:         return LOGSEVERITY_ERROR;
+        default:        return LOGSEVERITY_DEFAULT;
+    }
 }
+
+// Install the log file at `path` (rotated on startup + at 10 MB, 3 backups)
+// and redirect this process's stderr through the logger so writes from
+// CEF/Chromium (and subprocesses that inherit our stderr) land in the log.
+// Empty/null path disables file logging; stderr is still captured.
+// `min_level` is the value returned by parseLogLevel: 0=verbose .. 4=error;
+// pass -1 to keep the default (everything).
+// Call once before spawning any subprocess.
+void initLogging(const char* path, int min_level);
+
+// Flush and stop the backend, drain the stderr capture, close files.
+void shutdownLogging();

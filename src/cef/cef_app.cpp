@@ -1,13 +1,254 @@
 #include "cef_app.h"
 #include "resource_handler.h"
 #include "../settings.h"
+#include "../paths/paths.h"
 #include "embedded_js.h"
-#include "../logging.h"
+#include "logging.h"
+#include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
+#include "include/cef_render_process_handler.h"
 #include "include/cef_v8.h"
-#include <cmath>
+
+#include <cassert>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <cstdlib>
+#endif
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include "include/wrapper/cef_library_loader.h"
+#endif
+
+// App and NativeV8Handler are implementation details of this TU. Declaring
+// them here (not in the public header) keeps CEF types off main.cpp's public
+// surface.
+
+class App : public CefApp,
+            public CefBrowserProcessHandler,
+            public CefRenderProcessHandler {
+public:
+    App() = default;
+
+    // CefApp
+    CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
+    void OnBeforeCommandLineProcessing(const CefString& process_type,
+                                       CefRefPtr<CefCommandLine> command_line) override;
+    void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
+
+    // CefBrowserProcessHandler
+    void OnContextInitialized() override;
+    void OnScheduleMessagePumpWork(int64_t delay_ms) override;
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefProcessId source_process,
+                                  CefRefPtr<CefProcessMessage> message) override;
+
+#ifdef __APPLE__
+    // external_message_pump support (macOS only). InitPump() installs a
+    // CFRunLoopSource and CFRunLoopTimer in the main runloop's common modes;
+    // OnScheduleMessagePumpWork signals the source (immediate) or sets the
+    // timer's next fire date (delayed). Both are serviced by [NSApp run]'s
+    // CFRunLoopRun loop. Must be called once after [NSApplication
+    // sharedApplication] and before CefInitialize. Call ShutdownPump() after
+    // the post-run CEF drain completes (and before CefShutdown) to invalidate
+    // the source/timer and gate any racing wakes.
+    static void InitPump();
+    static void ShutdownPump();
+#endif
+
+    // CefRenderProcessHandler
+    void OnContextCreated(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefFrame> frame,
+                         CefRefPtr<CefV8Context> context) override;
+
+private:
+    IMPLEMENT_REFCOUNTING(App);
+    DISALLOW_COPY_AND_ASSIGN(App);
+};
+
+class NativeV8Handler : public CefV8Handler {
+public:
+    NativeV8Handler(CefRefPtr<CefBrowser> browser) : browser_(browser) {}
+
+    bool Execute(const CefString& name,
+                CefRefPtr<CefV8Value> object,
+                const CefV8ValueList& arguments,
+                CefRefPtr<CefV8Value>& retval,
+                CefString& exception) override;
+
+private:
+    CefRefPtr<CefBrowser> browser_;
+    IMPLEMENT_REFCOUNTING(NativeV8Handler);
+};
+
+namespace CefRuntime {
+
+// Process-lifetime state for the main/browser process.
+CefMainArgs g_main_args;
+CefRefPtr<App> g_app;
+
+// Populated by the Set*() configuration functions. CefSettings fields get
+// written directly; command-line switches get queued here and appended in
+// App::OnBeforeCommandLineProcessing when CEF invokes it.
+CefSettings g_settings;
+struct PendingSwitch { std::string name; std::string value; };  // value="" → flag
+std::vector<PendingSwitch> g_pending_switches;
+
+namespace {
+
+constexpr const char kSubprocessEnvVar[] = "JELLYFIN_CEF_SUBPROCESS";
+
+#ifndef _WIN32
+// Backing storage for the filtered argv we hand to CEF in the browser
+// process. Must outlive g_main_args, hence file-scope.
+char* g_argv0_only[2];
+#endif
+
+#ifdef __APPLE__
+// macOS loads libcef dynamically via the helper wrapper. The loader must
+// live for the rest of the process, so store it here.
+CefScopedLibraryLoader g_library_loader;
+#endif
+
+CefMainArgs BuildMainArgs(int argc, char* argv[]) {
+#ifdef _WIN32
+    (void)argc; (void)argv;
+    // Windows: argv is unused; Chromium reads subprocess switches from
+    // GetCommandLine() itself.
+    SetEnvironmentVariableA(kSubprocessEnvVar, "1");
+    return CefMainArgs(GetModuleHandle(NULL));
+#else
+    // Children inherit this env var from the parent that spawned them.
+    // Presence == "I am a CEF-spawned subprocess, pass argv through".
+    if (std::getenv(kSubprocessEnvVar)) {
+        return CefMainArgs(argc, argv);
+    }
+    setenv(kSubprocessEnvVar, "1", 1);
+    // Initial/browser process: strip argv so the user's shell flags don't
+    // reach Chromium's command-line parser.
+    g_argv0_only[0] = argv[0];
+    g_argv0_only[1] = nullptr;
+    return CefMainArgs(1, g_argv0_only);
+#endif
+}
+
+}  // namespace
+
+int Start(int argc, char* argv[]) {
+#ifdef __APPLE__
+    if (!g_library_loader.LoadInMain()) {
+        fprintf(stderr, "Failed to load CEF library\n");
+        return 1;
+    }
+#endif
+    g_main_args = BuildMainArgs(argc, argv);
+    g_app = new App();
+    // CefExecuteProcess returns >= 0 in subprocesses (GPU/renderer/...) after
+    // they've run their course; returns -1 in the main/browser process.
+    return CefExecuteProcess(g_main_args, g_app, nullptr);
+}
+
+void SetLogSeverity(cef_log_severity_t severity) {
+    g_settings.log_severity = severity;
+}
+
+void SetRemoteDebuggingPort(int port) {
+    g_settings.remote_debugging_port = port;
+}
+
+void SetDisableGpuCompositing(bool disable) {
+    if (disable) g_pending_switches.push_back({"disable-gpu-compositing", ""});
+}
+
+#ifdef __linux__
+void SetOzonePlatform(const std::string& platform) {
+    if (platform.empty()) return;
+    g_pending_switches.push_back({"ozone-platform", platform});
+    // CEF's OSR has no native window, so Chromium's per-window scaling override
+    // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
+    // from GetScreenInfo. Disabling the fractional scale protocol avoids that
+    // path and keeps HiDPI OSR content scaling correct.
+    if (platform == "wayland")
+        g_pending_switches.push_back({"disable-features", "WaylandFractionalScaleV1"});
+}
+#endif
+
+bool Initialize() {
+    assert(g_app && "CefRuntime::Start() must be called first");
+    CefSettings& settings = g_settings;
+    settings.windowless_rendering_enabled = true;
+#ifdef __APPLE__
+    settings.external_message_pump = true;
+#else
+    settings.multi_threaded_message_loop = true;
+#endif
+    settings.no_sandbox = true;
+    CefString(&settings.locale).FromASCII("en-US");
+
+#ifdef __APPLE__
+    char exe_buf[4096];
+    uint32_t exe_size = sizeof(exe_buf);
+    _NSGetExecutablePath(exe_buf, &exe_size);
+    auto exe = std::filesystem::canonical(exe_buf);
+    auto app_contents = exe.parent_path().parent_path();
+    auto fw_path = (app_contents / "Frameworks" / "Chromium Embedded Framework.framework").string();
+    CefString(&settings.framework_dir_path).FromString(fw_path);
+    CefString(&settings.browser_subprocess_path).FromString(exe.string());
+#elif defined(_WIN32)
+    char exe_buf[MAX_PATH];
+    GetModuleFileNameA(NULL, exe_buf, MAX_PATH);
+    auto exe_path = std::filesystem::canonical(exe_buf);
+    auto exe_dir = exe_path.parent_path();
+    CefString(&settings.browser_subprocess_path).FromString(exe_path.string());
+    CefString(&settings.resources_dir_path).FromString(exe_dir.string());
+    CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
+#else
+    auto exe_path = std::filesystem::canonical("/proc/self/exe");
+    CefString(&settings.browser_subprocess_path).FromString(exe_path.string());
+#ifdef CEF_RESOURCES_DIR
+    std::string res_dir = CEF_RESOURCES_DIR;
+    CefString(&settings.resources_dir_path).FromString(res_dir);
+    CefString(&settings.locales_dir_path).FromString(res_dir + "/locales");
+#else
+    auto exe_dir = exe_path.parent_path();
+    CefString(&settings.resources_dir_path).FromString(exe_dir.string());
+    CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
+#endif
+#endif
+    CefString(&settings.root_cache_path).FromString(paths::getCacheDir());
+
+#ifdef __APPLE__
+    // Install the CFRunLoopSource + CFRunLoopTimer that drive the external
+    // message pump. Must happen before CefInitialize so the very first
+    // OnScheduleMessagePumpWork callback (which fires synchronously during
+    // CefInitialize on the calling thread) finds the source/timer ready.
+    App::InitPump();
+#endif
+
+    return CefInitialize(g_main_args, settings, g_app, nullptr);
+}
+
+void Shutdown() {
+#ifdef __APPLE__
+    // Gate further external-pump dispatches so any blocks that race into the
+    // main queue after this point become no-ops instead of calling into CEF
+    // state that's about to be torn down.
+    App::ShutdownPump();
+#endif
+    CefShutdown();
+}
+
+}  // namespace CefRuntime
+
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
@@ -47,24 +288,15 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-id", "");
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
-#ifdef __linux__
-    // Only the browser process sets ozone platform; CEF propagates to subprocesses.
+    // Switches queued by the CefRuntime::Set*() configuration functions.
+    // Browser process only; CEF propagates to subprocesses as needed.
     if (process_type.empty()) {
-        command_line->AppendSwitchWithValue("ozone-platform", ozone_platform_);
-
-        // Disable fractional scale protocol when using ozone-platform=wayland.
-        // CEF's OSR has no native window, so Chromium's per-window scaling override
-        // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
-        // from GetScreenInfo. Without this, HiDPI content scaling breaks in OSR.
-        if (ozone_platform_ == "wayland") {
-            command_line->AppendSwitchWithValue(
-                "disable-features", "WaylandFractionalScaleV1");
+        for (const auto& s : CefRuntime::g_pending_switches) {
+            if (s.value.empty())
+                command_line->AppendSwitch(s.name);
+            else
+                command_line->AppendSwitchWithValue(s.name, s.value);
         }
-    }
-#endif
-
-    if (disable_gpu_compositing_) {
-        command_line->AppendSwitch("disable-gpu-compositing");
     }
 
 #ifdef __APPLE__
@@ -106,38 +338,21 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     CefRefPtr<NativeV8Handler> handler = new NativeV8Handler(browser);
 
     CefRefPtr<CefV8Value> jmpNative = CefV8Value::CreateObject(nullptr, nullptr);
-    jmpNative->SetValue("playerLoad", CefV8Value::CreateFunction("playerLoad", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerStop", CefV8Value::CreateFunction("playerStop", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerPause", CefV8Value::CreateFunction("playerPause", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerPlay", CefV8Value::CreateFunction("playerPlay", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSeek", CefV8Value::CreateFunction("playerSeek", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetVolume", CefV8Value::CreateFunction("playerSetVolume", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetMuted", CefV8Value::CreateFunction("playerSetMuted", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetSpeed", CefV8Value::CreateFunction("playerSetSpeed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetAspectRatio", CefV8Value::CreateFunction("playerSetAspectRatio", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetSubtitle", CefV8Value::CreateFunction("playerSetSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerAddSubtitle", CefV8Value::CreateFunction("playerAddSubtitle", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetAudio", CefV8Value::CreateFunction("playerSetAudio", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("playerSetAudioDelay", CefV8Value::CreateFunction("playerSetAudioDelay", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("saveServerUrl", CefV8Value::CreateFunction("saveServerUrl", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("loadServer", CefV8Value::CreateFunction("loadServer", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("checkServerConnectivity", CefV8Value::CreateFunction("checkServerConnectivity", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyMetadata", CefV8Value::CreateFunction("notifyMetadata", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyPosition", CefV8Value::CreateFunction("notifyPosition", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifySeek", CefV8Value::CreateFunction("notifySeek", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyPlaybackState", CefV8Value::CreateFunction("notifyPlaybackState", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyArtwork", CefV8Value::CreateFunction("notifyArtwork", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyQueueChange", CefV8Value::CreateFunction("notifyQueueChange", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("notifyRateChange", CefV8Value::CreateFunction("notifyRateChange", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("appExit", CefV8Value::CreateFunction("appExit", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("setSettingValue", CefV8Value::CreateFunction("setSettingValue", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("themeColor", CefV8Value::CreateFunction("themeColor", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("setOsdVisible", CefV8Value::CreateFunction("setOsdVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("setCursorVisible", CefV8Value::CreateFunction("setCursorVisible", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("toggleFullscreen", CefV8Value::CreateFunction("toggleFullscreen", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("menuItemSelected", CefV8Value::CreateFunction("menuItemSelected", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("menuDismissed", CefV8Value::CreateFunction("menuDismissed", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
-    jmpNative->SetValue("overlayFadeComplete", CefV8Value::CreateFunction("overlayFadeComplete", handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    static const char* const kFunctions[] = {
+        "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
+        "playerSetVolume", "playerSetMuted", "playerSetSpeed", "playerSetAspectRatio",
+        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
+        "playerSetAudioDelay", "playerOsdActive",
+        "saveServerUrl", "loadServer", "checkServerConnectivity",
+        "notifyMetadata", "notifyPosition", "notifySeek",
+        "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
+        "notifyRateChange",
+        "appExit", "setSettingValue", "themeColor",
+        "setOsdVisible", "setCursorVisible", "toggleFullscreen",
+        "menuItemSelected", "menuDismissed", "overlayFadeComplete",
+    };
+    for (const char* fn : kFunctions)
+        jmpNative->SetValue(fn, CefV8Value::CreateFunction(fn, handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject JS shim
@@ -195,62 +410,24 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
     return false;
 }
 
-// V8 handler -- sends IPC messages to browser process
-static int v8ToInt(const CefRefPtr<CefV8Value>& val, int fallback) {
-    if (val->IsInt()) return val->GetIntValue();
-    if (val->IsDouble()) return static_cast<int>(std::lround(val->GetDoubleValue()));
-    return fallback;
-}
-
+// V8 handler -- generic IPC relay to browser process.
+// Serializes V8 arguments by detected type; the receiving side handles
+// any coercion (e.g. JS numbers that should be ints).
 bool NativeV8Handler::Execute(const CefString& name,
                               CefRefPtr<CefV8Value>,
                               const CefV8ValueList& arguments,
                               CefRefPtr<CefV8Value>&,
                               CefString&) {
-    // Simple IPC relay: create message with same name and forward args
     CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create(name);
     CefRefPtr<CefListValue> args = msg->GetArgumentList();
 
-    if (name == "playerLoad") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) {
-            args->SetString(0, arguments[0]->GetStringValue());
-            args->SetInt(1, arguments.size() > 1 ? v8ToInt(arguments[1], 0) : 0);
-            args->SetInt(2, arguments.size() > 2 ? v8ToInt(arguments[2], -1) : -1);
-            args->SetInt(3, arguments.size() > 3 ? v8ToInt(arguments[3], -1) : -1);
-            args->SetString(4, arguments.size() > 4 && arguments[4]->IsString()
-                ? arguments[4]->GetStringValue() : "{}");
-        }
-    } else if (name == "playerSeek" || name == "playerSetVolume" || name == "playerSetSpeed" ||
-               name == "playerSetSubtitle" || name == "playerSetAudio" ||
-               name == "notifyPosition" || name == "notifySeek") {
-        if (arguments.size() >= 1) args->SetInt(0, v8ToInt(arguments[0], 0));
-    } else if (name == "playerSetMuted") {
-        if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
-    } else if (name == "playerSetAudioDelay" || name == "notifyRateChange") {
-        if (arguments.size() >= 1 && arguments[0]->IsDouble()) args->SetDouble(0, arguments[0]->GetDoubleValue());
-    } else if (name == "saveServerUrl" || name == "loadServer" || name == "checkServerConnectivity" ||
-               name == "notifyMetadata" || name == "notifyPlaybackState" || name == "notifyArtwork" ||
-               name == "themeColor" || name == "playerAddSubtitle" || name == "playerSetAspectRatio") {
-        if (arguments.size() >= 1 && arguments[0]->IsString()) args->SetString(0, arguments[0]->GetStringValue());
-    } else if (name == "notifyQueueChange") {
-        if (arguments.size() >= 2 && arguments[0]->IsBool() && arguments[1]->IsBool()) {
-            args->SetBool(0, arguments[0]->GetBoolValue());
-            args->SetBool(1, arguments[1]->GetBoolValue());
-        }
-    } else if (name == "setSettingValue") {
-        if (arguments.size() >= 3) {
-            args->SetString(0, arguments[0]->GetStringValue());
-            args->SetString(1, arguments[1]->GetStringValue());
-            args->SetString(2, arguments[2]->GetStringValue());
-        }
-    } else if (name == "setOsdVisible") {
-        if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
-    } else if (name == "setCursorVisible") {
-        if (arguments.size() >= 1 && arguments[0]->IsBool()) args->SetBool(0, arguments[0]->GetBoolValue());
-    } else if (name == "menuItemSelected") {
-        if (arguments.size() >= 1) args->SetInt(0, v8ToInt(arguments[0], 0));
+    for (size_t i = 0; i < arguments.size(); i++) {
+        auto& v = arguments[i];
+        if      (v->IsBool())   args->SetBool(i, v->GetBoolValue());
+        else if (v->IsInt())    args->SetInt(i, v->GetIntValue());
+        else if (v->IsDouble()) args->SetDouble(i, v->GetDoubleValue());
+        else if (v->IsString()) args->SetString(i, v->GetStringValue());
     }
-    // playerStop, playerPause, playerPlay, appExit, menuDismissed: no args needed
 
     browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
     return true;
@@ -357,7 +534,7 @@ constexpr double kCefMaxTimeSliceMs = 10.0;
 
 static void pump_drain(const char* trigger) {
     if (g_pump_shutdown.load(std::memory_order_acquire)) {
-        LOG_INFO(LOG_CEF, "[PUMP] drain(%s) skipped (shutdown)", trigger);
+        LOG_INFO(LOG_CEF, "[PUMP] drain({}) skipped (shutdown)", trigger);
         return;
     }
 
@@ -419,7 +596,7 @@ void App::InitPump() {
 
 void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
     if (g_pump_shutdown.load(std::memory_order_acquire)) {
-        LOG_INFO(LOG_CEF, "[PUMP] OnSched(%lld) SKIP(shutdown) tid=%llu",
+        LOG_INFO(LOG_CEF, "[PUMP] OnSched({}) SKIP(shutdown) tid={}",
                  (long long)delay_ms, (unsigned long long)tid_u64());
         return;
     }
@@ -447,7 +624,7 @@ void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
 
 
 void App::ShutdownPump() {
-    LOG_INFO(LOG_CEF, "[PUMP] ShutdownPump: sched_imm=%llu sched_delayed=%llu "
+    LOG_INFO(LOG_CEF, "[PUMP] ShutdownPump: sched_imm={} sched_delayed={} "
              "source_fired=%llu timer_fired=%llu dmlw_calls=%llu",
              (unsigned long long)g_pump_sched_imm_calls.load(),
              (unsigned long long)g_pump_sched_delayed_calls.load(),

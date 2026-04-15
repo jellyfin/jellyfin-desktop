@@ -157,7 +157,7 @@ void stopListener() {
 bool trySignalExisting() {
     std::string path = getSocketPath();
     if (path.size() >= sizeof(sockaddr_un::sun_path)) {
-        LOG_ERROR(LOG_MAIN, "Socket path too long (%zu bytes): %s", path.size(), path.c_str());
+        LOG_ERROR(LOG_MAIN, "Socket path too long ({} bytes): {}", path.size(), path.c_str());
         return false;
     }
 
@@ -232,7 +232,7 @@ void listenerThread(std::function<void(const std::string&)> onRaise) {
                         while (!token.empty() && (token.back() == '\n' || token.back() == '\r'))
                             token.pop_back();
                     }
-                    LOG_INFO(LOG_MAIN, "Received raise signal from another instance (token=%s)",
+                    LOG_INFO(LOG_MAIN, "Received raise signal from another instance (token={})",
                              token.empty() ? "none" : "present");
                     onRaise(token);
                 }
@@ -244,7 +244,7 @@ void listenerThread(std::function<void(const std::string&)> onRaise) {
 void startListener(std::function<void(const std::string&)> onRaise) {
     std::string path = getSocketPath();
     if (path.size() >= sizeof(sockaddr_un::sun_path)) {
-        LOG_ERROR(LOG_MAIN, "Socket path too long (%zu bytes): %s", path.size(), path.c_str());
+        LOG_ERROR(LOG_MAIN, "Socket path too long ({} bytes): {}", path.size(), path.c_str());
         return;
     }
 
@@ -257,7 +257,7 @@ void startListener(std::function<void(const std::string&)> onRaise) {
     std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
 
     if (bind(g_listen_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-        LOG_WARN(LOG_MAIN, "Single-instance listener: bind failed (%s)", std::strerror(errno));
+        LOG_WARN(LOG_MAIN, "Single-instance listener: bind failed ({})", std::strerror(errno));
         close(g_listen_fd);
         g_listen_fd = -1;
         return;
