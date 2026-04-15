@@ -1,71 +1,43 @@
 #pragma once
 
-#include "include/cef_app.h"
-#include "include/cef_render_process_handler.h"
-#include "include/cef_v8.h"
+#include "include/internal/cef_types.h"
 
-class App : public CefApp,
-            public CefBrowserProcessHandler,
-            public CefRenderProcessHandler {
-public:
-    App() = default;
+#include <string>
 
-    void SetDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
-    void SetOzonePlatform(const std::string& p) { ozone_platform_ = p; }
+// CEF process bootstrap. Encapsulates the multi-process dance so main.cpp
+// doesn't need to know about library loaders, MainArgs, subprocess dispatch,
+// argv sanitization, or the App object.
+//
+// CEF re-execs this binary to spawn GPU/renderer/utility children. Chromium
+// delivers --type=... and related switches to those children via argv, so
+// children must receive the full argv. The initial (browser) process must
+// NOT forward the user's shell argv into CEF — any Chromium switch we want
+// there goes through OnBeforeCommandLineProcessing. Parent/child is
+// discriminated via an inherited env var.
+namespace CefRuntime {
 
-    // CefApp
-    CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
-    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
-    void OnBeforeCommandLineProcessing(const CefString& process_type,
-                                       CefRefPtr<CefCommandLine> command_line) override;
-    void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
+// Call once at the top of main(), after platform early_init. If this process
+// is a CEF-spawned subprocess, it runs to completion; the return value is
+// the exit code the caller must `return` from main. If this is the initial
+// (browser) process, returns -1 and startup should continue.
+int Start(int argc, char* argv[]);
 
-    // CefBrowserProcessHandler
-    void OnContextInitialized() override;
-    void OnScheduleMessagePumpWork(int64_t delay_ms) override;
-    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
-                                  CefRefPtr<CefFrame> frame,
-                                  CefProcessId source_process,
-                                  CefRefPtr<CefProcessMessage> message) override;
-
-#ifdef __APPLE__
-    // external_message_pump support (macOS only). InitPump() installs a
-    // CFRunLoopSource and CFRunLoopTimer in the main runloop's common modes;
-    // OnScheduleMessagePumpWork signals the source (immediate) or sets the
-    // timer's next fire date (delayed). Both are serviced by [NSApp run]'s
-    // CFRunLoopRun loop. Must be called once after [NSApplication
-    // sharedApplication] and before CefInitialize. Call ShutdownPump() after
-    // the post-run CEF drain completes (and before CefShutdown) to invalidate
-    // the source/timer and gate any racing wakes.
-    static void InitPump();
-    static void ShutdownPump();
+// Configuration for the not-yet-started browser process. Call between
+// Start() and Initialize(). Values are applied when CEF asks us for them.
+void SetLogSeverity(cef_log_severity_t severity);
+void SetRemoteDebuggingPort(int port);            // 0 = disabled
+void SetDisableGpuCompositing(bool disable);
+#ifdef __linux__
+void SetOzonePlatform(const std::string& platform);
 #endif
 
-    // CefRenderProcessHandler
-    void OnContextCreated(CefRefPtr<CefBrowser> browser,
-                         CefRefPtr<CefFrame> frame,
-                         CefRefPtr<CefV8Context> context) override;
+// Builds CefSettings (paths, locale, message pump, sandbox, cache dir, etc.),
+// performs any platform pre-init (e.g. macOS message pump source/timer), and
+// calls CefInitialize for the browser process. Returns true on success.
+bool Initialize();
 
-private:
-    bool disable_gpu_compositing_ = false;
-    std::string ozone_platform_;
+// Tears down CEF for the browser process. Call once during shutdown after
+// all browsers have closed.
+void Shutdown();
 
-    IMPLEMENT_REFCOUNTING(App);
-    DISALLOW_COPY_AND_ASSIGN(App);
-};
-
-// V8 handler for native functions
-class NativeV8Handler : public CefV8Handler {
-public:
-    NativeV8Handler(CefRefPtr<CefBrowser> browser) : browser_(browser) {}
-
-    bool Execute(const CefString& name,
-                CefRefPtr<CefV8Value> object,
-                const CefV8ValueList& arguments,
-                CefRefPtr<CefV8Value>& retval,
-                CefString& exception) override;
-
-private:
-    CefRefPtr<CefBrowser> browser_;
-    IMPLEMENT_REFCOUNTING(NativeV8Handler);
-};
+}  // namespace CefRuntime

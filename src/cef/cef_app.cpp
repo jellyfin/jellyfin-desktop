@@ -1,12 +1,253 @@
 #include "cef_app.h"
 #include "resource_handler.h"
 #include "../settings.h"
+#include "../paths/paths.h"
 #include "embedded_js.h"
 #include "logging.h"
+#include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
 #include "include/cef_frame.h"
+#include "include/cef_render_process_handler.h"
 #include "include/cef_v8.h"
+
+#include <cassert>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <cstdlib>
+#endif
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include "include/wrapper/cef_library_loader.h"
+#endif
+
+// App and NativeV8Handler are implementation details of this TU. Declaring
+// them here (not in the public header) keeps CEF types off main.cpp's public
+// surface.
+
+class App : public CefApp,
+            public CefBrowserProcessHandler,
+            public CefRenderProcessHandler {
+public:
+    App() = default;
+
+    // CefApp
+    CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
+    void OnBeforeCommandLineProcessing(const CefString& process_type,
+                                       CefRefPtr<CefCommandLine> command_line) override;
+    void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
+
+    // CefBrowserProcessHandler
+    void OnContextInitialized() override;
+    void OnScheduleMessagePumpWork(int64_t delay_ms) override;
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefProcessId source_process,
+                                  CefRefPtr<CefProcessMessage> message) override;
+
+#ifdef __APPLE__
+    // external_message_pump support (macOS only). InitPump() installs a
+    // CFRunLoopSource and CFRunLoopTimer in the main runloop's common modes;
+    // OnScheduleMessagePumpWork signals the source (immediate) or sets the
+    // timer's next fire date (delayed). Both are serviced by [NSApp run]'s
+    // CFRunLoopRun loop. Must be called once after [NSApplication
+    // sharedApplication] and before CefInitialize. Call ShutdownPump() after
+    // the post-run CEF drain completes (and before CefShutdown) to invalidate
+    // the source/timer and gate any racing wakes.
+    static void InitPump();
+    static void ShutdownPump();
+#endif
+
+    // CefRenderProcessHandler
+    void OnContextCreated(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefFrame> frame,
+                         CefRefPtr<CefV8Context> context) override;
+
+private:
+    IMPLEMENT_REFCOUNTING(App);
+    DISALLOW_COPY_AND_ASSIGN(App);
+};
+
+class NativeV8Handler : public CefV8Handler {
+public:
+    NativeV8Handler(CefRefPtr<CefBrowser> browser) : browser_(browser) {}
+
+    bool Execute(const CefString& name,
+                CefRefPtr<CefV8Value> object,
+                const CefV8ValueList& arguments,
+                CefRefPtr<CefV8Value>& retval,
+                CefString& exception) override;
+
+private:
+    CefRefPtr<CefBrowser> browser_;
+    IMPLEMENT_REFCOUNTING(NativeV8Handler);
+};
+
+namespace CefRuntime {
+
+// Process-lifetime state for the main/browser process.
+CefMainArgs g_main_args;
+CefRefPtr<App> g_app;
+
+// Populated by the Set*() configuration functions. CefSettings fields get
+// written directly; command-line switches get queued here and appended in
+// App::OnBeforeCommandLineProcessing when CEF invokes it.
+CefSettings g_settings;
+struct PendingSwitch { std::string name; std::string value; };  // value="" → flag
+std::vector<PendingSwitch> g_pending_switches;
+
+namespace {
+
+constexpr const char kSubprocessEnvVar[] = "JELLYFIN_CEF_SUBPROCESS";
+
+#ifndef _WIN32
+// Backing storage for the filtered argv we hand to CEF in the browser
+// process. Must outlive g_main_args, hence file-scope.
+char* g_argv0_only[2];
+#endif
+
+#ifdef __APPLE__
+// macOS loads libcef dynamically via the helper wrapper. The loader must
+// live for the rest of the process, so store it here.
+CefScopedLibraryLoader g_library_loader;
+#endif
+
+CefMainArgs BuildMainArgs(int argc, char* argv[]) {
+#ifdef _WIN32
+    (void)argc; (void)argv;
+    // Windows: argv is unused; Chromium reads subprocess switches from
+    // GetCommandLine() itself.
+    SetEnvironmentVariableA(kSubprocessEnvVar, "1");
+    return CefMainArgs(GetModuleHandle(NULL));
+#else
+    // Children inherit this env var from the parent that spawned them.
+    // Presence == "I am a CEF-spawned subprocess, pass argv through".
+    if (std::getenv(kSubprocessEnvVar)) {
+        return CefMainArgs(argc, argv);
+    }
+    setenv(kSubprocessEnvVar, "1", 1);
+    // Initial/browser process: strip argv so the user's shell flags don't
+    // reach Chromium's command-line parser.
+    g_argv0_only[0] = argv[0];
+    g_argv0_only[1] = nullptr;
+    return CefMainArgs(1, g_argv0_only);
+#endif
+}
+
+}  // namespace
+
+int Start(int argc, char* argv[]) {
+#ifdef __APPLE__
+    if (!g_library_loader.LoadInMain()) {
+        fprintf(stderr, "Failed to load CEF library\n");
+        return 1;
+    }
+#endif
+    g_main_args = BuildMainArgs(argc, argv);
+    g_app = new App();
+    // CefExecuteProcess returns >= 0 in subprocesses (GPU/renderer/...) after
+    // they've run their course; returns -1 in the main/browser process.
+    return CefExecuteProcess(g_main_args, g_app, nullptr);
+}
+
+void SetLogSeverity(cef_log_severity_t severity) {
+    g_settings.log_severity = severity;
+}
+
+void SetRemoteDebuggingPort(int port) {
+    g_settings.remote_debugging_port = port;
+}
+
+void SetDisableGpuCompositing(bool disable) {
+    if (disable) g_pending_switches.push_back({"disable-gpu-compositing", ""});
+}
+
+#ifdef __linux__
+void SetOzonePlatform(const std::string& platform) {
+    if (platform.empty()) return;
+    g_pending_switches.push_back({"ozone-platform", platform});
+    // CEF's OSR has no native window, so Chromium's per-window scaling override
+    // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
+    // from GetScreenInfo. Disabling the fractional scale protocol avoids that
+    // path and keeps HiDPI OSR content scaling correct.
+    if (platform == "wayland")
+        g_pending_switches.push_back({"disable-features", "WaylandFractionalScaleV1"});
+}
+#endif
+
+bool Initialize() {
+    assert(g_app && "CefRuntime::Start() must be called first");
+    CefSettings& settings = g_settings;
+    settings.windowless_rendering_enabled = true;
+#ifdef __APPLE__
+    settings.external_message_pump = true;
+#else
+    settings.multi_threaded_message_loop = true;
+#endif
+    settings.no_sandbox = true;
+    CefString(&settings.locale).FromASCII("en-US");
+
+#ifdef __APPLE__
+    char exe_buf[4096];
+    uint32_t exe_size = sizeof(exe_buf);
+    _NSGetExecutablePath(exe_buf, &exe_size);
+    auto exe = std::filesystem::canonical(exe_buf);
+    auto app_contents = exe.parent_path().parent_path();
+    auto fw_path = (app_contents / "Frameworks" / "Chromium Embedded Framework.framework").string();
+    CefString(&settings.framework_dir_path).FromString(fw_path);
+    CefString(&settings.browser_subprocess_path).FromString(exe.string());
+#elif defined(_WIN32)
+    char exe_buf[MAX_PATH];
+    GetModuleFileNameA(NULL, exe_buf, MAX_PATH);
+    auto exe_path = std::filesystem::canonical(exe_buf);
+    auto exe_dir = exe_path.parent_path();
+    CefString(&settings.browser_subprocess_path).FromString(exe_path.string());
+    CefString(&settings.resources_dir_path).FromString(exe_dir.string());
+    CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
+#else
+    auto exe_path = std::filesystem::canonical("/proc/self/exe");
+    CefString(&settings.browser_subprocess_path).FromString(exe_path.string());
+#ifdef CEF_RESOURCES_DIR
+    std::string res_dir = CEF_RESOURCES_DIR;
+    CefString(&settings.resources_dir_path).FromString(res_dir);
+    CefString(&settings.locales_dir_path).FromString(res_dir + "/locales");
+#else
+    auto exe_dir = exe_path.parent_path();
+    CefString(&settings.resources_dir_path).FromString(exe_dir.string());
+    CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
+#endif
+#endif
+    CefString(&settings.root_cache_path).FromString(paths::getCacheDir());
+
+#ifdef __APPLE__
+    // Install the CFRunLoopSource + CFRunLoopTimer that drive the external
+    // message pump. Must happen before CefInitialize so the very first
+    // OnScheduleMessagePumpWork callback (which fires synchronously during
+    // CefInitialize on the calling thread) finds the source/timer ready.
+    App::InitPump();
+#endif
+
+    return CefInitialize(g_main_args, settings, g_app, nullptr);
+}
+
+void Shutdown() {
+#ifdef __APPLE__
+    // Gate further external-pump dispatches so any blocks that race into the
+    // main queue after this point become no-ops instead of calling into CEF
+    // state that's about to be torn down.
+    App::ShutdownPump();
+#endif
+    CefShutdown();
+}
+
+}  // namespace CefRuntime
 
 
 #ifdef __APPLE__
@@ -47,24 +288,15 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("google-default-client-id", "");
     command_line->AppendSwitchWithValue("google-default-client-secret", "");
 
-#ifdef __linux__
-    // Only the browser process sets ozone platform; CEF propagates to subprocesses.
+    // Switches queued by the CefRuntime::Set*() configuration functions.
+    // Browser process only; CEF propagates to subprocesses as needed.
     if (process_type.empty()) {
-        command_line->AppendSwitchWithValue("ozone-platform", ozone_platform_);
-
-        // Disable fractional scale protocol when using ozone-platform=wayland.
-        // CEF's OSR has no native window, so Chromium's per-window scaling override
-        // in UpdateScreenInfo resolves to 1.0 and clobbers our device_scale_factor
-        // from GetScreenInfo. Without this, HiDPI content scaling breaks in OSR.
-        if (ozone_platform_ == "wayland") {
-            command_line->AppendSwitchWithValue(
-                "disable-features", "WaylandFractionalScaleV1");
+        for (const auto& s : CefRuntime::g_pending_switches) {
+            if (s.value.empty())
+                command_line->AppendSwitch(s.name);
+            else
+                command_line->AppendSwitchWithValue(s.name, s.value);
         }
-    }
-#endif
-
-    if (disable_gpu_compositing_) {
-        command_line->AppendSwitch("disable-gpu-compositing");
     }
 
 #ifdef __APPLE__
