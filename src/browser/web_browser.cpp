@@ -138,10 +138,14 @@ bool WebBrowser::handleMessage(const std::string& name,
         if (active) {
             g_mpv.GetFullscreen(was_fullscreen_before_osd_);
         } else {
-            if (!was_fullscreen_before_osd_)
+            if (!was_fullscreen_before_osd_ &&
+                !g_kiosk_mode.load(std::memory_order_relaxed))
                 g_platform.set_fullscreen(false);
         }
     } else if (name == "toggleFullscreen") {
+        if (g_kiosk_mode.load(std::memory_order_relaxed)) {
+            return true;
+        }
         g_platform.toggle_fullscreen();
     } else if (name == "saveServerUrl") {
         std::string url = args->GetString(0).ToString();

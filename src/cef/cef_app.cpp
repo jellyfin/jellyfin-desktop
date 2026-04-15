@@ -147,6 +147,8 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     shim_str += embedded_js.at("input-plugin.js");
     shim_str += '\n';
     shim_str += embedded_js.at("context-menu.js");
+    shim_str += '\n';
+    shim_str += embedded_js.at("disable-fullscreen-button.js");
     frame->ExecuteJavaScript(shim_str, frame->GetURL(), 0);
 }
 

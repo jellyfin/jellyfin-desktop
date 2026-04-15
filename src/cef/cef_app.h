@@ -12,7 +12,6 @@ public:
 
     void SetDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
     void SetOzonePlatform(const std::string& p) { ozone_platform_ = p; }
-
     // CefApp
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
     CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }

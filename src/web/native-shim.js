@@ -72,7 +72,6 @@
 
     // Saved settings from native (injected as placeholder, replaced at load time)
     const _savedSettings = JSON.parse('__SETTINGS_JSON__');
-
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
         version: '1.0.0',
@@ -86,7 +85,12 @@
             { key: 'advanced', order: 2 }
         ],
         settings: {
-            main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
+            main: {
+                enableMPV: true,
+                fullscreen: false,
+                kiosk: !!_savedSettings.kioskMode,
+                userWebClient: '__SERVER_URL__'
+            },
             playback: {
                 hwdec: _savedSettings.hwdec || 'auto-safe'
             },

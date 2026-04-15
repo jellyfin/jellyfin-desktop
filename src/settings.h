@@ -50,6 +50,9 @@ public:
     const std::string& logLevel() const { return log_level_; }
     void setLogLevel(const std::string& v) { log_level_ = v; }
 
+    bool kioskMode() const { return kiosk_mode_; }
+    void setKioskMode(bool v) { kiosk_mode_ = v; }
+
     // JSON string of CLI-equivalent settings (for injection into JS)
     std::string cliSettingsJson() const;
 
@@ -71,6 +74,7 @@ private:
     bool titlebar_theme_color_ = true;
     bool transparent_titlebar_ = true;
     std::string log_level_;
+    bool kiosk_mode_ = false;
 
     std::mutex save_mutex_;  // Prevent concurrent saves
 };
