@@ -51,6 +51,7 @@
                 enumerable: false
             });
             this._core.player = this;
+            this.setVolume(this.getSavedVolume() * 100, false);
 
             this._videoDialog = undefined;
             this._currentSrc = undefined;

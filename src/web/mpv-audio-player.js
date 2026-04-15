@@ -45,7 +45,7 @@
                 enumerable: false
             });
             this._core.player = this;
-            this._core._volume = this.getSavedVolume() * 100;
+            this.setVolume(this.getSavedVolume() * 100, false);
 
             this._currentSrc = null;
             this._currentPlayOptions = null;
