@@ -28,11 +28,7 @@
 #include "logging.h"
 
 #ifdef __APPLE__
-#include "include/wrapper/cef_library_loader.h"
 #include <CoreFoundation/CoreFoundation.h>
-#include <mach-o/dyld.h>
-#elif defined(_WIN32)
-#include "single_instance.h"
 #else
 #include "single_instance.h"
 #endif
@@ -49,7 +45,6 @@
 #include <string>
 #include <vector>
 #include <thread>
-#include <filesystem>
 #include <atomic>
 #ifndef _WIN32
 #include <poll.h>
@@ -340,27 +335,7 @@ int main(int argc, char* argv[]) {
     // and CEF subprocesses exit at CefExecuteProcess before any platform use.
 #endif
 
-#ifdef __APPLE__
-    CefScopedLibraryLoader library_loader;
-    if (!library_loader.LoadInMain()) {
-        fprintf(stderr, "Failed to load CEF library\n");
-        return 1;
-    }
-#endif
-
-#ifdef _WIN32
-    SetEnvironmentVariableA("JELLYFIN_CEF_SUBPROCESS", "1");
-#else
-    setenv("JELLYFIN_CEF_SUBPROCESS", "1", 1);
-#endif
-#ifdef _WIN32
-    CefMainArgs main_args(GetModuleHandle(NULL));
-#else
-    CefMainArgs main_args(argc, argv);
-#endif
-    CefRefPtr<App> app(new App());
-    int exit_code = CefExecuteProcess(main_args, app, nullptr);
-    if (exit_code >= 0) return exit_code;
+    if (int rc = CefRuntime::Start(argc, argv); rc >= 0) return rc;
 
     // --- Parse CLI ---
     std::string hwdec_str = "auto-safe";
@@ -736,68 +711,18 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- CEF init ---
-    CefSettings settings{};
-    settings.windowless_rendering_enabled = true;
-#ifdef __APPLE__
-    settings.external_message_pump = true;
-#else
-    settings.multi_threaded_message_loop = true;
-#endif
-    settings.no_sandbox = true;
-    CefString(&settings.locale).FromASCII("en-US");
-
-#ifdef __APPLE__
-    char exe_buf[4096];
-    uint32_t exe_size = sizeof(exe_buf);
-    _NSGetExecutablePath(exe_buf, &exe_size);
-    auto exe = std::filesystem::canonical(exe_buf);
-    auto app_contents = exe.parent_path().parent_path();
-    auto fw_path = (app_contents / "Frameworks" / "Chromium Embedded Framework.framework").string();
-    CefString(&settings.framework_dir_path).FromString(fw_path);
-    CefString(&settings.browser_subprocess_path).FromString(exe.string());
-#elif defined(_WIN32)
-    char exe_buf[MAX_PATH];
-    GetModuleFileNameA(NULL, exe_buf, MAX_PATH);
-    auto exe_path = std::filesystem::canonical(exe_buf);
-    auto exe_dir = exe_path.parent_path();
-    CefString(&settings.browser_subprocess_path).FromString(exe_path.string());
-    CefString(&settings.resources_dir_path).FromString(exe_dir.string());
-    CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
-#else
-    CefString(&settings.browser_subprocess_path).FromString(
-        std::filesystem::canonical("/proc/self/exe").string());
-    auto exe_dir = std::filesystem::canonical("/proc/self/exe").parent_path();
-#ifdef CEF_RESOURCES_DIR
-    CefString(&settings.resources_dir_path).FromString(CEF_RESOURCES_DIR);
-    CefString(&settings.locales_dir_path).FromString(std::string(CEF_RESOURCES_DIR) + "/locales");
-#else
-    CefString(&settings.resources_dir_path).FromString(exe_dir.string());
-    CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
-#endif
-#endif
-    CefString(&settings.root_cache_path).FromString(paths::getCacheDir());
-
-    if (remote_debugging_port > 0)
-        settings.remote_debugging_port = remote_debugging_port;
-
-#ifdef __APPLE__
-    // Install the CFRunLoopSource + CFRunLoopTimer that drive the external
-    // message pump. Must happen before CefInitialize so the very first
-    // OnScheduleMessagePumpWork callback (which fires synchronously during
-    // CefInitialize on the calling thread) finds the source/timer ready.
-    LOG_INFO(LOG_MAIN, "[FLOW] App::InitPump");
-    App::InitPump();
-#endif
-
-    // Disable GPU compositing if probe failed or CLI flag set
     bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;
-    if (!use_shared_textures)
-        app->SetDisableGpuCompositing(true);
+
+    CefRuntime::SetLogSeverity(toCefSeverity(log_level));
+    CefRuntime::SetRemoteDebuggingPort(remote_debugging_port);
+    CefRuntime::SetDisableGpuCompositing(!use_shared_textures);
+#ifdef __linux__
     if (!ozone_platform.empty())
-        app->SetOzonePlatform(ozone_platform);
+        CefRuntime::SetOzonePlatform(ozone_platform);
+#endif
 
     LOG_INFO(LOG_MAIN, "[FLOW] calling CefInitialize...");
-    if (!CefInitialize(main_args, settings, app, nullptr)) {
+    if (!CefRuntime::Initialize()) {
         LOG_ERROR(LOG_MAIN, "CefInitialize failed");
         g_platform.cleanup();
         g_mpv.TerminateDestroy();
@@ -926,10 +851,6 @@ int main(int argc, char* argv[]) {
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, true);
     }
 
-    // Gate further pump dispatches so any blocks that race into the main
-    // queue after this point become no-ops instead of calling into CEF
-    // state that's about to be torn down by CefShutdown().
-    App::ShutdownPump();
 #else
     g_web_browser->waitForClose();
     if (g_overlay_browser)
@@ -1001,7 +922,7 @@ int main(int argc, char* argv[]) {
     // CEF shutdown: all browsers must be closed first (guaranteed by waitForClose above)
     delete g_web_browser; g_web_browser = nullptr;
     delete g_overlay_browser; g_overlay_browser = nullptr;
-    CefShutdown();
+    CefRuntime::Shutdown();
 
     // Platform cleanup (joins input thread, destroys subsurfaces)
     // Must happen after CefShutdown (CEF may still present during shutdown)

@@ -4,6 +4,7 @@
 
 #include "quill/Logger.h"
 #include "quill/LogMacros.h"
+#include "include/internal/cef_types.h"
 
 enum LogCategory {
     LOG_MAIN       = 0,
@@ -40,6 +41,17 @@ inline int parseLogLevel(const char* level) {
     if (strcmp(level, "warn") == 0)    return 3;
     if (strcmp(level, "error") == 0)   return 4;
     return -1;
+}
+
+// Map our 0..4 log level (see parseLogLevel) to CEF's severity enum.
+inline cef_log_severity_t toCefSeverity(int parsed) {
+    switch (parsed) {
+        case 0: case 1: return LOGSEVERITY_VERBOSE;
+        case 2:         return LOGSEVERITY_INFO;
+        case 3:         return LOGSEVERITY_WARNING;
+        case 4:         return LOGSEVERITY_ERROR;
+        default:        return LOGSEVERITY_DEFAULT;
+    }
 }
 
 // Install the log file at `path` (rotated on startup + at 10 MB, 3 backups)
