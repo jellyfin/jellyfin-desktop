@@ -2,7 +2,7 @@
 
 #include "input.h"
 #include "dispatch.h"
-#include "../logging.h"
+#include "logging.h"
 
 #import <Cocoa/Cocoa.h>
 #include <mach/mach_time.h>
@@ -291,7 +291,7 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
         owner:self
         userInfo:nil];
     [self addTrackingArea:_trackingArea];
-    LOG_INFO(LOG_PLATFORM, "[INPUT] updateTrackingAreas bounds=%.0fx%.0f",
+    LOG_INFO(LOG_PLATFORM, "[INPUT] updateTrackingAreas bounds={:.0f}x{:.0f}",
              self.bounds.size.width, self.bounds.size.height);
 }
 
@@ -312,7 +312,7 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
     else         g_mouse_button_modifiers &= ~flag;
 
     NSPoint loc = [self mouseLocInView:event];
-    LOG_INFO(LOG_PLATFORM, "[INPUT] mouseButton btn=%d pressed=%d (%.0f,%.0f)",
+    LOG_INFO(LOG_PLATFORM, "[INPUT] mouseButton btn={} pressed={} ({:.0f},{:.0f})",
              (int)button, pressed ? 1 : 0, loc.x, loc.y);
     input::dispatch_mouse_button({
         .button      = button,

@@ -363,30 +363,30 @@ MprisBackend::MprisBackend(MediaSession* session, const std::string& service_suf
     , service_name_(std::string(BASE_SERVICE_NAME) + service_suffix) {
     int r = sd_bus_open_user(&bus_);
     if (r < 0) {
-        LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to connect to session bus: %s", strerror(-r));
+        LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to connect to session bus: {}", strerror(-r));
         return;
     }
 
     r = sd_bus_request_name(bus_, service_name_.c_str(), 0);
     if (r < 0) {
-        LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to acquire service name: %s", strerror(-r));
+        LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to acquire service name: {}", strerror(-r));
         sd_bus_unref(bus_);
         bus_ = nullptr;
         return;
     }
 
-    LOG_INFO(LOG_MEDIA, "MPRIS: Registered as %s", service_name_.c_str());
+    LOG_INFO(LOG_MEDIA, "MPRIS: Registered as {}", service_name_.c_str());
 
     r = sd_bus_add_object_vtable(bus_, &slot_root_, MPRIS_PATH,
                                   MPRIS_ROOT_IFACE, root_vtable, this);
     if (r < 0) {
-        LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to add root vtable: %s", strerror(-r));
+        LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to add root vtable: {}", strerror(-r));
     }
 
     r = sd_bus_add_object_vtable(bus_, &slot_player_, MPRIS_PATH,
                                   MPRIS_PLAYER_IFACE, player_vtable, this);
     if (r < 0) {
-        LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to add player vtable: %s", strerror(-r));
+        LOG_ERROR(LOG_MEDIA, "MPRIS: Failed to add player vtable: {}", strerror(-r));
     }
 }
 

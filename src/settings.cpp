@@ -1,55 +1,17 @@
 #include "settings.h"
 #include "cjson/cJSON.h"
+#include "paths/paths.h"
 #include <fstream>
 #include <sstream>
-#include <cstdlib>
 #include <thread>
-#ifdef _WIN32
-#include <direct.h>
-#define MKDIR(path) _mkdir(path)
-#else
-#include <sys/stat.h>
-#define MKDIR(path) mkdir(path, 0755)
-#endif
 
 Settings& Settings::instance() {
     static Settings instance;
     return instance;
 }
 
-std::string Settings::getConfigDir() {
-    std::string config_dir;
-
-#ifdef _WIN32
-    const char* appdata = std::getenv("APPDATA");
-    if (appdata && appdata[0]) {
-        config_dir = appdata;
-    } else {
-        config_dir = "C:\\";
-    }
-    config_dir += "\\jellyfin-desktop";
-#else
-    const char* xdg_config = std::getenv("XDG_CONFIG_HOME");
-    if (xdg_config && xdg_config[0]) {
-        config_dir = xdg_config;
-    } else {
-        const char* home = std::getenv("HOME");
-        if (home) {
-            config_dir = std::string(home) + "/.config";
-        } else {
-            config_dir = "/tmp";
-        }
-    }
-    config_dir += "/jellyfin-desktop";
-#endif
-
-    MKDIR(config_dir.c_str());
-
-    return config_dir;
-}
-
 std::string Settings::getConfigPath() {
-    return getConfigDir() + "/settings.json";
+    return paths::getConfigDir() + "/settings.json";
 }
 
 static const char* jsonStr(const cJSON* root, const char* key, const char* fallback = "") {

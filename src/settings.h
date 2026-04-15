@@ -53,8 +53,6 @@ public:
     // JSON string of CLI-equivalent settings (for injection into JS)
     std::string cliSettingsJson() const;
 
-    static std::string getConfigDir();
-
 private:
     Settings() = default;
     std::string getConfigPath();

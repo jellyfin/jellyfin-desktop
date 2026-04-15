@@ -80,7 +80,7 @@ WindowsMediaBackend::WindowsMediaBackend(MediaSession* session, HWND hwnd)
 
         LOG_INFO(LOG_MEDIA, "[SMTC] Initialized");
     } catch (const winrt::hresult_error& e) {
-        LOG_ERROR(LOG_MEDIA, "[SMTC] Init failed: %ls", e.message().c_str());
+        LOG_ERROR(LOG_MEDIA, "[SMTC] Init failed: {}", winrt::to_string(e.message()));
     }
 }
 
