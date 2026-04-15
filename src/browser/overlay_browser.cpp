@@ -67,6 +67,7 @@ private:
 static void applySettingValue(const std::string& section, const std::string& key, const std::string& value) {
     auto& s = Settings::instance();
     if (key == "hwdec") s.setHwdec(value);
+    else if (key == "aspectRatio") s.setAspectRatio(value);
     else if (key == "audioPassthrough") s.setAudioPassthrough(value);
     else if (key == "audioExclusive") s.setAudioExclusive(value == "true");
     else if (key == "audioChannels") s.setAudioChannels(value);
