@@ -122,7 +122,7 @@ static bool init_dcomp() {
         return false;
     }
 
-    hr = g_win.dcomp_device->CreateTargetForHwnd(g_win.mpv_hwnd, TRUE, &g_win.dcomp_target);
+    hr = g_win.dcomp_device->CreateTargetForHwnd(g_win.mpv_hwnd, FALSE, &g_win.dcomp_target);
     if (FAILED(hr)) {
         LOG_ERROR(LOG_PLATFORM, "CreateTargetForHwnd failed: 0x{:08x}", hr);
         return false;
