@@ -64,7 +64,6 @@ WakeEvent g_shutdown_event;
 
 std::atomic<MediaType> g_media_type{MediaType::Unknown};
 std::atomic<PlaybackState> g_playback_state{PlaybackState::Stopped};
-std::atomic<bool> g_kiosk_mode{false};
 TitlebarColor* g_titlebar_color = nullptr;
 std::atomic<int> g_display_hz{60};
 
@@ -383,6 +382,7 @@ int main(int argc, char* argv[]) {
     if (!saved.audioPassthrough().empty()) audio_passthrough_str = saved.audioPassthrough();
     audio_exclusive = saved.audioExclusive();
     if (!saved.audioChannels().empty()) audio_channels_str = saved.audioChannels();
+    kiosk_mode = saved.kioskMode();
     std::string saved_log_level = saved.logLevel();
     if (!saved_log_level.empty()) log_level_str = saved_log_level.c_str();
 
@@ -703,7 +703,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- Platform init ---
-    g_kiosk_mode.store(kiosk_mode, std::memory_order_relaxed);
+    Settings::instance().setKioskMode(kiosk_mode);
 
     // Resolve effective ozone platform so CEF clients can check it.
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -805,7 +805,6 @@ int main(int argc, char* argv[]) {
     App::InitPump();
 #endif
 
-    app->SetKioskMode(kiosk_mode);
     // Disable GPU compositing if probe failed or CLI flag set
     bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;
     if (!use_shared_textures)

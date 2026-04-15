@@ -4,7 +4,6 @@
 #include "embedded_js.h"
 #include "../logging.h"
 #include "include/cef_browser.h"
-#include "include/cef_command_line.h"
 #include "include/cef_frame.h"
 #include "include/cef_v8.h"
 
@@ -83,12 +82,6 @@ void App::OnBeforeCommandLineProcessing(const CefString& process_type,
 #endif
 }
 
-void App::OnBeforeChildProcessLaunch(CefRefPtr<CefCommandLine> command_line) {
-    if (kiosk_mode_) {
-        command_line->AppendSwitch("kiosk");
-    }
-}
-
 void App::OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) {
     registrar->AddCustomScheme("app",
         CEF_SCHEME_OPTION_STANDARD |
@@ -111,13 +104,6 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     CefRefPtr<CefV8Value> window = context->GetGlobal();
     CefRefPtr<NativeV8Handler> handler = new NativeV8Handler(browser);
 
-    CefRefPtr<CefCommandLine> cl = CefCommandLine::GetGlobalCommandLine();
-    
-    const bool kiosk_mode = cl && cl->HasSwitch("kiosk");
-    if (kiosk_mode) {
-        LOG_INFO(LOG_CEF, "Kiosk mode enabled in renderer process");
-    }
-
     CefRefPtr<CefV8Value> jmpNative = CefV8Value::CreateObject(nullptr, nullptr);
     static const char* const kFunctions[] = {
         "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
@@ -135,7 +121,6 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     for (const char* fn : kFunctions)
         jmpNative->SetValue(fn, CefV8Value::CreateFunction(fn, handler), V8_PROPERTY_ATTRIBUTE_READONLY);
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
-    window->SetValue("kioskMode", CefV8Value::CreateBool(kiosk_mode), V8_PROPERTY_ATTRIBUTE_READONLY);
 
     // Inject JS shim
     std::string shim_str(embedded_js.at("native-shim.js"));

@@ -72,7 +72,6 @@
 
     // Saved settings from native (injected as placeholder, replaced at load time)
     const _savedSettings = JSON.parse('__SETTINGS_JSON__');
-
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
         version: '1.0.0',

@@ -1,5 +1,5 @@
 (function() {
-    const kioskMode = !!window.kioskMode;
+    const kioskMode = !!window.jmpInfo?.settings?.main?.kiosk;
     if (!kioskMode) return;
 
     const styleId = 'jmp-kiosk-hide-fullscreen-style';

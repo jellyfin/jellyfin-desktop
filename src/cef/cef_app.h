@@ -12,7 +12,6 @@ public:
 
     void SetDisableGpuCompositing(bool v) { disable_gpu_compositing_ = v; }
     void SetOzonePlatform(const std::string& p) { ozone_platform_ = p; }
-    void SetKioskMode(bool v) { kiosk_mode_ = v; }
     // CefApp
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
     CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
@@ -22,7 +21,6 @@ public:
 
     // CefBrowserProcessHandler
     void OnContextInitialized() override;
-    void OnBeforeChildProcessLaunch(CefRefPtr<CefCommandLine> command_line) override;
     void OnScheduleMessagePumpWork(int64_t delay_ms) override;
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                   CefRefPtr<CefFrame> frame,
@@ -49,7 +47,6 @@ public:
 
 private:
     bool disable_gpu_compositing_ = false;
-    bool kiosk_mode_ = false;
     std::string ozone_platform_;
 
     IMPLEMENT_REFCOUNTING(App);

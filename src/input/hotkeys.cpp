@@ -2,6 +2,7 @@
 
 #include "input.h"
 #include "../common.h"
+#include "../settings.h"
 #include "../platform/platform.h"
 
 namespace input {
@@ -28,7 +29,7 @@ bool hotkey_try_consume(const KeyEvent& e) {
 
     if (e.code == KeyCode::F || e.code == KeyCode::F11) {
         if (!video_player_active()) return false;
-        if (g_kiosk_mode.load(std::memory_order_relaxed)) return true;
+        if (Settings::instance().kioskMode()) return true;
         g_platform.toggle_fullscreen();
         return true;
     }
