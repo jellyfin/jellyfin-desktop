@@ -204,12 +204,12 @@
         }
 
         setVolume(val, save = true) {
-            this._core._volume = val;
-            if (save) {
-                this.saveVolume((val || 100) / 100);
-                this.events.trigger(this, 'volumechange');
+            val = Number(val);
+            if (!isNaN(val)) {
+                this._core._volume = val;
+                if (save) { this.saveVolume(val / 100); this.events.trigger(this, 'volumechange'); }
+                window.api.player.setVolume(val);
             }
-            window.api.player.setVolume(val);
         }
 
         getVolume() { return this._core.getVolume(); }
