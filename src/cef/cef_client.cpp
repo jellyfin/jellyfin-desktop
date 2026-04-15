@@ -1,12 +1,12 @@
 #include "cef_client.h"
 #include "../logging.h"
-#include "../settings.h"
 #include "../cjson/cJSON.h"
 #include "../platform/platform.h"
 #include <cstdio>
 
 extern Platform g_platform;
 extern std::atomic<bool> g_shutting_down;
+extern std::atomic<bool> g_kiosk_mode;
 
 // =====================================================================
 // Shared helpers (context menu, clipboard)
@@ -185,7 +185,7 @@ void CefLayer::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
 }
 
 void CefLayer::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {
-    if (Settings::instance().kioskMode() && !fullscreen) {
+    if (g_kiosk_mode.load(std::memory_order_relaxed) && !fullscreen) {
         return;
     }
     g_platform.set_fullscreen(fullscreen);

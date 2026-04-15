@@ -139,11 +139,11 @@ bool WebBrowser::handleMessage(const std::string& name,
             g_mpv.GetFullscreen(was_fullscreen_before_osd_);
         } else {
             if (!was_fullscreen_before_osd_ &&
-                !Settings::instance().kioskMode())
+                !g_kiosk_mode.load(std::memory_order_relaxed))
                 g_platform.set_fullscreen(false);
         }
     } else if (name == "toggleFullscreen") {
-        if (Settings::instance().kioskMode()) {
+        if (g_kiosk_mode.load(std::memory_order_relaxed)) {
             return true;
         }
         g_platform.toggle_fullscreen();

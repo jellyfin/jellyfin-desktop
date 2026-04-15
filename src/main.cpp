@@ -64,6 +64,7 @@ WakeEvent g_shutdown_event;
 
 std::atomic<MediaType> g_media_type{MediaType::Unknown};
 std::atomic<PlaybackState> g_playback_state{PlaybackState::Stopped};
+std::atomic<bool> g_kiosk_mode{false};
 TitlebarColor* g_titlebar_color = nullptr;
 std::atomic<int> g_display_hz{60};
 
@@ -382,7 +383,6 @@ int main(int argc, char* argv[]) {
     if (!saved.audioPassthrough().empty()) audio_passthrough_str = saved.audioPassthrough();
     audio_exclusive = saved.audioExclusive();
     if (!saved.audioChannels().empty()) audio_channels_str = saved.audioChannels();
-    kiosk_mode = saved.kioskMode();
     std::string saved_log_level = saved.logLevel();
     if (!saved_log_level.empty()) log_level_str = saved_log_level.c_str();
 
@@ -455,6 +455,8 @@ int main(int argc, char* argv[]) {
             player_playlist.push_back(argv[i]);
         }
     }
+
+    g_kiosk_mode.store(kiosk_mode, std::memory_order_relaxed);
 
     if (log_level_str && log_level_str[0]) {
         int level = parseLogLevel(log_level_str);
@@ -703,8 +705,6 @@ int main(int argc, char* argv[]) {
 #endif
 
     // --- Platform init ---
-    Settings::instance().setKioskMode(kiosk_mode);
-
     // Resolve effective ozone platform so CEF clients can check it.
 #if !defined(_WIN32) && !defined(__APPLE__)
     if (ozone_platform.empty())
@@ -718,6 +718,7 @@ int main(int argc, char* argv[]) {
     }
     LOG_INFO(LOG_MAIN, "Platform init ok");
 
+    Settings::instance().setKioskMode(kiosk_mode);
     if (kiosk_mode) {
         g_mpv.SetOptionString("fullscreen", "yes");
         g_platform.set_fullscreen(true);
@@ -1012,6 +1013,7 @@ int main(int argc, char* argv[]) {
                 Settings::instance().setWindowGeometry(geom);
             }
         }
+        Settings::instance().setKioskMode(kiosk_mode);
         Settings::instance().save();
     }
 
