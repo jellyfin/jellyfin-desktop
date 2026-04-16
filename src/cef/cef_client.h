@@ -54,6 +54,8 @@ public:
 
     void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override;
     bool GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) override;
+    void OnPopupShow(CefRefPtr<CefBrowser>, bool show) override;
+    void OnPopupSize(CefRefPtr<CefBrowser>, const CefRect& rect) override;
     void OnPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList&,
                  const void*, int w, int h) override;
     void OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
@@ -91,6 +93,8 @@ private:
     RenderTarget target_;
     int width_ = 1280, height_ = 720;
     int physical_w_ = 1280, physical_h_ = 720;
+    CefRect popup_rect_;
+    bool popup_visible_ = false;
     CefRefPtr<CefBrowser> browser_;
     std::atomic<bool> closed_{false};
     std::atomic<bool> loaded_{false};

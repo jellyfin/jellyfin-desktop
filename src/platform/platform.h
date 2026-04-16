@@ -29,6 +29,12 @@ struct Platform {
                                      const void* buffer, int w, int h);
     void (*overlay_resize)(int lw, int lh, int pw, int ph);
     void (*set_overlay_visible)(bool visible);
+
+    // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns)
+    void (*popup_show)(int x, int y, int lw, int lh);
+    void (*popup_hide)();
+    void (*popup_present)(const CefAcceleratedPaintInfo& info, int lw, int lh);
+    void (*popup_present_software)(const void* buffer, int pw, int ph, int lw, int lh);
     // Delay, then fade overlay from opaque to transparent, then hide.
     // on_fade_start is called after the delay, just before the fade begins.
     // on_complete is called after the fade finishes.  Both may fire on any thread.
