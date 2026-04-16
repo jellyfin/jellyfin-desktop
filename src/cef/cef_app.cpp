@@ -378,6 +378,8 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     shim_str += '\n';
     shim_str += embedded_js.at("input-plugin.js");
     shim_str += '\n';
+    shim_str += embedded_js.at("client-settings.js");
+    shim_str += '\n';
     shim_str += embedded_js.at("context-menu.js");
     frame->ExecuteJavaScript(shim_str, frame->GetURL(), 0);
 }

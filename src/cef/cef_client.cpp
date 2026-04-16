@@ -123,14 +123,35 @@ void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
     }
 }
 
+void CefLayer::OnPopupShow(CefRefPtr<CefBrowser>, bool show) {
+    popup_visible_ = show;
+    if (!show)
+        g_platform.popup_hide();
+}
+
+void CefLayer::OnPopupSize(CefRefPtr<CefBrowser>, const CefRect& rect) {
+    popup_rect_ = rect;
+    if (popup_visible_)
+        g_platform.popup_show(rect.x, rect.y, rect.width, rect.height);
+}
+
 void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                        const void* buffer, int w, int h) {
+    if (type == PET_POPUP) {
+        g_platform.popup_present_software(buffer, w, h,
+                                          popup_rect_.width, popup_rect_.height);
+        return;
+    }
     if (type != PET_VIEW) return;
     target_.present_software(dirty, buffer, w, h);
 }
 
 void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
                                   const RectList&, const CefAcceleratedPaintInfo& info) {
+    if (type == PET_POPUP) {
+        g_platform.popup_present(info, popup_rect_.width, popup_rect_.height);
+        return;
+    }
     if (type != PET_VIEW) return;
     target_.present(info);
 }
@@ -198,6 +219,11 @@ void CefLayer::execJs(const std::string& js) {
         browser_->GetMainFrame()->ExecuteJavaScript(js, "", 0);
 }
 
+enum {
+    MENU_ID_TOGGLE_FULLSCREEN = MENU_ID_USER_FIRST,
+    MENU_ID_EXIT,
+};
+
 bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
                                         CefProcessId, CefRefPtr<CefProcessMessage> message) {
     auto name = message->GetName().ToString();
@@ -225,6 +251,14 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
             case MENU_ID_COPY: frame->Copy(); break;
             case MENU_ID_PASTE: do_paste(browser_, frame); break;
             case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
+            case MENU_ID_TOGGLE_FULLSCREEN:
+            case MENU_ID_EXIT: {
+                auto msg = CefProcessMessage::Create(
+                    cmd == MENU_ID_TOGGLE_FULLSCREEN ? "toggleFullscreen" : "appExit");
+                if (message_handler_)
+                    message_handler_(msg->GetName().ToString(), msg->GetArgumentList(), browser);
+                break;
+            }
             default: break;
             }
         }
@@ -258,6 +292,9 @@ void CefLayer::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
     while (model->GetCount() > 0 &&
            model->GetTypeAt(model->GetCount() - 1) == MENUITEMTYPE_SEPARATOR)
         model->RemoveAt(model->GetCount() - 1);
+    model->AddSeparator();
+    model->AddItem(MENU_ID_TOGGLE_FULLSCREEN, "Toggle Fullscreen");
+    model->AddItem(MENU_ID_EXIT, "Exit");
 }
 
 bool CefLayer::RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
