@@ -213,7 +213,7 @@ private:
         SetOptionString("wayland-app-id", "org.jellyfin.JellyfinDesktop");
 #ifdef _WIN32
         // Tell mpv to load window icon from our exe resources
-        SetEnvironmentVariableW(L"MPV_WINDOW_ICON", L"IDI_ICON1");
+        _putenv_s("MPV_WINDOW_ICON", "IDI_ICON1");
 #endif
 
         // Keep window open when idle (no media loaded).

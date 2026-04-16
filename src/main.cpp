@@ -325,15 +325,13 @@ int main(int argc, char* argv[]) {
     // They must hit CefExecuteProcess immediately and exit — before CLI parsing,
     // settings, single instance, or anything else touches shared state.
 #ifdef _WIN32
-    g_platform = make_windows_platform();
-    g_platform.early_init();
+    g_platform = make_platform(DisplayBackend::Windows);
 #elif defined(__APPLE__)
-    g_platform = make_macos_platform();
-    g_platform.early_init();
+    g_platform = make_platform(DisplayBackend::macOS);
 #else
     // Linux: runtime detection, overridable with --platform.
-    // Deferred to after CLI parsing. Both platforms' early_init are no-ops,
-    // and CEF subprocesses exit at CefExecuteProcess before any platform use.
+    // Deferred to after CLI parsing — CEF subprocesses exit at
+    // CefExecuteProcess before any platform use.
 #endif
 
     if (int rc = CefRuntime::Start(argc, argv); rc >= 0) return rc;
@@ -464,29 +462,30 @@ int main(int argc, char* argv[]) {
 
     // --- Linux platform selection ---
 #if !defined(_WIN32) && !defined(__APPLE__)
-    bool use_wayland;
-    if (platform_override == "wayland")
-        use_wayland = true;
-    else if (platform_override == "x11")
-        use_wayland = false;
-    else if (!platform_override.empty()) {
-        fprintf(stderr, "Unknown platform: %s (expected wayland or x11)\n",
-                platform_override.c_str());
-        return 1;
-    } else {
-        use_wayland = getenv("WAYLAND_DISPLAY") || !getenv("DISPLAY");
-    }
-#ifdef HAVE_X11
-    g_platform = use_wayland ? make_wayland_platform() : make_x11_platform();
-#else
-    if (!use_wayland) {
-        fprintf(stderr, "X11 detected but X11 support not compiled in\n");
-        return 1;
-    }
-    g_platform = make_wayland_platform();
+    {
+        DisplayBackend backend;
+        if (platform_override == "wayland")
+            backend = DisplayBackend::Wayland;
+        else if (platform_override == "x11")
+            backend = DisplayBackend::X11;
+        else if (!platform_override.empty()) {
+            fprintf(stderr, "Unknown platform: %s (expected wayland or x11)\n",
+                    platform_override.c_str());
+            return 1;
+        } else {
+            backend = (getenv("WAYLAND_DISPLAY") || !getenv("DISPLAY"))
+                    ? DisplayBackend::Wayland : DisplayBackend::X11;
+        }
+#ifndef HAVE_X11
+        if (backend == DisplayBackend::X11) {
+            fprintf(stderr, "X11 detected but X11 support not compiled in\n");
+            return 1;
+        }
 #endif
-    g_platform.early_init();
-    LOG_INFO(LOG_MAIN, "Display backend: {}", use_wayland ? "wayland" : "x11");
+        g_platform = make_platform(backend);
+    }
+    LOG_INFO(LOG_MAIN, "Display backend: {}",
+             g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11");
 #endif
 
     // --- Signal handlers ---
@@ -644,7 +643,7 @@ int main(int argc, char* argv[]) {
     // Resolve effective ozone platform so CEF clients can check it.
 #if !defined(_WIN32) && !defined(__APPLE__)
     if (ozone_platform.empty())
-        ozone_platform = use_wayland ? "wayland" : "x11";
+        ozone_platform = g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11";
 #endif
     g_platform.cef_ozone_platform = ozone_platform;
     if (!g_platform.init(g_mpv.Get())) {
