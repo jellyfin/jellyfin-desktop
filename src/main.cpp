@@ -522,57 +522,10 @@ int main(int argc, char* argv[]) {
     setenv("MPV_HOME", mpv_home.c_str(), 1);
 #endif
 
-    g_mpv = MpvHandle::Create();
+    g_mpv = MpvHandle::Create(g_platform.display);
     if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
 
-#ifdef __APPLE__
-    setenv("MPVBUNDLE", "true", 1);
-#endif
-
-    g_mpv.SetOptionString("hwdec", hwdec_str);
-    g_mpv.SetOptionString("osd-level", "0");
-    g_mpv.SetOptionString("osc", "no");
-    g_mpv.SetOptionString("display-tags", "");  // suppress "Title: ...", "Artist: ..." tag dump
-    g_mpv.SetOptionString("input-default-bindings", "no");
-    g_mpv.SetOptionString("input-vo-keyboard", "no");
-    g_mpv.SetOptionString("input-vo-cursor", "no");
-    g_mpv.SetOptionString("input-cursor", "no");
-    // X11's WM_DELETE_WINDOW routes through mpv's input system as
-    // CLOSE_WIN — input-keyboard=no drops it, breaking the close button.
-#if defined(_WIN32) || defined(__APPLE__)
-    g_mpv.SetOptionString("input-keyboard", "no");
-#else
-    if (use_wayland)
-        g_mpv.SetOptionString("input-keyboard", "no");
-#endif
-    g_mpv.SetOptionString("stop-screensaver", "no");
-    g_mpv.SetOptionString("keepaspect-window", "no");
-    g_mpv.SetOptionString("auto-window-resize", "no");
-    g_mpv.SetOptionString("border", "yes");
-    g_mpv.SetOptionString("title", "Jellyfin Desktop");
-    g_mpv.SetOptionString("wayland-app-id", "org.jellyfin.JellyfinDesktop");
-#ifdef _WIN32
-    // Tell mpv to load window icon from our exe resources (read at class
-    // registration time, before any window is created — no icon flash)
-    SetEnvironmentVariableW(L"MPV_WINDOW_ICON", L"IDI_ICON1");
-#endif
-#ifdef __APPLE__
-    // macOS VO (mac_common.swift:37) uses DispatchQueue.main.sync for window
-    // creation. mp_initialize (main.c:435) calls handle_force_window when
-    // force_vo==2 ("immediate"), which deadlocks because main is blocked in
-    // mpv_initialize and can't service GCD.
-    //
-    // force-window=yes (force_vo=1) SKIPS the init-time call. idle=yes makes
-    // core_thread enter idle_loop (playloop.c:1349), which calls
-    // handle_force_window(mpctx, true) from the core thread. By that point,
-    // main has returned from mpv_initialize and is pumping GCD in the VO
-    // wait loop — DispatchQueue.main.sync succeeds.
-    g_mpv.SetOptionString("force-window", "yes");
-    g_mpv.SetOptionString("idle", "yes");
-#else
-    g_mpv.SetOptionString("force-window", "yes");
-    g_mpv.SetOptionString("idle", "yes");
-#endif
+    g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
 
     // Restore saved window geometry. mpv's macOS VO honors the --geometry
@@ -613,12 +566,12 @@ int main(int argc, char* argv[]) {
             }
             audio_passthrough_str = filtered;
         }
-        g_mpv.SetOptionString("audio-spdif", audio_passthrough_str);
+        g_mpv.SetAudioSpdif(audio_passthrough_str);
     }
     if (audio_exclusive)
-        g_mpv.SetOptionString("audio-exclusive", "yes");
+        g_mpv.SetAudioExclusive(true);
     if (!audio_channels_str.empty())
-        g_mpv.SetOptionString("audio-channels", audio_channels_str);
+        g_mpv.SetAudioChannels(audio_channels_str);
 
     // Register property observations before mpv_initialize. On macOS,
     // core_thread races to DispatchQueue.main.sync immediately after init

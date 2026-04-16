@@ -821,6 +821,7 @@ static void macos_clipboard_read_text_async(std::function<void(std::string)> on_
 
 Platform make_macos_platform() {
     return Platform{
+        .display = DisplayBackend::macOS,
         .early_init = macos_early_init,
         .init = macos_init,
         .cleanup = macos_cleanup,

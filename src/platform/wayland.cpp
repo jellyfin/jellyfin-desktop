@@ -1322,6 +1322,7 @@ static void wl_set_titlebar_color(uint8_t, uint8_t, uint8_t) {}
 
 Platform make_wayland_platform() {
     return Platform{
+        .display = DisplayBackend::Wayland,
         .early_init = []() {},
         .init = wl_init,
         .cleanup = wl_cleanup,

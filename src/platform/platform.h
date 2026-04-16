@@ -8,7 +8,11 @@
 
 enum class IdleInhibitLevel { None, System, Display };
 
+#include "display_backend.h"
+
 struct Platform {
+    DisplayBackend display{};
+
     void (*early_init)();
     bool (*init)(mpv_handle* mpv);
     void (*cleanup)();

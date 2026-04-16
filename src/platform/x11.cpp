@@ -617,6 +617,7 @@ static void x11_cleanup() {
 
 Platform make_x11_platform() {
     return Platform{
+        .display = DisplayBackend::X11,
         .early_init = []() {},
         .init = x11_init,
         .cleanup = x11_cleanup,
