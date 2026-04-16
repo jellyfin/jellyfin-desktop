@@ -112,6 +112,9 @@ struct Platform {
     // macOS/Windows the OS API is synchronous and the callback runs inline
     // on the calling thread. Callbacks may run on any thread.
     void (*clipboard_read_text_async)(std::function<void(std::string)> on_done);
+
+    // Caller guarantees non-empty URL not starting with '-'.
+    void (*open_external_url)(const std::string& url);
 };
 
 // Internal platform factories — called by make_platform()

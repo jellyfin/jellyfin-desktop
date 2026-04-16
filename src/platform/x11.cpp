@@ -4,6 +4,7 @@
 #include "browser/web_browser.h"
 #include "browser/overlay_browser.h"
 #include "idle_inhibit_linux.h"
+#include "open_url_linux.h"
 #include "input/input_x11.h"
 
 #include <xcb/xcb.h>
@@ -661,5 +662,6 @@ Platform make_x11_platform() {
         .set_titlebar_color = [](uint8_t, uint8_t, uint8_t) {},
         .shared_texture_supported = false,
         .clipboard_read_text_async = nullptr,
+        .open_external_url = open_url_linux::open,
     };
 }

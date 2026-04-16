@@ -5,6 +5,7 @@
 #include "browser/overlay_browser.h"
 #include "clipboard/wayland.h"
 #include "idle_inhibit_linux.h"
+#include "open_url_linux.h"
 #include "input/input_wayland.h"
 
 #include <wayland-client.h>
@@ -1462,5 +1463,6 @@ Platform make_wayland_platform() {
         .set_idle_inhibit = wl_set_idle_inhibit,
         .set_titlebar_color = wl_set_titlebar_color,
         .clipboard_read_text_async = clipboard_wayland::read_text_async,
+        .open_external_url = open_url_linux::open,
     };
 }

@@ -19,6 +19,7 @@
 #include <dxgi1_2.h>
 #include <dcomp.h>
 #include <dwmapi.h>
+#include <shellapi.h>
 
 #include <mutex>
 #include <thread>
@@ -28,6 +29,7 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dcomp.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "shell32.lib")
 
 // =====================================================================
 // Windows state (file-static)
@@ -674,6 +676,17 @@ static void win_clipboard_read_text_async(std::function<void(std::string)> on_do
     on_done(std::move(result));
 }
 
+static void win_open_external_url(const std::string& url) {
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, url.data(), (int)url.size(), nullptr, 0);
+    if (wlen <= 0) return;
+    std::wstring wurl(wlen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, url.data(), (int)url.size(), wurl.data(), wlen);
+    HINSTANCE r = ShellExecuteW(nullptr, L"open", wurl.c_str(),
+                                nullptr, nullptr, SW_SHOWNORMAL);
+    if ((INT_PTR)r <= 32)
+        LOG_ERROR(LOG_PLATFORM, "ShellExecuteW failed ({}): {}", (INT_PTR)r, url);
+}
+
 // Query window position relative to the monitor's working area (excludes
 // taskbar), in physical pixels. Matches mpv's --geometry +X+Y coordinate
 // system on Windows (vo_calc_window_geometry uses the working area).
@@ -742,6 +755,7 @@ Platform make_windows_platform() {
         .set_idle_inhibit = win_set_idle_inhibit,
         .set_titlebar_color = win_set_titlebar_color,
         .clipboard_read_text_async = win_clipboard_read_text_async,
+        .open_external_url = win_open_external_url,
     };
 }
 

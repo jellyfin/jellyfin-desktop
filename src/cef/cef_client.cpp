@@ -170,6 +170,23 @@ void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     if (on_after_created_) on_after_created_(browser);
 }
 
+bool CefLayer::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int,
+                             const CefString& target_url, const CefString&,
+                             WindowOpenDisposition, bool, const CefPopupFeatures&,
+                             CefWindowInfo&, CefRefPtr<CefClient>&,
+                             CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&,
+                             bool*) {
+    // OSR has no host for default popups; route them to the OS.
+    std::string url = target_url.ToString();
+    // Leading '-' guard blocks argv-style option smuggling into xdg-open.
+    if (url.empty() || url[0] == '-') {
+        LOG_WARN(LOG_CEF, "OnBeforePopup: refusing URL: '{}'", url);
+        return true;
+    }
+    g_platform.open_external_url(url);
+    return true;
+}
+
 void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     browser_ = nullptr;
     closed_ = true;
