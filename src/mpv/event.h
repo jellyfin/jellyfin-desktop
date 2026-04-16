@@ -14,6 +14,7 @@ enum class MpvEventType {
     TIME_POS,
     DURATION,
     FULLSCREEN,
+    WINDOW_MAXIMIZED,
     OSD_DIMS,
     SPEED,
     SEEKING,
@@ -50,9 +51,17 @@ enum MpvObserveId : uint64_t {
     MPV_OBSERVE_SEEKING       = 8,
     MPV_OBSERVE_DISPLAY_FPS   = 9,
     MPV_OBSERVE_CACHE_STATE   = 10,
+    MPV_OBSERVE_WINDOW_MAX    = 11,
 };
 
 class MpvHandle;
 
 void observe_properties(MpvHandle& mpv);
 MpvEvent digest_property(uint64_t id, mpv_event_property* p);
+
+namespace mpv {
+    bool fullscreen();
+    bool window_maximized();
+    int  osd_pw();
+    int  osd_ph();
+}
