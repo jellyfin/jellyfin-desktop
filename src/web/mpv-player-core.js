@@ -118,7 +118,7 @@
         getPlaybackRate() { return this._playRate || 1; }
 
         getSupportedPlaybackRates() {
-            return [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0].map(id => ({ name: id + 'x', id }));
+            return [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 3.5, 4.0].map(id => ({ name: id + 'x', id }));
         }
 
         // Volume
