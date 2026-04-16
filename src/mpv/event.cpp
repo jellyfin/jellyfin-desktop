@@ -1,7 +1,20 @@
 #include "event.h"
 #include "handle.h"
 #include "../common.h"
+#include <atomic>
 #include <cstring>
+
+static std::atomic<bool> s_fullscreen{false};
+static std::atomic<bool> s_window_maximized{false};
+static std::atomic<int>  s_osd_pw{0};
+static std::atomic<int>  s_osd_ph{0};
+
+namespace mpv {
+    bool fullscreen()       { return s_fullscreen.load(std::memory_order_relaxed); }
+    bool window_maximized() { return s_window_maximized.load(std::memory_order_relaxed); }
+    int  osd_pw()           { return s_osd_pw.load(std::memory_order_relaxed); }
+    int  osd_ph()           { return s_osd_ph.load(std::memory_order_relaxed); }
+}
 
 void observe_properties(MpvHandle& mpv) {
     mpv.ObservePropertyNode(MPV_OBSERVE_VIDEO_PARAMS, "video-params");
@@ -14,6 +27,7 @@ void observe_properties(MpvHandle& mpv) {
     mpv.ObservePropertyFlag(MPV_OBSERVE_SEEKING, "seeking");
     mpv.ObservePropertyDouble(MPV_OBSERVE_DISPLAY_FPS, "display-fps");
     mpv.ObservePropertyNode(MPV_OBSERVE_CACHE_STATE, "demuxer-cache-state");
+    mpv.ObservePropertyFlag(MPV_OBSERVE_WINDOW_MAX, "window-maximized");
 }
 
 MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
@@ -26,6 +40,8 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         g_mpv.GetPropertyInt("osd-height", h);
         ev.pw = static_cast<int>(w);
         ev.ph = static_cast<int>(h);
+        s_osd_pw.store(ev.pw, std::memory_order_relaxed);
+        s_osd_ph.store(ev.ph, std::memory_order_relaxed);
         float scale = g_platform.get_scale();
         ev.lw = static_cast<int>(ev.pw / scale);
         ev.lh = static_cast<int>(ev.ph / scale);
@@ -58,6 +74,7 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         if (p->format != MPV_FORMAT_FLAG) break;
         ev.type = MpvEventType::FULLSCREEN;
         ev.flag = *static_cast<int*>(p->data) != 0;
+        s_fullscreen.store(ev.flag, std::memory_order_relaxed);
         break;
     case MPV_OBSERVE_SPEED:
         if (p->format != MPV_FORMAT_DOUBLE) break;
@@ -68,6 +85,12 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         if (p->format != MPV_FORMAT_FLAG) break;
         ev.type = MpvEventType::SEEKING;
         ev.flag = *static_cast<int*>(p->data) != 0;
+        break;
+    case MPV_OBSERVE_WINDOW_MAX:
+        if (p->format != MPV_FORMAT_FLAG) break;
+        ev.type = MpvEventType::WINDOW_MAXIMIZED;
+        ev.flag = *static_cast<int*>(p->data) != 0;
+        s_window_maximized.store(ev.flag, std::memory_order_relaxed);
         break;
     case MPV_OBSERVE_DISPLAY_FPS: {
         if (p->format != MPV_FORMAT_DOUBLE) break;

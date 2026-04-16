@@ -227,10 +227,7 @@ static void cef_consumer_thread() {
             }
             case MpvEventType::FULLSCREEN:
                 if (ev.flag) {
-                    // Entering fullscreen: capture maximized state for save/restore
-                    bool maximized = false;
-                    g_mpv.GetWindowMaximized(maximized);
-                    g_was_maximized_before_fullscreen = maximized;
+                    g_was_maximized_before_fullscreen = mpv::window_maximized();
                 } else {
                     g_was_maximized_before_fullscreen = false;
                 }
@@ -821,19 +818,9 @@ int main(int argc, char* argv[]) {
     digest_thread.join();
 
     // Save window geometry while mpv is still alive.
-    // Three paths match old SDL implementation:
-    //   Fullscreen: preserve previous saved geometry, update only maximized flag
-    //   Maximized:  zero out size (sentinel), set maximized=true
-    //   Normal:     save current logical size
-    // Safe on macOS: all four properties read here are core-cached and
-    // resolve without a VO roundtrip (mpv's command.c:3113-3138 reads
-    // osd_get_vo_res; fullscreen/window-maximized are option-backed
-    // properties). Neither needs main-thread dispatch, so a sync read from
-    // the shutdown path after run_main_loop returned will not deadlock.
     {
-        bool fs = false, max = false;
-        g_mpv.GetFullscreen(fs);
-        g_mpv.GetWindowMaximized(max);
+        bool fs  = mpv::fullscreen();
+        bool max = mpv::window_maximized();
 
         if (fs) {
             // Preserve previous saved geometry; only update the maximized flag
@@ -851,13 +838,12 @@ int main(int argc, char* argv[]) {
             Settings::instance().setWindowGeometry(geom);
         } else {
             // Normal windowed: save current size and position.
-            int64_t pw = 0, ph = 0;
-            g_mpv.GetOsdWidth(pw);
-            g_mpv.GetOsdHeight(ph);
+            int pw = mpv::osd_pw();
+            int ph = mpv::osd_ph();
             if (pw > 0 && ph > 0) {
                 Settings::WindowGeometry geom;
-                geom.width = static_cast<int>(pw);
-                geom.height = static_cast<int>(ph);
+                geom.width = pw;
+                geom.height = ph;
                 geom.maximized = false;
                 int wx, wy;
                 if (g_platform.query_window_position &&
