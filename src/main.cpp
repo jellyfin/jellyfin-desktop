@@ -16,6 +16,7 @@
 #include "browser/web_browser.h"
 #include "browser/overlay_browser.h"
 #include "mpv/event.h"
+#include "mpv/options.h"
 #include "event_queue.h"
 #include "wake_event.h"
 #include "paths/paths.h"
@@ -338,7 +339,7 @@ int main(int argc, char* argv[]) {
     if (int rc = CefRuntime::Start(argc, argv); rc >= 0) return rc;
 
     // --- Parse CLI ---
-    std::string hwdec_str = "auto-safe";
+    std::string hwdec_str = kHwdecDefault;
     std::string audio_passthrough_str;
     bool audio_exclusive = false;
     std::string audio_channels_str;
@@ -369,7 +370,7 @@ int main(int argc, char* argv[]) {
                    "  -v, --version             Show version\n"
                    "  --log-level <level>       trace|debug|info|warn|error\n"
                    "  --log-file <path>         Write logs to file ('' to disable)\n"
-                   "  --hwdec <mode>            Hardware decoding mode (default: auto-safe)\n"
+                   "  --hwdec <mode>            Hardware decoding mode (default: auto)\n"
                    "  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd\n"
                    "  --audio-exclusive         Exclusive audio output\n"
                    "  --audio-channels <layout> e.g. stereo, 5.1, 7.1\n"
@@ -426,6 +427,8 @@ int main(int argc, char* argv[]) {
             player_playlist.push_back(argv[i]);
         }
     }
+
+    if (!isValidHwdec(hwdec_str)) hwdec_str = kHwdecDefault;
 
     // --log-file overrides default; empty argument disables file logging entirely.
     // Default to a platform log file on macOS/Windows (GUI apps have no

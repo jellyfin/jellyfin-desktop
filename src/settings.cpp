@@ -1,5 +1,6 @@
 #include "settings.h"
 #include "cjson/cJSON.h"
+#include "mpv/options.h"
 #include "paths/paths.h"
 #include <fstream>
 #include <sstream>
@@ -82,7 +83,7 @@ static std::string buildSettingsJson(const Settings& s, bool pretty) {
     }
     cJSON_AddBoolToObject(root, "windowMaximized", geom.maximized);
 
-    if (!s.hwdec().empty()) cJSON_AddStringToObject(root, "hwdec", s.hwdec().c_str());
+    if (!s.hwdec().empty() && s.hwdec() != kHwdecDefault) cJSON_AddStringToObject(root, "hwdec", s.hwdec().c_str());
     if (!s.audioPassthrough().empty()) cJSON_AddStringToObject(root, "audioPassthrough", s.audioPassthrough().c_str());
     if (s.audioExclusive()) cJSON_AddBoolToObject(root, "audioExclusive", true);
     if (!s.audioChannels().empty()) cJSON_AddStringToObject(root, "audioChannels", s.audioChannels().c_str());
@@ -131,6 +132,10 @@ std::string Settings::cliSettingsJson() const {
     if (!titlebar_theme_color_) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
     if (!transparent_titlebar_) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
     if (!log_level_.empty()) cJSON_AddStringToObject(root, "logLevel", log_level_.c_str());
+
+    cJSON* opts = cJSON_AddArrayToObject(root, "hwdecOptions");
+    for (const auto& o : hwdecOptions())
+        cJSON_AddItemToArray(opts, cJSON_CreateString(o.c_str()));
 
     char* str = cJSON_PrintUnformatted(root);
     std::string result(str);
