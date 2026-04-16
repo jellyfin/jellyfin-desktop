@@ -711,6 +711,7 @@ static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
 
 Platform make_windows_platform() {
     return Platform{
+        .display = DisplayBackend::Windows,
         .early_init = win_early_init,
         .init = win_init,
         .cleanup = win_cleanup,

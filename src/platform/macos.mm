@@ -1,10 +1,9 @@
 // platform_macos.mm — macOS platform layer.
-// Two plain CALayers composite CEF IOSurfaces (main + overlay) onto mpv's
+// Two CAMetalLayers composite CEF content (main + overlay) onto mpv's
 // window. CEF delivers straight-alpha BGRA via OnAcceleratedPaint; a Metal
-// pass converts to premultiplied into a small IOSurface pool we own, then
-// assigns that IOSurface as layer.contents — CoreAnimation handles the
-// actual compositing on its render-server thread. No CAMetalLayer, no
-// nextDrawable, no VSync-bound blocking on the main thread.
+// pass converts to premultiplied alpha and renders into the layer's
+// nextDrawable. CAMetalLayer.colorspace = sRGB tells CoreAnimation how to
+// color-manage the content into the window's working space (P3/EDR).
 // Input is owned by src/input/input_macos.mm.
 
 #include "platform/platform.h"
@@ -76,67 +75,32 @@ static void macos_pump();
 @end
 
 // =====================================================================
-// Compositor state (two CALayers: main + overlay)
+// Compositor state (two CAMetalLayers: main + overlay)
 // =====================================================================
 //
 // CEF's OSR pipeline delivers a BGRA8 IOSurface in STRAIGHT alpha via
 // OnAcceleratedPaint (confirmed from Chromium: components/viz/service/
 // frame_sinks/video_capture/video_capture_overlay_unittest.cc:476-477
 // "kUnpremul_SkAlphaType since that is the semantics of PIXEL_FORMAT_ARGB").
-// CoreAnimation expects premultiplied contents, so we can't use the CEF
-// IOSurface as layer.contents directly — CoreAnimation would composite the
-// edges too bright.
-//
-// Design:
-//
-//   [CEF IOSurface, straight alpha]
-//       │ MTLTexture wrap (read)
-//       ▼
-//   Metal render pass (premultiply in fragment shader)
-//       │ writes to
-//       ▼
-//   [Our IOSurface, premultiplied alpha]  ← pool of 3, round-robin
-//       │ command buffer completion handler
-//       │ dispatches to main queue
-//       ▼
-//   layer.contents = (id)ourIOSurface; [CATransaction commit];
-//       │
-//       ▼
-//   CoreAnimation composites on its own render server thread.
-//
-// This is the macOS analogue of the Wayland dmabuf→wl_surface.attach path.
-// The Metal pass is fast (sub-millisecond to encode+commit), non-blocking,
-// and runs the GPU work on Metal's private queue. The main thread's
-// OnAcceleratedPaint returns before CoreAnimation ever touches the result.
-//
-// A pool of 3 IOSurfaces per layer provides safe rotation: when we assign
-// surface N to the layer, surface N-2 (the one we'll overwrite next) is
-// two frames old — well past the point where the render server could still
-// be reading it.
+// CoreAnimation expects premultiplied contents, so we render CEF's
+// IOSurface into a CAMetalLayer drawable with premultiplication in the
+// fragment shader. CAMetalLayer.colorspace = sRGB tells CA how to
+// color-manage the content for the display (P3, EDR, etc.).
 
 static id<MTLDevice> g_mtl_device = nil;
 static id<MTLCommandQueue> g_mtl_queue = nil;
 static id<MTLRenderPipelineState> g_mtl_pipeline = nil;
 
-constexpr int kPoolSize = 3;
 
 struct LayerState {
     NSView* __strong view;
-    CALayer* __strong layer;
+    CAMetalLayer* __strong layer;
 
     // Input side: CEF's IOSurface, wrapped as an MTLTexture for sampling.
     // Recreated when the input IOSurface changes (new frame may use a new
     // backing surface from CEF's own pool).
     IOSurfaceRef cached_input;
     id<MTLTexture> __strong input_texture;
-
-    // Output side: our premultiplied IOSurfaces + render-target MTLTexture
-    // wrappers. All sized pool_w × pool_h in physical pixels.
-    IOSurfaceRef pool[kPoolSize];
-    id<MTLTexture> __strong pool_textures[kPoolSize];
-    int pool_w;
-    int pool_h;
-    int next_write;  // round-robin index into pool[]
 };
 
 static LayerState g_main{};
@@ -190,70 +154,13 @@ fragment float4 fragmentShader(VertexOut in [[stage_in]],
 )";
 
 // =====================================================================
-// IOSurface pool management
+// Input surface caching
 // =====================================================================
 
-static IOSurfaceRef create_premul_iosurface(int w, int h) {
-    NSDictionary* props = @{
-        (__bridge NSString*)kIOSurfaceWidth:           @(w),
-        (__bridge NSString*)kIOSurfaceHeight:          @(h),
-        (__bridge NSString*)kIOSurfaceBytesPerElement: @(4),
-        (__bridge NSString*)kIOSurfacePixelFormat:     @((uint32_t)'BGRA'),
-    };
-    return IOSurfaceCreate((__bridge CFDictionaryRef)props);
-}
-
-static void release_pool(LayerState& s) {
-    for (int i = 0; i < kPoolSize; i++) {
-        s.pool_textures[i] = nil;
-        if (s.pool[i]) {
-            CFRelease(s.pool[i]);
-            s.pool[i] = nullptr;
-        }
-    }
-    s.pool_w = 0;
-    s.pool_h = 0;
-    s.next_write = 0;
-}
-
-// Ensure the output IOSurface pool matches the input pixel dimensions.
-// Recreates everything if the size changed. Returns true if the pool is
-// ready to use.
-static bool ensure_pool(LayerState& s, int w, int h) {
-    if (s.pool_w == w && s.pool_h == h && s.pool[0] != nullptr) return true;
-
-    LOG_INFO(LOG_PLATFORM, "[POOL] resize {}x{} -> {}x{}", s.pool_w, s.pool_h, w, h);
-    release_pool(s);
-
-    for (int i = 0; i < kPoolSize; i++) {
-        s.pool[i] = create_premul_iosurface(w, h);
-        if (!s.pool[i]) {
-            LOG_ERROR(LOG_PLATFORM, "[POOL] IOSurfaceCreate failed i={} {}x{}", i, w, h);
-            release_pool(s);
-            return false;
-        }
-        MTLTextureDescriptor* desc = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-            width:w height:h mipmapped:NO];
-        desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-        desc.storageMode = MTLStorageModeShared;
-        s.pool_textures[i] = [g_mtl_device newTextureWithDescriptor:desc
-                                                            iosurface:s.pool[i]
-                                                                plane:0];
-        if (!s.pool_textures[i]) {
-            LOG_ERROR(LOG_PLATFORM, "[POOL] newTextureWithDescriptor:iosurface: failed i={}", i);
-            release_pool(s);
-            return false;
-        }
-    }
-    s.pool_w = w;
-    s.pool_h = h;
-    s.next_write = 0;
-    return true;
-}
-
 // Wrap the CEF input IOSurface as an MTLTexture for sampling. Recreated
-// when the input surface identity changes.
+// when the input surface identity changes. Also updates the layer's
+// colorspace from the IOSurface's kIOSurfaceColorSpace tag (set by
+// Chromium's viz compositor). Falls back to sRGB if untagged.
 static bool wrap_input_surface(LayerState& s, IOSurfaceRef surface, int w, int h) {
     if (surface == s.cached_input && s.input_texture != nil) return true;
 
@@ -271,13 +178,23 @@ static bool wrap_input_surface(LayerState& s, IOSurfaceRef surface, int w, int h
     }
     s.input_texture = tex;
     s.cached_input = surface;
+
+    CFTypeRef cs = IOSurfaceCopyValue(surface, kIOSurfaceColorSpace);
+    if (cs && CFGetTypeID(cs) == CFStringGetTypeID()) {
+        CGColorSpaceRef cg = CGColorSpaceCreateWithName((CFStringRef)cs);
+        if (cg) {
+            s.layer.colorspace = cg;
+            CGColorSpaceRelease(cg);
+        }
+    }
+    if (cs) CFRelease(cs);
+
     return true;
 }
 
 // =====================================================================
-// Present helper: encode the straight→premultiplied conversion pass to
-// one of our pool IOSurfaces, then asynchronously assign it as the
-// layer's contents once the GPU write is complete.
+// Present helper: render CEF's straight-alpha IOSurface into the
+// CAMetalLayer's next drawable with premultiplied alpha.
 // =====================================================================
 
 static void present_iosurface(LayerState& s, const CefAcceleratedPaintInfo& info) {
@@ -297,21 +214,22 @@ static void present_iosurface(LayerState& s, const CefAcceleratedPaintInfo& info
     int h = IOSurfaceGetHeight(surface);
 
     if (!wrap_input_surface(s, surface, w, h)) return;
-    if (!ensure_pool(s, w, h)) return;
 
-    // Pick the next pool slot. Round-robin through kPoolSize buffers so the
-    // slot we write to is always at least (kPoolSize-1) frames away from
-    // whatever the render server might still be reading.
-    int slot = s.next_write;
-    s.next_write = (s.next_write + 1) % kPoolSize;
-
-    IOSurfaceRef out_surface = s.pool[slot];
-    id<MTLTexture> out_texture = s.pool_textures[slot];
-    CALayer* target_layer = s.layer;
+    // Update drawable size if the input dimensions changed.
+    CGSize cur = s.layer.drawableSize;
+    if ((int)cur.width != w || (int)cur.height != h) {
+        s.layer.drawableSize = CGSizeMake(w, h);
+    }
 
     @autoreleasepool {
+        id<CAMetalDrawable> drawable = [s.layer nextDrawable];
+        if (!drawable) {
+            LOG_WARN(LOG_PLATFORM, "[METAL] nextDrawable returned nil");
+            return;
+        }
+
         MTLRenderPassDescriptor* passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
-        passDesc.colorAttachments[0].texture     = out_texture;
+        passDesc.colorAttachments[0].texture     = drawable.texture;
         passDesc.colorAttachments[0].loadAction  = MTLLoadActionClear;
         passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
         passDesc.colorAttachments[0].clearColor  = MTLClearColorMake(0, 0, 0, 0);
@@ -323,42 +241,32 @@ static void present_iosurface(LayerState& s, const CefAcceleratedPaintInfo& info
         [enc setFragmentTexture:s.input_texture atIndex:0];
         [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [enc endEncoding];
+        [cmdBuf presentDrawable:drawable];
         [cmdBuf commit];
-
-        // Assign the output IOSurface as the layer's contents synchronously,
-        // right after commit. The GPU write may not be finished yet, but
-        // Metal tracks IOSurface hazards across GPU contexts: when
-        // WindowServer's render process reads this surface (at the next
-        // CoreAnimation tick), Metal stalls the read until our write is
-        // complete. No explicit fence / completion handler / main-queue hop
-        // needed, and typing latency drops by the cost of those hops.
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        target_layer.contents = (__bridge id)out_surface;
-        [CATransaction commit];
     }
 }
 
 // =====================================================================
-// Helper: create a plain CALayer + hosting NSView
+// Helper: create a CAMetalLayer + hosting NSView
 // =====================================================================
 
 static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scale,
-                                 NSView* __strong& out_view, CALayer* __strong& out_layer,
+                                 NSView* __strong& out_view, CAMetalLayer* __strong& out_layer,
                                  NSView* positionAbove) {
     out_view = [[NSView alloc] initWithFrame:frame];
     [out_view setWantsLayer:YES];
     [out_view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
 
-    out_layer = [CALayer layer];
+    out_layer = [CAMetalLayer layer];
+    out_layer.device = g_mtl_device;
+    out_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    out_layer.colorspace = srgb;
+    CGColorSpaceRelease(srgb);
+    out_layer.framebufferOnly = YES;
     out_layer.frame = frame;
     out_layer.contentsScale = scale;
     out_layer.opaque = NO;
-    // 1:1 pixel mapping: display the contents IOSurface at its native size,
-    // anchored at the top-left. Gaps during resize (when our IOSurface is
-    // smaller than the layer) are acceptable; stretching is not.
-    // See CLAUDE.md: "No texture stretching during resize".
-    out_layer.contentsGravity = kCAGravityTopLeft;
     // Disable implicit animations on property changes — we update contents
     // every frame and don't want CA to cross-fade between them.
     out_layer.actions = @{
@@ -699,12 +607,11 @@ static void macos_toggle_fullscreen() {
 static void macos_begin_transition() {
     g_transitioning = true;
     // Drop cached input-surface wrappers so the next paint re-wraps at
-    // the new size. The output pool is recreated automatically inside
-    // ensure_pool() when the input dimensions change.
-    g_main.input_texture = nil;
-    g_main.cached_input = nullptr;
-    g_overlay.input_texture = nil;
-    g_overlay.cached_input = nullptr;
+    // the new size. drawableSize is updated in present_iosurface.
+    for (LayerState* s : {&g_main, &g_overlay}) {
+        s->input_texture = nil;
+        s->cached_input = nullptr;
+    }
 }
 
 static void macos_end_transition() {}
@@ -832,12 +739,10 @@ static void macos_cleanup() {
     if (g_overlay.view)  { [g_overlay.view removeFromSuperview];  g_overlay.view = nil; }
     if (g_main.view)     { [g_main.view removeFromSuperview];     g_main.view = nil; }
 
-    g_main.input_texture = nil;
-    g_overlay.input_texture = nil;
-    g_main.cached_input = nullptr;
-    g_overlay.cached_input = nullptr;
-    release_pool(g_main);
-    release_pool(g_overlay);
+    for (LayerState* s : {&g_main, &g_overlay}) {
+        s->input_texture = nil;
+        s->cached_input = nullptr;
+    }
 
     g_main.layer = nil;
     g_overlay.layer = nil;
@@ -916,6 +821,7 @@ static void macos_clipboard_read_text_async(std::function<void(std::string)> on_
 
 Platform make_macos_platform() {
     return Platform{
+        .display = DisplayBackend::macOS,
         .early_init = macos_early_init,
         .init = macos_init,
         .cleanup = macos_cleanup,

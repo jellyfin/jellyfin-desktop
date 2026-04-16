@@ -16,6 +16,7 @@
 #include "browser/web_browser.h"
 #include "browser/overlay_browser.h"
 #include "mpv/event.h"
+#include "mpv/options.h"
 #include "event_queue.h"
 #include "wake_event.h"
 #include "paths/paths.h"
@@ -324,21 +325,19 @@ int main(int argc, char* argv[]) {
     // They must hit CefExecuteProcess immediately and exit — before CLI parsing,
     // settings, single instance, or anything else touches shared state.
 #ifdef _WIN32
-    g_platform = make_windows_platform();
-    g_platform.early_init();
+    g_platform = make_platform(DisplayBackend::Windows);
 #elif defined(__APPLE__)
-    g_platform = make_macos_platform();
-    g_platform.early_init();
+    g_platform = make_platform(DisplayBackend::macOS);
 #else
     // Linux: runtime detection, overridable with --platform.
-    // Deferred to after CLI parsing. Both platforms' early_init are no-ops,
-    // and CEF subprocesses exit at CefExecuteProcess before any platform use.
+    // Deferred to after CLI parsing — CEF subprocesses exit at
+    // CefExecuteProcess before any platform use.
 #endif
 
     if (int rc = CefRuntime::Start(argc, argv); rc >= 0) return rc;
 
     // --- Parse CLI ---
-    std::string hwdec_str = "auto-safe";
+    std::string hwdec_str = kHwdecDefault;
     std::string audio_passthrough_str;
     bool audio_exclusive = false;
     std::string audio_channels_str;
@@ -369,7 +368,7 @@ int main(int argc, char* argv[]) {
                    "  -v, --version             Show version\n"
                    "  --log-level <level>       trace|debug|info|warn|error\n"
                    "  --log-file <path>         Write logs to file ('' to disable)\n"
-                   "  --hwdec <mode>            Hardware decoding mode (default: auto-safe)\n"
+                   "  --hwdec <mode>            Hardware decoding mode (default: auto)\n"
                    "  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd\n"
                    "  --audio-exclusive         Exclusive audio output\n"
                    "  --audio-channels <layout> e.g. stereo, 5.1, 7.1\n"
@@ -427,6 +426,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (!isValidHwdec(hwdec_str)) hwdec_str = kHwdecDefault;
+
     // --log-file overrides default; empty argument disables file logging entirely.
     // Default to a platform log file on macOS/Windows (GUI apps have no
     // user-visible stderr there). On Linux, stderr/journalctl is the norm,
@@ -461,29 +462,30 @@ int main(int argc, char* argv[]) {
 
     // --- Linux platform selection ---
 #if !defined(_WIN32) && !defined(__APPLE__)
-    bool use_wayland;
-    if (platform_override == "wayland")
-        use_wayland = true;
-    else if (platform_override == "x11")
-        use_wayland = false;
-    else if (!platform_override.empty()) {
-        fprintf(stderr, "Unknown platform: %s (expected wayland or x11)\n",
-                platform_override.c_str());
-        return 1;
-    } else {
-        use_wayland = getenv("WAYLAND_DISPLAY") || !getenv("DISPLAY");
-    }
-#ifdef HAVE_X11
-    g_platform = use_wayland ? make_wayland_platform() : make_x11_platform();
-#else
-    if (!use_wayland) {
-        fprintf(stderr, "X11 detected but X11 support not compiled in\n");
-        return 1;
-    }
-    g_platform = make_wayland_platform();
+    {
+        DisplayBackend backend;
+        if (platform_override == "wayland")
+            backend = DisplayBackend::Wayland;
+        else if (platform_override == "x11")
+            backend = DisplayBackend::X11;
+        else if (!platform_override.empty()) {
+            fprintf(stderr, "Unknown platform: %s (expected wayland or x11)\n",
+                    platform_override.c_str());
+            return 1;
+        } else {
+            backend = (getenv("WAYLAND_DISPLAY") || !getenv("DISPLAY"))
+                    ? DisplayBackend::Wayland : DisplayBackend::X11;
+        }
+#ifndef HAVE_X11
+        if (backend == DisplayBackend::X11) {
+            fprintf(stderr, "X11 detected but X11 support not compiled in\n");
+            return 1;
+        }
 #endif
-    g_platform.early_init();
-    LOG_INFO(LOG_MAIN, "Display backend: {}", use_wayland ? "wayland" : "x11");
+        g_platform = make_platform(backend);
+    }
+    LOG_INFO(LOG_MAIN, "Display backend: {}",
+             g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11");
 #endif
 
     // --- Signal handlers ---
@@ -519,60 +521,10 @@ int main(int argc, char* argv[]) {
     setenv("MPV_HOME", mpv_home.c_str(), 1);
 #endif
 
-    g_mpv = MpvHandle::Create();
+    g_mpv = MpvHandle::Create(g_platform.display);
     if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
 
-#ifdef __APPLE__
-    setenv("MPVBUNDLE", "true", 1);
-#endif
-
-    g_mpv.SetOptionString("vo", "gpu-next");
-    g_mpv.SetOptionString("gpu-api", "vulkan");
-    g_mpv.SetOptionString("hwdec", hwdec_str);
-    g_mpv.SetOptionString("target-colorspace-hint", "yes");
-    g_mpv.SetOptionString("osd-level", "0");
-    g_mpv.SetOptionString("osc", "no");
-    g_mpv.SetOptionString("display-tags", "");  // suppress "Title: ...", "Artist: ..." tag dump
-    g_mpv.SetOptionString("input-default-bindings", "no");
-    g_mpv.SetOptionString("input-vo-keyboard", "no");
-    g_mpv.SetOptionString("input-vo-cursor", "no");
-    g_mpv.SetOptionString("input-cursor", "no");
-    // X11's WM_DELETE_WINDOW routes through mpv's input system as
-    // CLOSE_WIN — input-keyboard=no drops it, breaking the close button.
-#if defined(_WIN32) || defined(__APPLE__)
-    g_mpv.SetOptionString("input-keyboard", "no");
-#else
-    if (use_wayland)
-        g_mpv.SetOptionString("input-keyboard", "no");
-#endif
-    g_mpv.SetOptionString("stop-screensaver", "no");
-    g_mpv.SetOptionString("keepaspect-window", "no");
-    g_mpv.SetOptionString("auto-window-resize", "no");
-    g_mpv.SetOptionString("border", "yes");
-    g_mpv.SetOptionString("title", "Jellyfin Desktop");
-    g_mpv.SetOptionString("wayland-app-id", "org.jellyfin.JellyfinDesktop");
-#ifdef _WIN32
-    // Tell mpv to load window icon from our exe resources (read at class
-    // registration time, before any window is created — no icon flash)
-    SetEnvironmentVariableW(L"MPV_WINDOW_ICON", L"IDI_ICON1");
-#endif
-#ifdef __APPLE__
-    // macOS VO (mac_common.swift:37) uses DispatchQueue.main.sync for window
-    // creation. mp_initialize (main.c:435) calls handle_force_window when
-    // force_vo==2 ("immediate"), which deadlocks because main is blocked in
-    // mpv_initialize and can't service GCD.
-    //
-    // force-window=yes (force_vo=1) SKIPS the init-time call. idle=yes makes
-    // core_thread enter idle_loop (playloop.c:1349), which calls
-    // handle_force_window(mpctx, true) from the core thread. By that point,
-    // main has returned from mpv_initialize and is pumping GCD in the VO
-    // wait loop — DispatchQueue.main.sync succeeds.
-    g_mpv.SetOptionString("force-window", "yes");
-    g_mpv.SetOptionString("idle", "yes");
-#else
-    g_mpv.SetOptionString("force-window", "yes");
-    g_mpv.SetOptionString("idle", "yes");
-#endif
+    g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
 
     // Restore saved window geometry. mpv's macOS VO honors the --geometry
@@ -613,12 +565,12 @@ int main(int argc, char* argv[]) {
             }
             audio_passthrough_str = filtered;
         }
-        g_mpv.SetOptionString("audio-spdif", audio_passthrough_str);
+        g_mpv.SetAudioSpdif(audio_passthrough_str);
     }
     if (audio_exclusive)
-        g_mpv.SetOptionString("audio-exclusive", "yes");
+        g_mpv.SetAudioExclusive(true);
     if (!audio_channels_str.empty())
-        g_mpv.SetOptionString("audio-channels", audio_channels_str);
+        g_mpv.SetAudioChannels(audio_channels_str);
 
     // Register property observations before mpv_initialize. On macOS,
     // core_thread races to DispatchQueue.main.sync immediately after init
@@ -691,7 +643,7 @@ int main(int argc, char* argv[]) {
     // Resolve effective ozone platform so CEF clients can check it.
 #if !defined(_WIN32) && !defined(__APPLE__)
     if (ozone_platform.empty())
-        ozone_platform = use_wayland ? "wayland" : "x11";
+        ozone_platform = g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11";
 #endif
     g_platform.cef_ozone_platform = ozone_platform;
     if (!g_platform.init(g_mpv.Get())) {

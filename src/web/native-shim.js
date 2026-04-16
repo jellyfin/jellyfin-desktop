@@ -88,7 +88,7 @@
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
             playback: {
-                hwdec: _savedSettings.hwdec || 'auto-safe'
+                hwdec: _savedSettings.hwdec || 'auto'
             },
             audio: {
                 audioPassthrough: _savedSettings.audioPassthrough || '',
@@ -102,16 +102,7 @@
         },
         settingsDescriptions: {
             playback: [
-                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto-safe" for safe auto-detection, "auto" for aggressive auto-detection, or "no" to disable.', options: [
-                    { value: 'auto-safe', title: 'Auto (Safe)' },
-                    { value: 'auto', title: 'Auto' },
-                    { value: 'no', title: 'Disabled' },
-                    { value: 'vaapi', title: 'VA-API (Linux)' },
-                    { value: 'nvdec', title: 'NVDEC (NVIDIA)' },
-                    { value: 'vulkan', title: 'Vulkan' },
-                    { value: 'd3d11va', title: 'D3D11VA (Windows)' },
-                    { value: 'videotoolbox', title: 'VideoToolbox (macOS)' }
-                ]}
+                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions }
             ],
             audio: [
                 { key: 'audioPassthrough', displayName: 'Audio Passthrough', help: 'Comma-separated list of codecs to pass through to the audio device (e.g. ac3,eac3,dts-hd,truehd). Leave empty to disable.', inputType: 'textarea' },
@@ -583,10 +574,12 @@
                     const control = document.createElement('select');
                     control.className = 'emby-select-withcolor emby-select';
                     for (const option of setting.options) {
+                        const val = typeof option === 'string' ? option : option.value;
+                        const title = typeof option === 'string' ? option : option.title;
                         const opt = document.createElement('option');
-                        opt.value = option.value;
-                        opt.selected = String(option.value) === String(values[setting.key]);
-                        opt.textContent = option.title;
+                        opt.value = val;
+                        opt.selected = String(val) === String(values[setting.key]);
+                        opt.textContent = title;
                         control.appendChild(opt);
                     }
                     control.addEventListener('change', () => {

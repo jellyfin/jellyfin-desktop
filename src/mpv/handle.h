@@ -5,6 +5,8 @@
 #include <vector>
 #include <cstring>
 
+#include "platform/display_backend.h"
+
 /**
  * Typed wrapper for mpv_handle. Encapsulates the mpv instance so it doesn't
  * need to be passed around. All methods are typesafe and handle format
@@ -21,8 +23,11 @@ public:
     // Creation and initialization
     // =====================================================================
 
-    static MpvHandle Create() {
-        return MpvHandle(mpv_create());
+    static MpvHandle Create(DisplayBackend display) {
+        MpvHandle mpv(mpv_create());
+        if (mpv.IsValid())
+            mpv.SetDefaults(display);
+        return mpv;
     }
 
     int Initialize() {
@@ -52,6 +57,12 @@ public:
         int flag = value ? 1 : 0;
         mpv_set_option(handle_, name.c_str(), MPV_FORMAT_FLAG, &flag);
     }
+
+    // Typed option setters (must be called before Initialize)
+    void SetHwdec(const std::string& mode)          { SetOptionString("hwdec", mode); }
+    void SetAudioSpdif(const std::string& codecs)    { SetOptionString("audio-spdif", codecs); }
+    void SetAudioExclusive(bool v)                   { SetOptionFlag("audio-exclusive", v); }
+    void SetAudioChannels(const std::string& layout)  { SetOptionString("audio-channels", layout); }
 
     // =====================================================================
     // Property access (synchronous - safe in main thread)
@@ -165,6 +176,54 @@ public:
     }
 
 private:
+    // =====================================================================
+    // Default options (called by Create)
+    // =====================================================================
+
+    void SetDefaults(DisplayBackend display) {
+#ifdef __APPLE__
+        setenv("MPVBUNDLE", "true", 1);
+#endif
+
+        // Disable OSD/OSC — CEF overlay handles all UI
+        SetOptionString("osd-level", "0");
+        SetOptionString("osc", "no");
+        SetOptionString("display-tags", "");
+
+        // Disable all mpv input — we own input and route through CEF
+        SetOptionString("input-default-bindings", "no");
+        SetOptionString("input-vo-keyboard", "no");
+        SetOptionString("input-vo-cursor", "no");
+        SetOptionString("input-cursor", "no");
+        // X11's WM_DELETE_WINDOW routes through mpv's input system as
+        // CLOSE_WIN — input-keyboard=no drops it, breaking the close button.
+#if defined(_WIN32) || defined(__APPLE__)
+        SetOptionString("input-keyboard", "no");
+#else
+        if (display == DisplayBackend::Wayland)
+            SetOptionString("input-keyboard", "no");
+#endif
+
+        // Window behavior
+        SetOptionString("stop-screensaver", "no");
+        SetOptionString("keepaspect-window", "no");
+        SetOptionString("auto-window-resize", "no");
+        SetOptionString("border", "yes");
+        SetOptionString("title", "Jellyfin Desktop");
+        SetOptionString("wayland-app-id", "org.jellyfin.JellyfinDesktop");
+#ifdef _WIN32
+        // Tell mpv to load window icon from our exe resources
+        _putenv_s("MPV_WINDOW_ICON", "IDI_ICON1");
+#endif
+
+        // Keep window open when idle (no media loaded).
+        // force-window=yes (not "immediate") avoids a macOS deadlock:
+        // "immediate" calls handle_force_window during mpv_initialize, which
+        // triggers DispatchQueue.main.sync while main is blocked in init.
+        SetOptionString("force-window", "yes");
+        SetOptionString("idle", "yes");
+    }
+
     // =====================================================================
     // Property modification (asynchronous - safe from any thread)
     // =====================================================================
