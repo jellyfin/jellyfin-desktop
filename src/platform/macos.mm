@@ -819,6 +819,17 @@ static void macos_clipboard_read_text_async(std::function<void(std::string)> on_
     on_done(utf8 ? std::string(utf8) : std::string());
 }
 
+static void macos_open_external_url(const std::string& url) {
+    NSString* str = [NSString stringWithUTF8String:url.c_str()];
+    NSURL* nsurl = str ? [NSURL URLWithString:str] : nil;
+    if (!nsurl) {
+        LOG_ERROR(LOG_PLATFORM, "open_external_url: invalid URL: {}", url);
+        return;
+    }
+    if (![[NSWorkspace sharedWorkspace] openURL:nsurl])
+        LOG_ERROR(LOG_PLATFORM, "NSWorkspace openURL failed: {}", url);
+}
+
 Platform make_macos_platform() {
     return Platform{
         .display = DisplayBackend::macOS,
@@ -854,5 +865,6 @@ Platform make_macos_platform() {
         .set_idle_inhibit = macos_set_idle_inhibit,
         .set_titlebar_color = macos_set_titlebar_color,
         .clipboard_read_text_async = macos_clipboard_read_text_async,
+        .open_external_url = macos_open_external_url,
     };
 }

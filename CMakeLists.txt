@@ -280,6 +280,7 @@ else()
     set(PLATFORM_SOURCES
         # Shared Linux
         src/platform/idle_inhibit_linux.cpp
+        src/platform/open_url_linux.cpp
         src/wake_event_linux.cpp
         src/paths/linux.cpp
         src/player/media_session.cpp

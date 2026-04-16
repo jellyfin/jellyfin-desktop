@@ -62,6 +62,12 @@ public:
                             const RectList&, const CefAcceleratedPaintInfo& info) override;
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser>) override;
+    bool OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int popup_id,
+                       const CefString& target_url, const CefString& target_frame_name,
+                       WindowOpenDisposition target_disposition, bool user_gesture,
+                       const CefPopupFeatures&, CefWindowInfo&,
+                       CefRefPtr<CefClient>&, CefBrowserSettings&,
+                       CefRefPtr<CefDictionaryValue>&, bool* no_javascript_access) override;
     void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override;
     void OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                      ErrorCode, const CefString& errorText, const CefString& failedUrl) override;
