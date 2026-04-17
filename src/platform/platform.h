@@ -35,10 +35,10 @@ struct Platform {
     void (*popup_hide)();
     void (*popup_present)(const CefAcceleratedPaintInfo& info, int lw, int lh);
     void (*popup_present_software)(const void* buffer, int pw, int ph, int lw, int lh);
-    // Delay, then fade overlay from opaque to transparent, then hide.
-    // on_fade_start is called after the delay, just before the fade begins.
-    // on_complete is called after the fade finishes.  Both may fire on any thread.
-    void (*fade_overlay)(float delay_sec, float fade_sec,
+    // Fade overlay from opaque to transparent over `fade_sec`, then hide.
+    // on_fade_start fires just before the fade begins; on_complete fires after
+    // the fade finishes. Both may fire on any thread.
+    void (*fade_overlay)(float fade_sec,
                          std::function<void()> on_fade_start,
                          std::function<void()> on_complete);
 

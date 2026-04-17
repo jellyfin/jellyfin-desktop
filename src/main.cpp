@@ -699,6 +699,12 @@ int main(int argc, char* argv[]) {
     bs.background_color = 0;
     bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
 
+    // Must exist before we create the main browser: the pre-loaded page fires
+    // its initial theme-color IPC at DOMContentLoaded, and we need to capture
+    // it so onOverlayDismissed has a color to apply.
+    TitlebarColor titlebar_color_obj(g_platform, Settings::instance().titlebarThemeColor());
+    g_titlebar_color = &titlebar_color_obj;
+
     // Main browser
     RenderTarget main_target{g_platform.present, g_platform.present_software};
     g_web_browser = new WebBrowser(main_target);
@@ -719,15 +725,16 @@ int main(int argc, char* argv[]) {
         auto encoded = CefURIEncode(json, false);
         main_url = "app://resources/player.html#" + encoded.ToString();
     } else if (!server_url.empty()) {
+        // Eager pre-load: begin fetching the saved server while the overlay
+        // probes in parallel. The overlay fades out on success, revealing the
+        // already-loaded page.
         main_url = server_url;
-    } else {
-        // No server URL known -- load overlay for server selection
-        main_url = "app://resources/index.html";
     }
+    // else: main browser starts blank; the overlay handles server selection.
 
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) url={} lw={} lh={} pw={} ph={}",
              main_url.c_str(), lw, lh, (long long)mw, (long long)mh);
-    CefBrowserHost::CreateBrowser(wi, g_web_browser->client(), main_url, bs, nullptr, nullptr);
+    g_web_browser->create(wi, bs, main_url);
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
 
     // Overlay browser (server selection UI) -- only in full app mode
@@ -759,9 +766,6 @@ int main(int argc, char* argv[]) {
     g_web_browser->waitForLoad();
 #endif
     LOG_INFO(LOG_MAIN, "Main browser loaded");
-
-    TitlebarColor titlebar_color_obj(g_platform, Settings::instance().titlebarThemeColor());
-    g_titlebar_color = &titlebar_color_obj;
 
     auto media_session_obj = MediaSession::create();
 

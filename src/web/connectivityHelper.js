@@ -35,17 +35,15 @@ window.jmpCheckServerConnectivity = (() => {
             pendingReject = reject;
             pendingUrl = url;
 
-            // Normalize URL
-            if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                url = 'http://' + url;
-            }
-
             console.log('Checking connectivity:', url);
             window.jmpNative.checkServerConnectivity(url);
         });
     };
 
     checkFunc.abort = () => {
+        if (window.jmpNative?.cancelServerConnectivity) {
+            window.jmpNative.cancelServerConnectivity();
+        }
         if (pendingReject) {
             pendingReject(new Error('Connection cancelled'));
             pendingResolve = null;

@@ -20,9 +20,8 @@ enum LogCategory {
     LOG_COMPOSITOR = 10,
     LOG_RESOURCE   = 11,
     LOG_TEST       = 12,
-    LOG_JS_MAIN    = 13,
-    LOG_JS_OVERLAY = 14,
-    LOG_VIDEO      = 15,
+    LOG_JS         = 13,
+    LOG_VIDEO      = 14,
     LOG_CATEGORY_COUNT,
 };
 

@@ -28,11 +28,49 @@
 
 quill::Logger* g_loggers[LOG_CATEGORY_COUNT] = {};
 
+// Sink mixin that replaces embedded newlines in the rendered log_statement
+// before handing it to the real sink. Runs on Quill's backend worker thread,
+// so the call site stays free of string mangling. Newlines come mainly from
+// multi-line JS console messages (stack traces) piped through OnConsoleMessage.
+template <class Base>
+class NewlineStripSink : public Base {
+public:
+    using Base::Base;
+    void write_log(quill::MacroMetadata const* md, uint64_t ts,
+                   std::string_view thread_id, std::string_view thread_name,
+                   std::string const& process_id, std::string_view logger_name,
+                   quill::LogLevel level, std::string_view level_desc,
+                   std::string_view level_code,
+                   std::vector<std::pair<std::string, std::string>> const* named_args,
+                   std::string_view log_message, std::string_view log_statement) override {
+        // Last char is the pattern suffix '\n' which Quill added — keep it.
+        // Only strip newlines that were embedded in the message itself.
+        auto body_end = log_statement.size();
+        if (body_end > 0 && log_statement[body_end - 1] == '\n') --body_end;
+        if (log_statement.substr(0, body_end).find_first_of("\r\n") == std::string_view::npos) {
+            Base::write_log(md, ts, thread_id, thread_name, process_id, logger_name,
+                            level, level_desc, level_code, named_args,
+                            log_message, log_statement);
+            return;
+        }
+        std::string cleaned(log_statement);
+        for (size_t i = 0; i < body_end; ++i) {
+            if (cleaned[i] == '\r' || cleaned[i] == '\n') cleaned[i] = ' ';
+        }
+        Base::write_log(md, ts, thread_id, thread_name, process_id, logger_name,
+                        level, level_desc, level_code, named_args,
+                        log_message, std::string_view(cleaned));
+    }
+};
+
+using ConsoleSinkNoNewlines = NewlineStripSink<quill::ConsoleSink>;
+using RotatingFileSinkNoNewlines = NewlineStripSink<quill::RotatingFileSink>;
+
 namespace {
 
 constexpr const char* kCategoryNames[LOG_CATEGORY_COUNT] = {
     "Main", "mpv",   "CEF",   "GL",    "Media",   "Overlay",  "Menu", "UI",
-    "Window", "Platform", "Compositor", "Resource", "Test", "JS:Main", "JS:Overlay", "Video",
+    "Window", "Platform", "Compositor", "Resource", "Test", "JS", "Video",
 };
 
 // ---- stderr capture ------------------------------------------------------
@@ -179,7 +217,7 @@ void initLogging(const char* path, int min_level) {
     quill::ConsoleSinkConfig console_config;
     console_config.set_override_pattern_formatter_options(quill::PatternFormatterOptions{
         "[%(logger)] %(message)", "", quill::Timezone::LocalTime});
-    sinks.push_back(quill::Frontend::create_or_get_sink<quill::ConsoleSink>(
+    sinks.push_back(quill::Frontend::create_or_get_sink<ConsoleSinkNoNewlines>(
         "console_sink", console_config));
 
     // File: ISO timestamp, padded level, then "[Category] message".
@@ -195,7 +233,7 @@ void initLogging(const char* path, int min_level) {
             "%(time) %(log_level:<7) [%(logger)] %(message)",
             "%Y-%m-%dT%H:%M:%S",
             quill::Timezone::LocalTime});
-        sinks.push_back(quill::Frontend::create_or_get_sink<quill::RotatingFileSink>(path, file_config));
+        sinks.push_back(quill::Frontend::create_or_get_sink<RotatingFileSinkNoNewlines>(path, file_config));
     }
 
     quill::LogLevel level = toQuillLevel(min_level);

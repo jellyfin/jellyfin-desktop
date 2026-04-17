@@ -1,37 +1,70 @@
+let cancelWait = null;
+// True whenever the main browser is loading the URL we currently care about.
+// Set at startup if a saved URL exists (main.cpp pre-loads it), by navigateMain
+// on success, cleared whenever native resets main (cancel or user edits URL).
+let mainLoaded = !!(window.jmpInfo && window.jmpInfo.settings.main.userWebClient);
+
+// Sleep for `ms` milliseconds, rejecting if cancelWait() is called first.
+// Stores the cancel hook in the module-level `cancelWait` so a single cancel
+// path handles whichever wait is currently outstanding.
+function cancellableDelay(ms, label) {
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(() => { cancelWait = null; resolve(); }, ms);
+        cancelWait = () => {
+            console.log('Cancelling ' + label + ' timer', t);
+            clearTimeout(t);
+            cancelWait = null;
+            reject(new Error('cancelled'));
+        };
+    });
+}
+
 async function tryConnect(server, spinnerStartTime = Date.now()) {
     try {
-        if (!server.startsWith("http")) {
-            server = "http://" + server;
-        }
-
         console.log("Checking connectivity to:", server);
 
         const resolvedUrl = await window.jmpCheckServerConnectivity(server);
         console.log("Server connectivity check passed");
         console.log("Resolved URL:", resolvedUrl);
 
-        // Save server URL persistently
-        window.jmpInfo.settings.main.userWebClient = server;
+        if (!isConnecting) return false;
+
+        // Save the normalized URL returned by native, not the raw user input.
+        window.jmpInfo.settings.main.userWebClient = resolvedUrl;
         if (window.jmpNative && window.jmpNative.saveServerUrl) {
-            window.jmpNative.saveServerUrl(server);
+            window.jmpNative.saveServerUrl(resolvedUrl);
         }
 
-        // Ensure spinner shows for at least 1s
+        // Kick off main-browser navigation immediately, then wait long enough
+        // to satisfy both constraints simultaneously: spinner visible ≥1s AND
+        // main browser has ≥1s to render after navigate. For fast probes this
+        // saves up to ~900ms compared to running the two waits sequentially.
+        // Skip when main is already loading (startup pre-load or prior nav).
+        if (!mainLoaded) {
+            if (window.jmpNative && window.jmpNative.navigateMain) {
+                window.jmpNative.navigateMain(resolvedUrl);
+                mainLoaded = true;
+            } else {
+                console.error("navigateMain IPC not available");
+                return false;
+            }
+        }
+
         const elapsed = Date.now() - spinnerStartTime;
-        if (elapsed < 1000) {
-            await new Promise(r => setTimeout(r, 1000 - elapsed));
-        }
+        const waitMs = Math.max(1000 - elapsed, 1000);
+        await cancellableDelay(waitMs, 'pre-fade');
+        if (!isConnecting) return false;
 
-        // Tell native to load this server in main browser
-        if (window.jmpNative && window.jmpNative.loadServer) {
-            window.jmpNative.loadServer(resolvedUrl);
-        } else {
-            console.error("loadServer IPC not available");
-            return false;
+        if (window.jmpNative && window.jmpNative.dismissOverlay) {
+            window.jmpNative.dismissOverlay();
         }
         return true;
     } catch (e) {
-        console.error("Server connectivity check failed:", e);
+        if (/cancel/i.test(e && e.message)) {
+            console.log("Connection cancelled");
+        } else {
+            console.error("Server connectivity check failed:", e);
+        }
         return false;
     }
 }
@@ -93,6 +126,8 @@ const cancelConnection = () => {
     if (!isConnecting) return;
 
     console.log("Cancelling connection");
+    // Native resets main on cancelServerConnectivity.
+    mainLoaded = false;
     isConnecting = false;
 
     // Cancel C++ connectivity check and abort JS promise
@@ -102,6 +137,7 @@ const cancelConnection = () => {
     if (window.jmpCheckServerConnectivity.abort) {
         window.jmpCheckServerConnectivity.abort();
     }
+    if (cancelWait) cancelWait();
 
     const address = document.getElementById('address');
     const title = document.getElementById('title');

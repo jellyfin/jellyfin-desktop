@@ -12,6 +12,8 @@ public:
         : platform_(platform), enabled_(enabled) {}
 
     void onThemeColor(const std::string& color) {
+        std::fprintf(stderr, "TitlebarColor::onThemeColor enabled=%d unlocked=%d color=%s\n",
+                     enabled_, unlocked_, color.c_str());
         if (!enabled_) return;
         current_ = color;
         if (unlocked_)
@@ -19,6 +21,7 @@ public:
     }
 
     void onOverlayDismissed() {
+        std::fprintf(stderr, "TitlebarColor::onOverlayDismissed current='%s'\n", current_.c_str());
         unlocked_ = true;
         if (!current_.empty())
             applyHex(current_);

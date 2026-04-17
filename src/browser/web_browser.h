@@ -18,6 +18,11 @@ public:
     bool isLoaded() const { return client_->isLoaded(); }
     void waitForClose() { client_->waitForClose(); }
     void waitForLoad() { client_->waitForLoad(); }
+    void create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url) {
+        client_->create(wi, bs, url);
+    }
+    void reset() { client_->reset(); }
+    void loadUrl(const std::string& url) { client_->loadUrl(url); }
     CefRefPtr<CefLayer> client() { return client_; }
 
 private:
