@@ -4,6 +4,7 @@
 #include <string>
 
 class WebBrowser;
+class ServerProbeClient;
 
 // Business logic wrapper for the server selection overlay browser.
 // Owns an CefLayer (pure CEF) and handles server selection,
@@ -11,6 +12,7 @@ class WebBrowser;
 class OverlayBrowser {
 public:
     OverlayBrowser(RenderTarget target, WebBrowser& main_browser);
+    ~OverlayBrowser();
 
     CefRefPtr<CefBrowser> browser() { return client_->browser(); }
     void execJs(const std::string& js) { client_->execJs(js); }
@@ -28,4 +30,5 @@ private:
 
     CefRefPtr<CefLayer> client_;
     WebBrowser& main_browser_;
+    CefRefPtr<ServerProbeClient> active_probe_;
 };

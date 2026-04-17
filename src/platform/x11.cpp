@@ -361,7 +361,7 @@ static void x11_set_overlay_visible(bool visible) {
 // Fade overlay
 // =====================================================================
 
-static void x11_fade_overlay(float delay_sec, float fade_sec,
+static void x11_fade_overlay(float fade_sec,
                              std::function<void()> on_fade_start,
                              std::function<void()> on_complete) {
     if (g_x11.net_wm_opacity == XCB_NONE) {
@@ -372,11 +372,9 @@ static void x11_fade_overlay(float delay_sec, float fade_sec,
         return;
     }
 
-    std::thread([delay_sec, fade_sec,
+    std::thread([fade_sec,
                  on_fade_start = std::move(on_fade_start),
                  on_complete = std::move(on_complete)]() {
-        if (delay_sec > 0)
-            std::this_thread::sleep_for(std::chrono::duration<float>(delay_sec));
         if (on_fade_start) on_fade_start();
 
         int fps = g_display_hz.load(std::memory_order_relaxed);

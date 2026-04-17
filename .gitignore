@@ -9,6 +9,7 @@ third_party/*
 !third_party/GL
 !third_party/KHR
 !third_party/quill
+!third_party/doctest
 
 # Project-scoped MCP
 .mcp.json

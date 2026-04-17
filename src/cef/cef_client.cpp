@@ -2,7 +2,22 @@
 #include "logging.h"
 #include "../cjson/cJSON.h"
 #include "../platform/platform.h"
+#include "include/cef_task.h"
 #include <cstdio>
+#include <functional>
+
+namespace {
+// Small CefTask adapter so we can post lambdas to the CEF UI thread without
+// pulling in base::BindOnce headers.
+class FnTask : public CefTask {
+public:
+    explicit FnTask(std::function<void()> fn) : fn_(std::move(fn)) {}
+    void Execute() override { if (fn_) fn_(); }
+private:
+    std::function<void()> fn_;
+    IMPLEMENT_REFCOUNTING(FnTask);
+};
+}
 
 extern Platform g_platform;
 extern std::atomic<bool> g_shutting_down;
@@ -160,6 +175,8 @@ void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     LOG_INFO(LOG_CEF, "CefLayer::OnAfterCreated browser={} id={}",
              static_cast<void*>(browser.get()), browser ? browser->GetIdentifier() : -1);
     browser_ = browser;
+    closed_ = false;
+    loaded_ = false;
     if (g_shutting_down.load(std::memory_order_relaxed)) {
         browser->GetHost()->CloseBrowser(true);
         return;
@@ -167,7 +184,28 @@ void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);
+
+    // Reset state machine: if reset() was called before the initial
+    // OnAfterCreated, close the freshly created browser so the one-shot
+    // before-close callback can spin up the blank replacement.
+    if (state_ == State::PendingReset) {
+        state_ = State::Recreating;
+        browser->GetHost()->CloseBrowser(true);
+        return;
+    }
+    // If we're coming out of a reset cycle, return to Normal; the blank
+    // browser is up and any URL buffered during the reset is applied below.
+    if (state_ == State::Recreating) {
+        state_ = State::Normal;
+    }
+
     if (on_after_created_) on_after_created_(browser);
+
+    // Flush any URL buffered while the browser wasn't ready.
+    if (!pending_url_.empty()) {
+        browser->GetMainFrame()->LoadURL(pending_url_);
+        pending_url_.clear();
+    }
 }
 
 bool CefLayer::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int,
@@ -193,6 +231,57 @@ void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     loaded_ = true;
     close_cv_.notify_all();
     load_cv_.notify_all();
+    // Move out before invoking. The callback can safely install a new one
+    // (via setBeforeCloseCallback) without destroying its own closure —
+    // invoking `on_before_close_()` inline would if the callback then
+    // nulled the slot.
+    auto cb = std::move(on_before_close_);
+    if (cb) cb();
+}
+
+void CefLayer::create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url) {
+    window_info_ = wi;
+    browser_settings_ = bs;
+    CefBrowserHost::CreateBrowser(wi, this, url, bs, nullptr, nullptr);
+}
+
+void CefLayer::reset() {
+    // Double-call guard: already tearing down or awaiting the replacement.
+    if (state_ != State::Normal) return;
+
+    // One-shot: when the current browser finishes closing, spin up a fresh
+    // one with no URL. A blank browser has no origin state from the old one.
+    // OnBeforeClose fires synchronously from within CEF's destroy chain, so
+    // we MUST defer the CreateBrowser — calling it inline reenters CEF while
+    // WebContents is mid-destroy and crashes inside libcef.
+    CefRefPtr<CefLayer> self(this);
+    setBeforeCloseCallback([self]() {
+        // OnBeforeClose already moved this callback out of on_before_close_,
+        // so we don't need to (and must not) clear it ourselves.
+        CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
+            // Go through create() so requested_url_ is cleared alongside the
+            // actual CreateBrowser call.
+            self->create(self->window_info_, self->browser_settings_, "");
+        })));
+    });
+
+    if (browser_) {
+        state_ = State::Recreating;
+        browser_->GetHost()->CloseBrowser(true);
+    } else {
+        // Initial create still in flight. Defer the close to OnAfterCreated.
+        state_ = State::PendingReset;
+    }
+}
+
+void CefLayer::loadUrl(const std::string& url) {
+    // If a reset is in flight or the initial create hasn't completed, buffer
+    // the URL and let OnAfterCreated apply it when the browser is ready.
+    if (state_ != State::Normal || !browser_) {
+        pending_url_ = url;
+        return;
+    }
+    browser_->GetMainFrame()->LoadURL(url);
 }
 
 void CefLayer::waitForClose() {
@@ -228,6 +317,20 @@ void CefLayer::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {
 bool CefLayer::OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle,
                               cef_cursor_type_t type, const CefCursorInfo&) {
     g_platform.set_cursor(type);
+    return true;
+}
+
+bool CefLayer::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level,
+                                const CefString& message, const CefString& source,
+                                int line) {
+    std::string msg = message.ToString();
+    std::string src = source.ToString();
+    if (level >= LOGSEVERITY_ERROR)
+        LOG_ERROR(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
+    else if (level == LOGSEVERITY_WARNING)
+        LOG_WARN(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
+    else
+        LOG_INFO(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
     return true;
 }
 

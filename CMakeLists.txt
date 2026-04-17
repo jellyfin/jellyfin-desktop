@@ -472,6 +472,7 @@ if(WIN32)
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/cjson/cJSON.c
+        src/jellyfin_api.cpp
         src/settings.cpp
         src/paths/paths.cpp
         src/wake_event_windows.cpp
@@ -493,6 +494,7 @@ else()
         src/settings.cpp
         src/paths/paths.cpp
         src/cjson/cJSON.c
+        src/jellyfin_api.cpp
     )
 endif()
 
@@ -752,6 +754,15 @@ else()
     if(EXTERNAL_MPV_DIR)
         install(FILES "${EXTERNAL_MPV_DIR}/lib/libmpv.so" DESTINATION .)
     endif()
+endif()
+
+# Tests (opt-in; existing packagers and CI are unaffected by default).
+# Default BUILD_TESTING to OFF before include(CTest) so distro builds
+# running plain `cmake ..` stay behavior-identical.
+set(BUILD_TESTING OFF CACHE BOOL "Build unit tests")
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
 endif()
 
 # CPack for creating distribution packages

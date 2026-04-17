@@ -156,6 +156,7 @@ bool WebBrowser::handleMessage(const std::string& name,
         applySettingValue(section, key, value);
     } else if (name == "themeColor") {
         std::string color = args->GetString(0).ToString();
+        LOG_DEBUG(LOG_CEF, "themeColor IPC: {}", color.c_str());
         if (g_titlebar_color) g_titlebar_color->onThemeColor(color);
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();

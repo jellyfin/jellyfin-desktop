@@ -1,5 +1,6 @@
 #pragma once
 
+#include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_render_handler.h"
 #include "include/cef_life_span_handler.h"
@@ -21,6 +22,9 @@ using MessageHandler = std::function<bool(const std::string& name,
 // Callback invoked after the browser is created (OnAfterCreated).
 using CreatedCallback = std::function<void(CefRefPtr<CefBrowser>)>;
 
+// Callback invoked just before the browser is destroyed (OnBeforeClose).
+using BeforeCloseCallback = std::function<void()>;
+
 // Render target callbacks — decouple the client from the platform layer.
 struct RenderTarget {
     void (*present)(const CefAcceleratedPaintInfo& info);
@@ -41,6 +45,7 @@ public:
 
     void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
     void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
+    void setBeforeCloseCallback(BeforeCloseCallback cb) { on_before_close_ = std::move(cb); }
 
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -76,6 +81,9 @@ public:
     void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override;
     bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle,
                         cef_cursor_type_t type, const CefCursorInfo&) override;
+    bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level,
+                          const CefString& message, const CefString& source,
+                          int line) override;
 
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                   CefProcessId, CefRefPtr<CefProcessMessage> message) override;
@@ -95,7 +103,29 @@ public:
     void waitForLoad();
     void execJs(const std::string& js);
 
+    // Create the underlying CEF browser. Stores wi/bs for use in reset().
+    void create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url);
+
+    // Tear down the current browser and recreate with no URL (blank).
+    // Asynchronous: the new browser is ready when OnAfterCreated fires.
+    // Safe to call before the initial create has completed, or while a
+    // previous reset is still in flight — subsequent calls are absorbed
+    // into the pending cycle.
+    void reset();
+
+    // Navigate the current browser to `url`. If a reset is in flight or the
+    // initial create hasn't completed yet, the URL is buffered and applied
+    // when the browser becomes ready.
+    void loadUrl(const std::string& url);
+
 private:
+    // Lifecycle states. Normal is the steady state; PendingReset means
+    // reset() was called before the initial OnAfterCreated and is waiting
+    // for it to fire so it can issue the close; Recreating means CloseBrowser
+    // has been issued (or is about to fire from the one-shot) and we're
+    // awaiting the blank replacement's OnAfterCreated.
+    enum class State { Normal, PendingReset, Recreating };
+
     RenderTarget target_;
     int width_ = 1280, height_ = 720;
     int physical_w_ = 1280, physical_h_ = 720;
@@ -111,5 +141,10 @@ private:
     CefRefPtr<CefRunContextMenuCallback> pending_menu_callback_;
     MessageHandler message_handler_;
     CreatedCallback on_after_created_;
+    BeforeCloseCallback on_before_close_;
+    CefWindowInfo window_info_;
+    CefBrowserSettings browser_settings_;
+    State state_ = State::Normal;
+    std::string pending_url_;
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

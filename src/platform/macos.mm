@@ -544,7 +544,7 @@ static void macos_set_overlay_visible(bool visible) {
     }
 }
 
-static void macos_fade_overlay(float delay_sec, float fade_sec,
+static void macos_fade_overlay(float fade_sec,
                                std::function<void()> on_fade_start,
                                std::function<void()> on_complete) {
     if (!g_overlay.view || !g_overlay.view.layer) {
@@ -555,18 +555,16 @@ static void macos_fade_overlay(float delay_sec, float fade_sec,
     // Copy into block-friendly shared_ptrs so the callbacks survive into the block chain.
     auto start_cb = std::make_shared<std::function<void()>>(std::move(on_fade_start));
     auto done_cb = std::make_shared<std::function<void()>>(std::move(on_complete));
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay_sec * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        // Reveal the main browser view now — the delay has elapsed, the
-        // fade is about to start, and g_main has had the full delay
-        // duration to load content into its layer. Holds until this
-        // moment so the user never sees the main browser before we've
-        // committed to hiding the overlay. g_overlay is still fully
-        // opaque at this point, so g_main is occluded until the fade
-        // actually drops overlay opacity below 1.0 a few lines down.
-        // Also reset mpv's clear color back to black — during startup
-        // it was set to match the app's dark fill, but from here on
-        // the video layer should use black as the default background.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // Reveal the main browser view now. The JS side already waited the
+        // full pre-fade interval, so g_main has had that time to load content
+        // into its layer. Held until this moment so the user never sees the
+        // main browser before we've committed to hiding the overlay.
+        // g_overlay is still fully opaque at this point, so g_main is
+        // occluded until the fade actually drops overlay opacity below 1.0.
+        // Also reset mpv's clear color back to black — during startup it was
+        // set to match the app's dark fill, but from here on the video layer
+        // should use black as the default background.
         if ([g_main.view isHidden]) {
             [g_main.view setHidden:NO];
             reset_background_to_black();
