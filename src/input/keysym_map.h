@@ -65,6 +65,20 @@ inline int keysym_to_vkey(xkb_keysym_t sym) {
     case XKB_KEY_Page_Down: return 0x22;
     case XKB_KEY_Delete:    return 0x2E;
     case XKB_KEY_Insert:    return 0x2D;
+    // OEM punctuation — needed so Chromium can derive event.key (e.g. '>'
+    // from Shift+Period) for DOM keydown handlers. Without a VK here,
+    // jellyfin-web's keyboard shortcuts like '<'/'>' never match.
+    case XKB_KEY_semicolon: case XKB_KEY_colon:        return 0xBA; // VK_OEM_1
+    case XKB_KEY_equal: case XKB_KEY_plus:             return 0xBB; // VK_OEM_PLUS
+    case XKB_KEY_comma: case XKB_KEY_less:             return 0xBC; // VK_OEM_COMMA
+    case XKB_KEY_minus: case XKB_KEY_underscore:       return 0xBD; // VK_OEM_MINUS
+    case XKB_KEY_period: case XKB_KEY_greater:         return 0xBE; // VK_OEM_PERIOD
+    case XKB_KEY_slash: case XKB_KEY_question:         return 0xBF; // VK_OEM_2
+    case XKB_KEY_grave: case XKB_KEY_asciitilde:       return 0xC0; // VK_OEM_3
+    case XKB_KEY_bracketleft: case XKB_KEY_braceleft:  return 0xDB; // VK_OEM_4
+    case XKB_KEY_backslash: case XKB_KEY_bar:          return 0xDC; // VK_OEM_5
+    case XKB_KEY_bracketright: case XKB_KEY_braceright:return 0xDD; // VK_OEM_6
+    case XKB_KEY_apostrophe: case XKB_KEY_quotedbl:    return 0xDE; // VK_OEM_7
     default: return 0;
     }
 }
