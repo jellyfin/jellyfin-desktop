@@ -2,9 +2,11 @@
 
 #include <mpv/client.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cstring>
 
+#include "logging.h"
 #include "platform/display_backend.h"
 
 /**
@@ -134,6 +136,22 @@ public:
         if (opts.subTrack != kTrackAuto)
             optsStr += ",sid=" + std::to_string(opts.subTrack);
         CommandAsync({"loadfile", path, "replace", "-1", optsStr});
+    }
+
+    inline static const std::unordered_map<std::string, std::pair<bool, double>> kAspectModes = {
+        {"auto",  {true,  0.0}},
+        {"cover", {true,  1.0}},
+        {"fill",  {false, 0.0}},
+    };
+
+    void SetAspectMode(const std::string& mode) {
+        auto it = kAspectModes.find(mode);
+        if (it == kAspectModes.end()) {
+            LOG_WARN(LOG_MPV, "SetAspectMode: unknown mode {}", mode.c_str());
+            return;
+        }
+        SetPropertyFlagAsync("keepaspect", it->second.first);
+        SetPropertyDoubleAsync("panscan", it->second.second);
     }
 
     // Window/display state

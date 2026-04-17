@@ -133,6 +133,8 @@ bool WebBrowser::handleMessage(const std::string& name,
         g_mpv.SetAudioTrack(getIntArg(args, 0));
     } else if (name == "playerSetAudioDelay") {
         g_mpv.SetAudioDelay(args->GetDouble(0));
+    } else if (name == "playerSetAspectMode") {
+        g_mpv.SetAspectMode(args->GetString(0).ToString());
     } else if (name == "playerOsdActive") {
         bool active = args->GetBool(0);
         if (active) {
