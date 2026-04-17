@@ -191,6 +191,19 @@ int ns_keycode_to_vkey(unsigned short kc) {
     case 0x3A: case 0x3D: return 0x12;  // VK_MENU (Alt)
     case 0x36: case 0x37: return 0x5B;  // VK_LWIN (Command)
     case 0x39:            return 0x14;  // VK_CAPITAL
+    // OEM punctuation — so Chromium can derive event.key for DOM keydown
+    // handlers (e.g. '>' from Shift+Period for jellyfin-web shortcuts).
+    case 0x29: return 0xBA;  // VK_OEM_1    (;:)
+    case 0x18: return 0xBB;  // VK_OEM_PLUS (=+)
+    case 0x2B: return 0xBC;  // VK_OEM_COMMA (,<)
+    case 0x1B: return 0xBD;  // VK_OEM_MINUS (-_)
+    case 0x2F: return 0xBE;  // VK_OEM_PERIOD (.>)
+    case 0x2C: return 0xBF;  // VK_OEM_2    (/?)
+    case 0x32: return 0xC0;  // VK_OEM_3    (`~)
+    case 0x21: return 0xDB;  // VK_OEM_4    ([{)
+    case 0x2A: return 0xDC;  // VK_OEM_5    (\|)
+    case 0x1E: return 0xDD;  // VK_OEM_6    (]})
+    case 0x27: return 0xDE;  // VK_OEM_7    ('")
     default:              return 0;
     }
 }
