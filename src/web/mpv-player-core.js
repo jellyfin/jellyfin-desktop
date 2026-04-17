@@ -1,7 +1,8 @@
 (function() {
     class MpvPlayerCore {
-        constructor(events) {
+        constructor(events, appSettings) {
             this.events = events;
+            this.appSettings = appSettings;
             this._duration = undefined;
             this._currentTime = null;
             this._paused = false;
@@ -22,6 +23,8 @@
                 onDuration: null,
                 onError: null
             };
+
+            this.setVolume(this.getSavedVolume() * 100, false);
         }
 
         // Timer management
@@ -121,14 +124,25 @@
             return [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 3.5, 4.0].map(id => ({ name: id + 'x', id }));
         }
 
+        saveVolume(value) {
+            if (value) this.appSettings.set('volume', value);
+        }
+
+        getSavedVolume() {
+            return this.appSettings.get('volume') || 1;
+        }
+
         // Volume
-        setVolume(val, save = true, appSettings = null) {
-            this._volume = val;
-            if (save && appSettings) {
-                appSettings.set('volume', (val || 100) / 100);
-                this.events.trigger(this.player, 'volumechange');
+        setVolume(val, save = true) {
+            val = Number(val);
+             if (!isNaN(val)) {
+                this._volume = val;
+                if (save) {
+                    this.appSettings.set('volume', (val || 100) / 100);
+                    this.events.trigger(this.player, 'volumechange');
+                }
+                window.api.player.setVolume(val);
             }
-            window.api.player.setVolume(val);
         }
 
         getVolume() { return this._volume; }
