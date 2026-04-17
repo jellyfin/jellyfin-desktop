@@ -42,8 +42,8 @@ modules:
       - cp libcef_dll_wrapper/libcef_dll_wrapper.a /app/cef/lib/
     sources:
       - type: archive
-        url: https://cef-builds.spotifycdn.com/cef_binary_146.0.10+g8219561+chromium-146.0.7680.179_linux64_minimal.tar.bz2
-        sha256: c49e2dc586648df4194846e7df5b1b0cc2a4bd97cf3063c30fab0d154bcbcc1c
+        url: https://cef-builds.spotifycdn.com/cef_binary_146.0.11+g3a0fcf1+chromium-146.0.7680.179_linux64_minimal.tar.bz2
+        sha256: 4320d0a18a8d7fbae1e2539030a9315094b34af8a2000999ad8caa7befda7625
 
   - name: libmpv
     buildsystem: meson
