@@ -210,6 +210,9 @@
                 if (window.jmpNative) window.jmpNative.playerSeek(ms);
             },
             setVolume(vol) {
+                // HTML range inputs emit strings; coerce so the C++ side gets VTYPE_DOUBLE
+                // instead of VTYPE_STRING (which getIntArg treats as 0 → mute).
+                vol = Number(vol);
                 console.log('[Media] player.setVolume:', vol);
                 playerState.volume = vol;
                 if (window.jmpNative) window.jmpNative.playerSetVolume(vol);

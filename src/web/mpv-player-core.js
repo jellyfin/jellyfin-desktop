@@ -1,11 +1,12 @@
 (function() {
     class MpvPlayerCore {
-        constructor(events) {
+        constructor(events, appSettings = null) {
             this.events = events;
+            this.appSettings = appSettings;
             this._duration = undefined;
             this._currentTime = null;
             this._paused = false;
-            this._volume = 100;
+            this._volume = this.getSavedVolume() * 100;
             this._playRate = 1;
             this._muted = false;
             this._timeUpdateTimer = null;
@@ -121,15 +122,34 @@
             return [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 3.5, 4.0].map(id => ({ name: id + 'x', id }));
         }
 
-        // Volume
-        setVolume(val, save = true, appSettings = null) {
+        // Volume (0-100 at the mpv/runtime layer; appSettings stores 0-1 to match jellyfin-web)
+        getSavedVolume() {
+            const raw = this.appSettings ? Number(this.appSettings.get('volume')) : NaN;
+            return isNaN(raw) || raw <= 0 ? 1 : raw;
+        }
+
+        saveVolume(valFractional) {
+            // Skip persisting 0: getSavedVolume falls back to 1 for 0/negative/NaN,
+            // so writing 0 would be lost on next load. Use the mute state for silence.
+            if (valFractional > 0 && this.appSettings) {
+                this.appSettings.set('volume', valFractional);
+            }
+        }
+
+        setVolume(val, save = true) {
+            val = Number(val);
+            if (isNaN(val)) return;
             this._volume = val;
-            if (save && appSettings) {
-                appSettings.set('volume', (val || 100) / 100);
+            if (save) {
+                this.saveVolume(val / 100);
                 this.events.trigger(this.player, 'volumechange');
             }
             window.api.player.setVolume(val);
         }
+
+        // Push tracked volume to mpv without save/event. mpv defaults to 100 on each
+        // load, so call this on first playback to restore the saved level.
+        pushVolume() { window.api.player.setVolume(this._volume); }
 
         getVolume() { return this._volume; }
         volumeUp() { this.setVolume(Math.min(this._volume + 2, 100)); }

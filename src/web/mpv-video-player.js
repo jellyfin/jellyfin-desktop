@@ -46,7 +46,7 @@
 
             // Use defineProperty to avoid circular reference in JSON.stringify
             Object.defineProperty(this, '_core', {
-                value: new window.MpvPlayerCore(events),
+                value: new window.MpvPlayerCore(events, appSettings),
                 writable: true,
                 enumerable: false
             });
@@ -63,6 +63,7 @@
             this._core.handlers.onPlaying = () => {
                 if (!this._started) {
                     this._started = true;
+                    this._core.pushVolume();
                     this.loading.hide();
                     const dlg = this._videoDialog;
                     // Remove poster so video shows through from subsurface
@@ -134,10 +135,6 @@
             await this.createMediaElement(options);
             console.log('[Media] [MPV] createMediaElement done, calling setCurrentSrc');
             return await this.setCurrentSrc(options);
-        }
-
-        getSavedVolume() {
-            return this.appSettings.get('volume') || 1;
         }
 
         setCurrentSrc(options) {
@@ -340,24 +337,12 @@
         setBrightness() {}
         getBrightness() { return 100; }
 
-        saveVolume(value) { if (value) this.appSettings.set('volume', value); }
-        setVolume(val, save = true) {
-            val = Number(val);
-            if (!isNaN(val)) {
-                this._core._volume = val;
-                if (save) { this.saveVolume(val / 100); this.events.trigger(this, 'volumechange'); }
-                window.api.player.setVolume(val);
-            }
-        }
+        setVolume(val) { this._core.setVolume(val); }
         getVolume() { return this._core.getVolume(); }
-        volumeUp() { this.setVolume(Math.min(this.getVolume() + 2, 100)); }
-        volumeDown() { this.setVolume(Math.max(this.getVolume() - 2, 0)); }
+        volumeUp() { this._core.volumeUp(); }
+        volumeDown() { this._core.volumeDown(); }
 
-        setMute(mute, triggerEvent = true) {
-            this._core._muted = mute;
-            window.api.player.setMuted(mute);
-            if (triggerEvent) this.events.trigger(this, 'volumechange');
-        }
+        setMute(mute, triggerEvent = true) { this._core.setMute(mute, triggerEvent); }
         isMuted() { return this._core.isMuted(); }
 
         togglePictureInPicture() {}
