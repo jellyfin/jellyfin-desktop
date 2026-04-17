@@ -242,6 +242,10 @@
                 console.log('[Media] player.setAudioDelay:', ms);
                 if (window.jmpNative) window.jmpNative.playerSetAudioDelay(ms / 1000.0);
             },
+            setAspectMode(mode) {
+                console.log('[Media] player.setAspectMode:', mode);
+                if (window.jmpNative) window.jmpNative.playerSetAspectMode(mode);
+            },
             setVideoRectangle(x, y, w, h) {
                 // No-op for now, we always render fullscreen
             },

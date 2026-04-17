@@ -174,6 +174,7 @@
                     }
                 }
 
+                window.api.player.setAspectMode(this.getAspectRatio());
                 window.api.player.load(val,
                     { startMilliseconds: ms, autoplay: true },
                     { type: 'video', metadata: options.item },
@@ -362,9 +363,18 @@
         togglePictureInPicture() {}
         toggleAirPlay() {}
         getStats() { return Promise.resolve({ categories: [] }); }
-        getSupportedAspectRatios() { return []; }
-        getAspectRatio() { return 'normal'; }
-        setAspectRatio(value) {}
+        getSupportedAspectRatios() {
+            return [
+                { id: 'auto',  name: this.globalize.translate('Auto') },
+                { id: 'cover', name: this.globalize.translate('AspectRatioCover') },
+                { id: 'fill',  name: this.globalize.translate('AspectRatioFill') }
+            ];
+        }
+        getAspectRatio() { return this.appSettings.aspectRatio() || 'auto'; }
+        setAspectRatio(value) {
+            this.appSettings.aspectRatio(value);
+            window.api.player.setAspectMode(value);
+        }
     }
 
     window._mpvVideoPlayer = mpvVideoPlayer;
