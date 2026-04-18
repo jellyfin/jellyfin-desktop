@@ -494,17 +494,6 @@ static float win_get_scale() {
     return 1.0f;
 }
 
-static bool win_query_logical_content_size(int* w, int* h) {
-    if (!g_win.mpv_hwnd) return false;
-    RECT rc;
-    if (!GetClientRect(g_win.mpv_hwnd, &rc)) return false;
-    // Client rect is in physical pixels on Windows; convert to logical
-    float scale = g_win.cached_scale > 0 ? g_win.cached_scale : 1.0f;
-    *w = static_cast<int>((rc.right - rc.left) / scale);
-    *h = static_cast<int>((rc.bottom - rc.top) / scale);
-    return *w > 0 && *h > 0;
-}
-
 // =====================================================================
 // Input thread: transparent child HWND -> CEF events
 // =====================================================================
@@ -757,7 +746,6 @@ Platform make_windows_platform() {
         .in_transition = win_in_transition,
         .set_expected_size = win_set_expected_size,
         .get_scale = win_get_scale,
-        .query_logical_content_size = win_query_logical_content_size,
         .query_window_position = win_query_window_position,
         .clamp_window_geometry = win_clamp_window_geometry,
         .pump = win_pump,

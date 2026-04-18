@@ -69,10 +69,6 @@ struct Platform {
 
     float (*get_scale)();
 
-    // Query logical content dimensions from the window system.
-    // Returns false if unavailable (caller should use mpv osd-dimensions / scale).
-    bool (*query_logical_content_size)(int* w, int* h);
-
     // Query the window's top-left screen position in logical pixels.
     // Returns false if unavailable. Used to save/restore window position.
     bool (*query_window_position)(int* x, int* y);

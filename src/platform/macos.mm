@@ -7,6 +7,7 @@
 // Input is owned by src/input/input_macos.mm.
 
 #include "platform/platform.h"
+#include "platform/macos_platform.h"
 #include "common.h"
 #include "browser/browsers.h"
 #include "browser/overlay_browser.h"
@@ -711,12 +712,14 @@ static float macos_get_scale() {
     return 1.0f;
 }
 
-static bool macos_query_logical_content_size(int* w, int* h) {
+namespace macos_platform {
+bool query_logical_content_size(int* w, int* h) {
     if (!g_window) return false;
     NSRect bounds = [[g_window contentView] bounds];
     *w = static_cast<int>(bounds.size.width);
     *h = static_cast<int>(bounds.size.height);
     return *w > 0 && *h > 0;
+}
 }
 
 static bool macos_query_window_position(int* x, int* y) {
@@ -946,7 +949,6 @@ Platform make_macos_platform() {
         .in_transition = macos_in_transition,
         .set_expected_size = macos_set_expected_size,
         .get_scale = macos_get_scale,
-        .query_logical_content_size = macos_query_logical_content_size,
         .query_window_position = macos_query_window_position,
         .clamp_window_geometry = macos_clamp_window_geometry,
         .pump = macos_pump,

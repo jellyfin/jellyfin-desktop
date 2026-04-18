@@ -1,6 +1,9 @@
 #include "event.h"
 #include "handle.h"
 #include "../common.h"
+#ifdef __APPLE__
+#include "../platform/macos_platform.h"
+#endif
 #include <atomic>
 #include <cstring>
 
@@ -66,7 +69,7 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         ev.lh = static_cast<int>(ev.ph / scale);
 #ifdef __APPLE__
         int qlw = 0, qlh = 0;
-        if (g_platform.query_logical_content_size(&qlw, &qlh) && qlw > 0 && qlh > 0) {
+        if (macos_platform::query_logical_content_size(&qlw, &qlh) && qlw > 0 && qlh > 0) {
             ev.lw = qlw; ev.lh = qlh;
             ev.pw = static_cast<int>(qlw * scale);
             ev.ph = static_cast<int>(qlh * scale);
