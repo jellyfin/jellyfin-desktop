@@ -49,30 +49,29 @@ def get_platform_id():
     return PLATFORM_MAP[key]
 
 
-def fetch_index():
-    """Fetch CEF builds index."""
+def _fetch_index():
     log.info("Fetching CEF builds index")
     with urllib.request.urlopen(CEF_INDEX_URL) as resp:
         return json.load(resp)
 
 
-def find_version_by_prefix(index, platform_id, version_prefix):
-    """Find a CEF version in the index matching the given prefix."""
+def _find_version_by_prefix(index, platform_id, version_prefix):
     for v in index.get(platform_id, {}).get("versions", []):
         if v.get("cef_version", "").startswith(version_prefix):
             return v
     return None
 
 
-def find_latest_stable(index, platform_id):
-    """Find the latest stable CEF version for the given platform."""
+def _find_latest_stable(index, platform_id):
     stable_versions = [
-        v for v in index.get(platform_id, {}).get("versions", [])
+        v
+        for v in index.get(platform_id, {}).get("versions", [])
         if v.get("channel") == "stable"
     ]
     if not stable_versions:
-        raise RuntimeError(f"No stable version found for platform: {platform_id}")
-    # Sort by chromium major version descending
+        raise RuntimeError(
+            f"No stable version found for platform: {platform_id}"
+        )
     stable_versions.sort(
         key=lambda v: int(v.get("chromium_version", "0").split(".")[0]),
         reverse=True,
@@ -80,19 +79,54 @@ def find_latest_stable(index, platform_id):
     return stable_versions[0]
 
 
-def get_minimal_distribution(version_data):
-    """Get the minimal distribution file info."""
+def _get_minimal_distribution(version_data):
     for file_info in version_data.get("files", []):
         if file_info.get("type") == "minimal":
             return file_info
-    # Fall back to standard if no minimal
     for file_info in version_data.get("files", []):
         if file_info.get("type") == "standard":
             return file_info
     raise RuntimeError("No suitable distribution found")
 
 
-def compute_hash(path, algorithm="sha1"):
+def _fetch_sha256(tarball_url):
+    sha256_url = f"{tarball_url}.sha256"
+    log.info("Fetching %s", sha256_url)
+    with urllib.request.urlopen(sha256_url) as resp:
+        sha256 = resp.read().decode().strip()
+    if len(sha256) != 64 or not all(c in "0123456789abcdef" for c in sha256):
+        raise RuntimeError(f"Invalid sha256 from {sha256_url}: {sha256!r}")
+    return sha256
+
+
+def resolve_distribution(version=None, platform_id=None):
+    """Resolve a CEF version (or latest stable if None) to distribution info.
+
+    Returns a dict with: cef_version, chromium_version, filename, url, sha256.
+    """
+    platform_id = platform_id or get_platform_id()
+    index = _fetch_index()
+    if version:
+        data = _find_version_by_prefix(index, platform_id, version)
+        if not data:
+            raise RuntimeError(
+                f"Version {version} not found for {platform_id}"
+            )
+    else:
+        data = _find_latest_stable(index, platform_id)
+    file_info = _get_minimal_distribution(data)
+    filename = file_info["name"]
+    url = f"{CEF_DOWNLOAD_BASE}/{filename}"
+    return {
+        "cef_version": data.get("cef_version"),
+        "chromium_version": data.get("chromium_version"),
+        "filename": filename,
+        "url": url,
+        "sha256": _fetch_sha256(url),
+    }
+
+
+def compute_hash(path, algorithm="sha256"):
     """Compute hash of a file."""
     h = hashlib.new(algorithm)
     with open(path, "rb") as f:
@@ -101,21 +135,21 @@ def compute_hash(path, algorithm="sha1"):
     return h.hexdigest()
 
 
-def verify_sha1(path, expected_sha1):
-    """Verify SHA1 hash of a file."""
-    log.info("Verifying SHA1")
-    actual_sha1 = compute_hash(path, "sha1")
-    if actual_sha1 != expected_sha1:
+def verify_sha256(path, expected_sha256):
+    """Verify SHA256 hash of a file."""
+    log.info("Verifying SHA256")
+    actual = compute_hash(path, "sha256")
+    if actual != expected_sha256:
         raise RuntimeError(
-            f"SHA1 mismatch: expected {expected_sha1}, got {actual_sha1}"
+            f"SHA256 mismatch: expected {expected_sha256}, got {actual}"
         )
 
 
-def download_file(url, dest_path, expected_sha1=None):
+def download_file(url, dest_path, expected_sha256=None):
     """Download a file with progress indication and optional hash verification."""
     log.info("Downloading %s", url)
     temp_path = dest_path.parent / f".{dest_path.name}.tmp"
-    sha1_path = dest_path.parent / f"{dest_path.name}.sha1"
+    sha256_path = dest_path.parent / f"{dest_path.name}.sha256"
 
     def report_progress(block_num, block_size, total_size):
         downloaded = block_num * block_size
@@ -132,9 +166,9 @@ def download_file(url, dest_path, expected_sha1=None):
         urllib.request.urlretrieve(url, temp_path, reporthook=report_progress)
         print()  # newline after progress
 
-        if expected_sha1:
-            verify_sha1(temp_path, expected_sha1)
-            sha1_path.write_text(expected_sha1)
+        if expected_sha256:
+            verify_sha256(temp_path, expected_sha256)
+            sha256_path.write_text(expected_sha256)
 
         temp_path.rename(dest_path)
     except:
@@ -150,7 +184,6 @@ def extract_tarball(tarball_path, extract_dir):
 
     log.info("Extracting to %s", relpath(final_dir))
 
-    # Clean up any previous temp dir
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
     temp_dir.mkdir(parents=True)
@@ -158,7 +191,6 @@ def extract_tarball(tarball_path, extract_dir):
     try:
         with tarfile.open(tarball_path, "r:bz2") as tar:
             tar.extractall(temp_dir)
-        # Move extracted content (it's in a subdir) to final location
         extracted = temp_dir / root_dir
         extracted.rename(final_dir)
         temp_dir.rmdir()
@@ -172,13 +204,15 @@ def extract_tarball(tarball_path, extract_dir):
 
 def create_symlink(target_dir, link_path):
     """Create or update symlink (uses directory junction on Windows)."""
-    if link_path.is_symlink() or (hasattr(link_path, 'is_junction') and link_path.is_junction()):
+    if link_path.is_symlink() or (
+        hasattr(link_path, "is_junction") and link_path.is_junction()
+    ):
         link_path.unlink()
     elif link_path.exists():
         shutil.rmtree(link_path)
     if platform.system() == "Windows":
-        # Use directory junction (no special permissions needed)
         import subprocess
+
         target_abs = (link_path.parent / target_dir.name).resolve()
         subprocess.run(
             ["cmd", "/c", "mklink", "/J", str(link_path), str(target_abs)],
@@ -214,7 +248,14 @@ def main():
     parser = argparse.ArgumentParser(description="Download CEF distribution")
     parser.add_argument(
         "--platform",
-        choices=["linux64", "linuxarm64", "macosx64", "macosarm64", "windows64", "windowsarm64"],
+        choices=[
+            "linux64",
+            "linuxarm64",
+            "macosx64",
+            "macosarm64",
+            "windows64",
+            "windowsarm64",
+        ],
         help="Target platform (default: auto-detect)",
     )
     parser.add_argument(
@@ -240,51 +281,38 @@ def main():
     platform_id = args.platform or get_platform_id()
     cef_link = args.output_dir / "cef"
 
-    # Check for existing tarball and sha1
     existing = find_existing_tarball(args.output_dir, platform_id)
     if existing and args.version:
         _, existing_name = existing
         if not existing_name.startswith(f"cef_binary_{args.version}"):
-            log.info("Existing CEF doesn't match requested version %s, re-downloading",
-                     args.version)
+            log.info(
+                "Existing CEF doesn't match requested version %s, re-downloading",
+                args.version,
+            )
             existing = None
     if existing:
         tarball_path, versioned_dir_name = existing
-        sha1_path = tarball_path.parent / f"{tarball_path.name}.sha1"
-        have_sha1 = sha1_path.exists()
+        sha256_path = tarball_path.parent / f"{tarball_path.name}.sha256"
+        have_sha256 = sha256_path.exists()
     else:
-        have_sha1 = False
+        have_sha256 = False
 
-    # Fetch index if needed (no tarball, no sha1, or --show-latest)
-    if args.show_latest or not existing or not have_sha1:
-        index = fetch_index()
-
-        if args.version:
-            version_data = find_version_by_prefix(index, platform_id, args.version)
-            if not version_data:
-                raise RuntimeError(
-                    f"Version {args.version} not found for {platform_id}"
-                )
-        else:
-            version_data = find_latest_stable(index, platform_id)
-
-        cef_version = version_data.get("cef_version", "unknown")
-        chromium_version = version_data.get("chromium_version", "unknown")
-        file_info = get_minimal_distribution(version_data)
-        filename = file_info["name"]
-        expected_sha1 = file_info.get("sha1")
-        download_url = f"{CEF_DOWNLOAD_BASE}/{filename}"
+    if args.show_latest or not existing or not have_sha256:
+        dist = resolve_distribution(args.version or None, platform_id)
+        filename = dist["filename"]
+        download_url = dist["url"]
+        expected_sha256 = dist["sha256"]
 
         if args.show_latest:
             print(
                 json.dumps(
                     {
                         "platform": platform_id,
-                        "cef_version": cef_version,
-                        "chromium_version": chromium_version,
+                        "cef_version": dist["cef_version"],
+                        "chromium_version": dist["chromium_version"],
                         "url": download_url,
                         "filename": filename,
-                        "sha1": expected_sha1,
+                        "sha256": expected_sha256,
                         "tarball_path": str(args.output_dir / filename),
                         "extract_path": str(args.output_dir / "cef"),
                     },
@@ -296,43 +324,39 @@ def main():
         tarball_path = args.output_dir / filename
         versioned_dir_name = filename.removesuffix(".tar.bz2")
     else:
-        expected_sha1 = sha1_path.read_text().strip()
+        expected_sha256 = sha256_path.read_text().strip()
 
     log.info("Platform: %s", platform_id)
     log.info("Version: %s", versioned_dir_name)
 
     versioned_dir = args.output_dir / versioned_dir_name
 
-    # Check if already at correct version
-    is_link = cef_link.is_symlink() or (hasattr(cef_link, 'is_junction') and cef_link.is_junction())
+    is_link = cef_link.is_symlink() or (
+        hasattr(cef_link, "is_junction") and cef_link.is_junction()
+    )
     if is_link:
         current_target = os.readlink(cef_link)
         if current_target == versioned_dir_name and versioned_dir.exists():
             log.info("Skipping, already set up")
             return
 
-    # Ensure output directory exists
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download
-    sha1_path = tarball_path.parent / f"{tarball_path.name}.sha1"
+    sha256_path = tarball_path.parent / f"{tarball_path.name}.sha256"
     if tarball_path.exists():
         log.info("Skipping download, already exists")
-        # Verify existing tarball before extract
-        if expected_sha1:
-            verify_sha1(tarball_path, expected_sha1)
-            if not sha1_path.exists():
-                sha1_path.write_text(expected_sha1)
+        if expected_sha256:
+            verify_sha256(tarball_path, expected_sha256)
+            if not sha256_path.exists():
+                sha256_path.write_text(expected_sha256)
     else:
-        download_file(download_url, tarball_path, expected_sha1)
+        download_file(download_url, tarball_path, expected_sha256)
 
-    # Extract
     if versioned_dir.exists():
         log.info("Skipping extraction, already extracted")
     else:
         extract_tarball(tarball_path, args.output_dir)
 
-    # Symlink
     log.info(
         "Creating symlink: %s -> %s", relpath(cef_link), versioned_dir_name
     )

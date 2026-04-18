@@ -19,6 +19,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check Flatpak manifest matches CEF_VERSION
+        run: python3 dev/flatpak/update_cef.py --check
+
       - name: Install Flatpak
         run: |
           sudo apt-get update
