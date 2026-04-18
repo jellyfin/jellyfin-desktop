@@ -654,15 +654,13 @@ int main(int argc, char* argv[]) {
     // property read can deadlock against core_thread's DispatchQueue.main.sync.
     LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
     int64_t mw = 0, mh = 0;
-    // Route the initial osd-dimensions event through digest_property so it
-    // also seeds s_osd_pw / s_osd_ph (src/mpv/event.cpp:62-63). Without this,
-    // the atomics stay at 0 until the user resizes, which causes the save
-    // block in cleanup to skip the entire geometry write when the user only
-    // moved the window (no VO reconfig → no second osd-dimensions event).
+    // Route every PROPERTY_CHANGE through digest_property, not just osd-dims.
+    // Side effect: seeds the atomics (s_osd_pw/ph, s_fullscreen,
+    // s_display_scale, ...) as mpv fires initial-value events, so platform
+    // init code can read them instead of issuing sync mpv_get_property calls.
+    // Caller breaks out of the loop only on a valid osd-dimensions event.
     auto try_consume_osd_dims = [&](mpv_event* ev) -> bool {
-        if (ev->event_id != MPV_EVENT_PROPERTY_CHANGE ||
-            ev->reply_userdata != MPV_OBSERVE_OSD_DIMS)
-            return false;
+        if (ev->event_id != MPV_EVENT_PROPERTY_CHANGE) return false;
         MpvEvent me = digest_property(
             ev->reply_userdata, static_cast<mpv_event_property*>(ev->data));
         if (me.type != MpvEventType::OSD_DIMS || me.pw <= 0 || me.ph <= 0)
@@ -689,6 +687,10 @@ int main(int argc, char* argv[]) {
 #else
     while (true) {
         mpv_event* ev = g_mpv.WaitEvent(1.0);
+        if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
+            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
+            continue;
+        }
         if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
         if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
         if (try_consume_osd_dims(ev)) break;

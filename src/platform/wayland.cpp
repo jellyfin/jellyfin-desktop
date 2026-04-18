@@ -872,11 +872,9 @@ static bool probe_shared_texture_support(const std::string& ozone_platform,
 static bool wl_init(mpv_handle* mpv) {
     // Seed was_fullscreen from mpv's current state so the first configure
     // after callback registration doesn't start a spurious transition.
-    {
-        bool fs = false;
-        g_mpv.GetFullscreen(fs);
-        g_wl.was_fullscreen = fs;
-    }
+    // The main-thread VO-wait loop has already digested mpv's initial
+    // fullscreen property-change event, so s_fullscreen is up to date.
+    g_wl.was_fullscreen = mpv::fullscreen();
 
     // Register mpv configure callback early — mpv's VO thread is already
     // processing configures in parallel, and we need to catch them all.
