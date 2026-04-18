@@ -631,6 +631,9 @@ Platform make_x11_platform() {
         .popup_hide = []() {},
         .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},
         .popup_present_software = [](const void*, int, int, int, int) {},
+        .try_native_popup_menu = [](int, int, int, int,
+                                    const std::vector<std::string>&, int,
+                                    std::function<void(int)>) { return false; },
         .fade_overlay = x11_fade_overlay,
         .set_fullscreen = x11_set_fullscreen,
         .toggle_fullscreen = x11_toggle_fullscreen,
@@ -639,7 +642,6 @@ Platform make_x11_platform() {
         .in_transition = x11_in_transition,
         .set_expected_size = x11_set_expected_size,
         .get_scale = x11_get_scale,
-        .query_logical_content_size = [](int*, int*) -> bool { return false; },
         .query_window_position = [](int* x, int* y) -> bool {
             if (!g_x11.conn || g_x11.parent == XCB_NONE) return false;
             auto cookie = xcb_translate_coordinates(g_x11.conn,

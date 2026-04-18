@@ -8,7 +8,7 @@
 // settings, and fullscreen policy IPC.
 class WebBrowser {
 public:
-    WebBrowser(RenderTarget target);
+    WebBrowser(RenderTarget target, int w, int h, int pw, int ph);
 
     // Forwarded from the CEF client
     CefRefPtr<CefBrowser> browser() { return client_->browser(); }

@@ -27,6 +27,12 @@ static int jsonInt(const cJSON* root, const char* key, int fallback) {
     return fallback;
 }
 
+static double jsonDouble(const cJSON* root, const char* key, double fallback) {
+    const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (cJSON_IsNumber(item)) return item->valuedouble;
+    return fallback;
+}
+
 static bool jsonBool(const cJSON* root, const char* key, bool fallback) {
     const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
     if (cJSON_IsBool(item)) return cJSON_IsTrue(item);
@@ -50,6 +56,9 @@ bool Settings::load() {
 
     window_geometry_.width = jsonInt(root, "windowWidth", 0);
     window_geometry_.height = jsonInt(root, "windowHeight", 0);
+    window_geometry_.logical_width = jsonInt(root, "windowLogicalWidth", 0);
+    window_geometry_.logical_height = jsonInt(root, "windowLogicalHeight", 0);
+    window_geometry_.scale = static_cast<float>(jsonDouble(root, "windowScale", 0.0));
     window_geometry_.x = jsonInt(root, "windowX", -1);
     window_geometry_.y = jsonInt(root, "windowY", -1);
     window_geometry_.maximized = jsonBool(root, "windowMaximized", false);
@@ -77,6 +86,12 @@ static std::string buildSettingsJson(const Settings& s, bool pretty) {
         cJSON_AddNumberToObject(root, "windowWidth", geom.width);
         cJSON_AddNumberToObject(root, "windowHeight", geom.height);
     }
+    if (geom.logical_width > 0 && geom.logical_height > 0) {
+        cJSON_AddNumberToObject(root, "windowLogicalWidth", geom.logical_width);
+        cJSON_AddNumberToObject(root, "windowLogicalHeight", geom.logical_height);
+    }
+    if (geom.scale > 0.f)
+        cJSON_AddNumberToObject(root, "windowScale", geom.scale);
     if (geom.x >= 0 && geom.y >= 0) {
         cJSON_AddNumberToObject(root, "windowX", geom.x);
         cJSON_AddNumberToObject(root, "windowY", geom.y);

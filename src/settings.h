@@ -15,10 +15,19 @@ public:
     void setServerUrl(const std::string& url) { server_url_ = url; }
 
     struct WindowGeometry {
+        // Defaults are in logical units. Scaled by the display DPI at
+        // restore time so the window has the same apparent size on any
+        // display, regardless of scale factor.
+        static constexpr int kDefaultLogicalWidth = 1280;
+        static constexpr int kDefaultLogicalHeight = 720;
+
         int x = -1;          // -1 = not set (use default centering)
         int y = -1;
-        int width = 0;       // 0 = not set (use default 1280x720)
+        int width = 0;           // pixel dims at save time; 0 = not set
         int height = 0;
+        int logical_width = 0;   // logical dims at save time; 0 = not set
+        int logical_height = 0;
+        float scale = 0.f;       // display scale at save time; 0 = not set
         bool maximized = false;
     };
 

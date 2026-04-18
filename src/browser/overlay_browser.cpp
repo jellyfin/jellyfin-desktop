@@ -124,8 +124,9 @@ static void applySettingValue(const std::string& section, const std::string& key
 
 OverlayBrowser::~OverlayBrowser() = default;
 
-OverlayBrowser::OverlayBrowser(RenderTarget target, WebBrowser& main_browser)
-    : client_(new CefLayer(target))
+OverlayBrowser::OverlayBrowser(RenderTarget target, WebBrowser& main_browser,
+                               int w, int h, int pw, int ph)
+    : client_(new CefLayer(target, w, h, pw, ph))
     , main_browser_(main_browser)
 {
     client_->setMessageHandler([this](const std::string& name,

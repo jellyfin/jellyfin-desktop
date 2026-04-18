@@ -7,6 +7,7 @@
 // Input is owned by src/input/input_macos.mm.
 
 #include "platform/platform.h"
+#include "platform/macos_platform.h"
 #include "common.h"
 #include "browser/browsers.h"
 #include "browser/overlay_browser.h"
@@ -524,6 +525,87 @@ static void macos_overlay_present_software(const CefRenderHandler::RectList&, co
 static void macos_resize(int, int, int, int) {}
 static void macos_overlay_resize(int, int, int, int) {}
 
+// =====================================================================
+// Native NSMenu popup (replaces CEF's HTML popup widget for <select>)
+// =====================================================================
+//
+// CEF's Alloy OSR popup widget renders hover/selection highlights as
+// opaque black on macOS (compositor-level issue we can't reach). Instead
+// we let CEF's popup widget run invisibly in the background and display
+// a native NSMenu in its place. On selection, we send the chosen index
+// back to the renderer process for application, then send Escape to
+// dismiss CEF's internal popup widget (which fires OnPopupShow(false)).
+
+@interface JellyfinPopupMenuTarget : NSObject {
+@public
+    std::function<void(int)> on_selected;
+    BOOL fired;
+}
+- (void)itemPicked:(NSMenuItem*)item;
+- (void)fireCancelIfNeeded;
+@end
+
+@implementation JellyfinPopupMenuTarget
+- (void)itemPicked:(NSMenuItem*)item {
+    if (fired) return;
+    fired = YES;
+    if (on_selected) on_selected((int)[item tag]);
+}
+- (void)fireCancelIfNeeded {
+    if (fired) return;
+    fired = YES;
+    if (on_selected) on_selected(-1);
+}
+@end
+
+static bool macos_try_native_popup_menu(int x, int y, int lw, int /*lh*/,
+                                        const std::vector<std::string>& options,
+                                        int current_index,
+                                        std::function<void(int)> on_selected) {
+    if (!g_window || !g_input_view || options.empty()) return false;
+
+    auto opts = options;
+    int cur = current_index;
+    int px = x, py = y, plw = lw;
+    auto cb = std::make_shared<std::function<void(int)>>(std::move(on_selected));
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+        [menu setAutoenablesItems:NO];
+
+        JellyfinPopupMenuTarget* target = [[JellyfinPopupMenuTarget alloc] init];
+        target->on_selected = [cb](int idx) { if (*cb) (*cb)(idx); };
+        target->fired = NO;
+
+        for (size_t i = 0; i < opts.size(); i++) {
+            NSString* title = [NSString stringWithUTF8String:opts[i].c_str()];
+            NSMenuItem* item =
+                [[NSMenuItem alloc] initWithTitle:title
+                                           action:@selector(itemPicked:)
+                                    keyEquivalent:@""];
+            [item setTag:(NSInteger)i];
+            [item setTarget:target];
+            if ((int)i == cur) [item setState:NSControlStateValueOn];
+            [menu addItem:item];
+        }
+
+        // Anchor in g_input_view — it's isFlipped=YES so (x, y) map directly
+        // without a contentView-height subtraction.
+        NSPoint location = NSMakePoint((CGFloat)px, (CGFloat)py);
+        NSMenuItem* initial = (cur >= 0 && cur < (int)opts.size())
+            ? [menu itemAtIndex:cur] : nil;
+        [menu setMinimumWidth:(CGFloat)plw];
+
+        [menu popUpMenuPositioningItem:initial
+                            atLocation:location
+                                inView:g_input_view];
+        // popUpMenuPositioningItem is modal; if no item was picked, cancel.
+        [target fireCancelIfNeeded];
+    });
+
+    return true;
+}
+
 static void macos_set_overlay_visible(bool visible) {
     g_overlay_visible = visible;
     [g_overlay.view setHidden:!visible];
@@ -623,15 +705,21 @@ static void macos_set_expected_size(int w, int h) {
 
 static float macos_get_scale() {
     if (g_window) return static_cast<float>([g_window backingScaleFactor]);
+    // Pre-window: fall back to the main screen's scale so callers (e.g.
+    // default-geometry sizing at startup) get an accurate value.
+    NSScreen* screen = [NSScreen mainScreen];
+    if (screen) return static_cast<float>([screen backingScaleFactor]);
     return 1.0f;
 }
 
-static bool macos_query_logical_content_size(int* w, int* h) {
+namespace macos_platform {
+bool query_logical_content_size(int* w, int* h) {
     if (!g_window) return false;
     NSRect bounds = [[g_window contentView] bounds];
     *w = static_cast<int>(bounds.size.width);
     *h = static_cast<int>(bounds.size.height);
     return *w > 0 && *h > 0;
+}
 }
 
 static bool macos_query_window_position(int* x, int* y) {
@@ -662,11 +750,16 @@ static void macos_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     // Shrink to fit
     if (*w > vw) *w = vw;
     if (*h > vh) *h = vh;
-    // Clamp position so the window stays fully on-screen
-    if (*x >= 0 && *x + *w > vw) *x = vw - *w;
-    if (*y >= 0 && *y + *h > vh) *y = vh - *h;
-    if (*x < 0) *x = -1;  // preserve "not set" sentinel
-    if (*y < 0) *y = -1;
+    // Center any unset axis (mpv's own centering misbehaves when we override
+    // --geometry's wh but leave xy unset: it pre-centers against the video
+    // size and doesn't re-center after applying the requested wh).
+    if (*x < 0) *x = (vw - *w) / 2;
+    if (*y < 0) *y = (vh - *h) / 2;
+    // Clamp saved position so the window stays fully on-screen
+    if (*x + *w > vw) *x = vw - *w;
+    if (*y + *h > vh) *y = vh - *h;
+    if (*x < 0) *x = 0;
+    if (*y < 0) *y = 0;
 }
 
 static void macos_pump() {
@@ -841,10 +934,13 @@ Platform make_macos_platform() {
         .overlay_present_software = macos_overlay_present_software,
         .overlay_resize = macos_overlay_resize,
         .set_overlay_visible = macos_set_overlay_visible,
+        // Popup compositor path is unused on macOS — see
+        // macos_try_native_popup_menu for the NSMenu substitute.
         .popup_show = [](int, int, int, int) {},
         .popup_hide = []() {},
         .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},
         .popup_present_software = [](const void*, int, int, int, int) {},
+        .try_native_popup_menu = macos_try_native_popup_menu,
         .fade_overlay = macos_fade_overlay,
         .set_fullscreen = macos_set_fullscreen,
         .toggle_fullscreen = macos_toggle_fullscreen,
@@ -853,7 +949,6 @@ Platform make_macos_platform() {
         .in_transition = macos_in_transition,
         .set_expected_size = macos_set_expected_size,
         .get_scale = macos_get_scale,
-        .query_logical_content_size = macos_query_logical_content_size,
         .query_window_position = macos_query_window_position,
         .clamp_window_geometry = macos_clamp_window_geometry,
         .pump = macos_pump,

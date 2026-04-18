@@ -1,6 +1,9 @@
 #include "event.h"
 #include "handle.h"
 #include "../common.h"
+#ifdef __APPLE__
+#include "../platform/macos_platform.h"
+#endif
 #include <atomic>
 #include <cstring>
 
@@ -14,6 +17,23 @@ namespace mpv {
     bool window_maximized() { return s_window_maximized.load(std::memory_order_relaxed); }
     int  osd_pw()           { return s_osd_pw.load(std::memory_order_relaxed); }
     int  osd_ph()           { return s_osd_ph.load(std::memory_order_relaxed); }
+
+    bool read_osd_dims_from_event(mpv_event_property* p, int64_t* w, int64_t* h) {
+        if (!p || p->format != MPV_FORMAT_NODE || !p->data) return false;
+        auto* n = static_cast<mpv_node*>(p->data);
+        if (n->format != MPV_FORMAT_NODE_MAP || !n->u.list) return false;
+        int64_t lw = 0, lh = 0;
+        for (int i = 0; i < n->u.list->num; i++) {
+            const mpv_node& v = n->u.list->values[i];
+            if (v.format != MPV_FORMAT_INT64) continue;
+            const char* k = n->u.list->keys[i];
+            if (!strcmp(k, "w")) lw = v.u.int64;
+            else if (!strcmp(k, "h")) lh = v.u.int64;
+        }
+        if (lw <= 0 || lh <= 0) return false;
+        *w = lw; *h = lh;
+        return true;
+    }
 }
 
 void observe_properties(MpvHandle& mpv) {
@@ -36,8 +56,10 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
     case MPV_OBSERVE_OSD_DIMS: {
         ev.type = MpvEventType::OSD_DIMS;
         int64_t w = 0, h = 0;
-        g_mpv.GetPropertyInt("osd-width", w);
-        g_mpv.GetPropertyInt("osd-height", h);
+        if (!mpv::read_osd_dims_from_event(p, &w, &h)) {
+            ev.type = MpvEventType::NONE;
+            break;
+        }
         ev.pw = static_cast<int>(w);
         ev.ph = static_cast<int>(h);
         s_osd_pw.store(ev.pw, std::memory_order_relaxed);
@@ -47,7 +69,7 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         ev.lh = static_cast<int>(ev.ph / scale);
 #ifdef __APPLE__
         int qlw = 0, qlh = 0;
-        if (g_platform.query_logical_content_size(&qlw, &qlh) && qlw > 0 && qlh > 0) {
+        if (macos_platform::query_logical_content_size(&qlw, &qlh) && qlw > 0 && qlh > 0) {
             ev.lw = qlw; ev.lh = qlh;
             ev.pw = static_cast<int>(qlw * scale);
             ev.ph = static_cast<int>(qlh * scale);

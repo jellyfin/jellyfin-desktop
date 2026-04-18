@@ -4,6 +4,7 @@
 #include "include/internal/cef_types.h"
 #include <functional>
 #include <string>
+#include <vector>
 #include <mpv/client.h>
 
 enum class IdleInhibitLevel { None, System, Display };
@@ -35,6 +36,20 @@ struct Platform {
     void (*popup_hide)();
     void (*popup_present)(const CefAcceleratedPaintInfo& info, int lw, int lh);
     void (*popup_present_software)(const void* buffer, int pw, int ph, int lw, int lh);
+
+    // Attempt to show the platform's native popup menu for a <select>
+    // dropdown. Returns true if the native menu will be shown (in which
+    // case the compositor-based popup_show path should NOT be used).
+    // Returns false on platforms without a native path; caller falls back
+    // to the compositor popup subsurface.
+    //
+    // on_selected is invoked with the chosen option index, or -1 if the
+    // user dismissed without selecting. Callers must assume it may fire
+    // on any thread (e.g. macOS invokes it from the AppKit main thread).
+    bool (*try_native_popup_menu)(int x, int y, int lw, int lh,
+                                  const std::vector<std::string>& options,
+                                  int current_index,
+                                  std::function<void(int)> on_selected);
     // Fade overlay from opaque to transparent over `fade_sec`, then hide.
     // on_fade_start fires just before the fade begins; on_complete fires after
     // the fade finishes. Both may fire on any thread.
@@ -53,10 +68,6 @@ struct Platform {
     void (*set_expected_size)(int w, int h);
 
     float (*get_scale)();
-
-    // Query logical content dimensions from the window system.
-    // Returns false if unavailable (caller should use mpv osd-dimensions / scale).
-    bool (*query_logical_content_size)(int* w, int* h);
 
     // Query the window's top-left screen position in logical pixels.
     // Returns false if unavailable. Used to save/restore window position.

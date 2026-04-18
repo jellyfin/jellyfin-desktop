@@ -12,6 +12,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <vector>
 
 // Callback invoked for IPC messages from the renderer process.
 // Returns true if the message was handled.
@@ -41,7 +42,9 @@ class CefLayer : public CefClient, public CefRenderHandler,
                  public CefContextMenuHandler, public CefDisplayHandler,
                  public CefKeyboardHandler {
 public:
-    explicit CefLayer(RenderTarget target) : target_(target) {}
+    CefLayer(RenderTarget target, int w, int h, int pw, int ph)
+        : target_(target), width_(w), height_(h),
+          physical_w_(pw), physical_h_(ph) {}
 
     void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
     void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
@@ -127,10 +130,22 @@ private:
     enum class State { Normal, PendingReset, Recreating };
 
     RenderTarget target_;
-    int width_ = 1280, height_ = 720;
-    int physical_w_ = 1280, physical_h_ = 720;
+    int width_, height_;
+    int physical_w_, physical_h_;
     CefRect popup_rect_;
     bool popup_visible_ = false;
+    // Native popup menu orchestration. OnPopupShow fires a renderer query
+    // for the focused <select>'s options; OnPopupSize delivers the rect.
+    // try_show_popup waits for both, then hands off to the platform's
+    // native menu (macOS) or the compositor popup subsurface (Wayland).
+    std::vector<std::string> popup_options_;
+    int popup_selected_idx_ = -1;
+    bool popup_size_received_ = false;
+    bool popup_options_received_ = false;
+
+    void reset_popup_state();
+    void try_show_popup();
+    void dispatch_popup_selection(int index);
     CefRefPtr<CefBrowser> browser_;
     std::atomic<bool> closed_{false};
     std::atomic<bool> loaded_{false};
