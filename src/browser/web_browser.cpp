@@ -4,6 +4,7 @@
 #include "../common.h"
 #include "../settings.h"
 #include "logging.h"
+#include "../mpv/event.h"
 #include "../player/media_session.h"
 #include "../player/media_session_thread.h"
 #include "../titlebar_color.h"
@@ -138,7 +139,7 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "playerOsdActive") {
         bool active = args->GetBool(0);
         if (active) {
-            g_mpv.GetFullscreen(was_fullscreen_before_osd_);
+            was_fullscreen_before_osd_ = mpv::fullscreen();
         } else {
             if (!was_fullscreen_before_osd_)
                 g_platform.set_fullscreen(false);

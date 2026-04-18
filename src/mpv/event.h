@@ -41,7 +41,6 @@ struct MpvEvent {
 // Observation IDs passed as reply_userdata to mpv_observe_property.
 // digest_property uses these to switch instead of string-comparing names.
 enum MpvObserveId : uint64_t {
-    MPV_OBSERVE_VIDEO_PARAMS  = 1,
     MPV_OBSERVE_OSD_DIMS      = 2,
     MPV_OBSERVE_FULLSCREEN    = 3,
     MPV_OBSERVE_PAUSE         = 4,
@@ -52,6 +51,7 @@ enum MpvObserveId : uint64_t {
     MPV_OBSERVE_DISPLAY_FPS   = 9,
     MPV_OBSERVE_CACHE_STATE   = 10,
     MPV_OBSERVE_WINDOW_MAX    = 11,
+    MPV_OBSERVE_DISPLAY_SCALE = 12,
 };
 
 class MpvHandle;
@@ -64,6 +64,10 @@ namespace mpv {
     bool window_maximized();
     int  osd_pw();
     int  osd_ph();
+    // Cached value of mpv's display-hidpi-scale, updated from property
+    // observation. Returns 0 before the first event arrives; callers
+    // should treat 0 as "not yet known" and fall back to 1.0.
+    double display_scale();
 
     // Read osd-dimensions 'w' and 'h' from an MPV_EVENT_PROPERTY_CHANGE
     // payload (MPV_FORMAT_NODE / NODE_MAP, per mpv's mp_property_osd_dim
