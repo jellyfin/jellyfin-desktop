@@ -480,13 +480,18 @@ static void win_toggle_fullscreen() {
 // =====================================================================
 
 static float win_get_scale() {
-    if (!g_mpv.IsValid()) return 1.0f;
-    double scale = 0;
-    if (g_mpv.GetDisplayScale(scale) >= 0 && scale > 0) {
-        g_win.cached_scale = static_cast<float>(scale);
-        return g_win.cached_scale;
+    if (g_mpv.IsValid()) {
+        double scale = 0;
+        if (g_mpv.GetDisplayScale(scale) >= 0 && scale > 0) {
+            g_win.cached_scale = static_cast<float>(scale);
+            return g_win.cached_scale;
+        }
     }
-    return g_win.cached_scale > 0 ? g_win.cached_scale : 1.0f;
+    if (g_win.cached_scale > 0) return g_win.cached_scale;
+    // Pre-mpv (e.g. default-geometry sizing at startup): ask the OS directly.
+    UINT dpi = GetDpiForSystem();
+    if (dpi > 0) return static_cast<float>(dpi) / 96.0f;
+    return 1.0f;
 }
 
 static bool win_query_logical_content_size(int* w, int* h) {
@@ -701,8 +706,10 @@ static bool win_query_window_position(int* x, int* y) {
     return true;
 }
 
-// Clamp saved geometry to the primary monitor's working area so the window
-// never opens larger than the screen (or off-screen).
+// Resolve saved geometry against the primary monitor's working area so the
+// window never opens larger than the screen or off-screen, and center any
+// unset axis (mpv's own centering misbehaves when we override --geometry's
+// wh but leave xy unset).
 static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     RECT work;
     if (!SystemParametersInfo(SPI_GETWORKAREA, 0, &work, 0)) return;
@@ -710,10 +717,12 @@ static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     int vh = work.bottom - work.top;
     if (*w > vw) *w = vw;
     if (*h > vh) *h = vh;
-    if (*x >= 0 && *x + *w > vw) *x = vw - *w;
-    if (*y >= 0 && *y + *h > vh) *y = vh - *h;
-    if (*x < 0) *x = -1;
-    if (*y < 0) *y = -1;
+    if (*x < 0) *x = (vw - *w) / 2;
+    if (*y < 0) *y = (vh - *h) / 2;
+    if (*x + *w > vw) *x = vw - *w;
+    if (*y + *h > vh) *y = vh - *h;
+    if (*x < 0) *x = 0;
+    if (*y < 0) *y = 0;
 }
 
 // =====================================================================

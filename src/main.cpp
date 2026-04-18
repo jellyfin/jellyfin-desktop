@@ -37,6 +37,7 @@
 #include "include/cef_parser.h"
 #include "include/cef_version.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #ifndef _WIN32
@@ -523,10 +524,42 @@ int main(int argc, char* argv[]) {
     // and --window-maximized options at init-time via vo_calc_window_geometry
     // / window.setMaximized (third_party/mpv/video/out/mac/common.swift:100-104),
     // so the same code path works cross-platform.
+    //
+    // mpv's --geometry is in *physical pixels*; m_geometry_apply assigns
+    // gm->w/h to widw/widh directly without applying dpi_scale
+    // (third_party/mpv/options/m_option.c:2296). We therefore do DPI scaling
+    // ourselves: same-scale → pixel verbatim (no float drift); different
+    // scale → logical × current_scale; fresh install → default logical × scale.
     {
         auto saved_geom = Settings::instance().windowGeometry();
-        int w = saved_geom.width;
-        int h = saved_geom.height;
+        float cur_scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+        if (cur_scale <= 0.f) cur_scale = 1.0f;
+
+        bool has_saved_pixels =
+            saved_geom.width > 0 && saved_geom.height > 0;
+        bool has_saved_logical =
+            saved_geom.logical_width > 0 && saved_geom.logical_height > 0;
+        bool same_scale = saved_geom.scale > 0.f &&
+            std::fabs(saved_geom.scale - cur_scale) < 0.01f;
+
+        int w, h;
+        if (has_saved_pixels && same_scale) {
+            w = saved_geom.width;
+            h = saved_geom.height;
+        } else if (has_saved_logical) {
+            w = static_cast<int>(std::lround(saved_geom.logical_width  * cur_scale));
+            h = static_cast<int>(std::lround(saved_geom.logical_height * cur_scale));
+        } else if (has_saved_pixels) {
+            // Legacy config: no logical/scale stored. Use pixels as-is.
+            w = saved_geom.width;
+            h = saved_geom.height;
+        } else {
+            w = static_cast<int>(std::lround(
+                Settings::WindowGeometry::kDefaultLogicalWidth  * cur_scale));
+            h = static_cast<int>(std::lround(
+                Settings::WindowGeometry::kDefaultLogicalHeight * cur_scale));
+        }
+
         int x = saved_geom.x, y = saved_geom.y;
         if (g_platform.clamp_window_geometry)
             g_platform.clamp_window_geometry(&w, &h, &x, &y);
@@ -598,6 +631,24 @@ int main(int argc, char* argv[]) {
     // property read can deadlock against core_thread's DispatchQueue.main.sync.
     LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
     int64_t mw = 0, mh = 0;
+    // Route the initial osd-dimensions event through digest_property so it
+    // also seeds s_osd_pw / s_osd_ph (src/mpv/event.cpp:62-63). Without this,
+    // the atomics stay at 0 until the user resizes, which causes the save
+    // block in cleanup to skip the entire geometry write when the user only
+    // moved the window (no VO reconfig → no second osd-dimensions event).
+    auto try_consume_osd_dims = [&](mpv_event* ev) -> bool {
+        if (ev->event_id != MPV_EVENT_PROPERTY_CHANGE ||
+            ev->reply_userdata != MPV_OBSERVE_OSD_DIMS)
+            return false;
+        MpvEvent me = digest_property(
+            ev->reply_userdata, static_cast<mpv_event_property*>(ev->data));
+        if (me.type != MpvEventType::OSD_DIMS || me.pw <= 0 || me.ph <= 0)
+            return false;
+        mw = me.pw;
+        mh = me.ph;
+        return true;
+    };
+
 #ifdef __APPLE__
     while (true) {
         g_platform.pump();
@@ -611,22 +662,14 @@ int main(int argc, char* argv[]) {
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
             g_mpv.TerminateDestroy(); return 0;
         }
-        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE &&
-            ev->reply_userdata == MPV_OBSERVE_OSD_DIMS &&
-            mpv::read_osd_dims_from_event(
-                static_cast<mpv_event_property*>(ev->data), &mw, &mh))
-            break;
+        if (try_consume_osd_dims(ev)) break;
     }
 #else
     while (true) {
         mpv_event* ev = g_mpv.WaitEvent(1.0);
         if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
         if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
-        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE &&
-            ev->reply_userdata == MPV_OBSERVE_OSD_DIMS &&
-            mpv::read_osd_dims_from_event(
-                static_cast<mpv_event_property*>(ev->data), &mw, &mh))
-            break;
+        if (try_consume_osd_dims(ev)) break;
     }
 #endif
 
@@ -826,12 +869,22 @@ int main(int argc, char* argv[]) {
             Settings::instance().setWindowGeometry(geom);
         } else {
             // Normal windowed: save current size and position.
+            // Capture {pixel, logical, scale} so the next launch can restore
+            // losslessly on the same display, or rescale correctly when moved
+            // to a display with a different DPI.
             int pw = mpv::osd_pw();
             int ph = mpv::osd_ph();
             if (pw > 0 && ph > 0) {
                 Settings::WindowGeometry geom;
                 geom.width = pw;
                 geom.height = ph;
+
+                float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+                if (scale <= 0.f) scale = 1.0f;
+                geom.scale = scale;
+                geom.logical_width  = static_cast<int>(std::lround(pw / scale));
+                geom.logical_height = static_cast<int>(std::lround(ph / scale));
+
                 geom.maximized = false;
                 int wx, wy;
                 if (g_platform.query_window_position &&

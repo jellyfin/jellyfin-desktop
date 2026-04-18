@@ -704,6 +704,10 @@ static void macos_set_expected_size(int w, int h) {
 
 static float macos_get_scale() {
     if (g_window) return static_cast<float>([g_window backingScaleFactor]);
+    // Pre-window: fall back to the main screen's scale so callers (e.g.
+    // default-geometry sizing at startup) get an accurate value.
+    NSScreen* screen = [NSScreen mainScreen];
+    if (screen) return static_cast<float>([screen backingScaleFactor]);
     return 1.0f;
 }
 
@@ -743,11 +747,16 @@ static void macos_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     // Shrink to fit
     if (*w > vw) *w = vw;
     if (*h > vh) *h = vh;
-    // Clamp position so the window stays fully on-screen
-    if (*x >= 0 && *x + *w > vw) *x = vw - *w;
-    if (*y >= 0 && *y + *h > vh) *y = vh - *h;
-    if (*x < 0) *x = -1;  // preserve "not set" sentinel
-    if (*y < 0) *y = -1;
+    // Center any unset axis (mpv's own centering misbehaves when we override
+    // --geometry's wh but leave xy unset: it pre-centers against the video
+    // size and doesn't re-center after applying the requested wh).
+    if (*x < 0) *x = (vw - *w) / 2;
+    if (*y < 0) *y = (vh - *h) / 2;
+    // Clamp saved position so the window stays fully on-screen
+    if (*x + *w > vw) *x = vw - *w;
+    if (*y + *h > vh) *y = vh - *h;
+    if (*x < 0) *x = 0;
+    if (*y < 0) *y = 0;
 }
 
 static void macos_pump() {
