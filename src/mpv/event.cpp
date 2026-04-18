@@ -115,10 +115,10 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         ev.flag = *static_cast<int*>(p->data) != 0;
         break;
     case MPV_OBSERVE_WINDOW_MAX:
+        // Silent update: callers read mpv::window_maximized() on demand.
         if (p->format != MPV_FORMAT_FLAG) break;
-        ev.type = MpvEventType::WINDOW_MAXIMIZED;
-        ev.flag = *static_cast<int*>(p->data) != 0;
-        s_window_maximized.store(ev.flag, std::memory_order_relaxed);
+        s_window_maximized.store(*static_cast<int*>(p->data) != 0,
+                                 std::memory_order_relaxed);
         break;
     case MPV_OBSERVE_DISPLAY_SCALE:
         // Silent update: callers read mpv::display_scale() on demand.
