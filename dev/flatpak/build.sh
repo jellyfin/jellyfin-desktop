@@ -24,7 +24,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CEF_VERSION="$(cat "${REPO_ROOT}/CEF_VERSION")"
 if ! grep -q "cef_binary_${CEF_VERSION}" "$MANIFEST"; then
     echo "Manifest CEF version doesn't match CEF_VERSION (${CEF_VERSION}), updating..."
-    python3 update_cef.py
+    python3 "${REPO_ROOT}/dev/tools/update_flatpak_manifest.py"
 fi
 
 # Build
