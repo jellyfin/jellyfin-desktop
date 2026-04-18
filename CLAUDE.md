@@ -5,10 +5,19 @@
 - **No artificial heartbeats/polling** - event-driven architecture only. Never use timeouts as a workaround for proper event integration. No arbitrary timeout-based bailouts in shutdown paths either — fix the root cause instead.
 - **No texture stretching during resize** - CEF content must always render at 1:1 pixel mapping. Never scale/stretch textures to fill the viewport. Gaps from stale texture sizes are acceptable; stretching is not.
 
-## Build
+## Build / Run
+Use `just` — recipes are OS-gated via `[macos]`/`[linux]`/`[windows]` attributes, so the same command works everywhere:
 ```
-cmake --build build
+just deps     # one-time: submodules, CEF download, macOS brew packages
+just build    # configure (if needed) + build
+just test     # ctest
+just run      # run with debug logging → logs to build/run.log
+just clean    # remove build/ (keeps CEF SDK)
+just dmg      # [macos] build app bundle + distributable DMG
+just appimage # [linux] build AppImage via podman/docker
+just flatpak  # [linux] build Flatpak bundle
 ```
+Platform-specific entry points live in `dev/linux/`, `dev/macos/`, `dev/windows/`, imported by the top-level justfile.
 
 ## Architecture
 - **CEF** (Chromium Embedded Framework) — hosts jellyfin-web as an embedded browser; handles JS-to-C++ IPC for player control commands and renders the UI as an overlay texture above the video layer. Multi-process: browser process (main app, owns CefBrowser), renderer process (V8/Blink), GPU process. IPC via `CefProcessMessage`.

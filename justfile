@@ -1,8 +1,13 @@
+import 'dev/linux/linux.just'
+import 'dev/macos/macos.just'
+import 'dev/windows/windows.just'
+
 # List available recipes
 list:
     @just --list
 
 # Configure (if needed) + build the main app
+[linux]
 build: deps
     #!/bin/sh
     set -eu
@@ -12,6 +17,7 @@ build: deps
     cmake --build build
 
 # Ensure submodules and CEF are present
+[linux]
 deps:
     #!/bin/sh
     set -eu
@@ -23,10 +29,12 @@ deps:
     fi
 
 # Run unit tests
+[linux]
 test: build
     ctest --test-dir build --output-on-failure
 
 # Run the app with debug logging
+[linux]
 run: build
     build/jellyfin-desktop --log-level=debug --log-file=build/run.log
 
