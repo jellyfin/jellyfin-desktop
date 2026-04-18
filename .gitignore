@@ -8,7 +8,6 @@ __pycache__/
 
 # Third-party dependencies (except submodules)
 third_party/*
-!third_party/mpv
 !third_party/letsmove
 !third_party/GL
 !third_party/KHR

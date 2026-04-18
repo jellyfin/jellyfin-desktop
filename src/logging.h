@@ -3,8 +3,8 @@
 #include <cstring>
 #include <string>
 
-#include "quill/Logger.h"
-#include "quill/LogMacros.h"
+#include <quill/Logger.h>
+#include <quill/LogMacros.h>
 #include "include/internal/cef_types.h"
 
 enum LogCategory {

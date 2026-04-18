@@ -1,9 +1,9 @@
 #include "logging.h"
 
-#include "quill/Backend.h"
-#include "quill/Frontend.h"
-#include "quill/sinks/ConsoleSink.h"
-#include "quill/sinks/RotatingFileSink.h"
+#include <quill/Backend.h>
+#include <quill/Frontend.h>
+#include <quill/sinks/ConsoleSink.h>
+#include <quill/sinks/RotatingFileSink.h>
 
 #include <atomic>
 #include <cstdio>
