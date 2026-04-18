@@ -525,8 +525,8 @@ int main(int argc, char* argv[]) {
     // so the same code path works cross-platform.
     {
         auto saved_geom = Settings::instance().windowGeometry();
-        int w = saved_geom.width > 0 ? saved_geom.width : 1280;
-        int h = saved_geom.height > 0 ? saved_geom.height : 720;
+        int w = saved_geom.width;
+        int h = saved_geom.height;
         int x = saved_geom.x, y = saved_geom.y;
         if (g_platform.clamp_window_geometry)
             g_platform.clamp_window_geometry(&w, &h, &x, &y);
@@ -591,12 +591,14 @@ int main(int argc, char* argv[]) {
     }
 
     // --- Wait for VO (mpv needs a window before we can get platform handles) ---
+    // Both loops wait for an osd-dimensions property-change event carrying
+    // positive w/h, captured into mw/mh via mpv::read_osd_dims_from_event.
+    // That's a struct read of the event payload — no mpv_get_property call —
+    // so it's safe on macOS's main thread during VO init, where a synchronous
+    // property read can deadlock against core_thread's DispatchQueue.main.sync.
     LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
+    int64_t mw = 0, mh = 0;
 #ifdef __APPLE__
-    // macOS: pump GCD + poll mpv events. NEVER call mpv_get_property here —
-    // it uses lock_core (mp_dispatch_lock) which deadlocks if core_thread
-    // holds the dispatch lock during VO init → DispatchQueue.main.sync.
-    // Wait for osd-dimensions property change event instead.
     while (true) {
         g_platform.pump();
         mpv_event* ev = g_mpv.WaitEvent(0);
@@ -609,12 +611,11 @@ int main(int argc, char* argv[]) {
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
             g_mpv.TerminateDestroy(); return 0;
         }
-        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            if ((ev->reply_userdata == MPV_OBSERVE_VIDEO_PARAMS ||
-                 ev->reply_userdata == MPV_OBSERVE_OSD_DIMS) &&
-                static_cast<mpv_event_property*>(ev->data)->data)
-                break;
-        }
+        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE &&
+            ev->reply_userdata == MPV_OBSERVE_OSD_DIMS &&
+            mpv::read_osd_dims_from_event(
+                static_cast<mpv_event_property*>(ev->data), &mw, &mh))
+            break;
     }
 #else
     while (true) {
@@ -622,12 +623,10 @@ int main(int argc, char* argv[]) {
         if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
         if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE &&
-            ev->reply_userdata == MPV_OBSERVE_VIDEO_PARAMS &&
-            static_cast<mpv_event_property*>(ev->data)->data)
+            ev->reply_userdata == MPV_OBSERVE_OSD_DIMS &&
+            mpv::read_osd_dims_from_event(
+                static_cast<mpv_event_property*>(ev->data), &mw, &mh))
             break;
-        int64_t ow = 0;
-        g_mpv.GetPropertyInt("osd-width", ow);
-        if (ow > 0) break;
     }
 #endif
 
@@ -644,15 +643,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     LOG_INFO(LOG_MAIN, "Platform init ok");
-
-#ifdef __APPLE__
-    int64_t mw = 1280, mh = 720;
-#else
-    int64_t mw = 0, mh = 0;
-    g_mpv.GetPropertyInt("osd-width", mw);
-    g_mpv.GetPropertyInt("osd-height", mh);
-    if (mw <= 0 || mh <= 0) { mw = 1280; mh = 720; }
-#endif
 
     // --- CEF init ---
     bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;
@@ -702,8 +692,7 @@ int main(int argc, char* argv[]) {
 
     // Main browser
     RenderTarget main_target{g_platform.present, g_platform.present_software};
-    g_web_browser = new WebBrowser(main_target);
-    g_web_browser->resize(lw, lh, (int)mw, (int)mh);
+    g_web_browser = new WebBrowser(main_target, lw, lh, (int)mw, (int)mh);
     g_platform.resize(lw, lh, (int)mw, (int)mh);
 
     std::string server_url = Settings::instance().serverUrl();
@@ -735,8 +724,8 @@ int main(int argc, char* argv[]) {
     // Overlay browser (server selection UI) -- only in full app mode
     if (!player_mode) {
         RenderTarget overlay_target{g_platform.overlay_present, g_platform.overlay_present_software};
-        g_overlay_browser = new OverlayBrowser(overlay_target, *g_web_browser);
-        g_overlay_browser->resize(lw, lh, (int)mw, (int)mh);
+        g_overlay_browser = new OverlayBrowser(overlay_target, *g_web_browser,
+                                               lw, lh, (int)mw, (int)mh);
         g_platform.set_overlay_visible(true);
 
         CefWindowInfo owi;

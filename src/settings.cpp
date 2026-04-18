@@ -48,8 +48,10 @@ bool Settings::load() {
 
     server_url_ = jsonStr(root, "serverUrl");
 
-    window_geometry_.width = jsonInt(root, "windowWidth", 0);
-    window_geometry_.height = jsonInt(root, "windowHeight", 0);
+    window_geometry_.width = jsonInt(root, "windowWidth",
+                                     Settings::WindowGeometry::kDefaultWidth);
+    window_geometry_.height = jsonInt(root, "windowHeight",
+                                      Settings::WindowGeometry::kDefaultHeight);
     window_geometry_.x = jsonInt(root, "windowX", -1);
     window_geometry_.y = jsonInt(root, "windowY", -1);
     window_geometry_.maximized = jsonBool(root, "windowMaximized", false);

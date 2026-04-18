@@ -11,7 +11,8 @@ class ServerProbeClient;
 // connectivity checks, and overlay fade/dismiss.
 class OverlayBrowser {
 public:
-    OverlayBrowser(RenderTarget target, WebBrowser& main_browser);
+    OverlayBrowser(RenderTarget target, WebBrowser& main_browser,
+                   int w, int h, int pw, int ph);
     ~OverlayBrowser();
 
     CefRefPtr<CefBrowser> browser() { return client_->browser(); }

@@ -161,8 +161,6 @@ public:
     void SetForceWindowPosition(bool v)  { SetPropertyFlagAsync("force-window-position", v); }
 
     int GetFullscreen(bool& out)         { return GetPropertyFlag("fullscreen", out); }
-    int GetOsdWidth(int64_t& out)        { return GetPropertyInt("osd-width", out); }
-    int GetOsdHeight(int64_t& out)       { return GetPropertyInt("osd-height", out); }
     int GetWindowId(int64_t& out)        { return GetPropertyInt("window-id", out); }
     int GetWindowMaximized(bool& out)    { return GetPropertyFlag("window-maximized", out); }
     int GetDisplayScale(double& out)     { return GetPropertyDouble("display-hidpi-scale", out); }

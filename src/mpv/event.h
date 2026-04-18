@@ -64,4 +64,15 @@ namespace mpv {
     bool window_maximized();
     int  osd_pw();
     int  osd_ph();
+
+    // Read osd-dimensions 'w' and 'h' from an MPV_EVENT_PROPERTY_CHANGE
+    // payload (MPV_FORMAT_NODE / NODE_MAP, per mpv's mp_property_osd_dim
+    // in third_party/mpv/player/command.c). Returns true when both fields
+    // are present and positive.
+    //
+    // Use this when calling mpv_get_property would be unsafe — specifically
+    // the macOS main thread during VO init, where core_thread may be
+    // blocked in DispatchQueue.main.sync and a synchronous property read
+    // would deadlock (see main.cpp's wait-for-VO loop comment).
+    bool read_osd_dims_from_event(mpv_event_property* p, int64_t* w, int64_t* h);
 }

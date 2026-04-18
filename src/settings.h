@@ -15,10 +15,13 @@ public:
     void setServerUrl(const std::string& url) { server_url_ = url; }
 
     struct WindowGeometry {
+        static constexpr int kDefaultWidth = 1280;
+        static constexpr int kDefaultHeight = 720;
+
         int x = -1;          // -1 = not set (use default centering)
         int y = -1;
-        int width = 0;       // 0 = not set (use default 1280x720)
-        int height = 0;
+        int width = kDefaultWidth;
+        int height = kDefaultHeight;
         bool maximized = false;
     };
 

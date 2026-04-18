@@ -75,8 +75,8 @@ static int getIntArg(CefRefPtr<CefListValue> args, size_t idx) {
 // WebBrowser
 // =====================================================================
 
-WebBrowser::WebBrowser(RenderTarget target)
-    : client_(new CefLayer(target))
+WebBrowser::WebBrowser(RenderTarget target, int w, int h, int pw, int ph)
+    : client_(new CefLayer(target, w, h, pw, ph))
 {
     client_->setMessageHandler([this](const std::string& name,
                                       CefRefPtr<CefListValue> args,
