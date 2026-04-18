@@ -17,6 +17,12 @@ private:
     std::function<void()> fn_;
     IMPLEMENT_REFCOUNTING(FnTask);
 };
+
+CefRefPtr<CefFrame> focused_or_main(CefRefPtr<CefBrowser> browser) {
+    if (!browser) return nullptr;
+    CefRefPtr<CefFrame> frame = browser->GetFocusedFrame();
+    return frame ? frame : browser->GetMainFrame();
+}
 }
 
 extern Platform g_platform;
@@ -79,9 +85,7 @@ static std::string js_string_literal(const std::string& text) {
 }
 
 static void paste_via_platform_clipboard(CefRefPtr<CefBrowser> browser) {
-    if (!browser) return;
-    auto frame = browser->GetFocusedFrame();
-    if (!frame) frame = browser->GetMainFrame();
+    auto frame = focused_or_main(browser);
     if (!frame) return;
     g_platform.clipboard_read_text_async([frame](std::string text) {
         if (text.empty()) return;
@@ -138,16 +142,69 @@ void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
     }
 }
 
-void CefLayer::OnPopupShow(CefRefPtr<CefBrowser>, bool show) {
+void CefLayer::reset_popup_state() {
+    popup_size_received_ = false;
+    popup_options_received_ = false;
+    popup_options_.clear();
+    popup_selected_idx_ = -1;
+}
+
+void CefLayer::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
     popup_visible_ = show;
-    if (!show)
+    reset_popup_state();
+    if (!show) {
         g_platform.popup_hide();
+        return;
+    }
+    if (CefRefPtr<CefFrame> frame = focused_or_main(browser)) {
+        auto msg = CefProcessMessage::Create("getPopupOptions");
+        frame->SendProcessMessage(PID_RENDERER, msg);
+    }
 }
 
 void CefLayer::OnPopupSize(CefRefPtr<CefBrowser>, const CefRect& rect) {
     popup_rect_ = rect;
-    if (popup_visible_)
-        g_platform.popup_show(rect.x, rect.y, rect.width, rect.height);
+    popup_size_received_ = true;
+    try_show_popup();
+}
+
+void CefLayer::try_show_popup() {
+    if (!popup_visible_ || !popup_size_received_ || !popup_options_received_)
+        return;
+
+    if (!popup_options_.empty() && g_platform.try_native_popup_menu) {
+        CefRefPtr<CefLayer> self = this;
+        auto on_selected = [self](int index) {
+            CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self, index]() {
+                self->dispatch_popup_selection(index);
+            })));
+        };
+        if (g_platform.try_native_popup_menu(
+                popup_rect_.x, popup_rect_.y,
+                popup_rect_.width, popup_rect_.height,
+                popup_options_, popup_selected_idx_,
+                std::move(on_selected))) {
+            return;
+        }
+    }
+
+    g_platform.popup_show(popup_rect_.x, popup_rect_.y,
+                          popup_rect_.width, popup_rect_.height);
+}
+
+void CefLayer::dispatch_popup_selection(int index) {
+    if (closed_ || !browser_) return;
+    if (CefRefPtr<CefFrame> frame = focused_or_main(browser_)) {
+        auto msg = CefProcessMessage::Create("applyPopupSelection");
+        msg->GetArgumentList()->SetInt(0, index);
+        frame->SendProcessMessage(PID_RENDERER, msg);
+    }
+    // Only public path to CancelWidget on a CEF OSR popup is a mouse-wheel
+    // event outside popup_position_ — render_widget_host_view_osr.cc:1337-1343.
+    CefMouseEvent me{};
+    me.x = -1;
+    me.y = -1;
+    browser_->GetHost()->SendMouseWheelEvent(me, /*deltaX=*/0, /*deltaY=*/1);
 }
 
 void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
@@ -349,6 +406,21 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
     auto name = message->GetName().ToString();
     auto args = message->GetArgumentList();
 
+    if (name == "popupOptions") {
+        CefRefPtr<CefListValue> list = args->GetList(0);
+        popup_options_.clear();
+        if (list) {
+            size_t n = list->GetSize();
+            popup_options_.reserve(n);
+            for (size_t i = 0; i < n; i++)
+                popup_options_.push_back(list->GetString(i).ToString());
+        }
+        popup_selected_idx_ = args->GetInt(1);
+        popup_options_received_ = true;
+        try_show_popup();
+        return true;
+    }
+
     // Context menu commands are browser-level, handled here.
     if (name == "menuItemSelected") {
         int cmd = args->GetInt(0);
@@ -357,8 +429,7 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
             pending_menu_callback_ = nullptr;
         }
         if (browser_) {
-            auto frame = browser_->GetFocusedFrame();
-            if (!frame) frame = browser_->GetMainFrame();
+            auto frame = focused_or_main(browser_);
             switch (cmd) {
             case MENU_ID_BACK: browser_->GoBack(); break;
             case MENU_ID_FORWARD: browser_->GoForward(); break;

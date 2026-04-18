@@ -524,6 +524,87 @@ static void macos_overlay_present_software(const CefRenderHandler::RectList&, co
 static void macos_resize(int, int, int, int) {}
 static void macos_overlay_resize(int, int, int, int) {}
 
+// =====================================================================
+// Native NSMenu popup (replaces CEF's HTML popup widget for <select>)
+// =====================================================================
+//
+// CEF's Alloy OSR popup widget renders hover/selection highlights as
+// opaque black on macOS (compositor-level issue we can't reach). Instead
+// we let CEF's popup widget run invisibly in the background and display
+// a native NSMenu in its place. On selection, we send the chosen index
+// back to the renderer process for application, then send Escape to
+// dismiss CEF's internal popup widget (which fires OnPopupShow(false)).
+
+@interface JellyfinPopupMenuTarget : NSObject {
+@public
+    std::function<void(int)> on_selected;
+    BOOL fired;
+}
+- (void)itemPicked:(NSMenuItem*)item;
+- (void)fireCancelIfNeeded;
+@end
+
+@implementation JellyfinPopupMenuTarget
+- (void)itemPicked:(NSMenuItem*)item {
+    if (fired) return;
+    fired = YES;
+    if (on_selected) on_selected((int)[item tag]);
+}
+- (void)fireCancelIfNeeded {
+    if (fired) return;
+    fired = YES;
+    if (on_selected) on_selected(-1);
+}
+@end
+
+static bool macos_try_native_popup_menu(int x, int y, int lw, int /*lh*/,
+                                        const std::vector<std::string>& options,
+                                        int current_index,
+                                        std::function<void(int)> on_selected) {
+    if (!g_window || !g_input_view || options.empty()) return false;
+
+    auto opts = options;
+    int cur = current_index;
+    int px = x, py = y, plw = lw;
+    auto cb = std::make_shared<std::function<void(int)>>(std::move(on_selected));
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+        [menu setAutoenablesItems:NO];
+
+        JellyfinPopupMenuTarget* target = [[JellyfinPopupMenuTarget alloc] init];
+        target->on_selected = [cb](int idx) { if (*cb) (*cb)(idx); };
+        target->fired = NO;
+
+        for (size_t i = 0; i < opts.size(); i++) {
+            NSString* title = [NSString stringWithUTF8String:opts[i].c_str()];
+            NSMenuItem* item =
+                [[NSMenuItem alloc] initWithTitle:title
+                                           action:@selector(itemPicked:)
+                                    keyEquivalent:@""];
+            [item setTag:(NSInteger)i];
+            [item setTarget:target];
+            if ((int)i == cur) [item setState:NSControlStateValueOn];
+            [menu addItem:item];
+        }
+
+        // Anchor in g_input_view — it's isFlipped=YES so (x, y) map directly
+        // without a contentView-height subtraction.
+        NSPoint location = NSMakePoint((CGFloat)px, (CGFloat)py);
+        NSMenuItem* initial = (cur >= 0 && cur < (int)opts.size())
+            ? [menu itemAtIndex:cur] : nil;
+        [menu setMinimumWidth:(CGFloat)plw];
+
+        [menu popUpMenuPositioningItem:initial
+                            atLocation:location
+                                inView:g_input_view];
+        // popUpMenuPositioningItem is modal; if no item was picked, cancel.
+        [target fireCancelIfNeeded];
+    });
+
+    return true;
+}
+
 static void macos_set_overlay_visible(bool visible) {
     g_overlay_visible = visible;
     [g_overlay.view setHidden:!visible];
@@ -841,10 +922,13 @@ Platform make_macos_platform() {
         .overlay_present_software = macos_overlay_present_software,
         .overlay_resize = macos_overlay_resize,
         .set_overlay_visible = macos_set_overlay_visible,
+        // Popup compositor path is unused on macOS — see
+        // macos_try_native_popup_menu for the NSMenu substitute.
         .popup_show = [](int, int, int, int) {},
         .popup_hide = []() {},
         .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},
         .popup_present_software = [](const void*, int, int, int, int) {},
+        .try_native_popup_menu = macos_try_native_popup_menu,
         .fade_overlay = macos_fade_overlay,
         .set_fullscreen = macos_set_fullscreen,
         .toggle_fullscreen = macos_toggle_fullscreen,

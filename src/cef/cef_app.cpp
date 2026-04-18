@@ -409,6 +409,59 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
         return true;
     }
 
+    if (name == "getPopupOptions") {
+        CefRefPtr<CefListValue> options = CefListValue::Create();
+        int selectedIdx = -1;
+        CefRefPtr<CefV8Context> ctx = frame->GetV8Context();
+        if (ctx && ctx->Enter()) {
+            CefRefPtr<CefV8Value> doc = ctx->GetGlobal()->GetValue("document");
+            CefRefPtr<CefV8Value> el = doc ? doc->GetValue("activeElement") : nullptr;
+            if (el && el->IsObject()) {
+                CefRefPtr<CefV8Value> tag = el->GetValue("tagName");
+                if (tag && tag->IsString() && tag->GetStringValue() == "SELECT") {
+                    CefRefPtr<CefV8Value> opts = el->GetValue("options");
+                    CefRefPtr<CefV8Value> lenVal = opts ? opts->GetValue("length") : nullptr;
+                    if (opts && opts->IsObject() && lenVal && lenVal->IsInt()) {
+                        int len = lenVal->GetIntValue();
+                        for (int i = 0; i < len; i++) {
+                            CefRefPtr<CefV8Value> opt = opts->GetValue(i);
+                            CefString s;
+                            if (opt && opt->IsObject()) {
+                                CefRefPtr<CefV8Value> t = opt->GetValue("text");
+                                if (t && t->IsString()) s = t->GetStringValue();
+                            }
+                            options->SetString(i, s);
+                        }
+                        CefRefPtr<CefV8Value> sel = el->GetValue("selectedIndex");
+                        if (sel && sel->IsInt()) selectedIdx = sel->GetIntValue();
+                    }
+                }
+            }
+            ctx->Exit();
+        }
+        auto reply = CefProcessMessage::Create("popupOptions");
+        reply->GetArgumentList()->SetList(0, options);
+        reply->GetArgumentList()->SetInt(1, selectedIdx);
+        frame->SendProcessMessage(PID_BROWSER, reply);
+        return true;
+    }
+
+    // Apply matches what a real click would do: set selectedIndex and
+    // fire input + change events so Jellyfin's onchange handlers run.
+    if (name == "applyPopupSelection") {
+        int idx = args->GetInt(0);
+        if (idx >= 0) {
+            std::string js = "(function(){var el=document.activeElement;"
+                "if(el&&el.tagName==='SELECT'){"
+                "el.selectedIndex=" + std::to_string(idx) + ";"
+                "el.dispatchEvent(new Event('input',{bubbles:true}));"
+                "el.dispatchEvent(new Event('change',{bubbles:true}));"
+                "}})();";
+            frame->ExecuteJavaScript(js, frame->GetURL(), 0);
+        }
+        return true;
+    }
+
     return false;
 }
 
