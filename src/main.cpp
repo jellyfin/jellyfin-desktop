@@ -171,11 +171,6 @@ MediaSessionThread* g_media_session = nullptr;
 static bool g_was_maximized_before_fullscreen = false;
 
 static void cef_consumer_thread() {
-    LOG_INFO(LOG_MAIN, "[FLOW] cef_consumer_thread: waitForLoad() start");
-    // Wait for main browser to load before processing events
-    g_web_browser->waitForLoad();
-    LOG_INFO(LOG_MAIN, "[FLOW] cef_consumer_thread: waitForLoad() returned");
-
 #ifdef _WIN32
     HANDLE handles[2] = {
         g_cef_queue.wake_handle(),
