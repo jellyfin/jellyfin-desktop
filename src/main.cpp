@@ -108,14 +108,29 @@ static void publish(const MpvEvent& ev) {
     g_cef_queue.try_push(ev);
 }
 
+static void log_mpv_message(const mpv_event_log_message* msg) {
+    switch (msg->log_level) {
+    case MPV_LOG_LEVEL_FATAL:
+    case MPV_LOG_LEVEL_ERROR:
+        LOG_ERROR(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    case MPV_LOG_LEVEL_WARN:
+        LOG_WARN(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    case MPV_LOG_LEVEL_INFO:
+        LOG_INFO(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    case MPV_LOG_LEVEL_TRACE:
+        LOG_TRACE(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    default: // V, DEBUG
+        LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    }
+}
+
 static void mpv_digest_thread() {
     while (!g_shutting_down.load(std::memory_order_relaxed)) {
         mpv_event* ev = g_mpv.WaitEvent(-1);
         if (ev->event_id == MPV_EVENT_NONE) continue;
 
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            auto* msg = static_cast<mpv_event_log_message*>(ev->data);
-            LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text);
+            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
             continue;
         }
 
@@ -140,8 +155,12 @@ static void mpv_digest_thread() {
                 fe.type = MpvEventType::END_FILE_EOF;
             else if (d->reason == MPV_END_FILE_REASON_STOP)
                 fe.type = MpvEventType::END_FILE_CANCEL;
-            else
+            else {
                 fe.type = MpvEventType::END_FILE_ERROR;
+                // mpv_error_string returns a pointer to a static, never-freed
+                // string — safe to carry across threads via MpvEvent.
+                fe.err_msg = mpv_error_string(d->error);
+            }
             publish(fe);
             continue;
         }
@@ -254,13 +273,17 @@ static void cef_consumer_thread() {
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
-            case MpvEventType::END_FILE_ERROR:
+            case MpvEventType::END_FILE_ERROR: {
                 g_playback_state = PlaybackState::Stopped;
                 update_idle_inhibit();
-                g_web_browser->execJs("window._nativeEmit('error','Playback error')");
+                auto val = CefValue::Create();
+                val->SetString(ev.err_msg ? ev.err_msg : "Playback error");
+                auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
+                g_web_browser->execJs("window._nativeEmit('error'," + json.ToString() + ")");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
+            }
             case MpvEventType::END_FILE_CANCEL:
                 g_playback_state = PlaybackState::Stopped;
                 update_idle_inhibit();
@@ -655,8 +678,7 @@ int main(int argc, char* argv[]) {
         mpv_event* ev = g_mpv.WaitEvent(0);
         if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            auto* msg = static_cast<mpv_event_log_message*>(ev->data);
-            LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text);
+            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
             continue;
         }
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {

@@ -36,6 +36,7 @@ struct MpvEvent {
     int pw, ph, lw, lh;    // OSD_DIMS
     int range_count;                            // BUFFERED_RANGES
     BufferedRange ranges[MAX_BUFFERED_RANGES];  // BUFFERED_RANGES
+    const char* err_msg;    // END_FILE_ERROR — points to mpv's static error string
 };
 
 // Observation IDs passed as reply_userdata to mpv_observe_property.
