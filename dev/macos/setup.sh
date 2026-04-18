@@ -6,7 +6,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${0}")" && pwd)"
 . "${SCRIPT_DIR}/common.sh"
 
-echo "[1/4] Checking Xcode Command Line Tools..."
+echo "Checking Xcode Command Line Tools..."
 if ! xcode-select -p > /dev/null 2>&1; then
     echo "Installing Xcode Command Line Tools..."
     xcode-select --install
@@ -14,28 +14,41 @@ if ! xcode-select -p > /dev/null 2>&1; then
     exit 0
 fi
 
-echo "[2/4] Checking Homebrew..."
+echo "Checking Homebrew..."
 if ! command -v brew > /dev/null; then
     echo "error: Homebrew not found. Install from https://brew.sh" >&2
     exit 1
 fi
 
-echo "[3/4] Installing build tools..."
-brew install cmake ninja meson pkg-config
+PACKAGES="
+cmake
+ninja
+meson
+pkgconf
+ffmpeg
+libplacebo
+libass
+luajit
+vulkan-loader
+vulkan-headers
+molten-vk
+little-cms2
+libunibreak
+zimg
+create-dmg
+"
 
-echo "[4/4] Installing mpv and runtime dependencies..."
-brew install \
-    ffmpeg \
-    libplacebo \
-    libass \
-    luajit \
-    vulkan-loader \
-    vulkan-headers \
-    molten-vk \
-    lcms2 \
-    libunibreak \
-    zimg \
-    create-dmg
+echo "Checking installed packages..."
+INSTALLED="$(brew list --formula -1)"
+MISSING=""
+for pkg in ${PACKAGES}; do
+    if ! printf '%s\n' "${INSTALLED}" | grep -qx "${pkg}"; then
+        MISSING="${MISSING} ${pkg}"
+    fi
+done
 
-echo ""
-echo "Setup complete. Run build.sh to build."
+if [ -n "${MISSING}" ]; then
+    echo "Installing missing packages:${MISSING}"
+    # shellcheck disable=SC2086
+    brew install ${MISSING}
+fi
