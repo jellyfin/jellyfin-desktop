@@ -36,16 +36,6 @@ RUN mkdir -p /usr/share/plasma-wayland-protocols && \
     wget -q -O /usr/share/plasma-wayland-protocols/server-decoration-palette.xml \
     "https://invent.kde.org/libraries/plasma-wayland-protocols/-/raw/master/src/protocols/server-decoration-palette.xml"
 
-# Build mpv from submodule (cef-mpv branch: exposes wayland-display/wayland-surface properties)
-RUN cd third_party/mpv && \
-    rm -rf build && \
-    meson setup build --default-library=shared -Dlibmpv=true \
-        -Dcdda=disabled -Ddvdnav=disabled -Djavascript=disabled \
-        -Dlua=disabled -Dopenal=disabled -Drubberband=disabled \
-        -Duchardet=disabled -Dvapoursynth=disabled \
-        -Dwayland=enabled && \
-    meson compile -C build
-
 # Build jellyfin-desktop
 # - CMAKE_SKIP_RPATH=1: no hardcoded paths, AppRun handles library resolution
 # - Uses CEF from third_party/cef, mpv from submodule (not external dirs)

@@ -22,12 +22,6 @@ if ! command -v meson > /dev/null; then
     exit 1
 fi
 
-# Initialize submodules if needed
-if [ ! -f "${PROJECT_ROOT}/third_party/mpv/meson.build" ]; then
-    echo "Initializing git submodules..."
-    (cd "${PROJECT_ROOT}" && git submodule update --init --recursive)
-fi
-
 # Download CEF if needed
 if [ ! -d "${PROJECT_ROOT}/third_party/cef" ]; then
     echo "Downloading CEF..."

@@ -16,15 +16,14 @@ build: deps
     fi
     cmake --build build
 
-# Ensure submodules and CEF are present
+# Ensure CEF is present
 [linux]
 deps:
     #!/bin/sh
     set -eu
-    if ! [ -e third_party/mpv/.git ]; then
-        git submodule update --init --recursive
+    if ! [ -d third_party/cef ]; then
+        python3 dev/download_cef.py
     fi
-    python3 dev/tools/download_cef.py
 
 # Run unit tests
 [linux]

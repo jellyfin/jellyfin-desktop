@@ -32,19 +32,13 @@ Or from a VS Developer Command Prompt:
 
 ## Manual Setup
 
-### 1. Git Submodules
-
-```powershell
-git submodule update --init --recursive
-```
-
-### 2. CEF (Chromium Embedded Framework)
+### 1. CEF (Chromium Embedded Framework)
 
 ```powershell
 python dev\tools\download_cef.py
 ```
 
-### 3. mpv
+### 2. mpv
 
 ```powershell
 .\dev\windows\build_mpv_source.ps1

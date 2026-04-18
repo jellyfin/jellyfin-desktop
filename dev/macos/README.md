@@ -23,7 +23,6 @@ dev/macos/run.sh     # Run
 ## Directory Structure
 
 - `third_party/cef/` - CEF binary distribution (downloaded by build.sh)
-- `third_party/mpv/` - mpv source (git submodule, built by cmake)
 - `build/` - Build output (safe to delete)
 - `build/jellyfin-desktop` - Dev executable
 - `build/output/Jellyfin Desktop.app` - App bundle (from bundle.sh)
