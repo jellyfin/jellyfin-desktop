@@ -2,5 +2,53 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "customDatasources": {
+    "cef": {
+      "defaultRegistryUrlTemplate": "https://cef-builds.spotifycdn.com/index.json",
+      "format": "json",
+      "transformTemplates": [
+        "{\"releases\": linux64.versions[channel='stable' and cef_version in $$.macosarm64.versions[channel='stable'].cef_version and cef_version in $$.macosx64.versions[channel='stable'].cef_version and cef_version in $$.windows64.versions[channel='stable'].cef_version and cef_version in $$.windowsarm64.versions[channel='stable'].cef_version].{\"version\": cef_version}}"
+      ]
+    }
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["^CEF_VERSION$"],
+      "matchStrings": ["^(?<currentValue>\\S+)"],
+      "datasourceTemplate": "custom.cef",
+      "depNameTemplate": "cef"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^third_party/doctest/VERSION$"],
+      "matchStrings": ["^(?<currentValue>\\S+)"],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "doctest/doctest",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^third_party/quill/VERSION$"],
+      "matchStrings": ["^(?<currentValue>\\S+)"],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "odygrd/quill",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": ["custom.cef"],
+      "commitMessageTopic": "CEF"
+    },
+    {
+      "matchDepNames": ["doctest/doctest"],
+      "commitMessageTopic": "doctest"
+    },
+    {
+      "matchDepNames": ["odygrd/quill"],
+      "commitMessageTopic": "quill"
+    }
   ]
 }
