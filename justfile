@@ -38,9 +38,9 @@ test: build
 run: build
     build/jellyfin-desktop --log-level=debug --log-file=build/run.log
 
-# Update CEF to specified version (or latest stable) and sync Flatpak manifest; pass --check to verify only
-update-cef *args:
-    python3 dev/update_cef.py {{args}}
+# Update vendored/fetched deps (CEF, doctest, quill); pass --check to verify only
+update-deps *args:
+    python3 dev/tools/update_deps.py {{args}}
 
 # Remove build artifacts (keeps CEF SDK download)
 clean:

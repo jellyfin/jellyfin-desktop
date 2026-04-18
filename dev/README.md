@@ -43,12 +43,11 @@ The target CEF version is pinned in `CEF_VERSION` at the repo root. All platform
 - CMake verifies the installed CEF matches at configure time
 - CI cache keys are based on it
 
-To bump CEF:
+To bump CEF (and other tracked deps):
 
 ```sh
-echo "NEW_VERSION_STRING" > CEF_VERSION
-python3 dev/download_cef.py              # download new version
-python3 dev/flatpak/update_cef.py        # update Flatpak manifest URL + sha256
+just update-deps             # bump all: CEF_VERSION, doctest, quill, and Flatpak manifest
+just update-deps --check     # report any that are stale (exit non-zero)
 ```
 
 ## Flatpak (Linux)
