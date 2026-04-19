@@ -33,7 +33,7 @@ deps:
 test: build
     ctest --test-dir build --output-on-failure
 
-# Run the app with debug logging
+# Run the app with debug logging (logs to build/run.log)
 [linux]
 run: build
     build/jellyfin-desktop --log-level=debug --log-file=build/run.log

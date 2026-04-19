@@ -24,7 +24,7 @@ test: build
 run: build
     ./dev/macos/run.sh --log-level=debug --log-file=build/run.log
 
-# Build app bundle and distributable DMG
+# Build app bundle and distributable DMG (outputs to dist/)
 [macos]
 dmg:
     ./dev/macos/build_bundle.sh
