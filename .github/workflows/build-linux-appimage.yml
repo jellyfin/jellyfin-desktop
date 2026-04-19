@@ -34,13 +34,13 @@ jobs:
         env:
           WORKSPACE: ${{ github.workspace }}
         run: |
-          mkdir -p output
+          mkdir -p dist
           docker run --rm \
-            -v "${WORKSPACE}/output:/host-output" \
+            -v "${WORKSPACE}/dist:/host-output" \
             jellyfin-desktop-appimage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: linux-appimage-x86_64
-          path: output/JellyfinDesktop-*.AppImage
+          path: dist/JellyfinDesktop-*.AppImage
