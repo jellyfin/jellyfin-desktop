@@ -8,9 +8,16 @@ endif()
 
 set(EXTERNAL_CEF_DIR "${_DEFAULT_EXTERNAL_CEF_DIR}" CACHE PATH "Path to external CEF installation (with prebuilt libcef_dll_wrapper.a)")
 
-# Auto-detect system CEF from the "cef" package (used as last resort)
+# Auto-detect system CEF from the "cef" package (used as last resort).
+# Skip when EXTERNAL_CEF_DIR or CEF_ROOT already point at a real SDK, since
+# those branches win in the elseif chain below; defaulting USE_SYSTEM_CEF=ON
+# anyway leaves the cache flag lying about which CEF is actually selected,
+# which then mis-gates resource-copy and compile-define logic in the parent
+# CMakeLists.txt.
 set(_DEFAULT_USE_SYSTEM_CEF OFF)
-if(EXISTS "/usr/include/cef/include/cef_version.h")
+if(EXISTS "/usr/include/cef/include/cef_version.h"
+   AND NOT EXTERNAL_CEF_DIR
+   AND NOT (CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h"))
     set(_DEFAULT_USE_SYSTEM_CEF ON)
 endif()
 
