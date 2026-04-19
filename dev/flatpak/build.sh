@@ -26,11 +26,9 @@ if ! flatpak info --user org.freedesktop.Sdk//$RUNTIME_VERSION >/dev/null 2>&1 &
     flatpak install --user -y flathub org.freedesktop.Sdk//$RUNTIME_VERSION org.freedesktop.Platform//$RUNTIME_VERSION
 fi
 
-# Ensure manifest CEF version matches CEF_VERSION
-CEF_VERSION="$(cat "${REPO_ROOT}/CEF_VERSION")"
-if ! grep -q "cef_binary_${CEF_VERSION}" "$MANIFEST"; then
-    echo "Manifest CEF version doesn't match CEF_VERSION (${CEF_VERSION}), updating..."
-    python3 "${REPO_ROOT}/dev/tools/update_flatpak_manifest.py"
+# Ensure CEF is extracted at third_party/cef
+if [ ! -d "${REPO_ROOT}/third_party/cef" ]; then
+    python3 "${REPO_ROOT}/dev/tools/download_cef.py"
 fi
 
 # Build
