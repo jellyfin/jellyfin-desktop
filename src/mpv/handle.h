@@ -68,35 +68,16 @@ public:
 
     // =====================================================================
     // Property access (synchronous - safe in main thread)
+    //
+    // Prefer mpv::* accessors (src/mpv/event.h) when a property is already
+    // observed — they read an atomic seeded by the event handler. Sync
+    // reads only belong here for init-time, one-shot values mpv doesn't
+    // expose as observable properties (window-id, wayland-display/surface,
+    // callback pointers).
     // =====================================================================
-
-    int GetPropertyString(const std::string& name, std::string& out) {
-        char* s = nullptr;
-        int err = mpv_get_property(handle_, name.c_str(), MPV_FORMAT_OSD_STRING, &s);
-        if (err >= 0 && s) {
-            out = s;
-            mpv_free(s);
-        }
-        return err;
-    }
 
     int GetPropertyInt(const std::string& name, int64_t& out) {
         return mpv_get_property(handle_, name.c_str(), MPV_FORMAT_INT64, &out);
-    }
-
-    int GetPropertyDouble(const std::string& name, double& out) {
-        return mpv_get_property(handle_, name.c_str(), MPV_FORMAT_DOUBLE, &out);
-    }
-
-    int GetPropertyFlag(const std::string& name, bool& out) {
-        int flag = 0;
-        int err = mpv_get_property(handle_, name.c_str(), MPV_FORMAT_FLAG, &flag);
-        out = (flag != 0);
-        return err;
-    }
-
-    int GetPropertyNode(const std::string& name, mpv_node& out) {
-        return mpv_get_property(handle_, name.c_str(), MPV_FORMAT_NODE, &out);
     }
 
     // =====================================================================
@@ -159,11 +140,9 @@ public:
     void ToggleFullscreen()              { CycleFullscreenAsync(); }
     void SetBackgroundColor(const std::string& color) { SetPropertyStringAsync("background-color", color); }
     void SetForceWindowPosition(bool v)  { SetPropertyFlagAsync("force-window-position", v); }
+    void SetGeometry(const std::string& geom) { SetPropertyStringAsync("geometry", geom); }
 
-    int GetFullscreen(bool& out)         { return GetPropertyFlag("fullscreen", out); }
     int GetWindowId(int64_t& out)        { return GetPropertyInt("window-id", out); }
-    int GetWindowMaximized(bool& out)    { return GetPropertyFlag("window-maximized", out); }
-    int GetDisplayScale(double& out)     { return GetPropertyDouble("display-hidpi-scale", out); }
 
     // Wayland platform pointers
     int GetWaylandDisplay(intptr_t& out) {
