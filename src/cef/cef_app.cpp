@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <regex>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -328,6 +329,11 @@ void App::OnContextInitialized() {
     CefRegisterSchemeHandlerFactory("app", "", new EmbeddedSchemeHandlerFactory());
 }
 
+std::string escapeString(const std::string& str) {
+    std::regex pattern("\\\\|\\\"");
+    return std::regex_replace(str, pattern, "\\$&");
+}
+
 void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefFrame> frame,
                            CefRefPtr<CefV8Context> context) {
@@ -366,7 +372,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     std::string settings_placeholder = "__SETTINGS_JSON__";
     pos = shim_str.find(settings_placeholder);
     if (pos != std::string::npos)
-        shim_str.replace(pos, settings_placeholder.length(), Settings::instance().cliSettingsJson());
+        shim_str.replace(pos, settings_placeholder.length(), escapeString(Settings::instance().cliSettingsJson()));
 
     // Append player plugins to shim and execute all JS in one call
     shim_str += '\n';

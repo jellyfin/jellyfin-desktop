@@ -40,6 +40,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <regex>
+#include <sstream>
 #ifndef _WIN32
 #include <unistd.h>
 #include <signal.h>
@@ -95,6 +97,29 @@ void initiate_shutdown() {
 
 static void signal_handler(int) {
     initiate_shutdown();
+}
+
+void apply_custom_mpv_config() {
+    std::stringstream custom_config(Settings::instance().customMpvConfig());
+    std::string line;
+
+    std::regex pattern("(^\"+)|(\"+$)");
+
+    while(std::getline(custom_config, line, '\n')) {
+        int index = line.find('=');
+        if (index <= 0 || index >= line.length() - 1) {
+            LOG_ERROR(LOG_MPV, "Custom MPV config: Failed to parse line: \"%s\"", line.c_str());
+            continue;
+        }
+
+        auto option = std::regex_replace(line.substr(0, index), pattern, "");
+        auto value = std::regex_replace(line.substr(index+1), pattern, "");
+
+        int result = g_mpv.SetOptionString(option, value);
+        if (result < 0) {
+            LOG_ERROR(LOG_MPV, "Custom MPV config: Failed to set option \"%s\" to \"%s\": %s", option.c_str(), value.c_str(), mpv_error_string(result));
+        }
+    }
 }
 
 // =====================================================================
@@ -596,6 +621,8 @@ int main(int argc, char* argv[]) {
         g_mpv.SetAudioExclusive(true);
     if (!audio_channels_str.empty())
         g_mpv.SetAudioChannels(audio_channels_str);
+
+    apply_custom_mpv_config();
 
     // Register property observations before mpv_initialize. On macOS,
     // core_thread races to DispatchQueue.main.sync immediately after init
