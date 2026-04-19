@@ -7,6 +7,7 @@
 #include "idle_inhibit_linux.h"
 #include "open_url_linux.h"
 #include "input/input_wayland.h"
+#include "mpv/event.h"
 
 #include <wayland-client.h>
 #include "linux-dmabuf-v1-client.h"
@@ -871,11 +872,9 @@ static bool probe_shared_texture_support(const std::string& ozone_platform,
 static bool wl_init(mpv_handle* mpv) {
     // Seed was_fullscreen from mpv's current state so the first configure
     // after callback registration doesn't start a spurious transition.
-    {
-        bool fs = false;
-        g_mpv.GetFullscreen(fs);
-        g_wl.was_fullscreen = fs;
-    }
+    // The main-thread VO-wait loop has already digested mpv's initial
+    // fullscreen property-change event, so s_fullscreen is up to date.
+    g_wl.was_fullscreen = mpv::fullscreen();
 
     // Register mpv configure callback early — mpv's VO thread is already
     // processing configures in parallel, and we need to catch them all.
@@ -1013,9 +1012,8 @@ static bool wl_init(mpv_handle* mpv) {
 }
 
 static float wl_get_scale() {
-    if (!g_mpv.IsValid()) return 1.0f;
-    double scale = 0;
-    if (g_mpv.GetDisplayScale(scale) >= 0 && scale > 0) {
+    double scale = mpv::display_scale();
+    if (scale > 0) {
         g_wl.cached_scale = static_cast<float>(scale);
         return g_wl.cached_scale;
     }
@@ -1120,20 +1118,17 @@ static void wl_end_transition_locked() {
 
 static void wl_set_fullscreen(bool fullscreen) {
     if (!g_mpv.IsValid()) return;
-    // Only transition if state actually changes
-    // Safe to call from CEF thread: this is cached in mpv's option struct,
-    // not a VO property — no VO lock contention.
-    bool current = false;
-    if (g_mpv.GetFullscreen(current) >= 0) {
-        if (current == fullscreen) {
-            // Compositor may have rejected our fullscreen change.
-            // If we're mid-transition and the state matches the pre-lock
-            // value (was_fullscreen), the compositor forced us back — cancel.
-            std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-            if (g_wl.transitioning && fullscreen == g_wl.was_fullscreen)
-                wl_end_transition_locked();
-            return;
-        }
+    // Only transition if state actually changes. Read the cached value
+    // populated from mpv's fullscreen property observation — avoids a
+    // sync mpv_get_property from callers on the event thread.
+    if (mpv::fullscreen() == fullscreen) {
+        // Compositor may have rejected our fullscreen change.
+        // If we're mid-transition and the state matches the pre-lock
+        // value (was_fullscreen), the compositor forced us back — cancel.
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (g_wl.transitioning && fullscreen == g_wl.was_fullscreen)
+            wl_end_transition_locked();
+        return;
     }
     {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);

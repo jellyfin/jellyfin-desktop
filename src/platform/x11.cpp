@@ -6,6 +6,7 @@
 #include "idle_inhibit_linux.h"
 #include "open_url_linux.h"
 #include "input/input_x11.h"
+#include "mpv/event.h"
 
 #include <xcb/xcb.h>
 #include <xcb/shm.h>
@@ -408,10 +409,7 @@ static void x11_fade_overlay(float fade_sec,
 
 static void x11_set_fullscreen(bool fullscreen) {
     if (!g_mpv.IsValid()) return;
-    bool current = false;
-    if (g_mpv.GetFullscreen(current) >= 0) {
-        if (current == fullscreen) return;
-    }
+    if (mpv::fullscreen() == fullscreen) return;
     g_mpv.SetFullscreen(fullscreen);
 }
 
@@ -433,9 +431,8 @@ static void x11_set_expected_size(int, int) {}
 // =====================================================================
 
 static float x11_get_scale() {
-    if (!g_mpv.IsValid()) return 1.0f;
-    double scale = 0;
-    if (g_mpv.GetDisplayScale(scale) >= 0 && scale > 0) {
+    double scale = mpv::display_scale();
+    if (scale > 0) {
         g_x11.cached_scale = static_cast<float>(scale);
         return g_x11.cached_scale;
     }

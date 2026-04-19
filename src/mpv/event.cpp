@@ -7,16 +7,27 @@
 #include <atomic>
 #include <cstring>
 
-static std::atomic<bool> s_fullscreen{false};
-static std::atomic<bool> s_window_maximized{false};
-static std::atomic<int>  s_osd_pw{0};
-static std::atomic<int>  s_osd_ph{0};
+static std::atomic<bool>   s_fullscreen{false};
+static std::atomic<bool>   s_window_maximized{false};
+static std::atomic<int>    s_osd_pw{0};
+static std::atomic<int>    s_osd_ph{0};
+static std::atomic<int>    s_window_pw{0};
+static std::atomic<int>    s_window_ph{0};
+static std::atomic<double> s_display_scale{0.0};
 
 namespace mpv {
-    bool fullscreen()       { return s_fullscreen.load(std::memory_order_relaxed); }
-    bool window_maximized() { return s_window_maximized.load(std::memory_order_relaxed); }
-    int  osd_pw()           { return s_osd_pw.load(std::memory_order_relaxed); }
-    int  osd_ph()           { return s_osd_ph.load(std::memory_order_relaxed); }
+    bool   fullscreen()       { return s_fullscreen.load(std::memory_order_relaxed); }
+    bool   window_maximized() { return s_window_maximized.load(std::memory_order_relaxed); }
+    int    osd_pw()           { return s_osd_pw.load(std::memory_order_relaxed); }
+    int    osd_ph()           { return s_osd_ph.load(std::memory_order_relaxed); }
+    int    window_pw()        { return s_window_pw.load(std::memory_order_relaxed); }
+    int    window_ph()        { return s_window_ph.load(std::memory_order_relaxed); }
+    double display_scale()    { return s_display_scale.load(std::memory_order_relaxed); }
+
+    void set_window_pixels(int pw, int ph) {
+        s_window_pw.store(pw, std::memory_order_relaxed);
+        s_window_ph.store(ph, std::memory_order_relaxed);
+    }
 
     bool read_osd_dims_from_event(mpv_event_property* p, int64_t* w, int64_t* h) {
         if (!p || p->format != MPV_FORMAT_NODE || !p->data) return false;
@@ -37,7 +48,11 @@ namespace mpv {
 }
 
 void observe_properties(MpvHandle& mpv) {
-    mpv.ObservePropertyNode(MPV_OBSERVE_VIDEO_PARAMS, "video-params");
+    // Register display-hidpi-scale before osd-dimensions so mpv's initial
+    // value delivery (FIFO by observation time) seeds s_display_scale
+    // before the first osd-dimensions event, which consumes the scale to
+    // compute logical dims.
+    mpv.ObservePropertyDouble(MPV_OBSERVE_DISPLAY_SCALE, "display-hidpi-scale");
     mpv.ObservePropertyNode(MPV_OBSERVE_OSD_DIMS, "osd-dimensions");
     mpv.ObservePropertyFlag(MPV_OBSERVE_FULLSCREEN, "fullscreen");
     mpv.ObservePropertyFlag(MPV_OBSERVE_PAUSE, "pause");
@@ -109,10 +124,16 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         ev.flag = *static_cast<int*>(p->data) != 0;
         break;
     case MPV_OBSERVE_WINDOW_MAX:
+        // Silent update: callers read mpv::window_maximized() on demand.
         if (p->format != MPV_FORMAT_FLAG) break;
-        ev.type = MpvEventType::WINDOW_MAXIMIZED;
-        ev.flag = *static_cast<int*>(p->data) != 0;
-        s_window_maximized.store(ev.flag, std::memory_order_relaxed);
+        s_window_maximized.store(*static_cast<int*>(p->data) != 0,
+                                 std::memory_order_relaxed);
+        break;
+    case MPV_OBSERVE_DISPLAY_SCALE:
+        // Silent update: callers read mpv::display_scale() on demand.
+        if (p->format != MPV_FORMAT_DOUBLE) break;
+        s_display_scale.store(*static_cast<double*>(p->data),
+                              std::memory_order_relaxed);
         break;
     case MPV_OBSERVE_DISPLAY_FPS: {
         if (p->format != MPV_FORMAT_DOUBLE) break;

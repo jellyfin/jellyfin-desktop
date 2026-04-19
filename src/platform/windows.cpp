@@ -11,6 +11,7 @@
 #include "browser/overlay_browser.h"
 #include "input/input_windows.h"
 #include "logging.h"
+#include "mpv/event.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -454,10 +455,7 @@ static void win_set_expected_size(int w, int h) {
 
 static void win_set_fullscreen(bool fullscreen) {
     if (!g_mpv.IsValid()) return;
-    bool current = false;
-    if (g_mpv.GetFullscreen(current) >= 0) {
-        if (current == fullscreen) return;
-    }
+    if (mpv::fullscreen() == fullscreen) return;
     {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
         win_begin_transition_locked();
@@ -480,12 +478,10 @@ static void win_toggle_fullscreen() {
 // =====================================================================
 
 static float win_get_scale() {
-    if (g_mpv.IsValid()) {
-        double scale = 0;
-        if (g_mpv.GetDisplayScale(scale) >= 0 && scale > 0) {
-            g_win.cached_scale = static_cast<float>(scale);
-            return g_win.cached_scale;
-        }
+    double scale = mpv::display_scale();
+    if (scale > 0) {
+        g_win.cached_scale = static_cast<float>(scale);
+        return g_win.cached_scale;
     }
     if (g_win.cached_scale > 0) return g_win.cached_scale;
     // Pre-mpv (e.g. default-geometry sizing at startup): ask the OS directly.

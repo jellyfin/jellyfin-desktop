@@ -108,14 +108,29 @@ static void publish(const MpvEvent& ev) {
     g_cef_queue.try_push(ev);
 }
 
+static void log_mpv_message(const mpv_event_log_message* msg) {
+    switch (msg->log_level) {
+    case MPV_LOG_LEVEL_FATAL:
+    case MPV_LOG_LEVEL_ERROR:
+        LOG_ERROR(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    case MPV_LOG_LEVEL_WARN:
+        LOG_WARN(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    case MPV_LOG_LEVEL_INFO:
+        LOG_INFO(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    case MPV_LOG_LEVEL_TRACE:
+        LOG_TRACE(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    default: // V, DEBUG
+        LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    }
+}
+
 static void mpv_digest_thread() {
     while (!g_shutting_down.load(std::memory_order_relaxed)) {
         mpv_event* ev = g_mpv.WaitEvent(-1);
         if (ev->event_id == MPV_EVENT_NONE) continue;
 
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            auto* msg = static_cast<mpv_event_log_message*>(ev->data);
-            LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text);
+            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
             continue;
         }
 
@@ -140,8 +155,12 @@ static void mpv_digest_thread() {
                 fe.type = MpvEventType::END_FILE_EOF;
             else if (d->reason == MPV_END_FILE_REASON_STOP)
                 fe.type = MpvEventType::END_FILE_CANCEL;
-            else
+            else {
                 fe.type = MpvEventType::END_FILE_ERROR;
+                // mpv_error_string returns a pointer to a static, never-freed
+                // string — safe to carry across threads via MpvEvent.
+                fe.err_msg = mpv_error_string(d->error);
+            }
             publish(fe);
             continue;
         }
@@ -254,13 +273,17 @@ static void cef_consumer_thread() {
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
-            case MpvEventType::END_FILE_ERROR:
+            case MpvEventType::END_FILE_ERROR: {
                 g_playback_state = PlaybackState::Stopped;
                 update_idle_inhibit();
-                g_web_browser->execJs("window._nativeEmit('error','Playback error')");
+                auto val = CefValue::Create();
+                val->SetString(ev.err_msg ? ev.err_msg : "Playback error");
+                auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
+                g_web_browser->execJs("window._nativeEmit('error'," + json.ToString() + ")");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
+            }
             case MpvEventType::END_FILE_CANCEL:
                 g_playback_state = PlaybackState::Stopped;
                 update_idle_inhibit();
@@ -520,44 +543,23 @@ int main(int argc, char* argv[]) {
     g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
 
-    // Restore saved window geometry. mpv's macOS VO honors the --geometry
-    // and --window-maximized options at init-time via vo_calc_window_geometry
-    // / window.setMaximized (third_party/mpv/video/out/mac/common.swift:100-104),
-    // so the same code path works cross-platform.
-    //
-    // mpv's --geometry is in *physical pixels*; m_geometry_apply assigns
-    // gm->w/h to widw/widh directly without applying dpi_scale
-    // (third_party/mpv/options/m_option.c:2296). We therefore do DPI scaling
-    // ourselves: same-scale → pixel verbatim (no float drift); different
-    // scale → logical × current_scale; fresh install → default logical × scale.
+    // Restore saved window geometry. mpv's --geometry is always physical
+    // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
+    // assigns gm->w/h to widw/widh without applying dpi_scale), so we pass
+    // physical pixels here. If the live display scale differs from what
+    // these pixels were computed against, the post-CEF-init resize block
+    // below corrects the window size once display-hidpi-scale is known.
     {
+        using WG = Settings::WindowGeometry;
         auto saved_geom = Settings::instance().windowGeometry();
-        float cur_scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
-        if (cur_scale <= 0.f) cur_scale = 1.0f;
-
-        bool has_saved_pixels =
-            saved_geom.width > 0 && saved_geom.height > 0;
-        bool has_saved_logical =
-            saved_geom.logical_width > 0 && saved_geom.logical_height > 0;
-        bool same_scale = saved_geom.scale > 0.f &&
-            std::fabs(saved_geom.scale - cur_scale) < 0.01f;
 
         int w, h;
-        if (has_saved_pixels && same_scale) {
-            w = saved_geom.width;
-            h = saved_geom.height;
-        } else if (has_saved_logical) {
-            w = static_cast<int>(std::lround(saved_geom.logical_width  * cur_scale));
-            h = static_cast<int>(std::lround(saved_geom.logical_height * cur_scale));
-        } else if (has_saved_pixels) {
-            // Legacy config: no logical/scale stored. Use pixels as-is.
+        if (saved_geom.width > 0 && saved_geom.height > 0) {
             w = saved_geom.width;
             h = saved_geom.height;
         } else {
-            w = static_cast<int>(std::lround(
-                Settings::WindowGeometry::kDefaultLogicalWidth  * cur_scale));
-            h = static_cast<int>(std::lround(
-                Settings::WindowGeometry::kDefaultLogicalHeight * cur_scale));
+            w = WG::kDefaultPhysicalWidth;
+            h = WG::kDefaultPhysicalHeight;
         }
 
         int x = saved_geom.x, y = saved_geom.y;
@@ -631,15 +633,13 @@ int main(int argc, char* argv[]) {
     // property read can deadlock against core_thread's DispatchQueue.main.sync.
     LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
     int64_t mw = 0, mh = 0;
-    // Route the initial osd-dimensions event through digest_property so it
-    // also seeds s_osd_pw / s_osd_ph (src/mpv/event.cpp:62-63). Without this,
-    // the atomics stay at 0 until the user resizes, which causes the save
-    // block in cleanup to skip the entire geometry write when the user only
-    // moved the window (no VO reconfig → no second osd-dimensions event).
+    // Route every PROPERTY_CHANGE through digest_property, not just osd-dims.
+    // Side effect: seeds the atomics (s_osd_pw/ph, s_fullscreen,
+    // s_display_scale, ...) as mpv fires initial-value events, so platform
+    // init code can read them instead of issuing sync mpv_get_property calls.
+    // Caller breaks out of the loop only on a valid osd-dimensions event.
     auto try_consume_osd_dims = [&](mpv_event* ev) -> bool {
-        if (ev->event_id != MPV_EVENT_PROPERTY_CHANGE ||
-            ev->reply_userdata != MPV_OBSERVE_OSD_DIMS)
-            return false;
+        if (ev->event_id != MPV_EVENT_PROPERTY_CHANGE) return false;
         MpvEvent me = digest_property(
             ev->reply_userdata, static_cast<mpv_event_property*>(ev->data));
         if (me.type != MpvEventType::OSD_DIMS || me.pw <= 0 || me.ph <= 0)
@@ -655,8 +655,7 @@ int main(int argc, char* argv[]) {
         mpv_event* ev = g_mpv.WaitEvent(0);
         if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            auto* msg = static_cast<mpv_event_log_message*>(ev->data);
-            LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text);
+            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
             continue;
         }
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
@@ -667,6 +666,10 @@ int main(int argc, char* argv[]) {
 #else
     while (true) {
         mpv_event* ev = g_mpv.WaitEvent(1.0);
+        if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
+            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
+            continue;
+        }
         if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
         if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
         if (try_consume_osd_dims(ev)) break;
@@ -707,8 +710,44 @@ int main(int argc, char* argv[]) {
     }
     LOG_INFO(LOG_MAIN, "[FLOW] CefInitialize returned ok");
 
+    double display_hidpi_scale = 0.0;
+    mpv_get_property(g_mpv.Get(), "display-hidpi-scale",
+                     MPV_FORMAT_DOUBLE, &display_hidpi_scale);
+    LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={}", display_hidpi_scale);
+
+    // If the live display-hidpi-scale differs from the saved scale, the
+    // pixels we passed to --geometry were sized for the wrong scale.
+    // Resize using the saved logical × the live scale.
+    {
+        using WG = Settings::WindowGeometry;
+        const auto& saved = Settings::instance().windowGeometry();
+        float saved_scale = saved.scale > 0.f ? saved.scale : WG::kDefaultScale;
+        int logical_w = saved.logical_width  > 0 ? saved.logical_width
+                                                 : WG::kDefaultLogicalWidth;
+        int logical_h = saved.logical_height > 0 ? saved.logical_height
+                                                 : WG::kDefaultLogicalHeight;
+        if (display_hidpi_scale > 0.0 &&
+            std::fabs(display_hidpi_scale - saved_scale) >= 0.01) {
+            int new_pw = static_cast<int>(
+                std::lround(logical_w * display_hidpi_scale));
+            int new_ph = static_cast<int>(
+                std::lround(logical_h * display_hidpi_scale));
+            std::string geom_str = std::to_string(new_pw) + "x"
+                                 + std::to_string(new_ph);
+            LOG_INFO(LOG_MAIN,
+                     "[FLOW] scale {:.3f} -> {:.3f}, resize to {}",
+                     saved_scale, display_hidpi_scale, geom_str.c_str());
+            g_mpv.SetGeometry(geom_str);
+            mw = new_pw;
+            mh = new_ph;
+        }
+        mpv::set_window_pixels(static_cast<int>(mw), static_cast<int>(mh));
+    }
+
     // --- Create browsers ---
-    float scale = g_platform.get_scale();
+    float scale = display_hidpi_scale > 0.0
+        ? static_cast<float>(display_hidpi_scale)
+        : g_platform.get_scale();
     int lw = static_cast<int>(mw / scale);
     int lh = static_cast<int>(mh / scale);
 
@@ -872,8 +911,15 @@ int main(int argc, char* argv[]) {
             // Capture {pixel, logical, scale} so the next launch can restore
             // losslessly on the same display, or rescale correctly when moved
             // to a display with a different DPI.
-            int pw = mpv::osd_pw();
-            int ph = mpv::osd_ph();
+            // Prefer the effective pixel size we recorded during boot so
+            // save reflects what we asked mpv for, even if osd-dimensions
+            // lags behind a resize we issued.
+            int pw = mpv::window_pw();
+            int ph = mpv::window_ph();
+            if (pw <= 0 || ph <= 0) {
+                pw = mpv::osd_pw();
+                ph = mpv::osd_ph();
+            }
             if (pw > 0 && ph > 0) {
                 Settings::WindowGeometry geom;
                 geom.width = pw;
