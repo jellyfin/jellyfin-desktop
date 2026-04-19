@@ -10,7 +10,9 @@ cd "$BUILD_OUT"
 
 MANIFEST="${SCRIPT_DIR}/org.jellyfin.JellyfinDesktop.yml"
 APP_ID="org.jellyfin.JellyfinDesktop"
-BUNDLE_NAME="jellyfin-desktop.flatpak"
+VERSION="$("${REPO_ROOT}/dev/tools/version.sh")"
+ARCH="$(uname -m)"
+BUNDLE_NAME="JellyfinDesktop-${VERSION}-linux-${ARCH}.flatpak"
 RUNTIME_VERSION="25.08"
 
 # Check dependencies

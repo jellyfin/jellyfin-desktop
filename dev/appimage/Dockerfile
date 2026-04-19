@@ -23,12 +23,10 @@ RUN wget -q "https://github.com/AppImage/appimagetool/releases/download/continuo
     ./appimagetool-x86_64.AppImage --appimage-extract && \
     mv squashfs-root appimagetool && rm appimagetool-x86_64.AppImage
 
-# Copy app source
+# Copy app source (.dockerignore symlinks to .gitignore, so the mpv submodule
+# worktree is copied as-is from the host — we build exactly what's checked out).
 COPY . /src
 WORKDIR /src
-
-# Init submodules (mpv excluded from .dockerignore to avoid copying build artifacts)
-RUN git submodule update --init
 
 # Download CEF (uses dev/tools/download_cef.py to fetch latest stable and set up third_party/cef symlink)
 RUN python3 dev/tools/download_cef.py
@@ -192,4 +190,4 @@ RUN mkdir -p /output && \
     --runtime-file /opt/tools/runtime-x86_64 \
     /AppDir /output/JellyfinDesktop-x86_64.AppImage
 
-CMD ["cp", "/output/JellyfinDesktop-x86_64.AppImage", "/host-output/"]
+CMD ["sh", "-c", "cp /output/JellyfinDesktop-x86_64.AppImage /host-output/JellyfinDesktop-${VERSION}-linux-x86_64.AppImage"]

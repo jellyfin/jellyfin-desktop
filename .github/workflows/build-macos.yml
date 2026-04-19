@@ -33,14 +33,7 @@ jobs:
 
       - name: Determine version
         id: version
-        run: |
-          if [ -f VERSION ]; then
-            VERSION=$(cat VERSION)
-          else
-            VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "0.0.0")
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Version: ${VERSION}"
+        run: echo "version=$(dev/tools/version.sh)" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: |

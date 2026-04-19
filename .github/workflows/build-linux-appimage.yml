@@ -35,8 +35,10 @@ jobs:
           WORKSPACE: ${{ github.workspace }}
         run: |
           mkdir -p dist
+          VERSION=$(dev/tools/version.sh)
           docker run --rm \
             -v "${WORKSPACE}/dist:/host-output" \
+            -e VERSION="${VERSION}" \
             jellyfin-desktop-appimage
 
       - name: Upload artifact

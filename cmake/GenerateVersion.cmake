@@ -7,12 +7,8 @@ set(HASH_CACHE "${BINARY_DIR}/src/.git_hash_cache")
 set(EPOCH_CACHE "${BINARY_DIR}/src/.epoch_cache")
 
 # Read current values
-if(EXISTS "${SOURCE_DIR}/VERSION")
-    file(READ "${SOURCE_DIR}/VERSION" APP_VERSION)
-    string(STRIP "${APP_VERSION}" APP_VERSION)
-else()
-    set(APP_VERSION "unknown")
-endif()
+file(READ "${SOURCE_DIR}/VERSION" APP_VERSION)
+string(STRIP "${APP_VERSION}" APP_VERSION)
 
 execute_process(
     COMMAND git describe --always --dirty

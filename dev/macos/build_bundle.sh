@@ -9,13 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${0}")" && pwd)"
 # Build first
 "${SCRIPT_DIR}/build.sh"
 
-# Determine version
-if [ -f "${PROJECT_ROOT}/VERSION" ]; then
-    VERSION="$(cat "${PROJECT_ROOT}/VERSION")"
-else
-    VERSION="$(cd "${PROJECT_ROOT}" && git describe --tags --always --dirty 2>/dev/null || echo "0.0.0")"
-fi
-
+VERSION="$("${PROJECT_ROOT}/dev/tools/version.sh")"
 ARCH="$(uname -m)"
 APP_DIR="${BUILD_DIR}/output/${APP_NAME}"
 DIST_DIR="${PROJECT_ROOT}/dist"
