@@ -27,7 +27,9 @@
     (function() {
         let lastTime = 0, lastX = 0, lastY = 0;
         document.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return;  // left button only
+            // left button only and only if clicked on main content (not header,
+            // or controls)
+            if (e.button !== 0 || !e.target.classList.contains("mainAnimatedPage")) return;
             const now = Date.now();
             const dx = e.clientX - lastX;
             const dy = e.clientY - lastY;
