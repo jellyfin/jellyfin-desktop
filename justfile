@@ -25,7 +25,7 @@ deps:
         git submodule update --init --recursive
     fi
     if ! [ -d third_party/cef ]; then
-        python3 dev/download_cef.py
+        python3 dev/tools/download_cef.py
     fi
 
 # Run unit tests

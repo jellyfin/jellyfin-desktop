@@ -6,8 +6,6 @@ import logging
 import pathlib
 import sys
 
-DEV_DIR = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(DEV_DIR))
 from download_cef import (
     CEF_DOWNLOAD_BASE,
     CEF_VERSION_FILE,
@@ -16,6 +14,7 @@ from download_cef import (
 )
 
 log = logging.getLogger(__name__)
+DEV_DIR = pathlib.Path(__file__).resolve().parent.parent
 MANIFEST_PATH = DEV_DIR / "flatpak" / "org.jellyfin.JellyfinDesktop.yml"
 URL_PREFIX = f"url: {CEF_DOWNLOAD_BASE}/cef_binary_"
 URL_SUFFIX = "_linux64_minimal.tar.bz2"

@@ -27,7 +27,7 @@ PLATFORM_MAP = {
 }
 
 log = logging.getLogger(__name__)
-REPO_ROOT = pathlib.Path(__file__).parent.parent
+REPO_ROOT = pathlib.Path(__file__).parent.parent.parent
 CEF_VERSION_FILE = REPO_ROOT / "CEF_VERSION"
 
 
@@ -266,7 +266,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=pathlib.Path,
-        default=pathlib.Path(__file__).parent.parent / "third_party",
+        default=REPO_ROOT / "third_party",
         help="Output directory (default: third_party/)",
     )
     parser.add_argument(

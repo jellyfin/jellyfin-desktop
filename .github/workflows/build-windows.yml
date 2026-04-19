@@ -59,7 +59,7 @@ jobs:
 
       - name: Download CEF
         run: |
-          python dev/download_cef.py --platform ${{ matrix.platform }}
+          python dev/tools/download_cef.py --platform ${{ matrix.platform }}
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2

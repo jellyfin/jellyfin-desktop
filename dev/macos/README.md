@@ -56,7 +56,7 @@ dev/macos/setup.sh
 
 Manually download CEF:
 ```bash
-python3 dev/download_cef.py
+python3 dev/tools/download_cef.py
 ```
 
 ### Web Debugger

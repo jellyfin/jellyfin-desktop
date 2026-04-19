@@ -302,7 +302,7 @@ else()
     message(FATAL_ERROR "CEF not found. Either:\n"
         "  - Install the 'cef' package (system CEF)\n"
         "  - Set EXTERNAL_CEF_DIR to a CEF installation\n"
-        "  - Download CEF to third_party/cef/ (dev/download_cef.py)")
+        "  - Download CEF to third_party/cef/ (dev/tools/download_cef.py)")
 endif()
 
 set(CEF_FOUND TRUE)

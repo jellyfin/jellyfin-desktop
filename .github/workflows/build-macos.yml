@@ -67,7 +67,7 @@ jobs:
 
       - name: Download CEF
         run: |
-          python3 dev/download_cef.py
+          python3 dev/tools/download_cef.py
 
       - name: Configure and build
         run: |

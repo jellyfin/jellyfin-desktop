@@ -14,7 +14,7 @@ $CefDir = Join-Path $RepoRoot "third_party\cef"
 # Check for CEF
 if (-not (Test-Path $CefDir)) {
     Write-Host "CEF not found at $CefDir" -ForegroundColor Red
-    Write-Host "Run setup.ps1 or dev\download_cef.py first"
+    Write-Host "Run setup.ps1 or dev\tools\download_cef.py first"
     exit 1
 }
 

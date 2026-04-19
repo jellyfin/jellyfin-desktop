@@ -6,7 +6,7 @@
 git clone https://github.com/jellyfin/jellyfin-desktop
 cd jellyfin-desktop
 git submodule update --init --recursive
-python3 dev/download_cef.py
+python3 dev/tools/download_cef.py
 cmake -B build -G Ninja
 cmake --build build
 ./build/jellyfin-desktop
@@ -18,7 +18,7 @@ cmake --build build
 git clone https://github.com/jellyfin/jellyfin-desktop
 cd jellyfin-desktop
 git submodule update --init --recursive
-python3 dev/download_cef.py
+python3 dev/tools/download_cef.py
 cmake -B build -G Ninja
 cmake --build build
 dev/macos/run.sh
@@ -39,7 +39,7 @@ cd jellyfin-desktop
 
 The target CEF version is pinned in `CEF_VERSION` at the repo root. All platforms use this version.
 
-- `dev/download_cef.py` reads it automatically when downloading CEF
+- `dev/tools/download_cef.py` reads it automatically when downloading CEF
 - CMake verifies the installed CEF matches at configure time
 - CI cache keys are based on it
 

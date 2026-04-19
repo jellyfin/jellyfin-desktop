@@ -5,15 +5,14 @@ import pathlib
 import subprocess
 import sys
 
-TOOLS_DIR = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(TOOLS_DIR.parent))
-
 from download_cef import (
     CEF_VERSION_FILE,
     read_pinned_version,
     relpath,
     resolve_distribution,
 )
+
+TOOLS_DIR = pathlib.Path(__file__).resolve().parent
 
 log = logging.getLogger(__name__)
 
