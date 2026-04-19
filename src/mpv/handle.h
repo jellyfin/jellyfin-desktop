@@ -1,10 +1,12 @@
 #pragma once
 
+#include "common.h"
 #include <mpv/client.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <cstring>
+#include <atomic>
 
 #include "logging.h"
 #include "platform/display_backend.h"
@@ -117,7 +119,41 @@ public:
     void SetAudioTrack(int64_t id)       { SetPropertyIntAsync("aid", id); }
     void SetSubtitleTrack(int64_t id)    { SetPropertyIntAsync("sid", id); }
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
-    void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }    void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
+    void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }    
+    void SubAdd(const std::string& url)  { CommandAsync({"sub-add", url, "auto"}); } // "auto" = don't select the subtitle after adding
+
+    // Tracked sub-add: adds external subtitles and defers subtitle track selection
+    // until all sub-add commands have finished. This avoid race conditions where MPV tries to select a subtitle before it's added,
+    // even though the methods were called in the correct order.
+    void AddSubtitlesAndSelect(const std::vector<std::string>& urls, int64_t target_sid,
+                               std::atomic<int>& pending, std::atomic<int64_t>& deferred_sid) {
+        if (urls.empty()) {
+            SetSubtitleTrack(target_sid);
+            return;
+        }
+        deferred_sid.store(target_sid, std::memory_order_relaxed);
+        pending.store(static_cast<int>(urls.size()), std::memory_order_release);
+        for (const auto& url : urls) {
+            std::vector<std::string> cmd = {"sub-add", url, "auto"}; // "auto" because we don't want to select the subtitle here
+            const char** c = BuildCommandArray(cmd);
+            if (c == nullptr) continue;
+            mpv_command_async(handle_, SUB_ADD_REPLY_BASE, c);
+            delete[] c;
+        }
+    }
+
+    // Called from the mpv digest thread when MPV_EVENT_COMMAND_REPLY arrives
+    // with reply_userdata == SUB_ADD_REPLY_BASE.
+    static void OnSubAddReply(MpvHandle& mpv,
+                              std::atomic<int>& pending, std::atomic<int64_t>& deferred_sid) {
+        if (pending.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            int64_t sid = deferred_sid.exchange(0, std::memory_order_relaxed);
+            if (sid != 0) {
+                mpv.SetSubtitleTrack(sid);
+            }
+        }
+    }
+
     // mpv track selection: -1 = auto, 0 = disable, 1+ = specific track
     static constexpr int64_t kTrackAuto    = -1;
     static constexpr int64_t kTrackDisable =  0;

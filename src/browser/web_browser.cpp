@@ -129,6 +129,14 @@ bool WebBrowser::handleMessage(const std::string& name,
         std::string url = args->GetString(0).ToString();
         LOG_INFO(LOG_CEF, "playerAddSubtitle: {}", url.c_str());
         g_mpv.SubAdd(url);
+    } else if (name == "playerAddSubtitlesAndSelect") {
+        int64_t sid = args->GetInt(0);
+        std::vector<std::string> urls;
+        for (size_t i = 1; i < args->GetSize(); i++) {
+            urls.push_back(args->GetString(i).ToString());
+        }
+        LOG_INFO(LOG_CEF, "playerAddSubtitlesAndSelect: sid=%d urls=%zu", (int)sid, urls.size());
+        g_mpv.AddSubtitlesAndSelect(urls, sid, g_sub_add_pending, g_sub_add_deferred_sid);
     } else if (name == "playerSetAudio") {
         g_mpv.SetAudioTrack(getIntArg(args, 0));
     } else if (name == "playerSetAudioDelay") {
