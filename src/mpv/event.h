@@ -64,6 +64,15 @@ namespace mpv {
     bool window_maximized();
     int  osd_pw();
     int  osd_ph();
+
+    // Effective window pixel size — the dimensions we asked mpv for. Set
+    // during boot geometry resolution (and any runtime resize we initiate);
+    // never overwritten by osd-dimensions events, so it survives cases
+    // where osd-dims hasn't caught up to a resize we just issued.
+    // Returns 0 before the first call to set_window_pixels.
+    int  window_pw();
+    int  window_ph();
+    void set_window_pixels(int pw, int ph);
     // Cached value of mpv's display-hidpi-scale, updated from property
     // observation. Returns 0 before the first event arrives; callers
     // should treat 0 as "not yet known" and fall back to 1.0.

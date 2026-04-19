@@ -140,6 +140,7 @@ public:
     void ToggleFullscreen()              { CycleFullscreenAsync(); }
     void SetBackgroundColor(const std::string& color) { SetPropertyStringAsync("background-color", color); }
     void SetForceWindowPosition(bool v)  { SetPropertyFlagAsync("force-window-position", v); }
+    void SetGeometry(const std::string& geom) { SetPropertyStringAsync("geometry", geom); }
 
     int GetWindowId(int64_t& out)        { return GetPropertyInt("window-id", out); }
 

@@ -11,6 +11,8 @@ static std::atomic<bool>   s_fullscreen{false};
 static std::atomic<bool>   s_window_maximized{false};
 static std::atomic<int>    s_osd_pw{0};
 static std::atomic<int>    s_osd_ph{0};
+static std::atomic<int>    s_window_pw{0};
+static std::atomic<int>    s_window_ph{0};
 static std::atomic<double> s_display_scale{0.0};
 
 namespace mpv {
@@ -18,7 +20,14 @@ namespace mpv {
     bool   window_maximized() { return s_window_maximized.load(std::memory_order_relaxed); }
     int    osd_pw()           { return s_osd_pw.load(std::memory_order_relaxed); }
     int    osd_ph()           { return s_osd_ph.load(std::memory_order_relaxed); }
+    int    window_pw()        { return s_window_pw.load(std::memory_order_relaxed); }
+    int    window_ph()        { return s_window_ph.load(std::memory_order_relaxed); }
     double display_scale()    { return s_display_scale.load(std::memory_order_relaxed); }
+
+    void set_window_pixels(int pw, int ph) {
+        s_window_pw.store(pw, std::memory_order_relaxed);
+        s_window_ph.store(ph, std::memory_order_relaxed);
+    }
 
     bool read_osd_dims_from_event(mpv_event_property* p, int64_t* w, int64_t* h) {
         if (!p || p->format != MPV_FORMAT_NODE || !p->data) return false;
