@@ -28,6 +28,8 @@
 
 quill::Logger* g_loggers[LOG_CATEGORY_COUNT] = {};
 
+static std::string g_active_log_path;
+
 // Sink mixin that replaces embedded newlines in the rendered log_statement
 // before handing it to the real sink. Runs on Quill's backend worker thread,
 // so the call site stays free of string mangling. Newlines come mainly from
@@ -208,7 +210,13 @@ static quill::LogLevel toQuillLevel(int parsed) {
     }
 }
 
+const std::string& activeLogPath() {
+    return g_active_log_path;
+}
+
 void initLogging(const char* path, int min_level) {
+    g_active_log_path = (path && path[0]) ? path : "";
+
     quill::Backend::start();
 
     std::vector<std::shared_ptr<quill::Sink>> sinks;

@@ -65,6 +65,13 @@ struct WlState {
     bool overlay_visible = false;
     bool overlay_placeholder = false;  // true while showing solid-color placeholder
 
+    // About browser subsurface (above overlay)
+    wl_surface* about_surface = nullptr;
+    wl_subsurface* about_subsurface = nullptr;
+    wl_buffer* about_buffer = nullptr;
+    wp_viewport* about_viewport = nullptr;
+    bool about_visible = false;
+
     // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns)
     wl_surface* popup_surface = nullptr;
     wl_subsurface* popup_subsurface = nullptr;
@@ -326,6 +333,111 @@ static void wl_overlay_present_software(const CefRenderHandler::RectList&,
     wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, w, h);
     wl_surface_commit(g_wl.overlay_surface);
     wl_display_flush(g_wl.display);
+}
+
+// =====================================================================
+// Present CEF dmabuf -- about browser
+// =====================================================================
+
+static void wl_about_present(const CefAcceleratedPaintInfo& info) {
+    int w = info.extra.coded_size.width;
+    int h = info.extra.coded_size.height;
+
+    auto* buf = create_dmabuf_buffer(info);
+    if (!buf) return;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.about_surface || !g_wl.about_visible) {
+        wl_buffer_destroy(buf);
+        return;
+    }
+
+    if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
+    g_wl.about_buffer = buf;
+    if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
+        int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
+        int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
+        float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
+        wp_viewport_set_source(g_wl.about_viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
+        wp_viewport_set_destination(g_wl.about_viewport,
+            static_cast<int>(cw / scale),
+            static_cast<int>(ch / scale));
+    }
+    wl_surface_attach(g_wl.about_surface, buf, 0, 0);
+    wl_surface_damage_buffer(g_wl.about_surface, 0, 0, w, h);
+    wl_surface_commit(g_wl.about_surface);
+    wl_display_flush(g_wl.display);
+}
+
+static void wl_about_present_software(const CefRenderHandler::RectList&,
+                                      const void* buffer, int w, int h) {
+    auto* buf = create_shm_buffer(buffer, w, h);
+    if (!buf) return;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.about_surface || !g_wl.about_visible) {
+        wl_buffer_destroy(buf);
+        return;
+    }
+
+    if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
+    g_wl.about_buffer = buf;
+    if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
+        int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
+        int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
+        float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
+        wp_viewport_set_source(g_wl.about_viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
+        wp_viewport_set_destination(g_wl.about_viewport,
+            static_cast<int>(cw / scale),
+            static_cast<int>(ch / scale));
+    }
+    wl_surface_attach(g_wl.about_surface, buf, 0, 0);
+    wl_surface_damage_buffer(g_wl.about_surface, 0, 0, w, h);
+    wl_surface_commit(g_wl.about_surface);
+    wl_display_flush(g_wl.display);
+}
+
+static void wl_about_resize(int lw, int lh, int pw, int ph) {
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.about_surface || !g_wl.about_viewport) return;
+    wp_viewport_set_source(g_wl.about_viewport,
+        wl_fixed_from_int(0), wl_fixed_from_int(0),
+        wl_fixed_from_int(pw), wl_fixed_from_int(ph));
+    wp_viewport_set_destination(g_wl.about_viewport, lw, lh);
+    wl_surface_commit(g_wl.about_surface);
+    wl_display_flush(g_wl.display);
+}
+
+static void wl_set_about_visible(bool visible) {
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (g_wl.about_visible == visible) return;
+        g_wl.about_visible = visible;
+        if (!g_wl.about_surface) return;
+        if (!visible) {
+            wl_surface_attach(g_wl.about_surface, nullptr, 0, 0);
+            wl_surface_commit(g_wl.about_surface);
+            wl_display_flush(g_wl.display);
+            if (g_wl.about_buffer) {
+                wl_buffer_destroy(g_wl.about_buffer);
+                g_wl.about_buffer = nullptr;
+            }
+        }
+    }
+
+    // Route keyboard focus. When showing, all lower browsers lose focus;
+    // when hiding, input::set_active_browser (called by AboutBrowser) will
+    // re-apply focus to whatever it was before.
+    if (visible) {
+        if (g_web_browser && g_web_browser->browser())
+            g_web_browser->browser()->GetHost()->SetFocus(false);
+        if (g_overlay_browser && g_overlay_browser->browser())
+            g_overlay_browser->browser()->GetHost()->SetFocus(false);
+    }
 }
 
 // =====================================================================
@@ -952,6 +1064,20 @@ static bool wl_init(mpv_handle* mpv) {
         g_wl.overlay_alpha = wp_alpha_modifier_v1_get_surface(g_wl.alpha_modifier, g_wl.overlay_surface);
     wl_surface_commit(g_wl.overlay_surface);
 
+    // --- About browser subsurface (above overlay) ---
+    g_wl.about_surface = wl_compositor_create_surface(g_wl.compositor);
+    g_wl.about_subsurface = wl_subcompositor_get_subsurface(g_wl.subcompositor, g_wl.about_surface, parent);
+    wl_subsurface_place_above(g_wl.about_subsurface, g_wl.overlay_surface);
+    wl_subsurface_set_desync(g_wl.about_subsurface);
+    {
+        wl_region* empty = wl_compositor_create_region(g_wl.compositor);
+        wl_surface_set_input_region(g_wl.about_surface, empty);
+        wl_region_destroy(empty);
+    }
+    if (g_wl.viewporter)
+        g_wl.about_viewport = wp_viewporter_get_viewport(g_wl.viewporter, g_wl.about_surface);
+    wl_surface_commit(g_wl.about_surface);
+
     // --- Popup subsurface (child of cef_surface, for CEF OSR <select> dropdowns) ---
     // Must be a child of cef_surface (not the parent) so that
     // wl_subsurface_set_position takes effect on cef_surface's commit
@@ -1033,6 +1159,11 @@ static void wl_cleanup() {
     if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
     if (g_wl.popup_subsurface) wl_subsurface_destroy(g_wl.popup_subsurface);
     if (g_wl.popup_surface) wl_surface_destroy(g_wl.popup_surface);
+    // About
+    if (g_wl.about_viewport) wp_viewport_destroy(g_wl.about_viewport);
+    if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
+    if (g_wl.about_subsurface) wl_subsurface_destroy(g_wl.about_subsurface);
+    if (g_wl.about_surface) wl_surface_destroy(g_wl.about_surface);
     // Overlay
     if (g_wl.overlay_alpha) { wp_alpha_modifier_surface_v1_destroy(g_wl.overlay_alpha); g_wl.overlay_alpha = nullptr; }
     if (g_wl.overlay_viewport) wp_viewport_destroy(g_wl.overlay_viewport);
@@ -1436,6 +1567,10 @@ Platform make_wayland_platform() {
         .overlay_present_software = wl_overlay_present_software,
         .overlay_resize = wl_overlay_resize,
         .set_overlay_visible = wl_set_overlay_visible,
+        .about_present = wl_about_present,
+        .about_present_software = wl_about_present_software,
+        .about_resize = wl_about_resize,
+        .set_about_visible = wl_set_about_visible,
         .popup_show = wl_popup_show,
         .popup_hide = wl_popup_hide,
         .popup_present = wl_popup_present,

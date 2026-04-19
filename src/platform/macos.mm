@@ -12,6 +12,7 @@
 #include "browser/browsers.h"
 #include "browser/overlay_browser.h"
 #include "browser/web_browser.h"
+#include "browser/about_browser.h"
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
 #include "input/input_macos.h"
@@ -107,6 +108,13 @@ struct LayerState {
 static LayerState g_main{};
 static LayerState g_overlay{};
 static bool g_overlay_visible = false;
+static LayerState g_about{};
+static bool g_about_visible = false;
+// Deferred-reveal flag: set by macos_set_about_visible(true), consumed by
+// macos_about_present once CEF delivers a frame. Avoids a window of empty
+// transparent layer between unhide and first real paint — the view stays
+// hidden until we actually have something to show.
+static bool g_about_pending_reveal = false;
 
 // Input NSView (owned by input::macos)
 static NSView* g_input_view = nil;
@@ -304,6 +312,10 @@ static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scal
         CefRefPtr<CefBrowser> b = g_overlay_browser->browser();
         if (b) b->GetHost()->SendExternalBeginFrame();
     }
+    if (g_about_browser) {
+        CefRefPtr<CefBrowser> b = g_about_browser->browser();
+        if (b) b->GetHost()->SendExternalBeginFrame();
+    }
 }
 @end
 
@@ -428,6 +440,7 @@ static bool macos_init(mpv_handle* mpv) {
 
     create_content_layer(contentView, frame, scale, g_main.view, g_main.layer, nil);
     create_content_layer(contentView, frame, scale, g_overlay.view, g_overlay.layer, g_main.view);
+    create_content_layer(contentView, frame, scale, g_about.view, g_about.layer, g_overlay.view);
     // Both CEF content views start hidden so nothing from their fresh
     // (empty) CALayer sublayers can leak stale window-server snapshot
     // content before CEF has actually painted. The user sees mpv's
@@ -437,11 +450,12 @@ static bool macos_init(mpv_handle* mpv) {
     // together); macos_present unhides g_main in player mode.
     [g_main.view setHidden:YES];
     [g_overlay.view setHidden:YES];
+    [g_about.view setHidden:YES];
 
     g_input_view = input::macos::create_input_view();
     g_input_view.frame = contentView.bounds;
     g_input_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [contentView addSubview:g_input_view positioned:NSWindowAbove relativeTo:g_overlay.view];
+    [contentView addSubview:g_input_view positioned:NSWindowAbove relativeTo:g_about.view];
 
     // NSWindow drops mouseMoved: events on the floor unless this is set.
     // Without it, our input view's hover/cursor tracking never fires.
@@ -524,6 +538,37 @@ static void macos_overlay_present_software(const CefRenderHandler::RectList&, co
 // dispatch table stays non-null.
 static void macos_resize(int, int, int, int) {}
 static void macos_overlay_resize(int, int, int, int) {}
+
+static void macos_about_present(const CefAcceleratedPaintInfo& info) {
+    present_iosurface(g_about, info);
+    if (g_about_pending_reveal) {
+        g_about_pending_reveal = false;
+        [g_about.view setHidden:NO];
+    }
+}
+
+static void macos_about_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
+
+static void macos_about_resize(int, int, int, int) {}
+
+static void macos_set_about_visible(bool visible) {
+    g_about_visible = visible;
+    if (visible) {
+        // Keep the layer hidden until macos_about_present confirms a real
+        // frame — avoids flashing an empty transparent layer.
+        g_about_pending_reveal = true;
+    } else {
+        g_about_pending_reveal = false;
+        [g_about.view setHidden:YES];
+    }
+
+    if (visible) {
+        auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+        auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
+        if (main) main->GetHost()->SetFocus(false);
+        if (ovl)  ovl->GetHost()->SetFocus(false);
+    }
+}
 
 // =====================================================================
 // Native NSMenu popup (replaces CEF's HTML popup widget for <select>)
@@ -841,6 +886,21 @@ static void macos_cleanup() {
     g_window = nil;
 }
 
+// Target for the app menu's "About" item. Lives for the process lifetime,
+// matches the pattern JellyfinPopupMenuTarget uses for <select> menus.
+@interface JellyfinAppMenuTarget : NSObject
+- (void)showAbout:(id)sender;
+@end
+
+@implementation JellyfinAppMenuTarget
+- (void)showAbout:(id)sender {
+    (void)sender;
+    AboutBrowser::open();
+}
+@end
+
+static JellyfinAppMenuTarget* g_app_menu_target = nil;
+
 static void macos_early_init() {
     [JellyfinApplication sharedApplication];
 
@@ -852,11 +912,21 @@ static void macos_early_init() {
 
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-    // Menu bar with Quit
+    // Menu bar: About, separator, Quit
+    g_app_menu_target = [[JellyfinAppMenuTarget alloc] init];
+
     NSMenu* menubar = [[NSMenu alloc] init];
     NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
     [menubar addItem:appMenuItem];
     NSMenu* appMenu = [[NSMenu alloc] init];
+
+    NSMenuItem* aboutItem =
+        [[NSMenuItem alloc] initWithTitle:@"About Jellyfin Desktop"
+                                   action:@selector(showAbout:)
+                            keyEquivalent:@""];
+    [aboutItem setTarget:g_app_menu_target];
+    [appMenu addItem:aboutItem];
+    [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Quit"
                                                 action:@selector(terminate:)
                                          keyEquivalent:@"q"]];
@@ -934,6 +1004,10 @@ Platform make_macos_platform() {
         .overlay_present_software = macos_overlay_present_software,
         .overlay_resize = macos_overlay_resize,
         .set_overlay_visible = macos_set_overlay_visible,
+        .about_present = macos_about_present,
+        .about_present_software = macos_about_present_software,
+        .about_resize = macos_about_resize,
+        .set_about_visible = macos_set_about_visible,
         // Popup compositor path is unused on macOS — see
         // macos_try_native_popup_menu for the NSMenu substitute.
         .popup_show = [](int, int, int, int) {},

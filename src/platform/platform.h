@@ -31,6 +31,13 @@ struct Platform {
     void (*overlay_resize)(int lw, int lh, int pw, int ph);
     void (*set_overlay_visible)(bool visible);
 
+    // About browser subsurface (above overlay)
+    void (*about_present)(const CefAcceleratedPaintInfo& info);
+    void (*about_present_software)(const CefRenderHandler::RectList& dirty,
+                                   const void* buffer, int w, int h);
+    void (*about_resize)(int lw, int lh, int pw, int ph);
+    void (*set_about_visible)(bool visible);
+
     // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns)
     void (*popup_show)(int x, int y, int lw, int lh);
     void (*popup_hide)();
