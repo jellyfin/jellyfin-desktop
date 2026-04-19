@@ -40,17 +40,10 @@ jobs:
           flatpak install --user -y flathub org.freedesktop.Sdk//25.08 org.freedesktop.Platform//25.08
 
       - name: Build Flatpak
-        working-directory: dev/flatpak
-        run: |
-          flatpak-builder --user --repo=repo --force-clean build-dir org.jellyfin.JellyfinDesktop.yml
-
-      - name: Create bundle
-        working-directory: dev/flatpak
-        run: |
-          flatpak build-bundle repo jellyfin-desktop.flatpak org.jellyfin.JellyfinDesktop
+        run: ./dev/flatpak/build.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: linux-flatpak
-          path: dev/flatpak/jellyfin-desktop.flatpak
+          path: dist/jellyfin-desktop.flatpak

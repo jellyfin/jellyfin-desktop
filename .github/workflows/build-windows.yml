@@ -59,7 +59,7 @@ jobs:
 
       - name: Download CEF
         run: |
-          python dev/download_cef.py --platform ${{ matrix.platform }}
+          python dev/tools/download_cef.py --platform ${{ matrix.platform }}
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
@@ -96,10 +96,10 @@ jobs:
         run: |
           cmake --install build --prefix build/install
           cd build
-          cpack -G ZIP
+          cpack -G ZIP -B ../dist
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
-          path: build/jellyfin-desktop-*.zip
+          path: dist/jellyfin-desktop-*.zip

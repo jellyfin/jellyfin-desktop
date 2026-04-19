@@ -67,7 +67,7 @@ jobs:
 
       - name: Download CEF
         run: |
-          python3 dev/download_cef.py
+          python3 dev/tools/download_cef.py
 
       - name: Configure and build
         run: |
@@ -86,6 +86,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           ARCH="${{ matrix.arch }}"
           DMG_NAME="JellyfinDesktop-${VERSION}-macos-${ARCH}.dmg"
+          mkdir -p dist
 
           # create-dmg returns non-zero if icon positioning fails (no icon), ignore that
           create-dmg \
@@ -95,18 +96,18 @@ jobs:
             --icon-size 100 \
             --icon "${APP_NAME}.app" 125 150 \
             --app-drop-link 375 150 \
-            "${DMG_NAME}" "build/output/${APP_NAME}.app" || true
+            "dist/${DMG_NAME}" "build/output/${APP_NAME}.app" || true
 
           # Verify DMG was created
-          if [ ! -f "${DMG_NAME}" ]; then
+          if [ ! -f "dist/${DMG_NAME}" ]; then
             echo "DMG creation failed"
             exit 1
           fi
-          echo "Created: ${DMG_NAME}"
-          ls -la "${DMG_NAME}"
+          echo "Created: dist/${DMG_NAME}"
+          ls -la "dist/${DMG_NAME}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: macos-${{ matrix.arch }}
-          path: JellyfinDesktop-*.dmg
+          path: dist/JellyfinDesktop-*.dmg

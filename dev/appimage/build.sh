@@ -3,7 +3,7 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-OUTPUT_DIR="${1:-${PROJECT_ROOT}/build/appimage}"
+OUTPUT_DIR="${1:-${PROJECT_ROOT}/dist}"
 
 if command -v podman > /dev/null 2>&1; then
     CONTAINER_CMD=podman

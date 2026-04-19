@@ -25,7 +25,7 @@ deps:
         git submodule update --init --recursive
     fi
     if ! [ -d third_party/cef ]; then
-        python3 dev/download_cef.py
+        python3 dev/tools/download_cef.py
     fi
 
 # Run unit tests
@@ -33,7 +33,7 @@ deps:
 test: build
     ctest --test-dir build --output-on-failure
 
-# Run the app with debug logging
+# Run the app with debug logging (logs to build/run.log)
 [linux]
 run: build
     build/jellyfin-desktop --log-level=debug --log-file=build/run.log
@@ -44,4 +44,4 @@ update-deps *args:
 
 # Remove build artifacts (keeps CEF SDK download)
 clean:
-    rm -rf build third_party/mpv/build
+    rm -rf build dist third_party/mpv/build

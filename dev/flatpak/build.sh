@@ -3,9 +3,12 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$SCRIPT_DIR"
+BUILD_OUT="${REPO_ROOT}/build/flatpak"
+DIST_DIR="${REPO_ROOT}/dist"
+mkdir -p "$BUILD_OUT" "$DIST_DIR"
+cd "$BUILD_OUT"
 
-MANIFEST="org.jellyfin.JellyfinDesktop.yml"
+MANIFEST="${SCRIPT_DIR}/org.jellyfin.JellyfinDesktop.yml"
 APP_ID="org.jellyfin.JellyfinDesktop"
 BUNDLE_NAME="jellyfin-desktop.flatpak"
 RUNTIME_VERSION="25.08"
@@ -34,6 +37,6 @@ flatpak-builder --user --repo=repo --force-clean build-dir "$MANIFEST"
 
 # Create bundle
 echo "Creating bundle..."
-flatpak build-bundle repo "$BUNDLE_NAME" "$APP_ID"
+flatpak build-bundle repo "${DIST_DIR}/${BUNDLE_NAME}" "$APP_ID"
 
-echo "Done: $BUNDLE_NAME"
+echo "Done: ${DIST_DIR}/${BUNDLE_NAME}"

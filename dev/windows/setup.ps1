@@ -93,7 +93,7 @@ Pop-Location
 if (-not $SkipCef) {
     Write-Host ""
     Write-Host "=== CEF (Chromium Embedded Framework) ===" -ForegroundColor Cyan
-    & python (Join-Path $RepoRoot "dev\download_cef.py")
+    & python (Join-Path $RepoRoot "dev\tools\download_cef.py")
 }
 
 # Build libmpv from source

@@ -18,11 +18,13 @@ fi
 
 ARCH="$(uname -m)"
 APP_DIR="${BUILD_DIR}/output/${APP_NAME}"
+DIST_DIR="${PROJECT_ROOT}/dist"
+mkdir -p "${DIST_DIR}"
 
 # Create DMG
 echo "Creating DMG..."
 DMG_NAME="JellyfinDesktop-${VERSION}-macos-${ARCH}.dmg"
-rm -f "${BUILD_DIR}/${DMG_NAME}"
+rm -f "${DIST_DIR}/${DMG_NAME}"
 
 # create-dmg returns non-zero if icon positioning fails (no icon), ignore that
 create-dmg \
@@ -32,10 +34,10 @@ create-dmg \
     --icon-size 100 \
     --icon "Jellyfin Desktop.app" 125 150 \
     --app-drop-link 375 150 \
-    "${BUILD_DIR}/${DMG_NAME}" "${APP_DIR}" || true
+    "${DIST_DIR}/${DMG_NAME}" "${APP_DIR}" || true
 
 # Verify DMG was created
-if [ ! -f "${BUILD_DIR}/${DMG_NAME}" ]; then
+if [ ! -f "${DIST_DIR}/${DMG_NAME}" ]; then
     echo "error: DMG creation failed" >&2
     exit 1
 fi
@@ -43,4 +45,4 @@ fi
 echo ""
 echo "Bundle complete!"
 echo "App: ${APP_DIR}"
-echo "DMG: ${BUILD_DIR}/${DMG_NAME}"
+echo "DMG: ${DIST_DIR}/${DMG_NAME}"

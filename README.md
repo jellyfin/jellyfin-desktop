@@ -25,6 +25,19 @@ sudo xattr -cr /Applications/Jellyfin\ Desktop.app
 - [arm64](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-windows/main/windows-arm64.zip)
 
 
-## Building
+## Development
 
-See [dev/](dev/README.md) for build instructions.
+This project uses [just](https://github.com/casey/just) as a command runner.
+
+```
+Available recipes:
+    appimage          # Build AppImage (outputs to dist/)
+    build             # Configure (if needed) + build the main app
+    clean             # Remove build artifacts (keeps CEF SDK download)
+    deps              # Ensure submodules and CEF are present
+    flatpak           # Build Flatpak bundle (outputs to dist/)
+    list              # List available recipes
+    run               # Run the app with debug logging (logs to build/run.log)
+    test              # Run unit tests
+    update-deps *args # Update vendored/fetched deps (CEF, doctest, quill); pass --check to verify only
+```

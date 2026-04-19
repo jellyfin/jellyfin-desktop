@@ -9,7 +9,7 @@ deps:
         git submodule update --init --recursive
     fi
     if ! [ -d third_party/cef ]; then
-        python3 dev/download_cef.py
+        python3 dev/tools/download_cef.py
     fi
 
 [macos]
@@ -24,7 +24,7 @@ test: build
 run: build
     ./dev/macos/run.sh --log-level=debug --log-file=build/run.log
 
-# Build app bundle and distributable DMG
+# Build app bundle and distributable DMG (outputs to dist/)
 [macos]
 dmg:
     ./dev/macos/build_bundle.sh

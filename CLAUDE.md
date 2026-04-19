@@ -12,7 +12,7 @@ just deps     # one-time: submodules, CEF download, macOS brew packages
 just build    # configure (if needed) + build
 just test     # ctest
 just run      # run with debug logging → logs to build/run.log
-just clean    # remove build/ (keeps CEF SDK)
+just clean    # remove build/ and dist/ (keeps CEF SDK)
 just dmg      # [macos] build app bundle + distributable DMG
 just appimage # [linux] build AppImage via podman/docker
 just flatpak  # [linux] build Flatpak bundle

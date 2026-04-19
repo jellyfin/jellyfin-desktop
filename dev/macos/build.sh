@@ -31,7 +31,7 @@ fi
 # Download CEF if needed
 if [ ! -d "${PROJECT_ROOT}/third_party/cef" ]; then
     echo "Downloading CEF..."
-    python3 "${PROJECT_ROOT}/dev/download_cef.py"
+    python3 "${PROJECT_ROOT}/dev/tools/download_cef.py"
 fi
 
 # Configure

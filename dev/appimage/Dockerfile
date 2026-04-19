@@ -30,8 +30,8 @@ WORKDIR /src
 # Init submodules (mpv excluded from .dockerignore to avoid copying build artifacts)
 RUN git submodule update --init
 
-# Download CEF (uses dev/download_cef.py to fetch latest stable and set up third_party/cef symlink)
-RUN python3 dev/download_cef.py
+# Download CEF (uses dev/tools/download_cef.py to fetch latest stable and set up third_party/cef symlink)
+RUN python3 dev/tools/download_cef.py
 
 # KDE server-decoration-palette protocol (build-time only, for KWin titlebar colors)
 RUN mkdir -p /usr/share/plasma-wayland-protocols && \
