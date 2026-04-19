@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Jellyfin Desktop
-Comment=Experimental rewrite of Jellyfin Desktop built on CEF
+Comment=Jellyfin desktop client
 Exec=jellyfin-desktop
 Icon=org.jellyfin.JellyfinDesktop
 Terminal=false
