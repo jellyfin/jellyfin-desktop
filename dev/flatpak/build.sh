@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$SCRIPT_DIR"
 
 MANIFEST="org.jellyfin.JellyfinDesktop.yml"
 APP_ID="org.jellyfin.JellyfinDesktop"
@@ -20,7 +22,6 @@ if ! flatpak info --user org.freedesktop.Sdk//$RUNTIME_VERSION >/dev/null 2>&1 &
 fi
 
 # Ensure manifest CEF version matches CEF_VERSION
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CEF_VERSION="$(cat "${REPO_ROOT}/CEF_VERSION")"
 if ! grep -q "cef_binary_${CEF_VERSION}" "$MANIFEST"; then
     echo "Manifest CEF version doesn't match CEF_VERSION (${CEF_VERSION}), updating..."
