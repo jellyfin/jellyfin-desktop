@@ -125,6 +125,29 @@ static void applySettingValue(const std::string& section, const std::string& key
 
 OverlayBrowser::~OverlayBrowser() = default;
 
+CefRefPtr<CefDictionaryValue> OverlayBrowser::injectionProfile() {
+    static const char* const kFunctions[] = {
+        "getSavedServerUrl",
+        "saveServerUrl", "navigateMain", "dismissOverlay",
+        "checkServerConnectivity", "cancelServerConnectivity",
+        "overlayFadeComplete",
+        "menuItemSelected", "menuDismissed",
+    };
+    static const char* const kScripts[] = {
+        "context-menu.js",
+    };
+    CefRefPtr<CefListValue> fns = CefListValue::Create();
+    for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
+        fns->SetString(i, kFunctions[i]);
+    CefRefPtr<CefListValue> scripts = CefListValue::Create();
+    for (size_t i = 0; i < sizeof(kScripts) / sizeof(*kScripts); i++)
+        scripts->SetString(i, kScripts[i]);
+    CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
+    d->SetList("functions", fns);
+    d->SetList("scripts", scripts);
+    return d;
+}
+
 OverlayBrowser::OverlayBrowser(RenderTarget target, WebBrowser& main_browser,
                                int w, int h, int pw, int ph)
     : client_(new CefLayer(target, w, h, pw, ph))
@@ -144,7 +167,13 @@ OverlayBrowser::OverlayBrowser(RenderTarget target, WebBrowser& main_browser,
 bool OverlayBrowser::handleMessage(const std::string& name,
                                    CefRefPtr<CefListValue> args,
                                    CefRefPtr<CefBrowser> browser) {
-    if (name == "navigateMain") {
+    if (name == "getSavedServerUrl") {
+        auto frame = browser ? browser->GetMainFrame() : nullptr;
+        if (!frame) return true;
+        auto reply = CefProcessMessage::Create("savedServerUrl");
+        reply->GetArgumentList()->SetString(0, Settings::instance().serverUrl());
+        frame->SendProcessMessage(PID_RENDERER, reply);
+    } else if (name == "navigateMain") {
         // Start the main browser loading the given URL. Does NOT hide the
         // overlay — the JS side owns the pre-fade delay so the user can still
         // cancel during that window.

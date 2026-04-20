@@ -45,6 +45,24 @@ int safe_lh() {
 }
 }
 
+CefRefPtr<CefDictionaryValue> AboutBrowser::injectionProfile() {
+    static const char* const kFunctions[] = {
+        "aboutOpenPath", "aboutDismiss",
+        "menuItemSelected", "menuDismissed",
+    };
+    static const char* const kScripts[] = { "context-menu.js" };
+    CefRefPtr<CefListValue> fns = CefListValue::Create();
+    for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
+        fns->SetString(i, kFunctions[i]);
+    CefRefPtr<CefListValue> scripts = CefListValue::Create();
+    for (size_t i = 0; i < sizeof(kScripts) / sizeof(*kScripts); i++)
+        scripts->SetString(i, kScripts[i]);
+    CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
+    d->SetList("functions", fns);
+    d->SetList("scripts", scripts);
+    return d;
+}
+
 AboutBrowser::AboutBrowser()
     : client_(new CefLayer(
         RenderTarget{g_platform.about_present, g_platform.about_present_software},
@@ -94,7 +112,8 @@ void AboutBrowser::open() {
     bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
 
     CefBrowserHost::CreateBrowser(wi, g_about_browser->client_,
-                                  "app://resources/about.html", bs, nullptr, nullptr);
+                                  "app://resources/about.html", bs,
+                                  injectionProfile(), nullptr);
 }
 
 bool AboutBrowser::handleMessage(const std::string& name,

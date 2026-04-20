@@ -19,11 +19,16 @@ public:
     void waitForClose() { client_->waitForClose(); }
     void waitForLoad() { client_->waitForLoad(); }
     void create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url) {
-        client_->create(wi, bs, url);
+        client_->create(wi, bs, url, injectionProfile());
     }
     void reset() { client_->reset(); }
     void loadUrl(const std::string& url) { client_->loadUrl(url); }
     CefRefPtr<CefLayer> client() { return client_; }
+
+    // Native-shim injection profile for this browser. Travels through CEF
+    // extra_info to the renderer; App::OnContextCreated binds the listed
+    // jmpNative functions and executes the listed scripts on the top frame.
+    static CefRefPtr<CefDictionaryValue> injectionProfile();
 
 private:
     bool handleMessage(const std::string& name,

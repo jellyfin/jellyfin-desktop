@@ -13,7 +13,9 @@
 
 #include <cassert>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -66,11 +68,20 @@ public:
 #endif
 
     // CefRenderProcessHandler
+    void OnBrowserCreated(CefRefPtr<CefBrowser> browser,
+                          CefRefPtr<CefDictionaryValue> extra_info) override;
+    void OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) override;
     void OnContextCreated(CefRefPtr<CefBrowser> browser,
                          CefRefPtr<CefFrame> frame,
                          CefRefPtr<CefV8Context> context) override;
 
 private:
+    // Renderer-local map of browser identifier → injection profile passed
+    // through extra_info at CreateBrowser time. Populated in OnBrowserCreated,
+    // consumed in OnContextCreated, erased in OnBrowserDestroyed.
+    std::mutex profiles_mtx_;
+    std::unordered_map<int, CefRefPtr<CefDictionaryValue>> profiles_;
+
     IMPLEMENT_REFCOUNTING(App);
     DISALLOW_COPY_AND_ASSIGN(App);
 };
@@ -328,61 +339,76 @@ void App::OnContextInitialized() {
     CefRegisterSchemeHandlerFactory("app", "", new EmbeddedSchemeHandlerFactory());
 }
 
+void App::OnBrowserCreated(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefDictionaryValue> extra_info) {
+    if (!extra_info) return;
+    std::lock_guard<std::mutex> lock(profiles_mtx_);
+    profiles_[browser->GetIdentifier()] = extra_info;
+}
+
+void App::OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) {
+    std::lock_guard<std::mutex> lock(profiles_mtx_);
+    profiles_.erase(browser->GetIdentifier());
+}
+
 void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefFrame> frame,
                            CefRefPtr<CefV8Context> context) {
-    // Load settings (renderer process is separate from browser process)
-    Settings::instance().load();
+    // Injection is a top-frame concern: binding window.jmpNative and running
+    // the player shim inside every iframe would duplicate state and pollute
+    // unrelated contexts. Sub-frames get nothing.
+    if (!frame->IsMain()) return;
 
+    // Look up the browser's injection profile (passed via extra_info at
+    // CreateBrowser time, stashed in OnBrowserCreated). No profile → this
+    // browser opted out of native-shim injection entirely.
+    CefRefPtr<CefDictionaryValue> profile;
+    {
+        std::lock_guard<std::mutex> lock(profiles_mtx_);
+        auto it = profiles_.find(browser->GetIdentifier());
+        if (it == profiles_.end()) return;
+        profile = it->second;
+    }
+
+    CefRefPtr<CefListValue> functions = profile->GetList("functions");
+    CefRefPtr<CefListValue> scripts = profile->GetList("scripts");
+
+    // Bind jmpNative with only the functions this browser declared.
     CefRefPtr<CefV8Value> window = context->GetGlobal();
     CefRefPtr<NativeV8Handler> handler = new NativeV8Handler(browser);
-
     CefRefPtr<CefV8Value> jmpNative = CefV8Value::CreateObject(nullptr, nullptr);
-    static const char* const kFunctions[] = {
-        "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
-        "playerSetVolume", "playerSetMuted", "playerSetSpeed",
-        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
-        "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive",
-        "saveServerUrl", "navigateMain", "dismissOverlay", "checkServerConnectivity", "cancelServerConnectivity",
-        "notifyMetadata", "notifyPosition", "notifySeek",
-        "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
-        "notifyRateChange",
-        "appExit", "setSettingValue", "themeColor",
-        "setOsdVisible", "setCursorVisible", "toggleFullscreen",
-        "menuItemSelected", "menuDismissed", "overlayFadeComplete",
-        "aboutOpenPath", "aboutDismiss",
-    };
-    for (const char* fn : kFunctions)
-        jmpNative->SetValue(fn, CefV8Value::CreateFunction(fn, handler), V8_PROPERTY_ATTRIBUTE_READONLY);
+    if (functions) {
+        for (size_t i = 0; i < functions->GetSize(); i++) {
+            std::string fn = functions->GetString(i).ToString();
+            jmpNative->SetValue(fn, CefV8Value::CreateFunction(fn, handler),
+                                V8_PROPERTY_ATTRIBUTE_READONLY);
+        }
+    }
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
-    // Inject JS shim
-    std::string shim_str(embedded_js.at("native-shim.js"));
+    if (!scripts || scripts->GetSize() == 0) return;
 
-    std::string placeholder = "__SERVER_URL__";
-    size_t pos = shim_str.find(placeholder);
-    if (pos != std::string::npos)
-        shim_str.replace(pos, placeholder.length(), Settings::instance().serverUrl());
+    // Renderer process is separate from browser process; settings need to be
+    // loaded here for placeholder substitution below.
+    Settings::instance().load();
 
-    std::string settings_placeholder = "__SETTINGS_JSON__";
-    pos = shim_str.find(settings_placeholder);
-    if (pos != std::string::npos)
-        shim_str.replace(pos, settings_placeholder.length(), Settings::instance().cliSettingsJson());
+    // Concatenate the declared scripts and execute in one call.
+    std::string code;
+    for (size_t i = 0; i < scripts->GetSize(); i++) {
+        if (i > 0) code += '\n';
+        code += embedded_js.at(scripts->GetString(i).ToString());
+    }
 
-    // Append player plugins to shim and execute all JS in one call
-    shim_str += '\n';
-    shim_str += embedded_js.at("mpv-player-core.js");
-    shim_str += '\n';
-    shim_str += embedded_js.at("mpv-video-player.js");
-    shim_str += '\n';
-    shim_str += embedded_js.at("mpv-audio-player.js");
-    shim_str += '\n';
-    shim_str += embedded_js.at("input-plugin.js");
-    shim_str += '\n';
-    shim_str += embedded_js.at("client-settings.js");
-    shim_str += '\n';
-    shim_str += embedded_js.at("context-menu.js");
-    frame->ExecuteJavaScript(shim_str, frame->GetURL(), 0);
+    // Placeholder substitution. No-op if the placeholder isn't present, so
+    // profiles that don't include native-shim.js pay nothing here.
+    auto replace_first = [&](const std::string& ph, const std::string& value) {
+        size_t pos = code.find(ph);
+        if (pos != std::string::npos) code.replace(pos, ph.length(), value);
+    };
+    replace_first("__SERVER_URL__", Settings::instance().serverUrl());
+    replace_first("__SETTINGS_JSON__", Settings::instance().cliSettingsJson());
+
+    frame->ExecuteJavaScript(code, frame->GetURL(), 0);
 }
 
 static void callJsGlobal(CefRefPtr<CefFrame> frame, const char* fn_name,
@@ -400,6 +426,13 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                    CefRefPtr<CefProcessMessage> message) {
     std::string name = message->GetName().ToString();
     CefRefPtr<CefListValue> args = message->GetArgumentList();
+
+    if (name == "savedServerUrl") {
+        CefV8ValueList v8args;
+        v8args.push_back(CefV8Value::CreateString(args->GetString(0)));
+        callJsGlobal(frame, "_onSavedServerUrl", v8args);
+        return true;
+    }
 
     if (name == "serverConnectivityResult") {
         CefV8ValueList v8args;

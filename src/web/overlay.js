@@ -1,8 +1,22 @@
 let cancelWait = null;
+
+// Saved server URL comes from the native side via IPC. Fire the request at
+// script load; the reply arrives through _onSavedServerUrl (defined below)
+// and resolves savedServerUrlReady.
+let savedServerUrl = null;
+const savedServerUrlReady = new Promise((resolve) => {
+    window._onSavedServerUrl = (url) => {
+        savedServerUrl = url || null;
+        resolve(savedServerUrl);
+    };
+});
+window.jmpNative.getSavedServerUrl();
+
 // True whenever the main browser is loading the URL we currently care about.
-// Set at startup if a saved URL exists (main.cpp pre-loads it), by navigateMain
-// on success, cleared whenever native resets main (cancel or user edits URL).
-let mainLoaded = !!(window.jmpInfo && window.jmpInfo.settings.main.userWebClient);
+// Set by the auto-connect path once we know a saved URL exists (main.cpp
+// has already pre-loaded it), by navigateMain on user-initiated success,
+// cleared whenever native resets main (cancel or user edits URL).
+let mainLoaded = false;
 
 // Sleep for `ms` milliseconds, rejecting if cancelWait() is called first.
 // Stores the cancel hook in the module-level `cancelWait` so a single cancel
@@ -30,7 +44,7 @@ async function tryConnect(server, spinnerStartTime = Date.now()) {
         if (!isConnecting) return false;
 
         // Save the normalized URL returned by native, not the raw user input.
-        window.jmpInfo.settings.main.userWebClient = resolvedUrl;
+        savedServerUrl = resolvedUrl;
         if (window.jmpNative && window.jmpNative.saveServerUrl) {
             window.jmpNative.saveServerUrl(resolvedUrl);
         }
@@ -130,10 +144,9 @@ const cancelConnection = () => {
     mainLoaded = false;
     isConnecting = false;
 
-    // Cancel C++ connectivity check and abort JS promise
-    if (window.api && window.api.system) {
-        window.api.system.cancelServerConnectivity();
-    }
+    // Cancel C++ connectivity check and abort JS promise.
+    // jmpCheckServerConnectivity.abort() calls jmpNative.cancelServerConnectivity
+    // internally (see connectivityHelper.js).
     if (window.jmpCheckServerConnectivity.abort) {
         window.jmpCheckServerConnectivity.abort();
     }
@@ -190,13 +203,15 @@ document.addEventListener('keydown', (e) => {
 (async () => {
     console.log('Auto-connect: starting');
 
-    await window.apiPromise;
-
-    const savedServer = window.jmpInfo.settings.main.userWebClient;
+    const savedServer = await savedServerUrlReady;
     console.log('Auto-connect: savedServer =', savedServer);
 
     if (savedServer) {
         console.log('Auto-connect: checking saved server', savedServer);
+
+        // main.cpp pre-loads the saved URL into the main browser in parallel
+        // with overlay startup, so don't issue a redundant navigateMain.
+        mainLoaded = true;
 
         const address = document.getElementById('address');
         const title = document.getElementById('title');

@@ -24,6 +24,11 @@ public:
     void waitForLoad() { client_->waitForLoad(); }
     CefRefPtr<CefLayer> client() { return client_; }
 
+    // Native-shim injection profile for this browser. See WebBrowser for
+    // details. Overlay only needs a tiny jmpNative surface and no scripts —
+    // its own JS is loaded by overlay.html via <script> tags.
+    static CefRefPtr<CefDictionaryValue> injectionProfile();
+
 private:
     bool handleMessage(const std::string& name,
                        CefRefPtr<CefListValue> args,

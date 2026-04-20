@@ -21,6 +21,11 @@ public:
     void resize(int w, int h, int pw, int ph) { client_->resize(w, h, pw, ph); }
     bool isClosed() const { return client_->isClosed(); }
 
+    // Native-shim injection profile for this browser. See WebBrowser for
+    // details. About only needs two jmpNative functions and no scripts —
+    // about.html loads its own JS via <script>.
+    static CefRefPtr<CefDictionaryValue> injectionProfile();
+
 private:
     AboutBrowser();
 
