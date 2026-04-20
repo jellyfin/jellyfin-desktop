@@ -17,11 +17,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Jellyfin"
             VALUE "FileDescription",  "Jellyfin Desktop"
-            VALUE "FileVersion",      "@APP_VERSION@"
+            VALUE "FileVersion",      "@APP_VERSION_FULL@"
             VALUE "InternalName",     "jellyfin-desktop"
             VALUE "OriginalFilename", "jellyfin-desktop.exe"
             VALUE "ProductName",      "Jellyfin Desktop"
-            VALUE "ProductVersion",   "@APP_VERSION@"
+            VALUE "ProductVersion",   "@APP_VERSION_FULL@"
         END
     END
     BLOCK "VarFileInfo"

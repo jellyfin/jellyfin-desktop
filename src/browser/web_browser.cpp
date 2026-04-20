@@ -77,6 +77,43 @@ static int getIntArg(CefRefPtr<CefListValue> args, size_t idx) {
 // WebBrowser
 // =====================================================================
 
+CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
+    static const char* const kFunctions[] = {
+        "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
+        "playerSetVolume", "playerSetMuted", "playerSetSpeed",
+        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
+        "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive",
+        "saveServerUrl",
+        "notifyMetadata", "notifyPosition", "notifySeek",
+        "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
+        "notifyRateChange",
+        "appExit", "setSettingValue", "themeColor",
+        "setOsdVisible", "setCursorVisible", "toggleFullscreen",
+        "menuItemSelected", "menuDismissed",
+    };
+    static const char* const kScripts[] = {
+        "native-shim.js",
+        "mpv-player-core.js",
+        "mpv-video-player.js",
+        "mpv-audio-player.js",
+        "input-plugin.js",
+        "client-settings.js",
+        "context-menu.js",
+    };
+
+    CefRefPtr<CefListValue> fns = CefListValue::Create();
+    for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
+        fns->SetString(i, kFunctions[i]);
+    CefRefPtr<CefListValue> scripts = CefListValue::Create();
+    for (size_t i = 0; i < sizeof(kScripts) / sizeof(*kScripts); i++)
+        scripts->SetString(i, kScripts[i]);
+
+    CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
+    d->SetList("functions", fns);
+    d->SetList("scripts", scripts);
+    return d;
+}
+
 WebBrowser::WebBrowser(RenderTarget target, int w, int h, int pw, int ph)
     : client_(new CefLayer(target, w, h, pw, ph))
 {

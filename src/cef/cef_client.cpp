@@ -296,10 +296,12 @@ void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     if (cb) cb();
 }
 
-void CefLayer::create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url) {
+void CefLayer::create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url,
+                      CefRefPtr<CefDictionaryValue> extra_info) {
     window_info_ = wi;
     browser_settings_ = bs;
-    CefBrowserHost::CreateBrowser(wi, this, url, bs, nullptr, nullptr);
+    extra_info_ = extra_info;
+    CefBrowserHost::CreateBrowser(wi, this, url, bs, extra_info, nullptr);
 }
 
 void CefLayer::reset() {
@@ -318,7 +320,7 @@ void CefLayer::reset() {
         CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
             // Go through create() so requested_url_ is cleared alongside the
             // actual CreateBrowser call.
-            self->create(self->window_info_, self->browser_settings_, "");
+            self->create(self->window_info_, self->browser_settings_, "", self->extra_info_);
         })));
     });
 

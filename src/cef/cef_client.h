@@ -106,8 +106,12 @@ public:
     void waitForLoad();
     void execJs(const std::string& js);
 
-    // Create the underlying CEF browser. Stores wi/bs for use in reset().
-    void create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url);
+    // Create the underlying CEF browser. Stores wi/bs/extra_info for use in
+    // reset(). `extra_info` travels to the renderer's OnBrowserCreated and
+    // typically carries this browser's native-shim injection profile
+    // (jmpNative function list + script list); may be null.
+    void create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url,
+                CefRefPtr<CefDictionaryValue> extra_info = nullptr);
 
     // Tear down the current browser and recreate with no URL (blank).
     // Asynchronous: the new browser is ready when OnAfterCreated fires.
@@ -159,6 +163,7 @@ private:
     BeforeCloseCallback on_before_close_;
     CefWindowInfo window_info_;
     CefBrowserSettings browser_settings_;
+    CefRefPtr<CefDictionaryValue> extra_info_;
     State state_ = State::Normal;
     std::string pending_url_;
     IMPLEMENT_REFCOUNTING(CefLayer);
