@@ -721,11 +721,19 @@ int main(int argc, char* argv[]) {
     double display_hidpi_scale = 0.0;
     mpv_get_property(g_mpv.Get(), "display-hidpi-scale",
                      MPV_FORMAT_DOUBLE, &display_hidpi_scale);
-    LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={}", display_hidpi_scale);
+    int fs_flag = 0;
+    mpv_get_property(g_mpv.Get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
+    LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={}",
+             display_hidpi_scale, fs_flag);
 
     // If the live display-hidpi-scale differs from the saved scale, the
     // pixels we passed to --geometry were sized for the wrong scale.
     // Resize using the saved logical × the live scale.
+    //
+    // When the compositor has forced fullscreen, still issue SetGeometry so
+    // mpv's stored unfullscreen size (wl->window_size) is scale-corrected for
+    // the eventual restore, but don't overwrite mw/mh — the fullscreen surface
+    // size is authoritative for browser creation.
     {
         using WG = Settings::WindowGeometry;
         const auto& saved = Settings::instance().windowGeometry();
@@ -746,8 +754,10 @@ int main(int argc, char* argv[]) {
                      "[FLOW] scale {:.3f} -> {:.3f}, resize to {}",
                      saved_scale, display_hidpi_scale, geom_str.c_str());
             g_mpv.SetGeometry(geom_str);
-            mw = new_pw;
-            mh = new_ph;
+            if (!fs_flag) {
+                mw = new_pw;
+                mh = new_ph;
+            }
         }
         mpv::set_window_pixels(static_cast<int>(mw), static_cast<int>(mh));
     }
