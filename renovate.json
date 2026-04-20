@@ -19,36 +19,12 @@
       "matchStrings": ["^(?<currentValue>\\S+)"],
       "datasourceTemplate": "custom.cef",
       "depNameTemplate": "cef"
-    },
-    {
-      "customType": "regex",
-      "fileMatch": ["^third_party/doctest/VERSION$"],
-      "matchStrings": ["^(?<currentValue>\\S+)"],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "doctest/doctest",
-      "extractVersionTemplate": "^v(?<version>.+)$"
-    },
-    {
-      "customType": "regex",
-      "fileMatch": ["^third_party/quill/VERSION$"],
-      "matchStrings": ["^(?<currentValue>\\S+)"],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "odygrd/quill",
-      "extractVersionTemplate": "^v(?<version>.+)$"
     }
   ],
   "packageRules": [
     {
       "matchDatasources": ["custom.cef"],
       "commitMessageTopic": "CEF"
-    },
-    {
-      "matchDepNames": ["doctest/doctest"],
-      "commitMessageTopic": "doctest"
-    },
-    {
-      "matchDepNames": ["odygrd/quill"],
-      "commitMessageTopic": "quill"
     }
   ]
 }

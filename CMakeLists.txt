@@ -1,10 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(jellyfin-desktop LANGUAGES C CXX)
 
-include(FetchContent)
-include(ExternalProject)
-
-set(THIRD_PARTY_BASE_DIR "${CMAKE_SOURCE_DIR}/third_party")
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Disable quill's own LOG_* macros so they
 # don't collide with ours. Our pattern doesn't reference file/line/function
@@ -14,29 +13,13 @@ set(QUILL_DISABLE_NON_PREFIXED_MACROS ON CACHE BOOL "" FORCE)
 set(QUILL_DISABLE_FUNCTION_NAME ON CACHE BOOL "" FORCE)
 set(QUILL_DISABLE_FILE_INFO ON CACHE BOOL "" FORCE)
 
-FetchContent_Declare(
-    quill
-    GIT_REPOSITORY https://github.com/odygrd/quill
-    GIT_TAG master
-)
-
-FetchContent_Declare(
-    doctest
-    GIT_REPOSITORY https://github.com/doctest/doctest
-    GIT_TAG master
-)
-
-FetchContent_MakeAvailable(quill)
-FetchContent_MakeAvailable(doctest)
+set(THIRD_PARTY_BASE_DIR "${CMAKE_SOURCE_DIR}/third_party")
+include(${CMAKE_SOURCE_DIR}/cmake/FetchDependencies.cmake)
 
 # Enable Objective-C++ on macOS
 if(APPLE)
     enable_language(OBJCXX)
 endif()
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Version info (checks VERSION file and git hash each build, only writes if changed)
 add_custom_target(generate_version ALL
@@ -450,29 +433,32 @@ if(EXTERNAL_MPV_DIR)
         message(FATAL_ERROR "mpv library not found at ${MPV_LIBRARY}")
     endif()
     set(MPV_LIBRARIES "${MPV_LIBRARY}")
-else()
-    set(MPV_SOURCE_DIR "${THIRD_PARTY_BASE_DIR}/mpv")
-    set(MPV_BUILD_DIR "${MPV_SOURCE_DIR}/build")
-
+elseif (NOT WIN32)
     if(APPLE)
         set(MPV_LIBRARY "${MPV_BUILD_DIR}/libmpv.dylib")
-    elseif(WIN32)
-        set(MPV_LIBRARY "${MPV_BUILD_DIR}/mpv.lib")
     else()
         set(MPV_LIBRARY "${MPV_BUILD_DIR}/libmpv.so")
     endif()
 
-    # Download and build libmpv
-    ExternalProject_Add(mpv
-        GIT_REPOSITORY https://github.com/andrewrabert/mpv/
-        GIT_TAG aa910a7f450ee7bd04423d36e9dba8af0327e90c
-        SOURCE_DIR "${MPV_SOURCE_DIR}"
-        CONFIGURE_COMMAND meson setup ${MPV_BUILD_DIR} --default-library=shared -Dlibmpv=true
-        BUILD_COMMAND meson compile -C ${MPV_BUILD_DIR}
-        INSTALL_COMMAND ""
-        BUILD_BYPRODUCTS ${MPV_LIBRARY}
-        BUILD_IN_SOURCE true
-        STEP_TARGETS build
+     # Configure meson if not yet configured
+    if(NOT EXISTS "${MPV_BUILD_DIR}/build.ninja")
+        message(STATUS "Configuring mpv with meson...")
+        execute_process(
+            COMMAND meson setup build --default-library=shared -Dlibmpv=true
+            WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+            RESULT_VARIABLE MPV_SETUP_RESULT
+        )
+        if(NOT MPV_SETUP_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to configure mpv with meson")
+        endif()
+    endif()
+
+    # Custom target that always invokes meson compile (meson handles incremental builds)
+    add_custom_target(mpv_build
+        COMMAND meson compile -C build
+        WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+        COMMENT "Building mpv (meson handles incremental builds)"
+        BYPRODUCTS ${MPV_LIBRARY}
     )
 
     set(MPV_INCLUDE_DIRS "${MPV_SOURCE_DIR}/include")
@@ -672,12 +658,12 @@ if(NOT EXTERNAL_CEF_DIR AND NOT USE_SYSTEM_CEF)
     endif()
 endif()
 
-if(NOT EXTERNAL_MPV_DIR)
-    add_dependencies(jellyfin-desktop mpv-build)
+if(NOT EXTERNAL_MPV_DIR AND NOT WIN32)
+    add_dependencies(jellyfin-desktop mpv_build)
 endif()
 
 # Copy libmpv to build directory
-if(NOT EXTERNAL_MPV_DIR)
+if(NOT EXTERNAL_MPV_DIR AND NOT WIN32)
     if(APPLE)
         add_custom_command(TARGET jellyfin-desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy

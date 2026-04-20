@@ -1,6 +1,7 @@
 # Build
 build/
 dist/
+CMakeFiles/
 
 # Python
 __pycache__/
@@ -11,8 +12,6 @@ third_party/*
 !third_party/letsmove
 !third_party/GL
 !third_party/KHR
-!third_party/quill
-!third_party/doctest
 
 # Project-scoped MCP
 .mcp.json

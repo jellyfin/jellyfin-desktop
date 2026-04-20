@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 // WinRT headers must come before windows.h
+#include <Unknwn.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.h>
 #include <winrt/Windows.Storage.Streams.h>
