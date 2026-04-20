@@ -90,6 +90,10 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
             ev.ph = static_cast<int>(qlh * scale);
         }
 #endif
+        // Keep the "effective pixel size" cache current so shutdown's
+        // geometry save reflects the latest resize, not just the boot-time
+        // value seeded by set_window_pixels.
+        mpv::set_window_pixels(ev.pw, ev.ph);
         break;
     }
     case MPV_OBSERVE_PAUSE:
