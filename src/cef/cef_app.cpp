@@ -350,6 +350,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
         "appExit", "setSettingValue", "themeColor",
         "setOsdVisible", "setCursorVisible", "toggleFullscreen",
         "menuItemSelected", "menuDismissed", "overlayFadeComplete",
+        "aboutOpenPath", "aboutDismiss",
     };
     for (const char* fn : kFunctions)
         jmpNative->SetValue(fn, CefV8Value::CreateFunction(fn, handler), V8_PROPERTY_ATTRIBUTE_READONLY);

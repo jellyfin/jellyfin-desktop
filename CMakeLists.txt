@@ -21,6 +21,40 @@ add_custom_target(generate_version ALL
 )
 include_directories("${CMAKE_BINARY_DIR}/src")
 
+# Configure-time version parsing for Info.plist / Windows VERSIONINFO.
+# APP_VERSION is the full string from VERSION (e.g. "3.0.0-dev"); APP_VERSION_NUMERIC
+# strips any "-<suffix>" for contexts that demand three-integer versions (Windows
+# FILEVERSION fields). APP_VERSION_FULL appends "+<git-describe>" for dev builds
+# and is used in macOS Info.plist so Finder's Get Info shows the commit SHA.
+file(READ "${CMAKE_SOURCE_DIR}/VERSION" APP_VERSION)
+string(STRIP "${APP_VERSION}" APP_VERSION)
+string(REGEX REPLACE "-.*$" "" APP_VERSION_NUMERIC "${APP_VERSION}")
+if(NOT APP_VERSION_NUMERIC MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
+    message(FATAL_ERROR "VERSION must be MAJOR.MINOR.PATCH[-suffix]; got '${APP_VERSION}'")
+endif()
+set(APP_VERSION_MAJOR ${CMAKE_MATCH_1})
+set(APP_VERSION_MINOR ${CMAKE_MATCH_2})
+set(APP_VERSION_PATCH ${CMAKE_MATCH_3})
+if(APP_VERSION MATCHES "-")
+    set(APP_VERSION_FILEFLAGS "VS_FF_PRERELEASE")
+    execute_process(
+        COMMAND git describe --always --dirty
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE _APP_GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _GIT_RESULT
+    )
+    if(_GIT_RESULT EQUAL 0 AND NOT _APP_GIT_HASH STREQUAL "")
+        set(APP_VERSION_FULL "${APP_VERSION}+${_APP_GIT_HASH}")
+    else()
+        set(APP_VERSION_FULL "${APP_VERSION}")
+    endif()
+else()
+    set(APP_VERSION_FILEFLAGS "0x0L")
+    set(APP_VERSION_FULL "${APP_VERSION}")
+endif()
+
 # Use static runtime on Windows to match CEF wrapper (which uses /MT)
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -104,6 +138,11 @@ if(APPLE)
         ${MEDIAPLAYER_FRAMEWORK}
     )
 elseif(WIN32)
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/resources/win/iconres.rc.in"
+        "${CMAKE_BINARY_DIR}/iconres.rc"
+        @ONLY
+    )
     set(PLATFORM_SOURCES
         src/platform/windows.cpp
         src/input/input_windows.cpp
@@ -111,7 +150,7 @@ elseif(WIN32)
         src/player/media_session.cpp
         src/player/windows/media_session_windows.cpp
         src/player/media_session_thread.cpp
-        ${CMAKE_SOURCE_DIR}/resources/win/iconres.rc
+        ${CMAKE_BINARY_DIR}/iconres.rc
     )
     set(PLATFORM_LIBRARIES
         dwmapi
@@ -469,6 +508,7 @@ if(WIN32)
         src/cef/resource_handler.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
+        src/browser/about_browser.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/cjson/cJSON.c
@@ -488,6 +528,7 @@ else()
         src/cef/resource_handler.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
+        src/browser/about_browser.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/single_instance.cpp
@@ -704,13 +745,7 @@ elseif(APPLE)
             \"\${CMAKE_INSTALL_PREFIX}/${APP_NAME}/Contents/MacOS/libGLESv2.dylib\")
     ")
 
-    # Install Info.plist (configure version)
-    if(EXISTS "${CMAKE_SOURCE_DIR}/VERSION")
-        file(READ "${CMAKE_SOURCE_DIR}/VERSION" APP_VERSION)
-        string(STRIP "${APP_VERSION}" APP_VERSION)
-    else()
-        set(APP_VERSION "0.0.0")
-    endif()
+    # Install Info.plist (uses configure-time APP_VERSION / APP_VERSION_NUMERIC)
     configure_file(
         "${CMAKE_SOURCE_DIR}/resources/macos/Info.plist.in"
         "${CMAKE_BINARY_DIR}/Info.plist"
@@ -769,9 +804,16 @@ endif()
 set(CPACK_PACKAGE_NAME "jellyfin-desktop")
 set(CPACK_PACKAGE_VENDOR "Jellyfin")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Jellyfin Desktop Client")
-file(READ "${CMAKE_SOURCE_DIR}/VERSION" CPACK_PACKAGE_VERSION)
-string(STRIP "${CPACK_PACKAGE_VERSION}" CPACK_PACKAGE_VERSION)
+set(CPACK_PACKAGE_VERSION "${APP_VERSION}")
 if(WIN32)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64|arm64)")
+        set(_WIN_ARCH "arm64")
+    elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_WIN_ARCH "x64")
+    else()
+        set(_WIN_ARCH "x86")
+    endif()
+    set(CPACK_PACKAGE_FILE_NAME "JellyfinDesktop-${APP_VERSION_FULL}-windows-${_WIN_ARCH}")
     set(CPACK_GENERATOR "ZIP")
 elseif(APPLE)
     set(CPACK_GENERATOR "ZIP")

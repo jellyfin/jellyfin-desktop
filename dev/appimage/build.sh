@@ -4,6 +4,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${1:-${PROJECT_ROOT}/dist}"
+VERSION="$("${PROJECT_ROOT}/dev/tools/version.sh")"
 
 if command -v podman > /dev/null 2>&1; then
     CONTAINER_CMD=podman
@@ -25,7 +26,8 @@ ${CONTAINER_CMD} build \
 echo "Extracting AppImage..."
 ${CONTAINER_CMD} run --rm \
     -v "${OUTPUT_DIR}:/host-output" \
+    -e VERSION="${VERSION}" \
     jellyfin-desktop-appimage
 
 echo ""
-echo "AppImage: ${OUTPUT_DIR}/JellyfinDesktop-x86_64.AppImage"
+echo "AppImage: ${OUTPUT_DIR}/JellyfinDesktop-${VERSION}-linux-x86_64.AppImage"

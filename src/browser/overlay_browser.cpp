@@ -1,4 +1,5 @@
 #include "overlay_browser.h"
+#include "about_browser.h"
 #include "web_browser.h"
 #include "../common.h"
 #include "../jellyfin_api.h"
@@ -201,6 +202,8 @@ bool OverlayBrowser::handleMessage(const std::string& name,
         // Kill the pre-load: closes the render process and recreates the main
         // browser blank, so no stale JS/service-workers/history survive.
         main_browser_.reset();
+    } else if (name == "openAbout") {
+        AboutBrowser::open();
     } else {
         return false;
     }

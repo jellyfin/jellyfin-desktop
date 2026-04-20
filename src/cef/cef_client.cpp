@@ -398,6 +398,7 @@ void CefLayer::execJs(const std::string& js) {
 
 enum {
     MENU_ID_TOGGLE_FULLSCREEN = MENU_ID_USER_FIRST,
+    MENU_ID_ABOUT,
     MENU_ID_EXIT,
 };
 
@@ -443,9 +444,12 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
             case MENU_ID_PASTE: do_paste(browser_, frame); break;
             case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
             case MENU_ID_TOGGLE_FULLSCREEN:
+            case MENU_ID_ABOUT:
             case MENU_ID_EXIT: {
-                auto msg = CefProcessMessage::Create(
-                    cmd == MENU_ID_TOGGLE_FULLSCREEN ? "toggleFullscreen" : "appExit");
+                const char* name = "appExit";
+                if (cmd == MENU_ID_TOGGLE_FULLSCREEN) name = "toggleFullscreen";
+                else if (cmd == MENU_ID_ABOUT) name = "openAbout";
+                auto msg = CefProcessMessage::Create(name);
                 if (message_handler_)
                     message_handler_(msg->GetName().ToString(), msg->GetArgumentList(), browser);
                 break;
@@ -485,6 +489,7 @@ void CefLayer::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
         model->RemoveAt(model->GetCount() - 1);
     model->AddSeparator();
     model->AddItem(MENU_ID_TOGGLE_FULLSCREEN, "Toggle Fullscreen");
+    model->AddItem(MENU_ID_ABOUT, "About");
     model->AddItem(MENU_ID_EXIT, "Exit");
 }
 

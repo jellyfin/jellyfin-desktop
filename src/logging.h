@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstring>
+#include <string>
 
 #include "quill/Logger.h"
 #include "quill/LogMacros.h"
@@ -64,3 +65,6 @@ void initLogging(const char* path, int min_level);
 
 // Flush and stop the backend, drain the stderr capture, close files.
 void shutdownLogging();
+
+// Path of the active log file, or empty string when file logging is disabled.
+const std::string& activeLogPath();

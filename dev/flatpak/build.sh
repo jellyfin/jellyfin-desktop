@@ -10,7 +10,10 @@ cd "$BUILD_OUT"
 
 MANIFEST="${SCRIPT_DIR}/org.jellyfin.JellyfinDesktop.yml"
 APP_ID="org.jellyfin.JellyfinDesktop"
-BUNDLE_NAME="jellyfin-desktop.flatpak"
+VERSION="$("${REPO_ROOT}/dev/tools/version.sh")"
+DATE="$(date -u +%Y-%m-%d)"
+ARCH="$(uname -m)"
+BUNDLE_NAME="JellyfinDesktop-${VERSION}-linux-${ARCH}.flatpak"
 RUNTIME_VERSION="25.08"
 
 # Check dependencies
@@ -24,12 +27,17 @@ if ! flatpak info --user org.freedesktop.Sdk//$RUNTIME_VERSION >/dev/null 2>&1 &
     flatpak install --user -y flathub org.freedesktop.Sdk//$RUNTIME_VERSION org.freedesktop.Platform//$RUNTIME_VERSION
 fi
 
-# Ensure manifest CEF version matches CEF_VERSION
-CEF_VERSION="$(cat "${REPO_ROOT}/CEF_VERSION")"
-if ! grep -q "cef_binary_${CEF_VERSION}" "$MANIFEST"; then
-    echo "Manifest CEF version doesn't match CEF_VERSION (${CEF_VERSION}), updating..."
-    python3 "${REPO_ROOT}/dev/tools/update_flatpak_manifest.py"
+# Ensure CEF is extracted at third_party/cef
+if [ ! -d "${REPO_ROOT}/third_party/cef" ]; then
+    python3 "${REPO_ROOT}/dev/tools/download_cef.py"
 fi
+
+# Generate metainfo.xml with the current version injected.
+python3 "${SCRIPT_DIR}/generate_metainfo.py" \
+    --template "${REPO_ROOT}/resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml" \
+    --output "${BUILD_OUT}/generated.metainfo.xml" \
+    --version "$VERSION" \
+    --date "$DATE"
 
 # Build
 echo "Building flatpak..."

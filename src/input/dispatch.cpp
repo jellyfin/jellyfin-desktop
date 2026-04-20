@@ -14,11 +14,6 @@ namespace {
 std::mutex g_active_mtx;
 CefRefPtr<CefBrowser> g_active;  // guarded by g_active_mtx
 
-CefRefPtr<CefBrowser> active_browser() {
-    std::lock_guard<std::mutex> lk(g_active_mtx);
-    return g_active;
-}
-
 cef_mouse_button_type_t to_cef_button(MouseButton b) {
     switch (b) {
     case MouseButton::Left:   return MBT_LEFT;
@@ -29,6 +24,11 @@ cef_mouse_button_type_t to_cef_button(MouseButton b) {
 }
 
 }  // namespace
+
+CefRefPtr<CefBrowser> active_browser() {
+    std::lock_guard<std::mutex> lk(g_active_mtx);
+    return g_active;
+}
 
 void set_active_browser(CefRefPtr<CefBrowser> browser) {
     CefRefPtr<CefBrowser> prev;

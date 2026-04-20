@@ -53,9 +53,16 @@ struct X11State {
     int overlay_buf_idx = 0;
     bool overlay_visible = false;
 
+    // About browser child window (above overlay)
+    xcb_window_t about_window = XCB_NONE;
+    ShmBuffer about_bufs[2];
+    int about_buf_idx = 0;
+    bool about_visible = false;
+
     // Graphics contexts (one per child window, reused across frames)
     xcb_gcontext_t cef_gc = XCB_NONE;
     xcb_gcontext_t overlay_gc = XCB_NONE;
+    xcb_gcontext_t about_gc = XCB_NONE;
 
     // ARGB visual
     xcb_visualid_t argb_visual = 0;
@@ -153,6 +160,8 @@ static void sync_overlay_positions() {
         xcb_configure_window(g_x11.conn, g_x11.cef_window, mask, vals);
     if (g_x11.overlay_window != XCB_NONE && g_x11.overlay_visible)
         xcb_configure_window(g_x11.conn, g_x11.overlay_window, mask, vals);
+    if (g_x11.about_window != XCB_NONE && g_x11.about_visible)
+        xcb_configure_window(g_x11.conn, g_x11.about_window, mask, vals);
     xcb_flush(g_x11.conn);
 }
 
@@ -207,6 +216,8 @@ static void shm_free(ShmBuffer& buf, xcb_connection_t* conn) {
 // =====================================================================
 
 static void hide_overlays_locked() {
+    if (g_x11.about_window != XCB_NONE)
+        xcb_unmap_window(g_x11.conn, g_x11.about_window);
     if (g_x11.overlay_window != XCB_NONE)
         xcb_unmap_window(g_x11.conn, g_x11.overlay_window);
     if (g_x11.cef_window != XCB_NONE)
@@ -310,6 +321,82 @@ static void x11_resize(int lw, int lh, int pw, int ph) {
 static void x11_overlay_resize(int, int, int, int) {
     std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
     sync_overlay_positions();
+}
+
+// =====================================================================
+// Present CEF software -- about browser
+// =====================================================================
+
+static void x11_about_present_software(const CefRenderHandler::RectList& dirty,
+                                       const void* buffer, int w, int h) {
+    if (g_shutting_down.load(std::memory_order_relaxed)) return;
+    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+    if (g_x11.about_window == XCB_NONE || !g_x11.about_visible) return;
+
+    auto& buf = g_x11.about_bufs[g_x11.about_buf_idx];
+    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
+
+    int stride = w * 4;
+    const auto* src = static_cast<const uint8_t*>(buffer);
+
+    for (const auto& rect : dirty) {
+        int rx = rect.x, ry = rect.y, rw = rect.width, rh = rect.height;
+        if (rx < 0) { rw += rx; rx = 0; }
+        if (ry < 0) { rh += ry; ry = 0; }
+        if (rx + rw > w) rw = w - rx;
+        if (ry + rh > h) rh = h - ry;
+        if (rw <= 0 || rh <= 0) continue;
+
+        for (int row = ry; row < ry + rh; row++) {
+            memcpy(buf.data + row * stride + rx * 4,
+                   src + row * stride + rx * 4,
+                   rw * 4);
+        }
+
+        xcb_shm_put_image(g_x11.conn, g_x11.about_window, g_x11.about_gc,
+            w, h, rx, ry, rw, rh,
+            rx, ry, g_x11.argb_depth,
+            XCB_IMAGE_FORMAT_Z_PIXMAP,
+            0, buf.seg, 0);
+    }
+
+    g_x11.about_buf_idx ^= 1;
+    xcb_flush(g_x11.conn);
+}
+
+static void x11_about_resize(int, int, int, int) {
+    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+    sync_overlay_positions();
+}
+
+static void x11_set_about_visible(bool visible) {
+    {
+        std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+        if (g_x11.about_visible == visible) return;
+        g_x11.about_visible = visible;
+        if (g_x11.about_window == XCB_NONE) return;
+
+        if (visible) {
+            if (g_x11.pw > 0 && g_x11.ph > 0) {
+                uint32_t vals[2] = {static_cast<uint32_t>(g_x11.pw),
+                                    static_cast<uint32_t>(g_x11.ph)};
+                xcb_configure_window(g_x11.conn, g_x11.about_window,
+                    XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, vals);
+            }
+            xcb_map_window(g_x11.conn, g_x11.about_window);
+            xcb_flush(g_x11.conn);
+        } else {
+            xcb_unmap_window(g_x11.conn, g_x11.about_window);
+            xcb_flush(g_x11.conn);
+        }
+    }
+
+    if (visible) {
+        auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+        auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
+        if (main) main->GetHost()->SetFocus(false);
+        if (ovl)  ovl->GetHost()->SetFocus(false);
+    }
 }
 
 // =====================================================================
@@ -545,6 +632,11 @@ static bool x11_init(mpv_handle*) {
     g_x11.overlay_gc = xcb_generate_id(g_x11.conn);
     xcb_create_gc(g_x11.conn, g_x11.overlay_gc, g_x11.overlay_window, 0, nullptr);
 
+    // About CEF window (above overlay, initially unmapped)
+    g_x11.about_window = create_overlay_window(px, py, pw, ph);
+    g_x11.about_gc = xcb_generate_id(g_x11.conn);
+    xcb_create_gc(g_x11.conn, g_x11.about_gc, g_x11.about_window, 0, nullptr);
+
     xcb_flush(g_x11.conn);
 
     // Note: input::x11::init already selects StructureNotify + input events
@@ -575,6 +667,8 @@ static bool x11_init(mpv_handle*) {
 static void x11_cleanup() {
     // Hide overlay windows immediately so they don't linger during shutdown
     if (g_x11.conn) {
+        if (g_x11.about_window != XCB_NONE)
+            xcb_unmap_window(g_x11.conn, g_x11.about_window);
         if (g_x11.overlay_window != XCB_NONE)
             xcb_unmap_window(g_x11.conn, g_x11.overlay_window);
         if (g_x11.cef_window != XCB_NONE)
@@ -588,8 +682,13 @@ static void x11_cleanup() {
     // Free SHM buffers
     for (auto& buf : g_x11.cef_bufs)     shm_free(buf, g_x11.conn);
     for (auto& buf : g_x11.overlay_bufs)  shm_free(buf, g_x11.conn);
+    for (auto& buf : g_x11.about_bufs)    shm_free(buf, g_x11.conn);
 
     // Free GCs and destroy windows
+    if (g_x11.about_gc != XCB_NONE)
+        xcb_free_gc(g_x11.conn, g_x11.about_gc);
+    if (g_x11.about_window != XCB_NONE)
+        xcb_destroy_window(g_x11.conn, g_x11.about_window);
     if (g_x11.overlay_gc != XCB_NONE)
         xcb_free_gc(g_x11.conn, g_x11.overlay_gc);
     if (g_x11.cef_gc != XCB_NONE)
@@ -624,6 +723,10 @@ Platform make_x11_platform() {
         .overlay_present_software = x11_overlay_present_software,
         .overlay_resize = x11_overlay_resize,
         .set_overlay_visible = x11_set_overlay_visible,
+        .about_present = [](const CefAcceleratedPaintInfo&) {},
+        .about_present_software = x11_about_present_software,
+        .about_resize = x11_about_resize,
+        .set_about_visible = x11_set_about_visible,
         .popup_show = [](int, int, int, int) {},
         .popup_hide = []() {},
         .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},

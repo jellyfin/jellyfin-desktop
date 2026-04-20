@@ -53,6 +53,7 @@ struct WinState {
     IDCompositionVisual* dcomp_main_visual = nullptr;
     IDCompositionVisual* dcomp_overlay_visual = nullptr;
     IDCompositionEffectGroup* dcomp_overlay_effect = nullptr;
+    IDCompositionVisual* dcomp_about_visual = nullptr;
 
     // Main browser swap chain
     IDXGISwapChain1* main_swap_chain = nullptr;
@@ -62,6 +63,11 @@ struct WinState {
     IDXGISwapChain1* overlay_swap_chain = nullptr;
     int overlay_sw = 0, overlay_sh = 0;
     bool overlay_visible = false;
+
+    // About browser swap chain (above overlay)
+    IDXGISwapChain1* about_swap_chain = nullptr;
+    int about_sw = 0, about_sh = 0;
+    bool about_visible = false;
 
     // Window state
     float cached_scale = 1.0f;
@@ -140,6 +146,8 @@ static bool init_dcomp() {
 
     g_win.dcomp_root->AddVisual(g_win.dcomp_main_visual, TRUE, nullptr);
     g_win.dcomp_root->AddVisual(g_win.dcomp_overlay_visual, TRUE, g_win.dcomp_main_visual);
+    g_win.dcomp_device->CreateVisual(&g_win.dcomp_about_visual);
+    g_win.dcomp_root->AddVisual(g_win.dcomp_about_visual, TRUE, g_win.dcomp_overlay_visual);
     g_win.dcomp_target->SetRoot(g_win.dcomp_root);
     g_win.dcomp_device->Commit();
 
@@ -327,6 +335,75 @@ static void win_set_overlay_visible(bool visible) {
     } else {
         if (ovl)  ovl->GetHost()->SetFocus(false);
         if (main) main->GetHost()->SetFocus(true);
+    }
+}
+
+// =====================================================================
+// Present CEF shared texture -- about browser
+// =====================================================================
+
+static void win_about_present(const CefAcceleratedPaintInfo& info) {
+    HANDLE handle = info.shared_texture_handle;
+    if (!handle) return;
+
+    ID3D11Texture2D* src = nullptr;
+    HRESULT hr = g_win.d3d_device->OpenSharedResource1(handle,
+        __uuidof(ID3D11Texture2D), (void**)&src);
+    if (FAILED(hr) || !src) return;
+
+    D3D11_TEXTURE2D_DESC td;
+    src->GetDesc(&td);
+    int w = static_cast<int>(td.Width);
+    int h = static_cast<int>(td.Height);
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    if (!g_win.about_visible) { src->Release(); return; }
+
+    ensure_swap_chain(g_win.about_swap_chain, g_win.about_sw, g_win.about_sh,
+                      g_win.dcomp_about_visual, w, h);
+    if (!g_win.about_swap_chain) { src->Release(); return; }
+
+    ID3D11Texture2D* bb = nullptr;
+    g_win.about_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    g_win.d3d_context->CopyResource(bb, src);
+    bb->Release();
+    src->Release();
+
+    g_win.about_swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
+}
+
+static void win_about_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
+
+static void win_about_resize(int, int, int pw, int ph) {
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    if (!g_win.about_swap_chain) return;
+    ensure_swap_chain(g_win.about_swap_chain, g_win.about_sw, g_win.about_sh,
+                      g_win.dcomp_about_visual, pw, ph);
+    g_win.dcomp_device->Commit();
+}
+
+static void win_set_about_visible(bool visible) {
+    {
+        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+        g_win.about_visible = visible;
+        if (!visible && g_win.dcomp_about_visual) {
+            g_win.dcomp_about_visual->SetContent(nullptr);
+            if (g_win.about_swap_chain) {
+                g_win.about_swap_chain->Release();
+                g_win.about_swap_chain = nullptr;
+                g_win.about_sw = 0;
+                g_win.about_sh = 0;
+            }
+            g_win.dcomp_device->Commit();
+        }
+    }
+
+    if (visible) {
+        auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+        auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
+        if (main) main->GetHost()->SetFocus(false);
+        if (ovl)  ovl->GetHost()->SetFocus(false);
     }
 }
 
@@ -727,6 +804,10 @@ Platform make_windows_platform() {
         .overlay_present_software = win_overlay_present_software,
         .overlay_resize = win_overlay_resize,
         .set_overlay_visible = win_set_overlay_visible,
+        .about_present = win_about_present,
+        .about_present_software = win_about_present_software,
+        .about_resize = win_about_resize,
+        .set_about_visible = win_set_about_visible,
         .popup_show = [](int, int, int, int) {},
         .popup_hide = []() {},
         .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},

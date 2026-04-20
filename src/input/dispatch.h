@@ -36,6 +36,10 @@ void dispatch_scroll(const ScrollEvent&);
 // browser's CefBrowserHost::SetFocus.
 void dispatch_keyboard_focus(bool gained);
 
+// Returns the browser currently receiving input events. May be nullptr if
+// no browser has been set (pre-creation or post-shutdown).
+CefRefPtr<CefBrowser> active_browser();
+
 // Set which CEF browser receives all subsequent input events. Called by
 // CEF client lifecycle code (src/cef/cef_client.cpp) whenever the target
 // changes. The input layer is deliberately ignorant of *why* — it just

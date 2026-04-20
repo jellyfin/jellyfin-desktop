@@ -41,9 +41,8 @@ modules:
       - cp -r include /app/cef/
       - cp libcef_dll_wrapper/libcef_dll_wrapper.a /app/cef/lib/
     sources:
-      - type: archive
-        url: https://cef-builds.spotifycdn.com/cef_binary_146.0.12+g6214c8e+chromium-146.0.7680.179_linux64_minimal.tar.bz2
-        sha256: 6f61ca6921045e466c9ec070f5b2f624698a5b044de65db0bbf3b50f17e10201
+      - type: dir
+        path: ../../third_party/cef
 
   - name: libmpv
     buildsystem: meson
@@ -168,7 +167,7 @@ modules:
       - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
+      - install -Dm644 build/flatpak/generated.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
     sources:
       - type: dir
         path: ../..

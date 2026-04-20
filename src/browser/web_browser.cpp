@@ -1,4 +1,5 @@
 #include "web_browser.h"
+#include "about_browser.h"
 #include "browsers.h"
 #include <cmath>
 #include "../common.h"
@@ -191,6 +192,8 @@ bool WebBrowser::handleMessage(const std::string& name,
         g_platform.set_cursor(args->GetBool(0) ? CT_POINTER : CT_NONE);
     } else if (name == "appExit") {
         initiate_shutdown();
+    } else if (name == "openAbout") {
+        AboutBrowser::open();
     } else {
         return false;
     }
