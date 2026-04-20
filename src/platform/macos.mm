@@ -543,7 +543,9 @@ static void macos_about_present(const CefAcceleratedPaintInfo& info) {
     present_iosurface(g_about, info);
     if (g_about_pending_reveal) {
         g_about_pending_reveal = false;
-        [g_about.view setHidden:NO];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [g_about.view setHidden:NO];
+        });
     }
 }
 
@@ -552,22 +554,29 @@ static void macos_about_present_software(const CefRenderHandler::RectList&, cons
 static void macos_about_resize(int, int, int, int) {}
 
 static void macos_set_about_visible(bool visible) {
-    g_about_visible = visible;
-    if (visible) {
-        // Keep the layer hidden until macos_about_present confirms a real
-        // frame — avoids flashing an empty transparent layer.
-        g_about_pending_reveal = true;
-    } else {
-        g_about_pending_reveal = false;
-        [g_about.view setHidden:YES];
-    }
+    // May be invoked from the CEF UI thread (via IPC "openAbout"/"aboutDismiss")
+    // or from the main thread (via the NSMenu selector). AppKit view mutation
+    // must happen on main, so marshal there.
+    dispatch_block_t body = ^{
+        g_about_visible = visible;
+        if (visible) {
+            // Keep the layer hidden until macos_about_present confirms a real
+            // frame — avoids flashing an empty transparent layer.
+            g_about_pending_reveal = true;
+        } else {
+            g_about_pending_reveal = false;
+            [g_about.view setHidden:YES];
+        }
 
-    if (visible) {
-        auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-        auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-        if (main) main->GetHost()->SetFocus(false);
-        if (ovl)  ovl->GetHost()->SetFocus(false);
-    }
+        if (visible) {
+            auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+            auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
+            if (main) main->GetHost()->SetFocus(false);
+            if (ovl)  ovl->GetHost()->SetFocus(false);
+        }
+    };
+    if ([NSThread isMainThread]) body();
+    else dispatch_async(dispatch_get_main_queue(), body);
 }
 
 // =====================================================================
