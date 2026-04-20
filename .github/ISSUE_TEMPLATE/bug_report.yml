@@ -1,0 +1,68 @@
+name: Bug report
+description: Create a report to help us improve
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please read the [Reporting Bugs](https://github.com/jellyfin/jellyfin-desktop/wiki/Reporting-Bugs) guide.
+  - type: checkboxes
+    id: read-guide
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have read the [Reporting Bugs](https://github.com/jellyfin/jellyfin-desktop/wiki/Reporting-Bugs) guide.
+          required: true
+        - label: I acknowledge that the version of Jellyfin Desktop I'm reporting for starts with `3.0.0-dev`
+          required: true
+        - label: I will disclose any use of custom styles or plugins that alter the web appearance.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: 3.0.0-dev+fffffff
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux / Wayland
+        - Linux / X11
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: e.g. Fedora 41, Windows 11, macOS 15
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      placeholder: e.g. AMD RX 7800 XT, Intel Arc A770, NVIDIA RTX 4080
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, logs, or any other relevant information.
