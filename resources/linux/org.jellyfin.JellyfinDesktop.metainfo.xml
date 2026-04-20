@@ -20,6 +20,8 @@
     <name>Jellyfin Contributors</name>
   </developer>
   <content_rating type="oars-1.1"/>
+  <releases>
+  </releases>
   <categories>
     <category>AudioVideo</category>
     <category>Video</category>

@@ -11,6 +11,7 @@ cd "$BUILD_OUT"
 MANIFEST="${SCRIPT_DIR}/org.jellyfin.JellyfinDesktop.yml"
 APP_ID="org.jellyfin.JellyfinDesktop"
 VERSION="$("${REPO_ROOT}/dev/tools/version.sh")"
+DATE="$(date -u +%Y-%m-%d)"
 ARCH="$(uname -m)"
 BUNDLE_NAME="JellyfinDesktop-${VERSION}-linux-${ARCH}.flatpak"
 RUNTIME_VERSION="25.08"
@@ -30,6 +31,13 @@ fi
 if [ ! -d "${REPO_ROOT}/third_party/cef" ]; then
     python3 "${REPO_ROOT}/dev/tools/download_cef.py"
 fi
+
+# Generate metainfo.xml with the current version injected.
+python3 "${SCRIPT_DIR}/generate_metainfo.py" \
+    --template "${REPO_ROOT}/resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml" \
+    --output "${BUILD_OUT}/generated.metainfo.xml" \
+    --version "$VERSION" \
+    --date "$DATE"
 
 # Build
 echo "Building flatpak..."

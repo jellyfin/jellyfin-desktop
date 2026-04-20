@@ -167,7 +167,7 @@ modules:
       - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
+      - install -Dm644 build/flatpak/generated.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
     sources:
       - type: dir
         path: ../..
