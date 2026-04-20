@@ -541,14 +541,10 @@ static void macos_overlay_resize(int, int, int, int) {}
 
 static void macos_about_present(const CefAcceleratedPaintInfo& info) {
     present_iosurface(g_about, info);
-    // Consume the pending-reveal flag on the main queue so it's serialized
-    // with macos_set_about_visible (which may be queued from any thread).
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (g_about_pending_reveal) {
-            g_about_pending_reveal = false;
-            [g_about.view setHidden:NO];
-        }
-    });
+    if (g_about_pending_reveal) {
+        g_about_pending_reveal = false;
+        [g_about.view setHidden:NO];
+    }
 }
 
 static void macos_about_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
@@ -556,31 +552,22 @@ static void macos_about_present_software(const CefRenderHandler::RectList&, cons
 static void macos_about_resize(int, int, int, int) {}
 
 static void macos_set_about_visible(bool visible) {
-    // May be invoked from the CEF UI thread (via IPC "openAbout"/"aboutDismiss")
-    // or from the main thread (via the NSMenu selector). AppKit view mutation
-    // must happen on main, and we must preserve FIFO ordering across callers:
-    // a rapid dismiss→reopen on different threads would otherwise let a later
-    // sync reopen execute before an earlier async dismiss, clobbering the
-    // pending-reveal flag and leaving the view hidden forever. Always dispatch
-    // async so both callers land in main-queue arrival order.
-    dispatch_async(dispatch_get_main_queue(), ^{
-        g_about_visible = visible;
-        if (visible) {
-            // Keep the layer hidden until macos_about_present confirms a real
-            // frame — avoids flashing an empty transparent layer.
-            g_about_pending_reveal = true;
-        } else {
-            g_about_pending_reveal = false;
-            [g_about.view setHidden:YES];
-        }
+    g_about_visible = visible;
+    if (visible) {
+        // Keep the layer hidden until macos_about_present confirms a real
+        // frame — avoids flashing an empty transparent layer.
+        g_about_pending_reveal = true;
+    } else {
+        g_about_pending_reveal = false;
+        [g_about.view setHidden:YES];
+    }
 
-        if (visible) {
-            auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-            auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-            if (main) main->GetHost()->SetFocus(false);
-            if (ovl)  ovl->GetHost()->SetFocus(false);
-        }
-    });
+    if (visible) {
+        auto main = g_web_browser ? g_web_browser->browser() : nullptr;
+        auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
+        if (main) main->GetHost()->SetFocus(false);
+        if (ovl)  ovl->GetHost()->SetFocus(false);
+    }
 }
 
 // =====================================================================

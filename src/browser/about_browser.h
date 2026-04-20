@@ -35,4 +35,7 @@ private:
 
     CefRefPtr<CefLayer> client_;
     CefRefPtr<CefBrowser> prev_active_;
+    // Set by aboutDismiss; read by open() to distinguish "already open,
+    // ignore" from "close in flight, defer reopen".
+    bool closing_ = false;
 };

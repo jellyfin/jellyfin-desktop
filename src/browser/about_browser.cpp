@@ -14,6 +14,14 @@ extern Platform g_platform;
 
 AboutBrowser* g_about_browser = nullptr;
 
+// Set by open() when it's called while a previous instance is still closing.
+// Consumed by the BeforeCloseCallback, which posts a fresh open() once the
+// previous instance has been fully torn down. Without this, rapid
+// dismiss→reopen sequences silently drop the reopen: g_about_browser remains
+// non-null until OnBeforeClose fires, and any intervening open() call bails
+// at the "already open" guard below.
+static bool g_about_reopen_pending = false;
+
 namespace {
 // Matches the FnTask pattern used in src/cef/cef_client.cpp — lets us post
 // lambdas to the CEF UI thread without pulling in base::BindOnce headers.
@@ -84,14 +92,33 @@ AboutBrowser::AboutBrowser()
         // mid-invocation (we're running inside it right now).
         AboutBrowser* self = g_about_browser;
         g_about_browser = nullptr;
-        if (!self) return;
-        CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() { delete self; })));
+        bool reopen = g_about_reopen_pending;
+        g_about_reopen_pending = false;
+        if (self) {
+            CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() { delete self; })));
+        }
+        // Honor any reopen request that arrived during the teardown window.
+        // Posted rather than called inline so it runs after we've fully
+        // unwound OnBeforeClose and the delete task has been queued.
+        if (reopen) {
+            CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([]() { AboutBrowser::open(); })));
+        }
     });
 }
 
 void AboutBrowser::open() {
     if (g_about_browser) {
-        LOG_INFO(LOG_CEF, "AboutBrowser::open: already open, ignoring");
+        // Either genuinely open, or closing-in-flight (CloseBrowser has been
+        // called but OnBeforeClose hasn't fired yet, so the global is still
+        // set). If a dismiss is already in flight, record a reopen request
+        // for the BeforeCloseCallback to honor — otherwise rapid
+        // dismiss→reopen silently drops the reopen.
+        if (g_about_browser->closing_) {
+            LOG_INFO(LOG_CEF, "AboutBrowser::open: close-in-flight, deferring reopen");
+            g_about_reopen_pending = true;
+        } else {
+            LOG_INFO(LOG_CEF, "AboutBrowser::open: already open, ignoring");
+        }
         return;
     }
     LOG_INFO(LOG_CEF, "AboutBrowser::open");
@@ -121,9 +148,13 @@ bool AboutBrowser::handleMessage(const std::string& name,
                                  CefRefPtr<CefBrowser> browser) {
     if (name == "aboutDismiss") {
         LOG_INFO(LOG_CEF, "AboutBrowser: aboutDismiss");
+        closing_ = true;
         input::set_active_browser(prev_active_);
         g_platform.set_about_visible(false);
-        if (browser) browser->GetHost()->CloseBrowser(false);
+        // force=true: the about page has no unload state worth preserving,
+        // and force-close shortens the window between CloseBrowser and
+        // OnBeforeClose — reducing the chance a rapid reopen is deferred.
+        if (browser) browser->GetHost()->CloseBrowser(true);
         return true;
     }
     if (name == "aboutOpenPath") {
