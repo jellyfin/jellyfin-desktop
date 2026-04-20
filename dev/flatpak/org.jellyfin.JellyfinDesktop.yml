@@ -44,26 +44,32 @@ modules:
       - type: dir
         path: ../../third_party/cef
 
-  - name: libmpv
-    buildsystem: meson
+  - name: plasma-wayland-protocols
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/share/plasma-wayland-protocols
+      - cp server-decoration-palette.xml /app/share/plasma-wayland-protocols/
+    sources:
+      - type: file
+        url: https://invent.kde.org/libraries/plasma-wayland-protocols/-/raw/master/src/protocols/server-decoration-palette.xml
+        sha256: 101e225ff0e035b8f4ed177a05cf6c985a5aba8c243b9f649cb1cd78d7c6b1f9
+
+  - name: jellyfin-desktop
+    buildsystem: cmake-ninja
+    build-options:
+      build-args:
+        - --share=network
     config-opts:
-      - --libdir=lib
-      - -Dalsa=disabled
-      - -Dbuild-date=false
-      - -Ddebug=false
-      - -Dlibmpv=true
-      - -Dlua=enabled
-      - -Dmanpage-build=disabled
-    cleanup:
-      - /share/applications/mpv.desktop
-      - /share/bash-completion
-      - /share/doc
-      - /share/fish
-      - /share/icons/hicolor/*/apps/mpv*
-      - /share/zsh
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DEXTERNAL_CEF_DIR=/app/cef
+    post-install:
+      - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
+      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
+      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg
+      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
     sources:
       - type: dir
-        path: ../../third_party/mpv
+        path: ../..
     modules:
       - name: luajit
         no-autogen: true
@@ -146,28 +152,3 @@ modules:
               project-id: 9265
               stable-only: true
               url-template: https://www.freedesktop.org/software/uchardet/releases/uchardet-$version.tar.xz
-
-  - name: plasma-wayland-protocols
-    buildsystem: simple
-    build-commands:
-      - mkdir -p /app/share/plasma-wayland-protocols
-      - cp server-decoration-palette.xml /app/share/plasma-wayland-protocols/
-    sources:
-      - type: file
-        url: https://invent.kde.org/libraries/plasma-wayland-protocols/-/raw/master/src/protocols/server-decoration-palette.xml
-        sha256: 101e225ff0e035b8f4ed177a05cf6c985a5aba8c243b9f649cb1cd78d7c6b1f9
-
-  - name: jellyfin-desktop
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DEXTERNAL_CEF_DIR=/app/cef
-      - -DEXTERNAL_MPV_DIR=/app
-    post-install:
-      - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg
-      - install -Dm644 build/flatpak/generated.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
-    sources:
-      - type: dir
-        path: ../..

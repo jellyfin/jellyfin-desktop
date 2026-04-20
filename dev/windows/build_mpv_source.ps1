@@ -36,6 +36,12 @@ if ((Test-Path $OutputLib) -and -not $Force) {
     exit 0
 }
 
+# Verify mpv submodule exists
+if (-not (Test-Path (Join-Path $MpvSourceDir "meson.build"))) {
+    Write-Host "mpv submodule not found. Run: git submodule update --init --recursive" -ForegroundColor Red
+    exit 1
+}
+
 # Check for MSYS2, install if missing
 $MsysBash = Join-Path $MsysPath "usr\bin\bash.exe"
 if (-not (Test-Path $MsysBash)) {

@@ -32,19 +32,11 @@ Or from a VS Developer Command Prompt:
 
 ## Manual Setup
 
-### 1. CEF (Chromium Embedded Framework)
+### CEF (Chromium Embedded Framework)
 
 ```powershell
 python dev\tools\download_cef.py
 ```
-
-### 2. mpv
-
-```powershell
-.\dev\windows\build_mpv_source.ps1
-```
-
-This builds mpv from the submodule source using MSYS2, and generates an MSVC import library.
 
 ## Building
 

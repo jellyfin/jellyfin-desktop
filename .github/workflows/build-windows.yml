@@ -34,8 +34,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
       - name: Cache CEF
         uses: actions/cache@v5
@@ -49,23 +47,13 @@ jobs:
         run: |
           python dev/tools/download_cef.py --platform ${{ matrix.platform }}
 
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: ${{ matrix.msystem }}
-          install: >-
-            ${{ matrix.pkg_prefix }}-cc
-            ${{ matrix.pkg_prefix }}-meson
-            ${{ matrix.pkg_prefix }}-pkgconf
-            ${{ matrix.pkg_prefix }}-ffmpeg
-            ${{ matrix.pkg_prefix }}-libplacebo
-            ${{ matrix.pkg_prefix }}-libass
-            ${{ matrix.pkg_prefix }}-vulkan-headers
-            ${{ matrix.pkg_prefix }}-vulkan-loader
-            ${{ matrix.pkg_prefix }}-shaderc
-            ${{ matrix.pkg_prefix }}-spirv-cross
+      - name: Configure (fetch dependencies)
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
-      - name: Build mpv from source
+      - name: Build MPV
         shell: pwsh
         run: |
           dev\windows\build_mpv_source.ps1 -Arch ${{ matrix.arch }} -Force

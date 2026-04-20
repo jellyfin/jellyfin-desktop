@@ -86,7 +86,7 @@ Write-Host "Visual Studio: $VsPath" -ForegroundColor Green
 Write-Host ""
 Write-Host "=== Git Submodules ===" -ForegroundColor Cyan
 Push-Location $RepoRoot
-& git submodule update --init --recursive
+& cmake -B build -G Ninja
 Pop-Location
 
 # Download CEF
