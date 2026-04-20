@@ -548,6 +548,10 @@ int main(int argc, char* argv[]) {
     g_mpv = MpvHandle::Create(g_platform.display);
     if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
 
+    // libmpv defaults config=no (opposite of the mpv CLI); enable it so
+    // users' $MPV_HOME/mpv.conf is loaded.
+    g_mpv.SetOptionString("config", "yes");
+
     g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
 
