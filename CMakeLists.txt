@@ -37,6 +37,11 @@ set(APP_VERSION_MINOR ${CMAKE_MATCH_2})
 set(APP_VERSION_PATCH ${CMAKE_MATCH_3})
 if(APP_VERSION MATCHES "-")
     set(APP_VERSION_FILEFLAGS "VS_FF_PRERELEASE")
+    # Zero out numeric FILEVERSION/PRODUCTVERSION for dev builds so they
+    # can never be confused with or outrank a real release by comparison.
+    set(APP_VERSION_MAJOR 0)
+    set(APP_VERSION_MINOR 0)
+    set(APP_VERSION_PATCH 0)
     execute_process(
         COMMAND git describe --always --dirty
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
