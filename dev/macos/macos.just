@@ -8,9 +8,7 @@ deps:
     if ! [ -e third_party/mpv/.git ]; then
         git submodule update --init --recursive
     fi
-    if ! [ -d third_party/cef ]; then
-        python3 dev/tools/download_cef.py
-    fi
+    python3 dev/tools/download_cef.py
 
 [macos]
 build: deps
