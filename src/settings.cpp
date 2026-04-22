@@ -123,17 +123,50 @@ bool Settings::save() {
     return true;
 }
 
-void Settings::saveAsync() {
-    std::string path = getConfigPath();
-    std::string data = buildSettingsJson(*this, true);
+void Settings::ensureSaveWorker() {
+    if (worker_started_) return;
+    worker_started_ = true;
+    save_thread_ = std::thread(&Settings::saveWorkerLoop, this);
+}
 
-    std::thread([this, path, data]() {
-        std::lock_guard<std::mutex> lock(save_mutex_);
-        std::ofstream file(path);
-        if (file.is_open()) {
-            file << data << '\n';
+void Settings::saveWorkerLoop() {
+    const std::string path = getConfigPath();
+    std::unique_lock<std::mutex> lk(save_mutex_);
+    while (true) {
+        save_cv_.wait(lk, [this] { return pending_ || stop_; });
+        if (pending_) {
+            std::string data = std::move(pending_data_);
+            pending_ = false;
+            lk.unlock();
+            std::ofstream file(path);
+            if (file.is_open()) {
+                file << data << '\n';
+            }
+            lk.lock();
         }
-    }).detach();
+        if (stop_ && !pending_) return;
+    }
+}
+
+void Settings::saveAsync() {
+    std::string data = buildSettingsJson(*this, true);
+    {
+        std::lock_guard<std::mutex> lk(save_mutex_);
+        ensureSaveWorker();
+        pending_data_ = std::move(data);
+        pending_ = true;
+    }
+    save_cv_.notify_one();
+}
+
+void Settings::shutdownSaveWorker() {
+    {
+        std::lock_guard<std::mutex> lk(save_mutex_);
+        if (!worker_started_) return;
+        stop_ = true;
+    }
+    save_cv_.notify_one();
+    if (save_thread_.joinable()) save_thread_.join();
 }
 
 std::string Settings::cliSettingsJson() const {

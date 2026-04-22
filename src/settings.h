@@ -1,7 +1,9 @@
 #pragma once
 
-#include <string>
+#include <condition_variable>
 #include <mutex>
+#include <string>
+#include <thread>
 
 class Settings {
 public:
@@ -9,7 +11,11 @@ public:
 
     bool load();
     bool save();
-    void saveAsync();  // Fire-and-forget async save
+    void saveAsync();  // Fire-and-forget async save — coalesces into single worker
+
+    // Stop the save worker (if started) and flush any pending write.
+    // Safe to call multiple times; safe to call if worker never started.
+    void shutdownSaveWorker();
 
     const std::string& serverUrl() const { return server_url_; }
     void setServerUrl(const std::string& url) { server_url_ = url; }
@@ -82,5 +88,15 @@ private:
     bool transparent_titlebar_ = true;
     std::string log_level_;
 
-    std::mutex save_mutex_;  // Prevent concurrent saves
+    // Single persistent save worker. saveAsync() coalesces into pending_data_;
+    // the worker wakes on cv_, writes the latest snapshot, and sleeps.
+    std::thread save_thread_;
+    std::mutex save_mutex_;
+    std::condition_variable save_cv_;
+    std::string pending_data_;
+    bool pending_ = false;
+    bool stop_ = false;
+    bool worker_started_ = false;
+    void ensureSaveWorker();  // starts worker on first saveAsync; caller holds save_mutex_
+    void saveWorkerLoop();
 };

@@ -971,6 +971,8 @@ int main(int argc, char* argv[]) {
         }
         Settings::instance().save();
     }
+    // Drain any outstanding async writes issued earlier, then join the worker.
+    Settings::instance().shutdownSaveWorker();
 
     // CEF shutdown: all browsers must be closed first (guaranteed by waitForClose above)
     delete g_web_browser; g_web_browser = nullptr;
