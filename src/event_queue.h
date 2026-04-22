@@ -5,7 +5,8 @@
 #include "wake_event.h"
 
 // Lock-free SPSC (single-producer, single-consumer) ring buffer.
-// Producer: try_push (non-blocking, signals wake event on success).
+// Producer: try_push (non-blocking, signals wake event when transitioning
+// from empty to non-empty).
 // Consumer: blocks on wake().fd(), drains with try_pop.
 template<typename T, size_t N = 256>
 class EventQueue {
@@ -14,11 +15,14 @@ public:
     bool try_push(const T& item) {
         size_t head = head_.load(std::memory_order_relaxed);
         size_t next = (head + 1) & (N - 1);
-        if (next == tail_.load(std::memory_order_acquire))
+        size_t tail = tail_.load(std::memory_order_acquire);
+        if (next == tail)
             return false;  // full
+        bool was_empty = head == tail;
         buf_[head] = item;
         head_.store(next, std::memory_order_release);
-        wake_.signal();
+        if (was_empty)
+            wake_.signal();
         return true;
     }
 
