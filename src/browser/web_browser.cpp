@@ -90,6 +90,9 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "appExit", "setSettingValue", "themeColor",
         "setOsdVisible", "setCursorVisible", "toggleFullscreen",
         "menuItemSelected", "menuDismissed",
+        // Prefetched from renderer on SELECT focusin so the native popup
+        // can show immediately on OnPopupSize without a round-trip.
+        "popupOptions",
     };
     static const char* const kScripts[] = {
         "native-shim.js",

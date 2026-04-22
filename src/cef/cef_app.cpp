@@ -588,6 +588,19 @@ bool NativeV8Handler::Execute(const CefString& name,
         else if (v->IsInt())    args->SetInt(i, v->GetIntValue());
         else if (v->IsDouble()) args->SetDouble(i, v->GetDoubleValue());
         else if (v->IsString()) args->SetString(i, v->GetStringValue());
+        else if (v->IsArray()) {
+            int n = v->GetArrayLength();
+            auto list = CefListValue::Create();
+            for (int j = 0; j < n; j++) {
+                auto el = v->GetValue(j);
+                if      (el->IsBool())   list->SetBool(j, el->GetBoolValue());
+                else if (el->IsInt())    list->SetInt(j, el->GetIntValue());
+                else if (el->IsDouble()) list->SetDouble(j, el->GetDoubleValue());
+                else if (el->IsString()) list->SetString(j, el->GetStringValue());
+                else                      list->SetNull(j);
+            }
+            args->SetList(i, list);
+        }
     }
 
     browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);

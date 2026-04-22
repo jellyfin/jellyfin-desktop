@@ -46,6 +46,20 @@
         }, true);  // capture phase — before jellyfin-web can stopPropagation
     })();
 
+    // Prefetch <select> options to the browser process on focus, so the
+    // native popup menu can show immediately when OnPopupShow fires instead
+    // of incurring a renderer round-trip (getPopupOptions → popupOptions).
+    document.addEventListener('focusin', (e) => {
+        const el = e.target;
+        if (!el || el.tagName !== 'SELECT' || !window.jmpNative) return;
+        const opts = [];
+        const options = el.options;
+        for (let i = 0; i < options.length; i++) opts.push(options[i].text || '');
+        try {
+            window.jmpNative.popupOptions(opts, el.selectedIndex);
+        } catch (err) { /* injection profile mismatch — harmless */ }
+    }, true);
+
     // Buffered ranges storage (updated by native code)
     window._bufferedRanges = [];
     window._nativeUpdateBufferedRanges = function(ranges) {

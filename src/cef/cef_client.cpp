@@ -151,14 +151,20 @@ void CefLayer::reset_popup_state() {
 
 void CefLayer::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
     popup_visible_ = show;
-    reset_popup_state();
     if (!show) {
         g_platform.popup_hide();
+        reset_popup_state();
         return;
     }
-    if (CefRefPtr<CefFrame> frame = focused_or_main(browser)) {
-        auto msg = CefProcessMessage::Create("getPopupOptions");
-        frame->SendProcessMessage(PID_RENDERER, msg);
+    // Reset only rect; keep any options prefetched by the SELECT focusin
+    // listener in native-shim.js. Fall back to a round-trip only if no
+    // prefetch arrived (e.g. non-SELECT popup, or focusin IPC still in flight).
+    popup_size_received_ = false;
+    if (!popup_options_received_) {
+        if (CefRefPtr<CefFrame> frame = focused_or_main(browser)) {
+            auto msg = CefProcessMessage::Create("getPopupOptions");
+            frame->SendProcessMessage(PID_RENDERER, msg);
+        }
     }
 }
 
