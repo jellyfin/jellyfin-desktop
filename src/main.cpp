@@ -39,6 +39,7 @@
 #include "include/cef_version.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #ifndef _WIN32
@@ -224,6 +225,7 @@ static void cef_consumer_thread() {
         // execJs calls when mpv re-observes the same state.
         static int  s_last_time_ms    = INT_MIN;
         static int  s_last_duration_ms = INT_MIN;
+        static int64_t s_last_media_position_us = INT64_MIN;
         static double s_last_speed   = -1.0;
         static std::vector<std::pair<int64_t,int64_t>> s_last_ranges;
         struct {
@@ -350,8 +352,15 @@ static void cef_consumer_thread() {
                 args->SetInt(0, ms);
                 g_web_browser->nativeCall("_nativeUpdatePosition", args);
             }
-            if (g_media_session)
-                g_media_session->setPosition(static_cast<int64_t>(batch.time_pos * 1000000));
+            if (g_media_session) {
+                int64_t position_us = static_cast<int64_t>(batch.time_pos * 1000000);
+                if (s_last_media_position_us == INT64_MIN ||
+                    position_us - s_last_media_position_us >= 1000000 ||
+                    s_last_media_position_us - position_us >= 1000000) {
+                    s_last_media_position_us = position_us;
+                    g_media_session->setPosition(position_us);
+                }
+            }
         }
         if (batch.have_duration) {
             int ms = static_cast<int>(batch.duration * 1000);
