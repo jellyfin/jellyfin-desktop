@@ -312,24 +312,6 @@ static void wl_overlay_present(const CefAcceleratedPaintInfo& info) {
 // Software present (wl_shm fallback when shared textures unavailable)
 // =====================================================================
 
-static wl_buffer* create_shm_buffer(const void* pixels, int w, int h) {
-    if (!g_wl.shm) return nullptr;
-    int stride = w * 4;
-    int size = stride * h;
-    int fd = memfd_create("cef-sw", MFD_CLOEXEC);
-    if (fd < 0) return nullptr;
-    if (ftruncate(fd, size) < 0) { close(fd); return nullptr; }
-    void* data = mmap(nullptr, size, PROT_WRITE, MAP_SHARED, fd, 0);
-    if (data == MAP_FAILED) { close(fd); return nullptr; }
-    memcpy(data, pixels, size);
-    munmap(data, size);
-    auto* pool = wl_shm_create_pool(g_wl.shm, fd, size);
-    auto* buf = wl_shm_pool_create_buffer(pool, 0, w, h, stride, WL_SHM_FORMAT_ARGB8888);
-    wl_shm_pool_destroy(pool);
-    close(fd);
-    return buf;
-}
-
 // Per-surface SHM buffer pool for the software-render fallback. Avoids
 // per-frame memfd_create + mmap + wl_shm_pool churn; we keep the memfd
 // and mmap alive across frames and memcpy pixels in-place into any
@@ -350,6 +332,7 @@ public:
     // Acquire a buffer of w×h, copy pixels into its mapping, mark in_use.
     // Returns nullptr on failure. Caller attaches the returned wl_buffer.
     wl_buffer* acquire(const void* pixels, int w, int h) {
+        std::lock_guard<std::mutex> lock(mtx_);
         const int stride = w * 4;
         const size_t size = static_cast<size_t>(stride) * h;
 
@@ -376,10 +359,10 @@ public:
             }
         }
 
-        // All slots in use — fall back to one-shot (self-owning, will be
-        // destroyed by caller's cef_buffer tracker).
+        // All slots are in use. Dropping this software frame is cheaper than
+        // reintroducing per-frame memfd/mmap churn on a saturated path.
         if (entries_.size() >= kMaxEntries) {
-            return create_shm_buffer(pixels, w, h);
+            return nullptr;
         }
 
         // Create new pooled entry.
@@ -410,15 +393,22 @@ public:
     }
 
     void clear() {
+        std::lock_guard<std::mutex> lock(mtx_);
         for (auto& e : entries_) destroy_entry(e);
         entries_.clear();
+    }
+
+    void release_unattached(wl_buffer* buf) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        for (auto& e : entries_) {
+            if (e.buf == buf) { e.in_use = false; return; }
+        }
     }
 
 private:
     static void on_release(void* data, wl_buffer* buf) {
         auto* self = static_cast<ShmPool*>(data);
-        // surface_mtx serializes against acquire() on the present thread.
-        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        std::lock_guard<std::mutex> lock(self->mtx_);
         for (auto& e : self->entries_) {
             if (e.buf == buf) { e.in_use = false; return; }
         }
@@ -433,6 +423,7 @@ private:
     }
 
     std::vector<ShmEntry> entries_;
+    std::mutex mtx_;
 };
 const wl_buffer_listener ShmPool::kReleaseListener = { ShmPool::on_release };
 
@@ -444,12 +435,24 @@ ShmPool g_popup_shm_pool;
 
 static void wl_present_software(const CefRenderHandler::RectList&,
                                 const void* buffer, int w, int h) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.cef_surface) return;
-    if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) return;
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (!g_wl.cef_surface) return;
+        if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) return;
+    }
 
     auto* buf = g_cef_shm_pool.acquire(buffer, w, h);
     if (!buf) return;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.cef_surface) {
+        g_cef_shm_pool.release_unattached(buf);
+        return;
+    }
+    if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) {
+        g_cef_shm_pool.release_unattached(buf);
+        return;
+    }
     if (g_wl.cef_buffer) { wl_buffer_destroy(g_wl.cef_buffer); g_wl.cef_buffer = nullptr; }
     if (g_wl.cef_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
@@ -470,11 +473,19 @@ static void wl_present_software(const CefRenderHandler::RectList&,
 
 static void wl_overlay_present_software(const CefRenderHandler::RectList&,
                                         const void* buffer, int w, int h) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.overlay_surface || !g_wl.overlay_visible) return;
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (!g_wl.overlay_surface || !g_wl.overlay_visible) return;
+    }
 
     auto* buf = g_overlay_shm_pool.acquire(buffer, w, h);
     if (!buf) return;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.overlay_surface || !g_wl.overlay_visible) {
+        g_overlay_shm_pool.release_unattached(buf);
+        return;
+    }
     if (g_wl.overlay_buffer) { wl_buffer_destroy(g_wl.overlay_buffer); g_wl.overlay_buffer = nullptr; }
     g_wl.overlay_placeholder = false;
     if (g_wl.overlay_viewport && g_wl.mpv_pw > 0) {
@@ -528,11 +539,19 @@ static void wl_about_present(const CefAcceleratedPaintInfo& info) {
 
 static void wl_about_present_software(const CefRenderHandler::RectList&,
                                       const void* buffer, int w, int h) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.about_surface || !g_wl.about_visible) return;
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (!g_wl.about_surface || !g_wl.about_visible) return;
+    }
 
     auto* buf = g_about_shm_pool.acquire(buffer, w, h);
     if (!buf) return;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.about_surface || !g_wl.about_visible) {
+        g_about_shm_pool.release_unattached(buf);
+        return;
+    }
     if (g_wl.about_buffer) { wl_buffer_destroy(g_wl.about_buffer); g_wl.about_buffer = nullptr; }
     if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
@@ -648,11 +667,19 @@ static void wl_popup_present(const CefAcceleratedPaintInfo& info, int lw, int lh
 
 static void wl_popup_present_software(const void* buffer, int pw, int ph, int lw, int lh) {
     if (lw <= 0 || lh <= 0) return;
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.popup_surface || !g_wl.popup_visible) return;
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (!g_wl.popup_surface || !g_wl.popup_visible) return;
+    }
 
     auto* buf = g_popup_shm_pool.acquire(buffer, pw, ph);
     if (!buf) return;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.popup_surface || !g_wl.popup_visible) {
+        g_popup_shm_pool.release_unattached(buf);
+        return;
+    }
     if (g_wl.popup_buffer) { wl_buffer_destroy(g_wl.popup_buffer); g_wl.popup_buffer = nullptr; }
     if (g_wl.popup_viewport) {
         wp_viewport_set_source(g_wl.popup_viewport,
