@@ -1,6 +1,5 @@
 #include "cef_app.h"
 #include "resource_handler.h"
-#include "../settings.h"
 #include "../paths/paths.h"
 #include "embedded_js.h"
 #include "logging.h"
@@ -100,6 +99,45 @@ private:
     CefRefPtr<CefBrowser> browser_;
     IMPLEMENT_REFCOUNTING(NativeV8Handler);
 };
+
+namespace {
+
+std::mutex g_script_cache_mtx;
+std::unordered_map<std::string, std::string> g_script_cache;
+
+std::string script_cache_key(CefRefPtr<CefListValue> scripts) {
+    std::string key;
+    if (!scripts) return key;
+    for (size_t i = 0; i < scripts->GetSize(); i++) {
+        if (i > 0) key += '\n';
+        key += scripts->GetString(i).ToString();
+    }
+    return key;
+}
+
+std::string script_bundle(CefRefPtr<CefListValue> scripts) {
+    std::string key = script_cache_key(scripts);
+    {
+        std::lock_guard<std::mutex> lock(g_script_cache_mtx);
+        auto it = g_script_cache.find(key);
+        if (it != g_script_cache.end()) return it->second;
+    }
+
+    std::string code;
+    if (scripts) {
+        for (size_t i = 0; i < scripts->GetSize(); i++) {
+            if (i > 0) code += '\n';
+            code += embedded_js.at(scripts->GetString(i).ToString());
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(g_script_cache_mtx);
+    auto [it, inserted] = g_script_cache.emplace(std::move(key), std::move(code));
+    (void)inserted;
+    return it->second;
+}
+
+}  // namespace
 
 namespace CefRuntime {
 
@@ -388,16 +426,8 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
 
     if (!scripts || scripts->GetSize() == 0) return;
 
-    // Renderer process is separate from browser process; settings need to be
-    // loaded here for placeholder substitution below.
-    Settings::instance().load();
-
-    // Concatenate the declared scripts and execute in one call.
-    std::string code;
-    for (size_t i = 0; i < scripts->GetSize(); i++) {
-        if (i > 0) code += '\n';
-        code += embedded_js.at(scripts->GetString(i).ToString());
-    }
+    // Concatenate the declared scripts once per profile and execute in one call.
+    std::string code = script_bundle(scripts);
 
     // Placeholder substitution. No-op if the placeholder isn't present, so
     // profiles that don't include native-shim.js pay nothing here.
@@ -405,8 +435,9 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
         size_t pos = code.find(ph);
         if (pos != std::string::npos) code.replace(pos, ph.length(), value);
     };
-    replace_first("__SERVER_URL__", Settings::instance().serverUrl());
-    replace_first("__SETTINGS_JSON__", Settings::instance().cliSettingsJson());
+    replace_first("__SERVER_URL__", profile->GetString("serverUrl").ToString());
+    std::string settings_json = profile->GetString("settingsJson").ToString();
+    replace_first("__SETTINGS_JSON__", settings_json.empty() ? "{}" : settings_json);
 
     frame->ExecuteJavaScript(code, frame->GetURL(), 0);
 }

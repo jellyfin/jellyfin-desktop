@@ -114,6 +114,8 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
     d->SetList("functions", fns);
     d->SetList("scripts", scripts);
+    d->SetString("serverUrl", Settings::instance().serverUrl());
+    d->SetString("settingsJson", Settings::instance().cliSettingsJson());
     return d;
 }
 
