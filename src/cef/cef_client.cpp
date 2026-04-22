@@ -395,7 +395,7 @@ bool CefLayer::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level,
     else if (level == LOGSEVERITY_WARNING)
         LOG_WARN(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
     else
-        LOG_INFO(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
+        LOG_DEBUG(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
     return true;
 }
 

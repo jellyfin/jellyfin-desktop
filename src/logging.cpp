@@ -207,7 +207,7 @@ static quill::LogLevel toQuillLevel(int parsed) {
         case 2: return quill::LogLevel::Info;
         case 3: return quill::LogLevel::Warning;
         case 4: return quill::LogLevel::Error;
-        default: return quill::LogLevel::TraceL3;  // allow everything
+        default: return quill::LogLevel::Info;
     }
 }
 

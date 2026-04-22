@@ -59,7 +59,7 @@ inline cef_log_severity_t toCefSeverity(int parsed) {
 // CEF/Chromium (and subprocesses that inherit our stderr) land in the log.
 // Empty/null path disables file logging; stderr is still captured.
 // `min_level` is the value returned by parseLogLevel: 0=verbose .. 4=error;
-// pass -1 to keep the default (everything).
+// pass -1 to keep the default (info).
 // Call once before spawning any subprocess.
 void initLogging(const char* path, int min_level);
 
