@@ -33,7 +33,6 @@ struct wl_configure_cb {
 #include <cstdlib>
 #include <unistd.h>
 #include <mutex>
-#include <thread>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include "logging.h"
@@ -596,46 +595,80 @@ static void wl_set_overlay_visible(bool visible) {
     }
 }
 
-// Animate overlay alpha from opaque to transparent over fade_sec, then hide.
-// Runs on a detached thread — finite UI animation.
+// Animate overlay alpha opaque → transparent over fade_sec, then hide.
+// Driven by wl_surface.frame callbacks (compositor vsync) instead of a
+// sleep_for loop on a detached thread — no drift, no extra threads, no
+// wasted wakeups when the compositor throttles us.
+namespace {
+struct FadeState {
+    std::atomic<bool> active{false};
+    std::chrono::steady_clock::time_point start;
+    float duration_sec = 0.f;
+    std::function<void()> on_complete;
+};
+FadeState g_fade;
+
+void fade_step();
+
+void fade_frame_done(void*, wl_callback* cb, uint32_t) {
+    wl_callback_destroy(cb);
+    fade_step();
+}
+
+const wl_callback_listener kFadeFrameListener = { fade_frame_done };
+
+void fade_step() {
+    if (!g_fade.active.load(std::memory_order_acquire)) return;
+
+    auto now = std::chrono::steady_clock::now();
+    float elapsed = std::chrono::duration<float>(now - g_fade.start).count();
+    float t = elapsed / g_fade.duration_sec;
+    bool done = t >= 1.0f;
+    if (done) t = 1.0f;
+    uint32_t alpha = static_cast<uint32_t>((1.0f - t) * UINT32_MAX);
+
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (!g_wl.overlay_visible || !g_wl.overlay_surface || !g_wl.overlay_alpha) {
+            g_fade.active.store(false, std::memory_order_release);
+            return;
+        }
+        wp_alpha_modifier_surface_v1_set_multiplier(g_wl.overlay_alpha, alpha);
+        if (!done) {
+            wl_callback* next = wl_surface_frame(g_wl.overlay_surface);
+            wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(next), g_wl.queue);
+            wl_callback_add_listener(next, &kFadeFrameListener, nullptr);
+        }
+        wl_surface_commit(g_wl.overlay_surface);
+    }
+    wl_display_flush(g_wl.display);
+
+    if (done) {
+        g_fade.active.store(false, std::memory_order_release);
+        auto cb = std::move(g_fade.on_complete);
+        wl_set_overlay_visible(false);
+        if (cb) cb();
+    }
+}
+}  // namespace
+
 static void wl_fade_overlay(float fade_sec,
                             std::function<void()> on_fade_start,
                             std::function<void()> on_complete) {
     if (!g_wl.overlay_alpha || !g_wl.overlay_surface) {
-        // No alpha modifier support — just hide immediately
         wl_set_overlay_visible(false);
         if (on_fade_start) on_fade_start();
         if (on_complete) on_complete();
         return;
     }
 
-    std::thread([fade_sec,
-                 on_fade_start = std::move(on_fade_start),
-                 on_complete = std::move(on_complete)]() {
-        if (on_fade_start) on_fade_start();
+    g_fade.duration_sec = fade_sec > 0.f ? fade_sec : 0.001f;
+    g_fade.start = std::chrono::steady_clock::now();
+    g_fade.on_complete = std::move(on_complete);
+    g_fade.active.store(true, std::memory_order_release);
 
-        int fps = g_display_hz.load(std::memory_order_relaxed);
-        int total_frames = static_cast<int>(fade_sec * fps);
-        if (total_frames < 1) total_frames = 1;
-        auto frame_duration = std::chrono::microseconds(1000000 / fps);
-
-        for (int i = 1; i <= total_frames; i++) {
-            float t = static_cast<float>(i) / total_frames;
-            uint32_t alpha = static_cast<uint32_t>((1.0f - t) * UINT32_MAX);
-
-            {
-                std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-                if (!g_wl.overlay_visible || !g_wl.overlay_surface) break;
-                wp_alpha_modifier_surface_v1_set_multiplier(g_wl.overlay_alpha, alpha);
-                wl_surface_commit(g_wl.overlay_surface);
-                wl_display_flush(g_wl.display);
-            }
-            std::this_thread::sleep_for(frame_duration);
-        }
-
-        wl_set_overlay_visible(false);
-        if (on_complete) on_complete();
-    }).detach();
+    if (on_fade_start) on_fade_start();
+    fade_step();
 }
 
 // =====================================================================
