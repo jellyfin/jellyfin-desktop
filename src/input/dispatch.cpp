@@ -7,11 +7,16 @@
 #include "include/cef_browser.h"
 
 #include <mutex>
+#include <shared_mutex>
 
 namespace input {
 namespace {
 
-std::mutex g_active_mtx;
+// Read-mostly: input events (keyboard, mouse move, scroll) read every event
+// from a single input thread; writes happen only when overlay focus changes.
+// shared_mutex lets the reader path take a shared lock with no contention
+// against itself, and the rare writer still gets exclusive access safely.
+std::shared_mutex g_active_mtx;
 CefRefPtr<CefBrowser> g_active;  // guarded by g_active_mtx
 
 cef_mouse_button_type_t to_cef_button(MouseButton b) {
@@ -26,14 +31,14 @@ cef_mouse_button_type_t to_cef_button(MouseButton b) {
 }  // namespace
 
 CefRefPtr<CefBrowser> active_browser() {
-    std::lock_guard<std::mutex> lk(g_active_mtx);
+    std::shared_lock<std::shared_mutex> lk(g_active_mtx);
     return g_active;
 }
 
 void set_active_browser(CefRefPtr<CefBrowser> browser) {
     CefRefPtr<CefBrowser> prev;
     {
-        std::lock_guard<std::mutex> lk(g_active_mtx);
+        std::unique_lock<std::shared_mutex> lk(g_active_mtx);
         if (g_active.get() == browser.get()) return;
         prev = g_active;
         g_active = browser;
