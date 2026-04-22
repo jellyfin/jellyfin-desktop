@@ -35,6 +35,7 @@ struct wl_configure_cb {
 #include <mutex>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <vector>
 #include "logging.h"
 
 
@@ -153,6 +154,70 @@ static wl_buffer* create_dmabuf_buffer(const CefAcceleratedPaintInfo& info) {
     return buf;
 }
 
+// Per-surface dmabuf pool. CEF re-uses a small set of shared-texture GMBs
+// in round-robin, but passes the same underlying dmabuf fd (or inode) each
+// time. Caching wl_buffers by inode+modifier+size avoids the dup+params
+// import+destroy syscall churn on every frame.
+namespace {
+struct PoolEntry {
+    uint64_t ino = 0;
+    uint64_t modifier = 0;
+    int w = 0, h = 0;
+    uint32_t stride = 0;
+    wl_buffer* buf = nullptr;
+};
+
+class DmabufPool {
+public:
+    static constexpr size_t kMaxEntries = 4;
+
+    wl_buffer* acquire(const CefAcceleratedPaintInfo& info) {
+        struct stat st;
+        if (fstat(info.planes[0].fd, &st) != 0) {
+            // Inode unavailable — fall back to one-shot creation. Caller
+            // must destroy via release_uncached() to avoid leaking.
+            return create_dmabuf_buffer(info);
+        }
+        const uint64_t ino = st.st_ino;
+        const uint64_t modifier = info.modifier;
+        const int w = info.extra.coded_size.width;
+        const int h = info.extra.coded_size.height;
+        const uint32_t stride = info.planes[0].stride;
+
+        for (size_t i = 0; i < entries_.size(); i++) {
+            auto& e = entries_[i];
+            if (e.ino == ino && e.modifier == modifier &&
+                e.w == w && e.h == h && e.stride == stride) {
+                if (i != 0) std::swap(entries_[0], entries_[i]);
+                return e.buf;
+            }
+        }
+
+        wl_buffer* buf = create_dmabuf_buffer(info);
+        if (!buf) return nullptr;
+        if (entries_.size() >= kMaxEntries) {
+            wl_buffer_destroy(entries_.back().buf);
+            entries_.pop_back();
+        }
+        entries_.insert(entries_.begin(), PoolEntry{ino, modifier, w, h, stride, buf});
+        return buf;
+    }
+
+    void clear() {
+        for (auto& e : entries_) wl_buffer_destroy(e.buf);
+        entries_.clear();
+    }
+
+private:
+    std::vector<PoolEntry> entries_;
+};
+
+DmabufPool g_cef_pool;
+DmabufPool g_overlay_pool;
+DmabufPool g_about_pool;
+DmabufPool g_popup_pool;
+}  // namespace
+
 static void wl_present(const CefAcceleratedPaintInfo& info) {
     int w = info.extra.coded_size.width;
     int h = info.extra.coded_size.height;
@@ -167,29 +232,26 @@ static void wl_present(const CefAcceleratedPaintInfo& info) {
         }
     }
 
-    // Phase 2: create dmabuf buffer (expensive, no lock)
-    auto* buf = create_dmabuf_buffer(info);
+    // Phase 2: acquire pooled dmabuf (cheap when CEF reuses a GMB fd)
+    auto* buf = g_cef_pool.acquire(info);
     if (!buf) return;
 
     // Phase 3: attach + commit under lock
     {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-        if (!g_wl.cef_surface) { wl_buffer_destroy(buf); return; }
-        // Drop oversized buffers
-        if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) {
-            wl_buffer_destroy(buf);
-            return;
-        }
+        if (!g_wl.cef_surface) return;
+        // Drop oversized buffers — leave them in the pool for reuse later.
+        if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) return;
         if (g_wl.transitioning) {
-            if (g_wl.expected_w <= 0 || (w == g_wl.transition_pw && h == g_wl.transition_ph)) {
-                wl_buffer_destroy(buf);
+            if (g_wl.expected_w <= 0 || (w == g_wl.transition_pw && h == g_wl.transition_ph))
                 return;
-            }
             wl_end_transition_locked();
         }
 
-        if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
-        g_wl.cef_buffer = buf;
+        // Pool owns `buf`. Destroy any lingering software/placeholder buffer
+        // we previously owned and null out the tracker so hide/cleanup
+        // don't double-free.
+        if (g_wl.cef_buffer) { wl_buffer_destroy(g_wl.cef_buffer); g_wl.cef_buffer = nullptr; }
         if (g_wl.cef_viewport && g_wl.mpv_pw > 0) {
             // Crop source to the smaller of buffer vs mpv window
             int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
@@ -221,17 +283,13 @@ static void wl_overlay_present(const CefAcceleratedPaintInfo& info) {
     int w = info.extra.coded_size.width;
     int h = info.extra.coded_size.height;
 
-    auto* buf = create_dmabuf_buffer(info);
+    auto* buf = g_overlay_pool.acquire(info);
     if (!buf) return;
 
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.overlay_surface || !g_wl.overlay_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
+    if (!g_wl.overlay_surface || !g_wl.overlay_visible) return;
 
-    if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
-    g_wl.overlay_buffer = buf;
+    if (g_wl.overlay_buffer) { wl_buffer_destroy(g_wl.overlay_buffer); g_wl.overlay_buffer = nullptr; }
     g_wl.overlay_placeholder = false;
     if (g_wl.overlay_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
@@ -342,17 +400,13 @@ static void wl_about_present(const CefAcceleratedPaintInfo& info) {
     int w = info.extra.coded_size.width;
     int h = info.extra.coded_size.height;
 
-    auto* buf = create_dmabuf_buffer(info);
+    auto* buf = g_about_pool.acquire(info);
     if (!buf) return;
 
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.about_surface || !g_wl.about_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
+    if (!g_wl.about_surface || !g_wl.about_visible) return;
 
-    if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
-    g_wl.about_buffer = buf;
+    if (g_wl.about_buffer) { wl_buffer_destroy(g_wl.about_buffer); g_wl.about_buffer = nullptr; }
     if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
@@ -474,16 +528,12 @@ static void wl_popup_present(const CefAcceleratedPaintInfo& info, int lw, int lh
     int w = info.extra.coded_size.width;
     int h = info.extra.coded_size.height;
 
-    auto* buf = create_dmabuf_buffer(info);
+    auto* buf = g_popup_pool.acquire(info);
     if (!buf) return;
 
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.popup_surface || !g_wl.popup_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
-    if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
-    g_wl.popup_buffer = buf;
+    if (!g_wl.popup_surface || !g_wl.popup_visible) return;
+    if (g_wl.popup_buffer) { wl_buffer_destroy(g_wl.popup_buffer); g_wl.popup_buffer = nullptr; }
     if (g_wl.popup_viewport) {
         wp_viewport_set_source(g_wl.popup_viewport,
             wl_fixed_from_int(0), wl_fixed_from_int(0),
@@ -1209,6 +1259,11 @@ static void wl_cleanup() {
     if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
     if (g_wl.overlay_subsurface) wl_subsurface_destroy(g_wl.overlay_subsurface);
     if (g_wl.overlay_surface) wl_surface_destroy(g_wl.overlay_surface);
+    // Dmabuf pools (owning): destroy before subsurfaces/viewports.
+    g_cef_pool.clear();
+    g_overlay_pool.clear();
+    g_about_pool.clear();
+    g_popup_pool.clear();
     // Main
     if (g_wl.cef_viewport) wp_viewport_destroy(g_wl.cef_viewport);
     if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
