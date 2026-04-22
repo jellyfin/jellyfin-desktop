@@ -402,13 +402,17 @@ static void wl_about_present_software(const CefRenderHandler::RectList&,
 }
 
 static void wl_about_resize(int lw, int lh, int pw, int ph) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.about_surface || !g_wl.about_viewport) return;
-    wp_viewport_set_source(g_wl.about_viewport,
-        wl_fixed_from_int(0), wl_fixed_from_int(0),
-        wl_fixed_from_int(pw), wl_fixed_from_int(ph));
-    wp_viewport_set_destination(g_wl.about_viewport, lw, lh);
-    wl_surface_commit(g_wl.about_surface);
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (!g_wl.about_surface || !g_wl.about_viewport) return;
+        wp_viewport_set_source(g_wl.about_viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(pw), wl_fixed_from_int(ph));
+        wp_viewport_set_destination(g_wl.about_viewport, lw, lh);
+        wl_surface_commit(g_wl.about_surface);
+    }
+    // flush is thread-safe (libwayland guards its own send buffer) and
+    // doesn't mutate surface state — no need to block presents on it.
     wl_display_flush(g_wl.display);
 }
 
@@ -522,16 +526,18 @@ static void wl_popup_present_software(const void* buffer, int pw, int ph, int lw
 }
 
 static void wl_overlay_resize(int lw, int lh, int pw, int ph) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.overlay_surface || !g_wl.overlay_viewport) return;
-    // Don't update source while placeholder is active — it's 1x1, not pw×ph.
-    // Destination is safe to update either way.
-    if (!g_wl.overlay_placeholder)
-        wp_viewport_set_source(g_wl.overlay_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(pw), wl_fixed_from_int(ph));
-    wp_viewport_set_destination(g_wl.overlay_viewport, lw, lh);
-    wl_surface_commit(g_wl.overlay_surface);
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (!g_wl.overlay_surface || !g_wl.overlay_viewport) return;
+        // Don't update source while placeholder is active — it's 1x1, not pw×ph.
+        // Destination is safe to update either way.
+        if (!g_wl.overlay_placeholder)
+            wp_viewport_set_source(g_wl.overlay_viewport,
+                wl_fixed_from_int(0), wl_fixed_from_int(0),
+                wl_fixed_from_int(pw), wl_fixed_from_int(ph));
+        wp_viewport_set_destination(g_wl.overlay_viewport, lw, lh);
+        wl_surface_commit(g_wl.overlay_surface);
+    }
     wl_display_flush(g_wl.display);
 }
 
