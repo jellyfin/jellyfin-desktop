@@ -1,6 +1,5 @@
 #include "media_session_thread.h"
 #include "logging.h"
-#include <chrono>
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include <sys/eventfd.h>
@@ -262,12 +261,16 @@ void MediaSessionThread::threadFunc() {
             work.pop();
         }
 
-        // Check for incoming messages
+        // Check for incoming messages. The macOS and Windows backends are
+        // callback-driven, so this is only needed after queued work runs.
         session_->update();
 
-        // Wait for command or timeout
+        // Wait for new commands or shutdown. Avoid a fixed 16 ms idle wakeup on
+        // platforms whose media-session APIs deliver callbacks directly.
         std::unique_lock lock(mutex_);
-        cv_.wait_for(lock, std::chrono::milliseconds(16));
+        cv_.wait(lock, [this] {
+            return !running_.load() || !queue_.empty();
+        });
     }
 #endif
 }
