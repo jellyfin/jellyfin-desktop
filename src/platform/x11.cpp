@@ -211,6 +211,69 @@ static void shm_free(ShmBuffer& buf, xcb_connection_t* conn) {
     buf.size = 0;
 }
 
+struct DirtyBounds {
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+};
+
+static bool compute_dirty_bounds(const CefRenderHandler::RectList& dirty,
+                                 int w, int h, DirtyBounds& out) {
+    if (w <= 0 || h <= 0) return false;
+    if (dirty.empty()) {
+        out = {0, 0, w, h};
+        return true;
+    }
+
+    int min_x = w;
+    int min_y = h;
+    int max_x = 0;
+    int max_y = 0;
+    for (const auto& rect : dirty) {
+        int x1 = rect.x;
+        int y1 = rect.y;
+        int x2 = rect.x + rect.width;
+        int y2 = rect.y + rect.height;
+        if (x1 < 0) x1 = 0;
+        if (y1 < 0) y1 = 0;
+        if (x2 > w) x2 = w;
+        if (y2 > h) y2 = h;
+        if (x2 <= x1 || y2 <= y1) continue;
+        if (x1 < min_x) min_x = x1;
+        if (y1 < min_y) min_y = y1;
+        if (x2 > max_x) max_x = x2;
+        if (y2 > max_y) max_y = y2;
+    }
+    if (max_x <= min_x || max_y <= min_y) return false;
+    out = {min_x, min_y, max_x - min_x, max_y - min_y};
+    return true;
+}
+
+static void upload_dirty_region(xcb_window_t window, xcb_gcontext_t gc,
+                                ShmBuffer& buf,
+                                const CefRenderHandler::RectList& dirty,
+                                const void* buffer, int w, int h) {
+    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
+
+    DirtyBounds bounds;
+    if (!compute_dirty_bounds(dirty, w, h, bounds)) return;
+
+    int stride = w * 4;
+    const auto* src = static_cast<const uint8_t*>(buffer);
+    for (int row = bounds.y; row < bounds.y + bounds.h; row++) {
+        memcpy(buf.data + row * stride + bounds.x * 4,
+               src + row * stride + bounds.x * 4,
+               bounds.w * 4);
+    }
+
+    xcb_shm_put_image(g_x11.conn, window, gc,
+        w, h, bounds.x, bounds.y, bounds.w, bounds.h,
+        bounds.x, bounds.y, g_x11.argb_depth,
+        XCB_IMAGE_FORMAT_Z_PIXMAP,
+        0, buf.seg, 0);
+}
+
 // =====================================================================
 // Present CEF software -- main browser
 // =====================================================================
@@ -232,33 +295,7 @@ static void x11_present_software(const CefRenderHandler::RectList& dirty,
     if (g_x11.cef_window == XCB_NONE) return;
 
     auto& buf = g_x11.cef_bufs[g_x11.cef_buf_idx];
-    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
-
-    int stride = w * 4;
-    const auto* src = static_cast<const uint8_t*>(buffer);
-
-    for (const auto& rect : dirty) {
-        int rx = rect.x, ry = rect.y, rw = rect.width, rh = rect.height;
-        // Clamp to buffer
-        if (rx < 0) { rw += rx; rx = 0; }
-        if (ry < 0) { rh += ry; ry = 0; }
-        if (rx + rw > w) rw = w - rx;
-        if (ry + rh > h) rh = h - ry;
-        if (rw <= 0 || rh <= 0) continue;
-
-        // Copy dirty region into shm buffer
-        for (int row = ry; row < ry + rh; row++) {
-            memcpy(buf.data + row * stride + rx * 4,
-                   src + row * stride + rx * 4,
-                   rw * 4);
-        }
-
-        xcb_shm_put_image(g_x11.conn, g_x11.cef_window, g_x11.cef_gc,
-            w, h, rx, ry, rw, rh,
-            rx, ry, g_x11.argb_depth,
-            XCB_IMAGE_FORMAT_Z_PIXMAP,
-            0, buf.seg, 0);
-    }
+    upload_dirty_region(g_x11.cef_window, g_x11.cef_gc, buf, dirty, buffer, w, h);
 
     g_x11.cef_buf_idx ^= 1;
     xcb_flush(g_x11.conn);
@@ -275,31 +312,7 @@ static void x11_overlay_present_software(const CefRenderHandler::RectList& dirty
     if (g_x11.overlay_window == XCB_NONE || !g_x11.overlay_visible) return;
 
     auto& buf = g_x11.overlay_bufs[g_x11.overlay_buf_idx];
-    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
-
-    int stride = w * 4;
-    const auto* src = static_cast<const uint8_t*>(buffer);
-
-    for (const auto& rect : dirty) {
-        int rx = rect.x, ry = rect.y, rw = rect.width, rh = rect.height;
-        if (rx < 0) { rw += rx; rx = 0; }
-        if (ry < 0) { rh += ry; ry = 0; }
-        if (rx + rw > w) rw = w - rx;
-        if (ry + rh > h) rh = h - ry;
-        if (rw <= 0 || rh <= 0) continue;
-
-        for (int row = ry; row < ry + rh; row++) {
-            memcpy(buf.data + row * stride + rx * 4,
-                   src + row * stride + rx * 4,
-                   rw * 4);
-        }
-
-        xcb_shm_put_image(g_x11.conn, g_x11.overlay_window, g_x11.overlay_gc,
-            w, h, rx, ry, rw, rh,
-            rx, ry, g_x11.argb_depth,
-            XCB_IMAGE_FORMAT_Z_PIXMAP,
-            0, buf.seg, 0);
-    }
+    upload_dirty_region(g_x11.overlay_window, g_x11.overlay_gc, buf, dirty, buffer, w, h);
 
     g_x11.overlay_buf_idx ^= 1;
     xcb_flush(g_x11.conn);
@@ -334,31 +347,7 @@ static void x11_about_present_software(const CefRenderHandler::RectList& dirty,
     if (g_x11.about_window == XCB_NONE || !g_x11.about_visible) return;
 
     auto& buf = g_x11.about_bufs[g_x11.about_buf_idx];
-    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
-
-    int stride = w * 4;
-    const auto* src = static_cast<const uint8_t*>(buffer);
-
-    for (const auto& rect : dirty) {
-        int rx = rect.x, ry = rect.y, rw = rect.width, rh = rect.height;
-        if (rx < 0) { rw += rx; rx = 0; }
-        if (ry < 0) { rh += ry; ry = 0; }
-        if (rx + rw > w) rw = w - rx;
-        if (ry + rh > h) rh = h - ry;
-        if (rw <= 0 || rh <= 0) continue;
-
-        for (int row = ry; row < ry + rh; row++) {
-            memcpy(buf.data + row * stride + rx * 4,
-                   src + row * stride + rx * 4,
-                   rw * 4);
-        }
-
-        xcb_shm_put_image(g_x11.conn, g_x11.about_window, g_x11.about_gc,
-            w, h, rx, ry, rw, rh,
-            rx, ry, g_x11.argb_depth,
-            XCB_IMAGE_FORMAT_Z_PIXMAP,
-            0, buf.seg, 0);
-    }
+    upload_dirty_region(g_x11.about_window, g_x11.about_gc, buf, dirty, buffer, w, h);
 
     g_x11.about_buf_idx ^= 1;
     xcb_flush(g_x11.conn);
