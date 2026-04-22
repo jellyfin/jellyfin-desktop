@@ -330,20 +330,127 @@ static wl_buffer* create_shm_buffer(const void* pixels, int w, int h) {
     return buf;
 }
 
-static void wl_present_software(const CefRenderHandler::RectList&,
-                                const void* buffer, int w, int h) {
-    auto* buf = create_shm_buffer(buffer, w, h);
-    if (!buf) return;
+// Per-surface SHM buffer pool for the software-render fallback. Avoids
+// per-frame memfd_create + mmap + wl_shm_pool churn; we keep the memfd
+// and mmap alive across frames and memcpy pixels in-place into any
+// buffer the compositor has released.
+namespace {
+struct ShmEntry {
+    wl_buffer* buf = nullptr;
+    void* data = nullptr;
+    size_t size = 0;
+    int w = 0, h = 0;
+    bool in_use = false;
+};
 
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.cef_surface) { wl_buffer_destroy(buf); return; }
-    if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) {
-        wl_buffer_destroy(buf);
-        return;
+class ShmPool {
+public:
+    static constexpr size_t kMaxEntries = 3;
+
+    // Acquire a buffer of w×h, copy pixels into its mapping, mark in_use.
+    // Returns nullptr on failure. Caller attaches the returned wl_buffer.
+    wl_buffer* acquire(const void* pixels, int w, int h) {
+        const int stride = w * 4;
+        const size_t size = static_cast<size_t>(stride) * h;
+
+        // Find an idle buffer matching size.
+        for (size_t i = 0; i < entries_.size(); i++) {
+            auto& e = entries_[i];
+            if (!e.in_use && e.w == w && e.h == h && e.size == size) {
+                memcpy(e.data, pixels, size);
+                e.in_use = true;
+                if (i != 0) std::swap(entries_[0], entries_[i]);
+                return e.buf;
+            }
+        }
+
+        // Evict the oldest idle buffer that doesn't match, if at capacity.
+        if (entries_.size() >= kMaxEntries) {
+            for (auto it = entries_.end(); it != entries_.begin();) {
+                --it;
+                if (!it->in_use) {
+                    destroy_entry(*it);
+                    entries_.erase(it);
+                    break;
+                }
+            }
+        }
+
+        // All slots in use — fall back to one-shot (self-owning, will be
+        // destroyed by caller's cef_buffer tracker).
+        if (entries_.size() >= kMaxEntries) {
+            return create_shm_buffer(pixels, w, h);
+        }
+
+        // Create new pooled entry.
+        ShmEntry e{};
+        e.size = size;
+        e.w = w;
+        e.h = h;
+        int fd = memfd_create("cef-sw-pool", MFD_CLOEXEC);
+        if (fd < 0) return nullptr;
+        if (ftruncate(fd, size) < 0) { close(fd); return nullptr; }
+        e.data = mmap(nullptr, size, PROT_WRITE, MAP_SHARED, fd, 0);
+        if (e.data == MAP_FAILED) { close(fd); return nullptr; }
+        memcpy(e.data, pixels, size);
+        auto* shm_pool = wl_shm_create_pool(g_wl.shm, fd, size);
+        e.buf = wl_shm_pool_create_buffer(shm_pool, 0, w, h, stride, WL_SHM_FORMAT_ARGB8888);
+        wl_shm_pool_destroy(shm_pool);
+        close(fd);
+        if (!e.buf) { munmap(e.data, e.size); return nullptr; }
+
+        // Hook release so we can mark idle. Listener runs on g_wl.queue
+        // (input thread); mark under surface_mtx.
+        wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(e.buf), g_wl.queue);
+        wl_buffer_add_listener(e.buf, &kReleaseListener, this);
+
+        e.in_use = true;
+        entries_.insert(entries_.begin(), e);
+        return e.buf;
     }
 
-    if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
-    g_wl.cef_buffer = buf;
+    void clear() {
+        for (auto& e : entries_) destroy_entry(e);
+        entries_.clear();
+    }
+
+private:
+    static void on_release(void* data, wl_buffer* buf) {
+        auto* self = static_cast<ShmPool*>(data);
+        // surface_mtx serializes against acquire() on the present thread.
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        for (auto& e : self->entries_) {
+            if (e.buf == buf) { e.in_use = false; return; }
+        }
+    }
+    static const wl_buffer_listener kReleaseListener;
+
+    void destroy_entry(ShmEntry& e) {
+        if (e.buf)  wl_buffer_destroy(e.buf);
+        if (e.data) munmap(e.data, e.size);
+        e.buf = nullptr;
+        e.data = nullptr;
+    }
+
+    std::vector<ShmEntry> entries_;
+};
+const wl_buffer_listener ShmPool::kReleaseListener = { ShmPool::on_release };
+
+ShmPool g_cef_shm_pool;
+ShmPool g_overlay_shm_pool;
+ShmPool g_about_shm_pool;
+ShmPool g_popup_shm_pool;
+}  // namespace
+
+static void wl_present_software(const CefRenderHandler::RectList&,
+                                const void* buffer, int w, int h) {
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.cef_surface) return;
+    if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) return;
+
+    auto* buf = g_cef_shm_pool.acquire(buffer, w, h);
+    if (!buf) return;
+    if (g_wl.cef_buffer) { wl_buffer_destroy(g_wl.cef_buffer); g_wl.cef_buffer = nullptr; }
     if (g_wl.cef_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
@@ -363,17 +470,12 @@ static void wl_present_software(const CefRenderHandler::RectList&,
 
 static void wl_overlay_present_software(const CefRenderHandler::RectList&,
                                         const void* buffer, int w, int h) {
-    auto* buf = create_shm_buffer(buffer, w, h);
-    if (!buf) return;
-
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.overlay_surface || !g_wl.overlay_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
+    if (!g_wl.overlay_surface || !g_wl.overlay_visible) return;
 
-    if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
-    g_wl.overlay_buffer = buf;
+    auto* buf = g_overlay_shm_pool.acquire(buffer, w, h);
+    if (!buf) return;
+    if (g_wl.overlay_buffer) { wl_buffer_destroy(g_wl.overlay_buffer); g_wl.overlay_buffer = nullptr; }
     g_wl.overlay_placeholder = false;
     if (g_wl.overlay_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
@@ -426,17 +528,12 @@ static void wl_about_present(const CefAcceleratedPaintInfo& info) {
 
 static void wl_about_present_software(const CefRenderHandler::RectList&,
                                       const void* buffer, int w, int h) {
-    auto* buf = create_shm_buffer(buffer, w, h);
-    if (!buf) return;
-
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.about_surface || !g_wl.about_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
+    if (!g_wl.about_surface || !g_wl.about_visible) return;
 
-    if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
-    g_wl.about_buffer = buf;
+    auto* buf = g_about_shm_pool.acquire(buffer, w, h);
+    if (!buf) return;
+    if (g_wl.about_buffer) { wl_buffer_destroy(g_wl.about_buffer); g_wl.about_buffer = nullptr; }
     if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
@@ -551,16 +648,12 @@ static void wl_popup_present(const CefAcceleratedPaintInfo& info, int lw, int lh
 
 static void wl_popup_present_software(const void* buffer, int pw, int ph, int lw, int lh) {
     if (lw <= 0 || lh <= 0) return;
-    auto* buf = create_shm_buffer(buffer, pw, ph);
-    if (!buf) return;
-
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.popup_surface || !g_wl.popup_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
-    if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
-    g_wl.popup_buffer = buf;
+    if (!g_wl.popup_surface || !g_wl.popup_visible) return;
+
+    auto* buf = g_popup_shm_pool.acquire(buffer, pw, ph);
+    if (!buf) return;
+    if (g_wl.popup_buffer) { wl_buffer_destroy(g_wl.popup_buffer); g_wl.popup_buffer = nullptr; }
     if (g_wl.popup_viewport) {
         wp_viewport_set_source(g_wl.popup_viewport,
             wl_fixed_from_int(0), wl_fixed_from_int(0),
@@ -1259,11 +1352,15 @@ static void wl_cleanup() {
     if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
     if (g_wl.overlay_subsurface) wl_subsurface_destroy(g_wl.overlay_subsurface);
     if (g_wl.overlay_surface) wl_surface_destroy(g_wl.overlay_surface);
-    // Dmabuf pools (owning): destroy before subsurfaces/viewports.
+    // Dmabuf + SHM pools (owning): destroy before subsurfaces/viewports.
     g_cef_pool.clear();
     g_overlay_pool.clear();
     g_about_pool.clear();
     g_popup_pool.clear();
+    g_cef_shm_pool.clear();
+    g_overlay_shm_pool.clear();
+    g_about_shm_pool.clear();
+    g_popup_shm_pool.clear();
     // Main
     if (g_wl.cef_viewport) wp_viewport_destroy(g_wl.cef_viewport);
     if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
