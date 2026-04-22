@@ -218,6 +218,21 @@ static void cef_consumer_thread() {
 #endif
 
         g_cef_queue.drain_wake();
+        // Coalesce rapid-fire observations (TIME_POS, SPEED, DURATION,
+        // BUFFERED_RANGES) across this drain: only the last value matters,
+        // and deduping against the last-emitted value avoids redundant
+        // execJs calls when mpv re-observes the same state.
+        static int  s_last_time_ms    = INT_MIN;
+        static int  s_last_duration_ms = INT_MIN;
+        static double s_last_speed   = -1.0;
+        static std::vector<std::pair<int64_t,int64_t>> s_last_ranges;
+        struct {
+            bool have_time_pos = false; double time_pos = 0;
+            bool have_speed = false;    double speed    = 0;
+            bool have_duration = false; double duration = 0;
+            bool have_buffered = false; MpvEvent buffered{};
+        } batch;
+
         MpvEvent ev;
         while (g_cef_queue.try_pop(ev)) {
             if (!g_web_browser) continue;
@@ -229,19 +244,14 @@ static void cef_consumer_thread() {
                 if (g_media_session)
                     g_media_session->setPlaybackState(ev.flag ? PlaybackState::Paused : PlaybackState::Playing);
                 break;
-            case MpvEventType::TIME_POS: {
-                int ms = static_cast<int>(ev.dbl * 1000);
-                g_web_browser->execJs("window._nativeUpdatePosition(" + std::to_string(ms) + ")");
-                if (g_media_session)
-                    g_media_session->setPosition(static_cast<int64_t>(ev.dbl * 1000000));
+            case MpvEventType::TIME_POS:
+                batch.have_time_pos = true;
+                batch.time_pos = ev.dbl;
                 break;
-            }
-            case MpvEventType::DURATION: {
-                int ms = static_cast<int>(ev.dbl * 1000);
-                g_web_browser->execJs("window._nativeUpdateDuration(" + std::to_string(ms) + ")");
-                // Duration is set via metadata, not a separate call
+            case MpvEventType::DURATION:
+                batch.have_duration = true;
+                batch.duration = ev.dbl;
                 break;
-            }
             case MpvEventType::FULLSCREEN:
                 if (ev.flag) {
                     g_was_maximized_before_fullscreen = mpv::window_maximized();
@@ -251,9 +261,8 @@ static void cef_consumer_thread() {
                 g_web_browser->execJs("window._nativeFullscreenChanged(" + std::string(ev.flag ? "true" : "false") + ")");
                 break;
             case MpvEventType::SPEED:
-                g_web_browser->execJs("window._nativeSetRate(" + std::to_string(ev.dbl) + ")");
-                if (g_media_session)
-                    g_media_session->setRate(ev.dbl);
+                batch.have_speed = true;
+                batch.speed = ev.dbl;
                 break;
             case MpvEventType::SEEKING:
                 if (ev.flag) {
@@ -305,20 +314,10 @@ static void cef_consumer_thread() {
                     g_platform.about_resize(ev.lw, ev.lh, ev.pw, ev.ph);
                 }
                 break;
-            case MpvEventType::BUFFERED_RANGES: {
-                auto list = CefListValue::Create();
-                for (int i = 0; i < ev.range_count; i++) {
-                    auto range = CefDictionaryValue::Create();
-                    range->SetDouble("start", static_cast<double>(ev.ranges[i].start_ticks));
-                    range->SetDouble("end", static_cast<double>(ev.ranges[i].end_ticks));
-                    list->SetDictionary(static_cast<size_t>(i), range);
-                }
-                auto val = CefValue::Create();
-                val->SetList(list);
-                auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-                g_web_browser->execJs("window._nativeUpdateBufferedRanges(" + json.ToString() + ")");
+            case MpvEventType::BUFFERED_RANGES:
+                batch.have_buffered = true;
+                batch.buffered = ev;
                 break;
-            }
             case MpvEventType::DISPLAY_FPS: {
                 int hz = g_display_hz.load(std::memory_order_relaxed);
                 LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", hz);
@@ -334,6 +333,61 @@ static void cef_consumer_thread() {
                 return;
             default:
                 break;
+            }
+        }
+
+        // Emit coalesced state once per drain, skipping redundant values.
+        if (!g_web_browser) continue;
+        if (batch.have_time_pos) {
+            int ms = static_cast<int>(batch.time_pos * 1000);
+            if (ms != s_last_time_ms) {
+                s_last_time_ms = ms;
+                g_web_browser->execJs("window._nativeUpdatePosition(" + std::to_string(ms) + ")");
+            }
+            if (g_media_session)
+                g_media_session->setPosition(static_cast<int64_t>(batch.time_pos * 1000000));
+        }
+        if (batch.have_duration) {
+            int ms = static_cast<int>(batch.duration * 1000);
+            if (ms != s_last_duration_ms) {
+                s_last_duration_ms = ms;
+                g_web_browser->execJs("window._nativeUpdateDuration(" + std::to_string(ms) + ")");
+            }
+        }
+        if (batch.have_speed) {
+            if (batch.speed != s_last_speed) {
+                s_last_speed = batch.speed;
+                g_web_browser->execJs("window._nativeSetRate(" + std::to_string(batch.speed) + ")");
+            }
+            if (g_media_session) g_media_session->setRate(batch.speed);
+        }
+        if (batch.have_buffered) {
+            const auto& b = batch.buffered;
+            bool changed = (int)s_last_ranges.size() != b.range_count;
+            if (!changed) {
+                for (int i = 0; i < b.range_count; i++) {
+                    if (s_last_ranges[i].first  != b.ranges[i].start_ticks ||
+                        s_last_ranges[i].second != b.ranges[i].end_ticks) {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (changed) {
+                s_last_ranges.clear();
+                s_last_ranges.reserve(b.range_count);
+                auto list = CefListValue::Create();
+                for (int i = 0; i < b.range_count; i++) {
+                    s_last_ranges.emplace_back(b.ranges[i].start_ticks, b.ranges[i].end_ticks);
+                    auto range = CefDictionaryValue::Create();
+                    range->SetDouble("start", static_cast<double>(b.ranges[i].start_ticks));
+                    range->SetDouble("end",   static_cast<double>(b.ranges[i].end_ticks));
+                    list->SetDictionary(static_cast<size_t>(i), range);
+                }
+                auto val = CefValue::Create();
+                val->SetList(list);
+                auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
+                g_web_browser->execJs("window._nativeUpdateBufferedRanges(" + json.ToString() + ")");
             }
         }
     }
