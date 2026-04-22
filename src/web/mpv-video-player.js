@@ -151,7 +151,7 @@
                 const defaultSubIdx = options.mediaSource.DefaultSubtitleStreamIndex ?? -1;
 
                 // Convert audio index from Jellyfin global stream index to mpv 1-based audio track index
-                let audioParam = MpvPlayerCore.TRACK_DISABLE;
+                let audioParam = MpvPlayerCore.TRACK_AUTO;
                 if (defaultAudioIdx >= 0) {
                     const relIdx = getRelativeIndexByType(streams, defaultAudioIdx, 'Audio');
                     audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
