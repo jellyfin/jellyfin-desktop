@@ -865,12 +865,11 @@ int main(int argc, char* argv[]) {
     std::thread digest_thread(mpv_digest_thread);
     std::thread cef_thread(cef_consumer_thread);
 
-#ifdef __APPLE__
-    // nothing — main thread pump happens below
-#else
-    g_web_browser->waitForLoad();
-#endif
-    LOG_INFO(LOG_MAIN, "Main browser loaded");
+    // Don't block on initial load. The digest + CEF-consumer threads above
+    // already decouple mpv event delivery from browser readiness; execJs on
+    // an unloaded browser is harmless. Letting startup proceed means the
+    // overlay can begin rendering (and the window becomes interactive)
+    // without waiting for the main browser's network load to finish.
 
     LOG_INFO(LOG_MAIN, "[FLOW] Running — about to enter run_main_loop");
 
