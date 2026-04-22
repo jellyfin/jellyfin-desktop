@@ -434,6 +434,78 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
         return true;
     }
 
+    if (name == "nativeCall") {
+        // Generic dispatch: args[0] = window-function name, args[1] = list of
+        // typed args. Avoids string-concat execJs for hot-path events.
+        CefString fn_name = args->GetString(0);
+        CefRefPtr<CefListValue> callArgs = args->GetList(1);
+        CefRefPtr<CefV8Context> ctx = frame->GetV8Context();
+        if (ctx && ctx->Enter()) {
+            CefRefPtr<CefV8Value> fn = ctx->GetGlobal()->GetValue(fn_name);
+            if (fn && fn->IsFunction()) {
+                CefV8ValueList v8args;
+                size_t n = callArgs ? callArgs->GetSize() : 0;
+                v8args.reserve(n);
+                for (size_t i = 0; i < n; i++) {
+                    switch (callArgs->GetType(i)) {
+                    case VTYPE_BOOL:   v8args.push_back(CefV8Value::CreateBool(callArgs->GetBool(i))); break;
+                    case VTYPE_INT:    v8args.push_back(CefV8Value::CreateInt(callArgs->GetInt(i))); break;
+                    case VTYPE_DOUBLE: v8args.push_back(CefV8Value::CreateDouble(callArgs->GetDouble(i))); break;
+                    case VTYPE_STRING: v8args.push_back(CefV8Value::CreateString(callArgs->GetString(i))); break;
+                    case VTYPE_NULL:   v8args.push_back(CefV8Value::CreateNull()); break;
+                    case VTYPE_LIST: {
+                        // Shallow list of {start,end} dicts or primitives — convert to JS array.
+                        auto sub = callArgs->GetList(i);
+                        size_t m = sub->GetSize();
+                        auto arr = CefV8Value::CreateArray(static_cast<int>(m));
+                        for (size_t j = 0; j < m; j++) {
+                            CefRefPtr<CefV8Value> v;
+                            switch (sub->GetType(j)) {
+                            case VTYPE_DOUBLE: v = CefV8Value::CreateDouble(sub->GetDouble(j)); break;
+                            case VTYPE_INT:    v = CefV8Value::CreateInt(sub->GetInt(j)); break;
+                            case VTYPE_STRING: v = CefV8Value::CreateString(sub->GetString(j)); break;
+                            case VTYPE_DICTIONARY: {
+                                auto d = sub->GetDictionary(j);
+                                auto obj = CefV8Value::CreateObject(nullptr, nullptr);
+                                CefDictionaryValue::KeyList keys;
+                                d->GetKeys(keys);
+                                for (const auto& k : keys) {
+                                    switch (d->GetType(k)) {
+                                    case VTYPE_DOUBLE:
+                                        obj->SetValue(k, CefV8Value::CreateDouble(d->GetDouble(k)), V8_PROPERTY_ATTRIBUTE_NONE);
+                                        break;
+                                    case VTYPE_INT:
+                                        obj->SetValue(k, CefV8Value::CreateInt(d->GetInt(k)), V8_PROPERTY_ATTRIBUTE_NONE);
+                                        break;
+                                    case VTYPE_STRING:
+                                        obj->SetValue(k, CefV8Value::CreateString(d->GetString(k)), V8_PROPERTY_ATTRIBUTE_NONE);
+                                        break;
+                                    case VTYPE_BOOL:
+                                        obj->SetValue(k, CefV8Value::CreateBool(d->GetBool(k)), V8_PROPERTY_ATTRIBUTE_NONE);
+                                        break;
+                                    default: break;
+                                    }
+                                }
+                                v = obj;
+                                break;
+                            }
+                            default: v = CefV8Value::CreateNull(); break;
+                            }
+                            arr->SetValue(static_cast<int>(j), v);
+                        }
+                        v8args.push_back(arr);
+                        break;
+                    }
+                    default: v8args.push_back(CefV8Value::CreateNull()); break;
+                    }
+                }
+                fn->ExecuteFunction(nullptr, v8args);
+            }
+            ctx->Exit();
+        }
+        return true;
+    }
+
     if (name == "serverConnectivityResult") {
         CefV8ValueList v8args;
         v8args.push_back(CefV8Value::CreateString(args->GetString(0)));

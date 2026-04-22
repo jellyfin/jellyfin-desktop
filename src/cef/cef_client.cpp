@@ -398,6 +398,17 @@ void CefLayer::execJs(const std::string& js) {
         browser_->GetMainFrame()->ExecuteJavaScript(js, "", 0);
 }
 
+void CefLayer::nativeCall(const char* fn, CefRefPtr<CefListValue> args) {
+    if (!browser_) return;
+    auto frame = browser_->GetMainFrame();
+    if (!frame) return;
+    auto msg = CefProcessMessage::Create("nativeCall");
+    auto mlist = msg->GetArgumentList();
+    mlist->SetString(0, fn);
+    if (args) mlist->SetList(1, args);
+    frame->SendProcessMessage(PID_RENDERER, msg);
+}
+
 enum {
     MENU_ID_TOGGLE_FULLSCREEN = MENU_ID_USER_FIRST,
     MENU_ID_ABOUT,

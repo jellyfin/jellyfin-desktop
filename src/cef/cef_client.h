@@ -106,6 +106,11 @@ public:
     void waitForLoad();
     void execJs(const std::string& js);
 
+    // Structured call into a window-scoped JS function. Faster than execJs
+    // for numeric/arg-heavy hot-path events (no string building, no JSON
+    // roundtrip). The renderer routes "nativeCall" to `window[fn](...args)`.
+    void nativeCall(const char* fn, CefRefPtr<CefListValue> args);
+
     // Create the underlying CEF browser. Stores wi/bs/extra_info for use in
     // reset(). `extra_info` travels to the renderer's OnBrowserCreated and
     // typically carries this browser's native-shim injection profile
