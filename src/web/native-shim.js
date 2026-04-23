@@ -370,7 +370,7 @@
                     Container: 'mp4',
                     Type: 'Video',
                     Protocol: 'hls',
-                    AudioCodec: 'aac,ac3,eac3,opus,flac,vorbis',
+                    AudioCodec: 'aac,mp3,ac3,eac3,opus,flac,vorbis',
                     VideoCodec: 'av1,h264,h265,hevc,mpeg4,mpeg2video',
                     MaxAudioChannels: '6'
                 },
