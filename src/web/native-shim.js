@@ -367,11 +367,11 @@
             TranscodingProfiles: [
                 { Type: 'Audio' },
                 {
-                    Container: 'ts',
+                    Container: 'mp4',
                     Type: 'Video',
                     Protocol: 'hls',
-                    AudioCodec: 'aac,mp3,ac3,opus,vorbis',
-                    VideoCodec: 'h264,h265,hevc,mpeg4,mpeg2video',
+                    AudioCodec: 'aac,ac3,eac3,opus,flac,vorbis',
+                    VideoCodec: 'av1,h264,h265,hevc,mpeg4,mpeg2video',
                     MaxAudioChannels: '6'
                 },
                 { Container: 'jpeg', Type: 'Photo' }

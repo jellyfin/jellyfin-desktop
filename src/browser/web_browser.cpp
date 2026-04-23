@@ -143,8 +143,9 @@ bool WebBrowser::handleMessage(const std::string& name,
                  audioIdx, subIdx, startMs, url.c_str());
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
-        opts.audioTrack = audioIdx;
-        opts.subTrack = subIdx;
+        bool isHls = url.find("master.m3u8") != std::string::npos;
+        opts.audioTrack = isHls ? MpvHandle::kTrackAuto : audioIdx;
+        opts.subTrack = isHls ? MpvHandle::kTrackAuto : subIdx;
         g_mpv.LoadFile(url, opts);
     } else if (name == "playerStop") {
         g_mpv.Stop();
