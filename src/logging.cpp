@@ -173,6 +173,12 @@ void shutdownStderrCapture() {
     if (!g_capture_running) return;
     g_capture_running = false;
 
+    if (g_original_stderr_fd >= 0) {
+        dup2(g_original_stderr_fd, STDERR_FILENO);
+        close(g_original_stderr_fd);
+        g_original_stderr_fd = -1;
+    }
+
 #ifdef _WIN32
     if (g_shutdown_event) SetEvent(g_shutdown_event);
     if (g_pipe_write >= 0) { close(g_pipe_write); g_pipe_write = -1; }
@@ -182,11 +188,6 @@ void shutdownStderrCapture() {
 
     if (g_capture_thread.joinable()) g_capture_thread.join();
 
-    if (g_original_stderr_fd >= 0) {
-        dup2(g_original_stderr_fd, STDERR_FILENO);
-        close(g_original_stderr_fd);
-        g_original_stderr_fd = -1;
-    }
     if (g_pipe_read >= 0)  { close(g_pipe_read);  g_pipe_read  = -1; }
     if (g_pipe_write >= 0) { close(g_pipe_write); g_pipe_write = -1; }
 #ifdef _WIN32
