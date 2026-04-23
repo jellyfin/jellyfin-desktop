@@ -94,6 +94,19 @@ struct WlState {
     bool transitioning = false;
     bool was_fullscreen = false;
 
+    // Size of the last non-null committed buffer for each clamped subsurface.
+    // KWin validates wp_viewport_set_source against the last non-null committed
+    // buffer at message-processing time (not at wl_surface.commit time), and
+    // retains that size even after a null buffer is committed.  We track these
+    // so set_viewport_source_clamped can fall back to source=-1 (full-buffer,
+    // always valid) instead of risking a protocol error when the proposed
+    // source exceeds the committed buffer.  0 means no buffer has ever been
+    // committed on that surface.  The popup subsurface is not tracked because
+    // its source is only set together with a new buffer of matching size.
+    int cef_committed_w = 0,     cef_committed_h = 0;
+    int overlay_committed_w = 0, overlay_committed_h = 0;
+    int about_committed_w = 0,   about_committed_h = 0;
+
 #ifdef HAVE_KDE_DECORATION_PALETTE
     org_kde_kwin_server_decoration_palette_manager* palette_manager = nullptr;
     org_kde_kwin_server_decoration_palette* palette = nullptr;
@@ -137,6 +150,31 @@ static wl_buffer* create_solid_color_buffer(uint8_t r, uint8_t g, uint8_t b) {
 // =====================================================================
 // Present CEF dmabuf -- main browser
 // =====================================================================
+
+// Set the viewport source rectangle, clamped to the last non-null committed
+// buffer size.  KWin validates wp_viewport_set_source against the committed
+// buffer at message-processing time (not at wl_surface.commit time), so a
+// source larger than the committed buffer raises a protocol error even if a
+// larger buffer has already been attached to the pending state.  When the
+// proposed (cw, ch) exceeds (committed_w, committed_h) we fall back to the
+// disabled form (-1) which is always valid and tells the compositor to use
+// the full buffer extent.  committed_w == 0 means no buffer has been
+// committed yet, in which case any source size is accepted.
+// Returns true when the explicit source was set (caller may then update the
+// destination to match); false when the disabled form was used.
+static bool set_viewport_source_clamped(wp_viewport* vp, int cw, int ch,
+                                        int committed_w, int committed_h) {
+    if (committed_w != 0 && (cw > committed_w || ch > committed_h)) {
+        wp_viewport_set_source(vp,
+            wl_fixed_from_int(-1), wl_fixed_from_int(-1),
+            wl_fixed_from_int(-1), wl_fixed_from_int(-1));
+        return false;
+    }
+    wp_viewport_set_source(vp,
+        wl_fixed_from_int(0), wl_fixed_from_int(0),
+        wl_fixed_from_int(cw), wl_fixed_from_int(ch));
+    return true;
+}
 
 static wl_buffer* create_dmabuf_buffer(const CefAcceleratedPaintInfo& info) {
     int fd = dup(info.planes[0].fd);
@@ -191,25 +229,32 @@ static void wl_present(const CefAcceleratedPaintInfo& info) {
 
         if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
         g_wl.cef_buffer = buf;
+        wl_surface_attach(g_wl.cef_surface, buf, 0, 0);
         if (g_wl.cef_viewport && g_wl.mpv_pw > 0) {
-            // Crop source to the smaller of buffer vs mpv window
             int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
             int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
             float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-            wp_viewport_set_source(g_wl.cef_viewport,
-                wl_fixed_from_int(0), wl_fixed_from_int(0),
-                wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-            // Destination must match source at 1:1 pixels — never stretch.
-            // When buffer matches mpv size, this fills the window.
-            // When buffer is smaller (stale frame after resize), this shows
-            // the buffer at correct size with video visible in the gap.
-            wp_viewport_set_destination(g_wl.cef_viewport,
-                static_cast<int>(cw / scale),
-                static_cast<int>(ch / scale));
+            // The buffer attached just above is still pending at this point;
+            // KWin validates set_source against the last committed buffer, so
+            // we clamp to cef_committed_w/h.  If clamped away to the disabled
+            // source, the compositor falls back to the full buffer extent and
+            // update_surface_size_locked's destination gives the correct
+            // full-window display for one transitional frame.
+            if (set_viewport_source_clamped(g_wl.cef_viewport, cw, ch,
+                    g_wl.cef_committed_w, g_wl.cef_committed_h)) {
+                // Destination must match source at 1:1 pixels — never stretch.
+                // When buffer matches mpv size, this fills the window.
+                // When buffer is smaller (stale frame after resize), this shows
+                // the buffer at correct size with video visible in the gap.
+                wp_viewport_set_destination(g_wl.cef_viewport,
+                    static_cast<int>(cw / scale),
+                    static_cast<int>(ch / scale));
+            }
         }
-        wl_surface_attach(g_wl.cef_surface, buf, 0, 0);
         wl_surface_damage_buffer(g_wl.cef_surface, 0, 0, w, h);
         wl_surface_commit(g_wl.cef_surface);
+        g_wl.cef_committed_w = w;
+        g_wl.cef_committed_h = h;
         wl_display_flush(g_wl.display);
     }
 }
@@ -234,20 +279,22 @@ static void wl_overlay_present(const CefAcceleratedPaintInfo& info) {
     if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
     g_wl.overlay_buffer = buf;
     g_wl.overlay_placeholder = false;
+    wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
     if (g_wl.overlay_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
         float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.overlay_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.overlay_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
+        if (set_viewport_source_clamped(g_wl.overlay_viewport, cw, ch,
+                g_wl.overlay_committed_w, g_wl.overlay_committed_h)) {
+            wp_viewport_set_destination(g_wl.overlay_viewport,
+                static_cast<int>(cw / scale),
+                static_cast<int>(ch / scale));
+        }
     }
-    wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
     wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, w, h);
     wl_surface_commit(g_wl.overlay_surface);
+    g_wl.overlay_committed_w = w;
+    g_wl.overlay_committed_h = h;
     wl_display_flush(g_wl.display);
 }
 
@@ -287,20 +334,22 @@ static void wl_present_software(const CefRenderHandler::RectList&,
 
     if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
     g_wl.cef_buffer = buf;
+    wl_surface_attach(g_wl.cef_surface, buf, 0, 0);
     if (g_wl.cef_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
         float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.cef_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.cef_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
+        if (set_viewport_source_clamped(g_wl.cef_viewport, cw, ch,
+                g_wl.cef_committed_w, g_wl.cef_committed_h)) {
+            wp_viewport_set_destination(g_wl.cef_viewport,
+                static_cast<int>(cw / scale),
+                static_cast<int>(ch / scale));
+        }
     }
-    wl_surface_attach(g_wl.cef_surface, buf, 0, 0);
     wl_surface_damage_buffer(g_wl.cef_surface, 0, 0, w, h);
     wl_surface_commit(g_wl.cef_surface);
+    g_wl.cef_committed_w = w;
+    g_wl.cef_committed_h = h;
     wl_display_flush(g_wl.display);
 }
 
@@ -318,20 +367,22 @@ static void wl_overlay_present_software(const CefRenderHandler::RectList&,
     if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
     g_wl.overlay_buffer = buf;
     g_wl.overlay_placeholder = false;
+    wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
     if (g_wl.overlay_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
         float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.overlay_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.overlay_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
+        if (set_viewport_source_clamped(g_wl.overlay_viewport, cw, ch,
+                g_wl.overlay_committed_w, g_wl.overlay_committed_h)) {
+            wp_viewport_set_destination(g_wl.overlay_viewport,
+                static_cast<int>(cw / scale),
+                static_cast<int>(ch / scale));
+        }
     }
-    wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
     wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, w, h);
     wl_surface_commit(g_wl.overlay_surface);
+    g_wl.overlay_committed_w = w;
+    g_wl.overlay_committed_h = h;
     wl_display_flush(g_wl.display);
 }
 
@@ -354,20 +405,22 @@ static void wl_about_present(const CefAcceleratedPaintInfo& info) {
 
     if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
     g_wl.about_buffer = buf;
+    wl_surface_attach(g_wl.about_surface, buf, 0, 0);
     if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
         float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.about_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.about_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
+        if (set_viewport_source_clamped(g_wl.about_viewport, cw, ch,
+                g_wl.about_committed_w, g_wl.about_committed_h)) {
+            wp_viewport_set_destination(g_wl.about_viewport,
+                static_cast<int>(cw / scale),
+                static_cast<int>(ch / scale));
+        }
     }
-    wl_surface_attach(g_wl.about_surface, buf, 0, 0);
     wl_surface_damage_buffer(g_wl.about_surface, 0, 0, w, h);
     wl_surface_commit(g_wl.about_surface);
+    g_wl.about_committed_w = w;
+    g_wl.about_committed_h = h;
     wl_display_flush(g_wl.display);
 }
 
@@ -384,29 +437,34 @@ static void wl_about_present_software(const CefRenderHandler::RectList&,
 
     if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
     g_wl.about_buffer = buf;
+    wl_surface_attach(g_wl.about_surface, buf, 0, 0);
     if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
         int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
         int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
         float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.about_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.about_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
+        if (set_viewport_source_clamped(g_wl.about_viewport, cw, ch,
+                g_wl.about_committed_w, g_wl.about_committed_h)) {
+            wp_viewport_set_destination(g_wl.about_viewport,
+                static_cast<int>(cw / scale),
+                static_cast<int>(ch / scale));
+        }
     }
-    wl_surface_attach(g_wl.about_surface, buf, 0, 0);
     wl_surface_damage_buffer(g_wl.about_surface, 0, 0, w, h);
     wl_surface_commit(g_wl.about_surface);
+    g_wl.about_committed_w = w;
+    g_wl.about_committed_h = h;
     wl_display_flush(g_wl.display);
 }
 
 static void wl_about_resize(int lw, int lh, int pw, int ph) {
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
     if (!g_wl.about_surface || !g_wl.about_viewport) return;
-    wp_viewport_set_source(g_wl.about_viewport,
-        wl_fixed_from_int(0), wl_fixed_from_int(0),
-        wl_fixed_from_int(pw), wl_fixed_from_int(ph));
+    // Only touch the source once a real buffer has been committed; before
+    // that, the next wl_about_present will set it correctly.
+    if (g_wl.about_committed_w > 0) {
+        set_viewport_source_clamped(g_wl.about_viewport, pw, ph,
+            g_wl.about_committed_w, g_wl.about_committed_h);
+    }
     wp_viewport_set_destination(g_wl.about_viewport, lw, lh);
     wl_surface_commit(g_wl.about_surface);
     wl_display_flush(g_wl.display);
@@ -524,12 +582,14 @@ static void wl_popup_present_software(const void* buffer, int pw, int ph, int lw
 static void wl_overlay_resize(int lw, int lh, int pw, int ph) {
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
     if (!g_wl.overlay_surface || !g_wl.overlay_viewport) return;
-    // Don't update source while placeholder is active — it's 1x1, not pw×ph.
-    // Destination is safe to update either way.
-    if (!g_wl.overlay_placeholder)
-        wp_viewport_set_source(g_wl.overlay_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(pw), wl_fixed_from_int(ph));
+    // Skip the source update when the current buffer is the 1x1 placeholder
+    // (overlay_placeholder) or when no buffer has been committed yet — in
+    // both cases the next wl_overlay_present will set the correct source.
+    // Destination is always safe to update.
+    if (!g_wl.overlay_placeholder && g_wl.overlay_committed_w > 0) {
+        set_viewport_source_clamped(g_wl.overlay_viewport, pw, ph,
+            g_wl.overlay_committed_w, g_wl.overlay_committed_h);
+    }
     wp_viewport_set_destination(g_wl.overlay_viewport, lw, lh);
     wl_surface_commit(g_wl.overlay_surface);
     wl_display_flush(g_wl.display);
@@ -1198,12 +1258,16 @@ static void update_surface_size_locked(int lw, int lh, int pw, int ph) {
         }
     } else if (g_wl.cef_surface) {
         bool growing = pw > g_wl.mpv_pw || ph > g_wl.mpv_ph;
-        if (growing)
-            wl_surface_attach(g_wl.cef_surface, nullptr, 0, 0);
         if (g_wl.cef_viewport) {
-            wp_viewport_set_source(g_wl.cef_viewport,
-                wl_fixed_from_int(0), wl_fixed_from_int(0),
-                wl_fixed_from_int(pw), wl_fixed_from_int(ph));
+            // Growing: leave the source alone — the new (larger) buffer has
+            // not been committed yet, so any explicit source update would be
+            // rejected.  Shrinking: clamp to the committed buffer, which may
+            // itself be smaller than pw if wl_present has not yet delivered
+            // a buffer at the previous mpv_pw.
+            if (!growing) {
+                set_viewport_source_clamped(g_wl.cef_viewport, pw, ph,
+                    g_wl.cef_committed_w, g_wl.cef_committed_h);
+            }
             wp_viewport_set_destination(g_wl.cef_viewport, lw, lh);
         }
         wl_surface_commit(g_wl.cef_surface);
@@ -1229,6 +1293,10 @@ static void wl_begin_transition_locked() {
         if (g_wl.cef_viewport)
             wp_viewport_set_destination(g_wl.cef_viewport, -1, -1);
         wl_surface_commit(g_wl.cef_surface);
+        // Do NOT reset cef_committed_w/h here.  KWin validates set_source
+        // against the last non-null committed buffer even after a null
+        // buffer is committed, so the tracked size must keep the previous
+        // value for set_viewport_source_clamped in wl_present to work.
         wl_display_flush(g_wl.display);
     }
 }
@@ -1238,9 +1306,13 @@ static void wl_end_transition_locked() {
     g_wl.expected_w = 0;
     g_wl.expected_h = 0;
     if (g_wl.cef_viewport && g_wl.pending_lw > 0) {
-        wp_viewport_set_source(g_wl.cef_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(g_wl.mpv_pw), wl_fixed_from_int(g_wl.mpv_ph));
+        // Do NOT call wp_viewport_set_source here: the committed buffer may
+        // still be the pre-transition (smaller) size, and KWin validates
+        // set_source against the committed buffer at call time.  When called
+        // from wl_present Phase 3, the set_viewport_source_clamped call that
+        // follows immediately handles the source safely (using -1 when
+        // needed).  When called from on_mpv_configure or wl_set_fullscreen,
+        // the next wl_present call will set the correct source.
         wp_viewport_set_destination(g_wl.cef_viewport, g_wl.pending_lw, g_wl.pending_lh);
         g_wl.pending_lw = 0;
         g_wl.pending_lh = 0;
