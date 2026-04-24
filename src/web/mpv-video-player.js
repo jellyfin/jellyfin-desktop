@@ -158,7 +158,7 @@
                 }
 
                 // Convert subtitle index to relative
-                let subParam = MpvPlayerCore.TRACK_DISABLE;
+                let subParam = MpvPlayerCore.TRACK_AUTO;
                 let externalSubUrl = null;
                 if (defaultSubIdx >= 0) {
                     const subStream = getStreamByIndex(streams, defaultSubIdx);
@@ -168,6 +168,8 @@
                         const relIdx = getRelativeIndexByType(streams, defaultSubIdx, 'Subtitle');
                         subParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
                     }
+                } else {
+                    subParam = MpvPlayerCore.TRACK_DISABLE;
                 }
 
                 window.api.player.setAspectMode(this.getAspectRatio());
