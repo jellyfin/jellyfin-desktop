@@ -410,7 +410,7 @@
         },
         supports(command) {
             const features = [
-                'filedownload', 'displaylanguage', 'htmlaudioautoplay',
+                'fileinput', 'filedownload', 'displaylanguage', 'htmlaudioautoplay',
                 'htmlvideoautoplay', 'externallinks', 'multiserver',
                 'fullscreenchange', 'remotevideo', 'displaymode',
                 'exitmenu', 'clientsettings'
