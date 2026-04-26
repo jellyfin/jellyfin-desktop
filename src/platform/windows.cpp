@@ -89,6 +89,10 @@ static WinState g_win;
 static void win_begin_transition_locked();
 static void win_end_transition_locked();
 
+static bool win_is_fullscreen_style(LONG_PTR style) {
+    return (style & WS_CAPTION) == 0 && (style & WS_THICKFRAME) == 0;
+}
+
 // =====================================================================
 // D3D11 / DXGI / DComp initialization
 // =====================================================================
@@ -604,9 +608,9 @@ static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
                     int lw = static_cast<int>(pw / scale);
                     int lh = static_cast<int>(ph / scale);
 
-                    // Detect fullscreen change via window style
+                    // Detect fullscreen via style bits mpv uses on Windows.
                     LONG_PTR style = GetWindowLongPtr(g_win.mpv_hwnd, GWL_STYLE);
-                    bool fs = !(style & WS_OVERLAPPEDWINDOW);
+                    bool fs = win_is_fullscreen_style(style);
 
                     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
                     if (fs != g_win.was_fullscreen) {
@@ -659,7 +663,7 @@ static bool win_init(mpv_handle* mpv) {
     // doesn't start a spurious transition if already fullscreen.
     {
         LONG_PTR style = GetWindowLongPtr(g_win.mpv_hwnd, GWL_STYLE);
-        g_win.was_fullscreen = !(style & WS_OVERLAPPEDWINDOW);
+        g_win.was_fullscreen = win_is_fullscreen_style(style);
     }
 
     // Install hook to monitor mpv's HWND for size/fullscreen/close
