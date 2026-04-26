@@ -15,6 +15,8 @@ struct Platform {
     DisplayBackend display{};
 
     void (*early_init)();
+    bool (*prepare_window)(int w, int h, int x, int y, bool maximized);
+    int64_t (*native_window_id)();
     bool (*init)(mpv_handle* mpv);
     void (*cleanup)();
 
@@ -144,6 +146,12 @@ Platform make_macos_platform();
 Platform make_wayland_platform();
 #ifdef HAVE_X11
 Platform make_x11_platform();
+// Toggle between self-composite mode (X11 self-composites mpv + CEF into
+// one app-owned window via vo=libmpv) and overlay mode (mpv renders
+// natively into our parent window via wid, and a separate ARGB sibling
+// window carries the CEF composite above it). Must be called before
+// prepare_window / init.
+void x11_set_self_composite(bool enabled);
 #endif
 #endif
 

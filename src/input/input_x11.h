@@ -12,6 +12,10 @@ void init(xcb_connection_t* conn, xcb_screen_t* screen, xcb_window_t window);
 // Fires when mpv's window moves or resizes (for overlay repositioning).
 void set_configure_callback(std::function<void()> cb);
 
+// Register a callback for parent/child structure map state changes.
+// `mapped` is false for UnmapNotify and true for MapNotify.
+void set_map_callback(std::function<void(xcb_window_t window, bool mapped)> cb);
+
 // Register a callback invoked when shutdown is detected (window destroyed,
 // or shutdown event fired). Called from the input thread before it exits.
 void set_shutdown_callback(std::function<void()> cb);

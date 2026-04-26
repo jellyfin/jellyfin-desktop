@@ -441,6 +441,7 @@ int main(int argc, char* argv[]) {
     bool disable_gpu_compositing = false;
     std::string ozone_platform;
     std::string platform_override;
+    bool x11_self_composite_flag = false;
     std::vector<std::string> player_playlist;
     int remote_debugging_port = 0;
     const char* log_level_str = nullptr;
@@ -473,6 +474,8 @@ int main(int argc, char* argv[]) {
                    "  --ozone-platform <plat>   CEF ozone platform (default: follows --platform)\n"
 #ifdef HAVE_X11
                    "  --platform <wayland|x11>  Force display backend (Linux only)\n"
+                   "  --x11-self-composite      Use SW self-composite (vo=libmpv) instead of\n"
+                   "                              the default ARGB overlay over native mpv\n"
 #endif
                    "  --player                  Standalone player mode\n");
             return 0;
@@ -515,6 +518,8 @@ int main(int argc, char* argv[]) {
             platform_override = argv[++i];
         } else if (strncmp(argv[i], "--platform=", 11) == 0) {
             platform_override = argv[i] + 11;
+        } else if (strcmp(argv[i], "--x11-self-composite") == 0) {
+            x11_self_composite_flag = true;
         } else if (strcmp(argv[i], "--player") == 0) {
             player_mode = true;
         } else if (argv[i][0] != '-') {
@@ -619,10 +624,21 @@ int main(int argc, char* argv[]) {
 
     g_mpv = MpvHandle::Create(g_platform.display);
     if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
+    bool x11_self_composite =
+        g_platform.display == DisplayBackend::X11 && x11_self_composite_flag;
+#ifdef HAVE_X11
+    if (g_platform.display == DisplayBackend::X11)
+        x11_set_self_composite(x11_self_composite);
+#endif
 
     // libmpv defaults config=no (opposite of the mpv CLI); enable it so
     // users' $MPV_HOME/mpv.conf is loaded.
     g_mpv.SetOptionString("config", "yes");
+    if (x11_self_composite) {
+        g_mpv.SetOptionString("vo", "libmpv");
+        g_mpv.SetOptionString("force-window", "no");
+        g_mpv.SetOptionString("input-keyboard", "no");
+    }
 
     g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
@@ -633,6 +649,8 @@ int main(int argc, char* argv[]) {
     // physical pixels here. If the live display scale differs from what
     // these pixels were computed against, the post-CEF-init resize block
     // below corrects the window size once display-hidpi-scale is known.
+    int initial_window_w = 0;
+    int initial_window_h = 0;
     {
         using WG = Settings::WindowGeometry;
         auto saved_geom = Settings::instance().windowGeometry();
@@ -654,9 +672,29 @@ int main(int argc, char* argv[]) {
             geom_str += "+" + std::to_string(x) + "+" + std::to_string(y);
             g_mpv.SetOptionString("force-window-position", "yes");
         }
+        bool prepared_native_window = false;
+        if (g_platform.prepare_window)
+            prepared_native_window = g_platform.prepare_window(w, h, x, y, saved_geom.maximized);
+        if (g_platform.display == DisplayBackend::X11 && !prepared_native_window) {
+            LOG_ERROR(LOG_MAIN, "Failed to prepare X11 window");
+            mpv_destroy(g_mpv.Get());
+            g_mpv.Set(nullptr);
+            shutdownLogging();
+            return 1;
+        }
+        if (prepared_native_window && g_platform.native_window_id && !x11_self_composite) {
+            int64_t wid = g_platform.native_window_id();
+            if (wid > 0) {
+                g_mpv.SetOptionInt("wid", wid);
+                g_mpv.SetOptionString("x11-name", "org.jellyfin.JellyfinDesktop");
+            }
+        }
+
         g_mpv.SetOptionString("geometry", geom_str);
         if (saved_geom.maximized)
             g_mpv.SetOptionString("window-maximized", "yes");
+        initial_window_w = w;
+        initial_window_h = h;
     }
 
     if (!audio_passthrough_str.empty()) {
@@ -690,7 +728,7 @@ int main(int argc, char* argv[]) {
     observe_properties(g_mpv);
 
     // Load file if in player mode (before init so it's in the playlist)
-    if (player_mode) {
+    if (player_mode && !x11_self_composite) {
         g_mpv.LoadFile(player_playlist[0], {});
     }
 
@@ -715,8 +753,8 @@ int main(int argc, char* argv[]) {
     // That's a struct read of the event payload — no mpv_get_property call —
     // so it's safe on macOS's main thread during VO init, where a synchronous
     // property read can deadlock against core_thread's DispatchQueue.main.sync.
-    LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
-    int64_t mw = 0, mh = 0;
+    int64_t mw = initial_window_w;
+    int64_t mh = initial_window_h;
     // Route every PROPERTY_CHANGE through digest_property, not just osd-dims.
     // Side effect: seeds the atomics (s_osd_pw/ph, s_fullscreen,
     // s_display_scale, ...) as mpv fires initial-value events, so platform
@@ -733,32 +771,38 @@ int main(int argc, char* argv[]) {
         return true;
     };
 
+    if (!x11_self_composite) {
+        LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
 #ifdef __APPLE__
-    while (true) {
-        g_platform.pump();
-        mpv_event* ev = g_mpv.WaitEvent(0);
-        if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
-        if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
-            continue;
+        while (true) {
+            g_platform.pump();
+            mpv_event* ev = g_mpv.WaitEvent(0);
+            if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
+            if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
+                log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
+                continue;
+            }
+            if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
+                g_mpv.TerminateDestroy(); return 0;
+            }
+            if (try_consume_osd_dims(ev)) break;
         }
-        if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
-            g_mpv.TerminateDestroy(); return 0;
-        }
-        if (try_consume_osd_dims(ev)) break;
-    }
 #else
-    while (true) {
-        mpv_event* ev = g_mpv.WaitEvent(1.0);
-        if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
-            continue;
+        while (true) {
+            mpv_event* ev = g_mpv.WaitEvent(1.0);
+            if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
+                log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
+                continue;
+            }
+            if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
+            if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
+            if (try_consume_osd_dims(ev)) break;
         }
-        if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
-        if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
-        if (try_consume_osd_dims(ev)) break;
-    }
 #endif
+    } else {
+        LOG_INFO(LOG_MAIN, "Using X11 self-compositor window {}x{}", mw, mh);
+        mpv::set_window_pixels(static_cast<int>(mw), static_cast<int>(mh));
+    }
 
     // --- Platform init ---
     // Resolve effective ozone platform so CEF clients can check it.
@@ -773,6 +817,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     LOG_INFO(LOG_MAIN, "Platform init ok");
+
+    if (player_mode && x11_self_composite) {
+        g_mpv.LoadFile(player_playlist[0], {});
+    }
 
     // --- CEF init ---
     bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;

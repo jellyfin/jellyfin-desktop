@@ -55,6 +55,7 @@ struct State {
 
     // Configure callback (for overlay repositioning)
     std::function<void()> configure_cb;
+    std::function<void(xcb_window_t, bool)> map_cb;
     // Shutdown callback (hide overlays before input thread exits)
     std::function<void()> shutdown_cb;
 };
@@ -349,9 +350,27 @@ void input_thread_func() {
             case XCB_CONFIGURE_NOTIFY:
                 if (g.configure_cb) g.configure_cb();
                 break;
+            case XCB_MAP_NOTIFY:
+                if (g.map_cb) {
+                    auto* map_ev = reinterpret_cast<xcb_map_notify_event_t*>(ev);
+                    g.map_cb(map_ev->window, true);
+                }
+                break;
+            case XCB_UNMAP_NOTIFY:
+                if (g.map_cb) {
+                    auto* unmap_ev = reinterpret_cast<xcb_unmap_notify_event_t*>(ev);
+                    g.map_cb(unmap_ev->window, false);
+                }
+                break;
             case XCB_DESTROY_NOTIFY:
-                // mpv's window was destroyed — shut down
-                initiate_shutdown();
+                {
+                    auto* destroy_ev = reinterpret_cast<xcb_destroy_notify_event_t*>(ev);
+                    // With root SubstructureNotify selected, unrelated windows
+                    // can report DestroyNotify here. Only mpv's input window
+                    // means the app should shut down.
+                    if (destroy_ev->window == g.window)
+                        initiate_shutdown();
+                }
                 break;
             case XCB_CLIENT_MESSAGE:
                 // WM_DELETE_WINDOW on our overlay windows (WM targets
@@ -389,6 +408,10 @@ void init(xcb_connection_t* conn, xcb_screen_t* screen, xcb_window_t window) {
 
 void set_configure_callback(std::function<void()> cb) {
     g.configure_cb = std::move(cb);
+}
+
+void set_map_callback(std::function<void(xcb_window_t, bool)> cb) {
+    g.map_cb = std::move(cb);
 }
 
 void set_shutdown_callback(std::function<void()> cb) {

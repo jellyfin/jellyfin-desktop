@@ -26,8 +26,8 @@ private:
     IMPLEMENT_REFCOUNTING(FnTask);
 };
 
-int safe_pw() { return mpv::osd_pw() > 0 ? mpv::osd_pw() : 1; }
-int safe_ph() { return mpv::osd_ph() > 0 ? mpv::osd_ph() : 1; }
+int safe_pw() { int pw = mpv::window_pw(); return pw > 0 ? pw : 1; }
+int safe_ph() { int ph = mpv::window_ph(); return ph > 0 ? ph : 1; }
 
 // Derive logical dimensions from physical pixels and the reported display
 // scale. Falls back to 1:1 (scale=1) when the scale hasn't been observed yet.
