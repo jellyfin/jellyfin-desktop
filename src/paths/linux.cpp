@@ -28,4 +28,9 @@ std::string getLogDir() {
     return dir;
 }
 
+void openMpvHome() {
+    std::string command = "xdg-open '" + getMpvHome() + "'";
+    system(command.c_str());
+}
+
 }  // namespace paths

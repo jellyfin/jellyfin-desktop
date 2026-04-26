@@ -18,6 +18,7 @@ inline constexpr char kAppDirName[] = "jellyfin-desktop";
 inline constexpr char kLogFileName[] = "jellyfin-desktop.log";
 
 void ensureDir(const std::string& path);
+void openMpvHome();
 
 // Returns std::getenv(var) if set and non-empty, else fallback.
 std::string envOr(const char* var, std::string_view fallback);
