@@ -11,6 +11,7 @@
 #include "../titlebar_color.h"
 #include "../input/dispatch.h"
 #include "../cjson/cJSON.h"
+#include "../paths/paths.h"
 
 extern void update_idle_inhibit();
 
@@ -83,7 +84,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "playerSetVolume", "playerSetMuted", "playerSetSpeed",
         "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
         "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive",
-        "saveServerUrl",
+        "openConfigDir", "saveServerUrl",
         "notifyMetadata", "notifyPosition", "notifySeek",
         "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
         "notifyRateChange",
@@ -231,6 +232,9 @@ bool WebBrowser::handleMessage(const std::string& name,
         initiate_shutdown();
     } else if (name == "openAbout") {
         AboutBrowser::open();
+    } else if (name == "openConfigDir") {
+        LOG_INFO(LOG_CEF, "Openning mpv home directory");
+        paths::openMpvHome();
     } else {
         return false;
     }

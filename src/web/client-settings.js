@@ -197,6 +197,30 @@
             }
         }
 
+        // Open mpv config button
+        if (jmpInfo.settings.main && jmpInfo.settings.main.userWebClient) {
+            const group = document.createElement('div');
+            group.className = 'verticalSection';
+            form.appendChild(group);
+
+            const sectionHeader = document.createElement('h2');
+            sectionHeader.className = 'sectionTitle';
+            sectionHeader.textContent = 'MPV config';
+            group.appendChild(sectionHeader);
+
+            const btn = document.createElement('button');
+            btn.className = 'raised button-cancel block emby-button';
+            btn.textContent = 'Open mpv config directory';
+            btn.type = 'button';
+            btn.addEventListener('click', () => {
+                if (window.jmpNative && window.jmpNative.openConfigDir) {
+                    console.log('[SETTINGS] called openConfigDir');
+                    window.jmpNative.openConfigDir();
+                }
+            });
+            group.appendChild(btn);
+        }
+
         // Reset server button
         if (jmpInfo.settings.main && jmpInfo.settings.main.userWebClient) {
             const group = document.createElement('div');
