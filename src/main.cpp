@@ -392,7 +392,7 @@ int main(int argc, char* argv[]) {
                    "  -v, --version             Show version\n"
                    "  --log-level <level>       trace|debug|info|warn|error\n"
                    "  --log-file <path>         Write logs to file ('' to disable)\n"
-                   "  --hwdec <mode>            Hardware decoding mode (default: auto)\n"
+                   "  --hwdec <mode>            Hardware decoding mode (default: %s)\n"
                    "  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd\n"
                    "  --audio-exclusive         Exclusive audio output\n"
                    "  --audio-channels <layout> e.g. stereo, 5.1, 7.1\n"
@@ -402,7 +402,8 @@ int main(int argc, char* argv[]) {
 #ifdef HAVE_X11
                    "  --platform <wayland|x11>  Force display backend (Linux only)\n"
 #endif
-                   "  --player                  Standalone player mode\n");
+                   "  --player                  Standalone player mode\n",
+                   kHwdecDefault);
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             printf("jellyfin-desktop %s\nCEF %s\n", APP_VERSION_STRING, CEF_VERSION);
