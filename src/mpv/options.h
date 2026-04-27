@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-constexpr const char* kHwdecDefault = "auto";
+constexpr const char* kHwdecDefault = "no";
 
 inline std::vector<std::string> hwdecOptions() {
     return {
