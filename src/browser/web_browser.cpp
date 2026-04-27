@@ -1,5 +1,5 @@
 #include "web_browser.h"
-#include "about_browser.h"
+#include "app_menu.h"
 #include "browsers.h"
 #include <cmath>
 #include "../common.h"
@@ -128,6 +128,8 @@ WebBrowser::WebBrowser(RenderTarget target, int w, int h, int pw, int ph)
         if (!g_overlay_browser)
             input::set_active_browser(browser);
     });
+    client_->setContextMenuBuilder(&app_menu::build);
+    client_->setContextMenuDispatcher(&app_menu::dispatch);
 }
 
 bool WebBrowser::handleMessage(const std::string& name,
@@ -230,8 +232,6 @@ bool WebBrowser::handleMessage(const std::string& name,
         g_platform.set_cursor(args->GetBool(0) ? CT_POINTER : CT_NONE);
     } else if (name == "appExit") {
         initiate_shutdown();
-    } else if (name == "openAbout") {
-        AboutBrowser::open();
     } else if (name == "openConfigDir") {
         LOG_INFO(LOG_CEF, "Openning mpv home directory");
         paths::openMpvHome();

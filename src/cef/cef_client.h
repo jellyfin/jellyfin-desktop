@@ -26,6 +26,11 @@ using CreatedCallback = std::function<void(CefRefPtr<CefBrowser>)>;
 // Callback invoked just before the browser is destroyed (OnBeforeClose).
 using BeforeCloseCallback = std::function<void()>;
 
+// Callbacks for app-level context menu items. CefLayer is policy-free: it
+// asks the app to append items and to dispatch unknown command IDs.
+using ContextMenuBuilder = std::function<void(CefRefPtr<CefMenuModel>)>;
+using ContextMenuDispatcher = std::function<bool(int command_id)>;
+
 // Render target callbacks — decouple the client from the platform layer.
 struct RenderTarget {
     void (*present)(const CefAcceleratedPaintInfo& info);
@@ -49,6 +54,8 @@ public:
     void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
     void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
     void setBeforeCloseCallback(BeforeCloseCallback cb) { on_before_close_ = std::move(cb); }
+    void setContextMenuBuilder(ContextMenuBuilder cb) { context_menu_builder_ = std::move(cb); }
+    void setContextMenuDispatcher(ContextMenuDispatcher cb) { context_menu_dispatcher_ = std::move(cb); }
 
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -161,6 +168,8 @@ private:
     MessageHandler message_handler_;
     CreatedCallback on_after_created_;
     BeforeCloseCallback on_before_close_;
+    ContextMenuBuilder context_menu_builder_;
+    ContextMenuDispatcher context_menu_dispatcher_;
     CefWindowInfo window_info_;
     CefBrowserSettings browser_settings_;
     CefRefPtr<CefDictionaryValue> extra_info_;

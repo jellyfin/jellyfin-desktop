@@ -1,4 +1,5 @@
 #include "about_browser.h"
+#include "app_menu.h"
 #include "browsers.h"
 #include "../common.h"
 #include "../mpv/event.h"
@@ -78,6 +79,8 @@ AboutBrowser::AboutBrowser()
     client_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
         input::set_active_browser(browser);
     });
+    client_->setContextMenuBuilder(&app_menu::build);
+    client_->setContextMenuDispatcher(&app_menu::dispatch);
     client_->setBeforeCloseCallback([]() {
         // Null the global now so "About" can be re-opened; defer the actual
         // delete so the CefLayer's OnBeforeClose lambda is not torn down
