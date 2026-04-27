@@ -514,6 +514,7 @@ if(WIN32)
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
         src/browser/about_browser.cpp
+        src/browser/app_menu.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/cjson/cJSON.c
@@ -534,6 +535,7 @@ else()
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
         src/browser/about_browser.cpp
+        src/browser/app_menu.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/single_instance.cpp

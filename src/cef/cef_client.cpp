@@ -398,12 +398,6 @@ void CefLayer::execJs(const std::string& js) {
         browser_->GetMainFrame()->ExecuteJavaScript(js, "", 0);
 }
 
-enum {
-    MENU_ID_TOGGLE_FULLSCREEN = MENU_ID_USER_FIRST,
-    MENU_ID_ABOUT,
-    MENU_ID_EXIT,
-};
-
 bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
                                         CefProcessId, CefRefPtr<CefProcessMessage> message) {
     auto name = message->GetName().ToString();
@@ -445,18 +439,9 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
             case MENU_ID_COPY: frame->Copy(); break;
             case MENU_ID_PASTE: do_paste(browser_, frame); break;
             case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
-            case MENU_ID_TOGGLE_FULLSCREEN:
-            case MENU_ID_ABOUT:
-            case MENU_ID_EXIT: {
-                const char* name = "appExit";
-                if (cmd == MENU_ID_TOGGLE_FULLSCREEN) name = "toggleFullscreen";
-                else if (cmd == MENU_ID_ABOUT) name = "openAbout";
-                auto msg = CefProcessMessage::Create(name);
-                if (message_handler_)
-                    message_handler_(msg->GetName().ToString(), msg->GetArgumentList(), browser);
+            default:
+                if (context_menu_dispatcher_) context_menu_dispatcher_(cmd);
                 break;
-            }
-            default: break;
             }
         }
         return true;
@@ -489,10 +474,10 @@ void CefLayer::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
     while (model->GetCount() > 0 &&
            model->GetTypeAt(model->GetCount() - 1) == MENUITEMTYPE_SEPARATOR)
         model->RemoveAt(model->GetCount() - 1);
-    model->AddSeparator();
-    model->AddItem(MENU_ID_TOGGLE_FULLSCREEN, "Toggle Fullscreen");
-    model->AddItem(MENU_ID_ABOUT, "About");
-    model->AddItem(MENU_ID_EXIT, "Exit");
+    if (context_menu_builder_) {
+        model->AddSeparator();
+        context_menu_builder_(model);
+    }
 }
 
 bool CefLayer::RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
