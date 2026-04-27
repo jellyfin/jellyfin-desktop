@@ -14,6 +14,13 @@ namespace {
 std::mutex g_active_mtx;
 CefRefPtr<CefBrowser> g_active;  // guarded by g_active_mtx
 
+std::mutex g_last_pos_mtx;
+struct LastPos {
+    bool     valid = false;
+    int      x = 0, y = 0;
+    uint32_t modifiers = 0;
+} g_last_pos;  // guarded by g_last_pos_mtx
+
 cef_mouse_button_type_t to_cef_button(MouseButton b) {
     switch (b) {
     case MouseButton::Left:   return MBT_LEFT;
@@ -42,6 +49,23 @@ void set_active_browser(CefRefPtr<CefBrowser> browser) {
              static_cast<void*>(prev.get()), static_cast<void*>(browser.get()));
     if (prev)    prev->GetHost()->SetFocus(false);
     if (browser) browser->GetHost()->SetFocus(true);
+
+    // Leave-then-move forces the renderer to re-emit OnCursorChange even
+    // when its cached cursor matches the new hit-test result; otherwise the
+    // platform cursor stays on whatever the previous active browser set.
+    if (browser) {
+        LastPos pos;
+        {
+            std::lock_guard<std::mutex> lk(g_last_pos_mtx);
+            pos = g_last_pos;
+        }
+        if (pos.valid) {
+            CefMouseEvent me{};
+            me.x = pos.x; me.y = pos.y; me.modifiers = pos.modifiers;
+            browser->GetHost()->SendMouseMoveEvent(me, true);
+            browser->GetHost()->SendMouseMoveEvent(me, false);
+        }
+    }
 }
 
 void dispatch_key(const KeyEvent& e) {
@@ -87,6 +111,17 @@ void dispatch_mouse_button(const MouseButtonEvent& e) {
 }
 
 void dispatch_mouse_move(const MouseMoveEvent& e) {
+    {
+        std::lock_guard<std::mutex> lk(g_last_pos_mtx);
+        if (e.leave) {
+            g_last_pos.valid = false;
+        } else {
+            g_last_pos.valid = true;
+            g_last_pos.x = e.x;
+            g_last_pos.y = e.y;
+            g_last_pos.modifiers = e.modifiers;
+        }
+    }
     auto b = active_browser();
     if (!b) return;
     CefMouseEvent me{};
