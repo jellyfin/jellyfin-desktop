@@ -1,5 +1,6 @@
 (function() {
     console.log('[Media] Installing native shim...');
+    const _displayBackend = '__DISPLAY_BACKEND__';
 
     // Fullscreen state tracking via HTML5 Fullscreen API
     window._isFullscreen = false;
@@ -13,6 +14,9 @@
         const player = window._mpvVideoPlayerInstance;
         if (player && player.events) {
             player.events.trigger(player, 'fullscreenchange');
+        }
+        if (typeof window._updateNativeWindowControlsVisibility === 'function') {
+            window._updateNativeWindowControlsVisibility();
         }
     });
 
@@ -70,6 +74,46 @@
             console.log('[Media] [Signal] ' + name + ' disconnected, now has', callbacks.length, 'listeners');
         };
         return signal;
+    }
+
+    function installLinuxWaylandWindowControls() {
+        if (_displayBackend !== 'wayland') return;
+        if (!window.jmpNative) return;
+
+        const controls = document.createElement('div');
+        controls.id = 'jfd-wayland-controls';
+
+        const makeButton = (label, title, onClick) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'jfd-wayland-control-btn';
+            btn.textContent = label;
+            btn.title = title;
+            btn.setAttribute('aria-label', title);
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClick();
+            });
+            return btn;
+        };
+
+        controls.appendChild(makeButton('_', 'Minimize', () => {
+            if (window.jmpNative.windowMinimize) window.jmpNative.windowMinimize();
+        }));
+        controls.appendChild(makeButton('[ ]', 'Maximize', () => {
+            if (window.jmpNative.windowToggleMaximize) window.jmpNative.windowToggleMaximize();
+        }));
+        controls.appendChild(makeButton('X', 'Close', () => {
+            if (window.jmpNative.appExit) window.jmpNative.appExit();
+        }));
+
+        document.body.appendChild(controls);
+
+        window._updateNativeWindowControlsVisibility = () => {
+            controls.style.display = window._isFullscreen ? 'none' : 'flex';
+        };
+        window._updateNativeWindowControlsVisibility();
     }
 
     // Saved settings from native (injected as placeholder, replaced at load time)
@@ -309,6 +353,9 @@
     };
     window._nativeFullscreenChanged = function(fullscreen) {
         window._isFullscreen = fullscreen;
+        if (typeof window._updateNativeWindowControlsVisibility === 'function') {
+            window._updateNativeWindowControlsVisibility();
+        }
         const player = window._mpvVideoPlayerInstance;
         if (player && player.events) {
             player.events.trigger(player, 'fullscreenchange');
@@ -478,8 +525,16 @@
             });
         }
 
+        if (_displayBackend === 'wayland') {
+            css += '\n#jfd-wayland-controls { position: fixed; top: 8px; right: 8px; z-index: 2147483647; display: flex; gap: 6px; }';
+            css += '\n#jfd-wayland-controls .jfd-wayland-control-btn { min-width: 28px; height: 24px; padding: 0 6px; border: 1px solid rgba(255,255,255,0.35); border-radius: 6px; background: rgba(20,20,20,0.75); color: #fff; font: 600 12px/1 sans-serif; cursor: pointer; }';
+            css += '\n#jfd-wayland-controls .jfd-wayland-control-btn:hover { background: rgba(255,255,255,0.2); }';
+            css += '\n#jfd-wayland-controls .jfd-wayland-control-btn:active { background: rgba(255,255,255,0.3); }';
+        }
+
         style.textContent = css;
         document.head.appendChild(style);
+        installLinuxWaylandWindowControls();
 
         // Titlebar black during video playback, restore theme color when done
         window.api.player.playing.connect(() => {

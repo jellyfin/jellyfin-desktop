@@ -508,6 +508,9 @@ int main(int argc, char* argv[]) {
         }
 #endif
         g_platform = make_platform(backend);
+        setenv("JFD_DISPLAY_BACKEND",
+               g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11",
+               1);
     }
     LOG_INFO(LOG_MAIN, "Display backend: {}",
              g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11");

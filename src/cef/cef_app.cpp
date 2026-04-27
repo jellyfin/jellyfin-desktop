@@ -12,6 +12,7 @@
 #include "include/cef_v8.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -20,8 +21,6 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#else
-#include <cstdlib>
 #endif
 
 #ifdef __APPLE__
@@ -405,6 +404,8 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
         size_t pos = code.find(ph);
         if (pos != std::string::npos) code.replace(pos, ph.length(), value);
     };
+    const char* display_backend = getenv("JFD_DISPLAY_BACKEND");
+    replace_first("__DISPLAY_BACKEND__", display_backend ? display_backend : "");
     replace_first("__SERVER_URL__", Settings::instance().serverUrl());
     replace_first("__SETTINGS_JSON__", Settings::instance().cliSettingsJson());
 

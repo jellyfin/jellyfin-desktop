@@ -90,6 +90,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "notifyRateChange",
         "appExit", "setSettingValue", "themeColor",
         "setOsdVisible", "setCursorVisible", "toggleFullscreen",
+        "windowMinimize", "windowToggleMaximize",
         "menuItemSelected", "menuDismissed",
     };
     static const char* const kScripts[] = {
@@ -187,6 +188,10 @@ bool WebBrowser::handleMessage(const std::string& name,
         }
     } else if (name == "toggleFullscreen") {
         g_platform.toggle_fullscreen();
+    } else if (name == "windowMinimize") {
+        g_mpv.SetWindowMinimized(true);
+    } else if (name == "windowToggleMaximize") {
+        g_mpv.SetWindowMaximized(!mpv::window_maximized());
     } else if (name == "saveServerUrl") {
         std::string url = args->GetString(0).ToString();
         Settings::instance().setServerUrl(url);
