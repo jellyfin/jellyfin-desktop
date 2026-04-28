@@ -59,6 +59,9 @@
             this._currentPlayOptions = undefined;
             this._endedPending = false;
 
+            // Support jellyfin-web v10.10.7
+            this._currentAspectRatio = undefined;
+
             // Set up video-specific event handlers
             this._core.handlers.onPlaying = () => {
                 if (!this._started) {
@@ -262,6 +265,9 @@
             this._core.stopTimeUpdateTimer();
             this.removeMediaDialog();
             this._core.disconnectSignals();
+
+            // Support jellyfin-web v10.10.7
+            this._currentAspectRatio = undefined;
         }
 
         createMediaElement(options) {
@@ -356,9 +362,21 @@
                 { id: 'fill',  name: this.globalize.translate('AspectRatioFill') }
             ];
         }
-        getAspectRatio() { return this.appSettings.aspectRatio() || 'auto'; }
+        getAspectRatio() {
+            const aspectRatio = typeof this.appSettings.aspectRatio === 'function'
+                ? this.appSettings.aspectRatio()
+                // Support jellyfin-web v10.10.7
+                : this._currentAspectRatio;
+
+            return aspectRatio || 'auto';
+        }
         setAspectRatio(value) {
-            this.appSettings.aspectRatio(value);
+            if (typeof this.appSettings.aspectRatio === 'function') {
+                this.appSettings.aspectRatio(value);
+            } else {
+                // Support jellyfin-web v10.10.7
+                this._currentAspectRatio = value;
+            }
             window.api.player.setAspectMode(value);
         }
     }
