@@ -575,20 +575,35 @@ static float win_get_scale() {
 // Input thread: transparent child HWND -> CEF events
 // =====================================================================
 
+#include "include/cef_task.h"
+
+namespace {
+class FnTask : public CefTask {
+public:
+    explicit FnTask(std::function<void()> fn) : fn_(std::move(fn)) {}
+    void Execute() override { if (fn_) fn_(); }
+private:
+    std::function<void()> fn_;
+    IMPLEMENT_REFCOUNTING(FnTask);
+};
+}
+
 static void win_set_idle_inhibit(IdleInhibitLevel level) {
-    UINT flags = ES_CONTINUOUS;
-    switch (level) {
-    case IdleInhibitLevel::Display:
-        flags |= ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED;
-        break;
-    case IdleInhibitLevel::System:
-        flags |= ES_SYSTEM_REQUIRED;
-        break;
-    case IdleInhibitLevel::None:
-        // ES_CONTINUOUS alone releases the inhibit
-        break;
-    }
-    SetThreadExecutionState(flags);
+    CefPostTask(TID_UI, new FnTask([level]() {
+        UINT flags = ES_CONTINUOUS;
+        switch (level) {
+        case IdleInhibitLevel::Display:
+            flags |= ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED;
+            break;
+        case IdleInhibitLevel::System:
+            flags |= ES_SYSTEM_REQUIRED;
+            break;
+        case IdleInhibitLevel::None:
+            // ES_CONTINUOUS alone releases the inhibit
+            break;
+        }
+        SetThreadExecutionState(flags);
+    }));
 }
 
 // Monitor mpv's HWND for size/fullscreen changes.
