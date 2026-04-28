@@ -6,7 +6,7 @@ add_executable(jellyfin_api_test
 
 target_include_directories(jellyfin_api_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/third_party/doctest
+    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
 )
 
 add_test(NAME jellyfin_api_test COMMAND jellyfin_api_test)
