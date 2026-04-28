@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 REPO = "doctest/doctest"
 VENDOR_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "third_party" / "doctest"
 VERSION_FILE = VENDOR_DIR / "VERSION"
-HEADER_FILE = VENDOR_DIR / "doctest.h"
+HEADER_FILE = VENDOR_DIR / "include" / "doctest.h"
 
 
 def latest_tag() -> str:
