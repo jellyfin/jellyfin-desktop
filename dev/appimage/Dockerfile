@@ -118,6 +118,9 @@ RUN find /AppDir/usr/lib -name '*.a' -delete && \
            /AppDir/usr/lib/libgallium* \
            /AppDir/usr/lib/dri_gbm.so* \
            /AppDir/usr/lib/gbm/dri_gbm.so* \
+           /AppDir/usr/lib/udev* \
+           /AppDir/usr/lib/guile* \
+           /AppDir/usr/lib/git* \
            /AppDir/usr/share/doc \
            /AppDir/usr/share/man \
            /AppDir/usr/share/info \
