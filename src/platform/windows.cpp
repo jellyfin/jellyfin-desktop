@@ -79,6 +79,8 @@ struct WinState {
     int pending_lw = 0, pending_lh = 0;
     bool transitioning = false;
     bool was_fullscreen = false;
+    bool was_minimized = false;
+    bool restore_maximized_on_unfullscreen = false;
 
     // Input thread (body lives in input::windows::run_input_thread)
     std::thread input_thread;
@@ -536,22 +538,70 @@ static void win_set_expected_size(int w, int h) {
 
 static void win_set_fullscreen(bool fullscreen) {
     if (!g_mpv.IsValid()) return;
-    if (mpv::fullscreen() == fullscreen) return;
-    {
+    if (mpv::fullscreen() == fullscreen) {
+        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+        if (g_win.transitioning && fullscreen == g_win.was_fullscreen)
+            win_end_transition_locked();
+        return;
+    }
+
+    if (fullscreen) {
+        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+        g_win.restore_maximized_on_unfullscreen = IsZoomed(g_win.mpv_hwnd) != 0;
+    }
+
+    bool should_restore_maximized = false;
+    if (!fullscreen) {
+        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+        should_restore_maximized = g_win.restore_maximized_on_unfullscreen;
+        g_win.restore_maximized_on_unfullscreen = false;
+    }
+
+    bool is_minimized_now = IsMinimized(g_win.mpv_hwnd) != 0;
+    if (!is_minimized_now) {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
         win_begin_transition_locked();
     }
+
+    if (fullscreen)
+        g_mpv.SetWindowMinimized(false);
+
     g_mpv.SetFullscreen(fullscreen);
+
+    if (!fullscreen && should_restore_maximized)
+        g_mpv.SetWindowMaximized(true);
 }
 
 static void win_toggle_fullscreen() {
-    {
+    if (!g_mpv.IsValid()) return;
+    bool target_fullscreen = !mpv::fullscreen();
+
+    if (target_fullscreen) {
+        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+        g_win.restore_maximized_on_unfullscreen = IsZoomed(g_win.mpv_hwnd) != 0;
+    }
+
+    bool should_restore_maximized = false;
+    if (!target_fullscreen) {
+        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+        should_restore_maximized = g_win.restore_maximized_on_unfullscreen;
+        g_win.restore_maximized_on_unfullscreen = false;
+    }
+
+    // Only start a transition if the window is not minimized.
+    bool is_minimized_now = IsMinimized(g_win.mpv_hwnd) != 0;
+    if (!is_minimized_now) {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
         win_begin_transition_locked();
     }
-    if (g_mpv.IsValid()) {
-        g_mpv.ToggleFullscreen();
-    }
+
+    if (target_fullscreen)
+        g_mpv.SetWindowMinimized(false);
+
+    g_mpv.ToggleFullscreen();
+
+    if (!target_fullscreen && should_restore_maximized)
+        g_mpv.SetWindowMaximized(true);
 }
 
 // =====================================================================
@@ -611,9 +661,15 @@ static HHOOK g_wndproc_hook = nullptr;
 
 static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
     if (nCode >= 0) {
-        auto* msg = reinterpret_cast<CWPSTRUCT*>(lp);
+        auto* msg = reinterpret_cast<CWPRETSTRUCT*>(lp);
         if (msg->hwnd == g_win.mpv_hwnd) {
-            if (msg->message == WM_SIZE && msg->wParam != SIZE_MINIMIZED) {
+            if (msg->message == WM_SIZE) {
+                if (msg->wParam == SIZE_MINIMIZED) {
+                    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+                    g_win.was_minimized = true;
+                    return CallNextHookEx(g_wndproc_hook, nCode, wp, lp);
+                }
+
                 int pw = LOWORD(msg->lParam);
                 int ph = HIWORD(msg->lParam);
                 if (pw > 0 && ph > 0) {
@@ -628,7 +684,13 @@ static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
                     bool fs = win_is_fullscreen_style(style);
 
                     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-                    if (fs != g_win.was_fullscreen) {
+                    bool recovering_from_minimize = g_win.was_minimized;
+                    if (recovering_from_minimize) {
+                        g_win.was_minimized = false;
+                        g_win.was_fullscreen = fs;
+                        if (g_win.transitioning)
+                            win_end_transition_locked();
+                    } else if (fs != g_win.was_fullscreen) {
                         if (!g_win.transitioning)
                             win_begin_transition_locked();
                         else
@@ -683,7 +745,7 @@ static bool win_init(mpv_handle* mpv) {
 
     // Install hook to monitor mpv's HWND for size/fullscreen/close
     DWORD mpv_tid = GetWindowThreadProcessId(g_win.mpv_hwnd, nullptr);
-    g_wndproc_hook = SetWindowsHookEx(WH_CALLWNDPROC, mpv_wndproc_hook,
+    g_wndproc_hook = SetWindowsHookEx(WH_CALLWNDPROCRET, mpv_wndproc_hook,
         nullptr, mpv_tid);
 
     // Start input thread (body lives in input::windows::run_input_thread).
