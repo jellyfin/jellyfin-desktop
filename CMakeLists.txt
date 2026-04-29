@@ -439,8 +439,12 @@ else()
     # Configure meson if not yet configured
     if(NOT EXISTS "${MPV_BUILD_DIR}/build.ninja")
         message(STATUS "Configuring mpv with meson...")
+        set(_MPV_MESON_ENV ${CMAKE_COMMAND} -E env)
+        if(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET)
+            list(APPEND _MPV_MESON_ENV "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+        endif()
         execute_process(
-            COMMAND meson setup build --default-library=shared -Dlibmpv=true
+            COMMAND ${_MPV_MESON_ENV} meson setup build --default-library=shared -Dlibmpv=true
             WORKING_DIRECTORY ${MPV_SOURCE_DIR}
             RESULT_VARIABLE MPV_SETUP_RESULT
         )
@@ -451,7 +455,7 @@ else()
 
     # Custom target that always invokes meson compile (meson handles incremental builds)
     add_custom_target(mpv_build
-        COMMAND meson compile -C build
+        COMMAND ${_MPV_MESON_ENV} meson compile -C build
         WORKING_DIRECTORY ${MPV_SOURCE_DIR}
         COMMENT "Building mpv (meson handles incremental builds)"
         BYPRODUCTS ${MPV_LIBRARY}

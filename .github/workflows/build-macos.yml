@@ -24,6 +24,9 @@ jobs:
           - runner: macos-15-intel
             arch: x86_64
     runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      CMAKE_OSX_DEPLOYMENT_TARGET: '12.0'
 
     steps:
       - name: Checkout
@@ -65,12 +68,19 @@ jobs:
       - name: Configure and build
         run: |
           cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"
           cmake --build build
 
       - name: Create app bundle
         run: |
           cmake --install build --prefix build/output
+
+      - name: Verify Monterey deployment target
+        run: |
+          python3 dev/tools/verify_macos_deployment.py \
+            "build/output/Jellyfin Desktop.app" \
+            --target "$MACOSX_DEPLOYMENT_TARGET"
 
       - name: Create DMG
         run: |
