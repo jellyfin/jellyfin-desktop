@@ -112,6 +112,12 @@ RUN find /AppDir/usr/lib -name '*.a' -delete && \
            /AppDir/usr/lib/bfd-plugins \
            /AppDir/usr/lib/ldscripts \
            /AppDir/usr/lib/systemd \
+           /AppDir/usr/lib/libLLVM* \
+           /AppDir/usr/lib/LLVMgold* \
+           /AppDir/usr/lib/libLTO* \
+           /AppDir/usr/lib/libgallium* \
+           /AppDir/usr/lib/dri_gbm.so* \
+           /AppDir/usr/lib/gbm/dri_gbm.so* \
            /AppDir/usr/share/doc \
            /AppDir/usr/share/man \
            /AppDir/usr/share/info \
