@@ -1,6 +1,7 @@
 # Build
 build/
 dist/
+result/
 
 # Python
 __pycache__/
