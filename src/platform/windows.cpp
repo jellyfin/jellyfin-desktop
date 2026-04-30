@@ -69,6 +69,11 @@ struct WinState {
     int about_sw = 0, about_sh = 0;
     bool about_visible = false;
 
+    IDCompositionVisual* dcomp_popup_visual = nullptr;
+    IDXGISwapChain1* popup_swap_chain = nullptr;
+    int popup_sw = 0, popup_sh = 0;
+    bool popup_visible = false;
+
     // Window state
     float cached_scale = 1.0f;
     int mpv_pw = 0, mpv_ph = 0;  // mpv's current physical size
@@ -154,6 +159,10 @@ static bool init_dcomp() {
     g_win.dcomp_root->AddVisual(g_win.dcomp_overlay_visual, TRUE, g_win.dcomp_main_visual);
     g_win.dcomp_device->CreateVisual(&g_win.dcomp_about_visual);
     g_win.dcomp_root->AddVisual(g_win.dcomp_about_visual, TRUE, g_win.dcomp_overlay_visual);
+
+    g_win.dcomp_device->CreateVisual(&g_win.dcomp_popup_visual);
+    g_win.dcomp_root->AddVisual(g_win.dcomp_popup_visual, TRUE, g_win.dcomp_about_visual);
+
     g_win.dcomp_target->SetRoot(g_win.dcomp_root);
     g_win.dcomp_device->Commit();
 
@@ -768,16 +777,20 @@ static void win_cleanup() {
     if (g_wndproc_hook) { UnhookWindowsHookEx(g_wndproc_hook); g_wndproc_hook = nullptr; }
 
     // Release swap chains
-    if (g_win.main_swap_chain) { g_win.main_swap_chain->Release(); g_win.main_swap_chain = nullptr; }
+    if (g_win.main_swap_chain)    { g_win.main_swap_chain->Release();    g_win.main_swap_chain    = nullptr; }
     if (g_win.overlay_swap_chain) { g_win.overlay_swap_chain->Release(); g_win.overlay_swap_chain = nullptr; }
+    if (g_win.about_swap_chain)   { g_win.about_swap_chain->Release();   g_win.about_swap_chain   = nullptr; }
+    if (g_win.popup_swap_chain)   { g_win.popup_swap_chain->Release();   g_win.popup_swap_chain   = nullptr; }
 
     // Release DComp
-    if (g_win.dcomp_overlay_effect) { g_win.dcomp_overlay_effect->Release(); g_win.dcomp_overlay_effect = nullptr; }
-    if (g_win.dcomp_overlay_visual) { g_win.dcomp_overlay_visual->Release(); g_win.dcomp_overlay_visual = nullptr; }
-    if (g_win.dcomp_main_visual) { g_win.dcomp_main_visual->Release(); g_win.dcomp_main_visual = nullptr; }
-    if (g_win.dcomp_root) { g_win.dcomp_root->Release(); g_win.dcomp_root = nullptr; }
-    if (g_win.dcomp_target) { g_win.dcomp_target->Release(); g_win.dcomp_target = nullptr; }
-    if (g_win.dcomp_device) { g_win.dcomp_device->Release(); g_win.dcomp_device = nullptr; }
+    if (g_win.dcomp_overlay_effect)  { g_win.dcomp_overlay_effect->Release();  g_win.dcomp_overlay_effect  = nullptr; }
+    if (g_win.dcomp_popup_visual)    { g_win.dcomp_popup_visual->Release();    g_win.dcomp_popup_visual    = nullptr; }
+    if (g_win.dcomp_about_visual)    { g_win.dcomp_about_visual->Release();    g_win.dcomp_about_visual    = nullptr; }
+    if (g_win.dcomp_overlay_visual)  { g_win.dcomp_overlay_visual->Release();  g_win.dcomp_overlay_visual  = nullptr; }
+    if (g_win.dcomp_main_visual)     { g_win.dcomp_main_visual->Release();     g_win.dcomp_main_visual     = nullptr; }
+    if (g_win.dcomp_root)            { g_win.dcomp_root->Release();            g_win.dcomp_root            = nullptr; }
+    if (g_win.dcomp_target)          { g_win.dcomp_target->Release();          g_win.dcomp_target          = nullptr; }
+    if (g_win.dcomp_device)          { g_win.dcomp_device->Release();          g_win.dcomp_device          = nullptr; }
 
     // Release D3D11
     if (g_win.dxgi_factory) { g_win.dxgi_factory->Release(); g_win.dxgi_factory = nullptr; }
@@ -868,6 +881,99 @@ static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     if (*y < 0) *y = 0;
 }
 
+static void win_popup_show(int x, int y, int /*lw*/, int /*lh*/) {
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    g_win.popup_visible = true;
+    if (!g_win.dcomp_popup_visual) return;
+    float scale = win_get_scale();
+    g_win.dcomp_popup_visual->SetOffsetX(static_cast<float>(x) * scale);
+    g_win.dcomp_popup_visual->SetOffsetY(static_cast<float>(y) * scale);
+}
+
+static void win_popup_hide() {
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    g_win.popup_visible = false;
+    if (!g_win.dcomp_popup_visual) return;
+
+    g_win.dcomp_popup_visual->SetContent(nullptr);
+    if (g_win.popup_swap_chain) {
+        g_win.popup_swap_chain->Release();
+        g_win.popup_swap_chain = nullptr;
+        g_win.popup_sw = 0;
+        g_win.popup_sh = 0;
+    }
+    g_win.dcomp_device->Commit();
+}
+
+static void win_popup_present(const CefAcceleratedPaintInfo& info, int /*lw*/, int /*lh*/) {
+    HANDLE handle = info.shared_texture_handle;
+    if (!handle) return;
+
+    ID3D11Texture2D* src = nullptr;
+    HRESULT hr = g_win.d3d_device->OpenSharedResource1(handle,
+        __uuidof(ID3D11Texture2D), (void**)&src);
+    if (FAILED(hr) || !src) return;
+
+    D3D11_TEXTURE2D_DESC td;
+    src->GetDesc(&td);
+    int w = static_cast<int>(td.Width);
+    int h = static_cast<int>(td.Height);
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    if (!g_win.popup_visible) { src->Release(); return; }
+
+    ensure_swap_chain(g_win.popup_swap_chain, g_win.popup_sw, g_win.popup_sh,
+                      g_win.dcomp_popup_visual, w, h);
+    if (!g_win.popup_swap_chain) { src->Release(); return; }
+
+    ID3D11Texture2D* bb = nullptr;
+    g_win.popup_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    g_win.d3d_context->CopyResource(bb, src);
+    bb->Release();
+    src->Release();
+
+    g_win.popup_swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
+}
+
+static void win_popup_present_software(const void* buffer, int pw, int ph,
+                                       int /*lw*/, int /*lh*/) {
+    if (!buffer || pw <= 0 || ph <= 0) return;
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    if (!g_win.popup_visible || !g_win.d3d_device) return;
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width             = static_cast<UINT>(pw);
+    desc.Height            = static_cast<UINT>(ph);
+    desc.MipLevels         = 1;
+    desc.ArraySize         = 1;
+    desc.Format            = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count  = 1;
+    desc.Usage             = D3D11_USAGE_DEFAULT;
+    desc.BindFlags         = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA init = {};
+    init.pSysMem     = buffer;
+    init.SysMemPitch = static_cast<UINT>(pw) * 4;
+
+    ID3D11Texture2D* src = nullptr;
+    if (FAILED(g_win.d3d_device->CreateTexture2D(&desc, &init, &src))) return;
+
+    ensure_swap_chain(g_win.popup_swap_chain, g_win.popup_sw, g_win.popup_sh,
+                      g_win.dcomp_popup_visual, pw, ph);
+    if (!g_win.popup_swap_chain) { src->Release(); return; }
+
+    ID3D11Texture2D* bb = nullptr;
+    g_win.popup_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    g_win.d3d_context->CopyResource(bb, src);
+    bb->Release();
+    src->Release();
+
+    g_win.popup_swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
+}
+
 // =====================================================================
 // make_windows_platform
 // =====================================================================
@@ -889,13 +995,13 @@ Platform make_windows_platform() {
         .about_present_software = win_about_present_software,
         .about_resize = win_about_resize,
         .set_about_visible = win_set_about_visible,
-        .popup_show = [](int, int, int, int) {},
-        .popup_hide = []() {},
-        .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},
-        .popup_present_software = [](const void*, int, int, int, int) {},
-        .try_native_popup_menu = [](int, int, int, int,
-                                    const std::vector<std::string>&, int,
-                                    std::function<void(int)>) { return false; },
+        .popup_show             = win_popup_show,
+        .popup_hide             = win_popup_hide,
+        .popup_present          = win_popup_present,
+        .popup_present_software = win_popup_present_software,
+        .try_native_popup_menu  = [](int, int, int, int,
+                                     const std::vector<std::string>&, int,
+                                     std::function<void(int)>) { return false; },
         .fade_overlay = win_fade_overlay,
         .set_fullscreen = win_set_fullscreen,
         .toggle_fullscreen = win_toggle_fullscreen,
