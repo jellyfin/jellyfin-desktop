@@ -265,7 +265,7 @@
           # libmpv.so.2, but the actual file lives in mpv's store path and
           # isn't copied alongside. The binary loads libmpv.so.2 via RPATH
           # directly from mpv's store path (autoPatchelfHook handles that),
-          # so this local symlink is unused — delete it so the broken-
+          # so this local symlink is unused - delete it so the broken-
           # symlinks check passes.
           rm -f $out/libexec/jellyfin-desktop/libmpv.so
 
