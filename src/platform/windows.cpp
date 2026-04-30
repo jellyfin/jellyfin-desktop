@@ -325,7 +325,27 @@ static void win_overlay_present(const CefAcceleratedPaintInfo& info) {
     g_win.dcomp_device->Commit();
 }
 
-static void win_overlay_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
+static void win_overlay_present_software(const CefRenderHandler::RectList&, const void* buffer, int w, int h) {
+    LOG_TRACE(LOG_PLATFORM, "win_overlay_present_software (software)");
+    if (!buffer || w <= 0 || h <= 0) return;
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    if (!g_win.overlay_visible) return;
+
+    ensure_swap_chain(g_win.overlay_swap_chain, g_win.overlay_sw, g_win.overlay_sh,
+                      g_win.dcomp_overlay_visual, w, h);
+    if (!g_win.overlay_swap_chain) return;
+
+    ID3D11Texture2D* bb = nullptr;
+    g_win.overlay_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    if (bb) {
+        g_win.d3d_context->UpdateSubresource(bb, 0, nullptr, buffer, w * 4, 0);
+        bb->Release();
+    }
+
+    g_win.overlay_swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
+}
 
 static void win_overlay_resize(int, int, int pw, int ph) {
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
@@ -405,7 +425,27 @@ static void win_about_present(const CefAcceleratedPaintInfo& info) {
     g_win.dcomp_device->Commit();
 }
 
-static void win_about_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
+static void win_about_present_software(const CefRenderHandler::RectList&, const void* buffer, int w, int h) {
+    LOG_TRACE(LOG_PLATFORM, "win_about_present_software (software)");
+    if (!buffer || w <= 0 || h <= 0) return;
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    if (!g_win.about_visible) return;
+
+    ensure_swap_chain(g_win.about_swap_chain, g_win.about_sw, g_win.about_sh,
+                      g_win.dcomp_about_visual, w, h);
+    if (!g_win.about_swap_chain) return;
+
+    ID3D11Texture2D* bb = nullptr;
+    g_win.about_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    if (bb) {
+        g_win.d3d_context->UpdateSubresource(bb, 0, nullptr, buffer, w * 4, 0);
+        bb->Release();
+    }
+
+    g_win.about_swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
+}
 
 static void win_about_resize(int, int, int pw, int ph) {
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
