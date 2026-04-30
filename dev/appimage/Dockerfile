@@ -44,7 +44,8 @@ RUN cd third_party/mpv && \
         -Dlua=disabled -Dopenal=disabled -Drubberband=disabled \
         -Duchardet=disabled -Dvapoursynth=disabled \
         -Dwayland=enabled && \
-    meson compile -C build
+    meson compile -C build && \
+    strip build/libmpv.so
 
 # Build jellyfin-desktop
 # - CMAKE_SKIP_RPATH=1: no hardcoded paths, AppRun handles library resolution
@@ -55,7 +56,8 @@ RUN cmake -G Ninja \
     -DCMAKE_SKIP_RPATH=1 \
     -Wno-dev \
     /src && \
-    ninja
+    ninja && \
+    strip /build/*.so /build/jellyfin-desktop
 
 # -- Build the AppDir (junest-style: ship the full library stack) --
 
@@ -110,6 +112,15 @@ RUN find /AppDir/usr/lib -name '*.a' -delete && \
            /AppDir/usr/lib/bfd-plugins \
            /AppDir/usr/lib/ldscripts \
            /AppDir/usr/lib/systemd \
+           /AppDir/usr/lib/libLLVM* \
+           /AppDir/usr/lib/LLVMgold* \
+           /AppDir/usr/lib/libLTO* \
+           /AppDir/usr/lib/libgallium* \
+           /AppDir/usr/lib/dri_gbm.so* \
+           /AppDir/usr/lib/gbm/dri_gbm.so* \
+           /AppDir/usr/lib/udev* \
+           /AppDir/usr/lib/guile* \
+           /AppDir/usr/lib/git* \
            /AppDir/usr/share/doc \
            /AppDir/usr/share/man \
            /AppDir/usr/share/info \

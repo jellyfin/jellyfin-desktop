@@ -173,7 +173,7 @@
                     const lbl = document.createElement('label');
                     const control = document.createElement('input');
                     control.type = 'checkbox';
-                    control.className = 'emby-checkbox';
+                    control.setAttribute('is', 'emby-checkbox');
                     control.checked = !!values[setting.key];
                     control.addEventListener('change', () => {
                         jmpInfo.settings[section][setting.key] = control.checked;
