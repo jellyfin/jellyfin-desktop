@@ -9,7 +9,7 @@ build: deps
     cmd /c dev\windows\build.bat
 
 [windows]
-test: build
+test: build test-web
     ctest --test-dir build --output-on-failure
 
 [windows]

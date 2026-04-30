@@ -463,6 +463,7 @@ endif()
 
 # Embed JS shims into generated header
 set(JS_SHIMS
+    ${CMAKE_SOURCE_DIR}/src/web/jmp-bus.js
     ${CMAKE_SOURCE_DIR}/src/web/native-shim.js
     ${CMAKE_SOURCE_DIR}/src/web/mpv-player-core.js
     ${CMAKE_SOURCE_DIR}/src/web/mpv-video-player.js
@@ -510,6 +511,7 @@ if(WIN32)
         src/mpv/event.cpp
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
+        src/cef/message_bus.cpp
         src/cef/resource_handler.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
@@ -521,6 +523,8 @@ if(WIN32)
         src/jellyfin_api.cpp
         src/settings.cpp
         src/paths/paths.cpp
+        src/player/player_router.cpp
+        src/player/track_resolver.cpp
         src/wake_event_windows.cpp
     )
 else()
@@ -531,6 +535,7 @@ else()
         src/mpv/event.cpp
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
+        src/cef/message_bus.cpp
         src/cef/resource_handler.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
@@ -543,6 +548,8 @@ else()
         src/paths/paths.cpp
         src/cjson/cJSON.c
         src/jellyfin_api.cpp
+        src/player/player_router.cpp
+        src/player/track_resolver.cpp
     )
 endif()
 

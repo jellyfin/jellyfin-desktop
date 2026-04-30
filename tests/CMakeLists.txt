@@ -10,3 +10,15 @@ target_include_directories(jellyfin_api_test PRIVATE
 )
 
 add_test(NAME jellyfin_api_test COMMAND jellyfin_api_test)
+
+add_executable(track_resolver_test
+    track_resolver_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/player/track_resolver.cpp
+)
+
+target_include_directories(track_resolver_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
+)
+
+add_test(NAME track_resolver_test COMMAND track_resolver_test)

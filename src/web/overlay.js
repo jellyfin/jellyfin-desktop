@@ -5,12 +5,12 @@ let cancelWait = null;
 // and resolves savedServerUrlReady.
 let savedServerUrl = null;
 const savedServerUrlReady = new Promise((resolve) => {
-    window._onSavedServerUrl = (url) => {
-        savedServerUrl = url || null;
+    window.jmp.on('overlay.savedServerUrl', (p) => {
+        savedServerUrl = (p && p.url) || null;
         resolve(savedServerUrl);
-    };
+    });
 });
-window.jmpNative.getSavedServerUrl();
+window.jmp.send('overlay.getSavedServerUrl');
 
 // True whenever the main browser is loading the URL we currently care about.
 // Set by the auto-connect path once we know a saved URL exists (main.cpp
@@ -45,9 +45,7 @@ async function tryConnect(server, spinnerStartTime = Date.now()) {
 
         // Save the normalized URL returned by native, not the raw user input.
         savedServerUrl = resolvedUrl;
-        if (window.jmpNative && window.jmpNative.saveServerUrl) {
-            window.jmpNative.saveServerUrl(resolvedUrl);
-        }
+        window.jmp.send('overlay.saveServerUrl', { url: resolvedUrl });
 
         // Kick off main-browser navigation immediately, then wait long enough
         // to satisfy both constraints simultaneously: spinner visible ≥1s AND
@@ -55,13 +53,8 @@ async function tryConnect(server, spinnerStartTime = Date.now()) {
         // saves up to ~900ms compared to running the two waits sequentially.
         // Skip when main is already loading (startup pre-load or prior nav).
         if (!mainLoaded) {
-            if (window.jmpNative && window.jmpNative.navigateMain) {
-                window.jmpNative.navigateMain(resolvedUrl);
-                mainLoaded = true;
-            } else {
-                console.error("navigateMain IPC not available");
-                return false;
-            }
+            window.jmp.send('overlay.navigateMain', { url: resolvedUrl });
+            mainLoaded = true;
         }
 
         const elapsed = Date.now() - spinnerStartTime;
@@ -69,9 +62,7 @@ async function tryConnect(server, spinnerStartTime = Date.now()) {
         await cancellableDelay(waitMs, 'pre-fade');
         if (!isConnecting) return false;
 
-        if (window.jmpNative && window.jmpNative.dismissOverlay) {
-            window.jmpNative.dismissOverlay();
-        }
+        window.jmp.send('overlay.dismissOverlay');
         return true;
     } catch (e) {
         if (/cancel/i.test(e && e.message)) {

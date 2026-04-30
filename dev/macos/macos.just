@@ -15,7 +15,7 @@ build: deps
     ./dev/macos/build.sh
 
 [macos]
-test: build
+test: build test-web
     ./dev/macos/test.sh
 
 [macos]

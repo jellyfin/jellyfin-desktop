@@ -213,10 +213,7 @@
             btn.textContent = 'Open mpv config directory';
             btn.type = 'button';
             btn.addEventListener('click', () => {
-                if (window.jmpNative && window.jmpNative.openConfigDir) {
-                    console.log('[SETTINGS] called openConfigDir');
-                    window.jmpNative.openConfigDir();
-                }
+                window.jmp.send('app.openConfigDir');
             });
             group.appendChild(btn);
         }
@@ -237,9 +234,7 @@
             btn.textContent = 'Reset Saved Server';
             btn.addEventListener('click', () => {
                 jmpInfo.settings.main.userWebClient = '';
-                if (window.jmpNative && window.jmpNative.saveServerUrl) {
-                    window.jmpNative.saveServerUrl('');
-                }
+                window.jmp.send('app.saveServerUrl', { url: '' });
                 window.location.reload();
             });
             group.appendChild(btn);

@@ -1,23 +1,4 @@
 (function() {
-    function getMediaStreamAudioTracks(mediaSource) {
-        return mediaSource.MediaStreams.filter(s => s.Type === 'Audio');
-    }
-
-    // Convert Jellyfin global MediaStream.Index to 1-based type-relative index
-    function getRelativeIndexByType(mediaStreams, jellyIndex, streamType) {
-        let relIndex = 1;
-        for (const source of mediaStreams) {
-            if (source.Type !== streamType || source.IsExternal) continue;
-            if (source.Index === jellyIndex) return relIndex;
-            relIndex += 1;
-        }
-        return null;
-    }
-
-    function getStreamByIndex(mediaStreams, index) {
-        return mediaStreams.find(s => s.Index === index) || null;
-    }
-
     class mpvVideoPlayer {
         constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm, dashboard }) {
             this.events = events;
@@ -41,7 +22,6 @@
             this.isLocalPlayer = true;
             this.isFetching = false;
 
-            // Register for fullscreen notifications
             window._mpvVideoPlayerInstance = this;
 
             // Use defineProperty to avoid circular reference in JSON.stringify
@@ -68,17 +48,15 @@
                     this._started = true;
                     this.loading.hide();
                     const dlg = this._videoDialog;
-                    // Remove poster so video shows through from subsurface
                     if (dlg) {
                         const poster = dlg.querySelector('.mpvPoster');
                         if (poster) poster.remove();
                     }
-                    // "fullscreen" = fills entire web content area, not the actual screen
                     if (this._currentPlayOptions?.fullscreen) {
                         this.appRouter.showVideoOsd();
                         if (dlg) dlg.style.zIndex = 'unset';
                     }
-                    window.api.player.setVideoRectangle(0, 0, 0, 0);
+                    window.jmp.send('player.setVideoRectangle', { x: 0, y: 0, w: 0, h: 0 });
                 }
                 if (this._core._paused) {
                     this._core._paused = false;
@@ -86,7 +64,6 @@
                 }
                 this._core.startTimeUpdateTimer();
                 this.events.trigger(this, 'playing');
-                console.log('[Media] [MPV] playing event triggered');
             };
 
             this._core.handlers.onTimeUpdate = (time) => {
@@ -128,14 +105,12 @@
         currentSrc() { return this._currentSrc; }
 
         async play(options) {
-            console.log('[Media] [MPV] play() called with options:', options);
             this._started = false;
             this._timeUpdated = false;
             this._core._currentTime = null;
             this._endedPending = false;
-            if (options.fullscreen) this.loading.show();  // fills entire web content area, not the actual screen
+            if (options.fullscreen) this.loading.show();
             await this.createMediaElement(options);
-            console.log('[Media] [MPV] createMediaElement done, calling setCurrentSrc');
             return await this.setCurrentSrc(options);
         }
 
@@ -143,85 +118,63 @@
             return new Promise((resolve) => {
                 const val = options.url;
                 this._currentSrc = val;
-                console.log('[Media] [MPV] Playing:', val);
 
                 const ms = Math.round((options.playerStartPositionTicks || 0) / 10000);
                 this._currentPlayOptions = options;
                 this._core._currentTime = ms;
 
-                const streams = options.mediaSource?.MediaStreams || [];
-                const defaultAudioIdx = options.mediaSource.DefaultAudioStreamIndex ?? -1;
-                const defaultSubIdx = options.mediaSource.DefaultSubtitleStreamIndex ?? -1;
+                window._jmpVideoActive = true;
 
-                // Convert audio index from Jellyfin global stream index to mpv 1-based audio track index
-                let audioParam = MpvPlayerCore.TRACK_AUTO;
-                if (defaultAudioIdx >= 0) {
-                    const relIdx = getRelativeIndexByType(streams, defaultAudioIdx, 'Audio');
-                    audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
-                }
+                // Wait for first playing/error to resolve play().
+                const onPlaying = () => {
+                    window.api.player.playing.disconnect(onPlaying);
+                    window.api.player.error.disconnect(onError);
+                    resolve();
+                };
+                const onError = () => {
+                    window.api.player.playing.disconnect(onPlaying);
+                    window.api.player.error.disconnect(onError);
+                    resolve();
+                };
+                window.api.player.playing.connect(onPlaying);
+                window.api.player.error.connect(onError);
 
-                // Convert subtitle index to relative
-                let subParam = MpvPlayerCore.TRACK_DISABLE;
-                let externalSubUrl = null;
-                if (defaultSubIdx >= 0) {
-                    const subStream = getStreamByIndex(streams, defaultSubIdx);
-                    if (subStream && subStream.DeliveryMethod === 'External' && subStream.DeliveryUrl) {
-                        externalSubUrl = subStream.DeliveryUrl;
-                    } else {
-                        const relIdx = getRelativeIndexByType(streams, defaultSubIdx, 'Subtitle');
-                        subParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
-                    }
-                }
-
-                window.api.player.setAspectMode(this.getAspectRatio());
-                window.api.player.load(val,
-                    { startMilliseconds: ms, autoplay: true },
-                    { type: 'video', metadata: options.item },
-                    audioParam,
-                    subParam,
-                    resolve);
-
-                if (externalSubUrl) {
-                    window.api.player.addSubtitleStream(externalSubUrl);
-                }
+                window.jmp.send('player.setAspectRatio', { mode: this.getAspectRatio() });
+                window.jmp.send('player.load', {
+                    url: val,
+                    startMs: ms,
+                    item: options.item,
+                    mediaSource: options.mediaSource,
+                    defaultAudioIdx: options.mediaSource?.DefaultAudioStreamIndex ?? null,
+                    defaultSubIdx:   options.mediaSource?.DefaultSubtitleStreamIndex ?? null,
+                });
             });
         }
 
         setSubtitleStreamIndex(index) {
-            if (index == null || index < 0) {
-                window.api.player.setSubtitleStream(MpvPlayerCore.TRACK_DISABLE);
-                return;
-            }
-            const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
-            const stream = getStreamByIndex(streams, index);
-            if (stream && stream.DeliveryMethod === 'External' && stream.DeliveryUrl) {
-                window.api.player.addSubtitleStream(stream.DeliveryUrl);
-                return;
-            }
-            const relIdx = getRelativeIndexByType(streams, index, 'Subtitle');
-            window.api.player.setSubtitleStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE);
+            window.jmp.send('player.selectSubtitle', {
+                jellyfinIndex: (index == null || index < 0) ? null : index,
+            });
         }
 
-        setSecondarySubtitleStreamIndex(index) {}
+        setSecondarySubtitleStreamIndex() {}
 
         resetSubtitleOffset() {
-            window.api.player.setSubtitleDelay(0);
+            window.jmp.send('player.setSubtitleOffset', { seconds: 0 });
         }
 
         enableShowingSubtitleOffset() {}
         disableShowingSubtitleOffset() {}
         isShowingSubtitleOffsetEnabled() { return false; }
-        setSubtitleOffset(offset) { window.api.player.setSubtitleDelay(Math.round(offset * 1000)); }
+        setSubtitleOffset(offset) {
+            window.jmp.send('player.setSubtitleOffset', { seconds: offset });
+        }
         getSubtitleOffset() { return 0; }
 
         setAudioStreamIndex(index) {
-            if (index == null || index < 0) {
-                window.api.player.setAudioStream(MpvPlayerCore.TRACK_AUTO);
-                return;
-            }
-            const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
-            const relIdx = getRelativeIndexByType(streams, index, 'Audio');
-            window.api.player.setAudioStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO);
+            window.jmp.send('player.selectAudio', {
+                jellyfinIndex: (index == null || index < 0) ? null : index,
+            });
         }
 
         onEndedInternal() {
@@ -242,16 +195,15 @@
                     dlg.appendChild(poster);
                 }
             }
-            window.api.player.stop();
+            window.jmp.send('player.stop');
             this._core.handlers.onEnded();
             if (destroyPlayer) this.destroy();
             return Promise.resolve();
         }
 
         removeMediaDialog() {
-            window.api.player.stop();
-            if (window.jmpNative) window.jmpNative.playerOsdActive(false);
-            window.api.player.setVideoRectangle(-1, 0, 0, 0);
+            window.jmp.send('player.stop');
+            window.jmp.send('osd.active', { active: false });
             document.body.classList.remove('hide-scroll');
             const dlg = this._videoDialog;
             if (dlg) {
@@ -265,27 +217,23 @@
             this._core.stopTimeUpdateTimer();
             this.removeMediaDialog();
             this._core.disconnectSignals();
-
-            // Support jellyfin-web v10.10.7
             this._currentAspectRatio = undefined;
         }
 
         createMediaElement(options) {
             let dlg = document.querySelector('.videoPlayerContainer');
             if (!dlg) {
-                if (window.jmpNative) window.jmpNative.playerOsdActive(true);
+                window.jmp.send('osd.active', { active: true });
                 dlg = document.createElement('div');
                 dlg.classList.add('videoPlayerContainer');
                 dlg.style.cssText = 'position:fixed;top:0;bottom:0;left:0;right:0;display:flex;align-items:center;background:transparent;';
-                if (options.fullscreen) dlg.style.zIndex = 1000;  // fills entire web content area, not the actual screen
+                if (options.fullscreen) dlg.style.zIndex = 1000;
                 document.body.insertBefore(dlg, document.body.firstChild);
                 this.setTransparency(2);
                 this._videoDialog = dlg;
 
                 this._core.connectSignals();
-                if (window.jmpNative) {
-                    window.jmpNative.notifyRateChange(this._core._playRate);
-                }
+                window.jmp.send('input.rateChanged', { rate: this._core._playRate });
             } else {
                 this._videoDialog = dlg;
             }
@@ -297,7 +245,7 @@
                 poster.style.cssText = `position:absolute;top:0;left:0;right:0;bottom:0;background:#000 url('${options.backdropUrl}') center/cover no-repeat;`;
                 dlg.appendChild(poster);
             }
-            if (options.fullscreen) document.body.classList.add('hide-scroll');  // fills entire web content area, not the actual screen
+            if (options.fullscreen) document.body.classList.add('hide-scroll');
             return Promise.resolve();
         }
 
@@ -313,7 +261,7 @@
         supports(feature) { return mpvVideoPlayer.getSupportedFeatures().includes(feature); }
         isFullscreen() { return window._isFullscreen === true; }
         toggleFullscreen() {
-            if (window.jmpNative) window.jmpNative.toggleFullscreen();
+            window.jmp.send('fullscreen.toggle');
         }
 
         // Delegate to core
@@ -329,7 +277,7 @@
 
         setPlaybackRate(value) {
             this._core.setPlaybackRate(value);
-            if (window.jmpNative) window.jmpNative.notifyRateChange(value);
+            window.jmp.send('input.rateChanged', { rate: value });
         }
         getPlaybackRate() { return this._core.getPlaybackRate(); }
         getSupportedPlaybackRates() { return this._core.getSupportedPlaybackRates(); }
@@ -365,22 +313,18 @@
         getAspectRatio() {
             const aspectRatio = typeof this.appSettings.aspectRatio === 'function'
                 ? this.appSettings.aspectRatio()
-                // Support jellyfin-web v10.10.7
                 : this._currentAspectRatio;
-
             return aspectRatio || 'auto';
         }
         setAspectRatio(value) {
             if (typeof this.appSettings.aspectRatio === 'function') {
                 this.appSettings.aspectRatio(value);
             } else {
-                // Support jellyfin-web v10.10.7
                 this._currentAspectRatio = value;
             }
-            window.api.player.setAspectMode(value);
+            window.jmp.send('player.setAspectRatio', { mode: value });
         }
     }
 
     window._mpvVideoPlayer = mpvVideoPlayer;
-    console.log('[Media] mpvVideoPlayer class installed');
 })();

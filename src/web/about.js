@@ -67,7 +67,7 @@
             v.className += ' path';
             v.textContent = value;
             v.addEventListener('click', function () {
-                if (window.jmpNative) jmpNative.aboutOpenPath(value);
+                window.jmp.send('about.aboutOpenPath', { path: value });
             });
         } else {
             v.textContent = value || '';
@@ -88,7 +88,7 @@
         dismissed = true;
         window.removeEventListener('keydown', onKeyDown, true);
         host.remove();
-        if (window.jmpNative) jmpNative.aboutDismiss();
+        window.jmp.send('about.aboutDismiss');
     }
 
     function onKeyDown(e) {

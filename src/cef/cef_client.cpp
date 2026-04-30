@@ -1,4 +1,5 @@
 #include "cef_client.h"
+#include "message_bus.h"
 #include "logging.h"
 #include "../cjson/cJSON.h"
 #include "../platform/platform.h"
@@ -403,6 +404,21 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
     auto name = message->GetName().ToString();
     auto args = message->GetArgumentList();
 
+    // Bus channel inbound: jmpNative.send(name, payload) from the renderer
+    // arrives here as ("jmp.send", [name, payload]). Hand off to the global
+    // bus, which routes to the registered handler regardless of which browser
+    // sent the message.
+    if (name == "jmp.send") {
+        std::string msg_name = args->GetString(0).ToString();
+        CefRefPtr<CefValue> payload_val = args->GetValue(1);
+        CefRefPtr<CefDictionaryValue> payload =
+            (payload_val && payload_val->GetType() == VTYPE_DICTIONARY)
+                ? payload_val->GetDictionary()
+                : CefDictionaryValue::Create();
+        g_bus.dispatch(msg_name, payload);
+        return true;
+    }
+
     if (name == "popupOptions") {
         CefRefPtr<CefListValue> list = args->GetList(0);
         popup_options_.clear();
@@ -453,9 +469,6 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
         return true;
     }
 
-    // Everything else delegates to the business logic handler.
-    if (message_handler_)
-        return message_handler_(name, args, browser);
     return false;
 }
 

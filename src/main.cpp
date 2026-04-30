@@ -26,6 +26,8 @@
 
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
+#include "player/player_router.h"
+#include "cef/message_bus.h"
 
 #include "logging.h"
 
@@ -221,75 +223,53 @@ static void cef_consumer_thread() {
         MpvEvent ev;
         while (g_cef_queue.try_pop(ev)) {
             if (!g_web_browser) continue;
+            // Player events fan out to JS via the bus; media-session and
+            // platform-side bookkeeping stay here.
+            player_router::on_mpv_event(ev);
             switch (ev.type) {
             case MpvEventType::PAUSE:
                 g_playback_state = ev.flag ? PlaybackState::Paused : PlaybackState::Playing;
                 update_idle_inhibit();
-                g_web_browser->execJs(ev.flag ? "window._nativeEmit('paused')" : "window._nativeEmit('playing')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(ev.flag ? PlaybackState::Paused : PlaybackState::Playing);
                 break;
             case MpvEventType::TIME_POS: {
-                int ms = static_cast<int>(ev.dbl * 1000);
-                g_web_browser->execJs("window._nativeUpdatePosition(" + std::to_string(ms) + ")");
                 if (g_media_session)
                     g_media_session->setPosition(static_cast<int64_t>(ev.dbl * 1000000));
                 break;
             }
-            case MpvEventType::DURATION: {
-                int ms = static_cast<int>(ev.dbl * 1000);
-                g_web_browser->execJs("window._nativeUpdateDuration(" + std::to_string(ms) + ")");
-                // Duration is set via metadata, not a separate call
+            case MpvEventType::DURATION:
                 break;
-            }
-            case MpvEventType::FULLSCREEN:
+            case MpvEventType::FULLSCREEN: {
                 if (ev.flag) {
                     g_was_maximized_before_fullscreen = mpv::window_maximized();
                 } else {
                     g_was_maximized_before_fullscreen = false;
                 }
-                g_web_browser->execJs("window._nativeFullscreenChanged(" + std::string(ev.flag ? "true" : "false") + ")");
+                auto p = CefDictionaryValue::Create();
+                p->SetBool("fullscreen", ev.flag);
+                g_bus.emit("fullscreen.changed", p);
                 break;
+            }
             case MpvEventType::SPEED:
-                g_web_browser->execJs("window._nativeSetRate(" + std::to_string(ev.dbl) + ")");
                 if (g_media_session)
                     g_media_session->setRate(ev.dbl);
                 break;
             case MpvEventType::SEEKING:
-                if (ev.flag) {
-                    g_web_browser->execJs("window._nativeEmit('seeking')");
-                    if (g_media_session) g_media_session->emitSeeking();
-                }
+                if (ev.flag && g_media_session)
+                    g_media_session->emitSeeking();
                 break;
             case MpvEventType::FILE_LOADED:
                 g_playback_state = PlaybackState::Playing;
                 update_idle_inhibit();
-                g_web_browser->execJs("window._nativeEmit('playing')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Playing);
                 break;
             case MpvEventType::END_FILE_EOF:
-                g_playback_state = PlaybackState::Stopped;
-                update_idle_inhibit();
-                g_web_browser->execJs("window._nativeEmit('finished')");
-                if (g_media_session)
-                    g_media_session->setPlaybackState(PlaybackState::Stopped);
-                break;
-            case MpvEventType::END_FILE_ERROR: {
-                g_playback_state = PlaybackState::Stopped;
-                update_idle_inhibit();
-                auto val = CefValue::Create();
-                val->SetString(ev.err_msg ? ev.err_msg : "Playback error");
-                auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-                g_web_browser->execJs("window._nativeEmit('error'," + json.ToString() + ")");
-                if (g_media_session)
-                    g_media_session->setPlaybackState(PlaybackState::Stopped);
-                break;
-            }
+            case MpvEventType::END_FILE_ERROR:
             case MpvEventType::END_FILE_CANCEL:
                 g_playback_state = PlaybackState::Stopped;
                 update_idle_inhibit();
-                g_web_browser->execJs("window._nativeEmit('canceled')");
                 if (g_media_session)
                     g_media_session->setPlaybackState(PlaybackState::Stopped);
                 break;
@@ -305,20 +285,9 @@ static void cef_consumer_thread() {
                     g_platform.about_resize(ev.lw, ev.lh, ev.pw, ev.ph);
                 }
                 break;
-            case MpvEventType::BUFFERED_RANGES: {
-                auto list = CefListValue::Create();
-                for (int i = 0; i < ev.range_count; i++) {
-                    auto range = CefDictionaryValue::Create();
-                    range->SetDouble("start", static_cast<double>(ev.ranges[i].start_ticks));
-                    range->SetDouble("end", static_cast<double>(ev.ranges[i].end_ticks));
-                    list->SetDictionary(static_cast<size_t>(i), range);
-                }
-                auto val = CefValue::Create();
-                val->SetList(list);
-                auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-                g_web_browser->execJs("window._nativeUpdateBufferedRanges(" + json.ToString() + ")");
+            case MpvEventType::BUFFERED_RANGES:
+                // Already routed to player.bufferedRangesChanged via player_router::on_mpv_event.
                 break;
-            }
             case MpvEventType::DISPLAY_FPS: {
                 int hz = g_display_hz.load(std::memory_order_relaxed);
                 LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", hz);
@@ -980,6 +949,9 @@ int main(int argc, char* argv[]) {
     // g_about_browser is normally self-deleted via its BeforeCloseCallback.
     // If shutdown races the callback (unlikely), we take responsibility here.
     if (g_about_browser) { delete g_about_browser; g_about_browser = nullptr; }
+    // Drop CefRefPtr<CefBrowser> still held by g_bus.namespaces_ before
+    // CefShutdown — otherwise the framework asserts on live browser refs.
+    g_bus.clearNamespaces();
     CefRuntime::Shutdown();
 
     // Platform cleanup (joins input thread, destroys subsurfaces)

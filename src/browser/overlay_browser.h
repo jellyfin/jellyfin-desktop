@@ -30,9 +30,8 @@ public:
     static CefRefPtr<CefDictionaryValue> injectionProfile();
 
 private:
-    bool handleMessage(const std::string& name,
-                       CefRefPtr<CefListValue> args,
-                       CefRefPtr<CefBrowser> browser);
+    // Register overlay.* handlers on g_bus.
+    void installBusHandlers();
 
     CefRefPtr<CefLayer> client_;
     WebBrowser& main_browser_;

@@ -2,6 +2,7 @@
 #include "app_menu.h"
 #include "web_browser.h"
 #include "../common.h"
+#include "../cef/message_bus.h"
 #include "../jellyfin_api.h"
 #include "../settings.h"
 #include "logging.h"
@@ -127,13 +128,11 @@ OverlayBrowser::~OverlayBrowser() = default;
 
 CefRefPtr<CefDictionaryValue> OverlayBrowser::injectionProfile() {
     static const char* const kFunctions[] = {
-        "getSavedServerUrl",
-        "saveServerUrl", "navigateMain", "dismissOverlay",
-        "checkServerConnectivity", "cancelServerConnectivity",
-        "overlayFadeComplete",
+        "send",
         "menuItemSelected", "menuDismissed",
     };
     static const char* const kScripts[] = {
+        "jmp-bus.js",
         "context-menu.js",
     };
     CefRefPtr<CefListValue> fns = CefListValue::Create();
@@ -153,45 +152,44 @@ OverlayBrowser::OverlayBrowser(RenderTarget target, WebBrowser& main_browser,
     : client_(new CefLayer(target, w, h, pw, ph))
     , main_browser_(main_browser)
 {
-    client_->setMessageHandler([this](const std::string& name,
-                                      CefRefPtr<CefListValue> args,
-                                      CefRefPtr<CefBrowser> browser) {
-        return handleMessage(name, args, browser);
-    });
     client_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
         // Overlay wins input whenever it's created.
         input::set_active_browser(browser);
+        g_bus.registerNamespace("overlay", browser);
     });
     client_->setContextMenuBuilder(&app_menu::build);
     client_->setContextMenuDispatcher(&app_menu::dispatch);
+
+    installBusHandlers();
 }
 
-bool OverlayBrowser::handleMessage(const std::string& name,
-                                   CefRefPtr<CefListValue> args,
-                                   CefRefPtr<CefBrowser> browser) {
-    if (name == "getSavedServerUrl") {
-        auto frame = browser ? browser->GetMainFrame() : nullptr;
-        if (!frame) return true;
-        auto reply = CefProcessMessage::Create("savedServerUrl");
-        reply->GetArgumentList()->SetString(0, Settings::instance().serverUrl());
-        frame->SendProcessMessage(PID_RENDERER, reply);
-    } else if (name == "navigateMain") {
-        // Start the main browser loading the given URL. Does NOT hide the
-        // overlay — the JS side owns the pre-fade delay so the user can still
-        // cancel during that window.
-        std::string url = args->GetString(0).ToString();
+// =====================================================================
+// MessageBus handler registration (overlay.*)
+// =====================================================================
+//
+// Runs in parallel with the legacy handleMessage arms. Outbound replies use
+// g_bus.emit (e.g. "overlay.savedServerUrl") instead of hand-built
+// CefProcessMessages so the wire format is uniform.
+
+void OverlayBrowser::installBusHandlers() {
+    g_bus.on("overlay.getSavedServerUrl", [](CefRefPtr<CefDictionaryValue>) {
+        auto reply = CefDictionaryValue::Create();
+        reply->SetString("url", Settings::instance().serverUrl());
+        g_bus.emit("overlay.savedServerUrl", reply);
+    });
+    g_bus.on("overlay.navigateMain", [this](CefRefPtr<CefDictionaryValue> p) {
+        if (!p->HasKey("url") || p->GetType("url") != VTYPE_STRING) return;
+        std::string url = p->GetString("url").ToString();
         LOG_INFO(LOG_CEF, "Overlay: navigateMain {}", url.c_str());
         Settings::instance().setServerUrl(url);
         Settings::instance().saveAsync();
-        // loadUrl handles all cases: live browser, initial create pending,
-        // or mid-reset — buffers the URL when the browser isn't ready.
         main_browser_.loadUrl(url);
-    } else if (name == "dismissOverlay") {
-        // Commit: hand input to main, start the fade, close when done.
+    });
+    g_bus.on("overlay.dismissOverlay", [this](CefRefPtr<CefDictionaryValue>) {
         LOG_INFO(LOG_CEF, "Overlay: dismissOverlay");
         if (auto b = main_browser_.browser())
             input::set_active_browser(b);
-        CefRefPtr<CefBrowser> overlay_browser = browser;
+        CefRefPtr<CefBrowser> overlay_browser = client_->browser();
         g_platform.fade_overlay(OVERLAY_FADE_DURATION_SEC,
             []() {
                 g_mpv.SetBackgroundColor(kVideoBgColor.hex);
@@ -201,40 +199,39 @@ bool OverlayBrowser::handleMessage(const std::string& name,
                 if (overlay_browser)
                     overlay_browser->GetHost()->CloseBrowser(false);
             });
-    } else if (name == "saveServerUrl") {
-        std::string url = args->GetString(0).ToString();
-        Settings::instance().setServerUrl(url);
+    });
+    g_bus.on("overlay.saveServerUrl", [](CefRefPtr<CefDictionaryValue> p) {
+        if (!p->HasKey("url") || p->GetType("url") != VTYPE_STRING) return;
+        Settings::instance().setServerUrl(p->GetString("url").ToString());
         Settings::instance().saveAsync();
-    } else if (name == "setSettingValue") {
-        std::string section = args->GetString(0).ToString();
-        std::string key = args->GetString(1).ToString();
-        std::string value = args->GetString(2).ToString();
+    });
+    g_bus.on("overlay.setSettingValue", [](CefRefPtr<CefDictionaryValue> p) {
+        std::string section = p->HasKey("section") ? p->GetString("section").ToString() : "";
+        std::string key     = p->HasKey("key")     ? p->GetString("key").ToString()     : "";
+        std::string value   = p->HasKey("value")   ? p->GetString("value").ToString()   : "";
         applySettingValue(section, key, value);
-    } else if (name == "checkServerConnectivity") {
-        std::string url = args->GetString(0).ToString();
+    });
+    g_bus.on("overlay.checkServerConnectivity", [this](CefRefPtr<CefDictionaryValue> p) {
+        if (!p->HasKey("url") || p->GetType("url") != VTYPE_STRING) return;
+        std::string url = p->GetString("url").ToString();
         if (active_probe_) active_probe_->Cancel();
         active_probe_ = new ServerProbeClient(
             jellyfin_api::normalize_input(url),
-            [browser, url](bool success, const std::string& base_url) {
-                auto frame = browser ? browser->GetMainFrame() : nullptr;
-                if (!frame) return;
-                auto msg = CefProcessMessage::Create("serverConnectivityResult");
-                msg->GetArgumentList()->SetString(0, url);
-                msg->GetArgumentList()->SetBool(1, success);
-                msg->GetArgumentList()->SetString(2, success ? base_url : url);
-                frame->SendProcessMessage(PID_RENDERER, msg);
+            [url](bool success, const std::string& base_url) {
+                auto reply = CefDictionaryValue::Create();
+                reply->SetString("url", url);
+                reply->SetBool("success", success);
+                reply->SetString("baseUrl", success ? base_url : url);
+                g_bus.emit("overlay.serverConnectivityResult", reply);
             });
         active_probe_->Start();
-    } else if (name == "cancelServerConnectivity") {
+    });
+    g_bus.on("overlay.cancelServerConnectivity", [this](CefRefPtr<CefDictionaryValue>) {
         if (active_probe_) {
             active_probe_->Cancel();
             active_probe_ = nullptr;
         }
-        // Kill the pre-load: closes the render process and recreates the main
-        // browser blank, so no stale JS/service-workers/history survive.
         main_browser_.reset();
-    } else {
-        return false;
-    }
-    return true;
+    });
 }
+

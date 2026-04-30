@@ -31,9 +31,9 @@ public:
     static CefRefPtr<CefDictionaryValue> injectionProfile();
 
 private:
-    bool handleMessage(const std::string& name,
-                       CefRefPtr<CefListValue> args,
-                       CefRefPtr<CefBrowser> browser);
+    // Register mpris/fullscreen/osd/app handlers on g_bus. Player handlers
+    // live in player_router; the rest are inline lambdas in web_browser.cpp.
+    void installBusHandlers();
 
     CefRefPtr<CefLayer> client_;
     bool was_fullscreen_before_osd_ = false;

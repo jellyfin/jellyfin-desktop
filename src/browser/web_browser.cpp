@@ -12,6 +12,8 @@
 #include "../input/dispatch.h"
 #include "../cjson/cJSON.h"
 #include "../paths/paths.h"
+#include "../cef/message_bus.h"
+#include "../player/player_router.h"
 
 extern void update_idle_inhibit();
 
@@ -67,32 +69,17 @@ static void applySettingValue(const std::string& section, const std::string& key
     s.saveAsync();
 }
 
-// Helper to read an int from CefListValue that may have been sent as double.
-static int getIntArg(CefRefPtr<CefListValue> args, size_t idx) {
-    if (args->GetType(idx) == VTYPE_DOUBLE)
-        return static_cast<int>(std::lround(args->GetDouble(idx)));
-    return args->GetInt(idx);
-}
-
 // =====================================================================
 // WebBrowser
 // =====================================================================
 
 CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     static const char* const kFunctions[] = {
-        "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
-        "playerSetVolume", "playerSetMuted", "playerSetSpeed",
-        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
-        "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive",
-        "openConfigDir", "saveServerUrl",
-        "notifyMetadata", "notifyPosition", "notifySeek",
-        "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
-        "notifyRateChange",
-        "appExit", "setSettingValue", "themeColor",
-        "setOsdVisible", "setCursorVisible", "toggleFullscreen",
+        "send",
         "menuItemSelected", "menuDismissed",
     };
     static const char* const kScripts[] = {
+        "jmp-bus.js",
         "native-shim.js",
         "mpv-player-core.js",
         "mpv-video-player.js",
@@ -118,125 +105,121 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
 WebBrowser::WebBrowser(RenderTarget target, int w, int h, int pw, int ph)
     : client_(new CefLayer(target, w, h, pw, ph))
 {
-    client_->setMessageHandler([this](const std::string& name,
-                                      CefRefPtr<CefListValue> args,
-                                      CefRefPtr<CefBrowser> browser) {
-        return handleMessage(name, args, browser);
-    });
     client_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
         // Main browser takes input only if the overlay isn't currently active.
         if (!g_overlay_browser)
             input::set_active_browser(browser);
+        // All web-browser-owned namespaces route to this CefBrowser for
+        // outbound bus emissions. Idempotent — safe across reloads.
+        g_bus.registerNamespace("player",     browser);
+        g_bus.registerNamespace("playback",   browser);
+        g_bus.registerNamespace("fullscreen", browser);
+        g_bus.registerNamespace("osd",        browser);
+        g_bus.registerNamespace("app",        browser);
+        g_bus.registerNamespace("input",      browser);
+        player_router::install();
     });
     client_->setContextMenuBuilder(&app_menu::build);
     client_->setContextMenuDispatcher(&app_menu::dispatch);
+
+    installBusHandlers();
 }
 
-bool WebBrowser::handleMessage(const std::string& name,
-                               CefRefPtr<CefListValue> args,
-                               CefRefPtr<CefBrowser> browser) {
-    if (!g_mpv.IsValid()) return false;
+// =====================================================================
+// MessageBus handler registration (playback / fullscreen / osd / app)
+// =====================================================================
+//
+// Player handlers live in player_router; the rest live here because they
+// reuse existing C++ logic that's tied to WebBrowser-adjacent globals
+// (g_media_session, g_platform, Settings, paths, g_titlebar_color).
+//
+// Registered in parallel with the legacy `handleMessage` arms; old per-method
+// `jmpNative.*` calls keep working until the JS migration step deletes them.
 
-    if (name == "playerLoad") {
-        std::string url = args->GetString(0).ToString();
-        int startMs = args->GetSize() > 1 ? getIntArg(args, 1) : 0;
-        int audioIdx = getIntArg(args, 2);
-        int subIdx = getIntArg(args, 3);
-        LOG_INFO(LOG_CEF, "playerLoad: audio={} sub={} start={}ms url={}",
-                 audioIdx, subIdx, startMs, url.c_str());
-        MpvHandle::LoadOptions opts;
-        opts.startSecs = startMs / 1000.0;
-        opts.audioTrack = audioIdx;
-        opts.subTrack = subIdx;
-        g_mpv.LoadFile(url, opts);
-    } else if (name == "playerStop") {
-        g_mpv.Stop();
-    } else if (name == "playerPause") {
-        g_mpv.Pause();
-    } else if (name == "playerPlay") {
-        g_mpv.Play();
-    } else if (name == "playerSeek") {
-        double pos = getIntArg(args, 0) / 1000.0;
-        g_mpv.SeekAbsolute(pos);
-    } else if (name == "playerSetVolume") {
-        g_mpv.SetVolume(getIntArg(args, 0));
-    } else if (name == "playerSetMuted") {
-        g_mpv.SetMuted(args->GetBool(0));
-    } else if (name == "playerSetSpeed") {
-        g_mpv.SetSpeed(getIntArg(args, 0) / 1000.0);
-    } else if (name == "playerSetSubtitle") {
-        LOG_INFO(LOG_CEF, "playerSetSubtitle: {}", getIntArg(args, 0));
-        g_mpv.SetSubtitleTrack(getIntArg(args, 0));
-    } else if (name == "playerAddSubtitle") {
-        std::string url = args->GetString(0).ToString();
-        LOG_INFO(LOG_CEF, "playerAddSubtitle: {}", url.c_str());
-        g_mpv.SubAdd(url);
-    } else if (name == "playerSetAudio") {
-        g_mpv.SetAudioTrack(getIntArg(args, 0));
-    } else if (name == "playerSetAudioDelay") {
-        g_mpv.SetAudioDelay(args->GetDouble(0));
-    } else if (name == "playerSetAspectMode") {
-        g_mpv.SetAspectMode(args->GetString(0).ToString());
-    } else if (name == "playerOsdActive") {
-        bool active = args->GetBool(0);
+void WebBrowser::installBusHandlers() {
+    // -------- playback (observed player state from JS) --------
+    g_bus.on("playback.metadata", [](CefRefPtr<CefDictionaryValue> p) {
+        if (!p->HasKey("json") || p->GetType("json") != VTYPE_STRING) return;
+        MediaMetadata meta = parseMetadataJson(p->GetString("json").ToString());
+        g_media_type = meta.media_type;
+        update_idle_inhibit();
+        if (g_media_session) g_media_session->setMetadata(meta);
+    });
+    g_bus.on("playback.artwork", [](CefRefPtr<CefDictionaryValue> p) {
+        if (!g_media_session) return;
+        if (p->HasKey("uri") && p->GetType("uri") == VTYPE_STRING)
+            g_media_session->setArtwork(p->GetString("uri").ToString());
+    });
+    g_bus.on("playback.queueChange", [](CefRefPtr<CefDictionaryValue> p) {
+        if (!g_media_session) return;
+        if (p->HasKey("canNext"))
+            g_media_session->setCanGoNext(p->GetBool("canNext"));
+        if (p->HasKey("canPrev"))
+            g_media_session->setCanGoPrevious(p->GetBool("canPrev"));
+    });
+    g_bus.on("playback.state", [](CefRefPtr<CefDictionaryValue> p) {
+        if (!g_media_session) return;
+        if (!p->HasKey("state") || p->GetType("state") != VTYPE_STRING) return;
+        std::string state = p->GetString("state").ToString();
+        if (state == "Playing")      g_media_session->setPlaybackState(PlaybackState::Playing);
+        else if (state == "Paused")  g_media_session->setPlaybackState(PlaybackState::Paused);
+        else                         g_media_session->setPlaybackState(PlaybackState::Stopped);
+    });
+    g_bus.on("playback.position", [](CefRefPtr<CefDictionaryValue> p) {
+        if (!g_media_session) return;
+        int posMs = 0;
+        if (p->HasKey("positionMs")) {
+            auto t = p->GetType("positionMs");
+            if (t == VTYPE_INT)         posMs = p->GetInt("positionMs");
+            else if (t == VTYPE_DOUBLE) posMs = static_cast<int>(std::lround(p->GetDouble("positionMs")));
+        }
+        g_media_session->emitSeeked(static_cast<int64_t>(posMs) * 1000);
+    });
+
+    // -------- fullscreen --------
+    g_bus.on("fullscreen.toggle", [](CefRefPtr<CefDictionaryValue>) {
+        g_platform.toggle_fullscreen();
+    });
+
+    // -------- osd --------
+    g_bus.on("osd.active", [this](CefRefPtr<CefDictionaryValue> p) {
+        bool active = p->HasKey("active") && p->GetBool("active");
         if (active) {
             was_fullscreen_before_osd_ = mpv::fullscreen();
         } else {
             if (!was_fullscreen_before_osd_)
                 g_platform.set_fullscreen(false);
         }
-    } else if (name == "toggleFullscreen") {
-        g_platform.toggle_fullscreen();
-    } else if (name == "saveServerUrl") {
-        std::string url = args->GetString(0).ToString();
-        Settings::instance().setServerUrl(url);
+    });
+    g_bus.on("osd.cursorVisible", [](CefRefPtr<CefDictionaryValue> p) {
+        bool visible = p->HasKey("visible") && p->GetBool("visible");
+        g_platform.set_cursor(visible ? CT_POINTER : CT_NONE);
+    });
+
+    // -------- app --------
+    g_bus.on("app.exit", [](CefRefPtr<CefDictionaryValue>) {
+        initiate_shutdown();
+    });
+    g_bus.on("app.openConfigDir", [](CefRefPtr<CefDictionaryValue>) {
+        LOG_INFO(LOG_CEF, "Opening mpv home directory");
+        paths::openMpvHome();
+    });
+    g_bus.on("app.saveServerUrl", [](CefRefPtr<CefDictionaryValue> p) {
+        if (!p->HasKey("url") || p->GetType("url") != VTYPE_STRING) return;
+        Settings::instance().setServerUrl(p->GetString("url").ToString());
         Settings::instance().saveAsync();
-    } else if (name == "setSettingValue") {
-        std::string section = args->GetString(0).ToString();
-        std::string key = args->GetString(1).ToString();
-        std::string value = args->GetString(2).ToString();
+    });
+    g_bus.on("app.setSettingValue", [](CefRefPtr<CefDictionaryValue> p) {
+        std::string section = p->HasKey("section") ? p->GetString("section").ToString() : "";
+        std::string key     = p->HasKey("key")     ? p->GetString("key").ToString()     : "";
+        std::string value   = p->HasKey("value")   ? p->GetString("value").ToString()   : "";
         applySettingValue(section, key, value);
-    } else if (name == "themeColor") {
-        std::string color = args->GetString(0).ToString();
+    });
+    g_bus.on("app.themeColor", [](CefRefPtr<CefDictionaryValue> p) {
+        if (!p->HasKey("color") || p->GetType("color") != VTYPE_STRING) return;
+        std::string color = p->GetString("color").ToString();
         LOG_DEBUG(LOG_CEF, "themeColor IPC: {}", color.c_str());
         if (g_titlebar_color) g_titlebar_color->onThemeColor(color);
-    } else if (name == "notifyMetadata") {
-        std::string json = args->GetString(0).ToString();
-        MediaMetadata meta = parseMetadataJson(json);
-        g_media_type = meta.media_type;
-        update_idle_inhibit();
-        if (g_media_session)
-            g_media_session->setMetadata(meta);
-    } else if (name == "notifyArtwork") {
-        std::string artworkUri = args->GetString(0).ToString();
-        if (g_media_session) g_media_session->setArtwork(artworkUri);
-    } else if (name == "notifyQueueChange") {
-        bool canNext = args->GetBool(0);
-        bool canPrev = args->GetBool(1);
-        if (g_media_session) {
-            g_media_session->setCanGoNext(canNext);
-            g_media_session->setCanGoPrevious(canPrev);
-        }
-    } else if (name == "notifyPlaybackState") {
-        std::string state = args->GetString(0).ToString();
-        if (g_media_session) {
-            if (state == "Playing") g_media_session->setPlaybackState(PlaybackState::Playing);
-            else if (state == "Paused") g_media_session->setPlaybackState(PlaybackState::Paused);
-            else g_media_session->setPlaybackState(PlaybackState::Stopped);
-        }
-    } else if (name == "notifySeek") {
-        int posMs = getIntArg(args, 0);
-        if (g_media_session)
-            g_media_session->emitSeeked(static_cast<int64_t>(posMs) * 1000);
-    } else if (name == "setCursorVisible") {
-        g_platform.set_cursor(args->GetBool(0) ? CT_POINTER : CT_NONE);
-    } else if (name == "appExit") {
-        initiate_shutdown();
-    } else if (name == "openConfigDir") {
-        LOG_INFO(LOG_CEF, "Openning mpv home directory");
-        paths::openMpvHome();
-    } else {
-        return false;
-    }
-    return true;
+    });
 }
+

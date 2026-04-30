@@ -19,7 +19,7 @@
         }
 
         notifyMetadata(item) {
-            if (!item || !window.jmpNative) return;
+            if (!item) return;
             const meta = {
                 Name: item.Name || '',
                 Type: item.Type || '',
@@ -32,8 +32,7 @@
                 RunTimeTicks: item.RunTimeTicks || 0,
                 Id: item.Id || ''
             };
-            console.log('[Media] notifyMetadata:', meta.Name);
-            window.jmpNative.notifyMetadata(JSON.stringify(meta));
+            window.jmp.send('playback.metadata', { json: JSON.stringify(meta) });
             this.fetchAlbumArt(item);
         }
 
@@ -68,7 +67,7 @@
         }
 
         fetchAlbumArt(item) {
-            if (!item || !window.jmpNative) return;
+            if (!item) return;
 
             if (this.artworkAbortController) {
                 this.artworkAbortController.abort();
@@ -108,8 +107,7 @@
                     reader.onloadend = () => {
                         if (signal.aborted) return;
                         const dataUri = reader.result;
-                        console.log('[Media] Album art fetched, sending data URI');
-                        window.jmpNative.notifyArtwork(dataUri);
+                        window.jmp.send('playback.artwork', { uri: dataUri });
                         this.pendingArtworkUrl = null;
                     };
                     reader.readAsDataURL(blob);
@@ -129,9 +127,6 @@
             const player = this.attachedPlayer;
 
             const initialPos = pm.currentTime ? pm.currentTime() : 0;
-            if (typeof initialPos === 'number' && initialPos >= 0) {
-                window.jmpNative.notifyPosition(Math.floor(initialPos));
-            }
 
             this.positionTracking = {
                 startTime: Date.now(),
@@ -162,12 +157,8 @@
             const drift = actual - expected;
 
             if (Math.abs(drift) > 2000) {
-                console.log('[Media] Position drift detected: expected=' + Math.floor(expected) + ' actual=' + Math.floor(actual) + ' drift=' + Math.floor(drift));
                 if (drift > 0) {
-                    window.jmpNative.notifySeek(Math.floor(actual));
-                } else {
-                    window.jmpNative.notifyRateChange(0.0);
-                    window.jmpNative.notifyPosition(Math.floor(actual));
+                    window.jmp.send('playback.position', { positionMs: Math.floor(actual) });
                 }
                 this.resetPositionTracking();
             }
@@ -179,8 +170,6 @@
 
         updateQueueState() {
             try {
-                if (!window.jmpNative) return;
-
                 const pm = this.playbackManager;
                 if (!pm) return;
 
@@ -190,7 +179,6 @@
 
                 if (!playlist || !Array.isArray(playlist) || playlist.length === 0 ||
                     currentIndex === undefined || currentIndex === null || currentIndex < 0) {
-                    console.log('[Media] updateQueueState: queue invalid (idx=' + currentIndex + ' len=' + (playlist?.length || 0) + '), keeping last state');
                     return;
                 }
 
@@ -200,8 +188,7 @@
                 const isMusic = state?.NowPlayingItem?.MediaType === 'Audio';
                 const canPrev = isMusic ? true : (currentIndex > 0);
 
-                console.log('[Media] updateQueueState: idx=' + currentIndex + ' len=' + playlist.length + ' canNext=' + canNext + ' canPrev=' + canPrev);
-                window.jmpNative.notifyQueueChange(canNext, canPrev);
+                window.jmp.send('playback.queueChange', { canNext, canPrev });
             } catch (e) {
                 console.error('[Media] updateQueueState error:', e);
             }
@@ -220,8 +207,7 @@
                     self.notifyMetadata(state.NowPlayingItem);
                 }
 
-                console.log('[Media] Sending Playing state from playbackstart');
-                if (window.jmpNative) window.jmpNative.notifyPlaybackState('Playing');
+                window.jmp.send('playback.state', { state: 'Playing' });
                 self.startPositionUpdates();
                 self.updateQueueState();
 
@@ -235,41 +221,16 @@
                     self.attachedPlayer = player;
 
                     window.Events.on(player, 'playing', () => {
-                        console.log('[Media] player.playing event');
-                        if (window.jmpNative) window.jmpNative.notifyPlaybackState('Playing');
+                        window.jmp.send('playback.state', { state: 'Playing' });
                         self.updateQueueState();
-
-                        const pos = pm.currentTime ? pm.currentTime() : 0;
-                        if (pos !== undefined && pos !== null) {
-                            window.jmpNative.notifyPosition(Math.floor(pos));
-                        }
                         self.resetPositionTracking();
-
-                        const rate = player.getPlaybackRate ? player.getPlaybackRate() : 1.0;
-                        window.jmpNative.notifyRateChange(rate);
                     });
 
                     window.Events.on(player, 'pause', () => {
-                        console.log('[Media] player.pause event');
-                        if (window.jmpNative) {
-                            window.jmpNative.notifyPlaybackState('Paused');
-                            const pos = pm.currentTime ? pm.currentTime() : 0;
-                            if (typeof pos === 'number' && pos >= 0) {
-                                window.jmpNative.notifyPosition(Math.floor(pos));
-                            }
-                        }
+                        window.jmp.send('playback.state', { state: 'Paused' });
                     });
 
                     window.Events.on(player, 'ratechange', () => {
-                        const rate = player.getPlaybackRate ? player.getPlaybackRate() : 1.0;
-                        console.log('[Media] player.ratechange event, rate:', rate);
-                        if (window.jmpNative) {
-                            window.jmpNative.notifyRateChange(rate);
-                            const pos = pm.currentTime ? pm.currentTime() : 0;
-                            if (typeof pos === 'number' && pos >= 0) {
-                                window.jmpNative.notifyPosition(Math.floor(pos));
-                            }
-                        }
                         self.resetPositionTracking();
                     });
 
@@ -289,10 +250,7 @@
 
                 const isNavigating = !!(stopInfo && stopInfo.nextMediaType);
                 if (!isNavigating) {
-                    console.log('[Media] Playback truly stopped, clearing state');
-                    if (window.jmpNative) window.jmpNative.notifyPlaybackState('Stopped');
-                } else {
-                    console.log('[Media] Navigating to next item, keeping metadata');
+                    window.jmp.send('playback.state', { state: 'Stopped' });
                 }
                 self.updateQueueState();
             });

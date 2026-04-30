@@ -38,6 +38,9 @@ Available recipes:
     flatpak           # Build Flatpak bundle (outputs to dist/)
     list              # List available recipes
     run               # Run the app with debug logging (logs to build/run.log)
-    test              # Run unit tests
+    test              # Run unit tests (C++ ctest + JS test-web)
+    test-web          # Run JS unit tests for src/web/ via Deno
     update-deps *args # Update vendored/fetched deps (CEF, doctest, quill); pass --check to verify only
 ```
+
+`just test-web` requires [Deno](https://deno.com/) on `PATH`.

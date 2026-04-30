@@ -14,12 +14,6 @@
 #include <string>
 #include <vector>
 
-// Callback invoked for IPC messages from the renderer process.
-// Returns true if the message was handled.
-using MessageHandler = std::function<bool(const std::string& name,
-                                         CefRefPtr<CefListValue> args,
-                                         CefRefPtr<CefBrowser> browser)>;
-
 // Callback invoked after the browser is created (OnAfterCreated).
 using CreatedCallback = std::function<void(CefRefPtr<CefBrowser>)>;
 
@@ -39,7 +33,8 @@ struct RenderTarget {
 };
 
 // Generic CEF browser client — pure rendering, lifecycle, context menu,
-// keyboard. Business logic is injected via setMessageHandler / setCreatedCallback.
+// keyboard. Business logic registers handlers on the global MessageBus;
+// per-browser hooks are installed via setCreatedCallback.
 // Used for both the main browser and overlay browser; the only difference
 // is the RenderTarget passed at construction.
 class CefLayer : public CefClient, public CefRenderHandler,
@@ -51,7 +46,6 @@ public:
         : target_(target), width_(w), height_(h),
           physical_w_(pw), physical_h_(ph) {}
 
-    void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
     void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
     void setBeforeCloseCallback(BeforeCloseCallback cb) { on_before_close_ = std::move(cb); }
     void setContextMenuBuilder(ContextMenuBuilder cb) { context_menu_builder_ = std::move(cb); }
@@ -165,7 +159,6 @@ private:
     std::mutex load_mtx_;
     std::condition_variable load_cv_;
     CefRefPtr<CefRunContextMenuCallback> pending_menu_callback_;
-    MessageHandler message_handler_;
     CreatedCallback on_after_created_;
     BeforeCloseCallback on_before_close_;
     ContextMenuBuilder context_menu_builder_;

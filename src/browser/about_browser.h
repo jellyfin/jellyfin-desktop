@@ -29,9 +29,8 @@ public:
 private:
     AboutBrowser();
 
-    bool handleMessage(const std::string& name,
-                       CefRefPtr<CefListValue> args,
-                       CefRefPtr<CefBrowser> browser);
+    // Register about.* handlers on g_bus.
+    void installBusHandlers();
 
     CefRefPtr<CefLayer> client_;
     CefRefPtr<CefBrowser> prev_active_;

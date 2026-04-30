@@ -51,7 +51,6 @@
             this._started = false;
             this._isFadingOut = false;
 
-            // Set up event handlers
             this._core.handlers.onPlaying = () => {
                 if (!this._started) {
                     this._started = true;
@@ -112,18 +111,34 @@
             return new Promise((resolve) => {
                 const val = options.url;
                 this._currentSrc = val;
-                console.log('[Media] [Audio] Playing:', val);
 
                 const ms = Math.round((options.playerStartPositionTicks || 0) / 10000);
                 this._currentPlayOptions = options;
                 this._core._currentTime = ms;
 
-                window.api.player.load(val,
-                    { startMilliseconds: ms, autoplay: true },
-                    { type: 'music', metadata: options.item },
-                    MpvPlayerCore.TRACK_AUTO,
-                    MpvPlayerCore.TRACK_AUTO,
-                    resolve);
+                window._jmpVideoActive = false;
+
+                const onPlaying = () => {
+                    window.api.player.playing.disconnect(onPlaying);
+                    window.api.player.error.disconnect(onError);
+                    resolve();
+                };
+                const onError = () => {
+                    window.api.player.playing.disconnect(onPlaying);
+                    window.api.player.error.disconnect(onError);
+                    resolve();
+                };
+                window.api.player.playing.connect(onPlaying);
+                window.api.player.error.connect(onError);
+
+                window.jmp.send('player.load', {
+                    url: val,
+                    startMs: ms,
+                    item: options.item,
+                    mediaSource: options.mediaSource,
+                    defaultAudioIdx: null,
+                    defaultSubIdx: null,
+                });
             });
         }
 
@@ -159,7 +174,7 @@
 
         destroy() {
             this._core.stopTimeUpdateTimer();
-            window.api.player.stop();
+            window.jmp.send('player.stop');
             this._core.disconnectSignals();
             this._core._duration = undefined;
         }
@@ -177,7 +192,6 @@
             return Promise.resolve({});
         }
 
-        // Delegate to core
         currentTime(val) { return this._core.currentTime(val); }
         currentTimeAsync() { return this._core.currentTimeAsync(); }
         duration() { return this._core.duration(); }
@@ -208,5 +222,4 @@
     }
 
     window._mpvAudioPlayer = mpvAudioPlayer;
-    console.log('[Media] mpvAudioPlayer plugin installed');
 })();

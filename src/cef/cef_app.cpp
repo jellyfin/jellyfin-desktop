@@ -411,13 +411,75 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     frame->ExecuteJavaScript(code, frame->GetURL(), 0);
 }
 
-static void callJsGlobal(CefRefPtr<CefFrame> frame, const char* fn_name,
-                         const CefV8ValueList& v8args) {
-    CefRefPtr<CefV8Context> ctx = frame->GetV8Context();
-    if (!ctx || !ctx->Enter()) return;
-    CefRefPtr<CefV8Value> fn = ctx->GetGlobal()->GetValue(fn_name);
-    if (fn && fn->IsFunction()) fn->ExecuteFunction(nullptr, v8args);
-    ctx->Exit();
+// Recursive V8 → CefValue. Handles primitives, plain objects, and arrays.
+// Functions, dates, typed arrays, etc. become null. The bus payload contract
+// is "JSON-shaped" — anything outside that is a programming error on the JS
+// side, not something we try to round-trip.
+static CefRefPtr<CefValue> v8_to_cef_value(CefRefPtr<CefV8Value> v) {
+    auto out = CefValue::Create();
+    if (!v || v->IsNull() || v->IsUndefined()) {
+        out->SetNull();
+    } else if (v->IsBool()) {
+        out->SetBool(v->GetBoolValue());
+    } else if (v->IsInt()) {
+        out->SetInt(v->GetIntValue());
+    } else if (v->IsUInt()) {
+        out->SetInt(static_cast<int>(v->GetUIntValue()));
+    } else if (v->IsDouble()) {
+        out->SetDouble(v->GetDoubleValue());
+    } else if (v->IsString()) {
+        out->SetString(v->GetStringValue());
+    } else if (v->IsArray()) {
+        CefRefPtr<CefListValue> list = CefListValue::Create();
+        int n = v->GetArrayLength();
+        for (int i = 0; i < n; i++) {
+            list->SetValue(i, v8_to_cef_value(v->GetValue(i)));
+        }
+        out->SetList(list);
+    } else if (v->IsObject()) {
+        CefRefPtr<CefDictionaryValue> dict = CefDictionaryValue::Create();
+        std::vector<CefString> keys;
+        v->GetKeys(keys);
+        for (const auto& key : keys) {
+            dict->SetValue(key, v8_to_cef_value(v->GetValue(key)));
+        }
+        out->SetDictionary(dict);
+    } else {
+        out->SetNull();
+    }
+    return out;
+}
+
+static CefRefPtr<CefV8Value> cef_value_to_v8(CefRefPtr<CefValue> v) {
+    if (!v) return CefV8Value::CreateNull();
+    switch (v->GetType()) {
+        case VTYPE_BOOL:   return CefV8Value::CreateBool(v->GetBool());
+        case VTYPE_INT:    return CefV8Value::CreateInt(v->GetInt());
+        case VTYPE_DOUBLE: return CefV8Value::CreateDouble(v->GetDouble());
+        case VTYPE_STRING: return CefV8Value::CreateString(v->GetString());
+        case VTYPE_LIST: {
+            auto list = v->GetList();
+            int n = static_cast<int>(list->GetSize());
+            auto arr = CefV8Value::CreateArray(n);
+            for (int i = 0; i < n; i++)
+                arr->SetValue(i, cef_value_to_v8(list->GetValue(i)));
+            return arr;
+        }
+        case VTYPE_DICTIONARY: {
+            auto dict = v->GetDictionary();
+            auto obj = CefV8Value::CreateObject(nullptr, nullptr);
+            CefDictionaryValue::KeyList keys;
+            dict->GetKeys(keys);
+            for (const auto& key : keys)
+                obj->SetValue(key, cef_value_to_v8(dict->GetValue(key)),
+                              V8_PROPERTY_ATTRIBUTE_NONE);
+            return obj;
+        }
+        case VTYPE_NULL:
+        case VTYPE_INVALID:
+        default:
+            return CefV8Value::CreateNull();
+    }
 }
 
 bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
@@ -427,19 +489,22 @@ bool App::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
     std::string name = message->GetName().ToString();
     CefRefPtr<CefListValue> args = message->GetArgumentList();
 
-    if (name == "savedServerUrl") {
-        CefV8ValueList v8args;
-        v8args.push_back(CefV8Value::CreateString(args->GetString(0)));
-        callJsGlobal(frame, "_onSavedServerUrl", v8args);
-        return true;
-    }
-
-    if (name == "serverConnectivityResult") {
-        CefV8ValueList v8args;
-        v8args.push_back(CefV8Value::CreateString(args->GetString(0)));
-        v8args.push_back(CefV8Value::CreateBool(args->GetBool(1)));
-        v8args.push_back(CefV8Value::CreateString(args->GetString(2)));
-        callJsGlobal(frame, "_onServerConnectivityResult", v8args);
+    // Bus channel inbound: browser process emits ("jmp.onMessage", [name,
+    // payload]); we hand it to window.jmp.onMessage in the renderer's V8
+    // context, reconstructing payload as a JS object/array. JS dispatches
+    // internally from there.
+    if (name == "jmp.onMessage") {
+        CefRefPtr<CefV8Context> ctx = frame->GetV8Context();
+        if (!ctx || !ctx->Enter()) return true;
+        CefRefPtr<CefV8Value> jmp = ctx->GetGlobal()->GetValue("jmp");
+        CefRefPtr<CefV8Value> fn = jmp && jmp->IsObject() ? jmp->GetValue("onMessage") : nullptr;
+        if (fn && fn->IsFunction()) {
+            CefV8ValueList v8args;
+            v8args.push_back(CefV8Value::CreateString(args->GetString(0)));
+            v8args.push_back(cef_value_to_v8(args->GetValue(1)));
+            fn->ExecuteFunction(jmp, v8args);
+        }
+        ctx->Exit();
         return true;
     }
 
@@ -507,6 +572,26 @@ bool NativeV8Handler::Execute(const CefString& name,
                               const CefV8ValueList& arguments,
                               CefRefPtr<CefV8Value>&,
                               CefString&) {
+    // Bus channel: jmpNative.send(name, payload) → "jmp.send" process message
+    // carrying [name, payload-as-CefValue]. The browser process routes to the
+    // bus dispatcher; per-method packing below stays alive for legacy bindings
+    // until callers migrate.
+    if (name == "send") {
+        if (arguments.empty() || !arguments[0]->IsString()) return true;
+        auto msg = CefProcessMessage::Create("jmp.send");
+        auto args = msg->GetArgumentList();
+        args->SetString(0, arguments[0]->GetStringValue());
+        if (arguments.size() >= 2) {
+            args->SetValue(1, v8_to_cef_value(arguments[1]));
+        } else {
+            auto empty = CefValue::Create();
+            empty->SetDictionary(CefDictionaryValue::Create());
+            args->SetValue(1, empty);
+        }
+        browser_->GetMainFrame()->SendProcessMessage(PID_BROWSER, msg);
+        return true;
+    }
+
     CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create(name);
     CefRefPtr<CefListValue> args = msg->GetArgumentList();
 

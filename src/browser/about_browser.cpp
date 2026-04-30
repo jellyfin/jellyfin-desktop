@@ -1,6 +1,7 @@
 #include "about_browser.h"
 #include "app_menu.h"
 #include "browsers.h"
+#include "../cef/message_bus.h"
 #include "../common.h"
 #include "../mpv/event.h"
 #include "logging.h"
@@ -48,10 +49,10 @@ int safe_lh() {
 
 CefRefPtr<CefDictionaryValue> AboutBrowser::injectionProfile() {
     static const char* const kFunctions[] = {
-        "aboutOpenPath", "aboutDismiss",
+        "send",
         "menuItemSelected", "menuDismissed",
     };
-    static const char* const kScripts[] = { "context-menu.js" };
+    static const char* const kScripts[] = { "jmp-bus.js", "context-menu.js" };
     CefRefPtr<CefListValue> fns = CefListValue::Create();
     for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
         fns->SetString(i, kFunctions[i]);
@@ -71,13 +72,9 @@ AboutBrowser::AboutBrowser()
 {
     prev_active_ = input::active_browser();
 
-    client_->setMessageHandler([this](const std::string& name,
-                                      CefRefPtr<CefListValue> args,
-                                      CefRefPtr<CefBrowser> browser) {
-        return handleMessage(name, args, browser);
-    });
     client_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
         input::set_active_browser(browser);
+        g_bus.registerNamespace("about", browser);
     });
     client_->setContextMenuBuilder(&app_menu::build);
     client_->setContextMenuDispatcher(&app_menu::dispatch);
@@ -87,8 +84,29 @@ AboutBrowser::AboutBrowser()
         // mid-invocation (we're running inside it right now).
         AboutBrowser* self = g_about_browser;
         g_about_browser = nullptr;
+        g_bus.unregisterNamespace("about");
         if (!self) return;
         CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() { delete self; })));
+    });
+
+    installBusHandlers();
+}
+
+void AboutBrowser::installBusHandlers() {
+    g_bus.on("about.aboutDismiss", [this](CefRefPtr<CefDictionaryValue>) {
+        LOG_INFO(LOG_CEF, "AboutBrowser: aboutDismiss");
+        input::set_active_browser(prev_active_);
+        g_platform.set_about_visible(false);
+        if (auto b = client_->browser()) b->GetHost()->CloseBrowser(false);
+    });
+    g_bus.on("about.aboutOpenPath", [](CefRefPtr<CefDictionaryValue> p) {
+        std::string path = p->HasKey("path") ? p->GetString("path").ToString() : "";
+        if (path.empty()) {
+            LOG_WARN(LOG_CEF, "about.aboutOpenPath: empty path, ignoring");
+            return;
+        }
+        if (g_platform.open_external_url)
+            g_platform.open_external_url("file://" + path);
     });
 }
 
@@ -119,25 +137,3 @@ void AboutBrowser::open() {
                                   injectionProfile(), nullptr);
 }
 
-bool AboutBrowser::handleMessage(const std::string& name,
-                                 CefRefPtr<CefListValue> args,
-                                 CefRefPtr<CefBrowser> browser) {
-    if (name == "aboutDismiss") {
-        LOG_INFO(LOG_CEF, "AboutBrowser: aboutDismiss");
-        input::set_active_browser(prev_active_);
-        g_platform.set_about_visible(false);
-        if (browser) browser->GetHost()->CloseBrowser(false);
-        return true;
-    }
-    if (name == "aboutOpenPath") {
-        std::string path = args->GetString(0).ToString();
-        if (path.empty()) {
-            LOG_WARN(LOG_CEF, "aboutOpenPath: empty path, ignoring");
-            return true;
-        }
-        if (g_platform.open_external_url)
-            g_platform.open_external_url("file://" + path);
-        return true;
-    }
-    return false;
-}

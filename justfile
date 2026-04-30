@@ -28,8 +28,12 @@ deps:
 
 # Run unit tests
 [linux]
-test: build
+test: build test-web
     ctest --test-dir build --output-on-failure
+
+# Run JS unit tests for src/web/ via Deno
+test-web:
+    deno test --allow-read=src/web,tests tests/web/
 
 # Run the app with debug logging (logs to build/run.log)
 [linux]
