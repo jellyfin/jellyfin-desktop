@@ -54,6 +54,7 @@ struct WinState {
     IDCompositionVisual* dcomp_overlay_visual = nullptr;
     IDCompositionEffectGroup* dcomp_overlay_effect = nullptr;
     IDCompositionVisual* dcomp_about_visual = nullptr;
+    IDCompositionVisual* dcomp_popup_visual = nullptr;
 
     // Main browser swap chain
     IDXGISwapChain1* main_swap_chain = nullptr;
@@ -68,6 +69,11 @@ struct WinState {
     IDXGISwapChain1* about_swap_chain = nullptr;
     int about_sw = 0, about_sh = 0;
     bool about_visible = false;
+
+    // Popup swap chain
+    IDXGISwapChain1* popup_swap_chain = nullptr;
+    int popup_sw = 0, popup_sh = 0;
+    bool popup_visible = false;
 
     // Window state
     float cached_scale = 1.0f;
@@ -154,6 +160,11 @@ static bool init_dcomp() {
     g_win.dcomp_root->AddVisual(g_win.dcomp_overlay_visual, TRUE, g_win.dcomp_main_visual);
     g_win.dcomp_device->CreateVisual(&g_win.dcomp_about_visual);
     g_win.dcomp_root->AddVisual(g_win.dcomp_about_visual, TRUE, g_win.dcomp_overlay_visual);
+
+    // Popup visual (above main, child of main)
+    g_win.dcomp_device->CreateVisual(&g_win.dcomp_popup_visual);
+    g_win.dcomp_main_visual->AddVisual(g_win.dcomp_popup_visual, TRUE, nullptr);
+
     g_win.dcomp_target->SetRoot(g_win.dcomp_root);
     g_win.dcomp_device->Commit();
 
@@ -260,8 +271,23 @@ static void win_present(const CefAcceleratedPaintInfo& info) {
     g_win.dcomp_device->Commit();
 }
 
-static void win_present_software(const CefRenderHandler::RectList&, const void*, int, int) {
-    // Software fallback not implemented for Windows
+static void win_present_software(const CefRenderHandler::RectList&, const void* buffer, int w, int h) {
+    if (!buffer || w <= 0 || h <= 0) return;
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    ensure_swap_chain(g_win.main_swap_chain, g_win.main_sw, g_win.main_sh,
+                      g_win.dcomp_main_visual, w, h);
+    if (!g_win.main_swap_chain) return;
+
+    ID3D11Texture2D* bb = nullptr;
+    g_win.main_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    if (bb) {
+        g_win.d3d_context->UpdateSubresource(bb, 0, nullptr, buffer, w * 4, 0);
+        bb->Release();
+    }
+
+    g_win.main_swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
 }
 
 // =====================================================================
@@ -411,6 +437,88 @@ static void win_set_about_visible(bool visible) {
         if (main) main->GetHost()->SetFocus(false);
         if (ovl)  ovl->GetHost()->SetFocus(false);
     }
+}
+
+// =====================================================================
+// Popup visual (CEF OSR popup elements)
+// =====================================================================
+
+static void win_popup_show(int x, int y, int lw, int lh) {
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    g_win.popup_visible = true;
+    if (!g_win.dcomp_popup_visual) return;
+    float scale = g_win.cached_scale > 0 ? g_win.cached_scale : 1.0f;
+    g_win.dcomp_popup_visual->SetOffsetX(static_cast<float>(x * scale));
+    g_win.dcomp_popup_visual->SetOffsetY(static_cast<float>(y * scale));
+    g_win.dcomp_device->Commit();
+}
+
+static void win_popup_hide() {
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    g_win.popup_visible = false;
+    if (!g_win.dcomp_popup_visual) return;
+    g_win.dcomp_popup_visual->SetContent(nullptr);
+    if (g_win.popup_swap_chain) {
+        g_win.popup_swap_chain->Release();
+        g_win.popup_swap_chain = nullptr;
+        g_win.popup_sw = 0;
+        g_win.popup_sh = 0;
+    }
+    g_win.dcomp_device->Commit();
+}
+
+static void win_popup_present(const CefAcceleratedPaintInfo& info, int lw, int lh) {
+    HANDLE handle = info.shared_texture_handle;
+    if (!handle) return;
+
+    ID3D11Texture2D* src = nullptr;
+    HRESULT hr = g_win.d3d_device->OpenSharedResource1(handle,
+        __uuidof(ID3D11Texture2D), (void**)&src);
+    if (FAILED(hr) || !src) return;
+
+    D3D11_TEXTURE2D_DESC td;
+    src->GetDesc(&td);
+    int w = static_cast<int>(td.Width);
+    int h = static_cast<int>(td.Height);
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    if (!g_win.popup_visible) { src->Release(); return; }
+
+    ensure_swap_chain(g_win.popup_swap_chain, g_win.popup_sw, g_win.popup_sh,
+                      g_win.dcomp_popup_visual, w, h);
+    if (!g_win.popup_swap_chain) { src->Release(); return; }
+
+    ID3D11Texture2D* bb = nullptr;
+    g_win.popup_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    if (bb) {
+        g_win.d3d_context->CopyResource(bb, src);
+        bb->Release();
+    }
+    src->Release();
+
+    g_win.popup_swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
+}
+
+static void win_popup_present_software(const void* buffer, int pw, int ph, int lw, int lh) {
+    if (!buffer || pw <= 0 || ph <= 0) return;
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+    if (!g_win.popup_visible) return;
+
+    ensure_swap_chain(g_win.popup_swap_chain, g_win.popup_sw, g_win.popup_sh,
+                      g_win.dcomp_popup_visual, pw, ph);
+    if (!g_win.popup_swap_chain) return;
+
+    ID3D11Texture2D* bb = nullptr;
+    g_win.popup_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    if (bb) {
+        g_win.d3d_context->UpdateSubresource(bb, 0, nullptr, buffer, pw * 4, 0);
+        bb->Release();
+    }
+
+    g_win.popup_swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
 }
 
 // Animate overlay opacity from 1.0 to 0.0 over fade_sec, then hide.
@@ -770,9 +878,13 @@ static void win_cleanup() {
     // Release swap chains
     if (g_win.main_swap_chain) { g_win.main_swap_chain->Release(); g_win.main_swap_chain = nullptr; }
     if (g_win.overlay_swap_chain) { g_win.overlay_swap_chain->Release(); g_win.overlay_swap_chain = nullptr; }
+    if (g_win.about_swap_chain) { g_win.about_swap_chain->Release(); g_win.about_swap_chain = nullptr; }
+    if (g_win.popup_swap_chain) { g_win.popup_swap_chain->Release(); g_win.popup_swap_chain = nullptr; }
 
     // Release DComp
     if (g_win.dcomp_overlay_effect) { g_win.dcomp_overlay_effect->Release(); g_win.dcomp_overlay_effect = nullptr; }
+    if (g_win.dcomp_about_visual) { g_win.dcomp_about_visual->Release(); g_win.dcomp_about_visual = nullptr; }
+    if (g_win.dcomp_popup_visual) { g_win.dcomp_popup_visual->Release(); g_win.dcomp_popup_visual = nullptr; }
     if (g_win.dcomp_overlay_visual) { g_win.dcomp_overlay_visual->Release(); g_win.dcomp_overlay_visual = nullptr; }
     if (g_win.dcomp_main_visual) { g_win.dcomp_main_visual->Release(); g_win.dcomp_main_visual = nullptr; }
     if (g_win.dcomp_root) { g_win.dcomp_root->Release(); g_win.dcomp_root = nullptr; }
@@ -889,10 +1001,10 @@ Platform make_windows_platform() {
         .about_present_software = win_about_present_software,
         .about_resize = win_about_resize,
         .set_about_visible = win_set_about_visible,
-        .popup_show = [](int, int, int, int) {},
-        .popup_hide = []() {},
-        .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},
-        .popup_present_software = [](const void*, int, int, int, int) {},
+        .popup_show = win_popup_show,
+        .popup_hide = win_popup_hide,
+        .popup_present = win_popup_present,
+        .popup_present_software = win_popup_present_software,
         .try_native_popup_menu = [](int, int, int, int,
                                     const std::vector<std::string>&, int,
                                     std::function<void(int)>) { return false; },
