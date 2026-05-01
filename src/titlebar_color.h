@@ -9,7 +9,10 @@
 class TitlebarColor {
 public:
     TitlebarColor(Platform& platform, bool enabled)
-        : platform_(platform), enabled_(enabled) {}
+        : platform_(platform), enabled_(enabled) {
+            if(enabled)
+                platform_.set_titlebar_color(kBgColor.r, kBgColor.g, kBgColor.b);
+        }
 
     void onThemeColor(const std::string& color) {
         std::fprintf(stderr, "TitlebarColor::onThemeColor enabled=%d unlocked=%d color=%s\n",
