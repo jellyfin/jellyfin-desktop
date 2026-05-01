@@ -968,6 +968,10 @@ const fallbackStrings = languages.find(l => l.lang === fallbackLanguage);
 const titleText = languageStrings.LabelServerHost || fallbackStrings.LabelServerHost || 'Server Address';
 const connectText = languageStrings.Connect || fallbackStrings.Connect;
 
+const headerConnectionFailureText = languageStrings.HeaderConnectionFailure || fallbackStrings.HeaderConnectionFailure;
+const messageUnableToConnectToServerText = languageStrings.MessageUnableToConnectToServer || fallbackStrings.MessageUnableToConnectToServer;
+const buttonGotItText = languageStrings.ButtonGotIt || fallbackStrings.ButtonGotIt;
+
 document.getElementById('title').innerText = titleText;
 document.getElementById('title').setAttribute('data-original-text', titleText);
 document.getElementById('address').placeholder = languageStrings.LabelServerHostHelp || fallbackStrings.LabelServerHostHelp;
