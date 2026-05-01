@@ -103,6 +103,7 @@
             },
             advanced: {
                 transparentTitlebar: _savedSettings.transparentTitlebar !== false,
+                titlebarThemeColor: _savedSettings.titlebarThemeColor !== false,
                 logLevel: _savedSettings.logLevel || ''
             }
         },
@@ -143,6 +144,15 @@
             key: 'transparentTitlebar',
             displayName: 'Transparent Titlebar',
             help: 'Overlay traffic light buttons on the window content instead of a separate titlebar. Requires restart.'
+        });
+    }
+
+    // Linux-only: titlebar theme color toggle
+    if (navigator.platform.startsWith('Linux')) {
+        jmpInfo.settingsDescriptions.advanced.unshift({
+            key: 'titlebarThemeColor',
+            displayName: 'Titlebar Theme Color',
+            help: 'Set titlebar color to match Jellyfin theme'
         });
     }
 
