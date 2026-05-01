@@ -101,6 +101,31 @@ const cancelOnEscape = (e) => {
     }
 };
 
+const showConnectionFailedDialog = () => {
+    const dialog = document.createElement('div');
+    dialog.className = 'dialog scaleIn';
+
+    const header = document.createElement('h1');
+    header.innerText = headerConnectionFailureText;
+
+    const message = document.createElement('div');
+    message.innerText = messageUnableToConnectToServerText;
+    message.className = 'dialog-message';
+
+    const button = document.createElement('button');
+    button.innerText = buttonGotItText;
+    button.type = 'button';
+    button.className = 'dialog-button';
+    button.addEventListener('click', (e) => {
+        dialog.remove();
+    });
+
+    dialog.appendChild(header);
+    dialog.appendChild(message);
+    dialog.appendChild(button);
+    document.body.appendChild(dialog);
+};
+
 const startConnecting = async () => {
     const address = document.getElementById('address');
     const title = document.getElementById('title');
@@ -133,6 +158,7 @@ const startConnecting = async () => {
         button.style.visibility = 'visible';
         document.removeEventListener('keydown', cancelOnEscape);
         updateButtonState();
+        showConnectionFailedDialog();
     }
 };
 
@@ -249,6 +275,7 @@ document.addEventListener('keydown', (e) => {
             document.removeEventListener('keydown', cancelOnEscape);
             address.focus();
             updateButtonState();
+            showConnectionFailedDialog();
         }
     } else {
         const title = document.getElementById('title');
