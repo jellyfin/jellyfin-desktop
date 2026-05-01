@@ -1117,9 +1117,8 @@ static bool wl_init(mpv_handle* mpv) {
         g_platform.shared_texture_supported = false;
     }
 
-    // KDE titlebar color — matches the loading screen background
+    // KDE titlebar color — use system theme color until changed by wl_set_titlebar_color(...)
     wl_init_kde_palette();
-    wl_set_titlebar_color(kBgColor.r, kBgColor.g, kBgColor.b);
 
     // Start input thread (input layer owns it)
     input::wayland::start_input_thread();
