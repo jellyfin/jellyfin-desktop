@@ -126,6 +126,63 @@ static void log_mpv_message(const mpv_event_log_message* msg) {
     }
 }
 
+#ifdef __APPLE__
+static std::atomic<bool> s_edr_geometry_pulse_pending{false};
+static std::atomic<int> s_edr_geometry_original_w{0};
+static std::atomic<int> s_edr_geometry_original_h{0};
+static std::atomic<int> s_edr_geometry_pulse_w{0};
+static std::atomic<int> s_edr_geometry_pulse_h{0};
+
+static void request_mpv_geometry_pulse_for_edr() {
+    if (!g_mpv.IsValid()) return;
+    if (mpv::fullscreen() || mpv::window_maximized())
+        return;
+    if (s_edr_geometry_pulse_pending.exchange(true, std::memory_order_acq_rel))
+        return;
+
+    int w = mpv::window_pw();
+    int h = mpv::window_ph();
+    if (w <= 0 || h <= 0) {
+        w = mpv::osd_pw();
+        h = mpv::osd_ph();
+    }
+    if (w <= 1 || h <= 1) {
+        s_edr_geometry_pulse_pending.store(false, std::memory_order_release);
+        return;
+    }
+
+    double scale = mpv::display_scale();
+    int delta = scale > 1.0 ? static_cast<int>(std::ceil(scale)) : 1;
+    int pulse_w = w + delta;
+
+    s_edr_geometry_original_w.store(w, std::memory_order_release);
+    s_edr_geometry_original_h.store(h, std::memory_order_release);
+    s_edr_geometry_pulse_w.store(pulse_w, std::memory_order_release);
+    s_edr_geometry_pulse_h.store(h, std::memory_order_release);
+
+    std::string pulse = std::to_string(pulse_w) + "x" + std::to_string(h);
+    g_mpv.SetGeometry(pulse);
+}
+
+static void maybe_restore_mpv_geometry_pulse_for_edr(int pw, int ph) {
+    if (!s_edr_geometry_pulse_pending.load(std::memory_order_acquire))
+        return;
+    if (pw != s_edr_geometry_pulse_w.load(std::memory_order_acquire) ||
+        ph != s_edr_geometry_pulse_h.load(std::memory_order_acquire))
+        return;
+
+    int original_w = s_edr_geometry_original_w.load(std::memory_order_acquire);
+    int original_h = s_edr_geometry_original_h.load(std::memory_order_acquire);
+    if (original_w > 0 && original_h > 0 && g_mpv.IsValid()) {
+        std::string original = std::to_string(original_w) + "x" +
+                               std::to_string(original_h);
+        g_mpv.SetGeometry(original);
+        mpv::set_window_pixels(original_w, original_h);
+    }
+    s_edr_geometry_pulse_pending.store(false, std::memory_order_release);
+}
+#endif
+
 static void mpv_digest_thread() {
     while (!g_shutting_down.load(std::memory_order_relaxed)) {
         mpv_event* ev = g_mpv.WaitEvent(-1);
@@ -145,10 +202,20 @@ static void mpv_digest_thread() {
         }
 
         if (ev->event_id == MPV_EVENT_FILE_LOADED) {
+#ifdef __APPLE__
+            request_mpv_geometry_pulse_for_edr();
+#endif
             MpvEvent fe{MpvEventType::FILE_LOADED};
             publish(fe);
             continue;
         }
+
+#ifdef __APPLE__
+        if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
+            request_mpv_geometry_pulse_for_edr();
+            continue;
+        }
+#endif
 
         if (ev->event_id == MPV_EVENT_END_FILE) {
             auto* d = static_cast<mpv_event_end_file*>(ev->data);
@@ -176,6 +243,9 @@ static void mpv_digest_thread() {
                 if (g_platform.in_transition())
                     g_platform.set_expected_size(me.pw, me.ph);
                 g_platform.resize(me.lw, me.lh, me.pw, me.ph);
+#ifdef __APPLE__
+                maybe_restore_mpv_geometry_pulse_for_edr(me.pw, me.ph);
+#endif
             }
             if (me.type == MpvEventType::FULLSCREEN) {
                 g_platform.set_fullscreen(me.flag);
@@ -555,6 +625,9 @@ int main(int argc, char* argv[]) {
 
     g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
+#ifdef __APPLE__
+    g_mpv.SetOptionString("target-colorspace-hint", "yes");
+#endif
 
     // Restore saved window geometry. mpv's --geometry is always physical
     // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
@@ -867,7 +940,7 @@ int main(int argc, char* argv[]) {
     std::thread cef_thread(cef_consumer_thread);
 
 #ifdef __APPLE__
-    // nothing — main thread pump happens below
+    request_mpv_geometry_pulse_for_edr();
 #else
     g_web_browser->waitForLoad();
 #endif
