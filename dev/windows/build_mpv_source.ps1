@@ -128,7 +128,7 @@ if (-not (Test-Path (Join-Path $MesonBuildDir "build.ninja"))) {
 cd '$MsysMpvSource' && \
 meson setup build --default-library=shared \
     -Dlibmpv=true \
-    -Dcplayer=false \
+    -Dcplayer=true \
     -Dlua=disabled \
     -Djavascript=disabled \
     -Dcdda=disabled \

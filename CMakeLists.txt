@@ -399,6 +399,8 @@ else()
 endif()
 
 # mpv configuration
+option(BUILD_MPV_CLI "Also build the standalone mpv CLI binary from the submodule (for rendering comparisons; requires building mpv from submodule, not EXTERNAL_MPV_DIR)" OFF)
+
 # Auto-detect external mpv from /opt if it exists
 set(_DEFAULT_EXTERNAL_MPV_DIR "")
 if(EXISTS "/opt/jellyfin-desktop/libmpv/lib/libmpv.so")
@@ -436,16 +438,31 @@ else()
         set(MPV_LIBRARY "${MPV_BUILD_DIR}/libmpv.so")
     endif()
 
-    # Configure meson if not yet configured
+    if(BUILD_MPV_CLI)
+        set(_MPV_CPLAYER "true")
+    else()
+        set(_MPV_CPLAYER "false")
+    endif()
+
+    # Configure meson if not yet configured; otherwise reconcile cplayer option
     if(NOT EXISTS "${MPV_BUILD_DIR}/build.ninja")
-        message(STATUS "Configuring mpv with meson...")
+        message(STATUS "Configuring mpv with meson (cplayer=${_MPV_CPLAYER})...")
         execute_process(
-            COMMAND meson setup build --default-library=shared -Dlibmpv=true
+            COMMAND meson setup build --default-library=shared -Dlibmpv=true -Dcplayer=${_MPV_CPLAYER}
             WORKING_DIRECTORY ${MPV_SOURCE_DIR}
             RESULT_VARIABLE MPV_SETUP_RESULT
         )
         if(NOT MPV_SETUP_RESULT EQUAL 0)
             message(FATAL_ERROR "Failed to configure mpv with meson")
+        endif()
+    else()
+        execute_process(
+            COMMAND meson configure build -Dcplayer=${_MPV_CPLAYER}
+            WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+            RESULT_VARIABLE MPV_RECONFIG_RESULT
+        )
+        if(NOT MPV_RECONFIG_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to reconfigure mpv cplayer option")
         endif()
     endif()
 
@@ -459,6 +476,15 @@ else()
 
     set(MPV_INCLUDE_DIRS "${MPV_SOURCE_DIR}/include")
     set(MPV_LIBRARIES "${MPV_LIBRARY}")
+
+    if(BUILD_MPV_CLI)
+        if(WIN32)
+            set(MPV_CLI_BINARY "${MPV_BUILD_DIR}/mpv.exe")
+        else()
+            set(MPV_CLI_BINARY "${MPV_BUILD_DIR}/mpv")
+        endif()
+        message(STATUS "Standalone mpv CLI will be built at: ${MPV_CLI_BINARY}")
+    endif()
 endif()
 
 # Embed JS shims into generated header
