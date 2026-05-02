@@ -63,7 +63,6 @@
                     this._core._paused = false;
                     this.events.trigger(this, 'unpause');
                 }
-                this._core.startTimeUpdateTimer();
                 this.events.trigger(this, 'playing');
             };
 
@@ -71,7 +70,6 @@
                 if (!this._isFadingOut) {
                     this._core._seeking = false;
                     this._core._currentTime = time;
-                    this._core._lastTimerTick = Date.now();
                     this.events.trigger(this, 'timeupdate');
                 }
             };
@@ -86,7 +84,6 @@
 
             this._core.handlers.onPause = () => {
                 this._core._paused = true;
-                this._core.stopTimeUpdateTimer();
                 this.events.trigger(this, 'pause');
             };
 
@@ -128,7 +125,6 @@
         }
 
         onEndedInternal() {
-            this._core.stopTimeUpdateTimer();
             this.events.trigger(this, 'stopped', [{ src: this._currentSrc }]);
             this._core._currentTime = null;
             this._currentSrc = null;
@@ -158,7 +154,6 @@
         }
 
         destroy() {
-            this._core.stopTimeUpdateTimer();
             window.api.player.stop();
             this._core.disconnectSignals();
             this._core._duration = undefined;

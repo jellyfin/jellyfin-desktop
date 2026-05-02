@@ -84,7 +84,6 @@
                     this._core._paused = false;
                     this.events.trigger(this, 'unpause');
                 }
-                this._core.startTimeUpdateTimer();
                 this.events.trigger(this, 'playing');
                 console.log('[Media] [MPV] playing event triggered');
             };
@@ -93,7 +92,6 @@
                 if (time && !this._timeUpdated) this._timeUpdated = true;
                 this._core._seeking = false;
                 this._core._currentTime = time;
-                this._core._lastTimerTick = Date.now();
                 this.events.trigger(this, 'timeupdate');
             };
 
@@ -110,7 +108,6 @@
 
             this._core.handlers.onPause = () => {
                 this._core._paused = true;
-                this._core.stopTimeUpdateTimer();
                 this.events.trigger(this, 'pause');
             };
 
@@ -279,7 +276,6 @@
         }
 
         destroy() {
-            this._core.stopTimeUpdateTimer();
             this.removeMediaDialog();
             this._core.disconnectSignals();
 

@@ -9,8 +9,6 @@
             this._volume = 100;
             this._playRate = 1;
             this._muted = false;
-            this._timeUpdateTimer = null;
-            this._lastTimerTick = null;
             this._hasConnection = false;
             this._seeking = false;
 
@@ -25,28 +23,6 @@
             };
 
             this.setVolume(this.getSavedVolume() * 100, false);
-        }
-
-        // Timer management
-        startTimeUpdateTimer() {
-            if (this._timeUpdateTimer) return;
-            this._lastTimerTick = Date.now();
-            this._timeUpdateTimer = setInterval(() => {
-                if (this._paused || this._seeking || this._currentTime === null) return;
-                const now = Date.now();
-                const elapsed = now - this._lastTimerTick;
-                this._lastTimerTick = now;
-                const rate = this._playRate || 1.0;
-                this._currentTime += elapsed * rate;
-                this.events.trigger(this.player, 'timeupdate');
-            }, 250);
-        }
-
-        stopTimeUpdateTimer() {
-            if (this._timeUpdateTimer) {
-                clearInterval(this._timeUpdateTimer);
-                this._timeUpdateTimer = null;
-            }
         }
 
         // Signal management
@@ -79,7 +55,6 @@
         // Default event handlers (can be overridden via handlers object)
         defaultOnPause() {
             this._paused = true;
-            this.stopTimeUpdateTimer();
             this.events.trigger(this.player, 'pause');
         }
 
@@ -97,7 +72,6 @@
         currentTime(val) {
             if (val != null) {
                 this._currentTime = val;
-                this._lastTimerTick = Date.now();
                 window.api.player.seekTo(val);
                 return;
             }
