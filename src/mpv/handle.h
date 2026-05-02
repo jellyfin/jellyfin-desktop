@@ -98,7 +98,9 @@ public:
     void SetAudioTrack(int64_t id)       { SetPropertyIntAsync("aid", TrackToMpv(id)); }
     void SetSubtitleTrack(int64_t id)    { SetPropertyIntAsync("sid", TrackToMpv(id)); }
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
-    void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }    void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
+    void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
+    void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
+    void AudioAdd(const std::string& url) { CommandAsync({"audio-add", url, "select"}); }
     // Public sentinels: 0 = disable, 1+ = specific track id. (kTrackAuto is
     // accepted only for back-compat detection in LoadFile; mpv must never
     // auto-pick — track-auto-selection=no in SetDefaults enforces this.)
@@ -110,6 +112,8 @@ public:
         int64_t videoTrack = 1;                // we always want the (single) video track
         int64_t audioTrack = kTrackDisable;
         int64_t subTrack   = kTrackDisable;
+        std::string externalAudioUrl;          // empty = none
+        std::string externalSubUrl;            // empty = none
     };
 
     void LoadFile(const std::string& path, const LoadOptions& opts) {
@@ -133,6 +137,8 @@ public:
         pendingVid_ = opts.videoTrack;
         pendingAid_ = aid;
         pendingSid_ = sid;
+        pendingExternalAudioUrl_ = opts.externalAudioUrl;
+        pendingExternalSubUrl_ = opts.externalSubUrl;
         pendingValid_ = true;
 
         std::string optsStr = "start=" + std::to_string(opts.startSecs)
@@ -141,16 +147,24 @@ public:
     }
 
     // Called from the FILE_LOADED event handler. Queues the pending
-    // vid/aid/sid property writes followed by pause=false. mpv processes
-    // these in submission order on its core thread, so the unpause runs
-    // after track-switch chain reinits.
+    // vid/aid/sid property writes, then audio-add / sub-add for any
+    // external streams (their `select` flag picks the new track), then
+    // pause=false. mpv processes these in submission order on its core
+    // thread, so the unpause runs after the external files' demuxers are
+    // opened and their tracks selected — same gating as internal tracks.
     void ApplyPendingTrackSelectionAndPlay() {
         if (!pendingValid_) return;
         SetPropertyIntAsync("vid", TrackToMpv(pendingVid_));
         SetPropertyIntAsync("aid", TrackToMpv(pendingAid_));
         SetPropertyIntAsync("sid", TrackToMpv(pendingSid_));
+        if (!pendingExternalAudioUrl_.empty())
+            CommandAsync({"audio-add", pendingExternalAudioUrl_, "select"});
+        if (!pendingExternalSubUrl_.empty())
+            CommandAsync({"sub-add", pendingExternalSubUrl_, "select"});
         SetPropertyFlagAsync("pause", false);
         pendingValid_ = false;
+        pendingExternalAudioUrl_.clear();
+        pendingExternalSubUrl_.clear();
     }
 
 private:
@@ -163,6 +177,8 @@ private:
     int64_t pendingVid_ = 1;
     int64_t pendingAid_ = kTrackDisable;
     int64_t pendingSid_ = kTrackDisable;
+    std::string pendingExternalAudioUrl_;
+    std::string pendingExternalSubUrl_;
     bool pendingValid_ = false;
 
 public:

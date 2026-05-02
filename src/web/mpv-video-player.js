@@ -157,9 +157,21 @@
                 // index for DefaultAudioStreamIndex, or TRACK_DISABLE if none is selected.
                 // Never TRACK_AUTO — mpv must not pick on its own.
                 let audioParam = MpvPlayerCore.TRACK_DISABLE;
-                if (defaultAudioIdx >= 0) {
-                    const relIdx = getRelativeIndexByType(streams, defaultAudioIdx, 'Audio');
-                    audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE;
+                let externalAudioUrl = null;
+                if (options.playMethod === 'Transcode') {
+                    // Server bakes the chosen audio into the transcoded output
+                    // (single audio track in the m3u8). Source MediaStreams indexing
+                    // doesn't apply — see htmlVideoPlayer/plugin.js:514 for the same
+                    // logic. Don't audio-add either; audio is already in the stream.
+                    audioParam = 1;
+                } else if (defaultAudioIdx >= 0) {
+                    const audioStream = getStreamByIndex(streams, defaultAudioIdx);
+                    if (audioStream && audioStream.DeliveryMethod === 'External' && audioStream.DeliveryUrl) {
+                        externalAudioUrl = audioStream.DeliveryUrl;
+                    } else {
+                        const relIdx = getRelativeIndexByType(streams, defaultAudioIdx, 'Audio');
+                        audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE;
+                    }
                 }
 
                 // Convert subtitle index to relative
@@ -171,7 +183,7 @@
                         externalSubUrl = subStream.DeliveryUrl;
                     } else {
                         const relIdx = getRelativeIndexByType(streams, defaultSubIdx, 'Subtitle');
-                        subParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
+                        subParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE;
                     }
                 }
 
@@ -181,11 +193,9 @@
                     { type: 'video', metadata: options.item },
                     audioParam,
                     subParam,
+                    externalAudioUrl,
+                    externalSubUrl,
                     resolve);
-
-                if (externalSubUrl) {
-                    window.api.player.addSubtitleStream(externalSubUrl);
-                }
             });
         }
 
@@ -222,6 +232,11 @@
                 return;
             }
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
+            const stream = getStreamByIndex(streams, index);
+            if (stream && stream.DeliveryMethod === 'External' && stream.DeliveryUrl) {
+                window.api.player.addAudioStream(stream.DeliveryUrl);
+                return;
+            }
             const relIdx = getRelativeIndexByType(streams, index, 'Audio');
             window.api.player.setAudioStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE);
         }

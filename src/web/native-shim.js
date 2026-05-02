@@ -169,7 +169,7 @@
             onMetaData: createSignal('onMetaData'),
 
             // Methods
-            load(url, options, streamdata, audioStream, subtitleStream, callback) {
+            load(url, options, streamdata, audioStream, subtitleStream, externalAudioUrl, externalSubUrl, callback) {
                 console.log('[Media] player.load:', url);
                 window._jmpVideoActive = streamdata?.type === 'video';
                 if (callback) {
@@ -189,7 +189,7 @@
                 }
                 if (window.jmpNative && window.jmpNative.playerLoad) {
                     const metadataJson = streamdata?.metadata ? JSON.stringify(streamdata.metadata) : '{}';
-                    window.jmpNative.playerLoad(url, options.startMilliseconds, audioStream, subtitleStream, metadataJson);
+                    window.jmpNative.playerLoad(url, options.startMilliseconds, audioStream, subtitleStream, metadataJson, externalAudioUrl || '', externalSubUrl || '');
                 }
             },
             stop() {
@@ -236,6 +236,10 @@
             setAudioStream(index) {
                 console.log('[Media] player.setAudioStream:', index);
                 if (window.jmpNative) window.jmpNative.playerSetAudio(index);
+            },
+            addAudioStream(url) {
+                console.log('[Media] player.addAudioStream:', url);
+                if (window.jmpNative) window.jmpNative.playerAddAudio(url);
             },
             setSubtitleDelay(ms) {
                 console.log('[Media] player.setSubtitleDelay:', ms);
