@@ -262,11 +262,13 @@ static void cef_consumer_thread() {
                 }
                 break;
             case MpvEventType::FILE_LOADED:
-                g_playback_state = PlaybackState::Playing;
-                update_idle_inhibit();
-                g_web_browser->execJs("window._nativeEmit('playing')");
-                if (g_media_session)
-                    g_media_session->setPlaybackState(PlaybackState::Playing);
+                // File loaded paused (see MpvHandle::LoadFile). Apply the
+                // pending vid/aid/sid selection and queue the unpause; the
+                // PAUSE observer will emit 'playing' to JS once mpv flips
+                // pause=false, after the track-switch reinits land. Don't
+                // emit 'playing' here — JS must not see "playing" until
+                // mpv is actually unpaused with the right tracks selected.
+                g_mpv.ApplyPendingTrackSelectionAndPlay();
                 break;
             case MpvEventType::END_FILE_EOF:
                 g_playback_state = PlaybackState::Stopped;

@@ -153,11 +153,13 @@
                 const defaultAudioIdx = options.mediaSource.DefaultAudioStreamIndex ?? -1;
                 const defaultSubIdx = options.mediaSource.DefaultSubtitleStreamIndex ?? -1;
 
-                // Convert audio index from Jellyfin global stream index to mpv 1-based audio track index
-                let audioParam = MpvPlayerCore.TRACK_AUTO;
+                // Mirror jellyfin-web's UI selection exactly: feed mpv the relative
+                // index for DefaultAudioStreamIndex, or TRACK_DISABLE if none is selected.
+                // Never TRACK_AUTO — mpv must not pick on its own.
+                let audioParam = MpvPlayerCore.TRACK_DISABLE;
                 if (defaultAudioIdx >= 0) {
                     const relIdx = getRelativeIndexByType(streams, defaultAudioIdx, 'Audio');
-                    audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
+                    audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE;
                 }
 
                 // Convert subtitle index to relative
@@ -216,12 +218,12 @@
 
         setAudioStreamIndex(index) {
             if (index == null || index < 0) {
-                window.api.player.setAudioStream(MpvPlayerCore.TRACK_AUTO);
+                window.api.player.setAudioStream(MpvPlayerCore.TRACK_DISABLE);
                 return;
             }
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
             const relIdx = getRelativeIndexByType(streams, index, 'Audio');
-            window.api.player.setAudioStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO);
+            window.api.player.setAudioStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE);
         }
 
         onEndedInternal() {
