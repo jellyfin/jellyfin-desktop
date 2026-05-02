@@ -95,8 +95,8 @@ public:
     void SetVolume(double vol)           { SetPropertyDoubleAsync("volume", vol); }
     void SetMuted(bool muted)            { SetPropertyFlagAsync("mute", muted); }
     void SetSpeed(double rate)           { SetPropertyDoubleAsync("speed", rate); }
-    void SetAudioTrack(int64_t id)       { SetPropertyIntAsync("aid", TrackToMpv(id)); }
-    void SetSubtitleTrack(int64_t id)    { SetPropertyIntAsync("sid", TrackToMpv(id)); }
+    void SetAudioTrack(int64_t id)       { SetPropertyStringAsync("aid", TrackToMpvStr(id)); }
+    void SetSubtitleTrack(int64_t id)    { SetPropertyStringAsync("sid", TrackToMpvStr(id)); }
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
     void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
     void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
@@ -154,9 +154,9 @@ public:
     // opened and their tracks selected — same gating as internal tracks.
     void ApplyPendingTrackSelectionAndPlay() {
         if (!pendingValid_) return;
-        SetPropertyIntAsync("vid", TrackToMpv(pendingVid_));
-        SetPropertyIntAsync("aid", TrackToMpv(pendingAid_));
-        SetPropertyIntAsync("sid", TrackToMpv(pendingSid_));
+        SetPropertyStringAsync("vid", TrackToMpvStr(pendingVid_));
+        SetPropertyStringAsync("aid", TrackToMpvStr(pendingAid_));
+        SetPropertyStringAsync("sid", TrackToMpvStr(pendingSid_));
         if (!pendingExternalAudioUrl_.empty())
             CommandAsync({"audio-add", pendingExternalAudioUrl_, "select"});
         if (!pendingExternalSubUrl_.empty())
@@ -168,10 +168,15 @@ public:
     }
 
 private:
-    // Translate our public sentinel (0 = disable) to mpv's TRACKCHOICE wire
-    // value (-2 = "no"). Concrete track ids and "auto" (-1) pass through.
-    static int64_t TrackToMpv(int64_t id) {
-        return id == kTrackDisable ? -2 : id;
+    // Translate our public sentinel to mpv's TRACKCHOICE string form. Must
+    // be sent as a string: mpv's choice_set converts MPV_FORMAT_INT64 via
+    // snprintf+parse_choice, and parse_choice falls through to numeric
+    // range parsing on a non-name match, where M_RANGE(0, 8190) rejects
+    // the negative sentinels (-2 "no" / -1 "auto") as out-of-range.
+    static std::string TrackToMpvStr(int64_t id) {
+        if (id == kTrackDisable) return "no";
+        if (id == kTrackAuto)    return "auto";
+        return std::to_string(id);
     }
 
     int64_t pendingVid_ = 1;
