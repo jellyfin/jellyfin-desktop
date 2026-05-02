@@ -152,7 +152,8 @@
 
                 // Mirror jellyfin-web's UI selection exactly: feed mpv the relative
                 // index for DefaultAudioStreamIndex, or TRACK_DISABLE if none is selected.
-                // Never TRACK_AUTO — mpv must not pick on its own.
+                // mpv auto track selection is completely disabled as it conflicts with
+                // the fact that jellyfin-web is ultimately responsible for that.
                 let audioParam = MpvPlayerCore.TRACK_DISABLE;
                 let externalAudioUrl = null;
                 if (options.playMethod === 'Transcode') {

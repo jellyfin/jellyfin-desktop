@@ -101,10 +101,10 @@ public:
     void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
     void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
     void AudioAdd(const std::string& url) { CommandAsync({"audio-add", url, "select"}); }
-    // Public sentinels: 0 = disable, 1+ = specific track id. (kTrackAuto is
-    // accepted only for back-compat detection in LoadFile; mpv must never
-    // auto-pick — track-auto-selection=no in SetDefaults enforces this.)
-    static constexpr int64_t kTrackAuto    = -1;
+    // Public sentinels: 0 = disable, 1+ = specific track id. mpv auto track
+    // selection is completely disabled (track-auto-selection=no in
+    // SetDefaults) as it conflicts with the fact that jellyfin-web is
+    // ultimately responsible for track selection.
     static constexpr int64_t kTrackDisable =  0;
 
     struct LoadOptions {
@@ -124,19 +124,9 @@ public:
         // intended ids, and apply them via property writes after FILE_LOADED.
         // The async writes + final pause=false are FIFO-ordered on mpv's core
         // thread, so playback only begins after track-switch reinits land.
-        int64_t aid = opts.audioTrack;
-        if (aid == kTrackAuto) {
-            LOG_ERROR(LOG_MPV, "LoadFile got audioTrack=kTrackAuto; substituting kTrackDisable");
-            aid = kTrackDisable;
-        }
-        int64_t sid = opts.subTrack;
-        if (sid == kTrackAuto) {
-            LOG_ERROR(LOG_MPV, "LoadFile got subTrack=kTrackAuto; substituting kTrackDisable");
-            sid = kTrackDisable;
-        }
         pendingVid_ = opts.videoTrack;
-        pendingAid_ = aid;
-        pendingSid_ = sid;
+        pendingAid_ = opts.audioTrack;
+        pendingSid_ = opts.subTrack;
         pendingExternalAudioUrl_ = opts.externalAudioUrl;
         pendingExternalSubUrl_ = opts.externalSubUrl;
         pendingValid_ = true;
@@ -172,11 +162,9 @@ private:
     // be sent as a string: mpv's choice_set converts MPV_FORMAT_INT64 via
     // snprintf+parse_choice, and parse_choice falls through to numeric
     // range parsing on a non-name match, where M_RANGE(0, 8190) rejects
-    // the negative sentinels (-2 "no" / -1 "auto") as out-of-range.
+    // -2 ("no") as out-of-range.
     static std::string TrackToMpvStr(int64_t id) {
-        if (id == kTrackDisable) return "no";
-        if (id == kTrackAuto)    return "auto";
-        return std::to_string(id);
+        return id == kTrackDisable ? "no" : std::to_string(id);
     }
 
     int64_t pendingVid_ = 1;
