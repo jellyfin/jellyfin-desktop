@@ -142,12 +142,21 @@ bool WebBrowser::handleMessage(const std::string& name,
         int startMs = args->GetSize() > 1 ? getIntArg(args, 1) : 0;
         int audioIdx = getIntArg(args, 2);
         int subIdx = getIntArg(args, 3);
-        LOG_INFO(LOG_CEF, "playerLoad: audio={} sub={} start={}ms url={}",
-                 audioIdx, subIdx, startMs, url.c_str());
+        // arg 4 is metadataJson (consumed elsewhere); args 5 and 6 are
+        // optional external audio / subtitle URLs bundled into load so
+        // their audio-add / sub-add can be queued before the FILE_LOADED-
+        // driven unpause, gating playback on each external file being
+        // opened and its track selected.
+        std::string externalAudioUrl = args->GetSize() > 5 ? args->GetString(5).ToString() : "";
+        std::string externalSubUrl = args->GetSize() > 6 ? args->GetString(6).ToString() : "";
+        LOG_INFO(LOG_CEF, "playerLoad: audio={} sub={} start={}ms extAudio={} extSub={} url={}",
+                 audioIdx, subIdx, startMs, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
         opts.audioTrack = audioIdx;
         opts.subTrack = subIdx;
+        opts.externalAudioUrl = externalAudioUrl;
+        opts.externalSubUrl = externalSubUrl;
         g_mpv.LoadFile(url, opts);
     } else if (name == "playerStop") {
         g_mpv.Stop();
@@ -173,6 +182,10 @@ bool WebBrowser::handleMessage(const std::string& name,
         g_mpv.SubAdd(url);
     } else if (name == "playerSetAudio") {
         g_mpv.SetAudioTrack(getIntArg(args, 0));
+    } else if (name == "playerAddAudio") {
+        std::string url = args->GetString(0).ToString();
+        LOG_INFO(LOG_CEF, "playerAddAudio: {}", url.c_str());
+        g_mpv.AudioAdd(url);
     } else if (name == "playerSetAudioDelay") {
         g_mpv.SetAudioDelay(args->GetDouble(0));
     } else if (name == "playerSetAspectMode") {
