@@ -39,6 +39,8 @@ echo "Configuring..."
 cmake -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=ON \
+    -DBUILD_MPV_CLI=ON \
+    -DEXTERNAL_MPV_DIR= \
     "${PROJECT_ROOT}"
 
 # Build

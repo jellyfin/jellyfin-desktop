@@ -12,7 +12,7 @@ build: deps
     #!/bin/sh
     set -eu
     if ! [ -f build/CMakeCache.txt ]; then
-        cmake -S . -B build -G Ninja -DBUILD_TESTING=ON
+        cmake -S . -B build -G Ninja -DBUILD_TESTING=ON -DBUILD_MPV_CLI=ON -DEXTERNAL_MPV_DIR=
     fi
     cmake --build build
 
@@ -39,6 +39,11 @@ run: build
 # Update vendored/fetched deps (CEF, doctest, quill); pass --check to verify only
 update-deps *args:
     python3 dev/tools/update_deps.py {{args}}
+
+# Run the standalone mpv CLI built from the submodule (forwards args)
+[linux]
+mpv *args: build
+    third_party/mpv/build/mpv {{args}}
 
 # Remove build artifacts (keeps CEF SDK download)
 clean:
