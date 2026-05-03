@@ -383,11 +383,15 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
 
 - (void)scrollWheel:(NSEvent*)event {
     NSPoint loc = [self mouseLocInView:event];
+    const bool precise = [event hasPreciseScrollingDeltas];
+    // When imprecise devices are used, a 10x multiplier restores expected scrolling speed.
+    const int scale = precise ? 1 : 10;
     input::dispatch_scroll({
         .x = (int)loc.x, .y = (int)loc.y,
-        .dx = (int)([event scrollingDeltaX] * 10),
-        .dy = (int)([event scrollingDeltaY] * 10),
-        .modifiers = input::macos::ns_to_cef_modifiers([event modifierFlags]),
+        .dx = (int)([event scrollingDeltaX] * scale),
+        .dy = (int)([event scrollingDeltaY] * scale),
+        .modifiers = input::macos::ns_to_cef_modifiers([event modifierFlags])
+                   | (precise ? EVENTFLAG_PRECISION_SCROLLING_DELTA : 0),
     });
 }
 
