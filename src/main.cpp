@@ -555,6 +555,9 @@ int main(int argc, char* argv[]) {
 
     g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
+#ifdef __APPLE__
+    g_mpv.SetOptionString("target-colorspace-hint", "yes");
+#endif
 
     // Restore saved window geometry. mpv's --geometry is always physical
     // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
