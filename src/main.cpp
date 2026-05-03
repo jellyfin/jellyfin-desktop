@@ -640,16 +640,6 @@ int main(int argc, char* argv[]) {
     }
     g_mpv.RequestLogMessages("info");
 
-    // Snapshot mpv's actual decoder/demuxer/protocol support and turn it
-    // into a Jellyfin device profile. Cached for renderer-process injection
-    // through extra_info; see WebBrowser::injectionProfile().
-    {
-        auto caps = mpv_capabilities::Query(g_mpv.Get());
-        jellyfin_device_profile::SetCachedJson(jellyfin_device_profile::Build(
-            caps, "Jellyfin Desktop", APP_VERSION_STRING,
-            Settings::instance().forceTranscoding()));
-    }
-
     // input-default-bindings=no removes all builtin bindings including
     // CLOSE_WIN → quit.  Re-bind it so the WM close button works.
     {
@@ -721,6 +711,18 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     LOG_INFO(LOG_MAIN, "Platform init ok");
+
+    // Snapshot mpv's actual decoder/demuxer/protocol support and turn it
+    // into a Jellyfin device profile. Cached for renderer-process injection
+    // through extra_info; see WebBrowser::injectionProfile().
+    // Must run after the VO-init wait loop so synchronous mpv API calls
+    // are safe (avoids DispatchQueue.main.sync deadlock on macOS).
+    {
+        auto caps = mpv_capabilities::Query(g_mpv.Get());
+        jellyfin_device_profile::SetCachedJson(jellyfin_device_profile::Build(
+            caps, "Jellyfin Desktop", APP_VERSION_STRING,
+            Settings::instance().forceTranscoding()));
+    }
 
     // --- CEF init ---
     bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;
