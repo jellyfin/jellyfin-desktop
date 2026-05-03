@@ -2,7 +2,7 @@
 #include "app_menu.h"
 #include "web_browser.h"
 #include "../common.h"
-#include "../jellyfin_api.h"
+#include "../jellyfin/api.h"
 #include "../settings.h"
 #include "logging.h"
 #include "../titlebar_color.h"

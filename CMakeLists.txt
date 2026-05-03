@@ -398,6 +398,24 @@ else()
     endif()
 endif()
 
+# libavcodec — used to enumerate the decoders mpv will route through ffmpeg.
+# Source of truth for the device profile's codec lists; mpv links the same
+# libavcodec at runtime, so what we enumerate here matches what mpv decodes.
+#
+# On Linux/macOS this comes via pkg-config. On Windows, build_mpv_source.ps1
+# stages ffmpeg headers + a generated avcodec.lib alongside mpv inside
+# EXTERNAL_MPV_DIR (see dev/windows/build_mpv_source.ps1) and we use those.
+if(WIN32)
+    set(LIBAVCODEC_INCLUDE_DIRS "${EXTERNAL_MPV_DIR}/include")
+    set(LIBAVCODEC_LIBRARIES    "${EXTERNAL_MPV_DIR}/lib/avcodec.lib")
+    if(NOT EXISTS "${LIBAVCODEC_LIBRARIES}")
+        message(FATAL_ERROR "avcodec.lib not found at ${LIBAVCODEC_LIBRARIES}. Re-run dev/windows/build_mpv_source.ps1 to regenerate.")
+    endif()
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBAVCODEC REQUIRED IMPORTED_TARGET libavcodec)
+endif()
+
 # mpv configuration
 option(BUILD_MPV_CLI "Also build the standalone mpv CLI binary from the submodule (for rendering comparisons; requires building mpv from submodule, not EXTERNAL_MPV_DIR)" OFF)
 
@@ -490,7 +508,7 @@ endif()
 # Embed JS shims into generated header
 set(JS_SHIMS
     ${CMAKE_SOURCE_DIR}/src/web/native-shim.js
-    ${CMAKE_SOURCE_DIR}/src/web/mpv-player-core.js
+    ${CMAKE_SOURCE_DIR}/src/web/mpv-player-base.js
     ${CMAKE_SOURCE_DIR}/src/web/mpv-video-player.js
     ${CMAKE_SOURCE_DIR}/src/web/mpv-audio-player.js
     ${CMAKE_SOURCE_DIR}/src/web/input-plugin.js
@@ -534,6 +552,8 @@ if(WIN32)
         src/logging.cpp
         src/single_instance.cpp
         src/mpv/event.cpp
+        src/mpv/capabilities.cpp
+        src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
@@ -544,7 +564,7 @@ if(WIN32)
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/cjson/cJSON.c
-        src/jellyfin_api.cpp
+        src/jellyfin/api.cpp
         src/settings.cpp
         src/paths/paths.cpp
         src/wake_event_windows.cpp
@@ -555,6 +575,8 @@ else()
         src/main.cpp
         src/logging.cpp
         src/mpv/event.cpp
+        src/mpv/capabilities.cpp
+        src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
@@ -568,7 +590,7 @@ else()
         src/settings.cpp
         src/paths/paths.cpp
         src/cjson/cJSON.c
-        src/jellyfin_api.cpp
+        src/jellyfin/api.cpp
     )
 endif()
 
@@ -603,6 +625,7 @@ add_dependencies(jellyfin-desktop embedded_js embedded_resources generate_versio
 target_include_directories(jellyfin-desktop PRIVATE
     ${CEF_INCLUDE_DIRS}
     ${MPV_INCLUDE_DIRS}
+    ${LIBAVCODEC_INCLUDE_DIRS}
     ${PLATFORM_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_BINARY_DIR}/generated
@@ -614,6 +637,11 @@ target_link_libraries(jellyfin-desktop PRIVATE
     ${PLATFORM_LIBRARIES}
     quill::quill
 )
+if(WIN32)
+    target_link_libraries(jellyfin-desktop PRIVATE ${LIBAVCODEC_LIBRARIES})
+else()
+    target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
+endif()
 
 # When using external/system CEF, tell the app where to find resources
 if(EXTERNAL_CEF_DIR OR USE_SYSTEM_CEF)
