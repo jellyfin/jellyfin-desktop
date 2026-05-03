@@ -21,6 +21,29 @@ static std::string absPath(const std::string& p) {
     return abs.string();
 }
 
+std::string buildAboutDataJson() {
+    auto dict = CefDictionaryValue::Create();
+    dict->SetString("app", APP_VERSION_STRING);
+    dict->SetString("cef", APP_CEF_VERSION);
+    dict->SetString("configDir", absPath(paths::getConfigDir()));
+
+    auto logo = embedded_resources.find("resources/logo.png");
+    if (logo != embedded_resources.end()) {
+        dict->SetString(
+            "logoDataUrl",
+            "data:image/png;base64," +
+                CefBase64Encode(logo->second.data, logo->second.size).ToString());
+    }
+
+    const std::string& log_path = activeLogPath();
+    if (!log_path.empty())
+        dict->SetString("logFile", absPath(log_path));
+
+    auto val = CefValue::Create();
+    val->SetDictionary(dict);
+    return CefWriteJSON(val, JSON_WRITER_DEFAULT).ToString();
+}
+
 // Generated at startup from kBgColor; served as app://resources/theme.css.
 static char g_theme_css[64];
 static size_t g_theme_css_len = 0;
@@ -70,18 +93,7 @@ CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(
         // Assemble the data blob with CefWriteJSON (per CLAUDE.md: no
         // hand-rolled JSON). Log paths are omitted when file logging is
         // disabled — the panel renders only the rows present in the data.
-        auto dict = CefDictionaryValue::Create();
-        dict->SetString("app", APP_VERSION_STRING);
-        dict->SetString("cef", APP_CEF_VERSION);
-        dict->SetString("configDir", absPath(paths::getConfigDir()));
-        const std::string& log_path = activeLogPath();
-        if (!log_path.empty())
-            dict->SetString("logFile", absPath(log_path));
-        auto val = CefValue::Create();
-        val->SetDictionary(dict);
-        CefString json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-
-        std::string prefix = "var _aboutData = " + json.ToString() + ";\n";
+        std::string prefix = "var _aboutData = " + buildAboutDataJson() + ";\n";
         std::string payload;
         payload.reserve(prefix.size() + it->second.size);
         payload.append(prefix);

@@ -1,7 +1,10 @@
 #include "about_browser.h"
 #include "app_menu.h"
 #include "browsers.h"
+#include "overlay_browser.h"
+#include "web_browser.h"
 #include "../common.h"
+#include "../cef/resource_handler.h"
 #include "../mpv/event.h"
 #include "logging.h"
 #include "../input/dispatch.h"
@@ -44,6 +47,7 @@ int safe_lh() {
     int ph = safe_ph();
     return static_cast<int>(std::lround(ph / s));
 }
+
 }
 
 CefRefPtr<CefDictionaryValue> AboutBrowser::injectionProfile() {
@@ -93,6 +97,21 @@ AboutBrowser::AboutBrowser()
 }
 
 void AboutBrowser::open() {
+#ifdef __APPLE__
+    CefRefPtr<CefBrowser> target = input::active_browser();
+    if (!target && g_overlay_browser) target = g_overlay_browser->browser();
+    if (!target && g_web_browser) target = g_web_browser->browser();
+    CefRefPtr<CefFrame> frame = target ? target->GetMainFrame() : nullptr;
+    if (!frame) {
+        LOG_WARN(LOG_CEF, "AboutBrowser::open: no live browser available on macOS");
+        return;
+    }
+    input::set_active_browser(target);
+    frame->ExecuteJavaScript(
+        "if(window._nativeShowAbout) window._nativeShowAbout(" + buildAboutDataJson() + ");",
+        frame->GetURL(), 0);
+    return;
+#else
     if (g_about_browser) {
         LOG_INFO(LOG_CEF, "AboutBrowser::open: already open, ignoring");
         return;
@@ -105,11 +124,7 @@ void AboutBrowser::open() {
     CefWindowInfo wi;
     wi.SetAsWindowless(0);
     wi.shared_texture_enabled = g_platform.shared_texture_supported;
-#ifdef __APPLE__
-    wi.external_begin_frame_enabled = true;
-#else
     wi.external_begin_frame_enabled = false;
-#endif
     CefBrowserSettings bs;
     bs.background_color = 0;
     bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
@@ -117,6 +132,7 @@ void AboutBrowser::open() {
     CefBrowserHost::CreateBrowser(wi, g_about_browser->client_,
                                   "app://resources/about.html", bs,
                                   injectionProfile(), nullptr);
+#endif
 }
 
 bool AboutBrowser::handleMessage(const std::string& name,

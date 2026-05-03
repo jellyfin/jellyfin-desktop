@@ -5,6 +5,10 @@
 #include "include/cef_resource_handler.h"
 #include "embedded_resources.h"
 
+// Shared About payload used by both the standalone about.html resource and the
+// macOS in-page About panel injected into an existing browser.
+std::string buildAboutDataJson();
+
 class EmbeddedSchemeHandlerFactory : public CefSchemeHandlerFactory {
 public:
     CefRefPtr<CefResourceHandler> Create(

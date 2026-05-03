@@ -300,10 +300,12 @@ static void cef_consumer_thread() {
                     g_overlay_browser->resize(ev.lw, ev.lh, ev.pw, ev.ph);
                     g_platform.overlay_resize(ev.lw, ev.lh, ev.pw, ev.ph);
                 }
+#ifndef __APPLE__
                 if (g_about_browser && g_about_browser->browser()) {
                     g_about_browser->resize(ev.lw, ev.lh, ev.pw, ev.ph);
                     g_platform.about_resize(ev.lw, ev.lh, ev.pw, ev.ph);
                 }
+#endif
                 break;
             case MpvEventType::BUFFERED_RANGES: {
                 auto list = CefListValue::Create();
@@ -326,8 +328,10 @@ static void cef_consumer_thread() {
                     g_web_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
                 if (g_overlay_browser && g_overlay_browser->browser())
                     g_overlay_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
+#ifndef __APPLE__
                 if (g_about_browser && g_about_browser->browser())
                     g_about_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
+#endif
                 break;
             }
             case MpvEventType::SHUTDOWN:
@@ -896,7 +900,11 @@ int main(int argc, char* argv[]) {
     // driven — CFRunLoopRunInMode wakes on any source firing.
     while (!g_web_browser->isClosed() ||
            (g_overlay_browser && !g_overlay_browser->isClosed()) ||
+#ifndef __APPLE__
            (g_about_browser && !g_about_browser->isClosed())) {
+#else
+           false) {
+#endif
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, true);
     }
 
@@ -977,9 +985,11 @@ int main(int argc, char* argv[]) {
     // CEF shutdown: all browsers must be closed first (guaranteed by waitForClose above)
     delete g_web_browser; g_web_browser = nullptr;
     delete g_overlay_browser; g_overlay_browser = nullptr;
+#ifndef __APPLE__
     // g_about_browser is normally self-deleted via its BeforeCloseCallback.
     // If shutdown races the callback (unlikely), we take responsibility here.
     if (g_about_browser) { delete g_about_browser; g_about_browser = nullptr; }
+#endif
     CefRuntime::Shutdown();
 
     // Platform cleanup (joins input thread, destroys subsurfaces)

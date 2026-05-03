@@ -131,9 +131,15 @@ CefRefPtr<CefDictionaryValue> OverlayBrowser::injectionProfile() {
         "saveServerUrl", "navigateMain", "dismissOverlay",
         "checkServerConnectivity", "cancelServerConnectivity",
         "overlayFadeComplete",
+#ifdef __APPLE__
+        "aboutOpenPath", "aboutDismiss",
+#endif
         "menuItemSelected", "menuDismissed",
     };
     static const char* const kScripts[] = {
+#ifdef __APPLE__
+        "about.js",
+#endif
         "context-menu.js",
     };
     CefRefPtr<CefListValue> fns = CefListValue::Create();
@@ -205,6 +211,18 @@ bool OverlayBrowser::handleMessage(const std::string& name,
         std::string url = args->GetString(0).ToString();
         Settings::instance().setServerUrl(url);
         Settings::instance().saveAsync();
+#ifdef __APPLE__
+    } else if (name == "aboutOpenPath") {
+        std::string path = args->GetString(0).ToString();
+        if (path.empty()) {
+            LOG_WARN(LOG_CEF, "aboutOpenPath: empty path, ignoring");
+            return true;
+        }
+        if (g_platform.open_external_url)
+            g_platform.open_external_url("file://" + path);
+    } else if (name == "aboutDismiss") {
+        return true;
+#endif
     } else if (name == "setSettingValue") {
         std::string section = args->GetString(0).ToString();
         std::string key = args->GetString(1).ToString();

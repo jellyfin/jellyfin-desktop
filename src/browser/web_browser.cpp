@@ -90,6 +90,9 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "notifyRateChange",
         "appExit", "setSettingValue", "themeColor",
         "setOsdVisible", "setCursorVisible", "toggleFullscreen",
+#ifdef __APPLE__
+        "aboutOpenPath", "aboutDismiss",
+#endif
         "menuItemSelected", "menuDismissed",
     };
     static const char* const kScripts[] = {
@@ -99,6 +102,9 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "mpv-audio-player.js",
         "input-plugin.js",
         "client-settings.js",
+#ifdef __APPLE__
+        "about.js",
+#endif
         "context-menu.js",
     };
 
@@ -135,6 +141,21 @@ WebBrowser::WebBrowser(RenderTarget target, int w, int h, int pw, int ph)
 bool WebBrowser::handleMessage(const std::string& name,
                                CefRefPtr<CefListValue> args,
                                CefRefPtr<CefBrowser> browser) {
+#ifdef __APPLE__
+    if (name == "aboutOpenPath") {
+        std::string path = args->GetString(0).ToString();
+        if (path.empty()) {
+            LOG_WARN(LOG_CEF, "aboutOpenPath: empty path, ignoring");
+            return true;
+        }
+        if (g_platform.open_external_url)
+            g_platform.open_external_url("file://" + path);
+        return true;
+    }
+    if (name == "aboutDismiss")
+        return true;
+#endif
+
     if (!g_mpv.IsValid()) return false;
 
     if (name == "playerLoad") {

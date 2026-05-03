@@ -8,11 +8,13 @@
 // is a no-op if a panel is already up; otherwise it allocates the singleton,
 // creates the CEF browser at app://resources/about.html, and hands it input.
 //
-// On dismiss (aboutDismiss IPC), the instance restores input to whatever
-// browser had it before, hides the platform subsurface, and closes the CEF
-// browser. OnBeforeClose nulls g_about_browser and posts a deferred
-// self-delete on the CEF UI thread so the instance is freed after the
-// callback returns rather than mid-invocation.
+// On macOS, AboutBrowser::open() injects the panel into the currently active
+// browser instead of creating a separate CEF browser.
+//
+// On dismiss (aboutDismiss IPC), the standalone path restores input to the
+// previous browser, hides the platform subsurface, and closes the About
+// browser. OnBeforeClose nulls g_about_browser and posts a deferred self-delete
+// on the CEF UI thread so the instance is freed after the callback returns.
 class AboutBrowser {
 public:
     static void open();
