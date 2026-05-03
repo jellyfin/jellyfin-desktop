@@ -128,8 +128,6 @@ std::string Build(const mpv_capabilities::Capabilities& caps,
     // picks the most efficient target it can produce.
     static const std::vector<std::string> kTranscodeVideoCodec =
         {"av1", "hevc", "h264", "vp9"};
-    static const std::vector<std::string> kTranscodeAudioCodecMp4 =
-        {"opus", "aac", "eac3", "ac3", "flac", "mp3", "dts", "truehd"};
     static const std::vector<std::string> kTranscodeAudioCodecTs =
         {"aac", "eac3", "ac3", "mp3"};
 
@@ -156,8 +154,6 @@ std::string Build(const mpv_capabilities::Capabilities& caps,
     // validator (^[a-zA-Z0-9\-\._,|]{0,40}$).
     const std::string transcode_video_csv =
         join_csv(filter_in_order(kTranscodeVideoCodec, video_codecs));
-    const std::string transcode_audio_csv_mp4 =
-        join_csv(filter_in_order(kTranscodeAudioCodecMp4, audio_codecs));
     const std::string transcode_audio_csv_ts =
         join_csv(filter_in_order(kTranscodeAudioCodecTs, audio_codecs));
 
@@ -208,17 +204,6 @@ std::string Build(const mpv_capabilities::Capabilities& caps,
         auto audio = CefDictionaryValue::Create();
         audio->SetString("Type", "Audio");
         transcoding->SetDictionary(tp_idx++, audio);
-
-        if (!force_transcode) {
-            auto fmp4 = CefDictionaryValue::Create();
-            fmp4->SetString("Container", "mp4");
-            fmp4->SetString("Type", "Video");
-            fmp4->SetString("Protocol", "hls");
-            fmp4->SetString("AudioCodec", transcode_audio_csv_mp4);
-            fmp4->SetString("VideoCodec", transcode_video_csv);
-            fmp4->SetString("MaxAudioChannels", kTranscodeMaxAudioChannels);
-            transcoding->SetDictionary(tp_idx++, fmp4);
-        }
 
         auto video = CefDictionaryValue::Create();
         video->SetString("Container", kTranscodeContainer);
