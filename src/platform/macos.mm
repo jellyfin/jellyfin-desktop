@@ -927,6 +927,19 @@ static void macos_early_init() {
     [aboutItem setTarget:g_app_menu_target];
     [appMenu addItem:aboutItem];
     [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Hide Jellyfin Desktop"
+                                                action:@selector(hide:)
+                                         keyEquivalent:@"h"]];
+    NSMenuItem* hideOthersItem =
+        [[NSMenuItem alloc] initWithTitle:@"Hide Others"
+                                   action:@selector(hideOtherApplications:)
+                            keyEquivalent:@"h"];
+    hideOthersItem.keyEquivalentModifierMask = NSEventModifierFlagOption | NSEventModifierFlagCommand;
+    [appMenu addItem:hideOthersItem];
+    [appMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Show All"
+                                                action:@selector(unhideAllApplications:)
+                                         keyEquivalent:@""]];
+    [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Quit"
                                                 action:@selector(terminate:)
                                          keyEquivalent:@"q"]];
