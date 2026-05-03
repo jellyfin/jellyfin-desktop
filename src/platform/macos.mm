@@ -912,7 +912,7 @@ static void macos_early_init() {
 
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-    // Menu bar: About, separator, Quit
+    // Menu bar: App (About, Quit) + Edit (standard editing shortcuts)
     g_app_menu_target = [[JellyfinAppMenuTarget alloc] init];
 
     NSMenu* menubar = [[NSMenu alloc] init];
@@ -931,6 +931,33 @@ static void macos_early_init() {
                                                 action:@selector(terminate:)
                                          keyEquivalent:@"q"]];
     [appMenuItem setSubmenu:appMenu];
+
+    // Edit menu
+    NSMenuItem* editMenuItem = [[NSMenuItem alloc] init];
+    [menubar addItem:editMenuItem];
+    NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Undo"
+                                                 action:@selector(undo:)
+                                          keyEquivalent:@"z"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Redo"
+                                                 action:@selector(redo:)
+                                          keyEquivalent:@"Z"]];
+    [editMenu addItem:[NSMenuItem separatorItem]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Cut"
+                                                 action:@selector(cut:)
+                                          keyEquivalent:@"x"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Copy"
+                                                 action:@selector(copy:)
+                                          keyEquivalent:@"c"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Paste"
+                                                 action:@selector(paste:)
+                                          keyEquivalent:@"v"]];
+    [editMenu addItem:[NSMenuItem separatorItem]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Select All"
+                                                 action:@selector(selectAll:)
+                                          keyEquivalent:@"a"]];
+    [editMenuItem setSubmenu:editMenu];
+
     [NSApp setMainMenu:menubar];
 
     [NSApp finishLaunching];
