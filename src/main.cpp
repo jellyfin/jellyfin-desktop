@@ -18,6 +18,8 @@
 #include "browser/about_browser.h"
 #include "mpv/event.h"
 #include "mpv/options.h"
+#include "mpv/capabilities.h"
+#include "jellyfin/device_profile.h"
 #include "event_queue.h"
 #include "wake_event.h"
 #include "paths/paths.h"
@@ -555,6 +557,11 @@ int main(int argc, char* argv[]) {
     // users' $MPV_HOME/mpv.conf is loaded.
     g_mpv.SetOptionString("config", "yes");
 
+    // We only ever feed mpv direct media URLs from the Jellyfin server;
+    // the youtube-dl/yt-dlp hook would just add startup latency and a
+    // failure mode for nothing.
+    g_mpv.SetOptionString("ytdl", "no");
+
     g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
 
@@ -632,6 +639,16 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     g_mpv.RequestLogMessages("info");
+
+    // Snapshot mpv's actual decoder/demuxer/protocol support and turn it
+    // into a Jellyfin device profile. Cached for renderer-process injection
+    // through extra_info; see WebBrowser::injectionProfile().
+    {
+        auto caps = mpv_capabilities::Query(g_mpv.Get());
+        jellyfin_device_profile::SetCachedJson(jellyfin_device_profile::Build(
+            caps, "Jellyfin Desktop", APP_VERSION_STRING,
+            Settings::instance().forceTranscoding()));
+    }
 
     // input-default-bindings=no removes all builtin bindings including
     // CLOSE_WIN → quit.  Re-bind it so the WM close button works.

@@ -12,6 +12,7 @@
 #include "../input/dispatch.h"
 #include "../cjson/cJSON.h"
 #include "../paths/paths.h"
+#include "../jellyfin/device_profile.h"
 
 extern void update_idle_inhibit();
 
@@ -63,6 +64,7 @@ static void applySettingValue(const std::string& section, const std::string& key
     else if (key == "audioExclusive") s.setAudioExclusive(value == "true");
     else if (key == "audioChannels") s.setAudioChannels(value);
     else if (key == "logLevel") s.setLogLevel(value);
+    else if (key == "forceTranscoding") s.setForceTranscoding(value == "true");
     else LOG_WARN(LOG_CEF, "Unknown setting key: {}.{}", section.c_str(), key.c_str());
     s.saveAsync();
 }
@@ -82,7 +84,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     static const char* const kFunctions[] = {
         "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
         "playerSetVolume", "playerSetMuted", "playerSetSpeed",
-        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
+        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio", "playerAddAudio",
         "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive",
         "openConfigDir", "saveServerUrl",
         "notifyMetadata", "notifyPosition", "notifySeek",
@@ -94,7 +96,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     };
     static const char* const kScripts[] = {
         "native-shim.js",
-        "mpv-player-core.js",
+        "mpv-player-base.js",
         "mpv-video-player.js",
         "mpv-audio-player.js",
         "input-plugin.js",
@@ -112,6 +114,9 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
     d->SetList("functions", fns);
     d->SetList("scripts", scripts);
+    const std::string& profile_json = jellyfin_device_profile::CachedJson();
+    if (!profile_json.empty())
+        d->SetString("device_profile_json", profile_json);
     return d;
 }
 

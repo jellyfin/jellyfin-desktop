@@ -172,6 +172,21 @@ New-Item -ItemType Directory -Path $IncludeDir -Force | Out-Null
 Write-Host "Copying headers..."
 Copy-Item (Join-Path $MpvSourceDir "include\mpv") (Join-Path $IncludeDir "mpv") -Recurse
 
+# Copy ffmpeg headers — jellyfin-desktop links libavcodec directly to enumerate
+# decoders for the Jellyfin device profile. Mirrors the mpv layout: headers
+# under include/, import lib under lib/ alongside mpv.lib.
+Write-Host "Copying ffmpeg headers..."
+$MsysIncludeDir = Join-Path $MsysPath "$MsysEnv\include"
+foreach ($pkg in @("libavcodec", "libavutil")) {
+    $src = Join-Path $MsysIncludeDir $pkg
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $IncludeDir $pkg) -Recurse
+    } else {
+        Write-Host "Missing $src — ffmpeg headers not installed in MSYS2" -ForegroundColor Red
+        exit 1
+    }
+}
+
 # Copy DLL
 Write-Host "Copying libmpv-2.dll..."
 Copy-Item $BuiltDll $LibDir
@@ -285,6 +300,42 @@ Invoke-Msys2 "bash '$MsysDepScript'" -Description "Copying MSYS2 runtime depende
 # Count what we copied
 $DllCount = (Get-ChildItem $LibDir -Filter "*.dll").Count
 Write-Host "Collected $DllCount DLLs total" -ForegroundColor Green
+
+# Generate avcodec.lib import library so MSVC can link libavcodec at build
+# time. The avcodec-NN.dll was pulled in by the runtime-dep walker above.
+Write-Host "Generating avcodec import library..."
+$AvcodecDll = Get-ChildItem $LibDir -Filter "avcodec-*.dll" | Select-Object -First 1
+if (-not $AvcodecDll) {
+    Write-Host "avcodec-*.dll not found in $LibDir — runtime collection failed" -ForegroundColor Red
+    exit 1
+}
+$AvcodecBase = [System.IO.Path]::GetFileNameWithoutExtension($AvcodecDll.Name)
+if ($HasMsvc) {
+    $DefFile = Join-Path $LibDir "$AvcodecBase.def"
+    $DumpOutput = & dumpbin /exports $AvcodecDll.FullName
+    $Exports = $DumpOutput | ForEach-Object {
+        if ($_ -match "^\s+\d+\s+[A-F0-9]+\s+[A-F0-9]+\s+(\w+)") { $matches[1] }
+    }
+    if ($Exports.Count -eq 0) {
+        Write-Host "No exports found in $($AvcodecDll.Name)" -ForegroundColor Red
+        exit 1
+    }
+    $DefContent = "LIBRARY $AvcodecBase`nEXPORTS`n"
+    $Exports | ForEach-Object { $DefContent += "    $_`n" }
+    Set-Content -Path $DefFile -Value $DefContent
+    Push-Location $LibDir
+    & lib.exe /def:"$AvcodecBase.def" /out:avcodec.lib /MACHINE:$LibMachine 2>&1 | Out-Null
+    Pop-Location
+} else {
+    $MsysLibDir = ConvertTo-MsysPath $LibDir
+    Invoke-Msys2 "cd '$MsysLibDir' && gendef '$($AvcodecDll.Name)' && dlltool -d '$AvcodecBase.def' -l avcodec.lib" `
+        -Description "Generating avcodec.lib with dlltool"
+}
+if (-not (Test-Path (Join-Path $LibDir "avcodec.lib"))) {
+    Write-Host "Failed to generate avcodec.lib" -ForegroundColor Red
+    exit 1
+}
+Write-Host "Generated avcodec.lib" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "=== Build complete ===" -ForegroundColor Green

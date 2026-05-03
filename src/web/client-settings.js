@@ -88,6 +88,86 @@
         document._callbacks['HISTORY_UPDATE'].push(teardown);
     }
 
+    // Codec checkbox/reorder widget. Renders one row per codec — enabled
+    // codecs first in user-preference order, then the remaining mpv-supported
+    // codecs at the bottom. Toggling a row enables/disables it; ↑/↓ reorder
+    // within the enabled set. Every change re-emits the ordered enabled list.
+    function renderCodecList({ enabled, all, onChange }) {
+        const widget = document.createElement('div');
+        widget.className = 'codecList';
+        widget.style.cssText = 'border:1px solid rgba(255,255,255,0.15); border-radius:4px; padding:0.5em;';
+
+        // Working state: list of {codec, enabled} in display order.
+        const enabledSet = new Set(enabled || []);
+        const allSet = new Set(all || []);
+        const rows = [];
+        for (const c of (enabled || []))     if (allSet.has(c)) rows.push({ codec: c, enabled: true });
+        for (const c of (all || []))         if (!enabledSet.has(c)) rows.push({ codec: c, enabled: false });
+
+        function rerender() {
+            widget.replaceChildren();
+            const lastEnabledIdx = rows.reduce((acc, r, i) => r.enabled ? i : acc, -1);
+            rows.forEach((row, idx) => {
+                const r = document.createElement('div');
+                r.style.cssText = 'display:flex; align-items:center; gap:0.5em; padding:0.25em 0;';
+
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = row.enabled;
+                cb.addEventListener('change', () => {
+                    row.enabled = cb.checked;
+                    if (cb.checked) {
+                        rows.splice(idx, 1);
+                        rows.splice(lastEnabledIdx + 1, 0, row);
+                    } else {
+                        rows.splice(idx, 1);
+                        const newLastEnabled = rows.reduce((acc, r, i) => r.enabled ? i : acc, -1);
+                        rows.splice(newLastEnabled + 1, 0, row);
+                    }
+                    emit();
+                    rerender();
+                });
+                r.appendChild(cb);
+
+                const name = document.createElement('span');
+                name.textContent = row.codec;
+                name.style.flex = '1';
+                r.appendChild(name);
+
+                const up = document.createElement('button');
+                up.type = 'button';
+                up.textContent = '↑';
+                up.disabled = !row.enabled || idx === 0 || !rows[idx - 1].enabled;
+                up.addEventListener('click', () => {
+                    [rows[idx - 1], rows[idx]] = [rows[idx], rows[idx - 1]];
+                    emit();
+                    rerender();
+                });
+                r.appendChild(up);
+
+                const down = document.createElement('button');
+                down.type = 'button';
+                down.textContent = '↓';
+                down.disabled = !row.enabled || idx >= lastEnabledIdx;
+                down.addEventListener('click', () => {
+                    [rows[idx], rows[idx + 1]] = [rows[idx + 1], rows[idx]];
+                    emit();
+                    rerender();
+                });
+                r.appendChild(down);
+
+                widget.appendChild(r);
+            });
+        }
+
+        function emit() {
+            onChange(rows.filter(r => r.enabled).map(r => r.codec));
+        }
+
+        rerender();
+        return widget;
+    }
+
     // Populate the settings form with controls driven by window.jmpInfo.
     function buildSettingsForm(form) {
         const jmpInfo = window.jmpInfo;
@@ -135,6 +215,27 @@
                         window.api.settings.setValue(section, setting.key, control.value);
                     });
                     container.appendChild(control);
+                    if (setting.help) {
+                        const helpText = document.createElement('div');
+                        helpText.className = 'fieldDescription';
+                        helpText.textContent = setting.help;
+                        container.appendChild(helpText);
+                    }
+                } else if (setting.inputType === 'codecList') {
+                    container.className = 'inputContainer';
+                    const labelText = document.createElement('label');
+                    labelText.className = 'inputLabel';
+                    labelText.textContent = setting.displayName;
+                    container.appendChild(labelText);
+                    const widget = renderCodecList({
+                        enabled: values[setting.key],
+                        all: jmpInfo[setting.codecListSource],
+                        onChange: (enabledOrdered) => {
+                            jmpInfo.settings[section][setting.key] = enabledOrdered;
+                            window.api.settings.setValue(section, setting.key, enabledOrdered);
+                        }
+                    });
+                    container.appendChild(widget);
                     if (setting.help) {
                         const helpText = document.createElement('div');
                         helpText.className = 'fieldDescription';

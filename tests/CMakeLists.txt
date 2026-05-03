@@ -1,6 +1,6 @@
 add_executable(jellyfin_api_test
     jellyfin_api_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/jellyfin_api.cpp
+    ${CMAKE_SOURCE_DIR}/src/jellyfin/api.cpp
     ${CMAKE_SOURCE_DIR}/src/cjson/cJSON.c
 )
 
