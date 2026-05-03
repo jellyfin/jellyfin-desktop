@@ -86,6 +86,7 @@ struct ScrollEvent {
     int      x, y;
     int      dx, dy;  // wheel deltas (pixels)
     uint32_t modifiers;
+    bool     precise = false;  // macOS trackpad precision scrolling
 };
 
 }  // namespace input
