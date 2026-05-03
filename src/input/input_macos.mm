@@ -7,6 +7,8 @@
 #import <Cocoa/Cocoa.h>
 #include <mach/mach_time.h>
 
+#include "include/cef_browser.h"
+#include "include/cef_frame.h"
 #include "include/internal/cef_types.h"
 
 #include <atomic>
@@ -456,6 +458,54 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
     LOG_INFO(LOG_PLATFORM, "[INPUT] resignFirstResponder");
     input::dispatch_keyboard_focus(false);
     return [super resignFirstResponder];
+}
+
+// --- Edit commands ---
+//
+// Without an Edit menu, AppKit never sends copy:/paste:/etc. through the
+// responder chain, so Cmd+C/V/X/Z/A silently do nothing.
+// Forward each action to the active CEF browser's focused frame.
+
+- (IBAction)undo:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Undo();
+}
+
+- (IBAction)redo:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Redo();
+}
+
+- (IBAction)cut:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Cut();
+}
+
+- (IBAction)copy:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Copy();
+}
+
+- (IBAction)paste:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Paste();
+}
+
+- (IBAction)selectAll:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->SelectAll();
 }
 
 @end
