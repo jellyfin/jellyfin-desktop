@@ -52,12 +52,20 @@ jobs:
             zimg \
             shaderc
 
+      - name: Cache built deps (ffmpeg + libplacebo)
+        id: deps-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/jellyfin-deps
+          key: deps-x86_64-ffmpeg-n8.1-libplacebo-v7.360.1-macos${{ env.MACOSX_DEPLOYMENT_TARGET }}-v2
+
       - name: Build ffmpeg from source
+        if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch n8.1 https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg-src
           cd /tmp/ffmpeg-src
           ./configure \
-            --prefix=/usr/local/jellyfin-deps \
+            --prefix="$HOME/jellyfin-deps" \
             --enable-shared \
             --disable-static \
             --enable-gpl \
@@ -68,9 +76,10 @@ jobs:
             --extra-cflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" \
             --extra-ldflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
           make -j$(sysctl -n hw.ncpu)
-          sudo make install
+          make install
 
       - name: Build libplacebo from source
+        if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --recursive --branch v7.360.1 https://code.videolan.org/videolan/libplacebo.git /tmp/libplacebo-src
           cd /tmp/libplacebo-src
@@ -84,12 +93,12 @@ jobs:
           t = t.replace('VkXML(ET.parse(xmlfile))', 'VkXML(ET.parse(xmlfile).getroot())')
           p.write_text(t)
           "
-          meson setup build --prefix=/usr/local/jellyfin-deps \
+          meson setup build --prefix="$HOME/jellyfin-deps" \
             -Ddemos=false -Dtests=false -Dvulkan=enabled \
             -Dc_args="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" \
             -Dcpp_args="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
           ninja -C build
-          sudo ninja -C build install
+          ninja -C build install
 
       - name: Patch mpv for macOS 12 Swift compatibility
         run: |
@@ -130,11 +139,11 @@ jobs:
 
       - name: Configure and build
         run: |
-          export PKG_CONFIG_PATH=/usr/local/jellyfin-deps/lib/pkgconfig:$PKG_CONFIG_PATH
+          export PKG_CONFIG_PATH="$HOME/jellyfin-deps/lib/pkgconfig:$PKG_CONFIG_PATH"
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET} \
-            -DCMAKE_PREFIX_PATH=/usr/local/jellyfin-deps
+            -DCMAKE_PREFIX_PATH="$HOME/jellyfin-deps"
           cmake --build build
 
       - name: Create app bundle
