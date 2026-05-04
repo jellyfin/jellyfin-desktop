@@ -121,10 +121,13 @@ static void log_mpv_message(const mpv_event_log_message* msg) {
         LOG_WARN(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
     case MPV_LOG_LEVEL_INFO:
         LOG_INFO(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
-    case MPV_LOG_LEVEL_TRACE:
-        LOG_TRACE(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
-    default: // V, DEBUG
+    case MPV_LOG_LEVEL_V:
         LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    case MPV_LOG_LEVEL_DEBUG:
+        LOG_TRACE(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    default: // unexpected (e.g. TRACE — we cap subscription at debug) or new mpv level
+        LOG_WARN(LOG_MPV, "[unhandled mpv level {}] {}: {}",
+                 (int)msg->log_level, msg->prefix, msg->text); break;
     }
 }
 
@@ -469,10 +472,10 @@ int main(int argc, char* argv[]) {
         log_path = paths::getLogPath();
 #endif
     }
-    int log_level = -1;
+    LogLevel log_level = LogLevel::Default;
     if (log_level_str && log_level_str[0]) {
         log_level = parseLogLevel(log_level_str);
-        if (log_level < 0) {
+        if (log_level == LogLevel::Default) {
             fprintf(stderr, "Invalid log level: '%s' (expected trace|debug|info|warn|error)\n",
                     log_level_str);
             return 1;
@@ -640,7 +643,7 @@ int main(int argc, char* argv[]) {
         g_mpv.TerminateDestroy();
         return 1;
     }
-    g_mpv.RequestLogMessages("info");
+    g_mpv.SetLogLevel(log_level);
 
     // input-default-bindings=no removes all builtin bindings including
     // CLOSE_WIN → quit.  Re-bind it so the WM close button works.
