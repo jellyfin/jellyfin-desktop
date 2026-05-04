@@ -12,7 +12,7 @@ build: deps
     #!/bin/sh
     set -eu
     if ! [ -f build/CMakeCache.txt ]; then
-        cmake -S . -B build -G Ninja -DBUILD_TESTING=ON
+        cmake -S . -B build -G Ninja -DBUILD_TESTING=ON -DBUILD_MPV_CLI=ON -DEXTERNAL_MPV_DIR=
     fi
     cmake --build build
 
@@ -31,14 +31,19 @@ deps:
 test: build
     ctest --test-dir build --output-on-failure
 
-# Run the app with debug logging (logs to build/run.log)
+# Run the app with trace logging (logs to build/run.log)
 [linux]
-run: build
-    build/jellyfin-desktop --log-level=debug --log-file=build/run.log
+run *args: build
+    build/jellyfin-desktop --log-level=trace --log-file=build/run.log {{args}}
 
 # Update vendored/fetched deps (CEF, doctest, quill); pass --check to verify only
 update-deps *args:
     python3 dev/tools/update_deps.py {{args}}
+
+# Run the standalone mpv CLI built from the submodule (forwards args)
+[linux]
+mpv *args: build
+    third_party/mpv/build/mpv {{args}}
 
 # Remove build artifacts (keeps CEF SDK download)
 clean:

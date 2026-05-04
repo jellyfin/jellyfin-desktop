@@ -129,11 +129,23 @@ void dispatch_mouse_move(const MouseMoveEvent& e) {
     b->GetHost()->SendMouseMoveEvent(me, e.leave);
 }
 
+void dispatch_history_nav(bool forward) {
+    auto b = active_browser();
+    if (!b) return;
+    if (forward) {
+        if (b->CanGoForward()) b->GoForward();
+    } else {
+        if (b->CanGoBack()) b->GoBack();
+    }
+}
+
 void dispatch_scroll(const ScrollEvent& e) {
     auto b = active_browser();
     if (!b) return;
     CefMouseEvent me{};
-    me.x = e.x; me.y = e.y; me.modifiers = e.modifiers;
+    me.x = e.x; me.y = e.y;
+    me.modifiers = e.modifiers;
+    if (e.precise) me.modifiers |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
     b->GetHost()->SendMouseWheelEvent(me, e.dx, e.dy);
 }
 

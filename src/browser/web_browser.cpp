@@ -12,6 +12,7 @@
 #include "../input/dispatch.h"
 #include "../cjson/cJSON.h"
 #include "../paths/paths.h"
+#include "../jellyfin/device_profile.h"
 
 extern void update_idle_inhibit();
 
@@ -62,7 +63,9 @@ static void applySettingValue(const std::string& section, const std::string& key
     else if (key == "audioPassthrough") s.setAudioPassthrough(value);
     else if (key == "audioExclusive") s.setAudioExclusive(value == "true");
     else if (key == "audioChannels") s.setAudioChannels(value);
+    else if (key == "titlebarThemeColor") s.setTitlebarThemeColor(value == "true");
     else if (key == "logLevel") s.setLogLevel(value);
+    else if (key == "forceTranscoding") s.setForceTranscoding(value == "true");
     else LOG_WARN(LOG_CEF, "Unknown setting key: {}.{}", section.c_str(), key.c_str());
     s.saveAsync();
 }
@@ -82,7 +85,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     static const char* const kFunctions[] = {
         "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
         "playerSetVolume", "playerSetMuted", "playerSetSpeed",
-        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
+        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio", "playerAddAudio",
         "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive",
         "openConfigDir", "saveServerUrl",
         "notifyMetadata", "notifyPosition", "notifySeek",
@@ -94,7 +97,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     };
     static const char* const kScripts[] = {
         "native-shim.js",
-        "mpv-player-core.js",
+        "mpv-player-base.js",
         "mpv-video-player.js",
         "mpv-audio-player.js",
         "input-plugin.js",
@@ -112,6 +115,9 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
     d->SetList("functions", fns);
     d->SetList("scripts", scripts);
+    const std::string& profile_json = jellyfin_device_profile::CachedJson();
+    if (!profile_json.empty())
+        d->SetString("device_profile_json", profile_json);
     return d;
 }
 
@@ -142,12 +148,21 @@ bool WebBrowser::handleMessage(const std::string& name,
         int startMs = args->GetSize() > 1 ? getIntArg(args, 1) : 0;
         int audioIdx = getIntArg(args, 2);
         int subIdx = getIntArg(args, 3);
-        LOG_INFO(LOG_CEF, "playerLoad: audio={} sub={} start={}ms url={}",
-                 audioIdx, subIdx, startMs, url.c_str());
+        // arg 4 is metadataJson (consumed elsewhere); args 5 and 6 are
+        // optional external audio / subtitle URLs bundled into load so
+        // their audio-add / sub-add can be queued before the FILE_LOADED-
+        // driven unpause, gating playback on each external file being
+        // opened and its track selected.
+        std::string externalAudioUrl = args->GetSize() > 5 ? args->GetString(5).ToString() : "";
+        std::string externalSubUrl = args->GetSize() > 6 ? args->GetString(6).ToString() : "";
+        LOG_INFO(LOG_CEF, "playerLoad: audio={} sub={} start={}ms extAudio={} extSub={} url={}",
+                 audioIdx, subIdx, startMs, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
         opts.audioTrack = audioIdx;
         opts.subTrack = subIdx;
+        opts.externalAudioUrl = externalAudioUrl;
+        opts.externalSubUrl = externalSubUrl;
         g_mpv.LoadFile(url, opts);
     } else if (name == "playerStop") {
         g_mpv.Stop();
@@ -173,6 +188,10 @@ bool WebBrowser::handleMessage(const std::string& name,
         g_mpv.SubAdd(url);
     } else if (name == "playerSetAudio") {
         g_mpv.SetAudioTrack(getIntArg(args, 0));
+    } else if (name == "playerAddAudio") {
+        std::string url = args->GetString(0).ToString();
+        LOG_INFO(LOG_CEF, "playerAddAudio: {}", url.c_str());
+        g_mpv.AudioAdd(url);
     } else if (name == "playerSetAudioDelay") {
         g_mpv.SetAudioDelay(args->GetDouble(0));
     } else if (name == "playerSetAspectMode") {

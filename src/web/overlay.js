@@ -101,6 +101,31 @@ const cancelOnEscape = (e) => {
     }
 };
 
+const showConnectionFailedDialog = () => {
+    const dialog = document.createElement('div');
+    dialog.className = 'dialog scaleIn';
+
+    const header = document.createElement('h1');
+    header.innerText = headerConnectionFailureText;
+
+    const message = document.createElement('div');
+    message.innerText = messageUnableToConnectToServerText;
+    message.className = 'dialog-message';
+
+    const button = document.createElement('button');
+    button.innerText = buttonGotItText;
+    button.type = 'button';
+    button.className = 'dialog-button';
+    button.addEventListener('click', (e) => {
+        dialog.remove();
+    });
+
+    dialog.appendChild(header);
+    dialog.appendChild(message);
+    dialog.appendChild(button);
+    document.body.appendChild(dialog);
+};
+
 const startConnecting = async () => {
     const address = document.getElementById('address');
     const title = document.getElementById('title');
@@ -108,6 +133,7 @@ const startConnecting = async () => {
     const button = document.getElementById('connect-button');
     const server = address.value;
 
+    // Show connecting UI
     isConnecting = true;
     title.textContent = '';
     title.style.visibility = 'hidden';
@@ -133,6 +159,7 @@ const startConnecting = async () => {
         button.style.visibility = 'visible';
         document.removeEventListener('keydown', cancelOnEscape);
         updateButtonState();
+        showConnectionFailedDialog();
     }
 };
 
@@ -151,21 +178,6 @@ const cancelConnection = () => {
         window.jmpCheckServerConnectivity.abort();
     }
     if (cancelWait) cancelWait();
-
-    const address = document.getElementById('address');
-    const title = document.getElementById('title');
-    const spinner = document.getElementById('spinner');
-    const button = document.getElementById('connect-button');
-
-    title.textContent = document.getElementById('title').getAttribute('data-original-text');
-    title.style.visibility = 'visible';
-    address.classList.remove('connecting');
-    address.style.visibility = 'visible';
-    address.disabled = false;
-    spinner.style.display = 'none';
-    button.style.visibility = 'visible';
-    document.removeEventListener('keydown', cancelOnEscape);
-    updateButtonState();
 };
 
 // Button click handler
@@ -214,42 +226,11 @@ document.addEventListener('keydown', (e) => {
         mainLoaded = true;
 
         const address = document.getElementById('address');
-        const title = document.getElementById('title');
-        const spinner = document.getElementById('spinner');
-        const button = document.getElementById('connect-button');
 
         // Set address value for potential display later
         address.value = savedServer;
 
-        // Show connecting UI
-        isConnecting = true;
-        title.textContent = '';
-        title.style.visibility = 'hidden';
-        address.classList.add('connecting');
-        address.style.visibility = 'hidden';
-        address.disabled = true;
-        spinner.style.display = 'block';
-        const spinnerStart = Date.now();
-        button.style.visibility = 'hidden';
-        document.addEventListener('keydown', cancelOnEscape);
-
-        // C++ handles retries, just wait for result
-        const connected = await tryConnect(savedServer, spinnerStart);
-
-        if (!connected) {
-            // User cancelled or error - show UI
-            isConnecting = false;
-            title.textContent = document.getElementById('title').getAttribute('data-original-text');
-            title.style.visibility = 'visible';
-            address.classList.remove('connecting');
-            address.style.visibility = 'visible';
-            address.disabled = false;
-            spinner.style.display = 'none';
-            button.style.visibility = 'visible';
-            document.removeEventListener('keydown', cancelOnEscape);
-            address.focus();
-            updateButtonState();
-        }
+        startConnecting();
     } else {
         const title = document.getElementById('title');
         const address = document.getElementById('address');

@@ -407,6 +407,9 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     };
     replace_first("__SERVER_URL__", Settings::instance().serverUrl());
     replace_first("__SETTINGS_JSON__", Settings::instance().cliSettingsJson());
+    if (profile->HasKey("device_profile_json"))
+        replace_first("__DEVICE_PROFILE_JSON__",
+                      profile->GetString("device_profile_json").ToString());
 
     frame->ExecuteJavaScript(code, frame->GetURL(), 0);
 }

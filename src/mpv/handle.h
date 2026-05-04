@@ -95,29 +95,86 @@ public:
     void SetVolume(double vol)           { SetPropertyDoubleAsync("volume", vol); }
     void SetMuted(bool muted)            { SetPropertyFlagAsync("mute", muted); }
     void SetSpeed(double rate)           { SetPropertyDoubleAsync("speed", rate); }
-    void SetAudioTrack(int64_t id)       { SetPropertyIntAsync("aid", id); }
-    void SetSubtitleTrack(int64_t id)    { SetPropertyIntAsync("sid", id); }
+    void SetAudioTrack(int64_t id)       { SetPropertyStringAsync("aid", TrackToMpvStr(id)); }
+    void SetSubtitleTrack(int64_t id)    { SetPropertyStringAsync("sid", TrackToMpvStr(id)); }
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
-    void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }    void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
-    // mpv track selection: -1 = auto, 0 = disable, 1+ = specific track
-    static constexpr int64_t kTrackAuto    = -1;
+    void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
+    void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
+    void AudioAdd(const std::string& url) { CommandAsync({"audio-add", url, "select"}); }
+    // Public sentinels: 0 = disable, 1+ = specific track id. mpv auto track
+    // selection is completely disabled (track-auto-selection=no in
+    // SetDefaults) as it conflicts with the fact that jellyfin-web is
+    // ultimately responsible for track selection.
     static constexpr int64_t kTrackDisable =  0;
 
     struct LoadOptions {
         double startSecs = 0;
-        int64_t audioTrack = kTrackAuto;
-        int64_t subTrack = kTrackAuto;
+        int64_t videoTrack = 1;                // we always want the (single) video track
+        int64_t audioTrack = kTrackDisable;
+        int64_t subTrack   = kTrackDisable;
+        std::string externalAudioUrl;          // empty = none
+        std::string externalSubUrl;            // empty = none
     };
 
     void LoadFile(const std::string& path, const LoadOptions& opts) {
+        // Track selection is owned by Jellyfin. With track-auto-selection=no,
+        // mpv silently drops aid=/vid=/sid= passed in loadfile options
+        // (loadfile.c:1850-1858 skips select_default_track entirely). We
+        // therefore load the file *paused* with no selectors, stash the
+        // intended ids, and apply them via property writes after FILE_LOADED.
+        // The async writes + final pause=false are FIFO-ordered on mpv's core
+        // thread, so playback only begins after track-switch reinits land.
+        pendingVid_ = opts.videoTrack;
+        pendingAid_ = opts.audioTrack;
+        pendingSid_ = opts.subTrack;
+        pendingExternalAudioUrl_ = opts.externalAudioUrl;
+        pendingExternalSubUrl_ = opts.externalSubUrl;
+        pendingValid_ = true;
+
         std::string optsStr = "start=" + std::to_string(opts.startSecs)
-                            + ",pause=no";
-        if (opts.audioTrack != kTrackAuto)
-            optsStr += ",aid=" + std::to_string(opts.audioTrack);
-        if (opts.subTrack != kTrackAuto)
-            optsStr += ",sid=" + std::to_string(opts.subTrack);
+                            + ",pause=yes";
         CommandAsync({"loadfile", path, "replace", "-1", optsStr});
     }
+
+    // Called from the FILE_LOADED event handler. Queues the pending
+    // vid/aid/sid property writes, then audio-add / sub-add for any
+    // external streams (their `select` flag picks the new track), then
+    // pause=false. mpv processes these in submission order on its core
+    // thread, so the unpause runs after the external files' demuxers are
+    // opened and their tracks selected — same gating as internal tracks.
+    void ApplyPendingTrackSelectionAndPlay() {
+        if (!pendingValid_) return;
+        SetPropertyStringAsync("vid", TrackToMpvStr(pendingVid_));
+        SetPropertyStringAsync("aid", TrackToMpvStr(pendingAid_));
+        SetPropertyStringAsync("sid", TrackToMpvStr(pendingSid_));
+        if (!pendingExternalAudioUrl_.empty())
+            CommandAsync({"audio-add", pendingExternalAudioUrl_, "select"});
+        if (!pendingExternalSubUrl_.empty())
+            CommandAsync({"sub-add", pendingExternalSubUrl_, "select"});
+        SetPropertyFlagAsync("pause", false);
+        pendingValid_ = false;
+        pendingExternalAudioUrl_.clear();
+        pendingExternalSubUrl_.clear();
+    }
+
+private:
+    // Translate our public sentinel to mpv's TRACKCHOICE string form. Must
+    // be sent as a string: mpv's choice_set converts MPV_FORMAT_INT64 via
+    // snprintf+parse_choice, and parse_choice falls through to numeric
+    // range parsing on a non-name match, where M_RANGE(0, 8190) rejects
+    // -2 ("no") as out-of-range.
+    static std::string TrackToMpvStr(int64_t id) {
+        return id == kTrackDisable ? "no" : std::to_string(id);
+    }
+
+    int64_t pendingVid_ = 1;
+    int64_t pendingAid_ = kTrackDisable;
+    int64_t pendingSid_ = kTrackDisable;
+    std::string pendingExternalAudioUrl_;
+    std::string pendingExternalSubUrl_;
+    bool pendingValid_ = false;
+
+public:
 
     inline static const std::unordered_map<std::string, std::pair<bool, double>> kAspectModes = {
         {"auto",  {true,  0.0}},
@@ -186,6 +243,11 @@ private:
         SetOptionString("osd-level", "0");
         SetOptionString("osc", "no");
         SetOptionString("display-tags", "");
+
+        // Track selection is owned by Jellyfin. Disable mpv's heuristic so
+        // unspecified tracks stay disabled instead of being auto-picked
+        // by language/default-flag/codec scoring.
+        SetOptionString("track-auto-selection", "no");
 
         // Disable all mpv input — we own input and route through CEF
         SetOptionString("input-default-bindings", "no");

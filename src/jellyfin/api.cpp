@@ -1,6 +1,6 @@
-#include "jellyfin_api.h"
+#include "api.h"
 
-#include "cjson/cJSON.h"
+#include "../cjson/cJSON.h"
 
 #include <cctype>
 #include <cstring>

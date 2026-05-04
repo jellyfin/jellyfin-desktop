@@ -7,15 +7,30 @@
 #import <Cocoa/Cocoa.h>
 #include <mach/mach_time.h>
 
+#include "include/cef_browser.h"
+#include "include/cef_frame.h"
 #include "include/internal/cef_types.h"
 
 #include <atomic>
 #include <cstdint>
+#include <cmath>
 
 static bool g_cursor_hidden = false;
 static bool g_mouse_inside = false;
 static cef_cursor_type_t g_pending_cursor = CT_POINTER;
 static uint32_t g_mouse_button_modifiers = 0;
+
+// Scroll accumulator — coalesces multiple trackpad/wheel events into a
+// single CEF wheel event per runloop cycle. Precise (trackpad) deltas
+// pass through unscaled; non-precise (mouse wheel) line deltas are
+// converted to pixels at a constant ratio.
+static float g_scroll_accum_x = 0.0f;
+static float g_scroll_accum_y = 0.0f;
+static int   g_scroll_x = 0, g_scroll_y = 0;
+static uint32_t g_scroll_mods = 0;
+static bool  g_scroll_precise = false;
+static bool  g_scroll_pending = false;
+static bool  g_scroll_flush_scheduled = false;
 
 namespace input::macos {
 namespace {
@@ -325,7 +340,7 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
     else         g_mouse_button_modifiers &= ~flag;
 
     NSPoint loc = [self mouseLocInView:event];
-    LOG_INFO(LOG_PLATFORM, "[INPUT] mouseButton btn={} pressed={} ({:.0f},{:.0f})",
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] mouseButton btn={} pressed={} ({:.0f},{:.0f})",
              (int)button, pressed ? 1 : 0, loc.x, loc.y);
     input::dispatch_mouse_button({
         .button      = button,
@@ -350,10 +365,22 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
 - (void)rightMouseUp:(NSEvent*)event {
     [self dispatchMouseButton:event button:input::MouseButton::Right pressed:false];
 }
+// NSEvent buttonNumber values for the "back"/"forward" side buttons on
+// standard 5-button mice. Apple doesn't define named constants for these.
+static constexpr NSInteger kNSMouseButtonBack    = 3;
+static constexpr NSInteger kNSMouseButtonForward = 4;
+
 - (void)otherMouseDown:(NSEvent*)event {
+    NSInteger n = [event buttonNumber];
+    if (n == kNSMouseButtonBack || n == kNSMouseButtonForward) {
+        input::dispatch_history_nav(n == kNSMouseButtonForward);
+        return;
+    }
     [self dispatchMouseButton:event button:input::MouseButton::Middle pressed:true];
 }
 - (void)otherMouseUp:(NSEvent*)event {
+    NSInteger n = [event buttonNumber];
+    if (n == kNSMouseButtonBack || n == kNSMouseButtonForward) return;
     [self dispatchMouseButton:event button:input::MouseButton::Middle pressed:false];
 }
 
@@ -381,14 +408,83 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
     [self dispatchMouseMove:event leave:true];
 }
 
+static void flush_scroll_accumulator() {
+    g_scroll_flush_scheduled = false;
+    if (!g_scroll_pending) return;
+
+    int dx = 0, dy = 0;
+    if (g_scroll_precise) {
+        // Precise (trackpad): pass pixel deltas straight through.
+        dx = static_cast<int>(std::lround(g_scroll_accum_x));
+        dy = static_cast<int>(std::lround(g_scroll_accum_y));
+        g_scroll_accum_x -= dx;
+        g_scroll_accum_y -= dy;
+    } else {
+        // Non-precise (mouse wheel): scale to pixels and drain with a
+        // fractional decay so wheel events feel smooth like Chrome.
+        constexpr float kDrainFraction = 0.45f;
+        dx = static_cast<int>(std::lround(g_scroll_accum_x * kDrainFraction));
+        dy = static_cast<int>(std::lround(g_scroll_accum_y * kDrainFraction));
+        if (dx == 0 && std::fabs(g_scroll_accum_x) >= 1.0f)
+            dx = g_scroll_accum_x > 0 ? 1 : -1;
+        if (dy == 0 && std::fabs(g_scroll_accum_y) >= 1.0f)
+            dy = g_scroll_accum_y > 0 ? 1 : -1;
+        g_scroll_accum_x -= dx;
+        g_scroll_accum_y -= dy;
+        if (std::fabs(g_scroll_accum_x) < 0.5f) g_scroll_accum_x = 0.0f;
+        if (std::fabs(g_scroll_accum_y) < 0.5f) g_scroll_accum_y = 0.0f;
+    }
+
+    g_scroll_pending = (g_scroll_accum_x != 0.0f || g_scroll_accum_y != 0.0f);
+    if (dx == 0 && dy == 0) return;
+
+    input::dispatch_scroll({
+        .x = g_scroll_x, .y = g_scroll_y,
+        .dx = dx, .dy = dy,
+        .modifiers = g_scroll_mods,
+        .precise = g_scroll_precise,
+    });
+}
+
 - (void)scrollWheel:(NSEvent*)event {
     NSPoint loc = [self mouseLocInView:event];
-    input::dispatch_scroll({
-        .x = (int)loc.x, .y = (int)loc.y,
-        .dx = (int)([event scrollingDeltaX] * 10),
-        .dy = (int)([event scrollingDeltaY] * 10),
-        .modifiers = input::macos::ns_to_cef_modifiers([event modifierFlags]),
-    });
+    const bool precise = [event hasPreciseScrollingDeltas];
+    float deltaX = 0.0f;
+    float deltaY = 0.0f;
+
+    if (precise) {
+        deltaX = static_cast<float>([event scrollingDeltaX]);
+        deltaY = static_cast<float>([event scrollingDeltaY]);
+    } else {
+        deltaX = static_cast<float>([event deltaX]);
+        deltaY = static_cast<float>([event deltaY]);
+    }
+
+    g_scroll_x = static_cast<int>(loc.x);
+    g_scroll_y = static_cast<int>(loc.y);
+    g_scroll_mods = input::macos::ns_to_cef_modifiers([event modifierFlags]);
+    g_scroll_precise = precise;
+
+    if (precise) {
+        g_scroll_accum_x += deltaX;
+        g_scroll_accum_y += deltaY;
+    } else {
+        // Cocoa scrollWheel with hasPreciseScrollingDeltas == NO reports
+        // line-based deltas (deltaX/Y), not pixels. Chromium maps one
+        // "scroll line" to 40 CSS pixels — see
+        // https://chromium.googlesource.com/chromium/blink/+/9eb0e6c/Source/web/WebInputEventFactoryMac.mm#1105
+        constexpr float kPixelsPerCocoaTick = 40.0f;
+        g_scroll_accum_x += deltaX * kPixelsPerCocoaTick;
+        g_scroll_accum_y += deltaY * kPixelsPerCocoaTick;
+    }
+    g_scroll_pending = true;
+
+    if (!g_scroll_flush_scheduled) {
+        g_scroll_flush_scheduled = true;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            flush_scroll_accumulator();
+        });
+    }
 }
 
 // --- Keyboard events ---
@@ -456,6 +552,54 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
     LOG_INFO(LOG_PLATFORM, "[INPUT] resignFirstResponder");
     input::dispatch_keyboard_focus(false);
     return [super resignFirstResponder];
+}
+
+// --- Edit commands ---
+//
+// Without an Edit menu, AppKit never sends copy:/paste:/etc. through the
+// responder chain, so Cmd+C/V/X/Z/A silently do nothing.
+// Forward each action to the active CEF browser's focused frame.
+
+- (IBAction)undo:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Undo();
+}
+
+- (IBAction)redo:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Redo();
+}
+
+- (IBAction)cut:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Cut();
+}
+
+- (IBAction)copy:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Copy();
+}
+
+- (IBAction)paste:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->Paste();
+}
+
+- (IBAction)selectAll:(id)sender {
+    (void)sender;
+    auto browser = input::active_browser();
+    if (!browser) return;
+    if (auto frame = browser->GetFocusedFrame()) frame->SelectAll();
 }
 
 @end

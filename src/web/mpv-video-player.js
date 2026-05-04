@@ -18,43 +18,33 @@
         return mediaStreams.find(s => s.Index === index) || null;
     }
 
-    class mpvVideoPlayer {
-        constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm, dashboard }) {
-            this.events = events;
+    class mpvVideoPlayer extends window.MpvPlayerBase {
+        constructor(args) {
+            super(args);
+            const { loading, appRouter, globalize, dashboard, playbackManager } = args;
             this.loading = loading;
             this.appRouter = appRouter;
             this.globalize = globalize;
-            this.appHost = appHost;
-            this.appSettings = appSettings;
+            this.playbackManager = playbackManager;
             if (dashboard && dashboard.default) {
                 this.setTransparency = dashboard.default.setBackdropTransparency.bind(dashboard);
             } else {
                 this.setTransparency = () => {};
             }
 
-            this.name = 'MPV Video Player';
-            this.type = 'mediaplayer';
             this.id = 'mpvvideoplayer';
+            this.logTag = 'Video';
+            this.name = 'MPV Video Player';
             this.syncPlayWrapAs = 'htmlvideoplayer';
             this.priority = -1;
             this.useFullSubtitleUrls = true;
             this.isLocalPlayer = true;
             this.isFetching = false;
 
-            // Register for fullscreen notifications
             window._mpvVideoPlayerInstance = this;
-
-            // Use defineProperty to avoid circular reference in JSON.stringify
-            Object.defineProperty(this, '_core', {
-                value: new window.MpvPlayerCore(events, appSettings),
-                writable: true,
-                enumerable: false
-            });
-            this._core.player = this;
 
             this._videoDialog = undefined;
             this._currentSrc = undefined;
-            this._started = false;
             this._timeUpdated = false;
             this._currentPlayOptions = undefined;
             this._endedPending = false;
@@ -62,8 +52,7 @@
             // Support jellyfin-web v10.10.7
             this._currentAspectRatio = undefined;
 
-            // Set up video-specific event handlers
-            this._core.handlers.onPlaying = () => {
+            this.handlers.onPlaying = () => {
                 if (!this._started) {
                     this._started = true;
                     this.loading.hide();
@@ -80,116 +69,106 @@
                     }
                     window.api.player.setVideoRectangle(0, 0, 0, 0);
                 }
-                if (this._core._paused) {
-                    this._core._paused = false;
-                    this.events.trigger(this, 'unpause');
-                }
-                this._core.startTimeUpdateTimer();
-                this.events.trigger(this, 'playing');
-                console.log('[Media] [MPV] playing event triggered');
+                this._emitPlaying();
             };
 
-            this._core.handlers.onTimeUpdate = (time) => {
+            this.handlers.onTimeUpdate = (time) => {
                 if (time && !this._timeUpdated) this._timeUpdated = true;
-                this._core._seeking = false;
-                this._core._currentTime = time;
-                this._core._lastTimerTick = Date.now();
+                this._seeking = false;
+                this._currentTime = time;
                 this.events.trigger(this, 'timeupdate');
             };
 
-            this._core.handlers.onSeeking = () => {
-                this._core._seeking = true;
-            };
-
-            this._core.handlers.onEnded = () => {
+            this.handlers.onEnded = () => {
                 if (!this._endedPending) {
                     this._endedPending = true;
                     this.onEndedInternal();
                 }
             };
 
-            this._core.handlers.onPause = () => {
-                this._core._paused = true;
-                this._core.stopTimeUpdateTimer();
-                this.events.trigger(this, 'pause');
-            };
-
-            this._core.handlers.onDuration = (duration) => {
-                this._core._duration = duration;
-            };
-
-            this._core.handlers.onError = (error) => {
+            this.handlers.onError = (error) => {
                 this.removeMediaDialog();
-                console.error('[Media] media error:', error);
+                console.error(`[Media] [${this.logTag}] media error:`, error);
                 this.events.trigger(this, 'error', [{ type: 'mediadecodeerror' }]);
             };
         }
 
-        currentSrc() { return this._currentSrc; }
-
         async play(options) {
-            console.log('[Media] [MPV] play() called with options:', options);
+            console.log(`[Media] [${this.logTag}] play() called with options:`, options);
             this._started = false;
             this._timeUpdated = false;
-            this._core._currentTime = null;
+            this._currentTime = null;
             this._endedPending = false;
             if (options.fullscreen) this.loading.show();  // fills entire web content area, not the actual screen
             await this.createMediaElement(options);
-            console.log('[Media] [MPV] createMediaElement done, calling setCurrentSrc');
-            return await this.setCurrentSrc(options);
+            console.log(`[Media] [${this.logTag}] createMediaElement done, calling setCurrentSrc`);
+            const result = await this.setCurrentSrc(options);
+
+            // needed when only audio is single external
+            const externalAudio = options.mediaSource?.MediaStreams?.find(s => s.Type === 'Audio' && s.IsExternal);
+            if (externalAudio && options.playMethod !== 'Transcode') {
+                this.setAudioStreamIndex(externalAudio.Index);
+            }
+            return result;
         }
 
-        setCurrentSrc(options) {
-            return new Promise((resolve) => {
-                const val = options.url;
-                this._currentSrc = val;
-                console.log('[Media] [MPV] Playing:', val);
+        get mediaType() { return 'video'; }
 
-                const ms = Math.round((options.playerStartPositionTicks || 0) / 10000);
-                this._currentPlayOptions = options;
-                this._core._currentTime = ms;
+        _resolveTracks(options) {
+            const streams = options.mediaSource?.MediaStreams || [];
+            let defaultAudioIdx = options.mediaSource.DefaultAudioStreamIndex ?? -1;
+            const defaultSubIdx = options.mediaSource.DefaultSubtitleStreamIndex ?? -1;
 
-                const streams = options.mediaSource?.MediaStreams || [];
-                const defaultAudioIdx = options.mediaSource.DefaultAudioStreamIndex ?? -1;
-                const defaultSubIdx = options.mediaSource.DefaultSubtitleStreamIndex ?? -1;
+            if (defaultAudioIdx < 0) {
+                const fallback = streams.find(s => s.Type === 'Audio' && !s.IsExternal)
+                    ?? streams.find(s => s.Type === 'Audio');
+                if (fallback) defaultAudioIdx = fallback.Index;
+            }
 
-                // Convert audio index from Jellyfin global stream index to mpv 1-based audio track index
-                let audioParam = MpvPlayerCore.TRACK_AUTO;
-                if (defaultAudioIdx >= 0) {
+            // Mirror jellyfin-web's UI selection exactly: feed mpv the relative
+            // index for DefaultAudioStreamIndex, or TRACK_DISABLE if none is selected.
+            // mpv auto track selection is completely disabled as it conflicts with
+            // the fact that jellyfin-web is ultimately responsible for that.
+            let audioParam = MpvPlayerBase.TRACK_DISABLE;
+            let externalAudioUrl = null;
+            if (options.playMethod === 'Transcode') {
+                // Server bakes the chosen audio into the transcoded output
+                // (single audio track in the m3u8). Source MediaStreams indexing
+                // doesn't apply — see htmlVideoPlayer/plugin.js:514 for the same
+                // logic. Don't audio-add either; audio is already in the stream.
+                audioParam = 1;
+            } else if (defaultAudioIdx >= 0) {
+                const audioStream = getStreamByIndex(streams, defaultAudioIdx);
+                if (audioStream && audioStream.DeliveryMethod === 'External' && audioStream.DeliveryUrl) {
+                    externalAudioUrl = audioStream.DeliveryUrl;
+                } else {
                     const relIdx = getRelativeIndexByType(streams, defaultAudioIdx, 'Audio');
-                    audioParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
+                    audioParam = relIdx != null ? relIdx : MpvPlayerBase.TRACK_DISABLE;
                 }
+            }
 
-                // Convert subtitle index to relative
-                let subParam = MpvPlayerCore.TRACK_DISABLE;
-                let externalSubUrl = null;
-                if (defaultSubIdx >= 0) {
-                    const subStream = getStreamByIndex(streams, defaultSubIdx);
-                    if (subStream && subStream.DeliveryMethod === 'External' && subStream.DeliveryUrl) {
-                        externalSubUrl = subStream.DeliveryUrl;
-                    } else {
-                        const relIdx = getRelativeIndexByType(streams, defaultSubIdx, 'Subtitle');
-                        subParam = relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO;
-                    }
+            let subParam = MpvPlayerBase.TRACK_DISABLE;
+            let externalSubUrl = null;
+            if (defaultSubIdx >= 0) {
+                const subStream = getStreamByIndex(streams, defaultSubIdx);
+                if (subStream && subStream.DeliveryMethod === 'External' && subStream.DeliveryUrl) {
+                    externalSubUrl = subStream.DeliveryUrl;
+                } else {
+                    const relIdx = getRelativeIndexByType(streams, defaultSubIdx, 'Subtitle');
+                    subParam = relIdx != null ? relIdx : MpvPlayerBase.TRACK_DISABLE;
                 }
+            }
 
-                window.api.player.setAspectMode(this.getAspectRatio());
-                window.api.player.load(val,
-                    { startMilliseconds: ms, autoplay: true },
-                    { type: 'video', metadata: options.item },
-                    audioParam,
-                    subParam,
-                    resolve);
+            return { audioParam, subParam, externalAudioUrl, externalSubUrl };
+        }
 
-                if (externalSubUrl) {
-                    window.api.player.addSubtitleStream(externalSubUrl);
-                }
-            });
+        _beforeLoad() {
+            window.api.player.setAspectMode(this.getAspectRatio());
         }
 
         setSubtitleStreamIndex(index) {
             if (index == null || index < 0) {
-                window.api.player.setSubtitleStream(MpvPlayerCore.TRACK_DISABLE);
+                window.api.player.setSubtitleStream(MpvPlayerBase.TRACK_DISABLE);
                 return;
             }
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
@@ -199,7 +178,7 @@
                 return;
             }
             const relIdx = getRelativeIndexByType(streams, index, 'Subtitle');
-            window.api.player.setSubtitleStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_DISABLE);
+            window.api.player.setSubtitleStream(relIdx != null ? relIdx : MpvPlayerBase.TRACK_DISABLE);
         }
 
         setSecondarySubtitleStreamIndex(index) {}
@@ -216,19 +195,27 @@
 
         setAudioStreamIndex(index) {
             if (index == null || index < 0) {
-                window.api.player.setAudioStream(MpvPlayerCore.TRACK_AUTO);
+                window.api.player.setAudioStream(MpvPlayerBase.TRACK_DISABLE);
                 return;
             }
             const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
+            const stream = getStreamByIndex(streams, index);
+            if (stream?.IsExternal) {
+                // External audio isn't part of the source container and the server
+                // doesn't pre-publish a DeliveryUrl for it, so we can't audio-add
+                // client-side. Re-enter playbackManager with canSetAudioStreamIndex
+                // forced false so it routes through changeStream — the server then
+                // regenerates the playback URL with the external audio attached.
+                this._forceServerReload = true;
+                try {
+                    this.playbackManager.setAudioStreamIndex(index, this);
+                } finally {
+                    this._forceServerReload = false;
+                }
+                return;
+            }
             const relIdx = getRelativeIndexByType(streams, index, 'Audio');
-            window.api.player.setAudioStream(relIdx != null ? relIdx : MpvPlayerCore.TRACK_AUTO);
-        }
-
-        onEndedInternal() {
-            this.events.trigger(this, 'stopped', [{ src: this._currentSrc }]);
-            this._core._currentTime = null;
-            this._currentSrc = null;
-            this._currentPlayOptions = null;
+            window.api.player.setAudioStream(relIdx != null ? relIdx : MpvPlayerBase.TRACK_DISABLE);
         }
 
         stop(destroyPlayer) {
@@ -243,7 +230,7 @@
                 }
             }
             window.api.player.stop();
-            this._core.handlers.onEnded();
+            this.handlers.onEnded();
             if (destroyPlayer) this.destroy();
             return Promise.resolve();
         }
@@ -262,9 +249,8 @@
         }
 
         destroy() {
-            this._core.stopTimeUpdateTimer();
             this.removeMediaDialog();
-            this._core.disconnectSignals();
+            this.disconnectSignals();
 
             // Support jellyfin-web v10.10.7
             this._currentAspectRatio = undefined;
@@ -282,9 +268,9 @@
                 this.setTransparency(2);
                 this._videoDialog = dlg;
 
-                this._core.connectSignals();
+                this.connectSignals();
                 if (window.jmpNative) {
-                    window.jmpNative.notifyRateChange(this._core._playRate);
+                    window.jmpNative.notifyRateChange(this._playRate);
                 }
             } else {
                 this._videoDialog = dlg;
@@ -306,9 +292,6 @@
         }
         canPlayItem(item) { return this.canPlayMediaType(item.MediaType); }
         supportsPlayMethod() { return true; }
-        getDeviceProfile(item, options) {
-            return this.appHost.getDeviceProfile ? this.appHost.getDeviceProfile(item, options) : Promise.resolve({});
-        }
         static getSupportedFeatures() { return ['PlaybackRate', 'SetAspectRatio']; }
         supports(feature) { return mpvVideoPlayer.getSupportedFeatures().includes(feature); }
         isFullscreen() { return window._isFullscreen === true; }
@@ -316,41 +299,18 @@
             if (window.jmpNative) window.jmpNative.toggleFullscreen();
         }
 
-        // Delegate to core
-        currentTime(val) { return this._core.currentTime(val); }
-        currentTimeAsync() { return this._core.currentTimeAsync(); }
-        duration() { return this._core.duration(); }
-        seekable() { return this._core.seekable(); }
-        getBufferedRanges() { return this._core.getBufferedRanges(); }
-        pause() { this._core.pause(); }
-        resume() { this._core.resume(); }
-        unpause() { this._core.unpause(); }
-        paused() { return this._core.paused(); }
-
         setPlaybackRate(value) {
-            this._core.setPlaybackRate(value);
+            super.setPlaybackRate(value);
             if (window.jmpNative) window.jmpNative.notifyRateChange(value);
         }
-        getPlaybackRate() { return this._core.getPlaybackRate(); }
-        getSupportedPlaybackRates() { return this._core.getSupportedPlaybackRates(); }
 
-        canSetAudioStreamIndex() { return true; }
+        canSetAudioStreamIndex() { return !this._forceServerReload; }
         setPictureInPictureEnabled() {}
         isPictureInPictureEnabled() { return false; }
         isAirPlayEnabled() { return false; }
         setAirPlayEnabled() {}
         setBrightness() {}
         getBrightness() { return 100; }
-
-        saveVolume(value) { this._core.saveVolume(value); }
-        getSavedVolume() { return this._core.getSavedVolume(); }
-        setVolume(val, save = true) { this._core.setVolume(val, save); }
-        getVolume() { return this._core.getVolume(); }
-        volumeUp() { this._core.volumeUp(); }
-        volumeDown() { this._core.volumeDown(); }
-
-        setMute(mute, triggerEvent = true) { this._core.setMute(mute, triggerEvent); }
-        isMuted() { return this._core.isMuted(); }
 
         togglePictureInPicture() {}
         toggleAirPlay() {}

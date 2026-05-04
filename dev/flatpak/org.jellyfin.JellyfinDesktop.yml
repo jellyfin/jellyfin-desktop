@@ -159,6 +159,12 @@ modules:
 
   - name: jellyfin-desktop
     buildsystem: cmake-ninja
+    build-options:
+      # Force ld to resolve libmpv's transitive ffmpeg deps from the base
+      # runtime (matches the libavcodec we link via pkg-config), not from
+      # the codecs-extra extension that the ldconfig cache otherwise
+      # returns first. Runtime loader still uses the cache.
+      ldflags: -Wl,-rpath-link=/usr/lib/x86_64-linux-gnu
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DEXTERNAL_CEF_DIR=/app/cef

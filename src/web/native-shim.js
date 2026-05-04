@@ -85,7 +85,8 @@
         sections: [
             { key: 'playback', order: 0 },
             { key: 'audio', order: 1 },
-            { key: 'advanced', order: 2 }
+            { key: 'transcode', order: 2 },
+            { key: 'advanced', order: 3 }
         ],
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
@@ -97,8 +98,12 @@
                 audioExclusive: _savedSettings.audioExclusive || false,
                 audioChannels: _savedSettings.audioChannels || ''
             },
+            transcode: {
+                forceTranscoding: !!_savedSettings.forceTranscoding
+            },
             advanced: {
                 transparentTitlebar: _savedSettings.transparentTitlebar !== false,
+                titlebarThemeColor: _savedSettings.titlebarThemeColor !== false,
                 logLevel: _savedSettings.logLevel || ''
             }
         },
@@ -115,6 +120,9 @@
                     { value: '5.1', title: '5.1 Surround' },
                     { value: '7.1', title: '7.1 Surround' }
                 ]}
+            ],
+            transcode: [
+                { key: 'forceTranscoding', displayName: 'Force Transcoding', help: 'Always request a transcoded stream from the server, even when direct play would work.' }
             ],
             advanced: [
                 { key: 'logLevel', displayName: 'Log Level', help: 'Set the application log verbosity level.', options: [
@@ -136,6 +144,15 @@
             key: 'transparentTitlebar',
             displayName: 'Transparent Titlebar',
             help: 'Overlay traffic light buttons on the window content instead of a separate titlebar. Requires restart.'
+        });
+    }
+
+    // Linux-only: titlebar theme color toggle
+    if (navigator.platform.startsWith('Linux')) {
+        jmpInfo.settingsDescriptions.advanced.unshift({
+            key: 'titlebarThemeColor',
+            displayName: 'Titlebar Theme Color',
+            help: 'Set titlebar color to match Jellyfin theme'
         });
     }
 
@@ -169,7 +186,7 @@
             onMetaData: createSignal('onMetaData'),
 
             // Methods
-            load(url, options, streamdata, audioStream, subtitleStream, callback) {
+            load(url, options, streamdata, audioStream, subtitleStream, externalAudioUrl, externalSubUrl, callback) {
                 console.log('[Media] player.load:', url);
                 window._jmpVideoActive = streamdata?.type === 'video';
                 if (callback) {
@@ -189,7 +206,7 @@
                 }
                 if (window.jmpNative && window.jmpNative.playerLoad) {
                     const metadataJson = streamdata?.metadata ? JSON.stringify(streamdata.metadata) : '{}';
-                    window.jmpNative.playerLoad(url, options.startMilliseconds, audioStream, subtitleStream, metadataJson);
+                    window.jmpNative.playerLoad(url, options.startMilliseconds, audioStream, subtitleStream, metadataJson, externalAudioUrl || '', externalSubUrl || '');
                 }
             },
             stop() {
@@ -237,6 +254,10 @@
                 console.log('[Media] player.setAudioStream:', index);
                 if (window.jmpNative) window.jmpNative.playerSetAudio(index);
             },
+            addAudioStream(url) {
+                console.log('[Media] player.addAudioStream:', url);
+                if (window.jmpNative) window.jmpNative.playerAddAudio(url);
+            },
             setSubtitleDelay(ms) {
                 console.log('[Media] player.setSubtitleDelay:', ms);
             },
@@ -276,7 +297,11 @@
         settings: {
             setValue(section, key, value, callback) {
                 if (window.jmpNative && window.jmpNative.setSettingValue) {
-                    window.jmpNative.setSettingValue(section, key, typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value));
+                    let serialized;
+                    if (typeof value === 'boolean')      serialized = value ? 'true' : 'false';
+                    else if (Array.isArray(value))       serialized = JSON.stringify(value);
+                    else                                 serialized = String(value);
+                    window.jmpNative.setSettingValue(section, key, serialized);
                 }
                 if (callback) callback();
             },
@@ -357,44 +382,12 @@
         }
     };
 
-    // Device profile for direct play
+    // Device profile for direct play. Built in C++ at startup from mpv's
+    // actual decoder/demuxer/protocol support and injected here as a JSON
+    // literal (JSON is a subset of JS object syntax, so no parse needed).
+    const _deviceProfile = __DEVICE_PROFILE_JSON__;
     function getDeviceProfile() {
-        return {
-            Name: 'Jellyfin Desktop',
-            MaxStaticBitrate: 1000000000,
-            MusicStreamingTranscodingBitrate: 1280000,
-            TimelineOffsetSeconds: 5,
-            TranscodingProfiles: [
-                { Type: 'Audio' },
-                {
-                    Container: 'ts',
-                    Type: 'Video',
-                    Protocol: 'hls',
-                    AudioCodec: 'aac,mp3,ac3,opus,vorbis',
-                    VideoCodec: 'h264,h265,hevc,mpeg4,mpeg2video',
-                    MaxAudioChannels: '6'
-                },
-                { Container: 'jpeg', Type: 'Photo' }
-            ],
-            DirectPlayProfiles: [
-                { Type: 'Video' },
-                { Type: 'Audio' },
-                { Type: 'Photo' }
-            ],
-            ResponseProfiles: [],
-            ContainerProfiles: [],
-            CodecProfiles: [],
-            SubtitleProfiles: [
-                { Format: 'srt', Method: 'External' },
-                { Format: 'srt', Method: 'Embed' },
-                { Format: 'ass', Method: 'External' },
-                { Format: 'ass', Method: 'Embed' },
-                { Format: 'sub', Method: 'Embed' },
-                { Format: 'ssa', Method: 'Embed' },
-                { Format: 'pgssub', Method: 'Embed' },
-                { Format: 'dvdsub', Method: 'Embed' }
-            ]
-        };
+        return _deviceProfile;
     }
 
     window.NativeShell.AppHost = {

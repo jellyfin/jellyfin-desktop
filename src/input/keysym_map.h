@@ -18,7 +18,7 @@ inline KeyCode keysym_to_keycode(xkb_keysym_t sym) {
     switch (sym) {
     case XKB_KEY_Return:    return KeyCode::Return;
     case XKB_KEY_Escape:    return KeyCode::Escape;
-    case XKB_KEY_Tab:       return KeyCode::Tab;
+    case XKB_KEY_Tab: case XKB_KEY_ISO_Left_Tab: return KeyCode::Tab;
     case XKB_KEY_BackSpace: return KeyCode::Backspace;
     case XKB_KEY_space:     return KeyCode::Space;
     case XKB_KEY_Left:      return KeyCode::ArrowLeft;
@@ -52,7 +52,7 @@ inline int keysym_to_vkey(xkb_keysym_t sym) {
     switch (sym) {
     case XKB_KEY_Return:    return 0x0D;
     case XKB_KEY_Escape:    return 0x1B;
-    case XKB_KEY_Tab:       return 0x09;
+    case XKB_KEY_Tab: case XKB_KEY_ISO_Left_Tab: return 0x09;
     case XKB_KEY_BackSpace: return 0x08;
     case XKB_KEY_space:     return 0x20;
     case XKB_KEY_Left:      return 0x25;

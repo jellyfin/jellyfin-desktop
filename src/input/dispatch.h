@@ -30,6 +30,9 @@ void dispatch_mouse_button(const MouseButtonEvent&);
 void dispatch_mouse_move(const MouseMoveEvent&);
 void dispatch_scroll(const ScrollEvent&);
 
+// Mouse "back"/"forward" side buttons. Routed to the active browser.
+void dispatch_history_nav(bool forward);
+
 // Called by platform translators when the native window gains or loses
 // keyboard focus (wl_keyboard enter/leave, WM_SETFOCUS/WM_KILLFOCUS,
 // NSWindow becomeKey/resignKey). Propagates to the currently active

@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "jellyfin_api.h"
+#include "jellyfin/api.h"
 
 using jellyfin_api::extract_base_url;
 using jellyfin_api::is_valid_public_info;

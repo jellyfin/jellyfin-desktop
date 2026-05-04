@@ -5,6 +5,7 @@
 #include "dispatch.h"
 #include "../common.h"
 #include "../wake_event.h"
+#include "logging.h"
 
 #include <wayland-client.h>
 #include "cursor-shape-v1-client.h"
@@ -115,6 +116,14 @@ void ptr_motion(void*, wl_pointer*, uint32_t, wl_fixed_t x, wl_fixed_t y) {
 }
 
 void ptr_button(void*, wl_pointer*, uint32_t, uint32_t, uint32_t button, uint32_t state) {
+    const bool pressed = (state == WL_POINTER_BUTTON_STATE_PRESSED);
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] ptr_button code=0x{:x} pressed={}", button, pressed);
+    if (button == BTN_SIDE || button == BTN_EXTRA ||
+        button == BTN_BACK || button == BTN_FORWARD) {
+        const bool forward = (button == BTN_EXTRA || button == BTN_FORWARD);
+        if (pressed) input::dispatch_history_nav(forward);
+        return;
+    }
     MouseButton btn;
     uint32_t flag;
     switch (button) {
@@ -123,7 +132,6 @@ void ptr_button(void*, wl_pointer*, uint32_t, uint32_t, uint32_t button, uint32_
     case BTN_MIDDLE: btn = MouseButton::Middle; flag = EVENTFLAG_MIDDLE_MOUSE_BUTTON; break;
     default: return;
     }
-    const bool pressed = (state == WL_POINTER_BUTTON_STATE_PRESSED);
     if (pressed) g.mouse_button_modifiers |= flag;
     else         g.mouse_button_modifiers &= ~flag;
 

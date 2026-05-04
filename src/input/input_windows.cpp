@@ -2,6 +2,7 @@
 
 #include "input.h"
 #include "dispatch.h"
+#include "logging.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -207,6 +208,7 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // --- Mouse buttons ---
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:
     case WM_LBUTTONUP:   case WM_RBUTTONUP:   case WM_MBUTTONUP: {
+        LOG_TRACE(LOG_PLATFORM, "[INPUT] wm_button msg=0x{:x} down={}", msg, is_button_down(msg));
         if (is_button_down(msg)) SetFocus(hwnd);
         dispatch_mouse_button({
             .button      = msg_to_button(msg),
@@ -217,6 +219,16 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             .modifiers   = mouse_modifiers(wp),
         });
         return 0;
+    }
+
+    case WM_XBUTTONDOWN: case WM_XBUTTONUP: {
+        WORD btn = GET_XBUTTON_WPARAM(wp);
+        LOG_TRACE(LOG_PLATFORM, "[INPUT] wm_xbutton msg=0x{:x} btn={}", msg, btn);
+        if (msg == WM_XBUTTONDOWN) {
+            // XBUTTON1 = mouse "back", XBUTTON2 = "forward"
+            dispatch_history_nav(btn == XBUTTON2);
+        }
+        return TRUE;  // must return TRUE for WM_XBUTTON* per MSDN
     }
 
     case WM_MOUSEWHEEL: {

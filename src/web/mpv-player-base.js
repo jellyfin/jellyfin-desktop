@@ -1,52 +1,41 @@
 (function() {
-    class MpvPlayerCore {
-        constructor(events, appSettings) {
+    class MpvPlayerBase {
+        constructor({ events, appHost, appSettings }) {
             this.events = events;
+            this.appHost = appHost;
             this.appSettings = appSettings;
+            this.type = 'mediaplayer';
+
             this._duration = undefined;
             this._currentTime = null;
             this._paused = false;
             this._volume = 100;
             this._playRate = 1;
             this._muted = false;
-            this._timeUpdateTimer = null;
-            this._lastTimerTick = null;
             this._hasConnection = false;
             this._seeking = false;
+
+            this._currentSrc = null;
+            this._currentPlayOptions = null;
+            this._started = false;
 
             this.handlers = {
                 onPlaying: null,
                 onTimeUpdate: null,
-                onSeeking: null,
-                onEnded: null,
-                onPause: null,
-                onDuration: null,
-                onError: null
+                onSeeking: () => { this._seeking = true; },
+                onEnded: () => { this.onEndedInternal(); },
+                onPause: () => {
+                    this._paused = true;
+                    this.events.trigger(this, 'pause');
+                },
+                onDuration: (duration) => { this._duration = duration; },
+                onError: (error) => {
+                    console.error(`[Media] [${this.logTag}] media error:`, error);
+                    this.events.trigger(this, 'error', [{ type: 'mediadecodeerror' }]);
+                }
             };
 
             this.setVolume(this.getSavedVolume() * 100, false);
-        }
-
-        // Timer management
-        startTimeUpdateTimer() {
-            if (this._timeUpdateTimer) return;
-            this._lastTimerTick = Date.now();
-            this._timeUpdateTimer = setInterval(() => {
-                if (this._paused || this._seeking || this._currentTime === null) return;
-                const now = Date.now();
-                const elapsed = now - this._lastTimerTick;
-                this._lastTimerTick = now;
-                const rate = this._playRate || 1.0;
-                this._currentTime += elapsed * rate;
-                this.events.trigger(this.player, 'timeupdate');
-            }, 250);
-        }
-
-        stopTimeUpdateTimer() {
-            if (this._timeUpdateTimer) {
-                clearInterval(this._timeUpdateTimer);
-                this._timeUpdateTimer = null;
-            }
         }
 
         // Signal management
@@ -76,15 +65,69 @@
             p.paused.disconnect(this.handlers.onPause);
         }
 
-        // Default event handlers (can be overridden via handlers object)
-        defaultOnPause() {
-            this._paused = true;
-            this.stopTimeUpdateTimer();
-            this.events.trigger(this.player, 'pause');
+        onEndedInternal() {
+            this.events.trigger(this, 'stopped', [{ src: this._currentSrc }]);
+            this._currentTime = null;
+            this._currentSrc = null;
+            this._currentPlayOptions = null;
         }
 
-        defaultOnDuration(duration) {
-            this._duration = duration;
+        currentSrc() { return this._currentSrc; }
+
+        getDeviceProfile(item, options) {
+            return this.appHost?.getDeviceProfile
+                ? this.appHost.getDeviceProfile(item, options)
+                : Promise.resolve({});
+        }
+
+        // Subclasses set this; used as the metadata.type passed to the native loader.
+        get mediaType() { return null; }
+
+        // Subclasses override to compute audio/subtitle track params from the media source.
+        // Default (audio): single baked-in track, no subs.
+        _resolveTracks(/* options */) {
+            return {
+                audioParam: 1,
+                subParam: MpvPlayerBase.TRACK_DISABLE,
+                externalAudioUrl: null,
+                externalSubUrl: null
+            };
+        }
+
+        // Subclass hook for any pre-load native calls (e.g. setAspectMode for video).
+        _beforeLoad(/* options */) {}
+
+        setCurrentSrc(options) {
+            return new Promise((resolve) => {
+                const val = options.url;
+                this._currentSrc = val;
+                console.log(`[Media] [${this.logTag}] Playing:`, val);
+
+                const ms = Math.round((options.playerStartPositionTicks || 0) / 10000);
+                this._currentPlayOptions = options;
+                this._currentTime = ms;
+
+                const { audioParam, subParam, externalAudioUrl, externalSubUrl } = this._resolveTracks(options);
+                this._beforeLoad(options);
+                window.api.player.load(val,
+                    { startMilliseconds: ms, autoplay: true },
+                    { type: this.mediaType, metadata: options.item },
+                    audioParam,
+                    subParam,
+                    externalAudioUrl,
+                    externalSubUrl,
+                    resolve);
+            });
+        }
+
+        // Shared tail of onPlaying: clear paused flag (firing unpause if needed) and emit playing.
+        _emitPlaying() {
+            if (this._paused) {
+                this._paused = false;
+                this.events.trigger(this, 'unpause');
+            }
+            this.events.trigger(this, 'playing');
+            console.log(`[Media] [${this.logTag}] playing event triggered`);
         }
 
         // Playback control
@@ -97,7 +140,6 @@
         currentTime(val) {
             if (val != null) {
                 this._currentTime = val;
-                this._lastTimerTick = Date.now();
                 window.api.player.seekTo(val);
                 return;
             }
@@ -135,11 +177,11 @@
         // Volume
         setVolume(val, save = true) {
             val = Number(val);
-             if (!isNaN(val)) {
+            if (!isNaN(val)) {
                 this._volume = val;
                 if (save) {
                     this.appSettings.set('volume', (val || 100) / 100);
-                    this.events.trigger(this.player, 'volumechange');
+                    this.events.trigger(this, 'volumechange');
                 }
                 window.api.player.setVolume(val);
             }
@@ -152,15 +194,14 @@
         setMute(mute, triggerEvent = true) {
             this._muted = mute;
             window.api.player.setMuted(mute);
-            if (triggerEvent) this.events.trigger(this.player, 'volumechange');
+            if (triggerEvent) this.events.trigger(this, 'volumechange');
         }
 
         isMuted() { return this._muted; }
     }
 
     // mpv track selection (1-based track indices)
-    MpvPlayerCore.TRACK_AUTO    = -1;  // mpv auto-selects
-    MpvPlayerCore.TRACK_DISABLE =  0;  // disable track (sid=0, aid=0)
+    MpvPlayerBase.TRACK_DISABLE = 0;  // disable track (sid=0, aid=0)
 
-    window.MpvPlayerCore = MpvPlayerCore;
+    window.MpvPlayerBase = MpvPlayerBase;
 })();
