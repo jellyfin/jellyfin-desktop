@@ -77,7 +77,7 @@
 
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
-        version: '1.0.0',
+        version: '__APP_VERSION__',
         deviceName: 'Jellyfin Desktop',
         mode: 'desktop',
         userAgent: navigator.userAgent,
