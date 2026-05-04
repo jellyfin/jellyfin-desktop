@@ -135,6 +135,11 @@ public:
         SetPropertyDoubleAsync("panscan", it->second.second);
     }
 
+    // Video positioning (settable at runtime for mini-player mode)
+    void SetVideoZoom(double zoom)   { SetPropertyDoubleAsync("video-zoom", zoom); }
+    void SetVideoAlignX(double val)  { SetPropertyDoubleAsync("video-align-x", val); }
+    void SetVideoAlignY(double val)  { SetPropertyDoubleAsync("video-align-y", val); }
+
     // Window/display state
     void SetFullscreen(bool fs)          { SetPropertyFlagAsync("fullscreen", fs); }
     void ToggleFullscreen()              { CycleFullscreenAsync(); }

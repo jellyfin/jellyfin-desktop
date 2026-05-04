@@ -82,7 +82,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
         "playerSetVolume", "playerSetMuted", "playerSetSpeed",
         "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio",
-        "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive",
+        "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive", "setVideoRect",
         "saveServerUrl",
         "notifyMetadata", "notifyPosition", "notifySeek",
         "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
@@ -231,6 +231,27 @@ bool WebBrowser::handleMessage(const std::string& name,
         initiate_shutdown();
     } else if (name == "openAbout") {
         AboutBrowser::open();
+    } else if (name == "setVideoRect") {
+        int w = getIntArg(args, 2);
+        int h = getIntArg(args, 3);
+        if (w <= 0 || h <= 0) {
+            // Restore full-screen video
+            g_mpv.SetVideoZoom(0.0);
+            g_mpv.SetVideoAlignX(0.0);
+            g_mpv.SetVideoAlignY(0.0);
+        } else {
+            // Shrink and pin video to the bottom-right corner (mini player)
+            double dpr    = mpv::display_scale() > 0.0 ? mpv::display_scale() : 1.0;
+            double win_lw = mpv::window_pw() / dpr;
+            double win_lh = mpv::window_ph() / dpr;
+            double scale  = std::min(
+                win_lw > 0 ? w / win_lw : 0.25,
+                win_lh > 0 ? h / win_lh : 0.25
+            );
+            g_mpv.SetVideoZoom(std::log2(scale));
+            g_mpv.SetVideoAlignX(1.0);
+            g_mpv.SetVideoAlignY(1.0);
+        }
     } else {
         return false;
     }

@@ -40,6 +40,7 @@
             this.useFullSubtitleUrls = true;
             this.isLocalPlayer = true;
             this.isFetching = false;
+            this._isMiniPlayer = false;
 
             // Register for fullscreen notifications
             window._mpvVideoPlayerInstance = this;
@@ -260,7 +261,18 @@
 
         destroy() {
             this._core.stopTimeUpdateTimer();
-            this.removeMediaDialog();
+            if (this._isMiniPlayer) {
+                // Keep mpv playing — only tear down the transparent full-screen overlay.
+                document.body.classList.remove('hide-scroll');
+                const dlg = this._videoDialog;
+                if (dlg) {
+                    this.setTransparency(0);
+                    this._videoDialog = null;
+                    dlg.parentNode.removeChild(dlg);
+                }
+            } else {
+                this.removeMediaDialog();
+            }
             this._core.disconnectSignals();
         }
 
@@ -303,7 +315,7 @@
         getDeviceProfile(item, options) {
             return this.appHost.getDeviceProfile ? this.appHost.getDeviceProfile(item, options) : Promise.resolve({});
         }
-        static getSupportedFeatures() { return ['PlaybackRate', 'SetAspectRatio']; }
+        static getSupportedFeatures() { return ['PlaybackRate', 'SetAspectRatio', 'PictureInPicture']; }
         supports(feature) { return mpvVideoPlayer.getSupportedFeatures().includes(feature); }
         isFullscreen() { return window._isFullscreen === true; }
         toggleFullscreen() {
@@ -329,8 +341,8 @@
         getSupportedPlaybackRates() { return this._core.getSupportedPlaybackRates(); }
 
         canSetAudioStreamIndex() { return true; }
-        setPictureInPictureEnabled() {}
-        isPictureInPictureEnabled() { return false; }
+        setPictureInPictureEnabled(enabled) { if (enabled !== this._isMiniPlayer) this.togglePictureInPicture(); }
+        isPictureInPictureEnabled() { return this._isMiniPlayer; }
         isAirPlayEnabled() { return false; }
         setAirPlayEnabled() {}
         setBrightness() {}
@@ -346,7 +358,20 @@
         setMute(mute, triggerEvent = true) { this._core.setMute(mute, triggerEvent); }
         isMuted() { return this._core.isMuted(); }
 
-        togglePictureInPicture() {}
+        togglePictureInPicture() {
+            this._isMiniPlayer = !this._isMiniPlayer;
+            if (this._isMiniPlayer) {
+                window._nativeEnterMiniPlayer();
+                // Navigate away so the user can browse the library
+                if (this.appRouter && typeof this.appRouter.home === 'function') {
+                    this.appRouter.home();
+                } else {
+                    window.history.back();
+                }
+            } else {
+                window._nativeExitMiniPlayer();
+            }
+        }
         toggleAirPlay() {}
         getStats() { return Promise.resolve({ categories: [] }); }
         getSupportedAspectRatios() {
@@ -356,9 +381,9 @@
                 { id: 'fill',  name: this.globalize.translate('AspectRatioFill') }
             ];
         }
-        getAspectRatio() { return this.appSettings.aspectRatio() || 'auto'; }
+        getAspectRatio() { return this.appSettings.get('aspectRatio') || 'auto'; }
         setAspectRatio(value) {
-            this.appSettings.aspectRatio(value);
+            this.appSettings.set('aspectRatio', value);
             window.api.player.setAspectMode(value);
         }
     }

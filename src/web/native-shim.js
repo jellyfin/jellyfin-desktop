@@ -249,7 +249,7 @@
                 if (window.jmpNative) window.jmpNative.playerSetAspectMode(mode);
             },
             setVideoRectangle(x, y, w, h) {
-                // No-op for now, we always render fullscreen
+                if (window.jmpNative) window.jmpNative.setVideoRect(x, y, w, h);
             },
             getPosition(callback) {
                 if (callback) callback(playerState.position);
@@ -300,6 +300,8 @@
     // Expose signal emitter for native code
     window._nativeEmit = function(signal, ...args) {
         console.log('[Media] _nativeEmit called with signal:', signal, 'args:', args);
+        if (signal === 'paused') playerState.paused = true;
+        else if (signal === 'playing') playerState.paused = false;
         if (window.api && window.api.player && window.api.player[signal]) {
             console.log('[Media] Firing signal:', signal);
             window.api.player[signal](...args);
@@ -334,6 +336,110 @@
     window._nativeSeek = function(positionMs) {
         console.log('[Media] _nativeSeek:', positionMs);
         window.api.input.positionSeek(positionMs);
+    };
+
+    // Mini player (picture-in-picture) overlay
+    window._mpvMiniPlayerActive = false;
+
+    window._nativeEnterMiniPlayer = function() {
+        if (document.getElementById('jmp-mini-player')) return;
+        const PIP_W = 320, PIP_H = 180;
+        const pip = document.createElement('div');
+        pip.id = 'jmp-mini-player';
+        pip.style.cssText = [
+            'position:fixed', 'right:0', 'bottom:0',
+            'width:' + PIP_W + 'px', 'height:' + PIP_H + 'px',
+            'z-index:10000', 'background:transparent',
+            'cursor:pointer', 'overflow:hidden',
+            'box-shadow:0 4px 24px rgba(0,0,0,0.8)',
+            'border-top:1px solid rgba(255,255,255,0.1)',
+            'border-left:1px solid rgba(255,255,255,0.1)'
+        ].join(';');
+
+        const controls = document.createElement('div');
+        controls.style.cssText = [
+            'position:absolute', 'bottom:0', 'left:0', 'right:0', 'height:40px',
+            'background:linear-gradient(transparent,rgba(0,0,0,0.75))',
+            'display:flex', 'align-items:center', 'justify-content:space-between',
+            'padding:0 8px', 'opacity:0', 'transition:opacity 0.15s'
+        ].join(';');
+
+        const btnCss = 'background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:2px 5px;line-height:1;';
+        const pauseBtn = document.createElement('button');
+        pauseBtn.id = 'jmp-mini-pause';
+        pauseBtn.style.cssText = btnCss;
+        pauseBtn.textContent = playerState.paused ? '\u25B6' : '\u23F8'; // ▶ or ⏸
+        pauseBtn.title = 'Pause/Play';
+
+        const right = document.createElement('div');
+        right.style.display = 'flex';
+
+        const expandBtn = document.createElement('button');
+        expandBtn.style.cssText = btnCss;
+        expandBtn.textContent = '\u26F6'; // ⛶ four-corners / expand
+        expandBtn.title = 'Expand';
+
+        const stopBtn = document.createElement('button');
+        stopBtn.style.cssText = btnCss;
+        stopBtn.textContent = '\u2715'; // ✕
+        stopBtn.title = 'Stop';
+
+        right.appendChild(expandBtn);
+        right.appendChild(stopBtn);
+        controls.appendChild(pauseBtn);
+        controls.appendChild(right);
+        pip.appendChild(controls);
+
+        pip.addEventListener('mouseenter', () => { controls.style.opacity = '1'; });
+        pip.addEventListener('mouseleave', () => { controls.style.opacity = '0'; });
+
+        pauseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (playerState.paused) window.api.player.play();
+            else window.api.player.pause();
+        });
+
+        // Keep pause button in sync with actual playback state
+        const onPaused = () => {
+            const b = document.getElementById('jmp-mini-pause');
+            if (b) b.textContent = '\u25B6'; // ▶
+        };
+        const onPlaying = () => {
+            const b = document.getElementById('jmp-mini-pause');
+            if (b) b.textContent = '\u23F8'; // ⏸
+        };
+        window.api.player.paused.connect(onPaused);
+        window.api.player.playing.connect(onPlaying);
+        pip._onPaused = onPaused;
+        pip._onPlaying = onPlaying;
+
+        expandBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window._nativeExitMiniPlayer();
+            window.history.back();
+        });
+
+        stopBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window._nativeExitMiniPlayer();
+            window.api.player.stop();
+        });
+
+        document.body.appendChild(pip);
+        window._mpvMiniPlayerActive = true;
+
+        const rect = pip.getBoundingClientRect();
+        window.api.player.setVideoRectangle(rect.left, rect.top, rect.width, rect.height);
+    };
+
+    window._nativeExitMiniPlayer = function() {
+        const pip = document.getElementById('jmp-mini-player');
+        if (!pip) return;
+        if (pip._onPaused) window.api.player.paused.disconnect(pip._onPaused);
+        if (pip._onPlaying) window.api.player.playing.disconnect(pip._onPlaying);
+        pip.parentNode.removeChild(pip);
+        window._mpvMiniPlayerActive = false;
+        window.api.player.setVideoRectangle(0, 0, 0, 0);
     };
 
     // window.NativeShell - app info and plugins
