@@ -927,6 +927,28 @@ static void macos_early_init() {
     }
 
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    // AppKit can add Dictation and Character Palette items to standard Edit
+    // menus. Apple documents Emoji & Symbols as Fn/Globe-E or Edit > Emoji &
+    // Symbols
+    //
+    // That shortcut is hard to work with for our input architecture. We receive the
+    // original NSEvent in JellyfinInputView, translate it into CefKeyEvent, and
+    // inject it into an off-screen CEF browser. CEF's public event flags do not
+    // include a Function/Globe bit, only caps/shift/control/option/command/etc.:
+    // https://raw.githubusercontent.com/chromiumembedded/cef/master/include/internal/cef_types.h
+    //
+    // Chromium's macOS synthetic NSEvent path reconstructs only those same
+    // modifiers when CEF turns the key event back into a native event for
+    // browser-side processing:
+    // https://chromium.googlesource.com/chromium/src/+/refs/tags/147.0.7727.118/components/input/native_web_keyboard_event_mac.mm
+    //
+    // So Fn/Globe-E and a plain E collapse to the same CefKeyEvent before CEF
+    // menu-key handling can see them. For a media player we do not need these
+    // text-input helpers, and leaving them enabled lets a plain "e" trigger the
+    // Character Palette on some macOS setups. Disable the automatic items
+    // entirely as it cannot be handled easily.
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"NSDisabledDictationMenuItem"];
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"NSDisabledCharacterPaletteMenuItem"];
 
     // Menu bar: App (About, Quit) + Edit (standard editing shortcuts)
     g_app_menu_target = [[JellyfinAppMenuTarget alloc] init];
