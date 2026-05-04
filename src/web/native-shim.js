@@ -78,7 +78,7 @@
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
         version: '__APP_VERSION__',
-        deviceName: 'Jellyfin Desktop',
+        deviceName: _savedSettings.deviceName || _savedSettings.deviceNameDefault,
         mode: 'desktop',
         userAgent: navigator.userAgent,
         scriptPath: '',
@@ -104,7 +104,8 @@
             advanced: {
                 transparentTitlebar: _savedSettings.transparentTitlebar !== false,
                 titlebarThemeColor: _savedSettings.titlebarThemeColor !== false,
-                logLevel: _savedSettings.logLevel || ''
+                logLevel: _savedSettings.logLevel || '',
+                deviceName: _savedSettings.deviceName || ''
             }
         },
         settingsDescriptions: {
@@ -125,6 +126,7 @@
                 { key: 'forceTranscoding', displayName: 'Force Transcoding', help: 'Always request a transcoded stream from the server, even when direct play would work.' }
             ],
             advanced: [
+                { key: 'deviceName', displayName: 'Device Name', help: 'Identifies this machine to the server. Leave blank to use the system hostname.', inputType: 'text', maxLength: 64, placeholder: _savedSettings.deviceNameDefault },
                 { key: 'logLevel', displayName: 'Log Level', help: 'Set the application log verbosity level.', options: [
                     { value: '', title: 'Default (Info)' },
                     { value: 'verbose', title: 'Verbose' },

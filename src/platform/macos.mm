@@ -25,8 +25,24 @@
 #import <QuartzCore/QuartzCore.h>
 #import <IOSurface/IOSurface.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
+#include <SystemConfiguration/SystemConfiguration.h>
 #include <mach/mach_time.h>
 #include <objc/runtime.h>
+
+// gethostname() on macOS returns a network-derived BSD hostname (e.g.
+// "dhcp-1-2-3-4.lan"); SCDynamicStoreCopyComputerName returns the stable
+// user-set name from System Settings → General → About → Name.
+std::string macosComputerName() {
+    CFStringRef name = SCDynamicStoreCopyComputerName(nullptr, nullptr);
+    if (!name) return {};
+    CFIndex len = CFStringGetLength(name);
+    CFIndex max = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
+    std::string out(max, '\0');
+    CFStringGetCString(name, out.data(), max, kCFStringEncodingUTF8);
+    out.resize(strlen(out.c_str()));
+    CFRelease(name);
+    return out;
+}
 
 // =====================================================================
 // Forward declarations
