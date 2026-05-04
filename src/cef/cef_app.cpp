@@ -629,7 +629,7 @@ constexpr double kCefMaxTimeSliceMs = 10.0;
 
 static void pump_drain(const char* trigger) {
     if (g_pump_shutdown.load(std::memory_order_acquire)) {
-        LOG_INFO(LOG_CEF, "[PUMP] drain({}) skipped (shutdown)", trigger);
+        LOG_DEBUG(LOG_CEF, "[PUMP] drain({}) skipped (shutdown)", trigger);
         return;
     }
 
@@ -691,7 +691,7 @@ void App::InitPump() {
 
 void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
     if (g_pump_shutdown.load(std::memory_order_acquire)) {
-        LOG_INFO(LOG_CEF, "[PUMP] OnSched({}) SKIP(shutdown) tid={}",
+        LOG_DEBUG(LOG_CEF, "[PUMP] OnSched({}) SKIP(shutdown) tid={}",
                  (long long)delay_ms, (unsigned long long)tid_u64());
         return;
     }

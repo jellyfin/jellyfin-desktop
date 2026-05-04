@@ -860,7 +860,7 @@ static bool probe_shared_texture_support(const std::string& ozone_platform,
     // --- Load GBM ---
     void* gbm_lib = dlopen("libgbm.so.1", RTLD_LAZY | RTLD_LOCAL);
     if (!gbm_lib) {
-        LOG_INFO(LOG_PLATFORM, "dmabuf probe: libgbm not available, assuming supported");
+        LOG_WARN(LOG_PLATFORM, "dmabuf probe: libgbm not available, assuming supported");
         cleanup_gl(); cleanup();
         return true;
     }
@@ -1113,7 +1113,7 @@ static bool wl_init(mpv_handle* mpv) {
     if (egl_dpy != EGL_NO_DISPLAY) eglInitialize(egl_dpy, nullptr, nullptr);
 
     if (!probe_shared_texture_support(g_platform.cef_ozone_platform, egl_dpy)) {
-        LOG_INFO(LOG_PLATFORM, "Shared textures not supported; using software CEF rendering");
+        LOG_WARN(LOG_PLATFORM, "Shared textures not supported; using software CEF rendering");
         g_platform.shared_texture_supported = false;
     }
 

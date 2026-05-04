@@ -492,7 +492,7 @@ static bool macos_init(mpv_handle* mpv) {
                      queue:nil
                 usingBlock:^(NSNotification* /*note*/) {
         NSRect b = [[g_window contentView] bounds];
-        LOG_INFO(LOG_PLATFORM, "[WINDOW] NSWindowDidResizeNotification contentView={:.0f}x{:.0f}",
+        LOG_TRACE(LOG_PLATFORM, "[WINDOW] NSWindowDidResizeNotification contentView={:.0f}x{:.0f}",
                  b.size.width, b.size.height);
     }];
 
