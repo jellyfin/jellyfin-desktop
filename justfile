@@ -31,10 +31,10 @@ deps:
 test: build
     ctest --test-dir build --output-on-failure
 
-# Run the app with debug logging (logs to build/run.log)
+# Run the app with trace logging (logs to build/run.log)
 [linux]
-run: build
-    build/jellyfin-desktop --log-level=debug --log-file=build/run.log
+run *args: build
+    build/jellyfin-desktop --log-level=trace --log-file=build/run.log {{args}}
 
 # Update vendored/fetched deps (CEF, doctest, quill); pass --check to verify only
 update-deps *args:

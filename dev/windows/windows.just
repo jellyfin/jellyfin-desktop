@@ -13,8 +13,8 @@ test: build
     ctest --test-dir build --output-on-failure
 
 [windows]
-run: build
-    build\jellyfin-desktop.exe --log-level=debug --log-file=build\run.log
+run *args: build
+    build\jellyfin-desktop.exe --log-level=trace --log-file=build\run.log {{args}}
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [windows]

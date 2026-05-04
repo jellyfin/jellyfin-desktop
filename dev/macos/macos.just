@@ -19,8 +19,8 @@ test: build
     ./dev/macos/test.sh
 
 [macos]
-run: build
-    ./dev/macos/run.sh --log-level=debug --log-file=build/run.log
+run *args: build
+    ./dev/macos/run.sh --log-level=trace --log-file=build/run.log {{args}}
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [macos]
