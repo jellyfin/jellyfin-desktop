@@ -253,7 +253,7 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "appExit") {
         initiate_shutdown();
     } else if (name == "openConfigDir") {
-        LOG_INFO(LOG_CEF, "Openning mpv home directory");
+        LOG_INFO(LOG_CEF, "Opening mpv home directory");
         paths::openMpvHome();
     } else {
         return false;

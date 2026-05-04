@@ -129,7 +129,7 @@ bool CefLayer::GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) {
 }
 
 void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
-    LOG_INFO(LOG_CEF, "CefLayer::resize logical={}x{} physical={}x{} browser={}",
+    LOG_TRACE(LOG_CEF, "CefLayer::resize logical={}x{} physical={}x{} browser={}",
              w, h, physical_w, physical_h, static_cast<void*>(browser_.get()));
     width_ = w;
     height_ = h;
@@ -229,7 +229,7 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-    LOG_INFO(LOG_CEF, "CefLayer::OnAfterCreated browser={} id={}",
+    LOG_DEBUG(LOG_CEF, "CefLayer::OnAfterCreated browser={} id={}",
              static_cast<void*>(browser.get()), browser ? browser->GetIdentifier() : -1);
     browser_ = browser;
     closed_ = false;

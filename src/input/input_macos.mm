@@ -319,7 +319,7 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
         owner:self
         userInfo:nil];
     [self addTrackingArea:_trackingArea];
-    LOG_INFO(LOG_PLATFORM, "[INPUT] updateTrackingAreas bounds={:.0f}x{:.0f}",
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] updateTrackingAreas bounds={:.0f}x{:.0f}",
              self.bounds.size.width, self.bounds.size.height);
 }
 
@@ -547,13 +547,13 @@ static void flush_scroll_accumulator() {
 
 // --- Focus ---
 - (BOOL)becomeFirstResponder {
-    LOG_INFO(LOG_PLATFORM, "[INPUT] becomeFirstResponder");
+    LOG_DEBUG(LOG_PLATFORM, "[INPUT] becomeFirstResponder");
     input::dispatch_keyboard_focus(true);
     return [super becomeFirstResponder];
 }
 
 - (BOOL)resignFirstResponder {
-    LOG_INFO(LOG_PLATFORM, "[INPUT] resignFirstResponder");
+    LOG_DEBUG(LOG_PLATFORM, "[INPUT] resignFirstResponder");
     input::dispatch_keyboard_focus(false);
     return [super resignFirstResponder];
 }
