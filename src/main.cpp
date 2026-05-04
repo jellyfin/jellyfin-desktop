@@ -562,6 +562,8 @@ int main(int argc, char* argv[]) {
     // failure mode for nothing.
     g_mpv.SetOptionString("ytdl", "no");
 
+    g_mpv.SetOptionString("user-agent", APP_USER_AGENT);
+
     g_mpv.SetHwdec(hwdec_str);
     g_mpv.SetOptionString("background-color", kBgColor.hex);
 
