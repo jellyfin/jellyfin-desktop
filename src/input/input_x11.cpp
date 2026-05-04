@@ -5,6 +5,7 @@
 #include "dispatch.h"
 #include "../common.h"
 #include "../wake_event.h"
+#include "logging.h"
 
 #include <xcb/xcb.h>
 #include <xcb/shm.h>
@@ -166,6 +167,7 @@ void handle_button(xcb_button_press_event_t* ev, bool pressed) {
     uint32_t button = ev->detail;
     int x = to_logical(ev->event_x);
     int y = to_logical(ev->event_y);
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] xcb_button code={} pressed={}", button, pressed);
 
     // Buttons 4-7 are scroll wheel events on X11
     if (button >= 4 && button <= 7) {
@@ -182,6 +184,14 @@ void handle_button(xcb_button_press_event_t* ev, bool pressed) {
             .dx = dx, .dy = dy,
             .modifiers = cef_modifiers(),
         });
+        return;
+    }
+
+    // X11 mouse buttons 8/9 are "back"/"forward" side buttons.
+    constexpr uint32_t XCB_BUTTON_BACK    = 8;
+    constexpr uint32_t XCB_BUTTON_FORWARD = 9;
+    if (button == XCB_BUTTON_BACK || button == XCB_BUTTON_FORWARD) {
+        if (pressed) input::dispatch_history_nav(button == XCB_BUTTON_FORWARD);
         return;
     }
 

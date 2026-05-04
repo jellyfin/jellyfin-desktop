@@ -327,7 +327,7 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
     else         g_mouse_button_modifiers &= ~flag;
 
     NSPoint loc = [self mouseLocInView:event];
-    LOG_INFO(LOG_PLATFORM, "[INPUT] mouseButton btn={} pressed={} ({:.0f},{:.0f})",
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] mouseButton btn={} pressed={} ({:.0f},{:.0f})",
              (int)button, pressed ? 1 : 0, loc.x, loc.y);
     input::dispatch_mouse_button({
         .button      = button,
@@ -352,10 +352,22 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
 - (void)rightMouseUp:(NSEvent*)event {
     [self dispatchMouseButton:event button:input::MouseButton::Right pressed:false];
 }
+// NSEvent buttonNumber values for the "back"/"forward" side buttons on
+// standard 5-button mice. Apple doesn't define named constants for these.
+static constexpr NSInteger kNSMouseButtonBack    = 3;
+static constexpr NSInteger kNSMouseButtonForward = 4;
+
 - (void)otherMouseDown:(NSEvent*)event {
+    NSInteger n = [event buttonNumber];
+    if (n == kNSMouseButtonBack || n == kNSMouseButtonForward) {
+        input::dispatch_history_nav(n == kNSMouseButtonForward);
+        return;
+    }
     [self dispatchMouseButton:event button:input::MouseButton::Middle pressed:true];
 }
 - (void)otherMouseUp:(NSEvent*)event {
+    NSInteger n = [event buttonNumber];
+    if (n == kNSMouseButtonBack || n == kNSMouseButtonForward) return;
     [self dispatchMouseButton:event button:input::MouseButton::Middle pressed:false];
 }
 
