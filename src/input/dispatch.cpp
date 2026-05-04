@@ -129,6 +129,16 @@ void dispatch_mouse_move(const MouseMoveEvent& e) {
     b->GetHost()->SendMouseMoveEvent(me, e.leave);
 }
 
+void dispatch_history_nav(bool forward) {
+    auto b = active_browser();
+    if (!b) return;
+    if (forward) {
+        if (b->CanGoForward()) b->GoForward();
+    } else {
+        if (b->CanGoBack()) b->GoBack();
+    }
+}
+
 void dispatch_scroll(const ScrollEvent& e) {
     auto b = active_browser();
     if (!b) return;
