@@ -973,7 +973,8 @@ static void macos_early_init() {
 
     [NSApp setMainMenu:menubar];
 
-    [NSApp finishLaunching];
+    // -[NSApp run] calls -finishLaunching internally; an explicit call here
+    // is redundant and crashes -[NSCarbonMenuImpl _createMenuRef] on macOS 12.
     [NSApp activateIgnoringOtherApps:YES];
 }
 
