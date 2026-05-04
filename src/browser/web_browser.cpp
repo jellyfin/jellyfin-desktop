@@ -66,6 +66,7 @@ static void applySettingValue(const std::string& section, const std::string& key
     else if (key == "titlebarThemeColor") s.setTitlebarThemeColor(value == "true");
     else if (key == "logLevel") s.setLogLevel(value);
     else if (key == "forceTranscoding") s.setForceTranscoding(value == "true");
+    else if (key == "deviceName") s.setDeviceName(value);
     else LOG_WARN(LOG_CEF, "Unknown setting key: {}.{}", section.c_str(), key.c_str());
     s.saveAsync();
 }

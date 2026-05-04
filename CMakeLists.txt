@@ -119,6 +119,7 @@ if(APPLE)
     find_library(IOSURFACE_FRAMEWORK IOSurface REQUIRED)
     find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
     find_library(MEDIAPLAYER_FRAMEWORK MediaPlayer REQUIRED)
+    find_library(SYSTEMCONFIGURATION_FRAMEWORK SystemConfiguration REQUIRED)
 
     set(PLATFORM_SOURCES
         src/platform/macos.mm
@@ -141,6 +142,7 @@ if(APPLE)
         ${IOSURFACE_FRAMEWORK}
         ${IOKIT_FRAMEWORK}
         ${MEDIAPLAYER_FRAMEWORK}
+        ${SYSTEMCONFIGURATION_FRAMEWORK}
     )
 elseif(WIN32)
     configure_file(
