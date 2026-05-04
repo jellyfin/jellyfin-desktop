@@ -394,8 +394,21 @@ public:
         mpv_set_wakeup_callback(handle_, cb, data);
     }
 
-    void RequestLogMessages(const char* level) {
-        mpv_request_log_messages(handle_, level);
+    // Subscribe mpv at the most verbose level our log filter would actually
+    // surface, so mpv doesn't waste IPC on messages we'd discard.
+    // We cap mpv at "debug" — mpv's "trace" is extreme and not worth the IPC.
+    // mpv's "v" maps to our Debug; mpv's "debug" maps to our Trace.
+    void SetLogLevel(LogLevel level) {
+        const char* mpv_level = "debug";
+        switch (level) {
+            case LogLevel::Debug: mpv_level = "v";     break;
+            case LogLevel::Info:  mpv_level = "info";  break;
+            case LogLevel::Warn:  mpv_level = "warn";  break;
+            case LogLevel::Error: mpv_level = "error"; break;
+            case LogLevel::Trace:
+            case LogLevel::Default: break; // subscribe to "debug" (cap)
+        }
+        mpv_request_log_messages(handle_, mpv_level);
     }
 
     mpv_event* WaitEvent(double timeout) {

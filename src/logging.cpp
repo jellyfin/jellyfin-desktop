@@ -71,8 +71,7 @@ using RotatingFileSinkNoNewlines = NewlineStripSink<quill::RotatingFileSink>;
 namespace {
 
 constexpr const char* kCategoryNames[LOG_CATEGORY_COUNT] = {
-    "Main", "mpv",   "CEF",   "GL",    "Media",   "Overlay",  "Menu", "UI",
-    "Window", "Platform", "Compositor", "Resource", "Test", "JS", "Video",
+    "Main", "mpv", "CEF", "Media", "Platform", "JS", "Resource",
 };
 
 // ---- stderr capture ------------------------------------------------------
@@ -200,22 +199,23 @@ void shutdownStderrCapture() {
 
 }  // namespace
 
-static quill::LogLevel toQuillLevel(int parsed) {
-    switch (parsed) {
-        case 0: return quill::LogLevel::TraceL1;  // verbose
-        case 1: return quill::LogLevel::Debug;
-        case 2: return quill::LogLevel::Info;
-        case 3: return quill::LogLevel::Warning;
-        case 4: return quill::LogLevel::Error;
-        default: return quill::LogLevel::TraceL3;  // allow everything
+static quill::LogLevel toQuillLevel(LogLevel level) {
+    switch (level) {
+        case LogLevel::Trace: return quill::LogLevel::TraceL1;
+        case LogLevel::Debug: return quill::LogLevel::Debug;
+        case LogLevel::Info:  return quill::LogLevel::Info;
+        case LogLevel::Warn:  return quill::LogLevel::Warning;
+        case LogLevel::Error: return quill::LogLevel::Error;
+        case LogLevel::Default: break;
     }
+    return quill::LogLevel::TraceL3;  // allow everything
 }
 
 const std::string& activeLogPath() {
     return g_active_log_path;
 }
 
-void initLogging(const char* path, int min_level) {
+void initLogging(const char* path, LogLevel min_level) {
     g_active_log_path = (path && path[0]) ? path : "";
 
     quill::Backend::start();
