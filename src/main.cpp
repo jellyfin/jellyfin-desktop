@@ -642,6 +642,14 @@ int main(int argc, char* argv[]) {
     }
     g_mpv.SetLogLevel(log_level);
 
+    for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
+        char* v = mpv_get_property_string(g_mpv, prop);
+        if (v) {
+            LOG_INFO(LOG_MAIN, "{} {}", prop, v);
+            mpv_free(v);
+        }
+    }
+
     // input-default-bindings=no removes all builtin bindings including
     // CLOSE_WIN → quit.  Re-bind it so the WM close button works.
     {
