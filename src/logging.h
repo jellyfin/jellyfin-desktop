@@ -27,13 +27,16 @@ extern quill::Logger* g_loggers[LOG_CATEGORY_COUNT];
 #define LOG_TRACE(cat, ...)   QUILL_LOG_TRACE_L1(g_loggers[cat], __VA_ARGS__)
 
 enum class LogLevel {
-    Default,  // backend default (everything)
+    Default,
     Trace,
     Debug,
     Info,
     Warn,
     Error,
 };
+
+inline constexpr LogLevel kDefaultLogLevel = LogLevel::Info;
+inline constexpr const char* kDefaultLogLevelName = "info";
 
 // Returns LogLevel::Default for unknown strings.
 inline LogLevel parseLogLevel(const char* level) {

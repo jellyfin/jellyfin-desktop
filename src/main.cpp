@@ -397,7 +397,7 @@ int main(int argc, char* argv[]) {
                    "\nOptions:\n"
                    "  -h, --help                Show this help\n"
                    "  -v, --version             Show version\n"
-                   "  --log-level <level>       trace|debug|info|warn|error\n"
+                   "  --log-level <level>       trace|debug|info|warn|error (default: %s)\n"
                    "  --log-file <path>         Write logs to file ('' to disable)\n"
                    "  --hwdec <mode>            Hardware decoding mode (default: %s)\n"
                    "  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd\n"
@@ -410,7 +410,7 @@ int main(int argc, char* argv[]) {
                    "  --platform <wayland|x11>  Force display backend (Linux only)\n"
 #endif
                    "  --player                  Standalone player mode\n",
-                   kHwdecDefault);
+                   kDefaultLogLevelName, kHwdecDefault);
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             printf("jellyfin-desktop %s\nCEF %s\n", APP_VERSION_STRING, CEF_VERSION);
