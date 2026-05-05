@@ -14,7 +14,7 @@ test: build
 
 [windows]
 run *args: build
-    build\jellyfin-desktop.exe --log-level=trace --log-file=build\run.log {{args}}
+    build\jellyfin-desktop.exe --log-level=debug --log-file=build\run.log {{args}}
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [windows]
