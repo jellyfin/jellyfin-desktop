@@ -466,7 +466,16 @@ int main(int argc, char* argv[]) {
             player_mode = true;
         } else if (argv[i][0] != '-') {
             player_playlist.push_back(argv[i]);
+        } else {
+            fprintf(stderr, "Error: unknown argument '%s'\n", argv[i]);
+            return 1;
         }
+    }
+
+    if (!player_mode && !player_playlist.empty()) {
+        fprintf(stderr, "Error: unexpected positional argument '%s' (use --player)\n",
+                player_playlist.front().c_str());
+        return 1;
     }
 
     if (!isValidHwdec(hwdec_str)) hwdec_str = kHwdecDefault;
