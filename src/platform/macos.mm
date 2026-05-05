@@ -462,8 +462,7 @@ static bool macos_init(mpv_handle* mpv) {
     // content before CEF has actually painted. The user sees mpv's
     // contentView backing (which we've set to the startup color) until the
     // first-frame paths unhide these below. macos_overlay_present
-    // unhides both in normal mode (overlay covers main as they appear
-    // together); macos_present unhides g_main in player mode.
+    // unhides both (overlay covers main as they appear together).
     [g_main.view setHidden:YES];
     [g_overlay.view setHidden:YES];
     [g_about.view setHidden:YES];

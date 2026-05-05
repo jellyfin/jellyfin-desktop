@@ -372,11 +372,9 @@ int main(int argc, char* argv[]) {
     std::string audio_passthrough_str;
     bool audio_exclusive = false;
     std::string audio_channels_str;
-    bool player_mode = false;
     bool disable_gpu_compositing = false;
     std::string ozone_platform;
     std::string platform_override;
-    std::vector<std::string> player_playlist;
     int remote_debugging_port = 0;
     const char* log_level_str = nullptr;
     const char* log_file_path = nullptr;
@@ -393,7 +391,6 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: jellyfin-desktop [options]\n"
-                   "       jellyfin-desktop --player [options] <file|url>...\n"
                    "\nOptions:\n"
                    "  -h, --help                Show this help\n"
                    "  -v, --version             Show version\n"
@@ -409,7 +406,7 @@ int main(int argc, char* argv[]) {
 #ifdef HAVE_X11
                    "  --platform <wayland|x11>  Force display backend (Linux only)\n"
 #endif
-                   "  --player                  Standalone player mode\n",
+                   ,
                    kDefaultLogLevelName, kHwdecDefault);
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -462,20 +459,10 @@ int main(int argc, char* argv[]) {
             platform_override = argv[++i];
         } else if (strncmp(argv[i], "--platform=", 11) == 0) {
             platform_override = argv[i] + 11;
-        } else if (strcmp(argv[i], "--player") == 0) {
-            player_mode = true;
-        } else if (argv[i][0] != '-') {
-            player_playlist.push_back(argv[i]);
         } else {
             fprintf(stderr, "Error: unknown argument '%s'\n", argv[i]);
             return 1;
         }
-    }
-
-    if (!player_mode && !player_playlist.empty()) {
-        fprintf(stderr, "Error: unexpected positional argument '%s' (use --player)\n",
-                player_playlist.front().c_str());
-        return 1;
     }
 
     if (!isValidHwdec(hwdec_str)) hwdec_str = kHwdecDefault;
@@ -502,11 +489,6 @@ int main(int argc, char* argv[]) {
         }
     }
     initLogging(log_path.c_str(), log_level);
-
-    if (player_mode && player_playlist.empty()) {
-        fprintf(stderr, "Error: --player requires at least one file or URL\n");
-        return 1;
-    }
 
     LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING);
     LOG_INFO(LOG_MAIN, "CEF {}", CEF_VERSION);
@@ -651,11 +633,6 @@ int main(int argc, char* argv[]) {
     // returns — main must enter the GCD pump loop without delay.
     g_mpv.SetWakeupCallback([](void*) {}, nullptr);
     observe_properties(g_mpv);
-
-    // Load file if in player mode (before init so it's in the playlist)
-    if (player_mode) {
-        g_mpv.LoadFile(player_playlist[0], {});
-    }
 
     int init_err = g_mpv.Initialize();
     if (init_err < 0) {
@@ -849,17 +826,7 @@ int main(int argc, char* argv[]) {
     std::string server_url = Settings::instance().serverUrl();
     std::string main_url;
 
-    if (player_mode) {
-        // Build player URL with playlist
-        auto list = CefListValue::Create();
-        for (size_t i = 0; i < player_playlist.size(); i++)
-            list->SetString(i, player_playlist[i]);
-        auto val = CefValue::Create();
-        val->SetList(list);
-        auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-        auto encoded = CefURIEncode(json, false);
-        main_url = "app://resources/player.html#" + encoded.ToString();
-    } else if (!server_url.empty()) {
+    if (!server_url.empty()) {
         // Eager pre-load: begin fetching the saved server while the overlay
         // probes in parallel. The overlay fades out on success, revealing the
         // already-loaded page.
@@ -872,8 +839,8 @@ int main(int argc, char* argv[]) {
     g_web_browser->create(wi, bs, main_url);
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
 
-    // Overlay browser (server selection UI) -- only in full app mode
-    if (!player_mode) {
+    // Overlay browser (server selection UI)
+    {
         RenderTarget overlay_target{g_platform.overlay_present, g_platform.overlay_present_software};
         g_overlay_browser = new OverlayBrowser(overlay_target, *g_web_browser,
                                                lw, lh, (int)mw, (int)mh);
