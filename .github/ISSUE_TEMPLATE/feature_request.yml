@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest an idea for this project
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please read the [Supported Versions](https://github.com/jellyfin/jellyfin-desktop/wiki/Supported-Versions) page.
+  - type: checkboxes
+    id: read-guide
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have confirmed this feature is absent from a [supported version](https://github.com/jellyfin/jellyfin-desktop/wiki/Supported-Versions).
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The version you tested against to confirm the feature is missing.
+      placeholder: 3.0.0-dev+fffffff
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the feature
+      description: A clear and concise description of what you'd like.
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other details, screenshots, or references.
