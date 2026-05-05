@@ -1,5 +1,6 @@
 #include "logging.h"
 
+#include "log_redact.h"
 #include "quill/Backend.h"
 #include "quill/Frontend.h"
 #include "quill/sinks/ConsoleSink.h"
@@ -30,12 +31,14 @@ quill::Logger* g_loggers[LOG_CATEGORY_COUNT] = {};
 
 static std::string g_active_log_path;
 
-// Sink mixin that replaces embedded newlines in the rendered log_statement
-// before handing it to the real sink. Runs on Quill's backend worker thread,
-// so the call site stays free of string mangling. Newlines come mainly from
-// multi-line JS console messages (stack traces) piped through OnConsoleMessage.
+// Sink mixin that post-processes the rendered log_statement before handing it
+// to the real sink. Two transforms:
+//   1. Replace embedded newlines (mainly multi-line JS stack traces) with
+//      spaces so each log entry stays on one line.
+//   2. Redact auth tokens / API keys via log_redact::censor.
+// Runs on Quill's backend worker thread so call sites stay free of mangling.
 template <class Base>
-class NewlineStripSink : public Base {
+class SanitizingSink : public Base {
 public:
     using Base::Base;
     void write_log(quill::MacroMetadata const* md, uint64_t ts,
@@ -46,18 +49,29 @@ public:
                    std::vector<std::pair<std::string, std::string>> const* named_args,
                    std::string_view log_message, std::string_view log_statement) override {
         // Last char is the pattern suffix '\n' which Quill added — keep it.
-        // Only strip newlines that were embedded in the message itself.
+        // Only consider transforms over the body.
         auto body_end = log_statement.size();
         if (body_end > 0 && log_statement[body_end - 1] == '\n') --body_end;
-        if (log_statement.substr(0, body_end).find_first_of("\r\n") == std::string_view::npos) {
+        std::string_view body = log_statement.substr(0, body_end);
+
+        bool has_newline = body.find_first_of("\r\n") != std::string_view::npos;
+        bool has_secret = log_redact::containsSecret(body);
+
+        if (!has_newline && !has_secret) {
             Base::write_log(md, ts, thread_id, thread_name, process_id, logger_name,
                             level, level_desc, level_code, named_args,
                             log_message, log_statement);
             return;
         }
+
         std::string cleaned(log_statement);
-        for (size_t i = 0; i < body_end; ++i) {
-            if (cleaned[i] == '\r' || cleaned[i] == '\n') cleaned[i] = ' ';
+        if (has_newline) {
+            for (size_t i = 0; i < body_end; ++i) {
+                if (cleaned[i] == '\r' || cleaned[i] == '\n') cleaned[i] = ' ';
+            }
+        }
+        if (has_secret) {
+            log_redact::censor(cleaned);
         }
         Base::write_log(md, ts, thread_id, thread_name, process_id, logger_name,
                         level, level_desc, level_code, named_args,
@@ -65,8 +79,8 @@ public:
     }
 };
 
-using ConsoleSinkNoNewlines = NewlineStripSink<quill::ConsoleSink>;
-using RotatingFileSinkNoNewlines = NewlineStripSink<quill::RotatingFileSink>;
+using ConsoleSinkSanitizing = SanitizingSink<quill::ConsoleSink>;
+using RotatingFileSinkSanitizing = SanitizingSink<quill::RotatingFileSink>;
 
 namespace {
 
@@ -226,7 +240,7 @@ void initLogging(const char* path, LogLevel min_level) {
     quill::ConsoleSinkConfig console_config;
     console_config.set_override_pattern_formatter_options(quill::PatternFormatterOptions{
         "[%(logger)] %(message)", "", quill::Timezone::LocalTime});
-    sinks.push_back(quill::Frontend::create_or_get_sink<ConsoleSinkNoNewlines>(
+    sinks.push_back(quill::Frontend::create_or_get_sink<ConsoleSinkSanitizing>(
         "console_sink", console_config));
 
     // File: ISO timestamp, padded level, then "[Category] message".
@@ -242,7 +256,7 @@ void initLogging(const char* path, LogLevel min_level) {
             "%(time) %(log_level:<7) [%(logger)] %(message)",
             "%Y-%m-%dT%H:%M:%S",
             quill::Timezone::LocalTime});
-        sinks.push_back(quill::Frontend::create_or_get_sink<RotatingFileSinkNoNewlines>(path, file_config));
+        sinks.push_back(quill::Frontend::create_or_get_sink<RotatingFileSinkSanitizing>(path, file_config));
     }
 
     quill::LogLevel level = toQuillLevel(min_level);

@@ -552,6 +552,7 @@ if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
         src/logging.cpp
+        src/log_redact.cpp
         src/single_instance.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
@@ -576,6 +577,7 @@ else()
     set(COMMON_SOURCES
         src/main.cpp
         src/logging.cpp
+        src/log_redact.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/jellyfin/device_profile.cpp
