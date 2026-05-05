@@ -229,6 +229,8 @@
         libxi
         libxrender
         libpulseaudio
+        
+        ffmpeg
       ];
 
       # Main package
