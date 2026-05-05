@@ -319,7 +319,7 @@
             btn.type = 'button';
             btn.addEventListener('click', () => {
                 if (window.jmpNative && window.jmpNative.openConfigDir) {
-                    console.log('[SETTINGS] called openConfigDir');
+                    console.debug('[SETTINGS] called openConfigDir');
                     window.jmpNative.openConfigDir();
                 }
             });

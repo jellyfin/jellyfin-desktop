@@ -1,5 +1,5 @@
 (function() {
-    console.log('[Media] Installing native shim...');
+    console.debug('[Media] Installing native shim...');
 
     // Fullscreen state tracking via HTML5 Fullscreen API
     window._isFullscreen = false;
@@ -62,12 +62,12 @@
         };
         signal.connect = (cb) => {
             callbacks.push(cb);
-            console.log('[Media] [Signal] ' + name + ' connected, now has', callbacks.length, 'listeners');
+            console.debug('[Media] [Signal] ' + name + ' connected, now has', callbacks.length, 'listeners');
         };
         signal.disconnect = (cb) => {
             const idx = callbacks.indexOf(cb);
             if (idx >= 0) callbacks.splice(idx, 1);
-            console.log('[Media] [Signal] ' + name + ' disconnected, now has', callbacks.length, 'listeners');
+            console.debug('[Media] [Signal] ' + name + ' disconnected, now has', callbacks.length, 'listeners');
         };
         return signal;
     }
@@ -189,7 +189,7 @@
 
             // Methods
             load(url, options, streamdata, audioStream, subtitleStream, externalAudioUrl, externalSubUrl, callback) {
-                console.log('[Media] player.load:', url);
+                console.debug('[Media] player.load:', url);
                 window._jmpVideoActive = streamdata?.type === 'video';
                 if (callback) {
                     // Wait for playing signal before calling callback
@@ -212,63 +212,63 @@
                 }
             },
             stop() {
-                console.log('[Media] player.stop');
+                console.debug('[Media] player.stop');
                 restoreThemeColor();
                 if (window.jmpNative) window.jmpNative.playerStop();
             },
             pause() {
-                console.log('[Media] player.pause');
+                console.debug('[Media] player.pause');
                 if (window.jmpNative) window.jmpNative.playerPause();
                 playerState.paused = true;
             },
             play() {
-                console.log('[Media] player.play');
+                console.debug('[Media] player.play');
                 if (window.jmpNative) window.jmpNative.playerPlay();
                 playerState.paused = false;
             },
             seekTo(ms) {
-                console.log('[Media] player.seekTo:', ms);
+                console.debug('[Media] player.seekTo:', ms);
                 if (window.jmpNative) window.jmpNative.playerSeek(ms);
             },
             setVolume(vol) {
-                console.log('[Media] player.setVolume:', vol);
+                console.debug('[Media] player.setVolume:', vol);
                 playerState.volume = vol;
                 if (window.jmpNative) window.jmpNative.playerSetVolume(vol);
             },
             setMuted(muted) {
-                console.log('[Media] player.setMuted:', muted);
+                console.debug('[Media] player.setMuted:', muted);
                 playerState.muted = muted;
                 if (window.jmpNative) window.jmpNative.playerSetMuted(muted);
             },
             setPlaybackRate(rate) {
-                console.log('[Media] player.setPlaybackRate:', rate);
+                console.debug('[Media] player.setPlaybackRate:', rate);
                 if (window.jmpNative) window.jmpNative.playerSetSpeed(rate);
             },
             setSubtitleStream(index) {
-                console.log('[Media] player.setSubtitleStream:', index);
+                console.debug('[Media] player.setSubtitleStream:', index);
                 if (window.jmpNative) window.jmpNative.playerSetSubtitle(index);
             },
             addSubtitleStream(url) {
-                console.log('[Media] player.addSubtitleStream:', url);
+                console.debug('[Media] player.addSubtitleStream:', url);
                 if (window.jmpNative) window.jmpNative.playerAddSubtitle(url);
             },
             setAudioStream(index) {
-                console.log('[Media] player.setAudioStream:', index);
+                console.debug('[Media] player.setAudioStream:', index);
                 if (window.jmpNative) window.jmpNative.playerSetAudio(index);
             },
             addAudioStream(url) {
-                console.log('[Media] player.addAudioStream:', url);
+                console.debug('[Media] player.addAudioStream:', url);
                 if (window.jmpNative) window.jmpNative.playerAddAudio(url);
             },
             setSubtitleDelay(ms) {
-                console.log('[Media] player.setSubtitleDelay:', ms);
+                console.debug('[Media] player.setSubtitleDelay:', ms);
             },
             setAudioDelay(ms) {
-                console.log('[Media] player.setAudioDelay:', ms);
+                console.debug('[Media] player.setAudioDelay:', ms);
                 if (window.jmpNative) window.jmpNative.playerSetAudioDelay(ms / 1000.0);
             },
             setAspectMode(mode) {
-                console.log('[Media] player.setAspectMode:', mode);
+                console.debug('[Media] player.setAspectMode:', mode);
                 if (window.jmpNative) window.jmpNative.playerSetAspectMode(mode);
             },
             setVideoRectangle(x, y, w, h) {
@@ -326,9 +326,9 @@
 
     // Expose signal emitter for native code
     window._nativeEmit = function(signal, ...args) {
-        console.log('[Media] _nativeEmit called with signal:', signal, 'args:', args);
+        console.debug('[Media] _nativeEmit called with signal:', signal, 'args:', args);
         if (window.api && window.api.player && window.api.player[signal]) {
-            console.log('[Media] Firing signal:', signal);
+            console.debug('[Media] Firing signal:', signal);
             window.api.player[signal](...args);
         } else {
             console.error('[Media] Signal not found:', signal, 'api exists:', !!window.api);
@@ -351,15 +351,15 @@
     };
     // Native emitters for media session control commands
     window._nativeHostInput = function(actions) {
-        console.log('[Media] _nativeHostInput:', actions);
+        console.debug('[Media] _nativeHostInput:', actions);
         window.api.input.hostInput(actions);
     };
     window._nativeSetRate = function(rate) {
-        console.log('[Media] _nativeSetRate:', rate);
+        console.debug('[Media] _nativeSetRate:', rate);
         window.api.input.rateChanged(rate);
     };
     window._nativeSeek = function(positionMs) {
-        console.log('[Media] _nativeSeek:', positionMs);
+        console.debug('[Media] _nativeSeek:', positionMs);
         window.api.input.positionSeek(positionMs);
     };
 
@@ -512,5 +512,5 @@
         }
     });
 
-    console.log('[Media] Native shim installed');
+    console.debug('[Media] Native shim installed');
 })();

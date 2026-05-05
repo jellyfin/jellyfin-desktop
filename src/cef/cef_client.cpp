@@ -384,12 +384,15 @@ bool CefLayer::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level,
                                 int line) {
     std::string msg = message.ToString();
     std::string src = source.ToString();
+    // CEF: VERBOSE/DEBUG share a value. DEFAULT (0) → treat as INFO.
     if (level >= LOGSEVERITY_ERROR)
         LOG_ERROR(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
     else if (level == LOGSEVERITY_WARNING)
         LOG_WARN(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
-    else
+    else if (level == LOGSEVERITY_INFO || level == LOGSEVERITY_DEFAULT)
         LOG_INFO(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
+    else  // VERBOSE/DEBUG
+        LOG_DEBUG(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
     return true;
 }
 

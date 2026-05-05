@@ -6,7 +6,7 @@ window.jmpCheckServerConnectivity = (() => {
 
     // Called by native code when result is ready
     window._onServerConnectivityResult = (url, success, resolvedUrl) => {
-        console.log('Connectivity result:', url, success, resolvedUrl);
+        console.debug('Connectivity result:', url, success, resolvedUrl);
         if (pendingUrl === url) {
             if (success) {
                 pendingResolve(resolvedUrl);
@@ -35,7 +35,7 @@ window.jmpCheckServerConnectivity = (() => {
             pendingReject = reject;
             pendingUrl = url;
 
-            console.log('Checking connectivity:', url);
+            console.debug('Checking connectivity:', url);
             window.jmpNative.checkServerConnectivity(url);
         });
     };
