@@ -222,7 +222,7 @@ static quill::LogLevel toQuillLevel(LogLevel level) {
         case LogLevel::Error: return quill::LogLevel::Error;
         case LogLevel::Default: break;
     }
-    return quill::LogLevel::TraceL3;  // allow everything
+    return toQuillLevel(kDefaultLogLevel);
 }
 
 const std::string& activeLogPath() {
