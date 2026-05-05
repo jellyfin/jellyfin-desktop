@@ -413,7 +413,18 @@ int main(int argc, char* argv[]) {
                    kDefaultLogLevelName, kHwdecDefault);
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
-            printf("jellyfin-desktop %s\nCEF %s\n", APP_VERSION_STRING, CEF_VERSION);
+            printf("jellyfin-desktop %s\n\nCEF %s\n\n", APP_VERSION_STRING, CEF_VERSION);
+            mpv_handle* h = mpv_create();
+            if (h && mpv_initialize(h) >= 0) {
+                for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
+                    char* v = mpv_get_property_string(h, prop);
+                    if (v) {
+                        printf("%s %s\n", prop, v);
+                        mpv_free(v);
+                    }
+                }
+            }
+            if (h) mpv_terminate_destroy(h);
             return 0;
         } else if (strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
             log_level_str = argv[++i];
