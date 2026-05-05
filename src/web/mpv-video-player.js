@@ -94,14 +94,14 @@
         }
 
         async play(options) {
-            console.log(`[Media] [${this.logTag}] play() called with options:`, options);
+            console.debug(`[Media] [${this.logTag}] play() called with options:`, options);
             this._started = false;
             this._timeUpdated = false;
             this._currentTime = null;
             this._endedPending = false;
             if (options.fullscreen) this.loading.show();  // fills entire web content area, not the actual screen
             await this.createMediaElement(options);
-            console.log(`[Media] [${this.logTag}] createMediaElement done, calling setCurrentSrc`);
+            console.debug(`[Media] [${this.logTag}] createMediaElement done, calling setCurrentSrc`);
             const result = await this.setCurrentSrc(options);
 
             // needed when only audio is single external
@@ -342,5 +342,5 @@
     }
 
     window._mpvVideoPlayer = mpvVideoPlayer;
-    console.log('[Media] mpvVideoPlayer class installed');
+    console.debug('[Media] mpvVideoPlayer class installed');
 })();

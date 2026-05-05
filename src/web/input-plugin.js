@@ -11,7 +11,7 @@
             this.pendingArtworkUrl = null;
             this.attachedPlayer = null;
 
-            console.log('[Media] inputPlugin constructed with playbackManager:', !!playbackManager);
+            console.debug('[Media] inputPlugin constructed with playbackManager:', !!playbackManager);
 
             if (playbackManager && window.Events) {
                 this.setupEvents(playbackManager);
@@ -32,7 +32,7 @@
                 RunTimeTicks: item.RunTimeTicks || 0,
                 Id: item.Id || ''
             };
-            console.log('[Media] notifyMetadata:', meta.Name);
+            console.debug('[Media] notifyMetadata:', meta.Name);
             window.jmpNative.notifyMetadata(JSON.stringify(meta));
             this.fetchAlbumArt(item);
         }
@@ -83,12 +83,12 @@
 
             const imageUrl = this.getImageUrl(item, baseUrl);
             if (!imageUrl) {
-                console.log('[Media] No album art URL found');
+                console.debug('[Media] No album art URL found');
                 return;
             }
 
             if (imageUrl === this.pendingArtworkUrl) {
-                console.log('[Media] Album art already pending for:', imageUrl);
+                console.debug('[Media] Album art already pending for:', imageUrl);
                 return;
             }
 
@@ -96,7 +96,7 @@
             this.artworkAbortController = new AbortController();
             const signal = this.artworkAbortController.signal;
 
-            console.log('[Media] Fetching album art:', imageUrl);
+            console.debug('[Media] Fetching album art:', imageUrl);
 
             fetch(imageUrl, { signal })
                 .then(response => {
@@ -108,7 +108,7 @@
                     reader.onloadend = () => {
                         if (signal.aborted) return;
                         const dataUri = reader.result;
-                        console.log('[Media] Album art fetched, sending data URI');
+                        console.debug('[Media] Album art fetched, sending data URI');
                         window.jmpNative.notifyArtwork(dataUri);
                         this.pendingArtworkUrl = null;
                     };
@@ -116,9 +116,9 @@
                 })
                 .catch(err => {
                     if (err.name === 'AbortError') {
-                        console.log('[Media] Album art fetch aborted');
+                        console.debug('[Media] Album art fetch aborted');
                     } else {
-                        console.log('[Media] Album art fetch failed:', err.message);
+                        console.warn('[Media] Album art fetch failed:', err.message);
                     }
                     this.pendingArtworkUrl = null;
                 });
@@ -162,7 +162,7 @@
             const drift = actual - expected;
 
             if (Math.abs(drift) > 2000) {
-                console.log('[Media] Position drift detected: expected=' + Math.floor(expected) + ' actual=' + Math.floor(actual) + ' drift=' + Math.floor(drift));
+                console.debug('[Media] Position drift detected: expected=' + Math.floor(expected) + ' actual=' + Math.floor(actual) + ' drift=' + Math.floor(drift));
                 if (drift > 0) {
                     window.jmpNative.notifySeek(Math.floor(actual));
                 } else {
@@ -190,7 +190,7 @@
 
                 if (!playlist || !Array.isArray(playlist) || playlist.length === 0 ||
                     currentIndex === undefined || currentIndex === null || currentIndex < 0) {
-                    console.log('[Media] updateQueueState: queue invalid (idx=' + currentIndex + ' len=' + (playlist?.length || 0) + '), keeping last state');
+                    console.warn('[Media] updateQueueState: queue invalid (idx=' + currentIndex + ' len=' + (playlist?.length || 0) + '), keeping last state');
                     return;
                 }
 
@@ -200,7 +200,7 @@
                 const isMusic = state?.NowPlayingItem?.MediaType === 'Audio';
                 const canPrev = isMusic ? true : (currentIndex > 0);
 
-                console.log('[Media] updateQueueState: idx=' + currentIndex + ' len=' + playlist.length + ' canNext=' + canNext + ' canPrev=' + canPrev);
+                console.debug('[Media] updateQueueState: idx=' + currentIndex + ' len=' + playlist.length + ' canNext=' + canNext + ' canPrev=' + canPrev);
                 window.jmpNative.notifyQueueChange(canNext, canPrev);
             } catch (e) {
                 console.error('[Media] updateQueueState error:', e);
@@ -208,11 +208,11 @@
         }
 
         setupEvents(pm) {
-            console.log('[Media] Setting up playbackManager events');
+            console.debug('[Media] Setting up playbackManager events');
             const self = this;
 
             window.Events.on(pm, 'playbackstart', (e, player) => {
-                console.log('[Media] playbackstart event, player:', !!player);
+                console.debug('[Media] playbackstart event, player:', !!player);
 
                 const state = pm.getPlayerState ? pm.getPlayerState() : null;
 
@@ -220,7 +220,7 @@
                     self.notifyMetadata(state.NowPlayingItem);
                 }
 
-                console.log('[Media] Sending Playing state from playbackstart');
+                console.debug('[Media] Sending Playing state from playbackstart');
                 if (window.jmpNative) window.jmpNative.notifyPlaybackState('Playing');
                 self.startPositionUpdates();
                 self.updateQueueState();
@@ -235,7 +235,7 @@
                     self.attachedPlayer = player;
 
                     window.Events.on(player, 'playing', () => {
-                        console.log('[Media] player.playing event');
+                        console.debug('[Media] player.playing event');
                         if (window.jmpNative) window.jmpNative.notifyPlaybackState('Playing');
                         self.updateQueueState();
 
@@ -250,7 +250,7 @@
                     });
 
                     window.Events.on(player, 'pause', () => {
-                        console.log('[Media] player.pause event');
+                        console.debug('[Media] player.pause event');
                         if (window.jmpNative) {
                             window.jmpNative.notifyPlaybackState('Paused');
                             const pos = pm.currentTime ? pm.currentTime() : 0;
@@ -262,7 +262,7 @@
 
                     window.Events.on(player, 'ratechange', () => {
                         const rate = player.getPlaybackRate ? player.getPlaybackRate() : 1.0;
-                        console.log('[Media] player.ratechange event, rate:', rate);
+                        console.debug('[Media] player.ratechange event, rate:', rate);
                         if (window.jmpNative) {
                             window.jmpNative.notifyRateChange(rate);
                             const pos = pm.currentTime ? pm.currentTime() : 0;
@@ -281,18 +281,18 @@
 
             window.Events.on(pm, 'playbackstop', (e, stopInfo) => {
                 try {
-                    console.log('[Media] playbackstop event, stopInfo:', JSON.stringify(stopInfo));
+                    console.debug('[Media] playbackstop event, stopInfo:', JSON.stringify(stopInfo));
                 } catch (err) {
-                    console.log('[Media] playbackstop event, stopInfo: [unserializable]');
+                    console.debug('[Media] playbackstop event, stopInfo: [unserializable]');
                 }
                 self.stopPositionUpdates();
 
                 const isNavigating = !!(stopInfo && stopInfo.nextMediaType);
                 if (!isNavigating) {
-                    console.log('[Media] Playback truly stopped, clearing state');
+                    console.debug('[Media] Playback truly stopped, clearing state');
                     if (window.jmpNative) window.jmpNative.notifyPlaybackState('Stopped');
                 } else {
-                    console.log('[Media] Navigating to next item, keeping metadata');
+                    console.debug('[Media] Navigating to next item, keeping metadata');
                 }
                 self.updateQueueState();
             });
@@ -313,40 +313,40 @@
             };
 
             window.api.input.hostInput.connect((actions) => {
-                console.log('[Media] hostInput received:', actions);
+                console.debug('[Media] hostInput received:', actions);
                 actions.forEach(action => {
                     const mappedAction = remap[action] || action;
-                    console.log('[Media] Sending to inputManager:', mappedAction);
+                    console.debug('[Media] Sending to inputManager:', mappedAction);
                     if (self.inputManager && typeof self.inputManager.handleCommand === 'function') {
                         self.inputManager.handleCommand(mappedAction, {});
                     } else {
-                        console.log('[Media] inputManager.handleCommand not available, inputManager:', !!self.inputManager);
+                        console.warn('[Media] inputManager.handleCommand not available, inputManager:', !!self.inputManager);
                     }
                 });
             });
 
             window.api.input.positionSeek.connect((positionMs) => {
-                console.log('[Media] positionSeek received:', positionMs);
+                console.debug('[Media] positionSeek received:', positionMs);
                 const currentPlayer = pm.getCurrentPlayer ? pm.getCurrentPlayer() : pm._currentPlayer;
                 if (currentPlayer) {
                     const duration = pm.duration ? pm.duration() : 0;
                     if (duration > 0) {
                         const percent = (positionMs * 10000) / duration * 100;
-                        console.log('[Media] Seeking to', percent.toFixed(2), '% (', positionMs, 'ms of', duration, 'ticks)');
+                        console.debug('[Media] Seeking to', percent.toFixed(2), '% (', positionMs, 'ms of', duration, 'ticks)');
                         pm.seekPercent(percent, currentPlayer);
                     }
                 }
             });
 
             window.api.input.rateChanged.connect((rate) => {
-                console.log('[Media] rateChanged received:', rate);
+                console.debug('[Media] rateChanged received:', rate);
                 const currentPlayer = pm.getCurrentPlayer ? pm.getCurrentPlayer() : pm._currentPlayer;
                 if (currentPlayer && typeof currentPlayer.setPlaybackRate === 'function') {
                     currentPlayer.setPlaybackRate(rate);
                 }
             });
 
-            console.log('[Media] Events setup complete');
+            console.debug('[Media] Events setup complete');
         }
 
         destroy() {
@@ -370,5 +370,5 @@
     }
 
     window._inputPlugin = inputPlugin;
-    console.log('[Media] inputPlugin class installed');
+    console.debug('[Media] inputPlugin class installed');
 })();

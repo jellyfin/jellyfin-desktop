@@ -25,7 +25,7 @@ function cancellableDelay(ms, label) {
     return new Promise((resolve, reject) => {
         const t = setTimeout(() => { cancelWait = null; resolve(); }, ms);
         cancelWait = () => {
-            console.log('Cancelling ' + label + ' timer', t);
+            console.debug('Cancelling ' + label + ' timer', t);
             clearTimeout(t);
             cancelWait = null;
             reject(new Error('cancelled'));
@@ -35,11 +35,11 @@ function cancellableDelay(ms, label) {
 
 async function tryConnect(server, spinnerStartTime = Date.now()) {
     try {
-        console.log("Checking connectivity to:", server);
+        console.debug("Checking connectivity to:", server);
 
         const resolvedUrl = await window.jmpCheckServerConnectivity(server);
         console.log("Server connectivity check passed");
-        console.log("Resolved URL:", resolvedUrl);
+        console.debug("Resolved URL:", resolvedUrl);
 
         if (!isConnecting) return false;
 
@@ -75,7 +75,7 @@ async function tryConnect(server, spinnerStartTime = Date.now()) {
         return true;
     } catch (e) {
         if (/cancel/i.test(e && e.message)) {
-            console.log("Connection cancelled");
+            console.debug("Connection cancelled");
         } else {
             console.error("Server connectivity check failed:", e);
         }
@@ -166,7 +166,7 @@ const startConnecting = async () => {
 const cancelConnection = () => {
     if (!isConnecting) return;
 
-    console.log("Cancelling connection");
+    console.debug("Cancelling connection");
     // Native resets main on cancelServerConnectivity.
     mainLoaded = false;
     isConnecting = false;
@@ -216,10 +216,10 @@ document.addEventListener('keydown', (e) => {
     console.log('Auto-connect: starting');
 
     const savedServer = await savedServerUrlReady;
-    console.log('Auto-connect: savedServer =', savedServer);
+    console.debug('Auto-connect: savedServer =', savedServer);
 
     if (savedServer) {
-        console.log('Auto-connect: checking saved server', savedServer);
+        console.debug('Auto-connect: checking saved server', savedServer);
 
         // main.cpp pre-loads the saved URL into the main browser in parallel
         // with overlay startup, so don't issue a redundant navigateMain.

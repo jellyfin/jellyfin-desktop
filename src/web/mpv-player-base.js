@@ -101,7 +101,7 @@
             return new Promise((resolve) => {
                 const val = options.url;
                 this._currentSrc = val;
-                console.log(`[Media] [${this.logTag}] Playing:`, val);
+                console.debug(`[Media] [${this.logTag}] Playing:`, val);
 
                 const ms = Math.round((options.playerStartPositionTicks || 0) / 10000);
                 this._currentPlayOptions = options;
@@ -127,7 +127,7 @@
                 this.events.trigger(this, 'unpause');
             }
             this.events.trigger(this, 'playing');
-            console.log(`[Media] [${this.logTag}] playing event triggered`);
+            console.debug(`[Media] [${this.logTag}] playing event triggered`);
         }
 
         // Playback control
