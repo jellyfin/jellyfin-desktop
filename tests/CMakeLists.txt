@@ -35,3 +35,15 @@ target_include_directories(settings_test PRIVATE
 )
 
 add_test(NAME settings_test COMMAND settings_test)
+
+add_executable(log_redact_test
+    log_redact_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/log_redact.cpp
+)
+
+target_include_directories(log_redact_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
+)
+
+add_test(NAME log_redact_test COMMAND log_redact_test)
