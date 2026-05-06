@@ -29,11 +29,13 @@
 #include <mach/mach_time.h>
 #include <objc/runtime.h>
 
-// gethostname() on macOS returns a network-derived BSD hostname (e.g.
-// "dhcp-1-2-3-4.lan"); SCDynamicStoreCopyComputerName returns the stable
-// user-set name from System Settings → General → About → Name.
+// SCDynamicStoreCopyComputerName returns the freeform "Computer Name" from
+// System Settings — which can contain emoji, smart quotes, CJK, and other
+// non-ASCII that breaks the HTTP header.
+// SCDynamicStoreCopyLocalHostName returns the Bonjour hostname: always DNS-safe ASCII (letters, digits,
+// hyphens), derived from the Computer Name by macOS itself.
 std::string macosComputerName() {
-    CFStringRef name = SCDynamicStoreCopyComputerName(nullptr, nullptr);
+    CFStringRef name = SCDynamicStoreCopyLocalHostName(nullptr);
     if (!name) return {};
     CFIndex len = CFStringGetLength(name);
     CFIndex max = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
