@@ -208,7 +208,7 @@
                 }
                 if (window.jmpNative && window.jmpNative.playerLoad) {
                     const metadataJson = streamdata?.metadata ? JSON.stringify(streamdata.metadata) : '{}';
-                    window.jmpNative.playerLoad(url, options.startMilliseconds, audioStream, subtitleStream, metadataJson, externalAudioUrl || '', externalSubUrl || '');
+                    window.jmpNative.playerLoad(url, options.startMilliseconds, audioStream, subtitleStream, metadataJson, externalAudioUrl || '', externalSubUrl || '', !!options.isInfiniteStream);
                 }
             },
             stop() {

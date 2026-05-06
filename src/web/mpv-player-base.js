@@ -110,7 +110,11 @@
                 const { audioParam, subParam, externalAudioUrl, externalSubUrl } = this._resolveTracks(options);
                 this._beforeLoad(options);
                 window.api.player.load(val,
-                    { startMilliseconds: ms, autoplay: true },
+                    {
+                        startMilliseconds: ms,
+                        autoplay: true,
+                        isInfiniteStream: !!options.mediaSource?.IsInfiniteStream
+                    },
                     { type: this.mediaType, metadata: options.item },
                     audioParam,
                     subParam,
