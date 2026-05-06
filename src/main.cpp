@@ -60,6 +60,7 @@
 // =====================================================================
 
 MpvHandle g_mpv;
+std::string g_video_bg_color;
 std::atomic<bool> g_shutting_down{false};
 WakeEvent g_shutdown_event;
 
@@ -570,7 +571,6 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("user-agent", APP_USER_AGENT);
 
     g_mpv.SetHwdec(hwdec_str);
-    g_mpv.SetOptionString("background-color", kBgColor.hex);
 
     // Restore saved window geometry. mpv's --geometry is always physical
     // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
@@ -642,13 +642,14 @@ int main(int argc, char* argv[]) {
     }
     g_mpv.SetLogLevel(log_level);
 
-    for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
-        char* v = mpv_get_property_string(g_mpv, prop);
-        if (v) {
-            LOG_INFO(LOG_MAIN, "{} {}", prop, v);
-            mpv_free(v);
-        }
-    }
+    // Capture user's mpv.conf background-color, then force the startup color.
+    // Safe post-Initialize: force-window=yes (not "immediate") defers VO
+    // creation, so the user's color never flashes before we override.
+    g_video_bg_color = g_mpv.GetPropertyString("background-color");
+    g_mpv.SetBackgroundColor(kBgColor.hex);
+
+    for (const char* prop : {"mpv-version", "ffmpeg-version"})
+        LOG_INFO(LOG_MAIN, "{} {}", prop, g_mpv.GetPropertyString(prop));
 
     // input-default-bindings=no removes all builtin bindings including
     // CLOSE_WIN → quit.  Re-bind it so the WM close button works.

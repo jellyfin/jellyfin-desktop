@@ -196,7 +196,7 @@ bool OverlayBrowser::handleMessage(const std::string& name,
         CefRefPtr<CefBrowser> overlay_browser = browser;
         g_platform.fade_overlay(OVERLAY_FADE_DURATION_SEC,
             []() {
-                g_mpv.SetBackgroundColor(kVideoBgColor.hex);
+                g_mpv.SetBackgroundColor(g_video_bg_color);
                 if (g_titlebar_color) g_titlebar_color->onOverlayDismissed();
             },
             [overlay_browser]() {

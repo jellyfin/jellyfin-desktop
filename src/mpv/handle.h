@@ -80,6 +80,15 @@ public:
         return mpv_get_property(handle_, name.c_str(), MPV_FORMAT_INT64, &out);
     }
 
+    std::string GetPropertyString(const std::string& name) {
+        std::string result;
+        if (char* v = mpv_get_property_string(handle_, name.c_str())) {
+            result = v;
+            mpv_free(v);
+        }
+        return result;
+    }
+
     // =====================================================================
     // Player API (dedicated typed methods)
     // =====================================================================
