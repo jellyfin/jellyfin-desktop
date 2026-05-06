@@ -511,10 +511,11 @@ static bool macos_init(mpv_handle* mpv) {
     return true;
 }
 
-// Reset all background colors from the startup fill to black.
-// Called once when the first real content is about to be revealed.
+// Reset background colors from the startup fill: mpv to the user's
+// configured background-color (captured post-init), and the AppKit
+// window/layer to black. Called once when first real content reveals.
 static void reset_background_to_black() {
-    g_mpv.SetBackgroundColor(kVideoBgColor.hex);
+    g_mpv.SetBackgroundColor(g_video_bg_color);
     g_window.backgroundColor = [NSColor blackColor];
     [[g_window contentView] layer].backgroundColor = [NSColor blackColor].CGColor;
 }

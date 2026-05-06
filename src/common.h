@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 constexpr char hexdigit(uint32_t c, int i) {
     uint8_t n = (c >> (20 - i * 4)) & 0xF;
@@ -23,8 +24,9 @@ struct Color {
 
 // Startup background color (loading screen / overlay).
 constexpr Color kBgColor{0x101010};
-// Playback background color (behind video).
-constexpr Color kVideoBgColor{0x000000};
+// Playback background color, captured from mpv post-Initialize so mpv.conf
+// is honored. See main.cpp for the capture/force sequence.
+extern std::string g_video_bg_color;
 
 #include "platform/platform.h"
 #include "mpv/handle.h"
