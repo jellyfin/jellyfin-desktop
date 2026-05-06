@@ -98,6 +98,7 @@ public:
     void SetAudioTrack(int64_t id)       { SetPropertyStringAsync("aid", TrackToMpvStr(id)); }
     void SetSubtitleTrack(int64_t id)    { SetPropertyStringAsync("sid", TrackToMpvStr(id)); }
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
+    void SetSubtitleDelay(double secs)   { SetPropertyDoubleAsync("sub-delay", secs); }
     void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
     void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
     void AudioAdd(const std::string& url) { CommandAsync({"audio-add", url, "select"}); }

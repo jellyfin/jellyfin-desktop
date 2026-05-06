@@ -262,6 +262,7 @@
             },
             setSubtitleDelay(ms) {
                 console.debug('[Media] player.setSubtitleDelay:', ms);
+                if (window.jmpNative) window.jmpNative.playerSetSubtitleDelay(ms / 1000.0);
             },
             setAudioDelay(ms) {
                 console.debug('[Media] player.setAudioDelay:', ms);
