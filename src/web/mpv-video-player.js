@@ -160,7 +160,7 @@
                 }
             }
 
-            return { audioParam, subParam, externalAudioUrl, externalSubUrl };
+            return { videoParam: 1, audioParam, subParam, externalAudioUrl, externalSubUrl };
         }
 
         _beforeLoad(options) {

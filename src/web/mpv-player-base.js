@@ -83,10 +83,16 @@
         // Subclasses set this; used as the metadata.type passed to the native loader.
         get mediaType() { return null; }
 
-        // Subclasses override to compute audio/subtitle track params from the media source.
-        // Default (audio): single baked-in track, no subs.
+        // Subclasses override to compute video/audio/subtitle track params from
+        // the media source. Default (audio): single baked-in audio track, no
+        // video, no subs. Video must stay disabled for audio playback — mp3s
+        // with embedded cover art expose an mjpeg "Image" stream that mpv
+        // would otherwise treat as a sparse video and end the file early
+        // (player/video.c last-frame draining), causing every track to skip
+        // after a fraction of a second.
         _resolveTracks(/* options */) {
             return {
+                videoParam: MpvPlayerBase.TRACK_DISABLE,
                 audioParam: 1,
                 subParam: MpvPlayerBase.TRACK_DISABLE,
                 externalAudioUrl: null,
@@ -107,7 +113,7 @@
                 this._currentPlayOptions = options;
                 this._currentTime = ms;
 
-                const { audioParam, subParam, externalAudioUrl, externalSubUrl } = this._resolveTracks(options);
+                const { videoParam, audioParam, subParam, externalAudioUrl, externalSubUrl } = this._resolveTracks(options);
                 this._beforeLoad(options);
                 window.api.player.load(val,
                     {
@@ -116,6 +122,7 @@
                         isInfiniteStream: !!options.mediaSource?.IsInfiniteStream
                     },
                     { type: this.mediaType, metadata: options.item },
+                    videoParam,
                     audioParam,
                     subParam,
                     externalAudioUrl,
