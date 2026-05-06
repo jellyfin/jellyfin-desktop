@@ -163,8 +163,8 @@
             return { audioParam, subParam, externalAudioUrl, externalSubUrl };
         }
 
-        _beforeLoad() {
-            window.api.player.setAspectMode(this.getAspectRatio());
+        _beforeLoad(options) {
+            window.api.player.setAspectMode(options?.aspectRatio || this.getAspectRatio());
         }
 
         setSubtitleStreamIndex(index) {
