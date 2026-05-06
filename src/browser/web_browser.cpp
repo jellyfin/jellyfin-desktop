@@ -87,7 +87,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
         "playerSetVolume", "playerSetMuted", "playerSetSpeed",
         "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio", "playerAddAudio",
-        "playerSetAudioDelay", "playerSetAspectMode", "playerOsdActive",
+        "playerSetAudioDelay", "playerSetSubtitleDelay", "playerSetAspectMode", "playerOsdActive",
         "openConfigDir", "saveServerUrl",
         "notifyMetadata", "notifyPosition", "notifySeek",
         "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
@@ -197,6 +197,8 @@ bool WebBrowser::handleMessage(const std::string& name,
         g_mpv.AudioAdd(url);
     } else if (name == "playerSetAudioDelay") {
         g_mpv.SetAudioDelay(args->GetDouble(0));
+    } else if (name == "playerSetSubtitleDelay") {
+        g_mpv.SetSubtitleDelay(args->GetDouble(0));
     } else if (name == "playerSetAspectMode") {
         g_mpv.SetAspectMode(args->GetString(0).ToString());
     } else if (name == "playerOsdActive") {

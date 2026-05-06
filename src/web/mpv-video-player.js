@@ -99,6 +99,7 @@
             this._timeUpdated = false;
             this._currentTime = null;
             this._endedPending = false;
+            if (options.resetSubtitleOffset !== false) this.resetSubtitleOffset();
             if (options.fullscreen) this.loading.show();  // fills entire web content area, not the actual screen
             await this.createMediaElement(options);
             console.debug(`[Media] [${this.logTag}] createMediaElement done, calling setCurrentSrc`);
@@ -184,14 +185,20 @@
         setSecondarySubtitleStreamIndex(index) {}
 
         resetSubtitleOffset() {
+            this._currentSubtitleOffset = 0;
+            this._showSubtitleOffset = false;
             window.api.player.setSubtitleDelay(0);
         }
 
-        enableShowingSubtitleOffset() {}
-        disableShowingSubtitleOffset() {}
-        isShowingSubtitleOffsetEnabled() { return false; }
-        setSubtitleOffset(offset) { window.api.player.setSubtitleDelay(Math.round(offset * 1000)); }
-        getSubtitleOffset() { return 0; }
+        enableShowingSubtitleOffset() { this._showSubtitleOffset = true; }
+        disableShowingSubtitleOffset() { this._showSubtitleOffset = false; }
+        isShowingSubtitleOffsetEnabled() { return this._showSubtitleOffset === true; }
+        setSubtitleOffset(offset) {
+            const v = parseFloat(offset) || 0;
+            this._currentSubtitleOffset = v;
+            window.api.player.setSubtitleDelay(Math.round(v * 1000));
+        }
+        getSubtitleOffset() { return this._currentSubtitleOffset || 0; }
 
         setAudioStreamIndex(index) {
             if (index == null || index < 0) {
