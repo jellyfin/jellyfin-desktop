@@ -59,16 +59,16 @@ if(NOT "${APP_VERSION}" STREQUAL "${CACHED_VERSION}" OR
     file(WRITE "${EPOCH_CACHE}" "${SOURCE_EPOCH}")
     file(WRITE "${CEF_CACHE}" "${APP_CEF_VERSION}")
     if(HAS_GIT_HASH)
-        set(APP_VERSION_STRING "${APP_VERSION}+${APP_GIT_HASH}")
+        set(APP_VERSION_FULL "${APP_VERSION}+${APP_GIT_HASH}")
     else()
-        set(APP_VERSION_STRING "${APP_VERSION}")
+        set(APP_VERSION_FULL "${APP_VERSION}")
     endif()
     file(WRITE "${VERSION_FILE}"
 "#pragma once
 
 #define APP_VERSION \"${APP_VERSION}\"
-#define APP_VERSION_STRING \"${APP_VERSION_STRING}\"
-#define APP_USER_AGENT \"JellyfinDesktop/${APP_VERSION_STRING}\"
+#define APP_VERSION_FULL \"${APP_VERSION_FULL}\"
+#define APP_USER_AGENT \"JellyfinDesktop/${APP_VERSION_FULL}\"
 #define APP_CEF_VERSION \"${APP_CEF_VERSION}\"
 ")
     message(STATUS "version.h updated: ${APP_VERSION}+${APP_GIT_HASH} cef=${APP_CEF_VERSION}")

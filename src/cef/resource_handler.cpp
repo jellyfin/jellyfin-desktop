@@ -71,7 +71,7 @@ CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(
         // hand-rolled JSON). Log paths are omitted when file logging is
         // disabled — the panel renders only the rows present in the data.
         auto dict = CefDictionaryValue::Create();
-        dict->SetString("app", APP_VERSION_STRING);
+        dict->SetString("app", APP_VERSION_FULL);
         dict->SetString("cef", APP_CEF_VERSION);
         dict->SetString("configDir", absPath(paths::getConfigDir()));
         const std::string& log_path = activeLogPath();
