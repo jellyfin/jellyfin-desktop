@@ -410,7 +410,7 @@ int main(int argc, char* argv[]) {
                    kDefaultLogLevelName, kHwdecDefault);
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
-            printf("jellyfin-desktop %s\n\nCEF %s\n\n", APP_VERSION_STRING, CEF_VERSION);
+            printf("jellyfin-desktop %s\n\nCEF %s\n\n", APP_VERSION_FULL, CEF_VERSION);
             mpv_handle* h = mpv_create();
             if (h && mpv_initialize(h) >= 0) {
                 for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
@@ -490,7 +490,7 @@ int main(int argc, char* argv[]) {
     }
     initLogging(log_path.c_str(), log_level);
 
-    LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING);
+    LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_FULL);
     LOG_INFO(LOG_MAIN, "CEF {}", CEF_VERSION);
     if (!log_path.empty()) LOG_INFO(LOG_MAIN, "Log file: {}", log_path.c_str());
 
@@ -730,7 +730,7 @@ int main(int argc, char* argv[]) {
     {
         auto caps = mpv_capabilities::Query(g_mpv.Get());
         jellyfin_device_profile::SetCachedJson(jellyfin_device_profile::Build(
-            caps, "Jellyfin Desktop", APP_VERSION_STRING,
+            caps, "Jellyfin Desktop", APP_VERSION_FULL,
             Settings::instance().forceTranscoding()));
     }
 
