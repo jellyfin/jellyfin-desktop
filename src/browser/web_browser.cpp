@@ -156,14 +156,16 @@ bool WebBrowser::handleMessage(const std::string& name,
         // opened and its track selected.
         std::string externalAudioUrl = args->GetSize() > 5 ? args->GetString(5).ToString() : "";
         std::string externalSubUrl = args->GetSize() > 6 ? args->GetString(6).ToString() : "";
-        LOG_INFO(LOG_CEF, "playerLoad: audio={} sub={} start={}ms extAudio={} extSub={} url={}",
-                 audioIdx, subIdx, startMs, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
+        bool isInfiniteStream = args->GetSize() > 7 ? args->GetBool(7) : false;
+        LOG_INFO(LOG_CEF, "playerLoad: audio={} sub={} start={}ms infinite={} extAudio={} extSub={} url={}",
+                 audioIdx, subIdx, startMs, isInfiniteStream, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
         opts.audioTrack = audioIdx;
         opts.subTrack = subIdx;
         opts.externalAudioUrl = externalAudioUrl;
         opts.externalSubUrl = externalSubUrl;
+        opts.isInfiniteStream = isInfiniteStream;
         g_mpv.LoadFile(url, opts);
     } else if (name == "playerStop") {
         g_mpv.Stop();

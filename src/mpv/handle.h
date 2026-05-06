@@ -114,6 +114,14 @@ public:
         int64_t subTrack   = kTrackDisable;
         std::string externalAudioUrl;          // empty = none
         std::string externalSubUrl;            // empty = none
+        // Mirrors server's MediaSourceInfo.IsInfiniteStream. When true AND
+        // audioTrack==kTrackDisable, jellyfin-web genuinely had no track
+        // info (unprobed Live TV) — let mpv's per-format demuxer pick audio
+        // (HLS DEFAULT=YES, MPEG-TS first PMT, etc.) instead of silencing.
+        // Combined with audioTrack>=1 (in-progress recording case) we still
+        // honor jellyfin-web's choice; combined with non-live we still
+        // honor explicit disables.
+        bool isInfiniteStream = false;
     };
 
     void LoadFile(const std::string& path, const LoadOptions& opts) {
@@ -129,10 +137,20 @@ public:
         pendingSid_ = opts.subTrack;
         pendingExternalAudioUrl_ = opts.externalAudioUrl;
         pendingExternalSubUrl_ = opts.externalSubUrl;
+        pendingDeferAudioToMpv_ = opts.isInfiniteStream
+                               && opts.audioTrack == kTrackDisable
+                               && opts.externalAudioUrl.empty();
         pendingValid_ = true;
 
         std::string optsStr = "start=" + std::to_string(opts.startSecs)
                             + ",pause=yes";
+        if (pendingDeferAudioToMpv_) {
+            // Per-file enable so mpv's demuxer picks the format-correct audio
+            // track (sub-auto-selection still happens too, but we explicitly
+            // write sid=no after FILE_LOADED to keep subs off — matching
+            // chrome's <video>, which doesn't surface HLS subs by default).
+            optsStr += ",track-auto-selection=yes";
+        }
         CommandAsync({"loadfile", path, "replace", "-1", optsStr});
     }
 
@@ -145,7 +163,12 @@ public:
     void ApplyPendingTrackSelectionAndPlay() {
         if (!pendingValid_) return;
         SetPropertyStringAsync("vid", TrackToMpvStr(pendingVid_));
-        SetPropertyStringAsync("aid", TrackToMpvStr(pendingAid_));
+        if (!pendingDeferAudioToMpv_) {
+            // Normal path: jellyfin-web is authoritative. Skipped only for the
+            // unprobed-live case (track-auto-selection=yes was set per-file in
+            // LoadFile so mpv's demuxer already picked the audio track).
+            SetPropertyStringAsync("aid", TrackToMpvStr(pendingAid_));
+        }
         SetPropertyStringAsync("sid", TrackToMpvStr(pendingSid_));
         if (!pendingExternalAudioUrl_.empty())
             CommandAsync({"audio-add", pendingExternalAudioUrl_, "select"});
@@ -153,6 +176,7 @@ public:
             CommandAsync({"sub-add", pendingExternalSubUrl_, "select"});
         SetPropertyFlagAsync("pause", false);
         pendingValid_ = false;
+        pendingDeferAudioToMpv_ = false;
         pendingExternalAudioUrl_.clear();
         pendingExternalSubUrl_.clear();
     }
@@ -173,6 +197,7 @@ private:
     std::string pendingExternalAudioUrl_;
     std::string pendingExternalSubUrl_;
     bool pendingValid_ = false;
+    bool pendingDeferAudioToMpv_ = false;
 
 public:
 
