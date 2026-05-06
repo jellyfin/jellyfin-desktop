@@ -28,7 +28,7 @@ static size_t g_theme_css_len = 0;
 static void init_theme_css() {
     if (g_theme_css_len == 0)
         g_theme_css_len = snprintf(g_theme_css, sizeof(g_theme_css),
-            ":root{--bg-color:#%06x}", kBgColor.rgb);
+            ":root{--bg-color:%s}", kBgColor.hex);
 }
 
 CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(

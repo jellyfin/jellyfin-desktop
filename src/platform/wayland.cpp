@@ -112,11 +112,11 @@ static void wl_begin_transition();
 static void wl_toggle_fullscreen();
 static void wl_init_kde_palette();
 static void wl_cleanup_kde_palette();
-static void wl_set_titlebar_color(uint8_t r, uint8_t g, uint8_t b);
+static void wl_set_theme_color(const Color& c);
 
 // Create a 1x1 ARGB8888 wl_buffer filled with a solid color.
 // Uses an anonymous shm fd — the buffer is self-contained.
-static wl_buffer* create_solid_color_buffer(uint8_t r, uint8_t g, uint8_t b) {
+static wl_buffer* create_solid_color_buffer(const Color& c) {
     if (!g_wl.shm) return nullptr;
     const int stride = 4, size = stride;  // 1x1 pixel, 4 bytes
     int fd = memfd_create("solid-color", MFD_CLOEXEC);
@@ -125,7 +125,7 @@ static wl_buffer* create_solid_color_buffer(uint8_t r, uint8_t g, uint8_t b) {
     auto* data = static_cast<uint8_t*>(mmap(nullptr, size, PROT_WRITE, MAP_SHARED, fd, 0));
     if (data == MAP_FAILED) { close(fd); return nullptr; }
     // ARGB8888: [B, G, R, A]
-    data[0] = b; data[1] = g; data[2] = r; data[3] = 0xFF;
+    data[0] = c.b; data[1] = c.g; data[2] = c.r; data[3] = 0xFF;
     munmap(data, size);
     auto* pool = wl_shm_create_pool(g_wl.shm, fd, size);
     auto* buf = wl_shm_pool_create_buffer(pool, 0, 1, 1, stride, WL_SHM_FORMAT_ARGB8888);
@@ -544,7 +544,7 @@ static void wl_set_overlay_visible(bool visible) {
         if (visible) {
             // Attach a solid placeholder so the user sees the correct
             // background color immediately, before CEF renders its first frame.
-            auto* buf = create_solid_color_buffer(kBgColor.r, kBgColor.g, kBgColor.b);
+            auto* buf = create_solid_color_buffer(kBgColor);
             if (buf) {
                 if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
                 g_wl.overlay_buffer = buf;
@@ -1117,7 +1117,7 @@ static bool wl_init(mpv_handle* mpv) {
         g_platform.shared_texture_supported = false;
     }
 
-    // KDE titlebar color — use system theme color until changed by wl_set_titlebar_color(...)
+    // KDE titlebar color — use system theme color until changed by wl_set_theme_color(...)
     wl_init_kde_palette();
 
     // Start input thread (input layer owns it)
@@ -1473,12 +1473,12 @@ static void replaceAll(std::string& s, const char* token, const char* value) {
     }
 }
 
-static bool writeColorScheme(uint8_t r, uint8_t g, uint8_t b, const std::string& path) {
+static bool writeColorScheme(const Color& c, const std::string& path) {
     char bg[32];
-    snprintf(bg, sizeof(bg), "%d,%d,%d", r, g, b);
+    snprintf(bg, sizeof(bg), "%d,%d,%d", c.r, c.g, c.b);
 
     // BT.709 luminance — choose readable foreground
-    double lum = 0.2126 * (r / 255.0) + 0.7152 * (g / 255.0) + 0.0722 * (b / 255.0);
+    double lum = 0.2126 * (c.r / 255.0) + 0.7152 * (c.g / 255.0) + 0.0722 * (c.b / 255.0);
     const char* active_fg   = lum < 0.5 ? "252,252,252" : "35,38,41";
     const char* inactive_fg = lum < 0.5 ? "126,126,126" : "35,38,41";
 
@@ -1529,16 +1529,16 @@ static void wl_cleanup_kde_palette() {
     }
 }
 
-static void wl_set_titlebar_color(uint8_t r, uint8_t g, uint8_t b) {
-    LOG_DEBUG(LOG_PLATFORM, "set_titlebar_color({:02x},{:02x},{:02x}) palette={}", r, g, b, (void*)g_wl.palette);
+static void wl_set_theme_color(const Color& c) {
+    LOG_DEBUG(LOG_PLATFORM, "set_theme_color({}) palette={}", c.hex, (void*)g_wl.palette);
     if (!g_wl.palette) return;
 
     char filename[64];
-    snprintf(filename, sizeof(filename), "JellyfinDesktop-%02x%02x%02x.colors", r, g, b);
+    snprintf(filename, sizeof(filename), "JellyfinDesktop-%s.colors", c.hex + 1);  // skip leading '#'
     std::string new_path = g_wl.colors_dir + "/" + filename;
     if (new_path == g_wl.colors_path) return;
 
-    if (!writeColorScheme(r, g, b, new_path)) return;
+    if (!writeColorScheme(c, new_path)) return;
 
     if (!g_wl.colors_path.empty())
         remove(g_wl.colors_path.c_str());
@@ -1550,7 +1550,7 @@ static void wl_set_titlebar_color(uint8_t r, uint8_t g, uint8_t b) {
 #else
 static void wl_init_kde_palette() {}
 static void wl_cleanup_kde_palette() {}
-static void wl_set_titlebar_color(uint8_t, uint8_t, uint8_t) {}
+static void wl_set_theme_color(const Color&) {}
 #endif
 
 Platform make_wayland_platform() {
@@ -1590,7 +1590,7 @@ Platform make_wayland_platform() {
         .pump = wl_pump,
         .set_cursor = input::wayland::set_cursor,
         .set_idle_inhibit = wl_set_idle_inhibit,
-        .set_titlebar_color = wl_set_titlebar_color,
+        .set_theme_color = wl_set_theme_color,
         .clipboard_read_text_async = clipboard_wayland::read_text_async,
         .open_external_url = open_url_linux::open,
     };

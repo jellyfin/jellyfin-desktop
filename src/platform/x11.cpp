@@ -759,7 +759,7 @@ Platform make_x11_platform() {
         .wake_main_loop = nullptr,
         .set_cursor = input::x11::set_cursor,
         .set_idle_inhibit = [](IdleInhibitLevel level) { idle_inhibit::set(level); },
-        .set_titlebar_color = [](uint8_t, uint8_t, uint8_t) {},
+        .set_theme_color = [](const Color&) {},
         .shared_texture_supported = false,
         .clipboard_read_text_async = nullptr,
         .open_external_url = open_url_linux::open,

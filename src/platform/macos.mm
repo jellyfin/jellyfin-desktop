@@ -364,6 +364,22 @@ static void stop_display_link() {
 // Platform interface implementation
 // =====================================================================
 
+static void macos_set_theme_color(const Color& c) {
+    // Updates AppKit fills behind mpv's CAMetalLayer / NSWindow root so the
+    // resize-gap stale-texture window (which CLAUDE.md explicitly accepts
+    // over stretching) matches mpv's own background — no flash visible.
+    NSColor* ns = [NSColor colorWithSRGBRed:c.r/255.0 green:c.g/255.0
+                                       blue:c.b/255.0 alpha:1.0];
+    auto apply = ^{
+        if (!g_window) return;
+        g_window.backgroundColor = ns;
+        if (NSView* cv = [g_window contentView]; cv.layer)
+            cv.layer.backgroundColor = ns.CGColor;
+    };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
+}
+
 static bool macos_init(mpv_handle* mpv) {
     LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: waiting for mpv window");
     for (int i = 0; i < 500 && !g_window; i++) {
@@ -411,26 +427,9 @@ static bool macos_init(mpv_handle* mpv) {
     NSView* contentView = [g_window contentView];
     if (!contentView.layer) [contentView setWantsLayer:YES];
 
-    // Paint a solid dark fill at every layer we can reach so the user
-    // never sees uninitialized CAMetalLayer drawable content during the
-    // gap between mpv creating the window and CEF delivering the first
-    // overlay frame. Three levels of coverage:
-    //   1. NSWindow.backgroundColor  — shows through anywhere the content-
-    //      View ends up transparent.
-    //   2. contentView.layer.backgroundColor — this is mpv's MetalLayer;
-    //      mpv only resets it from its `isOpaque` setter (metal_layer.swift:
-    //      87), which doesn't fire during normal operation, so the override
-    //      sticks until a real frame is drawn on top of it.
-    //   3. g_main / g_overlay layer backgroundColor — our own subview
-    //      layers, set below, so that even while their CEF contents are
-    //      still nil they fill with the startup color instead of exposing whatever
-    //      is under them.
-    NSColor* startup_bg = [NSColor colorWithSRGBRed:0x10/255.0
-                                              green:0x10/255.0
-                                               blue:0x10/255.0
-                                              alpha:1.0];
-    g_window.backgroundColor = startup_bg;
-    contentView.layer.backgroundColor = startup_bg.CGColor;
+    // Cover the AppKit fills before CEF delivers its first frame; ThemeColor
+    // takes over from overlay-dismissal onward.
+    macos_set_theme_color(kBgColor);
 
     // Metal setup
     g_mtl_device = MTLCreateSystemDefaultDevice();
@@ -511,26 +510,9 @@ static bool macos_init(mpv_handle* mpv) {
     return true;
 }
 
-// Reset background colors from the startup fill: mpv to the user's
-// configured background-color (captured post-init), and the AppKit
-// window/layer to black. Called once when first real content reveals.
-static void reset_background_to_black() {
-    g_mpv.SetBackgroundColor(g_video_bg_color);
-    g_window.backgroundColor = [NSColor blackColor];
-    [[g_window contentView] layer].backgroundColor = [NSColor blackColor].CGColor;
-}
-
 static void macos_present(const CefAcceleratedPaintInfo& info) {
     if (g_transitioning) return;
     present_iosurface(g_main, info);
-    // Player mode only: no overlay will ever paint, so the first main
-    // frame is the reveal trigger. In normal mode this branch is a
-    // no-op — macos_fade_overlay is responsible for unhiding the main
-    // view when the overlay starts its fade-out.
-    if (!g_overlay_browser && [g_main.view isHidden]) {
-        [g_main.view setHidden:NO];
-        reset_background_to_black();
-    }
     if (g_expected_w > 0) {
         IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
         if (surface && (int)IOSurfaceGetWidth(surface) == g_expected_w &&
@@ -707,13 +689,10 @@ static void macos_fade_overlay(float fade_sec,
         // main browser before we've committed to hiding the overlay.
         // g_overlay is still fully opaque at this point, so g_main is
         // occluded until the fade actually drops overlay opacity below 1.0.
-        // Also reset mpv's clear color back to black — during startup it was
-        // set to match the app's dark fill, but from here on the video layer
-        // should use black as the default background.
-        if ([g_main.view isHidden]) {
-            [g_main.view setHidden:NO];
-            reset_background_to_black();
-        }
+        // The AppKit fills behind g_main track ThemeColor — onOverlayDismissed
+        // (fired via start_cb below) pushes the current chrome color through
+        // set_theme_color, so no manual reset here.
+        if ([g_main.view isHidden]) [g_main.view setHidden:NO];
         if (*start_cb) (*start_cb)();
         if (!g_overlay.view || !g_overlay.view.layer) {
             if (*done_cb) (*done_cb)();
@@ -879,10 +858,6 @@ static void macos_wake_main_loop() {
             [NSApp postEvent:sentinel atStart:YES];
         }
     });
-}
-
-static void macos_set_titlebar_color(uint8_t, uint8_t, uint8_t) {
-    // No-op on macOS (deferred)
 }
 
 static void macos_cleanup() {
@@ -1111,7 +1086,7 @@ Platform make_macos_platform() {
         .wake_main_loop = macos_wake_main_loop,
         .set_cursor = input::macos::set_cursor,
         .set_idle_inhibit = macos_set_idle_inhibit,
-        .set_titlebar_color = macos_set_titlebar_color,
+        .set_theme_color = macos_set_theme_color,
         .clipboard_read_text_async = macos_clipboard_read_text_async,
         .open_external_url = macos_open_external_url,
     };

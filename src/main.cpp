@@ -24,7 +24,7 @@
 #include "wake_event.h"
 #include "paths/paths.h"
 #include "settings.h"
-#include "titlebar_color.h"
+#include "theme_color.h"
 
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
@@ -60,13 +60,13 @@
 // =====================================================================
 
 MpvHandle g_mpv;
-std::string g_video_bg_color;
+Color g_video_bg;
 std::atomic<bool> g_shutting_down{false};
 WakeEvent g_shutdown_event;
 
 std::atomic<MediaType> g_media_type{MediaType::Unknown};
 std::atomic<PlaybackState> g_playback_state{PlaybackState::Stopped};
-TitlebarColor* g_titlebar_color = nullptr;
+ThemeColor* g_theme_color = nullptr;
 std::atomic<int> g_display_hz{60};
 
 void update_idle_inhibit() {
@@ -642,11 +642,12 @@ int main(int argc, char* argv[]) {
     }
     g_mpv.SetLogLevel(log_level);
 
-    // Capture user's mpv.conf background-color, then force the startup color.
-    // Safe post-Initialize: force-window=yes (not "immediate") defers VO
-    // creation, so the user's color never flashes before we override.
-    g_video_bg_color = g_mpv.GetPropertyString("background-color");
-    g_mpv.SetBackgroundColor(kBgColor.hex);
+    // Capture user's mpv.conf bg, then force startup color. Safe here:
+    // force-window=yes (not "immediate") defers VO creation, so the user's
+    // color never flashes before we override.
+    g_video_bg = g_mpv.GetBackgroundColor();
+    LOG_INFO(LOG_MAIN, "video bg captured: {}", g_video_bg.hex);
+    g_mpv.SetBackgroundColor(kBgColor);
 
     for (const char* prop : {"mpv-version", "ffmpeg-version"})
         LOG_INFO(LOG_MAIN, "{} {}", prop, g_mpv.GetPropertyString(prop));
@@ -824,8 +825,12 @@ int main(int argc, char* argv[]) {
     // Must exist before we create the main browser: the pre-loaded page fires
     // its initial theme-color IPC at DOMContentLoaded, and we need to capture
     // it so onOverlayDismissed has a color to apply.
-    TitlebarColor titlebar_color_obj(g_platform, Settings::instance().titlebarThemeColor());
-    g_titlebar_color = &titlebar_color_obj;
+    bool titlebar_themed = Settings::instance().titlebarThemeColor();
+    ThemeColor theme_color_obj([titlebar_themed](const Color& c) {
+        if (titlebar_themed) g_platform.set_theme_color(c);
+        g_mpv.SetBackgroundColor(c);
+    });
+    g_theme_color = &theme_color_obj;
 
     // Main browser
     RenderTarget main_target{g_platform.present, g_platform.present_software};
@@ -931,7 +936,7 @@ int main(int argc, char* argv[]) {
     // --- Cleanup ---
     // Stop our threads first (they don't depend on CEF/mpv shutdown order)
     g_media_session = nullptr;
-    g_titlebar_color = nullptr;
+    g_theme_color = nullptr;
     media_session_thread.stop();
     g_platform.set_idle_inhibit(IdleInhibitLevel::None);
 

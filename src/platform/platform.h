@@ -10,6 +10,7 @@
 enum class IdleInhibitLevel { None, System, Display };
 
 #include "display_backend.h"
+#include "../color.h"
 
 struct Platform {
     DisplayBackend display{};
@@ -105,8 +106,11 @@ struct Platform {
     // Idle inhibit: None = release, System = prevent sleep, Display = prevent sleep + display off
     void (*set_idle_inhibit)(IdleInhibitLevel level);
 
-    // Titlebar color (KDE/KWin only, no-op on other compositors)
-    void (*set_titlebar_color)(uint8_t r, uint8_t g, uint8_t b);
+    // Chrome color: drives every native surface that should track the
+    // current theme color so resize gaps and titlebar match. On Wayland/KDE
+    // this writes a kwin palette file; on macOS it sets NSWindow + the
+    // mpv CAMetalLayer fills; X11/Windows are no-ops.
+    void (*set_theme_color)(const Color&);
 
     // Whether the GPU can produce shared textures (dmabufs). Set during init.
     // When false, CEF should use software rendering (OnPaint) instead of

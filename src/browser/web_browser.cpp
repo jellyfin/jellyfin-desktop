@@ -8,7 +8,8 @@
 #include "../mpv/event.h"
 #include "../player/media_session.h"
 #include "../player/media_session_thread.h"
-#include "../titlebar_color.h"
+#include "../theme_color.h"
+#include "../cef/color.h"
 #include "../input/dispatch.h"
 #include "../cjson/cJSON.h"
 #include "../paths/paths.h"
@@ -225,11 +226,12 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "themeColor") {
         std::string color = args->GetString(0).ToString();
         LOG_DEBUG(LOG_CEF, "themeColor IPC: {}", color.c_str());
-        if (g_titlebar_color) g_titlebar_color->onThemeColor(color);
+        if (g_theme_color) g_theme_color->onThemeColor(cef::parseColor(color));
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);
         g_media_type = meta.media_type;
+        if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
         update_idle_inhibit();
         if (g_media_session)
             g_media_session->setMetadata(meta);
@@ -250,6 +252,8 @@ bool WebBrowser::handleMessage(const std::string& name,
             else if (state == "Paused") g_media_session->setPlaybackState(PlaybackState::Paused);
             else g_media_session->setPlaybackState(PlaybackState::Stopped);
         }
+        if (state != "Playing" && state != "Paused" && g_theme_color)
+            g_theme_color->setVideoMode(false);
     } else if (name == "notifySeek") {
         int posMs = getIntArg(args, 0);
         if (g_media_session)
