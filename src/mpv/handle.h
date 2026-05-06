@@ -8,6 +8,7 @@
 
 #include "logging.h"
 #include "platform/display_backend.h"
+#include "color.h"
 
 /**
  * Typed wrapper for mpv_handle. Encapsulates the mpv instance so it doesn't
@@ -232,7 +233,8 @@ public:
     void ToggleFullscreen()              { CycleFullscreenAsync(); }
     void SetWindowMinimized(bool v)      { SetPropertyFlagAsync("window-minimized", v); }
     void SetWindowMaximized(bool v)      { SetPropertyFlagAsync("window-maximized", v); }
-    void SetBackgroundColor(const std::string& color) { SetPropertyStringAsync("background-color", color); }
+    void SetBackgroundColor(const Color& c) { SetPropertyStringAsync("background-color", c.hex); }
+    Color GetBackgroundColor() { return mpv::parseColor(GetPropertyString("background-color")); }
     void SetForceWindowPosition(bool v)  { SetPropertyFlagAsync("force-window-position", v); }
     void SetGeometry(const std::string& geom) { SetPropertyStringAsync("geometry", geom); }
 

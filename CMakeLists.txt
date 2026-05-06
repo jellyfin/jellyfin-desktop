@@ -556,8 +556,10 @@ if(WIN32)
         src/single_instance.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
+        src/mpv/color.cpp
         src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
+        src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
         src/browser/web_browser.cpp
@@ -580,8 +582,10 @@ else()
         src/log_redact.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
+        src/mpv/color.cpp
         src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
+        src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
         src/browser/web_browser.cpp

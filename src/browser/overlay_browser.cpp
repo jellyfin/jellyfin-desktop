@@ -5,7 +5,7 @@
 #include "../jellyfin/api.h"
 #include "../settings.h"
 #include "logging.h"
-#include "../titlebar_color.h"
+#include "../theme_color.h"
 #include "../input/dispatch.h"
 #include "include/cef_urlrequest.h"
 
@@ -196,8 +196,7 @@ bool OverlayBrowser::handleMessage(const std::string& name,
         CefRefPtr<CefBrowser> overlay_browser = browser;
         g_platform.fade_overlay(OVERLAY_FADE_DURATION_SEC,
             []() {
-                g_mpv.SetBackgroundColor(g_video_bg_color);
-                if (g_titlebar_color) g_titlebar_color->onOverlayDismissed();
+                if (g_theme_color) g_theme_color->onOverlayDismissed();
             },
             [overlay_browser]() {
                 if (overlay_browser)
