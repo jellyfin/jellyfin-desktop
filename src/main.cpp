@@ -228,6 +228,14 @@ static void cef_consumer_thread() {
             if (!g_web_browser) continue;
             switch (ev.type) {
             case MpvEventType::PAUSE:
+                // mpv's `pause` property is observable in idle state too,
+                // where pause=false does not imply playback is running.
+                // Without this guard, a stale pause=false event after
+                // END_FILE_* would flip state back to Playing and re-arm
+                // the display-sleep inhibit. The next FILE_LOADED brings
+                // state out of Stopped via the explicit assignment there.
+                if (g_playback_state.load(std::memory_order_relaxed)
+                    == PlaybackState::Stopped) break;
                 g_playback_state = ev.flag ? PlaybackState::Paused : PlaybackState::Playing;
                 update_idle_inhibit();
                 g_web_browser->execJs(ev.flag ? "window._nativeEmit('paused')" : "window._nativeEmit('playing')");
@@ -273,6 +281,11 @@ static void cef_consumer_thread() {
                 // pause=false, after the track-switch reinits land. Don't
                 // emit 'playing' here — JS must not see "playing" until
                 // mpv is actually unpaused with the right tracks selected.
+                // Bring state out of Stopped so the upcoming PAUSE events
+                // (pause=true from loadfile, then pause=false from
+                // ApplyPendingTrackSelectionAndPlay) are not blocked by
+                // the PAUSE handler's idle-state guard.
+                g_playback_state = PlaybackState::Paused;
                 g_mpv.ApplyPendingTrackSelectionAndPlay();
                 break;
             case MpvEventType::END_FILE_EOF:
