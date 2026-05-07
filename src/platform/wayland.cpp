@@ -1515,14 +1515,17 @@ static void wl_init_kde_palette() {
 }
 
 static void wl_cleanup_kde_palette() {
-    if (g_wl.palette) {
-        org_kde_kwin_server_decoration_palette_release(g_wl.palette);
-        g_wl.palette = nullptr;
-    }
-    if (g_wl.palette_manager) {
-        org_kde_kwin_server_decoration_palette_manager_destroy(g_wl.palette_manager);
-        g_wl.palette_manager = nullptr;
-    }
+    // Don't release the palette object — that tells KWin to drop the per-window
+    // override, which makes the titlebar flash back to the system colorscheme
+    // while the window is still on-screen during teardown. Let KWin clean it
+    // up atomically with the window when the connection drops.
+    g_wl.palette = nullptr;
+    g_wl.palette_manager = nullptr;
+    // colors_path is removed in wl_post_window_cleanup, after mpv tears the
+    // window down — KWin may still re-read the file during teardown.
+}
+
+static void wl_post_window_cleanup() {
     if (!g_wl.colors_path.empty()) {
         remove(g_wl.colors_path.c_str());
         g_wl.colors_path.clear();
@@ -1545,11 +1548,14 @@ static void wl_set_theme_color(const Color& c) {
     g_wl.colors_path = new_path;
 
     org_kde_kwin_server_decoration_palette_set_palette(g_wl.palette, g_wl.colors_path.c_str());
+    wl_display_flush(g_wl.display);
+    LOG_INFO(LOG_PLATFORM, "set_theme_color({}) applied", c.hex);
 }
 
 #else
 static void wl_init_kde_palette() {}
 static void wl_cleanup_kde_palette() {}
+static void wl_post_window_cleanup() {}
 static void wl_set_theme_color(const Color&) {}
 #endif
 
@@ -1559,6 +1565,7 @@ Platform make_wayland_platform() {
         .early_init = []() {},
         .init = wl_init,
         .cleanup = wl_cleanup,
+        .post_window_cleanup = wl_post_window_cleanup,
         .present = wl_present,
         .present_software = wl_present_software,
         .resize = wl_resize,

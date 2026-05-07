@@ -18,6 +18,10 @@ struct Platform {
     void (*early_init)();
     bool (*init)(mpv_handle* mpv);
     void (*cleanup)();
+    // Optional: runs after mpv has destroyed the window, for cleanup that
+    // would otherwise be visible (e.g. removing a per-window kwin palette
+    // file while the window is still on-screen). May be null.
+    void (*post_window_cleanup)();
 
     // Main browser subsurface
     void (*present)(const CefAcceleratedPaintInfo& info);
