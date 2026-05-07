@@ -724,6 +724,12 @@ int main(int argc, char* argv[]) {
     }
     LOG_INFO(LOG_MAIN, "Platform init ok");
 
+    // Set the initial titlebar color now, before CefInitialize blocks the
+    // main thread. Otherwise the window sits with the system default palette
+    // for the whole CEF init duration before snapping to kBgColor.
+    if (Settings::instance().titlebarThemeColor())
+        g_platform.set_theme_color(kBgColor);
+
     // Snapshot mpv's actual decoder/demuxer/protocol support and turn it
     // into a Jellyfin device profile. Cached for renderer-process injection
     // through extra_info; see WebBrowser::injectionProfile().
@@ -1058,6 +1064,9 @@ int main(int argc, char* argv[]) {
 #else
     g_mpv.TerminateDestroy();
 #endif
+
+    if (g_platform.post_window_cleanup)
+        g_platform.post_window_cleanup();
 
     shutdownLogging();
     return 0;
