@@ -204,6 +204,7 @@ bool Initialize() {
     settings.multi_threaded_message_loop = true;
 #endif
     settings.no_sandbox = true;
+    settings.disable_signal_handlers = true;
     CefString(&settings.locale).FromASCII("en-US");
     CefString(&settings.user_agent).FromASCII(APP_USER_AGENT);
 
