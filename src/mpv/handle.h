@@ -8,6 +8,7 @@
 
 #include "logging.h"
 #include "platform/display_backend.h"
+#include "color.h"
 
 /**
  * Typed wrapper for mpv_handle. Encapsulates the mpv instance so it doesn't
@@ -80,6 +81,15 @@ public:
         return mpv_get_property(handle_, name.c_str(), MPV_FORMAT_INT64, &out);
     }
 
+    std::string GetPropertyString(const std::string& name) {
+        std::string result;
+        if (char* v = mpv_get_property_string(handle_, name.c_str())) {
+            result = v;
+            mpv_free(v);
+        }
+        return result;
+    }
+
     // =====================================================================
     // Player API (dedicated typed methods)
     // =====================================================================
@@ -98,6 +108,7 @@ public:
     void SetAudioTrack(int64_t id)       { SetPropertyStringAsync("aid", TrackToMpvStr(id)); }
     void SetSubtitleTrack(int64_t id)    { SetPropertyStringAsync("sid", TrackToMpvStr(id)); }
     void SetAudioDelay(double secs)      { SetPropertyDoubleAsync("audio-delay", secs); }
+    void SetSubtitleDelay(double secs)   { SetPropertyDoubleAsync("sub-delay", secs); }
     void SetStartPosition(double secs)   { SetPropertyDoubleAsync("start", secs); }
     void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
     void AudioAdd(const std::string& url) { CommandAsync({"audio-add", url, "select"}); }
@@ -114,6 +125,14 @@ public:
         int64_t subTrack   = kTrackDisable;
         std::string externalAudioUrl;          // empty = none
         std::string externalSubUrl;            // empty = none
+        // Mirrors server's MediaSourceInfo.IsInfiniteStream. When true AND
+        // audioTrack==kTrackDisable, jellyfin-web genuinely had no track
+        // info (unprobed Live TV) — let mpv's per-format demuxer pick audio
+        // (HLS DEFAULT=YES, MPEG-TS first PMT, etc.) instead of silencing.
+        // Combined with audioTrack>=1 (in-progress recording case) we still
+        // honor jellyfin-web's choice; combined with non-live we still
+        // honor explicit disables.
+        bool isInfiniteStream = false;
     };
 
     void LoadFile(const std::string& path, const LoadOptions& opts) {
@@ -129,10 +148,20 @@ public:
         pendingSid_ = opts.subTrack;
         pendingExternalAudioUrl_ = opts.externalAudioUrl;
         pendingExternalSubUrl_ = opts.externalSubUrl;
+        pendingDeferAudioToMpv_ = opts.isInfiniteStream
+                               && opts.audioTrack == kTrackDisable
+                               && opts.externalAudioUrl.empty();
         pendingValid_ = true;
 
         std::string optsStr = "start=" + std::to_string(opts.startSecs)
                             + ",pause=yes";
+        if (pendingDeferAudioToMpv_) {
+            // Per-file enable so mpv's demuxer picks the format-correct audio
+            // track (sub-auto-selection still happens too, but we explicitly
+            // write sid=no after FILE_LOADED to keep subs off — matching
+            // chrome's <video>, which doesn't surface HLS subs by default).
+            optsStr += ",track-auto-selection=yes";
+        }
         CommandAsync({"loadfile", path, "replace", "-1", optsStr});
     }
 
@@ -145,7 +174,12 @@ public:
     void ApplyPendingTrackSelectionAndPlay() {
         if (!pendingValid_) return;
         SetPropertyStringAsync("vid", TrackToMpvStr(pendingVid_));
-        SetPropertyStringAsync("aid", TrackToMpvStr(pendingAid_));
+        if (!pendingDeferAudioToMpv_) {
+            // Normal path: jellyfin-web is authoritative. Skipped only for the
+            // unprobed-live case (track-auto-selection=yes was set per-file in
+            // LoadFile so mpv's demuxer already picked the audio track).
+            SetPropertyStringAsync("aid", TrackToMpvStr(pendingAid_));
+        }
         SetPropertyStringAsync("sid", TrackToMpvStr(pendingSid_));
         if (!pendingExternalAudioUrl_.empty())
             CommandAsync({"audio-add", pendingExternalAudioUrl_, "select"});
@@ -153,6 +187,7 @@ public:
             CommandAsync({"sub-add", pendingExternalSubUrl_, "select"});
         SetPropertyFlagAsync("pause", false);
         pendingValid_ = false;
+        pendingDeferAudioToMpv_ = false;
         pendingExternalAudioUrl_.clear();
         pendingExternalSubUrl_.clear();
     }
@@ -173,6 +208,7 @@ private:
     std::string pendingExternalAudioUrl_;
     std::string pendingExternalSubUrl_;
     bool pendingValid_ = false;
+    bool pendingDeferAudioToMpv_ = false;
 
 public:
 
@@ -197,7 +233,8 @@ public:
     void ToggleFullscreen()              { CycleFullscreenAsync(); }
     void SetWindowMinimized(bool v)      { SetPropertyFlagAsync("window-minimized", v); }
     void SetWindowMaximized(bool v)      { SetPropertyFlagAsync("window-maximized", v); }
-    void SetBackgroundColor(const std::string& color) { SetPropertyStringAsync("background-color", color); }
+    void SetBackgroundColor(const Color& c) { SetPropertyStringAsync("background-color", c.hex); }
+    Color GetBackgroundColor() { return mpv::parseColor(GetPropertyString("background-color")); }
     void SetForceWindowPosition(bool v)  { SetPropertyFlagAsync("force-window-position", v); }
     void SetGeometry(const std::string& geom) { SetPropertyStringAsync("geometry", geom); }
 
@@ -394,8 +431,21 @@ public:
         mpv_set_wakeup_callback(handle_, cb, data);
     }
 
-    void RequestLogMessages(const char* level) {
-        mpv_request_log_messages(handle_, level);
+    // Subscribe mpv at the most verbose level our log filter would actually
+    // surface, so mpv doesn't waste IPC on messages we'd discard.
+    // We cap mpv at "debug" — mpv's "trace" is extreme and not worth the IPC.
+    // mpv's "v" maps to our Debug; mpv's "debug" maps to our Trace.
+    void SetLogLevel(LogLevel level) {
+        const char* mpv_level = "debug";
+        switch (level) {
+            case LogLevel::Debug: mpv_level = "v";     break;
+            case LogLevel::Info:  mpv_level = "info";  break;
+            case LogLevel::Warn:  mpv_level = "warn";  break;
+            case LogLevel::Error: mpv_level = "error"; break;
+            case LogLevel::Trace:
+            case LogLevel::Default: break; // subscribe to "debug" (cap)
+        }
+        mpv_request_log_messages(handle_, mpv_level);
     }
 
     mpv_event* WaitEvent(double timeout) {

@@ -242,17 +242,24 @@
                         helpText.textContent = setting.help;
                         container.appendChild(helpText);
                     }
-                } else if (setting.inputType === 'textarea') {
+                } else if (setting.inputType === 'text' || setting.inputType === 'textarea') {
+                    const isTextarea = setting.inputType === 'textarea';
                     container.className = 'inputContainer';
                     const labelText = document.createElement('label');
                     labelText.className = 'inputLabel';
                     labelText.textContent = setting.displayName;
                     container.appendChild(labelText);
-                    const control = document.createElement('textarea');
+                    const control = document.createElement(isTextarea ? 'textarea' : 'input');
                     control.className = 'emby-input';
-                    control.style.resize = 'none';
                     control.value = values[setting.key] || '';
-                    control.rows = 2;
+                    if (isTextarea) {
+                        control.style.resize = 'none';
+                        control.rows = 2;
+                    } else {
+                        control.type = 'text';
+                        if (setting.placeholder) control.placeholder = setting.placeholder;
+                        if (setting.maxLength) control.maxLength = setting.maxLength;
+                    }
                     control.addEventListener('change', () => {
                         jmpInfo.settings[section][setting.key] = control.value;
                         window.api.settings.setValue(section, setting.key, control.value);
@@ -312,7 +319,7 @@
             btn.type = 'button';
             btn.addEventListener('click', () => {
                 if (window.jmpNative && window.jmpNative.openConfigDir) {
-                    console.log('[SETTINGS] called openConfigDir');
+                    console.debug('[SETTINGS] called openConfigDir');
                     window.jmpNative.openConfigDir();
                 }
             });

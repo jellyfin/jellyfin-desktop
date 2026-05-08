@@ -106,5 +106,5 @@
     }
 
     window._mpvAudioPlayer = mpvAudioPlayer;
-    console.log('[Media] mpvAudioPlayer plugin installed');
+    console.debug('[Media] mpvAudioPlayer plugin installed');
 })();

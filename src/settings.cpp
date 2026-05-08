@@ -6,6 +6,15 @@
 #include <sstream>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+// Server's Devices.DeviceName column is varchar(64); clamp here to match.
+static constexpr size_t kDeviceNameMax = 64;
+
 Settings& Settings::instance() {
     static Settings instance;
     return instance;
@@ -72,6 +81,8 @@ bool Settings::load() {
     transparent_titlebar_ = jsonBool(root, "transparentTitlebar", true);
     log_level_ = jsonStr(root, "logLevel");
     force_transcoding_ = jsonBool(root, "forceTranscoding", false);
+    device_name_ = jsonStr(root, "deviceName");
+    if (device_name_.size() > kDeviceNameMax) device_name_.resize(kDeviceNameMax);
 
     cJSON_Delete(root);
     return true;
@@ -108,6 +119,7 @@ static std::string buildSettingsJson(const Settings& s, bool pretty) {
     if (!s.transparentTitlebar()) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
     if (!s.logLevel().empty()) cJSON_AddStringToObject(root, "logLevel", s.logLevel().c_str());
     if (s.forceTranscoding()) cJSON_AddBoolToObject(root, "forceTranscoding", true);
+    if (!s.deviceName().empty()) cJSON_AddStringToObject(root, "deviceName", s.deviceName().c_str());
 
     char* str = pretty ? cJSON_Print(root) : cJSON_PrintUnformatted(root);
     std::string result(str);
@@ -150,6 +162,8 @@ std::string Settings::cliSettingsJson() const {
     if (!transparent_titlebar_) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
     if (!log_level_.empty()) cJSON_AddStringToObject(root, "logLevel", log_level_.c_str());
     cJSON_AddBoolToObject(root, "forceTranscoding", force_transcoding_);
+    if (!device_name_.empty()) cJSON_AddStringToObject(root, "deviceName", device_name_.c_str());
+    cJSON_AddStringToObject(root, "deviceNameDefault", platformDeviceName().c_str());
 
     cJSON* opts = cJSON_AddArrayToObject(root, "hwdecOptions");
     for (const auto& o : hwdecOptions())
@@ -160,4 +174,55 @@ std::string Settings::cliSettingsJson() const {
     cJSON_free(str);
     cJSON_Delete(root);
     return result;
+}
+
+#ifdef __APPLE__
+std::string macosComputerName();  // src/platform/macos.mm
+#endif
+
+std::string Settings::platformDeviceName() {
+#ifdef _WIN32
+    wchar_t buf[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD len = sizeof(buf) / sizeof(buf[0]);
+    GetComputerNameW(buf, &len);
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, buf, len, nullptr, 0, nullptr, nullptr);
+    std::string out(utf8_len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, buf, len, out.data(), utf8_len, nullptr, nullptr);
+#elif defined(__APPLE__)
+    std::string out = macosComputerName();
+#else
+    char buf[256] = {};
+    gethostname(buf, sizeof(buf) - 1);
+    std::string out(buf);
+#endif
+    if (out.size() > kDeviceNameMax) out.resize(kDeviceNameMax);
+    return out;
+}
+
+void Settings::setDeviceName(const std::string& v) {
+    // Server's auth header parser preserves whitespace verbatim, so " foo "
+    // would round-trip into the Devices table.
+    std::string trimmed;
+    trimmed.reserve(v.size());
+    bool in_space = true;
+    for (char c : v) {
+        bool ws = c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f';
+        if (ws) {
+            if (!in_space) trimmed.push_back(' ');
+            in_space = true;
+        } else {
+            trimmed.push_back(c);
+            in_space = false;
+        }
+    }
+    if (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
+    if (trimmed.size() > kDeviceNameMax) trimmed.resize(kDeviceNameMax);
+    // Don't persist the platform default — leave the override empty so
+    // hostname changes propagate automatically on the next launch.
+    if (trimmed == platformDeviceName()) trimmed.clear();
+    device_name_ = std::move(trimmed);
+}
+
+std::string Settings::effectiveDeviceName() const {
+    return device_name_.empty() ? platformDeviceName() : device_name_;
 }

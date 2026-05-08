@@ -24,7 +24,7 @@
 #include "wake_event.h"
 #include "paths/paths.h"
 #include "settings.h"
-#include "titlebar_color.h"
+#include "theme_color.h"
 
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
@@ -60,12 +60,13 @@
 // =====================================================================
 
 MpvHandle g_mpv;
+Color g_video_bg;
 std::atomic<bool> g_shutting_down{false};
 WakeEvent g_shutdown_event;
 
 std::atomic<MediaType> g_media_type{MediaType::Unknown};
 std::atomic<PlaybackState> g_playback_state{PlaybackState::Stopped};
-TitlebarColor* g_titlebar_color = nullptr;
+ThemeColor* g_theme_color = nullptr;
 std::atomic<int> g_display_hz{60};
 
 void update_idle_inhibit() {
@@ -121,10 +122,13 @@ static void log_mpv_message(const mpv_event_log_message* msg) {
         LOG_WARN(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
     case MPV_LOG_LEVEL_INFO:
         LOG_INFO(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
-    case MPV_LOG_LEVEL_TRACE:
-        LOG_TRACE(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
-    default: // V, DEBUG
+    case MPV_LOG_LEVEL_V:
         LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    case MPV_LOG_LEVEL_DEBUG:
+        LOG_TRACE(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
+    default: // unexpected (e.g. TRACE — we cap subscription at debug) or new mpv level
+        LOG_WARN(LOG_MPV, "[unhandled mpv level {}] {}: {}",
+                 (int)msg->log_level, msg->prefix, msg->text); break;
     }
 }
 
@@ -369,11 +373,9 @@ int main(int argc, char* argv[]) {
     std::string audio_passthrough_str;
     bool audio_exclusive = false;
     std::string audio_channels_str;
-    bool player_mode = false;
     bool disable_gpu_compositing = false;
     std::string ozone_platform;
     std::string platform_override;
-    std::vector<std::string> player_playlist;
     int remote_debugging_port = 0;
     const char* log_level_str = nullptr;
     const char* log_file_path = nullptr;
@@ -390,11 +392,10 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: jellyfin-desktop [options]\n"
-                   "       jellyfin-desktop --player [options] <file|url>...\n"
                    "\nOptions:\n"
                    "  -h, --help                Show this help\n"
                    "  -v, --version             Show version\n"
-                   "  --log-level <level>       trace|debug|info|warn|error\n"
+                   "  --log-level <level>       trace|debug|info|warn|error (default: %s)\n"
                    "  --log-file <path>         Write logs to file ('' to disable)\n"
                    "  --hwdec <mode>            Hardware decoding mode (default: %s)\n"
                    "  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd\n"
@@ -406,11 +407,22 @@ int main(int argc, char* argv[]) {
 #ifdef HAVE_X11
                    "  --platform <wayland|x11>  Force display backend (Linux only)\n"
 #endif
-                   "  --player                  Standalone player mode\n",
-                   kHwdecDefault);
+                   ,
+                   kDefaultLogLevelName, kHwdecDefault);
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
-            printf("jellyfin-desktop %s\nCEF %s\n", APP_VERSION_STRING, CEF_VERSION);
+            printf("jellyfin-desktop %s\n\nCEF %s\n\n", APP_VERSION_FULL, CEF_VERSION);
+            mpv_handle* h = mpv_create();
+            if (h && mpv_initialize(h) >= 0) {
+                for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
+                    char* v = mpv_get_property_string(h, prop);
+                    if (v) {
+                        printf("%s %s\n", prop, v);
+                        mpv_free(v);
+                    }
+                }
+            }
+            if (h) mpv_terminate_destroy(h);
             return 0;
         } else if (strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
             log_level_str = argv[++i];
@@ -448,10 +460,9 @@ int main(int argc, char* argv[]) {
             platform_override = argv[++i];
         } else if (strncmp(argv[i], "--platform=", 11) == 0) {
             platform_override = argv[i] + 11;
-        } else if (strcmp(argv[i], "--player") == 0) {
-            player_mode = true;
-        } else if (argv[i][0] != '-') {
-            player_playlist.push_back(argv[i]);
+        } else {
+            fprintf(stderr, "Error: unknown argument '%s'\n", argv[i]);
+            return 1;
         }
     }
 
@@ -469,10 +480,10 @@ int main(int argc, char* argv[]) {
         log_path = paths::getLogPath();
 #endif
     }
-    int log_level = -1;
+    LogLevel log_level = LogLevel::Default;
     if (log_level_str && log_level_str[0]) {
         log_level = parseLogLevel(log_level_str);
-        if (log_level < 0) {
+        if (log_level == LogLevel::Default) {
             fprintf(stderr, "Invalid log level: '%s' (expected trace|debug|info|warn|error)\n",
                     log_level_str);
             return 1;
@@ -480,12 +491,7 @@ int main(int argc, char* argv[]) {
     }
     initLogging(log_path.c_str(), log_level);
 
-    if (player_mode && player_playlist.empty()) {
-        fprintf(stderr, "Error: --player requires at least one file or URL\n");
-        return 1;
-    }
-
-    LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_STRING);
+    LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_FULL);
     LOG_INFO(LOG_MAIN, "CEF {}", CEF_VERSION);
     if (!log_path.empty()) LOG_INFO(LOG_MAIN, "Log file: {}", log_path.c_str());
 
@@ -562,8 +568,9 @@ int main(int argc, char* argv[]) {
     // failure mode for nothing.
     g_mpv.SetOptionString("ytdl", "no");
 
+    g_mpv.SetOptionString("user-agent", APP_USER_AGENT);
+
     g_mpv.SetHwdec(hwdec_str);
-    g_mpv.SetOptionString("background-color", kBgColor.hex);
 
     // Restore saved window geometry. mpv's --geometry is always physical
     // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
@@ -627,18 +634,23 @@ int main(int argc, char* argv[]) {
     g_mpv.SetWakeupCallback([](void*) {}, nullptr);
     observe_properties(g_mpv);
 
-    // Load file if in player mode (before init so it's in the playlist)
-    if (player_mode) {
-        g_mpv.LoadFile(player_playlist[0], {});
-    }
-
     int init_err = g_mpv.Initialize();
     if (init_err < 0) {
         LOG_ERROR(LOG_MAIN, "mpv_initialize failed: {}", init_err);
         g_mpv.TerminateDestroy();
         return 1;
     }
-    g_mpv.RequestLogMessages("info");
+    g_mpv.SetLogLevel(log_level);
+
+    // Capture user's mpv.conf bg, then force startup color. Safe here:
+    // force-window=yes (not "immediate") defers VO creation, so the user's
+    // color never flashes before we override.
+    g_video_bg = g_mpv.GetBackgroundColor();
+    LOG_INFO(LOG_MAIN, "video bg captured: {}", g_video_bg.hex);
+    g_mpv.SetBackgroundColor(kBgColor);
+
+    for (const char* prop : {"mpv-version", "ffmpeg-version"})
+        LOG_INFO(LOG_MAIN, "{} {}", prop, g_mpv.GetPropertyString(prop));
 
     // input-default-bindings=no removes all builtin bindings including
     // CLOSE_WIN → quit.  Re-bind it so the WM close button works.
@@ -712,6 +724,12 @@ int main(int argc, char* argv[]) {
     }
     LOG_INFO(LOG_MAIN, "Platform init ok");
 
+    // Set the initial titlebar color now, before CefInitialize blocks the
+    // main thread. Otherwise the window sits with the system default palette
+    // for the whole CEF init duration before snapping to kBgColor.
+    if (Settings::instance().titlebarThemeColor())
+        g_platform.set_theme_color(kBgColor);
+
     // Snapshot mpv's actual decoder/demuxer/protocol support and turn it
     // into a Jellyfin device profile. Cached for renderer-process injection
     // through extra_info; see WebBrowser::injectionProfile().
@@ -720,7 +738,7 @@ int main(int argc, char* argv[]) {
     {
         auto caps = mpv_capabilities::Query(g_mpv.Get());
         jellyfin_device_profile::SetCachedJson(jellyfin_device_profile::Build(
-            caps, "Jellyfin Desktop", APP_VERSION_STRING,
+            caps, "Jellyfin Desktop", APP_VERSION_FULL,
             Settings::instance().forceTranscoding()));
     }
 
@@ -813,8 +831,12 @@ int main(int argc, char* argv[]) {
     // Must exist before we create the main browser: the pre-loaded page fires
     // its initial theme-color IPC at DOMContentLoaded, and we need to capture
     // it so onOverlayDismissed has a color to apply.
-    TitlebarColor titlebar_color_obj(g_platform, Settings::instance().titlebarThemeColor());
-    g_titlebar_color = &titlebar_color_obj;
+    bool titlebar_themed = Settings::instance().titlebarThemeColor();
+    ThemeColor theme_color_obj([titlebar_themed](const Color& c) {
+        if (titlebar_themed) g_platform.set_theme_color(c);
+        g_mpv.SetBackgroundColor(c);
+    });
+    g_theme_color = &theme_color_obj;
 
     // Main browser
     RenderTarget main_target{g_platform.present, g_platform.present_software};
@@ -824,17 +846,7 @@ int main(int argc, char* argv[]) {
     std::string server_url = Settings::instance().serverUrl();
     std::string main_url;
 
-    if (player_mode) {
-        // Build player URL with playlist
-        auto list = CefListValue::Create();
-        for (size_t i = 0; i < player_playlist.size(); i++)
-            list->SetString(i, player_playlist[i]);
-        auto val = CefValue::Create();
-        val->SetList(list);
-        auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-        auto encoded = CefURIEncode(json, false);
-        main_url = "app://resources/player.html#" + encoded.ToString();
-    } else if (!server_url.empty()) {
+    if (!server_url.empty()) {
         // Eager pre-load: begin fetching the saved server while the overlay
         // probes in parallel. The overlay fades out on success, revealing the
         // already-loaded page.
@@ -847,8 +859,8 @@ int main(int argc, char* argv[]) {
     g_web_browser->create(wi, bs, main_url);
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
 
-    // Overlay browser (server selection UI) -- only in full app mode
-    if (!player_mode) {
+    // Overlay browser (server selection UI)
+    {
         RenderTarget overlay_target{g_platform.overlay_present, g_platform.overlay_present_software};
         g_overlay_browser = new OverlayBrowser(overlay_target, *g_web_browser,
                                                lw, lh, (int)mw, (int)mh);
@@ -930,7 +942,7 @@ int main(int argc, char* argv[]) {
     // --- Cleanup ---
     // Stop our threads first (they don't depend on CEF/mpv shutdown order)
     g_media_session = nullptr;
-    g_titlebar_color = nullptr;
+    g_theme_color = nullptr;
     media_session_thread.stop();
     g_platform.set_idle_inhibit(IdleInhibitLevel::None);
 
@@ -1052,6 +1064,9 @@ int main(int argc, char* argv[]) {
 #else
     g_mpv.TerminateDestroy();
 #endif
+
+    if (g_platform.post_window_cleanup)
+        g_platform.post_window_cleanup();
 
     shutdownLogging();
     return 0;

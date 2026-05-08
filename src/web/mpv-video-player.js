@@ -94,14 +94,15 @@
         }
 
         async play(options) {
-            console.log(`[Media] [${this.logTag}] play() called with options:`, options);
+            console.debug(`[Media] [${this.logTag}] play() called with options:`, options);
             this._started = false;
             this._timeUpdated = false;
             this._currentTime = null;
             this._endedPending = false;
+            if (options.resetSubtitleOffset !== false) this.resetSubtitleOffset();
             if (options.fullscreen) this.loading.show();  // fills entire web content area, not the actual screen
             await this.createMediaElement(options);
-            console.log(`[Media] [${this.logTag}] createMediaElement done, calling setCurrentSrc`);
+            console.debug(`[Media] [${this.logTag}] createMediaElement done, calling setCurrentSrc`);
             const result = await this.setCurrentSrc(options);
 
             // needed when only audio is single external
@@ -159,11 +160,11 @@
                 }
             }
 
-            return { audioParam, subParam, externalAudioUrl, externalSubUrl };
+            return { videoParam: 1, audioParam, subParam, externalAudioUrl, externalSubUrl };
         }
 
-        _beforeLoad() {
-            window.api.player.setAspectMode(this.getAspectRatio());
+        _beforeLoad(options) {
+            window.api.player.setAspectMode(options?.aspectRatio || this.getAspectRatio());
         }
 
         setSubtitleStreamIndex(index) {
@@ -184,14 +185,20 @@
         setSecondarySubtitleStreamIndex(index) {}
 
         resetSubtitleOffset() {
+            this._currentSubtitleOffset = 0;
+            this._showSubtitleOffset = false;
             window.api.player.setSubtitleDelay(0);
         }
 
-        enableShowingSubtitleOffset() {}
-        disableShowingSubtitleOffset() {}
-        isShowingSubtitleOffsetEnabled() { return false; }
-        setSubtitleOffset(offset) { window.api.player.setSubtitleDelay(Math.round(offset * 1000)); }
-        getSubtitleOffset() { return 0; }
+        enableShowingSubtitleOffset() { this._showSubtitleOffset = true; }
+        disableShowingSubtitleOffset() { this._showSubtitleOffset = false; }
+        isShowingSubtitleOffsetEnabled() { return this._showSubtitleOffset === true; }
+        setSubtitleOffset(offset) {
+            const v = parseFloat(offset) || 0;
+            this._currentSubtitleOffset = v;
+            window.api.player.setSubtitleDelay(Math.round(v * 1000));
+        }
+        getSubtitleOffset() { return this._currentSubtitleOffset || 0; }
 
         setAudioStreamIndex(index) {
             if (index == null || index < 0) {
@@ -342,5 +349,5 @@
     }
 
     window._mpvVideoPlayer = mpvVideoPlayer;
-    console.log('[Media] mpvVideoPlayer class installed');
+    console.debug('[Media] mpvVideoPlayer class installed');
 })();

@@ -65,11 +65,23 @@ public:
     bool forceTranscoding() const { return force_transcoding_; }
     void setForceTranscoding(bool v) { force_transcoding_ = v; }
 
+    // Device name override. Empty = use platform default (hostname).
+    const std::string& deviceName() const { return device_name_; }
+    void setDeviceName(const std::string& v);
+
+    // System hostname, truncated to the server's 64-char DeviceName limit.
+    // Used when no explicit override is set.
+    static std::string platformDeviceName();
+
+    // Stored override if non-empty, otherwise platformDeviceName().
+    std::string effectiveDeviceName() const;
+
     // JSON string of CLI-equivalent settings (for injection into JS)
     std::string cliSettingsJson() const;
 
-private:
     Settings() = default;
+
+private:
     std::string getConfigPath();
 
     std::string server_url_;
@@ -85,6 +97,7 @@ private:
     bool transparent_titlebar_ = true;
     std::string log_level_;
     bool force_transcoding_ = false;
+    std::string device_name_;
 
     std::mutex save_mutex_;  // Prevent concurrent saves
 };

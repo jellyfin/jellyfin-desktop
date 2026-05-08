@@ -804,7 +804,7 @@ static void win_pump() {
     // Input is handled by the dedicated input thread's message loop
 }
 
-static void win_set_titlebar_color(uint8_t, uint8_t, uint8_t) {
+static void win_set_theme_color(const Color&) {
     // No-op on Windows (DWM handles titlebar appearance)
 }
 
@@ -1015,7 +1015,7 @@ Platform make_windows_platform() {
         .pump = win_pump,
         .set_cursor = input::windows::set_cursor,
         .set_idle_inhibit = win_set_idle_inhibit,
-        .set_titlebar_color = win_set_titlebar_color,
+        .set_theme_color = win_set_theme_color,
         .clipboard_read_text_async = win_clipboard_read_text_async,
         .open_external_url = win_open_external_url,
     };

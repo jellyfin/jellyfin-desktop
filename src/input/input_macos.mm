@@ -319,7 +319,7 @@ static void fill_key_event_from_nsevent(input::KeyEvent& e, NSEvent* event) {
         owner:self
         userInfo:nil];
     [self addTrackingArea:_trackingArea];
-    LOG_INFO(LOG_PLATFORM, "[INPUT] updateTrackingAreas bounds={:.0f}x{:.0f}",
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] updateTrackingAreas bounds={:.0f}x{:.0f}",
              self.bounds.size.width, self.bounds.size.height);
 }
 
@@ -490,6 +490,7 @@ static void flush_scroll_accumulator() {
 // --- Keyboard events ---
 - (void)keyDown:(NSEvent*)event {
     unsigned short kc = [event keyCode];
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] keyDown kc={}", (int)kc);
 
     input::KeyEvent e{};
     fill_key_event_from_nsevent(e, event);
@@ -515,6 +516,7 @@ static void flush_scroll_accumulator() {
 }
 
 - (void)keyUp:(NSEvent*)event {
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] keyUp kc={}", (int)[event keyCode]);
     input::KeyEvent e{};
     fill_key_event_from_nsevent(e, event);
     e.action = input::KeyAction::Up;
@@ -523,6 +525,8 @@ static void flush_scroll_accumulator() {
 
 - (void)flagsChanged:(NSEvent*)event {
     unsigned short kc = [event keyCode];
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] flagsChanged kc={} flags=0x{:x}",
+              (int)kc, (uint64_t)[event modifierFlags]);
     NSEventModifierFlags flag = 0;
     switch (kc) {
         case 56: case 60: flag = NSEventModifierFlagShift; break;
@@ -543,13 +547,13 @@ static void flush_scroll_accumulator() {
 
 // --- Focus ---
 - (BOOL)becomeFirstResponder {
-    LOG_INFO(LOG_PLATFORM, "[INPUT] becomeFirstResponder");
+    LOG_DEBUG(LOG_PLATFORM, "[INPUT] becomeFirstResponder");
     input::dispatch_keyboard_focus(true);
     return [super becomeFirstResponder];
 }
 
 - (BOOL)resignFirstResponder {
-    LOG_INFO(LOG_PLATFORM, "[INPUT] resignFirstResponder");
+    LOG_DEBUG(LOG_PLATFORM, "[INPUT] resignFirstResponder");
     input::dispatch_keyboard_focus(false);
     return [super resignFirstResponder];
 }

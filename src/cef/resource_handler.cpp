@@ -28,7 +28,7 @@ static size_t g_theme_css_len = 0;
 static void init_theme_css() {
     if (g_theme_css_len == 0)
         g_theme_css_len = snprintf(g_theme_css, sizeof(g_theme_css),
-            ":root{--bg-color:#%06x}", kBgColor.rgb);
+            ":root{--bg-color:%s}", kBgColor.hex);
 }
 
 CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(
@@ -71,7 +71,7 @@ CefRefPtr<CefResourceHandler> EmbeddedSchemeHandlerFactory::Create(
         // hand-rolled JSON). Log paths are omitted when file logging is
         // disabled — the panel renders only the rows present in the data.
         auto dict = CefDictionaryValue::Create();
-        dict->SetString("app", APP_VERSION_STRING);
+        dict->SetString("app", APP_VERSION_FULL);
         dict->SetString("cef", APP_CEF_VERSION);
         dict->SetString("configDir", absPath(paths::getConfigDir()));
         const std::string& log_path = activeLogPath();

@@ -119,6 +119,7 @@ if(APPLE)
     find_library(IOSURFACE_FRAMEWORK IOSurface REQUIRED)
     find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
     find_library(MEDIAPLAYER_FRAMEWORK MediaPlayer REQUIRED)
+    find_library(SYSTEMCONFIGURATION_FRAMEWORK SystemConfiguration REQUIRED)
 
     set(PLATFORM_SOURCES
         src/platform/macos.mm
@@ -141,6 +142,7 @@ if(APPLE)
         ${IOSURFACE_FRAMEWORK}
         ${IOKIT_FRAMEWORK}
         ${MEDIAPLAYER_FRAMEWORK}
+        ${SYSTEMCONFIGURATION_FRAMEWORK}
     )
 elseif(WIN32)
     configure_file(
@@ -550,11 +552,14 @@ if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
         src/logging.cpp
+        src/log_redact.cpp
         src/single_instance.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
+        src/mpv/color.cpp
         src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
+        src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
         src/browser/web_browser.cpp
@@ -574,10 +579,13 @@ else()
     set(COMMON_SOURCES
         src/main.cpp
         src/logging.cpp
+        src/log_redact.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
+        src/mpv/color.cpp
         src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
+        src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
         src/browser/web_browser.cpp

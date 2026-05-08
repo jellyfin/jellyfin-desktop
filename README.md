@@ -38,7 +38,7 @@ Available recipes:
     flatpak           # Build Flatpak bundle (outputs to dist/)
     list              # List available recipes
     mpv *args         # Run the standalone mpv CLI built from the submodule (forwards args)
-    run *args         # Run the app with trace logging (logs to build/run.log)
+    run *args         # Run the app with debug logging (logs to build/run.log)
     test              # Run unit tests
     update-deps *args # Update vendored/fetched deps (CEF, doctest, quill); pass --check to verify only
 ```

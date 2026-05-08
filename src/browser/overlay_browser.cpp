@@ -5,7 +5,7 @@
 #include "../jellyfin/api.h"
 #include "../settings.h"
 #include "logging.h"
-#include "../titlebar_color.h"
+#include "../theme_color.h"
 #include "../input/dispatch.h"
 #include "include/cef_urlrequest.h"
 
@@ -116,6 +116,7 @@ static void applySettingValue(const std::string& section, const std::string& key
     else if (key == "audioChannels") s.setAudioChannels(value);
     else if (key == "titlebarThemeColor") s.setTitlebarThemeColor(value == "true");
     else if (key == "logLevel") s.setLogLevel(value);
+    else if (key == "deviceName") s.setDeviceName(value);
     else LOG_WARN(LOG_CEF, "Unknown setting key: {}.{}", section.c_str(), key.c_str());
     s.saveAsync();
 }
@@ -195,8 +196,7 @@ bool OverlayBrowser::handleMessage(const std::string& name,
         CefRefPtr<CefBrowser> overlay_browser = browser;
         g_platform.fade_overlay(OVERLAY_FADE_DURATION_SEC,
             []() {
-                g_mpv.SetBackgroundColor(kVideoBgColor.hex);
-                if (g_titlebar_color) g_titlebar_color->onOverlayDismissed();
+                if (g_theme_color) g_theme_color->onOverlayDismissed();
             },
             [overlay_browser]() {
                 if (overlay_browser)

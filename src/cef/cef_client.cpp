@@ -129,7 +129,7 @@ bool CefLayer::GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) {
 }
 
 void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
-    LOG_INFO(LOG_CEF, "CefLayer::resize logical={}x{} physical={}x{} browser={}",
+    LOG_TRACE(LOG_CEF, "CefLayer::resize logical={}x{} physical={}x{} browser={}",
              w, h, physical_w, physical_h, static_cast<void*>(browser_.get()));
     width_ = w;
     height_ = h;
@@ -229,7 +229,7 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-    LOG_INFO(LOG_CEF, "CefLayer::OnAfterCreated browser={} id={}",
+    LOG_DEBUG(LOG_CEF, "CefLayer::OnAfterCreated browser={} id={}",
              static_cast<void*>(browser.get()), browser ? browser->GetIdentifier() : -1);
     browser_ = browser;
     closed_ = false;
@@ -384,12 +384,15 @@ bool CefLayer::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level,
                                 int line) {
     std::string msg = message.ToString();
     std::string src = source.ToString();
+    // CEF: VERBOSE/DEBUG share a value. DEFAULT (0) → treat as INFO.
     if (level >= LOGSEVERITY_ERROR)
         LOG_ERROR(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
     else if (level == LOGSEVERITY_WARNING)
         LOG_WARN(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
-    else
+    else if (level == LOGSEVERITY_INFO || level == LOGSEVERITY_DEFAULT)
         LOG_INFO(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
+    else  // VERBOSE/DEBUG
+        LOG_DEBUG(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
     return true;
 }
 

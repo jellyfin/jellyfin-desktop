@@ -135,6 +135,16 @@ void handle_key(xcb_key_press_event_t* ev, bool pressed) {
     if (!g.xkb_st) return;
     xkb_keycode_t kc = ev->detail;
     xkb_keysym_t sym = xkb_state_key_get_one_sym(g.xkb_st, kc);
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] xcb_key code={} sym=0x{:x} pressed={}",
+              (int)kc - 8, (uint32_t)sym, pressed);
+
+    // Browser/IR-remote history navigation keys (e.g. XF86Back on MCE remotes).
+    if (sym == XKB_KEY_XF86Back || sym == XKB_KEY_XF86Forward) {
+        if (pressed) input::dispatch_history_nav(sym == XKB_KEY_XF86Forward);
+        xkb_state_update_key(g.xkb_st, kc,
+            pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+        return;
+    }
 
     KeyEvent e{};
     e.code             = keysym_to_keycode(sym);
@@ -201,7 +211,9 @@ void handle_button(xcb_button_press_event_t* ev, bool pressed) {
     case 1: btn = MouseButton::Left;   flag = EVENTFLAG_LEFT_MOUSE_BUTTON;   break;
     case 2: btn = MouseButton::Middle; flag = EVENTFLAG_MIDDLE_MOUSE_BUTTON; break;
     case 3: btn = MouseButton::Right;  flag = EVENTFLAG_RIGHT_MOUSE_BUTTON;  break;
-    default: return;
+    default:
+        LOG_TRACE(LOG_PLATFORM, "[INPUT] xcb_button unhandled code={}", button);
+        return;
     }
 
     if (pressed) g.mouse_button_modifiers |= flag;
@@ -367,6 +379,9 @@ void input_thread_func() {
                 // WM_DELETE_WINDOW on our overlay windows (WM targets
                 // the focused window, which may be our overlay)
                 initiate_shutdown();
+                break;
+            default:
+                LOG_TRACE(LOG_PLATFORM, "[INPUT] xcb_event unhandled type={}", (int)type);
                 break;
             }
             free(ev);

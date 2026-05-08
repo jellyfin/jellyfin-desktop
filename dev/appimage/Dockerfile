@@ -13,6 +13,7 @@ RUN pacman -Syu --noconfirm && \
     ffmpeg libplacebo libass wayland libxpresent libxss \
     vulkan-headers wayland-protocols python-docutils \
     systemd-libs libdrm libx11 xcb-util-cursor \
+    libpipewire luajit rubberband uchardet \
     wget file patchelf desktop-file-utils && \
     pacman -Scc --noconfirm
 
@@ -41,8 +42,7 @@ RUN cd third_party/mpv && \
     rm -rf build && \
     meson setup build --default-library=shared -Dlibmpv=true \
         -Dcdda=disabled -Ddvdnav=disabled -Djavascript=disabled \
-        -Dlua=disabled -Dopenal=disabled -Drubberband=disabled \
-        -Duchardet=disabled -Dvapoursynth=disabled \
+        -Dopenal=disabled -Dvapoursynth=disabled \
         -Dwayland=enabled && \
     meson compile -C build && \
     strip build/libmpv.so

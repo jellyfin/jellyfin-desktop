@@ -25,8 +25,26 @@
 #import <QuartzCore/QuartzCore.h>
 #import <IOSurface/IOSurface.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
+#include <SystemConfiguration/SystemConfiguration.h>
 #include <mach/mach_time.h>
 #include <objc/runtime.h>
+
+// SCDynamicStoreCopyComputerName returns the freeform "Computer Name" from
+// System Settings — which can contain emoji, smart quotes, CJK, and other
+// non-ASCII that breaks the HTTP header.
+// SCDynamicStoreCopyLocalHostName returns the Bonjour hostname: always DNS-safe ASCII (letters, digits,
+// hyphens), derived from the Computer Name by macOS itself.
+std::string macosComputerName() {
+    CFStringRef name = SCDynamicStoreCopyLocalHostName(nullptr);
+    if (!name) return {};
+    CFIndex len = CFStringGetLength(name);
+    CFIndex max = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
+    std::string out(max, '\0');
+    CFStringGetCString(name, out.data(), max, kCFStringEncodingUTF8);
+    out.resize(strlen(out.c_str()));
+    CFRelease(name);
+    return out;
+}
 
 // =====================================================================
 // Forward declarations
@@ -346,6 +364,22 @@ static void stop_display_link() {
 // Platform interface implementation
 // =====================================================================
 
+static void macos_set_theme_color(const Color& c) {
+    // Updates AppKit fills behind mpv's CAMetalLayer / NSWindow root so the
+    // resize-gap stale-texture window (which CLAUDE.md explicitly accepts
+    // over stretching) matches mpv's own background — no flash visible.
+    NSColor* ns = [NSColor colorWithSRGBRed:c.r/255.0 green:c.g/255.0
+                                       blue:c.b/255.0 alpha:1.0];
+    auto apply = ^{
+        if (!g_window) return;
+        g_window.backgroundColor = ns;
+        if (NSView* cv = [g_window contentView]; cv.layer)
+            cv.layer.backgroundColor = ns.CGColor;
+    };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
+}
+
 static bool macos_init(mpv_handle* mpv) {
     LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: waiting for mpv window");
     for (int i = 0; i < 500 && !g_window; i++) {
@@ -393,26 +427,9 @@ static bool macos_init(mpv_handle* mpv) {
     NSView* contentView = [g_window contentView];
     if (!contentView.layer) [contentView setWantsLayer:YES];
 
-    // Paint a solid dark fill at every layer we can reach so the user
-    // never sees uninitialized CAMetalLayer drawable content during the
-    // gap between mpv creating the window and CEF delivering the first
-    // overlay frame. Three levels of coverage:
-    //   1. NSWindow.backgroundColor  — shows through anywhere the content-
-    //      View ends up transparent.
-    //   2. contentView.layer.backgroundColor — this is mpv's MetalLayer;
-    //      mpv only resets it from its `isOpaque` setter (metal_layer.swift:
-    //      87), which doesn't fire during normal operation, so the override
-    //      sticks until a real frame is drawn on top of it.
-    //   3. g_main / g_overlay layer backgroundColor — our own subview
-    //      layers, set below, so that even while their CEF contents are
-    //      still nil they fill with the startup color instead of exposing whatever
-    //      is under them.
-    NSColor* startup_bg = [NSColor colorWithSRGBRed:0x10/255.0
-                                              green:0x10/255.0
-                                               blue:0x10/255.0
-                                              alpha:1.0];
-    g_window.backgroundColor = startup_bg;
-    contentView.layer.backgroundColor = startup_bg.CGColor;
+    // Cover the AppKit fills before CEF delivers its first frame; ThemeColor
+    // takes over from overlay-dismissal onward.
+    macos_set_theme_color(kBgColor);
 
     // Metal setup
     g_mtl_device = MTLCreateSystemDefaultDevice();
@@ -446,8 +463,7 @@ static bool macos_init(mpv_handle* mpv) {
     // content before CEF has actually painted. The user sees mpv's
     // contentView backing (which we've set to the startup color) until the
     // first-frame paths unhide these below. macos_overlay_present
-    // unhides both in normal mode (overlay covers main as they appear
-    // together); macos_present unhides g_main in player mode.
+    // unhides both (overlay covers main as they appear together).
     [g_main.view setHidden:YES];
     [g_overlay.view setHidden:YES];
     [g_about.view setHidden:YES];
@@ -476,7 +492,7 @@ static bool macos_init(mpv_handle* mpv) {
                      queue:nil
                 usingBlock:^(NSNotification* /*note*/) {
         NSRect b = [[g_window contentView] bounds];
-        LOG_INFO(LOG_PLATFORM, "[WINDOW] NSWindowDidResizeNotification contentView={:.0f}x{:.0f}",
+        LOG_TRACE(LOG_PLATFORM, "[WINDOW] NSWindowDidResizeNotification contentView={:.0f}x{:.0f}",
                  b.size.width, b.size.height);
     }];
 
@@ -494,25 +510,9 @@ static bool macos_init(mpv_handle* mpv) {
     return true;
 }
 
-// Reset all background colors from the startup fill to black.
-// Called once when the first real content is about to be revealed.
-static void reset_background_to_black() {
-    g_mpv.SetBackgroundColor(kVideoBgColor.hex);
-    g_window.backgroundColor = [NSColor blackColor];
-    [[g_window contentView] layer].backgroundColor = [NSColor blackColor].CGColor;
-}
-
 static void macos_present(const CefAcceleratedPaintInfo& info) {
     if (g_transitioning) return;
     present_iosurface(g_main, info);
-    // Player mode only: no overlay will ever paint, so the first main
-    // frame is the reveal trigger. In normal mode this branch is a
-    // no-op — macos_fade_overlay is responsible for unhiding the main
-    // view when the overlay starts its fade-out.
-    if (!g_overlay_browser && [g_main.view isHidden]) {
-        [g_main.view setHidden:NO];
-        reset_background_to_black();
-    }
     if (g_expected_w > 0) {
         IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
         if (surface && (int)IOSurfaceGetWidth(surface) == g_expected_w &&
@@ -689,13 +689,10 @@ static void macos_fade_overlay(float fade_sec,
         // main browser before we've committed to hiding the overlay.
         // g_overlay is still fully opaque at this point, so g_main is
         // occluded until the fade actually drops overlay opacity below 1.0.
-        // Also reset mpv's clear color back to black — during startup it was
-        // set to match the app's dark fill, but from here on the video layer
-        // should use black as the default background.
-        if ([g_main.view isHidden]) {
-            [g_main.view setHidden:NO];
-            reset_background_to_black();
-        }
+        // The AppKit fills behind g_main track ThemeColor — onOverlayDismissed
+        // (fired via start_cb below) pushes the current chrome color through
+        // set_theme_color, so no manual reset here.
+        if ([g_main.view isHidden]) [g_main.view setHidden:NO];
         if (*start_cb) (*start_cb)();
         if (!g_overlay.view || !g_overlay.view.layer) {
             if (*done_cb) (*done_cb)();
@@ -863,10 +860,6 @@ static void macos_wake_main_loop() {
     });
 }
 
-static void macos_set_titlebar_color(uint8_t, uint8_t, uint8_t) {
-    // No-op on macOS (deferred)
-}
-
 static void macos_cleanup() {
     // Stop the display link first so no more BeginFrames race the teardown.
     stop_display_link();
@@ -911,6 +904,28 @@ static void macos_early_init() {
     }
 
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    // AppKit can add Dictation and Character Palette items to standard Edit
+    // menus. Apple documents Emoji & Symbols as Fn/Globe-E or Edit > Emoji &
+    // Symbols
+    //
+    // That shortcut is hard to work with for our input architecture. We receive the
+    // original NSEvent in JellyfinInputView, translate it into CefKeyEvent, and
+    // inject it into an off-screen CEF browser. CEF's public event flags do not
+    // include a Function/Globe bit, only caps/shift/control/option/command/etc.:
+    // https://raw.githubusercontent.com/chromiumembedded/cef/master/include/internal/cef_types.h
+    //
+    // Chromium's macOS synthetic NSEvent path reconstructs only those same
+    // modifiers when CEF turns the key event back into a native event for
+    // browser-side processing:
+    // https://chromium.googlesource.com/chromium/src/+/refs/tags/147.0.7727.118/components/input/native_web_keyboard_event_mac.mm
+    //
+    // So Fn/Globe-E and a plain E collapse to the same CefKeyEvent before CEF
+    // menu-key handling can see them. For a media player we do not need these
+    // text-input helpers, and leaving them enabled lets a plain "e" trigger the
+    // Character Palette on some macOS setups. Disable the automatic items
+    // entirely as it cannot be handled easily.
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"NSDisabledDictationMenuItem"];
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"NSDisabledCharacterPaletteMenuItem"];
 
     // Menu bar: App (About, Quit) + Edit (standard editing shortcuts)
     g_app_menu_target = [[JellyfinAppMenuTarget alloc] init];
@@ -973,7 +988,8 @@ static void macos_early_init() {
 
     [NSApp setMainMenu:menubar];
 
-    [NSApp finishLaunching];
+    // -[NSApp run] calls -finishLaunching internally; an explicit call here
+    // is redundant and crashes -[NSCarbonMenuImpl _createMenuRef] on macOS 12.
     [NSApp activateIgnoringOtherApps:YES];
 }
 
@@ -1070,7 +1086,7 @@ Platform make_macos_platform() {
         .wake_main_loop = macos_wake_main_loop,
         .set_cursor = input::macos::set_cursor,
         .set_idle_inhibit = macos_set_idle_inhibit,
-        .set_titlebar_color = macos_set_titlebar_color,
+        .set_theme_color = macos_set_theme_color,
         .clipboard_read_text_async = macos_clipboard_read_text_async,
         .open_external_url = macos_open_external_url,
     };

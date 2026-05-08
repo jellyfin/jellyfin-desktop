@@ -231,6 +231,26 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return TRUE;  // must return TRUE for WM_XBUTTON* per MSDN
     }
 
+    // MCE IR remote / multimedia keys deliver Back/Forward as WM_APPCOMMAND
+    // rather than VK_BROWSER_BACK keystrokes. Handle here so the remote's Back
+    // button navigates browser history.
+    case WM_APPCOMMAND: {
+        const WORD cmd = GET_APPCOMMAND_LPARAM(lp);
+        LOG_TRACE(LOG_PLATFORM, "[INPUT] wm_appcommand cmd={}", cmd);
+        switch (cmd) {
+        case APPCOMMAND_BROWSER_BACKWARD:
+            dispatch_history_nav(false);
+            return TRUE;
+        case APPCOMMAND_BROWSER_FORWARD:
+            dispatch_history_nav(true);
+            return TRUE;
+        default:
+            LOG_TRACE(LOG_PLATFORM, "[INPUT] wm_appcommand unhandled cmd={}", cmd);
+            break;
+        }
+        break;  // let DefWindowProc bubble unhandled commands to parent
+    }
+
     case WM_MOUSEWHEEL: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ScreenToClient(hwnd, &pt);
@@ -261,6 +281,15 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             PostMessage(g.mpv_hwnd, WM_CLOSE, 0, 0);
             return 0;
         }
+        LOG_TRACE(LOG_PLATFORM, "[INPUT] wm_key msg=0x{:x} vk=0x{:x} down={}",
+                  msg, (int)wp, msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
+        // Browser navigation keys from keyboards/IR drivers that emit keystrokes
+        // rather than WM_APPCOMMAND.
+        if (wp == VK_BROWSER_BACK || wp == VK_BROWSER_FORWARD) {
+            if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
+                dispatch_history_nav(wp == VK_BROWSER_FORWARD);
+            return 0;
+        }
         KeyEvent e{};
         e.code             = vk_to_keycode(static_cast<int>(wp));
         e.windows_key_code = static_cast<int>(wp);
@@ -274,6 +303,7 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_CHAR: case WM_SYSCHAR: {
+        LOG_TRACE(LOG_PLATFORM, "[INPUT] wm_char msg=0x{:x} cp=0x{:x}", msg, (uint32_t)wp);
         dispatch_char(static_cast<uint32_t>(wp),
                       keyboard_modifiers(wp, lp),
                       static_cast<int>(lp),

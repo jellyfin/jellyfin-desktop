@@ -4,6 +4,7 @@
 #include "../paths/paths.h"
 #include "embedded_js.h"
 #include "logging.h"
+#include "version.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
@@ -204,6 +205,7 @@ bool Initialize() {
 #endif
     settings.no_sandbox = true;
     CefString(&settings.locale).FromASCII("en-US");
+    CefString(&settings.user_agent).FromASCII(APP_USER_AGENT);
 
 #ifdef __APPLE__
     char exe_buf[4096];
@@ -407,6 +409,7 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     };
     replace_first("__SERVER_URL__", Settings::instance().serverUrl());
     replace_first("__SETTINGS_JSON__", Settings::instance().cliSettingsJson());
+    replace_first("__APP_VERSION__", APP_VERSION);
     if (profile->HasKey("device_profile_json"))
         replace_first("__DEVICE_PROFILE_JSON__",
                       profile->GetString("device_profile_json").ToString());
@@ -626,7 +629,7 @@ constexpr double kCefMaxTimeSliceMs = 10.0;
 
 static void pump_drain(const char* trigger) {
     if (g_pump_shutdown.load(std::memory_order_acquire)) {
-        LOG_INFO(LOG_CEF, "[PUMP] drain({}) skipped (shutdown)", trigger);
+        LOG_DEBUG(LOG_CEF, "[PUMP] drain({}) skipped (shutdown)", trigger);
         return;
     }
 
@@ -688,7 +691,7 @@ void App::InitPump() {
 
 void App::OnScheduleMessagePumpWork(int64_t delay_ms) {
     if (g_pump_shutdown.load(std::memory_order_acquire)) {
-        LOG_INFO(LOG_CEF, "[PUMP] OnSched({}) SKIP(shutdown) tid={}",
+        LOG_DEBUG(LOG_CEF, "[PUMP] OnSched({}) SKIP(shutdown) tid={}",
                  (long long)delay_ms, (unsigned long long)tid_u64());
         return;
     }

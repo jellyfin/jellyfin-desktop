@@ -1,0 +1,180 @@
+name: build-macos-legacy
+
+# Secondary macOS workflow that targets macOS 12 Monterey on Intel.
+# The standard build-macos.yml workflow uses Homebrew bottles which target
+# macOS 13+, so this workflow builds ffmpeg and libplacebo from source
+# against the macOS 12 SDK. Apple Silicon Macs all run macOS 13+, so only
+# x86_64 is built here.
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: "12.0"
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Determine version
+        id: version
+        run: echo "version=$(dev/tools/version.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: |
+          brew install \
+            meson \
+            ninja \
+            nasm \
+            libass \
+            luajit \
+            vulkan-loader \
+            vulkan-headers \
+            molten-vk \
+            sdl3 \
+            libunibreak \
+            zimg \
+            shaderc
+
+      - name: Cache built deps (ffmpeg + libplacebo)
+        id: deps-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/jellyfin-deps
+          key: deps-x86_64-ffmpeg-n8.1-libplacebo-v7.360.1-macos${{ env.MACOSX_DEPLOYMENT_TARGET }}-v2
+
+      - name: Build ffmpeg from source
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch n8.1 https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg-src
+          cd /tmp/ffmpeg-src
+          ./configure \
+            --prefix="$HOME/jellyfin-deps" \
+            --enable-shared \
+            --disable-static \
+            --enable-gpl \
+            --enable-version3 \
+            --disable-programs \
+            --disable-doc \
+            --disable-debug \
+            --extra-cflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" \
+            --extra-ldflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
+          make -j$(sysctl -n hw.ncpu)
+          make install
+
+      - name: Build libplacebo from source
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --recursive --branch v7.360.1 https://code.videolan.org/videolan/libplacebo.git /tmp/libplacebo-src
+          cd /tmp/libplacebo-src
+          # Fix Python 3.14 compatibility: ElementTree constructor no longer
+          # accepts an ElementTree object, only Element. Known upstream issue
+          # in libplacebo v7.349.0 (utils_gen.py).
+          python3 -c "
+          import pathlib
+          p = pathlib.Path('src/vulkan/utils_gen.py')
+          t = p.read_text()
+          t = t.replace('VkXML(ET.parse(xmlfile))', 'VkXML(ET.parse(xmlfile).getroot())')
+          p.write_text(t)
+          "
+          meson setup build --prefix="$HOME/jellyfin-deps" \
+            -Ddemos=false -Dtests=false -Dvulkan=enabled \
+            -Dc_args="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" \
+            -Dcpp_args="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
+          ninja -C build
+          ninja -C build install
+
+      - name: Patch mpv for macOS 12 Swift compatibility
+        run: |
+          python3 -c "
+          import pathlib, os
+          # mpv's swift_compat.swift gates an NSLocking.withLock backport on
+          # Swift 5.7, but withLock was only added to Foundation in Swift 5.8
+          # (macOS 13). Enable the backport for Swift 5.7 too.
+          p = pathlib.Path('third_party/mpv/osdep/mac/swift_compat.swift')
+          t = p.read_text()
+          t = t.replace('#if !swift(>=5.7)', '#if !swift(>=5.8)')
+          p.write_text(t)
+
+          # Pin mpv's Swift compile to the macOS 12 ABI so the resulting
+          # libmpv only references Swift runtime symbols that exist on
+          # Monterey (e.g. avoid __StaticArrayStorage which is macOS 13+).
+          p = pathlib.Path('third_party/mpv/osdep/mac/meson.build')
+          t = p.read_text()
+          target = f'x86_64-apple-macos{os.environ[\"MACOSX_DEPLOYMENT_TARGET\"]}'
+          marker = \"swift_flags = ['-c'\"
+          inject = f\"swift_flags = ['-target', '{target}', '-c'\"
+          if marker in t and inject not in t:
+              t = t.replace(marker, inject)
+              p.write_text(t)
+          "
+
+      - name: Cache CEF
+        uses: actions/cache@v5
+        with:
+          path: |
+            third_party/cef
+            third_party/cef_binary_*
+          key: cef-macos-x86_64-${{ hashFiles('CEF_VERSION') }}
+
+      - name: Download CEF
+        run: |
+          python3 dev/tools/download_cef.py
+
+      - name: Configure and build
+        run: |
+          export PKG_CONFIG_PATH="$HOME/jellyfin-deps/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET} \
+            -DCMAKE_PREFIX_PATH="$HOME/jellyfin-deps"
+          cmake --build build
+
+      - name: Create app bundle
+        run: |
+          cmake --install build --prefix build/output
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          APP_NAME="Jellyfin Desktop"
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_NAME="JellyfinDesktop-${VERSION}-macos-12-x86_64.dmg"
+          mkdir -p dist
+
+          create-dmg \
+            --volname "Jellyfin Desktop v${VERSION}" \
+            --no-internet-enable \
+            --window-size 500 300 \
+            --icon-size 100 \
+            --icon "${APP_NAME}.app" 125 150 \
+            --app-drop-link 375 150 \
+            "dist/${DMG_NAME}" "build/output/${APP_NAME}.app" || true
+
+          if [ ! -f "dist/${DMG_NAME}" ]; then
+            echo "DMG creation failed"
+            exit 1
+          fi
+          ls -la "dist/${DMG_NAME}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-12-x86_64
+          path: dist/JellyfinDesktop-*.dmg

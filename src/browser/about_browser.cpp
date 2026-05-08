@@ -94,7 +94,7 @@ AboutBrowser::AboutBrowser()
 
 void AboutBrowser::open() {
     if (g_about_browser) {
-        LOG_INFO(LOG_CEF, "AboutBrowser::open: already open, ignoring");
+        LOG_DEBUG(LOG_CEF, "AboutBrowser::open: already open, ignoring");
         return;
     }
     LOG_INFO(LOG_CEF, "AboutBrowser::open");

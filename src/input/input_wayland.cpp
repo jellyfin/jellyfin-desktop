@@ -130,7 +130,9 @@ void ptr_button(void*, wl_pointer*, uint32_t, uint32_t, uint32_t button, uint32_
     case BTN_LEFT:   btn = MouseButton::Left;   flag = EVENTFLAG_LEFT_MOUSE_BUTTON;   break;
     case BTN_RIGHT:  btn = MouseButton::Right;  flag = EVENTFLAG_RIGHT_MOUSE_BUTTON;  break;
     case BTN_MIDDLE: btn = MouseButton::Middle; flag = EVENTFLAG_MIDDLE_MOUSE_BUTTON; break;
-    default: return;
+    default:
+        LOG_TRACE(LOG_PLATFORM, "[INPUT] ptr_button unhandled code=0x{:x}", button);
+        return;
     }
     if (pressed) g.mouse_button_modifiers |= flag;
     else         g.mouse_button_modifiers &= ~flag;
@@ -237,6 +239,14 @@ void kb_key(void*, wl_keyboard*, uint32_t, uint32_t, uint32_t key, uint32_t stat
     uint32_t kc = key + 8;
     xkb_keysym_t sym = xkb_state_key_get_one_sym(g.xkb_st, kc);
     const bool pressed = (state == WL_KEYBOARD_KEY_STATE_PRESSED);
+    LOG_TRACE(LOG_PLATFORM, "[INPUT] kb_key code={} sym=0x{:x} pressed={}",
+              key, (uint32_t)sym, pressed);
+
+    // Browser/IR-remote history navigation keys (e.g. XF86Back on MCE remotes).
+    if (sym == XKB_KEY_XF86Back || sym == XKB_KEY_XF86Forward) {
+        if (pressed) input::dispatch_history_nav(sym == XKB_KEY_XF86Forward);
+        return;
+    }
 
     KeyEvent e{};
     e.code             = keysym_to_keycode(sym);
