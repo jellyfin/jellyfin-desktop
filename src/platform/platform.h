@@ -143,6 +143,28 @@ struct Platform {
     void (*open_external_url)(const std::string& url);
 };
 
+// Platform lifetime. Must destruct after CefRuntimeScope, before mpv teardown.
+class PlatformScope {
+public:
+    PlatformScope(Platform& p, mpv_handle* mpv) : p_(p), ok_(p.init(mpv)) {}
+    ~PlatformScope() { if (ok_) p_.cleanup(); }
+    bool ok() const { return ok_; }
+
+    PlatformScope(const PlatformScope&) = delete;
+    PlatformScope& operator=(const PlatformScope&) = delete;
+private:
+    Platform& p_;
+    bool ok_;
+};
+
+// Defined in main.cpp.
+extern Platform g_platform;
+
+// Releases the platform idle inhibit on any exit path.
+struct IdleInhibitGuard {
+    ~IdleInhibitGuard() { g_platform.set_idle_inhibit(IdleInhibitLevel::None); }
+};
+
 // Internal platform factories — called by make_platform()
 #ifdef _WIN32
 Platform make_windows_platform();

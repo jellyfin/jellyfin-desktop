@@ -30,9 +30,11 @@
 #include "player/media_session_thread.h"
 
 #include "logging.h"
+#include "signal_guard.h"
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
+#include <signal.h>
 #else
 #include "single_instance.h"
 #endif
@@ -45,8 +47,8 @@
 #include <cstdlib>
 #ifndef _WIN32
 #include <unistd.h>
-#include <signal.h>
 #endif
+#include <memory>
 #include <string>
 #include <vector>
 #include <thread>
@@ -216,7 +218,6 @@ static void cef_consumer_thread() {
     while (true) {
 #ifdef _WIN32
         WaitForMultipleObjects(2, handles, FALSE, INFINITE);
-        // Check shutdown
         if (WaitForSingleObject(handles[1], 0) == WAIT_OBJECT_0) break;
 #else
         poll(fds, 2, -1);
@@ -245,7 +246,6 @@ static void cef_consumer_thread() {
             case MpvEventType::DURATION: {
                 int ms = static_cast<int>(ev.dbl * 1000);
                 g_web_browser->execJs("window._nativeUpdateDuration(" + std::to_string(ms) + ")");
-                // Duration is set via metadata, not a separate call
                 break;
             }
             case MpvEventType::FULLSCREEN:
@@ -347,28 +347,308 @@ static void cef_consumer_thread() {
     }
 }
 
+// Shutdown order (reverse of declaration):
+//   browsers → CefShutdown → idle_inhibit clear → platform.cleanup
+// then main runs mpv terminate + post_window_cleanup.
+static int run_with_cef(int mw, int mh,
+                        std::string ozone_platform,
+                        bool disable_gpu_compositing,
+                        int remote_debugging_port,
+                        LogLevel log_level) {
+#if !defined(_WIN32) && !defined(__APPLE__)
+    if (ozone_platform.empty())
+        ozone_platform = g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11";
+#endif
+    g_platform.cef_ozone_platform = ozone_platform;
+    PlatformScope platform_scope(g_platform, g_mpv.Get());
+    if (!platform_scope.ok()) {
+        LOG_ERROR(LOG_MAIN, "Platform init failed");
+        return 1;
+    }
+    LOG_INFO(LOG_MAIN, "Platform init ok");
+
+    IdleInhibitGuard idle_inhibit_guard;
+
+    // Apply titlebar color before CefInitialize so the window doesn't sit
+    // with the system default palette for the whole CEF init duration.
+    if (Settings::instance().titlebarThemeColor())
+        g_platform.set_theme_color(kBgColor);
+
+    // Must run after the VO-init wait loop — sync mpv API calls would
+    // deadlock against core_thread's DispatchQueue.main.sync on macOS.
+    {
+        auto caps = mpv_capabilities::Query(g_mpv.Get());
+        jellyfin_device_profile::SetCachedJson(jellyfin_device_profile::Build(
+            caps, "Jellyfin Desktop", APP_VERSION_FULL,
+            Settings::instance().forceTranscoding()));
+    }
+
+    bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;
+
+    CefRuntime::SetLogSeverity(toCefSeverity(log_level));
+    CefRuntime::SetRemoteDebuggingPort(remote_debugging_port);
+    CefRuntime::SetDisableGpuCompositing(!use_shared_textures);
+#ifdef __linux__
+    if (!ozone_platform.empty())
+        CefRuntime::SetOzonePlatform(ozone_platform);
+#endif
+
+    LOG_INFO(LOG_MAIN, "[FLOW] calling CefInitialize...");
+    CefRuntimeScope cef_scope;
+    if (!cef_scope.ok()) {
+        LOG_ERROR(LOG_MAIN, "CefInitialize failed");
+        return 1;
+    }
+    LOG_INFO(LOG_MAIN, "[FLOW] CefInitialize returned ok");
+
+    double display_hidpi_scale = 0.0;
+    mpv_get_property(g_mpv.Get(), "display-hidpi-scale",
+                     MPV_FORMAT_DOUBLE, &display_hidpi_scale);
+    int fs_flag = 0;
+    mpv_get_property(g_mpv.Get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
+    LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={}",
+             display_hidpi_scale, fs_flag);
+
+    // If the live display-hidpi-scale differs from the saved scale, the
+    // pixels we passed to --geometry were sized for the wrong scale.
+    // Resize using the saved logical × the live scale.
+    //
+    // When the compositor has forced fullscreen, still issue SetGeometry so
+    // mpv's stored unfullscreen size (wl->window_size) is scale-corrected for
+    // the eventual restore, but don't overwrite mw/mh — the fullscreen surface
+    // size is authoritative for browser creation.
+    {
+        using WG = Settings::WindowGeometry;
+        const auto& saved = Settings::instance().windowGeometry();
+        float saved_scale = saved.scale > 0.f ? saved.scale : WG::kDefaultScale;
+        int logical_w = saved.logical_width  > 0 ? saved.logical_width
+                                                 : WG::kDefaultLogicalWidth;
+        int logical_h = saved.logical_height > 0 ? saved.logical_height
+                                                 : WG::kDefaultLogicalHeight;
+        if (display_hidpi_scale > 0.0 &&
+            std::fabs(display_hidpi_scale - saved_scale) >= 0.01) {
+            int new_pw = static_cast<int>(
+                std::lround(logical_w * display_hidpi_scale));
+            int new_ph = static_cast<int>(
+                std::lround(logical_h * display_hidpi_scale));
+            std::string geom_str = std::to_string(new_pw) + "x"
+                                 + std::to_string(new_ph);
+            LOG_INFO(LOG_MAIN,
+                     "[FLOW] scale {:.3f} -> {:.3f}, resize to {}",
+                     saved_scale, display_hidpi_scale, geom_str.c_str());
+            g_mpv.SetGeometry(geom_str);
+            if (!fs_flag) {
+                mw = new_pw;
+                mh = new_ph;
+            }
+        }
+        mpv::set_window_pixels(mw, mh);
+    }
+
+    float scale = display_hidpi_scale > 0.0
+        ? static_cast<float>(display_hidpi_scale)
+        : g_platform.get_scale();
+    int lw = static_cast<int>(mw / scale);
+    int lh = static_cast<int>(mh / scale);
+
+    CefWindowInfo wi;
+    wi.SetAsWindowless(0);
+    wi.shared_texture_enabled = use_shared_textures;
+#ifdef __APPLE__
+    // Drive BeginFrames from CVDisplayLink (platform/macos.mm:g_display_link)
+    // to eliminate phase lag against CEF's internal 60Hz timer.
+    wi.external_begin_frame_enabled = true;
+#else
+    wi.external_begin_frame_enabled = false;
+#endif
+    CefBrowserSettings bs;
+    bs.background_color = 0;
+    bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
+
+    // Must exist before main browser creation: the pre-loaded page fires
+    // its initial theme-color IPC at DOMContentLoaded; onOverlayDismissed
+    // needs a color already captured.
+    bool titlebar_themed = Settings::instance().titlebarThemeColor();
+    ThemeColor theme_color_obj([titlebar_themed](const Color& c) {
+        if (titlebar_themed) g_platform.set_theme_color(c);
+        g_mpv.SetBackgroundColor(c);
+    });
+    g_theme_color = &theme_color_obj;
+
+    RenderTarget main_target{g_platform.present, g_platform.present_software};
+    auto web_browser_owner = std::make_unique<WebBrowser>(main_target, lw, lh, mw, mh);
+    g_web_browser = web_browser_owner.get();
+    g_platform.resize(lw, lh, mw, mh);
+
+    std::string server_url = Settings::instance().serverUrl();
+    std::string main_url;
+    // Eager pre-load: fetch the saved server while the overlay probes in
+    // parallel. The overlay fades out on success, revealing the loaded page.
+    if (!server_url.empty())
+        main_url = server_url;
+
+    LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) url={} lw={} lh={} pw={} ph={}",
+             main_url.c_str(), lw, lh, mw, mh);
+    g_web_browser->create(wi, bs, main_url);
+    LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
+
+    std::unique_ptr<OverlayBrowser> overlay_browser_owner;
+    {
+        RenderTarget overlay_target{g_platform.overlay_present, g_platform.overlay_present_software};
+        overlay_browser_owner = std::make_unique<OverlayBrowser>(
+            overlay_target, *g_web_browser, lw, lh, mw, mh);
+        g_overlay_browser = overlay_browser_owner.get();
+        g_platform.set_overlay_visible(true);
+
+        CefWindowInfo owi;
+        owi.SetAsWindowless(0);
+        owi.shared_texture_enabled = use_shared_textures;
+#ifdef __APPLE__
+        owi.external_begin_frame_enabled = true;
+#else
+        owi.external_begin_frame_enabled = false;
+#endif
+        CefBrowserSettings obs;
+        obs.background_color = 0;
+        obs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
+        LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay)");
+        CefBrowserHost::CreateBrowser(owi, g_overlay_browser->client(), "app://resources/overlay.html", obs,
+                                      OverlayBrowser::injectionProfile(), nullptr);
+        LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay) call returned");
+    }
+
+    auto media_session_obj = MediaSession::create();
+
+    MediaSessionThread media_session_thread;
+    media_session_thread.start(media_session_obj.get());
+    g_media_session = &media_session_thread;
+
+    // Start before waitForLoad so mpv events (OSD_DIMS especially) reach
+    // the platform/browsers during the overlay-only startup phase, before
+    // the main browser finishes loading.
+    LOG_INFO(LOG_MAIN, "[FLOW] starting digest + cef_consumer threads");
+    std::thread digest_thread(mpv_digest_thread);
+    std::thread cef_thread(cef_consumer_thread);
+
+#ifndef __APPLE__
+    g_web_browser->waitForLoad();
+#endif
+    LOG_INFO(LOG_MAIN, "Main browser loaded");
+
+    LOG_INFO(LOG_MAIN, "[FLOW] Running — about to enter run_main_loop");
+
+#ifdef __APPLE__
+    // Block on the NSApplication run loop until initiate_shutdown calls
+    // wake_main_loop. Services NSEvents and GCD main-queue blocks (mpv VO
+    // DispatchQueue.main.sync, CEF App::OnScheduleMessagePumpWork).
+    g_platform.run_main_loop();
+    LOG_INFO(LOG_MAIN, "[FLOW] run_main_loop returned — entering post-run drain");
+
+    // CEF may still have browser-close work in flight after the main loop
+    // breaks. Spin the runloop event-driven until all browsers report closed.
+    while (!g_web_browser->isClosed() ||
+           (g_overlay_browser && !g_overlay_browser->isClosed()) ||
+           (g_about_browser && !g_about_browser->isClosed())) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, true);
+    }
+
+#else
+    g_web_browser->waitForClose();
+    if (g_overlay_browser)
+        g_overlay_browser->waitForClose();
+#endif
+
+    g_media_session = nullptr;
+    g_theme_color = nullptr;
+    media_session_thread.stop();
+
+    cef_thread.join();
+    g_mpv.Wakeup();
+    digest_thread.join();
+
+    // Save window geometry while mpv is still alive.
+    {
+        bool fs  = mpv::fullscreen();
+        bool max = mpv::window_maximized();
+
+        if (fs) {
+            // Don't overwrite the saved windowed size with fullscreen dims;
+            // only update the maximized flag for the eventual restore.
+            auto geom = Settings::instance().windowGeometry();
+            geom.maximized = g_was_maximized_before_fullscreen;
+            Settings::instance().setWindowGeometry(geom);
+        } else if (max) {
+            // Don't overwrite the saved windowed size with monitor dims;
+            // on next launch the window opens maximized and unmaximize
+            // restores the preserved size.
+            auto geom = Settings::instance().windowGeometry();
+            geom.maximized = true;
+            Settings::instance().setWindowGeometry(geom);
+        } else {
+            // Capture {pixel, logical, scale} so the next launch can
+            // restore losslessly on the same display, or rescale on a
+            // display with different DPI. Prefer window_pw/ph (set at boot)
+            // over osd_pw/ph which may lag a resize we just issued.
+            int pw = mpv::window_pw();
+            int ph = mpv::window_ph();
+            if (pw <= 0 || ph <= 0) {
+                pw = mpv::osd_pw();
+                ph = mpv::osd_ph();
+            }
+            if (pw > 0 && ph > 0) {
+                Settings::WindowGeometry geom;
+                geom.width = pw;
+                geom.height = ph;
+
+                float win_scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+                if (win_scale <= 0.f) win_scale = 1.0f;
+                geom.scale = win_scale;
+                geom.logical_width  = static_cast<int>(std::lround(pw / win_scale));
+                geom.logical_height = static_cast<int>(std::lround(ph / win_scale));
+
+                geom.maximized = false;
+                int wx, wy;
+                if (g_platform.query_window_position &&
+                    g_platform.query_window_position(&wx, &wy)) {
+                    geom.x = wx;
+                    geom.y = wy;
+                }
+                Settings::instance().setWindowGeometry(geom);
+            }
+        }
+        Settings::instance().save();
+    }
+
+    // Browsers must be deleted before CefShutdown (waitForClose above
+    // guarantees they're closed at the CEF level).
+    g_web_browser = nullptr;
+    web_browser_owner.reset();
+    g_overlay_browser = nullptr;
+    overlay_browser_owner.reset();
+    // g_about_browser self-deletes via BeforeCloseCallback; cover the
+    // shutdown race where we got here before the callback ran.
+    if (g_about_browser) { delete g_about_browser; g_about_browser = nullptr; }
+
+    return 0;
+}
+
 // =====================================================================
 // Main
 // =====================================================================
 
 int main(int argc, char* argv[]) {
-    // --- Platform early init + CEF subprocess check ---
-    // Must be first: CEF subprocesses (GPU, renderer) re-execute this binary.
-    // They must hit CefExecuteProcess immediately and exit — before CLI parsing,
-    // settings, single instance, or anything else touches shared state.
+    // CEF subprocesses (GPU, renderer) re-execute this binary; they must
+    // hit CefExecuteProcess immediately, before CLI parsing or anything
+    // else touches shared state. Linux platform selection is deferred
+    // until after CLI parsing.
 #ifdef _WIN32
     g_platform = make_platform(DisplayBackend::Windows);
 #elif defined(__APPLE__)
     g_platform = make_platform(DisplayBackend::macOS);
-#else
-    // Linux: runtime detection, overridable with --platform.
-    // Deferred to after CLI parsing — CEF subprocesses exit at
-    // CefExecuteProcess before any platform use.
 #endif
 
     if (int rc = CefRuntime::Start(argc, argv); rc >= 0) return rc;
 
-    // --- Parse CLI ---
     std::string hwdec_str = kHwdecDefault;
     std::string audio_passthrough_str;
     bool audio_exclusive = false;
@@ -495,7 +775,6 @@ int main(int argc, char* argv[]) {
     LOG_INFO(LOG_MAIN, "CEF {}", CEF_VERSION);
     if (!log_path.empty()) LOG_INFO(LOG_MAIN, "Log file: {}", log_path.c_str());
 
-    // --- Linux platform selection ---
 #if !defined(_WIN32) && !defined(__APPLE__)
     {
         DisplayBackend backend;
@@ -523,19 +802,16 @@ int main(int argc, char* argv[]) {
              g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11");
 #endif
 
-    // --- Signal handlers ---
 #ifdef _WIN32
     SetConsoleCtrlHandler([](DWORD) -> BOOL {
         initiate_shutdown();
         return TRUE;
     }, TRUE);
 #else
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    SignalHandlerGuard signal_guard(signal_handler);
 #endif
 
 #ifndef __APPLE__
-    // --- Single instance ---
     if (trySignalExisting()) {
         LOG_INFO(LOG_MAIN, "Signaled existing instance, exiting");
         return 0;
@@ -543,12 +819,11 @@ int main(int argc, char* argv[]) {
     startListener([](const std::string&) {
         // TODO: raise window via xdg-activation
     });
-    // Ensure listener thread is joined on any exit path (std::thread
-    // destructor calls std::terminate if joinable).
+    // Joins the listener thread on any exit path (a joinable std::thread
+    // calls std::terminate from its destructor).
     struct ListenerGuard { ~ListenerGuard() { stopListener(); } } listener_guard;
 #endif
 
-    // --- mpv setup ---
     std::string mpv_home = paths::getMpvHome();
 #ifdef _WIN32
     SetEnvironmentVariableA("MPV_HOME", mpv_home.c_str());
@@ -637,7 +912,6 @@ int main(int argc, char* argv[]) {
     int init_err = g_mpv.Initialize();
     if (init_err < 0) {
         LOG_ERROR(LOG_MAIN, "mpv_initialize failed: {}", init_err);
-        g_mpv.TerminateDestroy();
         return 1;
     }
     g_mpv.SetLogLevel(log_level);
@@ -659,19 +933,14 @@ int main(int argc, char* argv[]) {
         mpv_command(g_mpv.Get(), cmd);
     }
 
-    // --- Wait for VO (mpv needs a window before we can get platform handles) ---
-    // Both loops wait for an osd-dimensions property-change event carrying
-    // positive w/h, captured into mw/mh via mpv::read_osd_dims_from_event.
-    // That's a struct read of the event payload — no mpv_get_property call —
-    // so it's safe on macOS's main thread during VO init, where a synchronous
-    // property read can deadlock against core_thread's DispatchQueue.main.sync.
+    // Wait for the VO window. Reads osd-dimensions from the event payload
+    // (no sync mpv_get_property call) so it stays safe against a
+    // DispatchQueue.main.sync deadlock against core_thread on macOS.
     LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
     int64_t mw = 0, mh = 0;
-    // Route every PROPERTY_CHANGE through digest_property, not just osd-dims.
-    // Side effect: seeds the atomics (s_osd_pw/ph, s_fullscreen,
-    // s_display_scale, ...) as mpv fires initial-value events, so platform
-    // init code can read them instead of issuing sync mpv_get_property calls.
-    // Caller breaks out of the loop only on a valid osd-dimensions event.
+    // Route every PROPERTY_CHANGE through digest_property — this seeds the
+    // s_osd_pw/ph, s_fullscreen, s_display_scale atomics from mpv's initial-
+    // value events so platform init can read them without sync API calls.
     auto try_consume_osd_dims = [&](mpv_event* ev) -> bool {
         if (ev->event_id != MPV_EVENT_PROPERTY_CHANGE) return false;
         MpvEvent me = digest_property(
@@ -693,7 +962,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
-            g_mpv.TerminateDestroy(); return 0;
+            return 0;
         }
         if (try_consume_osd_dims(ev)) break;
     }
@@ -704,354 +973,27 @@ int main(int argc, char* argv[]) {
             log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
             continue;
         }
-        if (ev->event_id == MPV_EVENT_SHUTDOWN) { g_mpv.TerminateDestroy(); return 0; }
-        if (ev->event_id == MPV_EVENT_END_FILE) { g_mpv.TerminateDestroy(); return 0; }
+        if (ev->event_id == MPV_EVENT_SHUTDOWN) return 0;
+        if (ev->event_id == MPV_EVENT_END_FILE) return 0;
         if (try_consume_osd_dims(ev)) break;
     }
 #endif
 
-    // --- Platform init ---
-    // Resolve effective ozone platform so CEF clients can check it.
-#if !defined(_WIN32) && !defined(__APPLE__)
-    if (ozone_platform.empty())
-        ozone_platform = g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11";
-#endif
-    g_platform.cef_ozone_platform = ozone_platform;
-    if (!g_platform.init(g_mpv.Get())) {
-        LOG_ERROR(LOG_MAIN, "Platform init failed");
-        g_mpv.TerminateDestroy();
-        return 1;
-    }
-    LOG_INFO(LOG_MAIN, "Platform init ok");
-
-    // Set the initial titlebar color now, before CefInitialize blocks the
-    // main thread. Otherwise the window sits with the system default palette
-    // for the whole CEF init duration before snapping to kBgColor.
-    if (Settings::instance().titlebarThemeColor())
-        g_platform.set_theme_color(kBgColor);
-
-    // Snapshot mpv's actual decoder/demuxer/protocol support and turn it
-    // into a Jellyfin device profile. Cached for renderer-process injection
-    // through extra_info; see WebBrowser::injectionProfile().
-    // Must run after the VO-init wait loop so synchronous mpv API calls
-    // are safe (avoids DispatchQueue.main.sync deadlock on macOS).
-    {
-        auto caps = mpv_capabilities::Query(g_mpv.Get());
-        jellyfin_device_profile::SetCachedJson(jellyfin_device_profile::Build(
-            caps, "Jellyfin Desktop", APP_VERSION_FULL,
-            Settings::instance().forceTranscoding()));
-    }
-
-    // --- CEF init ---
-    bool use_shared_textures = g_platform.shared_texture_supported && !disable_gpu_compositing;
-
-    CefRuntime::SetLogSeverity(toCefSeverity(log_level));
-    CefRuntime::SetRemoteDebuggingPort(remote_debugging_port);
-    CefRuntime::SetDisableGpuCompositing(!use_shared_textures);
-#ifdef __linux__
-    if (!ozone_platform.empty())
-        CefRuntime::SetOzonePlatform(ozone_platform);
-#endif
-
-    LOG_INFO(LOG_MAIN, "[FLOW] calling CefInitialize...");
-    if (!CefRuntime::Initialize()) {
-        LOG_ERROR(LOG_MAIN, "CefInitialize failed");
-        g_platform.cleanup();
-        g_mpv.TerminateDestroy();
-        return 1;
-    }
-    LOG_INFO(LOG_MAIN, "[FLOW] CefInitialize returned ok");
-
-    double display_hidpi_scale = 0.0;
-    mpv_get_property(g_mpv.Get(), "display-hidpi-scale",
-                     MPV_FORMAT_DOUBLE, &display_hidpi_scale);
-    int fs_flag = 0;
-    mpv_get_property(g_mpv.Get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
-    LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={}",
-             display_hidpi_scale, fs_flag);
-
-    // If the live display-hidpi-scale differs from the saved scale, the
-    // pixels we passed to --geometry were sized for the wrong scale.
-    // Resize using the saved logical × the live scale.
-    //
-    // When the compositor has forced fullscreen, still issue SetGeometry so
-    // mpv's stored unfullscreen size (wl->window_size) is scale-corrected for
-    // the eventual restore, but don't overwrite mw/mh — the fullscreen surface
-    // size is authoritative for browser creation.
-    {
-        using WG = Settings::WindowGeometry;
-        const auto& saved = Settings::instance().windowGeometry();
-        float saved_scale = saved.scale > 0.f ? saved.scale : WG::kDefaultScale;
-        int logical_w = saved.logical_width  > 0 ? saved.logical_width
-                                                 : WG::kDefaultLogicalWidth;
-        int logical_h = saved.logical_height > 0 ? saved.logical_height
-                                                 : WG::kDefaultLogicalHeight;
-        if (display_hidpi_scale > 0.0 &&
-            std::fabs(display_hidpi_scale - saved_scale) >= 0.01) {
-            int new_pw = static_cast<int>(
-                std::lround(logical_w * display_hidpi_scale));
-            int new_ph = static_cast<int>(
-                std::lround(logical_h * display_hidpi_scale));
-            std::string geom_str = std::to_string(new_pw) + "x"
-                                 + std::to_string(new_ph);
-            LOG_INFO(LOG_MAIN,
-                     "[FLOW] scale {:.3f} -> {:.3f}, resize to {}",
-                     saved_scale, display_hidpi_scale, geom_str.c_str());
-            g_mpv.SetGeometry(geom_str);
-            if (!fs_flag) {
-                mw = new_pw;
-                mh = new_ph;
-            }
-        }
-        mpv::set_window_pixels(static_cast<int>(mw), static_cast<int>(mh));
-    }
-
-    // --- Create browsers ---
-    float scale = display_hidpi_scale > 0.0
-        ? static_cast<float>(display_hidpi_scale)
-        : g_platform.get_scale();
-    int lw = static_cast<int>(mw / scale);
-    int lh = static_cast<int>(mh / scale);
-
-    CefWindowInfo wi;
-    wi.SetAsWindowless(0);
-    wi.shared_texture_enabled = use_shared_textures;
-#ifdef __APPLE__
-    // macOS: drive BeginFrames from CVDisplayLink, aligned with display
-    // vsync. Eliminates the phase lag from CEF's internal 60Hz BeginFrame
-    // timer. See platform/macos.mm:g_display_link setup.
-    wi.external_begin_frame_enabled = true;
-#else
-    wi.external_begin_frame_enabled = false;
-#endif
-    CefBrowserSettings bs;
-    bs.background_color = 0;
-    bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
-
-    // Must exist before we create the main browser: the pre-loaded page fires
-    // its initial theme-color IPC at DOMContentLoaded, and we need to capture
-    // it so onOverlayDismissed has a color to apply.
-    bool titlebar_themed = Settings::instance().titlebarThemeColor();
-    ThemeColor theme_color_obj([titlebar_themed](const Color& c) {
-        if (titlebar_themed) g_platform.set_theme_color(c);
-        g_mpv.SetBackgroundColor(c);
-    });
-    g_theme_color = &theme_color_obj;
-
-    // Main browser
-    RenderTarget main_target{g_platform.present, g_platform.present_software};
-    g_web_browser = new WebBrowser(main_target, lw, lh, (int)mw, (int)mh);
-    g_platform.resize(lw, lh, (int)mw, (int)mh);
-
-    std::string server_url = Settings::instance().serverUrl();
-    std::string main_url;
-
-    if (!server_url.empty()) {
-        // Eager pre-load: begin fetching the saved server while the overlay
-        // probes in parallel. The overlay fades out on success, revealing the
-        // already-loaded page.
-        main_url = server_url;
-    }
-    // else: main browser starts blank; the overlay handles server selection.
-
-    LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) url={} lw={} lh={} pw={} ph={}",
-             main_url.c_str(), lw, lh, (long long)mw, (long long)mh);
-    g_web_browser->create(wi, bs, main_url);
-    LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
-
-    // Overlay browser (server selection UI)
-    {
-        RenderTarget overlay_target{g_platform.overlay_present, g_platform.overlay_present_software};
-        g_overlay_browser = new OverlayBrowser(overlay_target, *g_web_browser,
-                                               lw, lh, (int)mw, (int)mh);
-        g_platform.set_overlay_visible(true);
-
-        CefWindowInfo owi;
-        owi.SetAsWindowless(0);
-        owi.shared_texture_enabled = use_shared_textures;
-#ifdef __APPLE__
-        owi.external_begin_frame_enabled = true;
-#else
-        owi.external_begin_frame_enabled = false;
-#endif
-        CefBrowserSettings obs;
-        obs.background_color = 0;
-        obs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
-        LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay)");
-        CefBrowserHost::CreateBrowser(owi, g_overlay_browser->client(), "app://resources/overlay.html", obs,
-                                      OverlayBrowser::injectionProfile(), nullptr);
-        LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay) call returned");
-    }
-
-    auto media_session_obj = MediaSession::create();
-
-    MediaSessionThread media_session_thread;
-    media_session_thread.start(media_session_obj.get());
-    g_media_session = &media_session_thread;
-
-    // --- Start threads ---
-    // Start before waitForLoad so mpv events (OSD_DIMS in particular) drain
-    // into the platform and browsers even while we're still sitting on a
-    // blank main browser. Without this, the overlay-only startup path never
-    // sees resize/fullscreen events until the user picks a server and the
-    // main browser finishes its first load.
-    LOG_INFO(LOG_MAIN, "[FLOW] starting digest + cef_consumer threads");
-    std::thread digest_thread(mpv_digest_thread);
-    std::thread cef_thread(cef_consumer_thread);
+    int rc = run_with_cef(static_cast<int>(mw), static_cast<int>(mh),
+                          ozone_platform, disable_gpu_compositing,
+                          remote_debugging_port, log_level);
+    if (rc != 0) return rc;
 
 #ifdef __APPLE__
-    // nothing — main thread pump happens below
-#else
-    g_web_browser->waitForLoad();
-#endif
-    LOG_INFO(LOG_MAIN, "Main browser loaded");
-
-    LOG_INFO(LOG_MAIN, "[FLOW] Running — about to enter run_main_loop");
-
-    // --- Wait for shutdown ---
-#ifdef __APPLE__
-    // macOS: block on the NSApplication run loop. Returns when
-    // initiate_shutdown calls wake_main_loop ([NSApp stop:nil] from main).
-    // Everything that needs the main thread fires from inside this call,
-    // event-driven, no polling:
-    //   - NSEvents → [NSApp sendEvent:]
-    //   - GCD main-queue blocks: mpv VO's DispatchQueue.main.sync, and
-    //     CEF pump work enqueued by App::OnScheduleMessagePumpWork via
-    //     dispatch_async_f / dispatch_after_f
-    g_platform.run_main_loop();
-    LOG_INFO(LOG_MAIN, "[FLOW] run_main_loop returned — entering post-run drain");
-
-    // After shutdown breaks the main run loop, CEF may still have browser-
-    // close work in flight (IO/Network cleanup posting back to the UI
-    // thread). Keep the pump alive and spin the runloop until both browsers
-    // report closed; dispatch blocks queued by OnScheduleMessagePumpWork
-    // keep running CefDoMessageLoopWork as CEF posts new tasks. Event-
-    // driven — CFRunLoopRunInMode wakes on any source firing.
-    while (!g_web_browser->isClosed() ||
-           (g_overlay_browser && !g_overlay_browser->isClosed()) ||
-           (g_about_browser && !g_about_browser->isClosed())) {
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, true);
-    }
-
-#else
-    g_web_browser->waitForClose();
-    if (g_overlay_browser)
-        g_overlay_browser->waitForClose();
-#endif
-
-    // --- Cleanup ---
-    // Stop our threads first (they don't depend on CEF/mpv shutdown order)
-    g_media_session = nullptr;
-    g_theme_color = nullptr;
-    media_session_thread.stop();
-    g_platform.set_idle_inhibit(IdleInhibitLevel::None);
-
-    cef_thread.join();
-    g_mpv.Wakeup();
-    digest_thread.join();
-
-    // Save window geometry while mpv is still alive.
-    {
-        bool fs  = mpv::fullscreen();
-        bool max = mpv::window_maximized();
-
-        if (fs) {
-            // Preserve previous saved geometry; only update the maximized flag
-            // to reflect whether the user was maximized before entering fullscreen.
-            auto geom = Settings::instance().windowGeometry();
-            geom.maximized = g_was_maximized_before_fullscreen;
-            Settings::instance().setWindowGeometry(geom);
-        } else if (max) {
-            // Preserve the previous saved windowed size (don't save the
-            // maximized dimensions — they're the monitor size). On next
-            // launch the window opens maximized; on unmaximize, the
-            // preserved size is used.
-            auto geom = Settings::instance().windowGeometry();
-            geom.maximized = true;
-            Settings::instance().setWindowGeometry(geom);
-        } else {
-            // Normal windowed: save current size and position.
-            // Capture {pixel, logical, scale} so the next launch can restore
-            // losslessly on the same display, or rescale correctly when moved
-            // to a display with a different DPI.
-            // Prefer the effective pixel size we recorded during boot so
-            // save reflects what we asked mpv for, even if osd-dimensions
-            // lags behind a resize we issued.
-            int pw = mpv::window_pw();
-            int ph = mpv::window_ph();
-            if (pw <= 0 || ph <= 0) {
-                pw = mpv::osd_pw();
-                ph = mpv::osd_ph();
-            }
-            if (pw > 0 && ph > 0) {
-                Settings::WindowGeometry geom;
-                geom.width = pw;
-                geom.height = ph;
-
-                float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
-                if (scale <= 0.f) scale = 1.0f;
-                geom.scale = scale;
-                geom.logical_width  = static_cast<int>(std::lround(pw / scale));
-                geom.logical_height = static_cast<int>(std::lround(ph / scale));
-
-                geom.maximized = false;
-                int wx, wy;
-                if (g_platform.query_window_position &&
-                    g_platform.query_window_position(&wx, &wy)) {
-                    geom.x = wx;
-                    geom.y = wy;
-                }
-                Settings::instance().setWindowGeometry(geom);
-            }
-        }
-        Settings::instance().save();
-    }
-
-    // CEF shutdown: all browsers must be closed first (guaranteed by waitForClose above)
-    delete g_web_browser; g_web_browser = nullptr;
-    delete g_overlay_browser; g_overlay_browser = nullptr;
-    // g_about_browser is normally self-deleted via its BeforeCloseCallback.
-    // If shutdown races the callback (unlikely), we take responsibility here.
-    if (g_about_browser) { delete g_about_browser; g_about_browser = nullptr; }
-    CefRuntime::Shutdown();
-
-    // Platform cleanup (joins input thread, destroys subsurfaces)
-    // Must happen after CefShutdown (CEF may still present during shutdown)
-    // but before mpv_terminate_destroy (mpv destroys the parent surface)
-    g_platform.cleanup();
-
-#ifdef __APPLE__
-    // mpv's macOS VO uninit (mac_common.swift:84) calls
-    // DispatchQueue.main.sync to close its window. That blocks the VO
-    // thread until the main thread services the GCD block. If we call
-    // mpv_terminate_destroy synchronously here, the main thread is
-    // blocked waiting for mpv to finish while mpv is blocked waiting for
-    // the main thread — classic deadlock.
-    //
-    // Fix: run mpv teardown on a separate thread and keep the main
-    // thread pumping the runloop so GCD blocks dispatch normally.
-    // mpv's VO teardown needs the main thread for two reasons:
-    //   1. DispatchQueue.main.sync in mac_common.swift:84 (window close)
-    //   2. PreciseTimer.terminate() sends pthread_kill(SIGALRM) — CefInitialize
-    //      reset SIGALRM to SIG_DFL (content_main.cc:108), so restore a no-op
-    //      handler before mpv tears down the timer.
-    //
-    // CFRunLoopSourceSignal latches: if the teardown thread finishes before
-    // CFRunLoopRun enters, the signal is pending and fires immediately on
-    // entry — no race with CFRunLoopStop (which is a no-op if the runloop
-    // isn't running yet).
-    // mpv's VO teardown (mac_common.swift:84) uses DispatchQueue.main.sync
-    // to close its window — the main thread must service GCD blocks.
-    // Loop CFRunLoopRunInMode until mpv is done (same pattern as Chromium's
-    // MessagePumpCFRunLoop::DoRun in message_pump_apple.mm:676-680).
-    // Each iteration blocks until a source fires (event-driven); we check
-    // the done flag after each wake.
+    // mpv's VO uninit (mac_common.swift:84) does DispatchQueue.main.sync
+    // to close its window — calling TerminateDestroy from the main thread
+    // would deadlock. Run it on a side thread and pump the runloop here
+    // (same pattern as Chromium's MessagePumpCFRunLoop::DoRun).
     std::atomic<bool> mpv_done{false};
     std::thread mpv_teardown([&mpv_done]{
-        // CefInitialize reset SIGALRM to SIG_DFL (content_main.cc:108).
-        // mpv's PreciseTimer.terminate() sends pthread_kill(SIGALRM) to
-        // wake its timer thread — restore a no-op handler so the default
-        // action (terminate process) doesn't fire.
+        // CefInitialize reset SIGALRM to SIG_DFL (content_main.cc:108);
+        // mpv's PreciseTimer.terminate() sends pthread_kill(SIGALRM), so
+        // restore a no-op handler before tearing down the timer.
         signal(SIGALRM, [](int){});
         g_mpv.TerminateDestroy();
         mpv_done.store(true, std::memory_order_release);
