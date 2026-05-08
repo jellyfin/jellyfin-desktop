@@ -104,6 +104,19 @@ struct WlState {
 
 static WlState g_wl;
 
+// Fade thread state. Joinable so wl_cleanup can stop it before destroying
+// the surfaces and alpha modifier it touches — Alt+F4 mid-fade otherwise
+// races destruction against the next iteration's set_multiplier/commit.
+static std::thread g_fade_thread;
+static std::atomic<bool> g_fade_stop{false};
+
+static void stop_fade_thread() {
+    if (g_fade_thread.joinable()) {
+        g_fade_stop.store(true, std::memory_order_release);
+        g_fade_thread.join();
+    }
+}
+
 static void update_surface_size_locked(int lw, int lh, int pw, int ph);
 static void wl_begin_transition_locked();
 static void wl_end_transition_locked();
@@ -603,7 +616,10 @@ static void wl_fade_overlay(float fade_sec,
         return;
     }
 
-    std::thread([fade_sec,
+    stop_fade_thread();
+    g_fade_stop.store(false, std::memory_order_release);
+
+    g_fade_thread = std::thread([fade_sec,
                  on_fade_start = std::move(on_fade_start),
                  on_complete = std::move(on_complete)]() {
         if (on_fade_start) on_fade_start();
@@ -613,7 +629,9 @@ static void wl_fade_overlay(float fade_sec,
         if (total_frames < 1) total_frames = 1;
         auto frame_duration = std::chrono::microseconds(1000000 / fps);
 
+        bool aborted = false;
         for (int i = 1; i <= total_frames; i++) {
+            if (g_fade_stop.load(std::memory_order_acquire)) { aborted = true; break; }
             float t = static_cast<float>(i) / total_frames;
             uint32_t alpha = static_cast<uint32_t>((1.0f - t) * UINT32_MAX);
 
@@ -627,9 +645,14 @@ static void wl_fade_overlay(float fade_sec,
             std::this_thread::sleep_for(frame_duration);
         }
 
+        // On abort (shutdown), skip touching wayland surfaces and the CEF
+        // overlay browser — wl_cleanup is about to destroy the surfaces and
+        // CefShutdown has already (or is about to) tear down the browser.
+        if (aborted) return;
+
         wl_set_overlay_visible(false);
         if (on_complete) on_complete();
-    }).detach();
+    });
 }
 
 // =====================================================================
@@ -1146,6 +1169,8 @@ static float wl_get_scale() {
 }
 
 static void wl_cleanup() {
+    stop_fade_thread();
+
     // Null the trampolines we installed into mpv's configure/close hooks
     // before destroying the g_wl state they read. They keep being invoked
     // until mpv itself is torn down, which happens after this function.
