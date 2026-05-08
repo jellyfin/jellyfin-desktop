@@ -489,7 +489,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-    initLogging(log_path.c_str(), log_level);
+    LoggingScope logging(log_path.c_str(), log_level);
 
     LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_FULL);
     LOG_INFO(LOG_MAIN, "CEF {}", CEF_VERSION);
@@ -1068,6 +1068,5 @@ int main(int argc, char* argv[]) {
     if (g_platform.post_window_cleanup)
         g_platform.post_window_cleanup();
 
-    shutdownLogging();
     return 0;
 }
