@@ -551,6 +551,8 @@ add_custom_target(embedded_resources DEPENDS ${EMBEDDED_RESOURCES_HEADER})
 if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
+        src/event_dispatcher.cpp
+        src/shutdown.cpp
         src/logging.cpp
         src/log_redact.cpp
         src/single_instance.cpp
@@ -578,6 +580,8 @@ else()
     # Linux + macOS: shared main with platform abstraction
     set(COMMON_SOURCES
         src/main.cpp
+        src/event_dispatcher.cpp
+        src/shutdown.cpp
         src/logging.cpp
         src/log_redact.cpp
         src/mpv/event.cpp
