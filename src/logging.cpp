@@ -229,7 +229,7 @@ const std::string& activeLogPath() {
     return g_active_log_path;
 }
 
-void initLogging(const char* path, LogLevel min_level) {
+static void initLogging(const char* path, LogLevel min_level) {
     g_active_log_path = (path && path[0]) ? path : "";
 
     quill::Backend::start();
@@ -268,11 +268,19 @@ void initLogging(const char* path, LogLevel min_level) {
     initStderrCapture();
 }
 
-void shutdownLogging() {
+static void shutdownLogging() {
     shutdownStderrCapture();
     for (auto*& logger : g_loggers) {
         if (logger) logger->flush_log();
         logger = nullptr;
     }
     quill::Backend::stop();
+}
+
+LoggingScope::LoggingScope(const char* path, LogLevel min_level) {
+    initLogging(path, min_level);
+}
+
+LoggingScope::~LoggingScope() {
+    shutdownLogging();
 }

@@ -60,15 +60,12 @@ inline cef_log_severity_t toCefSeverity(LogLevel level) {
     return LOGSEVERITY_DEFAULT;
 }
 
-// Install the log file at `path` (rotated on startup + at 10 MB, 3 backups)
-// and redirect this process's stderr through the logger so writes from
-// CEF/Chromium (and subprocesses that inherit our stderr) land in the log.
-// Empty/null path disables file logging; stderr is still captured.
-// Call once before spawning any subprocess.
-void initLogging(const char* path, LogLevel min_level);
-
-// Flush and stop the backend, drain the stderr capture, close files.
-void shutdownLogging();
+// Logging lifetime. Construct before spawning subprocesses.
+class LoggingScope {
+public:
+    LoggingScope(const char* path, LogLevel min_level);
+    ~LoggingScope();
+};
 
 // Path of the active log file, or empty string when file logging is disabled.
 const std::string& activeLogPath();
