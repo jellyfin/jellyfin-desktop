@@ -1146,6 +1146,23 @@ static float wl_get_scale() {
 }
 
 static void wl_cleanup() {
+    // Null the trampolines we installed into mpv's configure/close hooks
+    // before destroying the g_wl state they read. They keep being invoked
+    // until mpv itself is torn down, which happens after this function.
+    {
+        intptr_t cb_ptr = 0;
+        g_mpv.GetWaylandConfigureCbPtr(cb_ptr);
+        if (cb_ptr) {
+            auto* fn = reinterpret_cast<void(**)(void*, int, int, bool)>(cb_ptr);
+            *fn = nullptr;
+        }
+        g_mpv.GetWaylandCloseCbPtr(cb_ptr);
+        if (cb_ptr) {
+            auto* fn = reinterpret_cast<void(**)(void*)>(cb_ptr);
+            *fn = nullptr;
+        }
+    }
+
     wl_cleanup_kde_palette();
     idle_inhibit::cleanup();
     // Clipboard worker owns its own thread + wl_event_queue; must shut
