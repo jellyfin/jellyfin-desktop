@@ -22,6 +22,25 @@ private:
 public:
     explicit MpvHandle(mpv_handle* h = nullptr) : handle_(h) {}
 
+    ~MpvHandle() {
+        if (handle_) mpv_terminate_destroy(handle_);
+    }
+
+    MpvHandle(const MpvHandle&) = delete;
+    MpvHandle& operator=(const MpvHandle&) = delete;
+
+    MpvHandle(MpvHandle&& other) noexcept : handle_(other.handle_) {
+        other.handle_ = nullptr;
+    }
+    MpvHandle& operator=(MpvHandle&& other) noexcept {
+        if (this != &other) {
+            if (handle_) mpv_terminate_destroy(handle_);
+            handle_ = other.handle_;
+            other.handle_ = nullptr;
+        }
+        return *this;
+    }
+
     // =====================================================================
     // Creation and initialization
     // =====================================================================
@@ -37,6 +56,10 @@ public:
         return mpv_initialize(handle_);
     }
 
+    // Explicit destruction. Used on the macOS shutdown path where mpv must
+    // be torn down off the main thread to avoid a GCD deadlock — the dtor
+    // would otherwise fire on the main thread at scope exit. On other
+    // platforms, prefer letting the dtor run.
     void TerminateDestroy() {
         if (handle_) {
             mpv_terminate_destroy(handle_);

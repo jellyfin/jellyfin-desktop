@@ -41,3 +41,16 @@ bool Initialize();
 void Shutdown();
 
 }  // namespace CefRuntime
+
+// CEF runtime lifetime.
+class CefRuntimeScope {
+public:
+    CefRuntimeScope() : ok_(CefRuntime::Initialize()) {}
+    ~CefRuntimeScope() { if (ok_) CefRuntime::Shutdown(); }
+    bool ok() const { return ok_; }
+
+    CefRuntimeScope(const CefRuntimeScope&) = delete;
+    CefRuntimeScope& operator=(const CefRuntimeScope&) = delete;
+private:
+    bool ok_;
+};
