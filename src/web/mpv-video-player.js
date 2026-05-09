@@ -265,14 +265,14 @@
 
         createMediaElement(options) {
             let dlg = document.querySelector('.videoPlayerContainer');
-            if (!dlg) {
+            const isNewDlg = !dlg;
+            if (isNewDlg) {
                 if (window.jmpNative) window.jmpNative.playerOsdActive(true);
                 dlg = document.createElement('div');
                 dlg.classList.add('videoPlayerContainer');
                 dlg.style.cssText = 'position:fixed;top:0;bottom:0;left:0;right:0;display:flex;align-items:center;background:transparent;';
                 if (options.fullscreen) dlg.style.zIndex = 1000;  // fills entire web content area, not the actual screen
                 document.body.insertBefore(dlg, document.body.firstChild);
-                this.setTransparency(2);
                 this._videoDialog = dlg;
 
                 this.connectSignals();
@@ -282,16 +282,29 @@
             } else {
                 this._videoDialog = dlg;
             }
-            if (options.backdropUrl) {
-                const existing = dlg.querySelector('.mpvPoster');
-                if (existing) existing.remove();
-                const poster = document.createElement('div');
-                poster.classList.add('mpvPoster');
-                poster.style.cssText = `position:absolute;top:0;left:0;right:0;bottom:0;background:#000 url('${options.backdropUrl}') center/cover no-repeat;`;
-                dlg.appendChild(poster);
-            }
+
+            const existing = dlg.querySelector('.mpvPoster');
+            if (existing) existing.remove();
+            const poster = document.createElement('div');
+            poster.classList.add('mpvPoster');
+            const bg = options.backdropUrl
+                ? `#000 url('${options.backdropUrl}') center/cover no-repeat`
+                : '#000';
+            poster.style.cssText = `position:absolute;top:0;left:0;right:0;bottom:0;background:${bg};`;
+
+            const ready = new Promise((resolve) => {
+                if (isNewDlg && options.fullscreen) {
+                    dlg.style.animation = 'mpv-video-zoomin 240ms ease-in normal';
+                    dlg.addEventListener('animationend', resolve, { once: true });
+                } else {
+                    resolve();
+                }
+            });
+            if (isNewDlg) ready.then(() => this.setTransparency(2));
+            dlg.appendChild(poster);
+
             if (options.fullscreen) document.body.classList.add('hide-scroll');  // fills entire web content area, not the actual screen
-            return Promise.resolve();
+            return ready;
         }
 
         canPlayMediaType(mediaType) {
