@@ -8,14 +8,13 @@
 #include "../mpv/event.h"
 #include "../player/media_session.h"
 #include "../player/media_session_thread.h"
+#include "../player/playback_coordinator.h"
 #include "../theme_color.h"
 #include "../cef/color.h"
 #include "../input/dispatch.h"
 #include "../cjson/cJSON.h"
 #include "../paths/paths.h"
 #include "../jellyfin/device_profile.h"
-
-extern void update_idle_inhibit();
 
 // =====================================================================
 // Helpers
@@ -230,9 +229,8 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);
-        g_media_type = meta.media_type;
+        if (g_playback_coord) g_playback_coord->postMediaType(meta.media_type);
         if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
-        update_idle_inhibit();
         if (g_media_session)
             g_media_session->setMetadata(meta);
     } else if (name == "notifyArtwork") {
@@ -246,14 +244,9 @@ bool WebBrowser::handleMessage(const std::string& name,
             g_media_session->setCanGoPrevious(canPrev);
         }
     } else if (name == "notifyPlaybackState") {
-        std::string state = args->GetString(0).ToString();
-        if (g_media_session) {
-            if (state == "Playing") g_media_session->setPlaybackState(PlaybackState::Playing);
-            else if (state == "Paused") g_media_session->setPlaybackState(PlaybackState::Paused);
-            else g_media_session->setPlaybackState(PlaybackState::Stopped);
-        }
-        if (state != "Playing" && state != "Paused" && g_theme_color)
-            g_theme_color->setVideoMode(false);
+        // mpv is the authoritative playback-state source via the coordinator.
+        // JS still emits this hint as it navigates; ignore it for state but
+        // keep the IPC callable so the JS side does not see a missing handler.
     } else if (name == "notifySeek") {
         int posMs = getIntArg(args, 0);
         if (g_media_session)

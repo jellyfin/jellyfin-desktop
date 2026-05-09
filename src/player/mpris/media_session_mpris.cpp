@@ -412,19 +412,12 @@ void MprisBackend::setArtwork(const std::string& dataUri) {
 void MprisBackend::setPlaybackState(PlaybackState state) {
     state_ = state;
 
-    // Clear state when stopped (JS only sends Stopped when truly stopped, not navigating)
+    // Clear playback-shaped fields when stopped. The coordinator drives
+    // explicit seeking/buffering false transitions through setBuffering /
+    // (lack of) emitSeeking — do not implicitly clear them here.
     if (state == PlaybackState::Stopped) {
         metadata_ = MediaMetadata{};
         position_us_ = 0;
-        seeking_ = false;
-        buffering_ = false;
-    }
-
-    // When resuming playback, clear all rate locks and restore pending rate
-    if (state == PlaybackState::Playing && (seeking_ || buffering_)) {
-        seeking_ = false;
-        buffering_ = false;
-        syncRate();
     }
 
     // Emit all capability-related properties when state changes

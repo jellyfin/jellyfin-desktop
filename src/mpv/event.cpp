@@ -63,6 +63,7 @@ void observe_properties(MpvHandle& mpv) {
     mpv.ObservePropertyDouble(MPV_OBSERVE_DISPLAY_FPS, "display-fps");
     mpv.ObservePropertyNode(MPV_OBSERVE_CACHE_STATE, "demuxer-cache-state");
     mpv.ObservePropertyFlag(MPV_OBSERVE_WINDOW_MAX, "window-maximized");
+    mpv.ObservePropertyFlag(MPV_OBSERVE_PAUSED_FOR_CACHE, "paused-for-cache");
 }
 
 MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
@@ -125,6 +126,11 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
     case MPV_OBSERVE_SEEKING:
         if (p->format != MPV_FORMAT_FLAG) break;
         ev.type = MpvEventType::SEEKING;
+        ev.flag = *static_cast<int*>(p->data) != 0;
+        break;
+    case MPV_OBSERVE_PAUSED_FOR_CACHE:
+        if (p->format != MPV_FORMAT_FLAG) break;
+        ev.type = MpvEventType::PAUSED_FOR_CACHE;
         ev.flag = *static_cast<int*>(p->data) != 0;
         break;
     case MPV_OBSERVE_WINDOW_MAX:

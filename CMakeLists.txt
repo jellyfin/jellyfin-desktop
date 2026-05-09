@@ -129,6 +129,9 @@ if(APPLE)
         src/player/media_session.cpp
         src/player/macos/media_session_macos.mm
         src/player/media_session_thread.cpp
+        src/player/playback_state_machine.cpp
+        src/player/playback_coordinator.cpp
+        src/player/playback_sinks.cpp
     )
 
     # LetsMove - prompts user to move app to /Applications (clears quarantine)
@@ -157,6 +160,9 @@ elseif(WIN32)
         src/player/media_session.cpp
         src/player/windows/media_session_windows.cpp
         src/player/media_session_thread.cpp
+        src/player/playback_state_machine.cpp
+        src/player/playback_coordinator.cpp
+        src/player/playback_sinks.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
     )
     set(PLATFORM_LIBRARIES
@@ -332,6 +338,9 @@ else()
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
         src/player/media_session_thread.cpp
+        src/player/playback_state_machine.cpp
+        src/player/playback_coordinator.cpp
+        src/player/playback_sinks.cpp
         # Wayland
         src/platform/wayland.cpp
         src/clipboard/wayland.cpp
