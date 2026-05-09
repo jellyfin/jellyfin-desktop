@@ -115,7 +115,11 @@ void BrowserPlaybackSink::deliver(const PlaybackEvent& ev) {
     }
     case PlaybackEvent::Kind::BufferingChanged:
     case PlaybackEvent::Kind::MediaTypeChanged:
-        // Not surfaced via this sink.
+    case PlaybackEvent::Kind::MetadataChanged:
+    case PlaybackEvent::Kind::ArtworkChanged:
+    case PlaybackEvent::Kind::QueueCapsChanged:
+    case PlaybackEvent::Kind::Seeked:
+        // Not surfaced via this sink. JS already owns metadata.
         break;
     }
 }

@@ -1,11 +1,11 @@
-#include "cef_thread_sinks.h"
+#include "queued_sink.h"
 
 namespace {
 constexpr size_t kEventSinkCapacity = 256;
 constexpr size_t kActionSinkCapacity = 64;
 }  // namespace
 
-bool CefThreadPlaybackSink::tryPost(const PlaybackEvent& ev) {
+bool QueuedPlaybackSink::tryPost(const PlaybackEvent& ev) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (queue_.size() >= kEventSinkCapacity) return false;
@@ -15,7 +15,7 @@ bool CefThreadPlaybackSink::tryPost(const PlaybackEvent& ev) {
     return true;
 }
 
-void CefThreadPlaybackSink::pump() {
+void QueuedPlaybackSink::pump() {
     std::deque<PlaybackEvent> drained;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -24,7 +24,7 @@ void CefThreadPlaybackSink::pump() {
     for (const auto& ev : drained) deliver(ev);
 }
 
-bool CefThreadActionSink::tryPost(const PlaybackAction& act) {
+bool QueuedActionSink::tryPost(const PlaybackAction& act) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (queue_.size() >= kActionSinkCapacity) return false;
@@ -34,7 +34,7 @@ bool CefThreadActionSink::tryPost(const PlaybackAction& act) {
     return true;
 }
 
-void CefThreadActionSink::pump() {
+void QueuedActionSink::pump() {
     std::deque<PlaybackAction> drained;
     {
         std::lock_guard<std::mutex> lock(mutex_);

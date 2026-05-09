@@ -107,7 +107,7 @@ add_test(NAME playback_coordinator_test COMMAND playback_coordinator_test)
 if(UNIX AND NOT APPLE)
     add_executable(mpris_projection_test
         mpris_projection_test.cpp
-        ${CMAKE_SOURCE_DIR}/src/player/mpris/mpris_projection.cpp
+        ${CMAKE_SOURCE_DIR}/src/playback/sinks/mpris/mpris_projection.cpp
     )
     target_include_directories(mpris_projection_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src
