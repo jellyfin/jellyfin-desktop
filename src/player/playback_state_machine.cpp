@@ -42,6 +42,11 @@ std::vector<PlaybackEvent> PlaybackStateMachine::onFileLoaded() {
     pending_load_ = false;
     pause_requested_ = false;
     frame_available_ = false;
+    // mpv loads paused; queue the pending vid/aid/sid selection + unpause.
+    // Action sinks fire this on the cef consumer thread (preserves the
+    // old ordering relative to FILE_LOADED draining).
+    pending_actions_.push_back(
+        {PlaybackAction::Kind::ApplyPendingTrackSelectionAndPlay});
     return {{PlaybackEvent::Kind::TrackLoaded}};
 }
 
@@ -202,14 +207,74 @@ std::vector<PlaybackEvent> PlaybackStateMachine::onCoreIdle(bool core_idle) {
 }
 
 std::vector<PlaybackEvent> PlaybackStateMachine::onPosition(int64_t position_us) {
+    if (s_.position_us == position_us && !s_.seeking) return {};
     s_.position_us = position_us;
+    std::vector<PlaybackEvent> out;
     if (s_.seeking) {
         s_.seeking = false;
-        PlaybackEvent e{PlaybackEvent::Kind::SeekingChanged};
-        e.flag = false;
-        return {e};
+        PlaybackEvent se{PlaybackEvent::Kind::SeekingChanged};
+        se.flag = false;
+        out.push_back(se);
     }
-    return {};
+    out.push_back({PlaybackEvent::Kind::PositionChanged});
+    return out;
+}
+
+std::vector<PlaybackEvent> PlaybackStateMachine::onSpeed(double rate) {
+    if (s_.rate == rate) return {};
+    s_.rate = rate;
+    return {{PlaybackEvent::Kind::RateChanged}};
+}
+
+std::vector<PlaybackEvent> PlaybackStateMachine::onDuration(int64_t duration_us) {
+    if (s_.duration_us == duration_us) return {};
+    s_.duration_us = duration_us;
+    return {{PlaybackEvent::Kind::DurationChanged}};
+}
+
+std::vector<PlaybackEvent> PlaybackStateMachine::onFullscreen(bool fullscreen, bool was_maximized) {
+    if (s_.fullscreen == fullscreen) return {};
+    s_.fullscreen = fullscreen;
+    s_.maximized_before_fullscreen = fullscreen ? was_maximized : false;
+    return {{PlaybackEvent::Kind::FullscreenChanged}};
+}
+
+std::vector<PlaybackEvent> PlaybackStateMachine::onOsdDims(int lw, int lh, int pw, int ph) {
+    if (s_.layout_w == lw && s_.layout_h == lh && s_.pixel_w == pw && s_.pixel_h == ph)
+        return {};
+    s_.layout_w = lw;
+    s_.layout_h = lh;
+    s_.pixel_w = pw;
+    s_.pixel_h = ph;
+    return {{PlaybackEvent::Kind::OsdDimsChanged}};
+}
+
+std::vector<PlaybackEvent> PlaybackStateMachine::onBufferedRanges(std::vector<PlaybackBufferedRange> ranges) {
+    if (ranges.size() == s_.buffered.size()) {
+        bool same = true;
+        for (size_t i = 0; i < ranges.size(); ++i) {
+            if (ranges[i].start_ticks != s_.buffered[i].start_ticks ||
+                ranges[i].end_ticks   != s_.buffered[i].end_ticks) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return {};
+    }
+    s_.buffered = std::move(ranges);
+    return {{PlaybackEvent::Kind::BufferedRangesChanged}};
+}
+
+std::vector<PlaybackEvent> PlaybackStateMachine::onDisplayHz(int hz) {
+    if (s_.display_hz == hz) return {};
+    s_.display_hz = hz;
+    return {{PlaybackEvent::Kind::DisplayHzChanged}};
+}
+
+std::vector<PlaybackAction> PlaybackStateMachine::consumeActions() {
+    std::vector<PlaybackAction> out;
+    out.swap(pending_actions_);
+    return out;
 }
 
 std::vector<PlaybackEvent> PlaybackStateMachine::onVideoFrameAvailable(bool available) {
@@ -227,9 +292,7 @@ std::vector<PlaybackEvent> PlaybackStateMachine::onVideoFrameAvailable(bool avai
 std::vector<PlaybackEvent> PlaybackStateMachine::onMediaType(MediaType type) {
     if (s_.media_type == type) return {};
     s_.media_type = type;
-    PlaybackEvent e{PlaybackEvent::Kind::MediaTypeChanged};
-    e.media_type = type;
-    std::vector<PlaybackEvent> out{e};
+    std::vector<PlaybackEvent> out{{PlaybackEvent::Kind::MediaTypeChanged}};
     // Switching to Audio relaxes the frame-available gate; promote now if
     // the rest of the conditions are met.
     if (s_.phase == PlaybackPhase::Starting && pause_requested_ && !s_.buffering

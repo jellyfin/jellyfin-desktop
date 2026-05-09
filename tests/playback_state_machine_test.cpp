@@ -394,7 +394,7 @@ TEST_CASE("media type changes are edge-triggered") {
     auto a = sm.onMediaType(MediaType::Video);
     CHECK(a.size() == 1);
     CHECK(a[0].kind == PlaybackEvent::Kind::MediaTypeChanged);
-    CHECK(a[0].media_type == MediaType::Video);
+    CHECK(sm.snapshot().media_type == MediaType::Video);
     auto b = sm.onMediaType(MediaType::Video);
     CHECK(b.empty());
     auto c = sm.onMediaType(MediaType::Audio);

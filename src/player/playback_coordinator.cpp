@@ -18,6 +18,10 @@ void PlaybackCoordinator::addSink(std::shared_ptr<PlaybackEventSink> sink) {
     sinks_.push_back(std::move(sink));
 }
 
+void PlaybackCoordinator::addActionSink(std::shared_ptr<PlaybackActionSink> sink) {
+    action_sinks_.push_back(std::move(sink));
+}
+
 void PlaybackCoordinator::start() {
     if (running_.exchange(true)) return;
     thread_ = std::thread(&PlaybackCoordinator::worker, this);
@@ -96,6 +100,43 @@ void PlaybackCoordinator::postVideoFrameAvailable(bool available) {
     enqueue(std::move(in));
 }
 
+void PlaybackCoordinator::postSpeed(double rate) {
+    Input in{Input::Kind::Speed};
+    in.dbl = rate;
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postDuration(int64_t duration_us) {
+    Input in{Input::Kind::Duration};
+    in.i64 = duration_us;
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postFullscreen(bool fullscreen, bool was_maximized) {
+    Input in{Input::Kind::Fullscreen};
+    in.flag = fullscreen;
+    in.flag2 = was_maximized;
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postOsdDims(int lw, int lh, int pw, int ph) {
+    Input in{Input::Kind::OsdDims};
+    in.lw = lw; in.lh = lh; in.pw = pw; in.ph = ph;
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postBufferedRanges(std::vector<PlaybackBufferedRange> ranges) {
+    Input in{Input::Kind::BufferedRanges};
+    in.ranges = std::move(ranges);
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postDisplayHz(int hz) {
+    Input in{Input::Kind::DisplayHz};
+    in.hz = hz;
+    enqueue(std::move(in));
+}
+
 PlaybackSnapshot PlaybackCoordinator::snapshot() const {
     std::lock_guard<std::mutex> lock(snapshot_mutex_);
     return snapshot_;
@@ -134,6 +175,24 @@ void PlaybackCoordinator::apply(const Input& in, std::vector<PlaybackEvent>& out
     case Input::Kind::VideoFrameAvailable:
         emitted = sm_.onVideoFrameAvailable(in.flag);
         break;
+    case Input::Kind::Speed:
+        emitted = sm_.onSpeed(in.dbl);
+        break;
+    case Input::Kind::Duration:
+        emitted = sm_.onDuration(in.i64);
+        break;
+    case Input::Kind::Fullscreen:
+        emitted = sm_.onFullscreen(in.flag, in.flag2);
+        break;
+    case Input::Kind::OsdDims:
+        emitted = sm_.onOsdDims(in.lw, in.lh, in.pw, in.ph);
+        break;
+    case Input::Kind::BufferedRanges:
+        emitted = sm_.onBufferedRanges(in.ranges);
+        break;
+    case Input::Kind::DisplayHz:
+        emitted = sm_.onDisplayHz(in.hz);
+        break;
     }
     for (auto& e : emitted) out.push_back(std::move(e));
 }
@@ -165,13 +224,25 @@ void PlaybackCoordinator::worker() {
         }
 
         std::vector<PlaybackEvent> events;
-        for (const auto& in : work) apply(in, events);
+        std::vector<PlaybackAction> actions;
+        for (const auto& in : work) {
+            apply(in, events);
+            auto produced = sm_.consumeActions();
+            for (auto& a : produced) actions.push_back(std::move(a));
+        }
 
-        // Publish snapshot under its own lock; readers must observe
-        // post-transition state.
+        // Stamp every event with the live snapshot so sinks never pull
+        // from coord. Snapshot is the post-transition value of all
+        // events emitted in this batch (sinks treat each event as the
+        // edge that produced this state).
+        PlaybackSnapshot snap = sm_.snapshot();
+        for (auto& e : events) e.snapshot = snap;
+
+        // Publish snapshot under its own lock for non-event readers
+        // (hotkeys, idle inhibit reads outside the event path).
         {
             std::lock_guard<std::mutex> lock(snapshot_mutex_);
-            snapshot_ = sm_.snapshot();
+            snapshot_ = snap;
         }
 
         // Sinks deliver via their own executor; tryPost must not block.
@@ -180,6 +251,11 @@ void PlaybackCoordinator::worker() {
         for (auto& sink : sinks_) {
             for (const auto& e : events) {
                 (void)sink->tryPost(e);
+            }
+        }
+        for (auto& sink : action_sinks_) {
+            for (const auto& a : actions) {
+                (void)sink->tryPost(a);
             }
         }
     }

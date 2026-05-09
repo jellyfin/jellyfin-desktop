@@ -335,10 +335,18 @@ static int run_with_cef(int mw, int mh,
     PlaybackCoordinatorScope coord_scope;
     g_playback_coord = &coord_scope.coord();
     auto browser_sink = std::make_shared<BrowserPlaybackSink>();
+    auto idle_inhibit_sink = std::make_shared<IdleInhibitSink>();
+    auto theme_color_sink = std::make_shared<ThemeColorSink>();
+    auto mpv_action_sink = std::make_shared<MpvActionSink>();
     coord_scope.coord().addSink(browser_sink);
+    coord_scope.coord().addSink(idle_inhibit_sink);
+    coord_scope.coord().addSink(theme_color_sink);
     coord_scope.coord().addSink(
         std::make_shared<MediaSessionPlaybackSink>(&media_session_thread));
-    set_browser_playback_sink(browser_sink);
+    coord_scope.coord().addActionSink(mpv_action_sink);
+    register_cef_thread_sinks(
+        {browser_sink, idle_inhibit_sink, theme_color_sink},
+        {mpv_action_sink});
 
     // Start before waitForLoad so mpv events (OSD_DIMS especially) reach
     // the platform/browsers during the overlay-only startup phase, before

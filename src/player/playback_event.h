@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "media_session.h"
 
@@ -16,6 +17,13 @@ enum class PlaybackPhase { Starting, Playing, Paused, Stopped };
 // Reason an mpv END_FILE event fired. Mirrors mpv's MPV_END_FILE_REASON_*.
 enum class EndReason { Eof, Error, Canceled };
 
+// Mirror of mpv's BufferedRange in coord/SM-facing form. Decoupled from
+// the mpv-side fixed-size array so the SM has no mpv dependency.
+struct PlaybackBufferedRange {
+    int64_t start_ticks = 0;  // 100ns units
+    int64_t end_ticks = 0;
+};
+
 struct PlaybackSnapshot {
     PlayerPresence presence = PlayerPresence::None;
     PlaybackPhase phase = PlaybackPhase::Stopped;
@@ -29,11 +37,22 @@ struct PlaybackSnapshot {
     // distinguish "user is reloading the same item" from a fresh track
     // change without re-deriving identity.
     bool variant_switch_pending = false;
+
+    // mpv-derived state mirrored into the SM so every consumer sees one
+    // coherent snapshot at event-emission time. No pull from coord.
+    double rate = 1.0;
+    int64_t duration_us = 0;
+    bool fullscreen = false;
+    bool maximized_before_fullscreen = false;
+    int layout_w = 0, layout_h = 0;
+    int pixel_w = 0, pixel_h = 0;
+    int display_hz = 0;
+    std::vector<PlaybackBufferedRange> buffered;
 };
 
 // Semantic playback events emitted by the state machine to all sinks.
-// SeekingChanged/BufferingChanged carry the new flag value.
-// MediaTypeChanged carries the new media_type. Error carries a message.
+// Each event carries a full snapshot of post-transition state so sinks
+// never need to pull from the coordinator.
 struct PlaybackEvent {
     enum class Kind {
         Started,
@@ -45,11 +64,28 @@ struct PlaybackEvent {
         BufferingChanged,
         MediaTypeChanged,
         TrackLoaded,
+        PositionChanged,
+        DurationChanged,
+        RateChanged,
+        FullscreenChanged,
+        OsdDimsChanged,
+        BufferedRangesChanged,
+        DisplayHzChanged,
     };
     Kind kind = Kind::Started;
-    bool flag = false;
-    MediaType media_type = MediaType::Unknown;
-    std::string error_message;
+    bool flag = false;          // SeekingChanged/BufferingChanged value
+    std::string error_message;  // Error
+    PlaybackSnapshot snapshot;  // post-transition state
+};
+
+// Coord-side actions emitted by the SM alongside events. Distinct from
+// events because these fire side-effecting commands (e.g. mpv async
+// property writes) rather than notifying observers of state changes.
+struct PlaybackAction {
+    enum class Kind {
+        ApplyPendingTrackSelectionAndPlay,
+    };
+    Kind kind;
 };
 
 // Narrow non-blocking interface. Coordinator calls tryPost from the
@@ -60,4 +96,10 @@ class PlaybackEventSink {
 public:
     virtual ~PlaybackEventSink() = default;
     virtual bool tryPost(const PlaybackEvent& ev) = 0;
+};
+
+class PlaybackActionSink {
+public:
+    virtual ~PlaybackActionSink() = default;
+    virtual bool tryPost(const PlaybackAction& act) = 0;
 };

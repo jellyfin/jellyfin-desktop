@@ -28,6 +28,7 @@ public:
     PlaybackCoordinator& operator=(const PlaybackCoordinator&) = delete;
 
     void addSink(std::shared_ptr<PlaybackEventSink> sink);
+    void addActionSink(std::shared_ptr<PlaybackActionSink> sink);
 
     void start();
     void stop();
@@ -43,6 +44,12 @@ public:
     void postPosition(int64_t position_us);
     void postMediaType(MediaType type);
     void postVideoFrameAvailable(bool available);
+    void postSpeed(double rate);
+    void postDuration(int64_t duration_us);
+    void postFullscreen(bool fullscreen, bool was_maximized);
+    void postOsdDims(int lw, int lh, int pw, int ph);
+    void postBufferedRanges(std::vector<PlaybackBufferedRange> ranges);
+    void postDisplayHz(int hz);
 
     // Canonical snapshot. Read-only consumers (hotkeys, idle inhibit)
     // call this instead of touching the SM directly.
@@ -53,14 +60,21 @@ private:
         enum class Kind {
             FileLoaded, LoadStarting, PauseChanged, EndFile,
             SeekingChanged, PausedForCache, CoreIdle, Position, MediaType,
-            VideoFrameAvailable,
+            VideoFrameAvailable, Speed, Duration, Fullscreen, OsdDims,
+            BufferedRanges, DisplayHz,
         };
         Kind kind;
         bool flag = false;
+        bool flag2 = false;     // Fullscreen: was_maximized
         int64_t i64 = 0;
+        double dbl = 0.0;       // Speed
+        int lw = 0, lh = 0;     // OsdDims
+        int pw = 0, ph = 0;     // OsdDims
+        int hz = 0;             // DisplayHz
         EndReason reason = EndReason::Eof;
         ::MediaType media_type = ::MediaType::Unknown;
         std::string str;
+        std::vector<PlaybackBufferedRange> ranges;
     };
 
     void enqueue(Input in);
@@ -68,6 +82,7 @@ private:
     void apply(const Input& in, std::vector<PlaybackEvent>& out);
 
     std::vector<std::shared_ptr<PlaybackEventSink>> sinks_;
+    std::vector<std::shared_ptr<PlaybackActionSink>> action_sinks_;
 
     std::mutex queue_mutex_;
     std::deque<Input> queue_;
