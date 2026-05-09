@@ -442,6 +442,7 @@
         // This CSS makes CEF report CT_NONE so the native side can hide the OS cursor.
         const style = document.createElement('style');
         let css = 'body.mouseIdle, body.mouseIdle * { cursor: none !important; }';
+        css += '\n@keyframes mpv-video-zoomin { from { transform: scale3d(0.2, 0.2, 0.2); opacity: 0.6; } to { transform: none; opacity: initial; } }';
 
         // macOS: offset UI elements so traffic lights don't overlap content
         if (navigator.platform.startsWith('Mac') && jmpInfo.settings.advanced.transparentTitlebar) {
