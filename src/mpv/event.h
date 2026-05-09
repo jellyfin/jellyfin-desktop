@@ -20,6 +20,8 @@ enum class MpvEventType {
     DISPLAY_FPS,
     BUFFERED_RANGES,
     PAUSED_FOR_CACHE,
+    CORE_IDLE,
+    VIDEO_FRAME_INFO,
 };
 
 static constexpr int MAX_BUFFERED_RANGES = 8;
@@ -54,6 +56,8 @@ enum MpvObserveId : uint64_t {
     MPV_OBSERVE_WINDOW_MAX    = 11,
     MPV_OBSERVE_DISPLAY_SCALE = 12,
     MPV_OBSERVE_PAUSED_FOR_CACHE = 13,
+    MPV_OBSERVE_CORE_IDLE        = 14,
+    MPV_OBSERVE_VIDEO_FRAME_INFO = 15,
 };
 
 class MpvHandle;

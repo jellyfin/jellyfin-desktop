@@ -236,10 +236,14 @@ static void initLogging(const char* path, LogLevel min_level) {
 
     std::vector<std::shared_ptr<quill::Sink>> sinks;
 
-    // Terminal: just "[Category] message", no timestamp/level.
+    // Terminal: "[Category] message"; at Trace level prepend a millisecond
+    // timestamp so trace output can be correlated with the file log.
     quill::ConsoleSinkConfig console_config;
+    const bool trace = min_level == LogLevel::Trace;
     console_config.set_override_pattern_formatter_options(quill::PatternFormatterOptions{
-        "[%(logger)] %(message)", "", quill::Timezone::LocalTime});
+        trace ? "%(time) [%(logger)] %(message)" : "[%(logger)] %(message)",
+        trace ? "%H:%M:%S.%Qms" : "",
+        quill::Timezone::LocalTime});
     sinks.push_back(quill::Frontend::create_or_get_sink<ConsoleSinkSanitizing>(
         "console_sink", console_config));
 

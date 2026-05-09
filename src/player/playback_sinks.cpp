@@ -42,15 +42,20 @@ bool MediaSessionPlaybackSink::tryPost(const PlaybackEvent& ev) {
         session_->setPlaybackState(PlaybackState::Stopped);
         break;
     case PlaybackEvent::Kind::SeekingChanged:
-        if (ev.flag) session_->emitSeeking();
-        // false transitions surface via the snapshot; backends infer
-        // resume from the next setPlaybackState/setPosition pair.
+        session_->setSeeking(ev.flag);
         break;
     case PlaybackEvent::Kind::BufferingChanged:
         session_->setBuffering(ev.flag);
         break;
     case PlaybackEvent::Kind::MediaTypeChanged:
         // Media metadata IPC carries the type; nothing to forward here.
+        break;
+    case PlaybackEvent::Kind::TrackLoaded:
+        // Pre-roll: track is loaded, mpv has not yet flipped pause=false.
+        // Map to Paused so macOS/Windows NowPlaying shows the new track
+        // immediately, and so MPRIS recompute picks up phase=Starting +
+        // the new metadata content_ that the IPC handler already wrote.
+        session_->setPlaybackState(PlaybackState::Paused);
         break;
     }
     return true;

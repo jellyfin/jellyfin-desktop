@@ -26,6 +26,8 @@ static MediaMetadata parseMetadataJson(const std::string& json) {
     if (!root) return meta;
 
     cJSON* item;
+    if ((item = cJSON_GetObjectItem(root, "Id")) && cJSON_IsString(item))
+        meta.id = item->valuestring;
     if ((item = cJSON_GetObjectItem(root, "Name")) && cJSON_IsString(item))
         meta.title = item->valuestring;
     if ((item = cJSON_GetObjectItem(root, "SeriesName")) && cJSON_IsString(item))
@@ -155,11 +157,34 @@ bool WebBrowser::handleMessage(const std::string& name,
         // their audio-add / sub-add can be queued before the FILE_LOADED-
         // driven unpause, gating playback on each external file being
         // opened and its track selected.
+        std::string metadataJson = args->GetSize() > 5 ? args->GetString(5).ToString() : "";
         std::string externalAudioUrl = args->GetSize() > 6 ? args->GetString(6).ToString() : "";
         std::string externalSubUrl = args->GetSize() > 7 ? args->GetString(7).ToString() : "";
         bool isInfiniteStream = args->GetSize() > 8 ? args->GetBool(8) : false;
         LOG_INFO(LOG_CEF, "playerLoad: video={} audio={} sub={} start={}ms infinite={} extAudio={} extSub={} url={}",
                  videoIdx, audioIdx, subIdx, startMs, isInfiniteStream, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
+        // Push next-track metadata + load-starting hint atomically before
+        // mpv loadfile. Parse metadata first so the Jellyfin item Id can
+        // ride along with postLoadStarting — SM compares it to the prior
+        // Id to set snapshot.variant_switch_pending on same-item reload
+        // (bitrate / transcode-variant change). Coord seeds
+        // snapshot.position_us with the resume offset so MPRIS/JS see
+        // the start position before mpv has opened the file. Coord also
+        // swallows the resulting END_FILE for the outgoing track
+        // (no Stopped flicker); MPRIS sees phase=Starting with the new
+        // content immediately.
+        MediaMetadata meta = metadataJson.empty()
+            ? MediaMetadata{}
+            : parseMetadataJson(metadataJson);
+        if (g_playback_coord) {
+            g_playback_coord->postLoadStarting(meta.id);
+            g_playback_coord->postPosition(static_cast<int64_t>(startMs) * 1000);
+        }
+        if (!metadataJson.empty()) {
+            if (g_playback_coord) g_playback_coord->postMediaType(meta.media_type);
+            if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
+            if (g_media_session) g_media_session->setMetadata(meta);
+        }
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
         opts.videoTrack = videoIdx;
