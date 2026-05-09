@@ -51,6 +51,19 @@ public:
     void postBufferedRanges(std::vector<PlaybackBufferedRange> ranges);
     void postDisplayHz(int hz);
 
+    // Metadata stream — JS-sourced. Bypasses the state machine; coord
+    // emits the corresponding MetadataChanged/ArtworkChanged/QueueCapsChanged
+    // event directly, and for postMetadata also routes meta.media_type
+    // into the SM via onMediaType so snapshot.media_type stays in sync.
+    void postMetadata(MediaMetadata meta);
+    void postArtwork(std::string data_uri);
+    void postQueueCaps(bool can_go_next, bool can_go_prev);
+
+    // Explicit seek-completion signal (JS notifySeek). Updates snapshot
+    // position via the SM and emits a Seeked event for sinks that surface
+    // it (MPRIS).
+    void postSeeked(int64_t position_us);
+
     // Canonical snapshot. Read-only consumers (hotkeys, idle inhibit)
     // call this instead of touching the SM directly.
     PlaybackSnapshot snapshot() const;
@@ -62,10 +75,11 @@ private:
             SeekingChanged, PausedForCache, CoreIdle, Position, MediaType,
             VideoFrameAvailable, Speed, Duration, Fullscreen, OsdDims,
             BufferedRanges, DisplayHz,
+            Metadata, Artwork, QueueCaps, Seeked,
         };
         Kind kind;
         bool flag = false;
-        bool flag2 = false;     // Fullscreen: was_maximized
+        bool flag2 = false;     // Fullscreen: was_maximized / QueueCaps: can_go_prev
         int64_t i64 = 0;
         double dbl = 0.0;       // Speed
         int lw = 0, lh = 0;     // OsdDims
@@ -73,8 +87,9 @@ private:
         int hz = 0;             // DisplayHz
         EndReason reason = EndReason::Eof;
         ::MediaType media_type = ::MediaType::Unknown;
-        std::string str;
+        std::string str;        // LoadStarting item_id, EndFile error_message, Artwork data URI
         std::vector<PlaybackBufferedRange> ranges;
+        MediaMetadata metadata; // Metadata
     };
 
     void enqueue(Input in);

@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "player/mpris/mpris_projection.h"
+#include "playback/sinks/mpris/mpris_projection.h"
 
 #include <algorithm>
 #include <string>

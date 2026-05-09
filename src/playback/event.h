@@ -4,7 +4,28 @@
 #include <string>
 #include <vector>
 
-#include "../player/media_session.h"
+enum class MediaType { Unknown, Audio, Video };
+
+struct MediaMetadata {
+    std::string id;            // Jellyfin item Id; identity across bitrate / variant switches
+    std::string title;
+    std::string artist;
+    std::string album;
+    int track_number = 0;
+    int64_t duration_us = 0;
+    std::string art_url;       // Jellyfin URL
+    std::string art_data_uri;  // base64 data URI after fetch
+    MediaType media_type = MediaType::Unknown;
+
+    bool operator==(const MediaMetadata& o) const {
+        return id == o.id && title == o.title && artist == o.artist && album == o.album
+            && track_number == o.track_number && duration_us == o.duration_us
+            && art_url == o.art_url && art_data_uri == o.art_data_uri
+            && media_type == o.media_type;
+    }
+};
+
+enum class PlaybackState { Stopped, Playing, Paused };
 
 // Whether mpv has a player loaded. Cleared on terminal events; set on file-loaded.
 enum class PlayerPresence { None, Present };
@@ -71,11 +92,27 @@ struct PlaybackEvent {
         OsdDimsChanged,
         BufferedRangesChanged,
         DisplayHzChanged,
+        // Metadata stream — JS-sourced, not mpv-derived. Carried via event
+        // payload (NOT snapshot); SM ignores. Sinks that surface track info
+        // to a media-session backend dispatch on these.
+        MetadataChanged,
+        ArtworkChanged,
+        QueueCapsChanged,
+        // Explicit seek-completion signal from JS (notifySeek). Sinks that
+        // expose a "Seeked" notification (MPRIS) emit it with snapshot.position_us.
+        Seeked,
     };
     Kind kind = Kind::Started;
     bool flag = false;          // SeekingChanged/BufferingChanged value
     std::string error_message;  // Error
     PlaybackSnapshot snapshot;  // post-transition state
+
+    // Per-event payload for the metadata stream. Empty/default on every
+    // other event kind.
+    MediaMetadata metadata;     // MetadataChanged
+    std::string artwork_uri;    // ArtworkChanged (data URI)
+    bool can_go_next = false;   // QueueCapsChanged
+    bool can_go_prev = false;   // QueueCapsChanged
 };
 
 // Coord-side actions emitted by the SM alongside events. Distinct from

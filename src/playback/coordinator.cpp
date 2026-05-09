@@ -137,6 +137,31 @@ void PlaybackCoordinator::postDisplayHz(int hz) {
     enqueue(std::move(in));
 }
 
+void PlaybackCoordinator::postMetadata(MediaMetadata meta) {
+    Input in{Input::Kind::Metadata};
+    in.metadata = std::move(meta);
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postArtwork(std::string data_uri) {
+    Input in{Input::Kind::Artwork};
+    in.str = std::move(data_uri);
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postQueueCaps(bool can_go_next, bool can_go_prev) {
+    Input in{Input::Kind::QueueCaps};
+    in.flag = can_go_next;
+    in.flag2 = can_go_prev;
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postSeeked(int64_t position_us) {
+    Input in{Input::Kind::Seeked};
+    in.i64 = position_us;
+    enqueue(std::move(in));
+}
+
 PlaybackSnapshot PlaybackCoordinator::snapshot() const {
     std::lock_guard<std::mutex> lock(snapshot_mutex_);
     return snapshot_;
@@ -193,6 +218,40 @@ void PlaybackCoordinator::apply(const Input& in, std::vector<PlaybackEvent>& out
     case Input::Kind::DisplayHz:
         emitted = sm_.onDisplayHz(in.hz);
         break;
+    case Input::Kind::Metadata: {
+        // Route media_type through the SM so snapshot.media_type tracks
+        // metadata changes (idle inhibit reads it).
+        emitted = sm_.onMediaType(in.metadata.media_type);
+        PlaybackEvent ev;
+        ev.kind = PlaybackEvent::Kind::MetadataChanged;
+        ev.metadata = in.metadata;
+        emitted.push_back(std::move(ev));
+        break;
+    }
+    case Input::Kind::Artwork: {
+        PlaybackEvent ev;
+        ev.kind = PlaybackEvent::Kind::ArtworkChanged;
+        ev.artwork_uri = in.str;
+        emitted.push_back(std::move(ev));
+        break;
+    }
+    case Input::Kind::QueueCaps: {
+        PlaybackEvent ev;
+        ev.kind = PlaybackEvent::Kind::QueueCapsChanged;
+        ev.can_go_next = in.flag;
+        ev.can_go_prev = in.flag2;
+        emitted.push_back(std::move(ev));
+        break;
+    }
+    case Input::Kind::Seeked: {
+        // Update snapshot position via SM, then emit Seeked so sinks
+        // (MPRIS) read the new position from snapshot.
+        emitted = sm_.onPosition(in.i64);
+        PlaybackEvent ev;
+        ev.kind = PlaybackEvent::Kind::Seeked;
+        emitted.push_back(std::move(ev));
+        break;
+    }
     }
     for (auto& e : emitted) out.push_back(std::move(e));
 }

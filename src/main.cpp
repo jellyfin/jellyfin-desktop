@@ -24,10 +24,15 @@
 #include "settings.h"
 #include "theme_color.h"
 
-#include "player/media_session.h"
-#include "player/media_session_thread.h"
 #include "playback/coordinator.h"
 #include "playback/sinks.h"
+#if defined(__APPLE__)
+#include "playback/sinks/macos/macos_sink.h"
+#elif defined(_WIN32)
+#include "playback/sinks/windows/windows_sink.h"
+#else
+#include "playback/sinks/mpris/mpris_sink.h"
+#endif
 
 #include "logging.h"
 #include "signal_guard.h"
@@ -151,7 +156,6 @@ static void mpv_digest_thread() {
     }
 }
 
-MediaSessionThread* g_media_session = nullptr;
 
 // Shutdown order (reverse of declaration):
 //   browsers → CefShutdown → idle_inhibit clear → platform.cleanup
@@ -323,12 +327,6 @@ static int run_with_cef(int mw, int mh,
         LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay) call returned");
     }
 
-    auto media_session_obj = MediaSession::create();
-
-    MediaSessionThread media_session_thread;
-    media_session_thread.start(media_session_obj.get());
-    g_media_session = &media_session_thread;
-
     // Coordinator + sinks must exist before any thread can post inputs or
     // observe playback state. Sinks register before start() so the worker
     // never delivers to a half-built fanout.
@@ -341,10 +339,19 @@ static int run_with_cef(int mw, int mh,
     coord_scope.coord().addSink(browser_sink);
     coord_scope.coord().addSink(idle_inhibit_sink);
     coord_scope.coord().addSink(theme_color_sink);
-    coord_scope.coord().addSink(
-        std::make_shared<MediaSessionPlaybackSink>(&media_session_thread));
+#if defined(__APPLE__)
+    auto media_sink = std::make_shared<MacosSink>();
+#elif defined(_WIN32)
+    int64_t wid = 0;
+    g_mpv.GetPropertyInt("window-id", wid);
+    auto media_sink = std::make_shared<WindowsSink>(reinterpret_cast<HWND>(static_cast<intptr_t>(wid)));
+#else
+    auto media_sink = std::make_shared<MprisSink>();
+#endif
+    coord_scope.coord().addSink(media_sink);
+    media_sink->start();
     coord_scope.coord().addActionSink(mpv_action_sink);
-    register_cef_thread_sinks(
+    register_queued_sinks(
         {browser_sink, idle_inhibit_sink, theme_color_sink},
         {mpv_action_sink});
 
@@ -383,9 +390,8 @@ static int run_with_cef(int mw, int mh,
         g_overlay_browser->waitForClose();
 #endif
 
-    g_media_session = nullptr;
     g_theme_color = nullptr;
-    media_session_thread.stop();
+    media_sink->stop();
 
     cef_thread.join();
     g_mpv.Wakeup();

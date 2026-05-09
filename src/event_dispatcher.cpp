@@ -17,14 +17,14 @@
 #include <vector>
 
 static EventQueue<MpvEvent> g_cef_queue;
-static std::vector<std::shared_ptr<CefThreadPlaybackSink>> g_event_sinks;
-static std::vector<std::shared_ptr<CefThreadActionSink>> g_action_sinks;
+static std::vector<std::shared_ptr<QueuedPlaybackSink>> g_event_sinks;
+static std::vector<std::shared_ptr<QueuedActionSink>> g_action_sinks;
 
 bool g_was_maximized_before_fullscreen = false;
 
-void register_cef_thread_sinks(
-    std::vector<std::shared_ptr<CefThreadPlaybackSink>> event_sinks,
-    std::vector<std::shared_ptr<CefThreadActionSink>> action_sinks)
+void register_queued_sinks(
+    std::vector<std::shared_ptr<QueuedPlaybackSink>> event_sinks,
+    std::vector<std::shared_ptr<QueuedActionSink>> action_sinks)
 {
     g_event_sinks = std::move(event_sinks);
     g_action_sinks = std::move(action_sinks);
