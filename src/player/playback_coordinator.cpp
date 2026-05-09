@@ -41,6 +41,12 @@ void PlaybackCoordinator::postFileLoaded() {
     enqueue({Input::Kind::FileLoaded});
 }
 
+void PlaybackCoordinator::postLoadStarting(std::string item_id) {
+    Input in{Input::Kind::LoadStarting};
+    in.str = std::move(item_id);
+    enqueue(std::move(in));
+}
+
 void PlaybackCoordinator::postPauseChanged(bool paused) {
     Input in{Input::Kind::PauseChanged};
     in.flag = paused;
@@ -60,9 +66,15 @@ void PlaybackCoordinator::postSeekingChanged(bool seeking) {
     enqueue(std::move(in));
 }
 
-void PlaybackCoordinator::postBufferingChanged(bool buffering) {
-    Input in{Input::Kind::BufferingChanged};
-    in.flag = buffering;
+void PlaybackCoordinator::postPausedForCache(bool pfc) {
+    Input in{Input::Kind::PausedForCache};
+    in.flag = pfc;
+    enqueue(std::move(in));
+}
+
+void PlaybackCoordinator::postCoreIdle(bool core_idle) {
+    Input in{Input::Kind::CoreIdle};
+    in.flag = core_idle;
     enqueue(std::move(in));
 }
 
@@ -78,6 +90,12 @@ void PlaybackCoordinator::postMediaType(MediaType type) {
     enqueue(std::move(in));
 }
 
+void PlaybackCoordinator::postVideoFrameAvailable(bool available) {
+    Input in{Input::Kind::VideoFrameAvailable};
+    in.flag = available;
+    enqueue(std::move(in));
+}
+
 PlaybackSnapshot PlaybackCoordinator::snapshot() const {
     std::lock_guard<std::mutex> lock(snapshot_mutex_);
     return snapshot_;
@@ -89,6 +107,9 @@ void PlaybackCoordinator::apply(const Input& in, std::vector<PlaybackEvent>& out
     case Input::Kind::FileLoaded:
         emitted = sm_.onFileLoaded();
         break;
+    case Input::Kind::LoadStarting:
+        emitted = sm_.onLoadStarting(in.str);
+        break;
     case Input::Kind::PauseChanged:
         emitted = sm_.onPauseChanged(in.flag);
         break;
@@ -98,14 +119,20 @@ void PlaybackCoordinator::apply(const Input& in, std::vector<PlaybackEvent>& out
     case Input::Kind::SeekingChanged:
         emitted = sm_.onSeekingChanged(in.flag);
         break;
-    case Input::Kind::BufferingChanged:
-        emitted = sm_.onBufferingChanged(in.flag);
+    case Input::Kind::PausedForCache:
+        emitted = sm_.onPausedForCache(in.flag);
+        break;
+    case Input::Kind::CoreIdle:
+        emitted = sm_.onCoreIdle(in.flag);
         break;
     case Input::Kind::Position:
         emitted = sm_.onPosition(in.i64);
         break;
     case Input::Kind::MediaType:
         emitted = sm_.onMediaType(in.media_type);
+        break;
+    case Input::Kind::VideoFrameAvailable:
+        emitted = sm_.onVideoFrameAvailable(in.flag);
         break;
     }
     for (auto& e : emitted) out.push_back(std::move(e));

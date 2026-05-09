@@ -54,16 +54,18 @@ TEST_CASE("coordinator delivers events in order across sinks") {
     coord.postPauseChanged(false);
     coord.postPauseChanged(true);
 
-    wait_until([&] { return sink_a->size() >= 2 && sink_b->size() >= 2; });
+    wait_until([&] { return sink_a->size() >= 3 && sink_b->size() >= 3; });
 
     auto a = sink_a->drain();
     auto b = sink_b->drain();
-    REQUIRE(a.size() >= 2);
-    REQUIRE(b.size() >= 2);
-    CHECK(a[0].kind == PlaybackEvent::Kind::Started);
-    CHECK(a[1].kind == PlaybackEvent::Kind::Paused);
-    CHECK(b[0].kind == PlaybackEvent::Kind::Started);
-    CHECK(b[1].kind == PlaybackEvent::Kind::Paused);
+    REQUIRE(a.size() >= 3);
+    REQUIRE(b.size() >= 3);
+    CHECK(a[0].kind == PlaybackEvent::Kind::TrackLoaded);
+    CHECK(a[1].kind == PlaybackEvent::Kind::Started);
+    CHECK(a[2].kind == PlaybackEvent::Kind::Paused);
+    CHECK(b[0].kind == PlaybackEvent::Kind::TrackLoaded);
+    CHECK(b[1].kind == PlaybackEvent::Kind::Started);
+    CHECK(b[2].kind == PlaybackEvent::Kind::Paused);
 
     coord.stop();
 }
@@ -77,6 +79,7 @@ TEST_CASE("coordinator snapshot reflects post-transition state") {
     coord.postMediaType(MediaType::Video);
     coord.postFileLoaded();
     coord.postPauseChanged(false);
+    coord.postVideoFrameAvailable(true);
 
     wait_until([&] {
         auto s = coord.snapshot();

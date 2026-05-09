@@ -49,6 +49,8 @@ void MediaSession::wireTransportCallbacks() {
 }
 
 void MediaSession::setMetadata(const MediaMetadata& meta) {
+    if (!meta.id.empty() && meta.id == last_metadata_.id) return;
+    last_metadata_ = meta;
     for (auto& b : backends_) b->setMetadata(meta);
 }
 
@@ -85,8 +87,8 @@ void MediaSession::setBuffering(bool buffering) {
     for (auto& b : backends_) b->setBuffering(buffering);
 }
 
-void MediaSession::emitSeeking() {
-    for (auto& b : backends_) b->emitSeeking();
+void MediaSession::setSeeking(bool seeking) {
+    for (auto& b : backends_) b->setSeeking(seeking);
 }
 
 void MediaSession::emitSeeked(int64_t position_us) {

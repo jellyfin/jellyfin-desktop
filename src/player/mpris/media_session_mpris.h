@@ -1,6 +1,8 @@
 #pragma once
 
 #include "player/media_session.h"
+#include "player/mpris/mpris_projection.h"
+
 #include <systemd/sd-bus.h>
 
 class MprisBackend : public MediaSessionBackend {
@@ -8,6 +10,9 @@ public:
     MprisBackend(MediaSession* session, const std::string& service_suffix = "");
     ~MprisBackend() override;
 
+    // All setters write the relevant MprisContent field (or do nothing,
+    // for inputs that live in the PlaybackCoordinator snapshot) and
+    // call recomputeAndEmit(). No setter names an MPRIS property.
     void setMetadata(const MediaMetadata& meta) override;
     void setArtwork(const std::string& dataUri) override;
     void setPlaybackState(PlaybackState state) override;
@@ -17,24 +22,29 @@ public:
     void setCanGoPrevious(bool can) override;
     void setRate(double rate) override;
     void setBuffering(bool buffering) override;
-    void emitSeeking() override;                     // Lock rate at 0x during seek
-    void emitSeeked(int64_t position_us) override;  // Emit Seeked signal when user seeks
+    void setSeeking(bool seeking) override;
+    void emitSeeked(int64_t position_us) override;
     void update() override;
     int getFd() override;
 
-    // Property getters (called from D-Bus vtable)
-    const char* getPlaybackStatus() const;
-    int64_t getPosition() const { return position_us_; }
-    double getVolume() const { return volume_; }
-    double getRate() const { return rate_; }
-    bool canGoNext() const { return can_go_next_; }
-    bool canGoPrevious() const { return can_go_previous_; }
-    const MediaMetadata& getMetadata() const { return metadata_; }
+    // Property getters used by the D-Bus vtable. Each reads a single
+    // field of last_, so getters never re-derive logic.
+    const char* getPlaybackStatus() const { return last_.playback_status.c_str(); }
+    int64_t getPosition() const;
+    double getVolume() const { return last_.volume; }
+    double getRate() const { return last_.rate; }
+    bool canGoNext() const { return last_.can_go_next; }
+    bool canGoPrevious() const { return last_.can_go_previous; }
+    bool canPlay() const { return last_.can_play; }
+    bool canPause() const { return last_.can_pause; }
+    bool canSeek() const { return last_.can_seek; }
+    bool canControl() const { return last_.can_control; }
+    const MediaMetadata& getMetadata() const { return last_.metadata; }
     MediaSession* session() { return session_; }
 
 private:
-    void emitPropertiesChanged(const char* interface, const char* property);
-    void syncRate();  // Apply pending_rate_ or 0 based on seeking_/buffering_
+    void recomputeAndEmit();
+    void emitChanged(const std::vector<const char*>& names);
 
     MediaSession* session_;
     std::string service_name_;
@@ -42,16 +52,8 @@ private:
     sd_bus_slot* slot_root_ = nullptr;
     sd_bus_slot* slot_player_ = nullptr;
 
-    MediaMetadata metadata_;
-    PlaybackState state_ = PlaybackState::Stopped;
-    int64_t position_us_ = 0;
-    double volume_ = 1.0;
-    double rate_ = 1.0;
-    double pending_rate_ = 1.0;  // Stored rate while locked at 0x
-    bool seeking_ = false;       // Rate locked by seeking
-    bool buffering_ = false;     // Rate locked by buffering
-    bool can_go_next_ = false;
-    bool can_go_previous_ = false;
+    MprisContent content_;
+    MprisView last_;          // mirrors what bus clients last saw
 };
 
 std::unique_ptr<MediaSessionBackend> createMprisBackend(MediaSession* session, const std::string& service_suffix = "");

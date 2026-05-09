@@ -34,12 +34,15 @@ public:
 
     // Inputs — safe from any thread.
     void postFileLoaded();
+    void postLoadStarting(std::string item_id = {});
     void postPauseChanged(bool paused);
     void postEndFile(EndReason reason, std::string error_message = {});
     void postSeekingChanged(bool seeking);
-    void postBufferingChanged(bool buffering);
+    void postPausedForCache(bool paused_for_cache);
+    void postCoreIdle(bool core_idle);
     void postPosition(int64_t position_us);
     void postMediaType(MediaType type);
+    void postVideoFrameAvailable(bool available);
 
     // Canonical snapshot. Read-only consumers (hotkeys, idle inhibit)
     // call this instead of touching the SM directly.
@@ -48,8 +51,9 @@ public:
 private:
     struct Input {
         enum class Kind {
-            FileLoaded, PauseChanged, EndFile,
-            SeekingChanged, BufferingChanged, Position, MediaType,
+            FileLoaded, LoadStarting, PauseChanged, EndFile,
+            SeekingChanged, PausedForCache, CoreIdle, Position, MediaType,
+            VideoFrameAvailable,
         };
         Kind kind;
         bool flag = false;

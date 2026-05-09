@@ -9,6 +9,7 @@
 enum class MediaType { Unknown, Audio, Video };
 
 struct MediaMetadata {
+    std::string id;            // Jellyfin item Id; identity across bitrate / variant switches
     std::string title;
     std::string artist;
     std::string album;
@@ -17,6 +18,13 @@ struct MediaMetadata {
     std::string art_url;       // Jellyfin URL
     std::string art_data_uri;  // base64 data URI after fetch
     MediaType media_type = MediaType::Unknown;
+
+    bool operator==(const MediaMetadata& o) const {
+        return id == o.id && title == o.title && artist == o.artist && album == o.album
+            && track_number == o.track_number && duration_us == o.duration_us
+            && art_url == o.art_url && art_data_uri == o.art_data_uri
+            && media_type == o.media_type;
+    }
 };
 
 enum class PlaybackState { Stopped, Playing, Paused };
@@ -33,7 +41,7 @@ public:
     virtual void setCanGoPrevious(bool can) = 0;
     virtual void setRate(double rate) = 0;
     virtual void setBuffering(bool /*buffering*/) {}
-    virtual void emitSeeking() {}
+    virtual void setSeeking(bool /*seeking*/) {}
     virtual void emitSeeked(int64_t /*position_us*/) {}
     virtual void update() = 0;  // Called from event loop to process events
     virtual int getFd() = 0;    // File descriptor for poll, -1 if none
@@ -56,7 +64,7 @@ public:
     void setCanGoPrevious(bool can);
     void setRate(double rate);
     void setBuffering(bool buffering);
-    void emitSeeking();
+    void setSeeking(bool seeking);
     void emitSeeked(int64_t position_us);
 
     // Called from event loop
@@ -84,4 +92,11 @@ public:
 private:
     std::vector<std::unique_ptr<MediaSessionBackend>> backends_;
     PlaybackState state_ = PlaybackState::Stopped;
+    // Last metadata fan-out's content. Used to dedup setMetadata calls
+    // by Jellyfin item Id: a same-Id setMetadata is a semantic no-op
+    // (identical item) and must not churn backend state — otherwise
+    // empty art fields in the incoming meta would clobber cached art
+    // from notifyArtwork on every variant switch (bitrate / transcode
+    // audio change).
+    MediaMetadata last_metadata_;
 };

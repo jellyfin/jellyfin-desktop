@@ -51,13 +51,33 @@ void apply_idle_inhibit(const PlaybackSnapshot& snap) {
 }
 
 void deliver_playback_event(const PlaybackEvent& ev) {
-    if (!g_web_browser) return;
     PlaybackSnapshot snap = g_playback_coord ? g_playback_coord->snapshot()
                                              : PlaybackSnapshot{};
+    {
+        const char* k = "?";
+        switch (ev.kind) {
+        case PlaybackEvent::Kind::Started:           k = "Started"; break;
+        case PlaybackEvent::Kind::Paused:            k = "Paused"; break;
+        case PlaybackEvent::Kind::Finished:          k = "Finished"; break;
+        case PlaybackEvent::Kind::Canceled:          k = "Canceled"; break;
+        case PlaybackEvent::Kind::Error:             k = "Error"; break;
+        case PlaybackEvent::Kind::SeekingChanged:    k = "SeekingChanged"; break;
+        case PlaybackEvent::Kind::BufferingChanged:  k = "BufferingChanged"; break;
+        case PlaybackEvent::Kind::MediaTypeChanged:  k = "MediaTypeChanged"; break;
+        case PlaybackEvent::Kind::TrackLoaded:       k = "TrackLoaded"; break;
+        }
+        LOG_INFO(LOG_MEDIA,
+            "coord emit: {} flag={} snap[phase={} buffer={} seek={}]",
+            k, ev.flag, static_cast<int>(snap.phase),
+            snap.buffering, snap.seeking);
+    }
+    if (!g_web_browser) return;
     switch (ev.kind) {
     case PlaybackEvent::Kind::Started:
         g_web_browser->execJs("window._nativeEmit('playing')");
         apply_idle_inhibit(snap);
+        if (g_media_session)
+            g_media_session->emitSeeked(snap.position_us);
         break;
     case PlaybackEvent::Kind::Paused:
         g_web_browser->execJs("window._nativeEmit('paused')");
@@ -94,6 +114,18 @@ void deliver_playback_event(const PlaybackEvent& ev) {
     case PlaybackEvent::Kind::MediaTypeChanged:
         apply_idle_inhibit(snap);
         break;
+    case PlaybackEvent::Kind::TrackLoaded:
+        // JS already drives its own per-track state via playerLoad on
+        // a fresh load. The exception is a variant switch (same
+        // Jellyfin Id) — JS's playerLoad path doesn't fire its own
+        // pause UI, so the SM's variant_switch_pending lifecycle drives
+        // the pause indicator from here. Cleared on first-frame Started
+        // via the existing Started → 'playing' emit.
+        if (snap.variant_switch_pending)
+            g_web_browser->execJs("window._nativeEmit('paused')");
+        // Idle inhibit unchanged because phase=Starting still maps to
+        // "not Playing" for that gate.
+        break;
     }
 }
 
@@ -101,29 +133,43 @@ void route_to_coordinator(const MpvEvent& ev) {
     if (!g_playback_coord) return;
     switch (ev.type) {
     case MpvEventType::PAUSE:
+        LOG_INFO(LOG_MPV, "mpv: pause={}", ev.flag);
         g_playback_coord->postPauseChanged(ev.flag);
         break;
     case MpvEventType::FILE_LOADED:
+        LOG_INFO(LOG_MPV, "mpv: FILE_LOADED");
         g_playback_coord->postFileLoaded();
         break;
     case MpvEventType::END_FILE_EOF:
+        LOG_INFO(LOG_MPV, "mpv: END_FILE eof");
         g_playback_coord->postEndFile(EndReason::Eof);
         break;
     case MpvEventType::END_FILE_ERROR:
+        LOG_INFO(LOG_MPV, "mpv: END_FILE error msg={}", ev.err_msg ? ev.err_msg : "");
         g_playback_coord->postEndFile(EndReason::Error,
                                       ev.err_msg ? ev.err_msg : "");
         break;
     case MpvEventType::END_FILE_CANCEL:
+        LOG_INFO(LOG_MPV, "mpv: END_FILE cancel");
         g_playback_coord->postEndFile(EndReason::Canceled);
         break;
     case MpvEventType::SEEKING:
+        LOG_INFO(LOG_MPV, "mpv: seeking={}", ev.flag);
         g_playback_coord->postSeekingChanged(ev.flag);
         break;
     case MpvEventType::PAUSED_FOR_CACHE:
-        g_playback_coord->postBufferingChanged(ev.flag);
+        LOG_INFO(LOG_MPV, "mpv: paused-for-cache={}", ev.flag);
+        g_playback_coord->postPausedForCache(ev.flag);
+        break;
+    case MpvEventType::CORE_IDLE:
+        LOG_INFO(LOG_MPV, "mpv: core-idle={}", ev.flag);
+        g_playback_coord->postCoreIdle(ev.flag);
         break;
     case MpvEventType::TIME_POS:
         g_playback_coord->postPosition(static_cast<int64_t>(ev.dbl * 1000000.0));
+        break;
+    case MpvEventType::VIDEO_FRAME_INFO:
+        g_playback_coord->postVideoFrameAvailable(ev.flag);
         break;
     default:
         break;
@@ -196,6 +242,9 @@ void cef_consumer_thread() {
                 int ms = static_cast<int>(ev.dbl * 1000);
                 g_web_browser->execJs("window._nativeUpdatePosition("
                                       + std::to_string(ms) + ")");
+                if (g_media_session)
+                    g_media_session->setPosition(
+                        static_cast<int64_t>(ev.dbl * 1000000));
                 break;
             }
             case MpvEventType::DURATION: {

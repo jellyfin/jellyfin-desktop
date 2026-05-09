@@ -23,6 +23,12 @@ struct PlaybackSnapshot {
     bool buffering = false;
     MediaType media_type = MediaType::Unknown;
     int64_t position_us = 0;
+    // True between a load-starting hint whose Jellyfin item Id matches
+    // the previous load's Id (bitrate change, transcode-audio change,
+    // any same-item reload) and the next FILE_LOADED. Lets consumers
+    // distinguish "user is reloading the same item" from a fresh track
+    // change without re-deriving identity.
+    bool variant_switch_pending = false;
 };
 
 // Semantic playback events emitted by the state machine to all sinks.
@@ -38,6 +44,7 @@ struct PlaybackEvent {
         SeekingChanged,
         BufferingChanged,
         MediaTypeChanged,
+        TrackLoaded,
     };
     Kind kind = Kind::Started;
     bool flag = false;

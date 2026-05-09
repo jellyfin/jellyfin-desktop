@@ -337,6 +337,7 @@ else()
         src/paths/linux.cpp
         src/player/media_session.cpp
         src/player/mpris/media_session_mpris.cpp
+        src/player/mpris/mpris_projection.cpp
         src/player/media_session_thread.cpp
         src/player/playback_state_machine.cpp
         src/player/playback_coordinator.cpp

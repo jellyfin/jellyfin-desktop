@@ -1,7 +1,9 @@
 #include "player/mpris/media_session_mpris.h"
 #include <cstring>
 #include <string>
+#include "common.h"
 #include "logging.h"
+#include "player/playback_coordinator.h"
 
 // D-Bus object path
 static const char* MPRIS_PATH = "/org/mpris/MediaPlayer2";
@@ -163,37 +165,28 @@ static int prop_get_can_play(sd_bus* bus, const char* path, const char* interfac
                              const char* property, sd_bus_message* reply,
                              void* userdata, sd_bus_error* error) {
     auto* backend = static_cast<MprisBackend*>(userdata);
-    // CanPlay: true when not stopped
-    bool can = (strcmp(backend->getPlaybackStatus(), "Stopped") != 0);
-    return sd_bus_message_append(reply, "b", can);
+    return sd_bus_message_append(reply, "b", backend->canPlay());
 }
 
 static int prop_get_can_pause(sd_bus* bus, const char* path, const char* interface,
                               const char* property, sd_bus_message* reply,
                               void* userdata, sd_bus_error* error) {
     auto* backend = static_cast<MprisBackend*>(userdata);
-    // CanPause: true only when playing
-    bool can = (strcmp(backend->getPlaybackStatus(), "Playing") == 0);
-    return sd_bus_message_append(reply, "b", can);
+    return sd_bus_message_append(reply, "b", backend->canPause());
 }
 
 static int prop_get_can_seek(sd_bus* bus, const char* path, const char* interface,
                              const char* property, sd_bus_message* reply,
                              void* userdata, sd_bus_error* error) {
     auto* backend = static_cast<MprisBackend*>(userdata);
-    // CanSeek: true when not stopped and has duration
-    bool can = (strcmp(backend->getPlaybackStatus(), "Stopped") != 0) &&
-               (backend->getMetadata().duration_us > 0);
-    return sd_bus_message_append(reply, "b", can);
+    return sd_bus_message_append(reply, "b", backend->canSeek());
 }
 
 static int prop_get_can_control(sd_bus* bus, const char* path, const char* interface,
                                 const char* property, sd_bus_message* reply,
                                 void* userdata, sd_bus_error* error) {
     auto* backend = static_cast<MprisBackend*>(userdata);
-    // CanControl: true when not stopped
-    bool can = (strcmp(backend->getPlaybackStatus(), "Stopped") != 0);
-    return sd_bus_message_append(reply, "b", can);
+    return sd_bus_message_append(reply, "b", backend->canControl());
 }
 
 static int prop_get_metadata(sd_bus* bus, const char* path, const char* interface,
@@ -400,85 +393,91 @@ MprisBackend::~MprisBackend() {
 }
 
 void MprisBackend::setMetadata(const MediaMetadata& meta) {
-    metadata_ = meta;
-    emitPropertiesChanged(MPRIS_PLAYER_IFACE, "Metadata");
+    content_.metadata = meta;
+    recomputeAndEmit();
 }
 
 void MprisBackend::setArtwork(const std::string& dataUri) {
-    metadata_.art_data_uri = dataUri;
-    emitPropertiesChanged(MPRIS_PLAYER_IFACE, "Metadata");
+    content_.metadata.art_data_uri = dataUri;
+    recomputeAndEmit();
 }
 
-void MprisBackend::setPlaybackState(PlaybackState state) {
-    state_ = state;
-
-    // Clear playback-shaped fields when stopped. The coordinator drives
-    // explicit seeking/buffering false transitions through setBuffering /
-    // (lack of) emitSeeking — do not implicitly clear them here.
-    if (state == PlaybackState::Stopped) {
-        metadata_ = MediaMetadata{};
-        position_us_ = 0;
-    }
-
-    // Emit all capability-related properties when state changes
-    // MPRIS clients need to know when controls become available/unavailable
-    sd_bus_emit_properties_changed(bus_, MPRIS_PATH, MPRIS_PLAYER_IFACE,
-        "PlaybackStatus", "CanPlay", "CanPause", "CanSeek", "CanControl", "Metadata", nullptr);
+void MprisBackend::setPlaybackState(PlaybackState /*state*/) {
+    // Authoritative state lives in the PlaybackCoordinator snapshot.
+    // The sink call is a recompute trigger, not a state write.
+    recomputeAndEmit();
 }
 
-void MprisBackend::setPosition(int64_t position_us) {
-    position_us_ = position_us;
-    // Position is polled, not signaled (per MPRIS spec)
+void MprisBackend::setPosition(int64_t /*position_us*/) {
+    // Position is polled, not signaled (per MPRIS spec). The single
+    // source of truth is the coordinator snapshot — getPosition() reads
+    // from there. No need to mirror it locally.
+}
+
+int64_t MprisBackend::getPosition() const {
+    return g_playback_coord ? g_playback_coord->snapshot().position_us : 0;
 }
 
 void MprisBackend::setVolume(double volume) {
-    volume_ = volume;
-    emitPropertiesChanged(MPRIS_PLAYER_IFACE, "Volume");
+    content_.volume = volume;
+    recomputeAndEmit();
 }
 
 void MprisBackend::setCanGoNext(bool can) {
-    if (can_go_next_ != can) {
-        can_go_next_ = can;
-        emitPropertiesChanged(MPRIS_PLAYER_IFACE, "CanGoNext");
-    }
+    content_.can_go_next = can;
+    recomputeAndEmit();
 }
 
 void MprisBackend::setCanGoPrevious(bool can) {
-    if (can_go_previous_ != can) {
-        can_go_previous_ = can;
-        emitPropertiesChanged(MPRIS_PLAYER_IFACE, "CanGoPrevious");
-    }
+    content_.can_go_previous = can;
+    recomputeAndEmit();
 }
 
 void MprisBackend::setRate(double rate) {
-    pending_rate_ = rate;
-    syncRate();
+    content_.pending_rate = rate;
+    recomputeAndEmit();
 }
 
-void MprisBackend::setBuffering(bool buffering) {
-    buffering_ = buffering;
-    syncRate();
+void MprisBackend::setBuffering(bool /*buffering*/) {
+    // buffering lives in the coordinator snapshot.
+    recomputeAndEmit();
 }
 
-void MprisBackend::emitSeeking() {
-    seeking_ = true;
-    syncRate();
+void MprisBackend::setSeeking(bool /*seeking*/) {
+    // seeking lives in the coordinator snapshot.
+    recomputeAndEmit();
 }
 
 void MprisBackend::emitSeeked(int64_t position_us) {
-    if (!bus_) return;
-    position_us_ = position_us;
-    seeking_ = false;
-    syncRate();
-    sd_bus_emit_signal(bus_, MPRIS_PATH, MPRIS_PLAYER_IFACE, "Seeked", "x", position_us);
+    if (bus_)
+        sd_bus_emit_signal(bus_, MPRIS_PATH, MPRIS_PLAYER_IFACE,
+                           "Seeked", "x", position_us);
 }
 
-void MprisBackend::syncRate() {
-    double target = (seeking_ || buffering_) ? 0.0 : pending_rate_;
-    if (rate_ != target) {
-        rate_ = target;
-        emitPropertiesChanged(MPRIS_PLAYER_IFACE, "Rate");
-    }
+void MprisBackend::recomputeAndEmit() {
+    PlaybackSnapshot snap = g_playback_coord ? g_playback_coord->snapshot()
+                                             : PlaybackSnapshot{};
+    MprisView next = project(snap, content_);
+    auto changed = diff(last_, next);
+    LOG_INFO(LOG_MEDIA,
+        "mpris: snap phase={} buffering={} seeking={} -> status={} rate={} canSeek={} dur={} changed={}",
+        static_cast<int>(snap.phase), snap.buffering, snap.seeking,
+        next.playback_status.c_str(), next.rate, next.can_seek,
+        next.metadata.duration_us, changed.size());
+    last_ = std::move(next);
+    if (!bus_ || changed.empty()) return;
+    emitChanged(changed);
+}
+
+void MprisBackend::emitChanged(const std::vector<const char*>& names) {
+    // sd_bus_emit_properties_changed_strv takes a NULL-terminated char**
+    // array. Build the argv from the diff list.
+    std::vector<char*> argv;
+    argv.reserve(names.size() + 1);
+    for (const char* n : names) argv.push_back(const_cast<char*>(n));
+    argv.push_back(nullptr);
+    sd_bus_emit_properties_changed_strv(bus_, MPRIS_PATH, MPRIS_PLAYER_IFACE,
+                                        argv.data());
 }
 
 void MprisBackend::update() {
@@ -491,19 +490,6 @@ void MprisBackend::update() {
 
 int MprisBackend::getFd() {
     return bus_ ? sd_bus_get_fd(bus_) : -1;
-}
-
-const char* MprisBackend::getPlaybackStatus() const {
-    switch (state_) {
-        case PlaybackState::Playing: return "Playing";
-        case PlaybackState::Paused: return "Paused";
-        default: return "Stopped";
-    }
-}
-
-void MprisBackend::emitPropertiesChanged(const char* interface, const char* property) {
-    if (!bus_) return;
-    sd_bus_emit_properties_changed(bus_, MPRIS_PATH, interface, property, nullptr);
 }
 
 std::unique_ptr<MediaSessionBackend> createMprisBackend(MediaSession* session, const std::string& service_suffix) {
