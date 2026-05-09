@@ -9,7 +9,8 @@
 // Pure deterministic state machine. No threads, globals, platform calls,
 // CEF calls, media-session calls, or logging. All state lives in the
 // returned snapshot. Inputs return the list of semantic events emitted
-// by the transition (often empty).
+// by the transition (often empty). Side-effecting transitions also push
+// PlaybackActions onto an internal queue, drained via consumeActions().
 class PlaybackStateMachine {
 public:
     PlaybackSnapshot snapshot() const { return s_; }
@@ -20,7 +21,10 @@ public:
     // the loadfile round-trip survives; mpv's first time-pos overwrites
     // it once frames roll. Emits TrackLoaded so sinks pick up the new
     // track without waiting for the first PAUSE flip — Started/Paused
-    // still wait for that flip.
+    // still wait for that flip. Also emits an
+    // ApplyPendingTrackSelectionAndPlay action: mpv loads paused, and
+    // the SM owns the "now apply pending track picks then unpause"
+    // side effect that used to live in event_dispatcher.
     std::vector<PlaybackEvent> onFileLoaded();
 
     // Browser-driven hint that a `loadfile` is about to issue. Carries
@@ -60,7 +64,9 @@ public:
 
     // mpv 'time-pos' update. Updates snapshot position; if seeking is
     // active, the first position update completes the seek (clears the
-    // flag and emits SeekingChanged(false)).
+    // flag and emits SeekingChanged(false)). Always emits PositionChanged
+    // when the value actually changed — sinks (browser, media session)
+    // need every tick.
     std::vector<PlaybackEvent> onPosition(int64_t position_us);
 
     // Browser-driven media-type change (Audio/Video/Unknown).
@@ -74,6 +80,35 @@ public:
     // STATUS_EOF default.
     std::vector<PlaybackEvent> onVideoFrameAvailable(bool available);
 
+    // mpv 'speed' property change. Self-edges silent. Snapshot.rate
+    // tracks the live value.
+    std::vector<PlaybackEvent> onSpeed(double rate);
+
+    // mpv 'duration' property change. Stored in microseconds. Self-edges
+    // silent.
+    std::vector<PlaybackEvent> onDuration(int64_t duration_us);
+
+    // mpv 'fullscreen' property change. `was_maximized` captures
+    // mpv::window_maximized() at the dispatcher boundary so the SM
+    // does not need to call platform code; it lets the geometry-save
+    // tail know whether to restore maximized after exit.
+    std::vector<PlaybackEvent> onFullscreen(bool fullscreen, bool was_maximized);
+
+    // mpv 'osd-dimensions' property change. lw/lh = layout px,
+    // pw/ph = physical px. Self-edges silent.
+    std::vector<PlaybackEvent> onOsdDims(int lw, int lh, int pw, int ph);
+
+    // mpv buffered-ranges update from the digest thread. Self-edges
+    // silent (vector equality).
+    std::vector<PlaybackEvent> onBufferedRanges(std::vector<PlaybackBufferedRange> ranges);
+
+    // Display refresh rate update. Self-edges silent.
+    std::vector<PlaybackEvent> onDisplayHz(int hz);
+
+    // Drain coord-side actions emitted by the most recent transitions.
+    // Coordinator calls after each apply() and fans out to action sinks.
+    std::vector<PlaybackAction> consumeActions();
+
 private:
     PlaybackSnapshot s_;
     bool pending_load_ = false;     // set by onLoadStarting, consumed by next end-file
@@ -82,4 +117,5 @@ private:
     bool core_idle_ = false;        // raw mpv flag
     bool frame_available_ = false;  // mpv's video-frame-info AVAILABLE since last FILE_LOADED; truthful first-frame edge
     std::string last_known_item_id_; // Last item Id seen via onLoadStarting; used to set variant_switch_pending on same-Id reload
+    std::vector<PlaybackAction> pending_actions_;
 };
