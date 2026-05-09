@@ -74,7 +74,7 @@ add_test(NAME cef_color_test COMMAND cef_color_test)
 
 add_executable(playback_state_machine_test
     playback_state_machine_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/player/playback_state_machine.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/state_machine.cpp
 )
 target_include_directories(playback_state_machine_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -91,8 +91,8 @@ endif()
 
 add_executable(playback_coordinator_test
     playback_coordinator_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/player/playback_state_machine.cpp
-    ${CMAKE_SOURCE_DIR}/src/player/playback_coordinator.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/state_machine.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/coordinator.cpp
     ${_wake_event_src}
 )
 target_include_directories(playback_coordinator_test PRIVATE

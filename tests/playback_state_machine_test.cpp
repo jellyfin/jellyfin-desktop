@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "player/playback_state_machine.h"
+#include "playback/state_machine.h"
 
 namespace {
 

@@ -3,7 +3,7 @@
 #include "input.h"
 #include "../common.h"
 #include "../platform/platform.h"
-#include "../player/playback_coordinator.h"
+#include "../playback/coordinator.h"
 
 namespace input {
 namespace {

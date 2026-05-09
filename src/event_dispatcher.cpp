@@ -3,9 +3,9 @@
 #include "common.h"
 #include "event_queue.h"
 #include "logging.h"
-#include "player/playback_coordinator.h"
-#include "player/playback_event.h"
-#include "player/playback_sinks.h"
+#include "playback/coordinator.h"
+#include "playback/event.h"
+#include "playback/sinks.h"
 #include "wake_event.h"
 
 #ifdef _WIN32
