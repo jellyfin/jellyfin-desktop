@@ -1,7 +1,7 @@
 #pragma once
 
-#include "playback_event.h"
-#include "playback_state_machine.h"
+#include "event.h"
+#include "state_machine.h"
 #include "../wake_event.h"
 
 #include <atomic>

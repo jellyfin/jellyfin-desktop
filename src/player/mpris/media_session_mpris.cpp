@@ -3,7 +3,7 @@
 #include <string>
 #include "common.h"
 #include "logging.h"
-#include "player/playback_coordinator.h"
+#include "playback/coordinator.h"
 
 // D-Bus object path
 static const char* MPRIS_PATH = "/org/mpris/MediaPlayer2";

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../media_session.h"
-#include "../playback_event.h"
+#include "../../playback/event.h"
 
 #include <string>
 #include <vector>

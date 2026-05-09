@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "player/playback_coordinator.h"
+#include "playback/coordinator.h"
 
 #include <chrono>
 #include <memory>

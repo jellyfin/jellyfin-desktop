@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "media_session.h"
+#include "../player/media_session.h"
 
 // Whether mpv has a player loaded. Cleared on terminal events; set on file-loaded.
 enum class PlayerPresence { None, Present };

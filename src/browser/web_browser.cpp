@@ -8,7 +8,7 @@
 #include "../mpv/event.h"
 #include "../player/media_session.h"
 #include "../player/media_session_thread.h"
-#include "../player/playback_coordinator.h"
+#include "../playback/coordinator.h"
 #include "../theme_color.h"
 #include "../cef/color.h"
 #include "../input/dispatch.h"

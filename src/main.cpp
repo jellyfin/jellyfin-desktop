@@ -26,8 +26,8 @@
 
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
-#include "player/playback_coordinator.h"
-#include "player/playback_sinks.h"
+#include "playback/coordinator.h"
+#include "playback/sinks.h"
 
 #include "logging.h"
 #include "signal_guard.h"
