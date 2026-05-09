@@ -26,6 +26,8 @@
 
 #include "player/media_session.h"
 #include "player/media_session_thread.h"
+#include "player/playback_coordinator.h"
+#include "player/playback_sinks.h"
 
 #include "logging.h"
 #include "signal_guard.h"
@@ -63,8 +65,7 @@
 MpvHandle g_mpv;
 Color g_video_bg;
 
-std::atomic<MediaType> g_media_type{MediaType::Unknown};
-std::atomic<PlaybackState> g_playback_state{PlaybackState::Stopped};
+PlaybackCoordinator* g_playback_coord = nullptr;
 ThemeColor* g_theme_color = nullptr;
 std::atomic<int> g_display_hz{60};
 
@@ -328,6 +329,17 @@ static int run_with_cef(int mw, int mh,
     media_session_thread.start(media_session_obj.get());
     g_media_session = &media_session_thread;
 
+    // Coordinator + sinks must exist before any thread can post inputs or
+    // observe playback state. Sinks register before start() so the worker
+    // never delivers to a half-built fanout.
+    PlaybackCoordinatorScope coord_scope;
+    g_playback_coord = &coord_scope.coord();
+    auto browser_sink = std::make_shared<BrowserPlaybackSink>();
+    coord_scope.coord().addSink(browser_sink);
+    coord_scope.coord().addSink(
+        std::make_shared<MediaSessionPlaybackSink>(&media_session_thread));
+    set_browser_playback_sink(browser_sink);
+
     // Start before waitForLoad so mpv events (OSD_DIMS especially) reach
     // the platform/browsers during the overlay-only startup phase, before
     // the main browser finishes loading.
@@ -370,6 +382,11 @@ static int run_with_cef(int mw, int mh,
     cef_thread.join();
     g_mpv.Wakeup();
     digest_thread.join();
+
+    // Producers have joined; coordinator drains any in-flight inputs and
+    // stops via PlaybackCoordinatorScope dtor at end of scope. Clear the
+    // global pointer first so any late readers see "no coordinator".
+    g_playback_coord = nullptr;
 
     // Save window geometry while mpv is still alive.
     {

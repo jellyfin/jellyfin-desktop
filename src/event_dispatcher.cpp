@@ -7,8 +7,11 @@
 #include "browser/about_browser.h"
 #include "event_queue.h"
 #include "logging.h"
-#include "player/media_session.h"
 #include "player/media_session_thread.h"
+#include "player/playback_coordinator.h"
+#include "player/playback_event.h"
+#include "player/playback_sinks.h"
+#include "theme_color.h"
 #include "wake_event.h"
 
 #include "include/cef_parser.h"
@@ -23,69 +26,182 @@
 #include <string>
 
 static EventQueue<MpvEvent> g_cef_queue;
+static std::shared_ptr<BrowserPlaybackSink> g_browser_sink;
 
 bool g_was_maximized_before_fullscreen = false;
 
-void update_idle_inhibit() {
-    if (g_playback_state.load(std::memory_order_relaxed) != PlaybackState::Playing) {
-        g_platform.set_idle_inhibit(IdleInhibitLevel::None);
-    } else if (g_media_type.load(std::memory_order_relaxed) == MediaType::Audio) {
-        g_platform.set_idle_inhibit(IdleInhibitLevel::System);
-    } else {
-        g_platform.set_idle_inhibit(IdleInhibitLevel::Display);
-    }
+void set_browser_playback_sink(std::shared_ptr<BrowserPlaybackSink> sink) {
+    g_browser_sink = std::move(sink);
 }
 
 void publish(const MpvEvent& ev) {
     g_cef_queue.try_push(ev);
 }
 
+namespace {
+
+void apply_idle_inhibit(const PlaybackSnapshot& snap) {
+    if (snap.phase != PlaybackPhase::Playing) {
+        g_platform.set_idle_inhibit(IdleInhibitLevel::None);
+    } else if (snap.media_type == MediaType::Audio) {
+        g_platform.set_idle_inhibit(IdleInhibitLevel::System);
+    } else {
+        g_platform.set_idle_inhibit(IdleInhibitLevel::Display);
+    }
+}
+
+void deliver_playback_event(const PlaybackEvent& ev) {
+    if (!g_web_browser) return;
+    PlaybackSnapshot snap = g_playback_coord ? g_playback_coord->snapshot()
+                                             : PlaybackSnapshot{};
+    switch (ev.kind) {
+    case PlaybackEvent::Kind::Started:
+        g_web_browser->execJs("window._nativeEmit('playing')");
+        apply_idle_inhibit(snap);
+        break;
+    case PlaybackEvent::Kind::Paused:
+        g_web_browser->execJs("window._nativeEmit('paused')");
+        apply_idle_inhibit(snap);
+        break;
+    case PlaybackEvent::Kind::Finished:
+        g_web_browser->execJs("window._nativeEmit('finished')");
+        if (g_theme_color) g_theme_color->setVideoMode(false);
+        apply_idle_inhibit(snap);
+        break;
+    case PlaybackEvent::Kind::Canceled:
+        g_web_browser->execJs("window._nativeEmit('canceled')");
+        if (g_theme_color) g_theme_color->setVideoMode(false);
+        apply_idle_inhibit(snap);
+        break;
+    case PlaybackEvent::Kind::Error: {
+        auto val = CefValue::Create();
+        val->SetString(ev.error_message.empty() ? "Playback error"
+                                                : ev.error_message);
+        auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
+        g_web_browser->execJs("window._nativeEmit('error',"
+                              + json.ToString() + ")");
+        if (g_theme_color) g_theme_color->setVideoMode(false);
+        apply_idle_inhibit(snap);
+        break;
+    }
+    case PlaybackEvent::Kind::SeekingChanged:
+        if (ev.flag)
+            g_web_browser->execJs("window._nativeEmit('seeking')");
+        break;
+    case PlaybackEvent::Kind::BufferingChanged:
+        // Buffering is reflected via the snapshot; no JS emit today.
+        break;
+    case PlaybackEvent::Kind::MediaTypeChanged:
+        apply_idle_inhibit(snap);
+        break;
+    }
+}
+
+void route_to_coordinator(const MpvEvent& ev) {
+    if (!g_playback_coord) return;
+    switch (ev.type) {
+    case MpvEventType::PAUSE:
+        g_playback_coord->postPauseChanged(ev.flag);
+        break;
+    case MpvEventType::FILE_LOADED:
+        g_playback_coord->postFileLoaded();
+        break;
+    case MpvEventType::END_FILE_EOF:
+        g_playback_coord->postEndFile(EndReason::Eof);
+        break;
+    case MpvEventType::END_FILE_ERROR:
+        g_playback_coord->postEndFile(EndReason::Error,
+                                      ev.err_msg ? ev.err_msg : "");
+        break;
+    case MpvEventType::END_FILE_CANCEL:
+        g_playback_coord->postEndFile(EndReason::Canceled);
+        break;
+    case MpvEventType::SEEKING:
+        g_playback_coord->postSeekingChanged(ev.flag);
+        break;
+    case MpvEventType::PAUSED_FOR_CACHE:
+        g_playback_coord->postBufferingChanged(ev.flag);
+        break;
+    case MpvEventType::TIME_POS:
+        g_playback_coord->postPosition(static_cast<int64_t>(ev.dbl * 1000000.0));
+        break;
+    default:
+        break;
+    }
+}
+
+}  // namespace
+
 void cef_consumer_thread() {
 #ifdef _WIN32
-    HANDLE handles[2] = {
+    HANDLE handles[3] = {
         g_cef_queue.wake_handle(),
+        g_browser_sink->wake().handle(),
         g_shutdown_event.handle()
     };
 #else
-    int wake_fd = g_cef_queue.wake().fd();
-    int shutdown_fd = g_shutdown_event.fd();
-    struct pollfd fds[2] = {
-        {wake_fd, POLLIN, 0},
-        {shutdown_fd, POLLIN, 0},
+    struct pollfd fds[3] = {
+        {g_cef_queue.wake().fd(),         POLLIN, 0},
+        {g_browser_sink->wake().fd(),     POLLIN, 0},
+        {g_shutdown_event.fd(),           POLLIN, 0},
     };
 #endif
 
     while (true) {
 #ifdef _WIN32
-        WaitForMultipleObjects(2, handles, FALSE, INFINITE);
-        if (WaitForSingleObject(handles[1], 0) == WAIT_OBJECT_0) break;
+        WaitForMultipleObjects(3, handles, FALSE, INFINITE);
+        if (WaitForSingleObject(handles[2], 0) == WAIT_OBJECT_0) break;
 #else
-        poll(fds, 2, -1);
-        if (fds[1].revents & POLLIN) break;
+        poll(fds, 3, -1);
+        if (fds[2].revents & POLLIN) break;
 #endif
+
+        // Drain coordinator-emitted playback events first so snapshot-driven
+        // side effects in mpv-event handling see the updated state.
+        g_browser_sink->wake().drain();
+        PlaybackEvent pe;
+        while (g_browser_sink->drain(pe)) {
+            deliver_playback_event(pe);
+        }
 
         g_cef_queue.drain_wake();
         MpvEvent ev;
         while (g_cef_queue.try_pop(ev)) {
-            if (!g_web_browser) continue;
+            // Playback-relevant events flow through the coordinator;
+            // it owns transition logic and side-effect dispatch.
+            route_to_coordinator(ev);
+
+            if (!g_web_browser) {
+                if (ev.type == MpvEventType::SHUTDOWN) return;
+                continue;
+            }
             switch (ev.type) {
             case MpvEventType::PAUSE:
-                g_playback_state = ev.flag ? PlaybackState::Paused : PlaybackState::Playing;
-                update_idle_inhibit();
-                g_web_browser->execJs(ev.flag ? "window._nativeEmit('paused')" : "window._nativeEmit('playing')");
-                if (g_media_session)
-                    g_media_session->setPlaybackState(ev.flag ? PlaybackState::Paused : PlaybackState::Playing);
+            case MpvEventType::FILE_LOADED:
+            case MpvEventType::END_FILE_EOF:
+            case MpvEventType::END_FILE_ERROR:
+            case MpvEventType::END_FILE_CANCEL:
+            case MpvEventType::SEEKING:
+            case MpvEventType::PAUSED_FOR_CACHE:
+                // Coordinator-owned. UI fan-out happens via BrowserPlaybackSink.
+                if (ev.type == MpvEventType::FILE_LOADED) {
+                    // mpv loads paused (see MpvHandle::LoadFile). Apply pending
+                    // vid/aid/sid selection and queue the unpause; the PAUSE
+                    // observer will drive Started once mpv flips pause=false
+                    // after the track-switch reinits.
+                    g_mpv.ApplyPendingTrackSelectionAndPlay();
+                }
                 break;
             case MpvEventType::TIME_POS: {
                 int ms = static_cast<int>(ev.dbl * 1000);
-                g_web_browser->execJs("window._nativeUpdatePosition(" + std::to_string(ms) + ")");
-                if (g_media_session)
-                    g_media_session->setPosition(static_cast<int64_t>(ev.dbl * 1000000));
+                g_web_browser->execJs("window._nativeUpdatePosition("
+                                      + std::to_string(ms) + ")");
                 break;
             }
             case MpvEventType::DURATION: {
                 int ms = static_cast<int>(ev.dbl * 1000);
-                g_web_browser->execJs("window._nativeUpdateDuration(" + std::to_string(ms) + ")");
+                g_web_browser->execJs("window._nativeUpdateDuration("
+                                      + std::to_string(ms) + ")");
                 break;
             }
             case MpvEventType::FULLSCREEN:
@@ -94,52 +210,14 @@ void cef_consumer_thread() {
                 } else {
                     g_was_maximized_before_fullscreen = false;
                 }
-                g_web_browser->execJs("window._nativeFullscreenChanged(" + std::string(ev.flag ? "true" : "false") + ")");
+                g_web_browser->execJs("window._nativeFullscreenChanged("
+                                      + std::string(ev.flag ? "true" : "false")
+                                      + ")");
                 break;
             case MpvEventType::SPEED:
-                g_web_browser->execJs("window._nativeSetRate(" + std::to_string(ev.dbl) + ")");
-                if (g_media_session)
-                    g_media_session->setRate(ev.dbl);
-                break;
-            case MpvEventType::SEEKING:
-                if (ev.flag) {
-                    g_web_browser->execJs("window._nativeEmit('seeking')");
-                    if (g_media_session) g_media_session->emitSeeking();
-                }
-                break;
-            case MpvEventType::FILE_LOADED:
-                // File loaded paused (see MpvHandle::LoadFile). Apply the
-                // pending vid/aid/sid selection and queue the unpause; the
-                // PAUSE observer will emit 'playing' to JS once mpv flips
-                // pause=false, after the track-switch reinits land. Don't
-                // emit 'playing' here — JS must not see "playing" until
-                // mpv is actually unpaused with the right tracks selected.
-                g_mpv.ApplyPendingTrackSelectionAndPlay();
-                break;
-            case MpvEventType::END_FILE_EOF:
-                g_playback_state = PlaybackState::Stopped;
-                update_idle_inhibit();
-                g_web_browser->execJs("window._nativeEmit('finished')");
-                if (g_media_session)
-                    g_media_session->setPlaybackState(PlaybackState::Stopped);
-                break;
-            case MpvEventType::END_FILE_ERROR: {
-                g_playback_state = PlaybackState::Stopped;
-                update_idle_inhibit();
-                auto val = CefValue::Create();
-                val->SetString(ev.err_msg ? ev.err_msg : "Playback error");
-                auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-                g_web_browser->execJs("window._nativeEmit('error'," + json.ToString() + ")");
-                if (g_media_session)
-                    g_media_session->setPlaybackState(PlaybackState::Stopped);
-                break;
-            }
-            case MpvEventType::END_FILE_CANCEL:
-                g_playback_state = PlaybackState::Stopped;
-                update_idle_inhibit();
-                g_web_browser->execJs("window._nativeEmit('canceled')");
-                if (g_media_session)
-                    g_media_session->setPlaybackState(PlaybackState::Stopped);
+                g_web_browser->execJs("window._nativeSetRate("
+                                      + std::to_string(ev.dbl) + ")");
+                if (g_media_session) g_media_session->setRate(ev.dbl);
                 break;
             case MpvEventType::OSD_DIMS:
                 if (g_web_browser->browser())
@@ -164,7 +242,8 @@ void cef_consumer_thread() {
                 auto val = CefValue::Create();
                 val->SetList(list);
                 auto json = CefWriteJSON(val, JSON_WRITER_DEFAULT);
-                g_web_browser->execJs("window._nativeUpdateBufferedRanges(" + json.ToString() + ")");
+                g_web_browser->execJs("window._nativeUpdateBufferedRanges("
+                                      + json.ToString() + ")");
                 break;
             }
             case MpvEventType::DISPLAY_FPS: {
