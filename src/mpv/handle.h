@@ -342,11 +342,6 @@ private:
 #ifdef _WIN32
         // Tell mpv to load window icon from our exe resources
         _putenv_s("MPV_WINDOW_ICON", "IDI_ICON1");
-
-        // Windows Dolby Vision playback can fall back to HDR during active
-        // playback unless mpv peak computation is disabled.
-        SetOptionString("hdr-compute-peak", "no");
-
 #endif
 
         // Keep window open when idle (no media loaded).
