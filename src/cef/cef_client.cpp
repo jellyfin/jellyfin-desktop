@@ -3,6 +3,7 @@
 #include "../cjson/cJSON.h"
 #include "../platform/platform.h"
 #include "include/cef_task.h"
+#include <cmath>
 #include <cstdio>
 #include <functional>
 
@@ -140,6 +141,18 @@ void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
         browser_->GetHost()->WasResized();
         browser_->GetHost()->Invalidate(PET_VIEW);
     }
+}
+
+void CefLayer::setRefreshRate(CefBrowserSettings& bs, double hz) {
+    if (hz <= 0) return;
+    bs.windowless_frame_rate = static_cast<int>(std::ceil(hz));
+}
+
+void CefLayer::setRefreshRate(double hz) {
+    if (hz <= 0) return;
+    setRefreshRate(browser_settings_, hz);
+    if (browser_)
+        browser_->GetHost()->SetWindowlessFrameRate(browser_settings_.windowless_frame_rate);
 }
 
 void CefLayer::reset_popup_state() {

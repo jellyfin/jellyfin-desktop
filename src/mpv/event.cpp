@@ -14,6 +14,7 @@ static std::atomic<int>    s_osd_ph{0};
 static std::atomic<int>    s_window_pw{0};
 static std::atomic<int>    s_window_ph{0};
 static std::atomic<double> s_display_scale{0.0};
+static std::atomic<double> s_display_hz{0.0};
 
 namespace mpv {
     bool   fullscreen()       { return s_fullscreen.load(std::memory_order_relaxed); }
@@ -23,6 +24,13 @@ namespace mpv {
     int    window_pw()        { return s_window_pw.load(std::memory_order_relaxed); }
     int    window_ph()        { return s_window_ph.load(std::memory_order_relaxed); }
     double display_scale()    { return s_display_scale.load(std::memory_order_relaxed); }
+    double display_hz() { return s_display_hz.load(std::memory_order_relaxed); }
+    void seed_display_hz_sync(MpvHandle& mpv) {
+        double fps = 0.0;
+        mpv_get_property(mpv.Get(), "display-fps", MPV_FORMAT_DOUBLE, &fps);
+        if (fps > 0)
+            s_display_hz.store(fps, std::memory_order_relaxed);
+    }
 
     void set_window_pixels(int pw, int ph) {
         s_window_pw.store(pw, std::memory_order_relaxed);
@@ -159,9 +167,8 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
     case MPV_OBSERVE_DISPLAY_FPS: {
         if (p->format != MPV_FORMAT_DOUBLE) break;
         double fps = *static_cast<double*>(p->data);
-        int hz = (fps > 0) ? static_cast<int>(fps + 0.5) : 60;
-        if (hz != g_display_hz.load(std::memory_order_relaxed)) {
-            g_display_hz.store(hz, std::memory_order_relaxed);
+        if (fps != s_display_hz.load(std::memory_order_relaxed)) {
+            s_display_hz.store(fps, std::memory_order_relaxed);
             ev.type = MpvEventType::DISPLAY_FPS;
         }
         break;

@@ -104,7 +104,7 @@ void route_to_coordinator(const MpvEvent& ev) {
         break;
     }
     case MpvEventType::DISPLAY_FPS:
-        g_playback_coord->postDisplayHz(g_display_hz.load(std::memory_order_relaxed));
+        g_playback_coord->postDisplayHz(mpv::display_hz());
         break;
     default:
         break;

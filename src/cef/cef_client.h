@@ -49,7 +49,11 @@ class CefLayer : public CefClient, public CefRenderHandler,
 public:
     CefLayer(RenderTarget target, int w, int h, int pw, int ph)
         : target_(target), width_(w), height_(h),
-          physical_w_(pw), physical_h_(ph) {}
+          physical_w_(pw), physical_h_(ph) { all_.push_back(this); }
+    ~CefLayer() override { std::erase(all_, this); }
+
+    // Registry of all live CefLayer instances. CEF UI thread only.
+    static const std::vector<CefLayer*>& all() { return all_; }
 
     void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
     void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
@@ -112,6 +116,8 @@ public:
     void waitForClose();
     void waitForLoad();
     void execJs(const std::string& js);
+    void setRefreshRate(double hz);
+    static void setRefreshRate(CefBrowserSettings& bs, double hz);
 
     // Create the underlying CEF browser. Stores wi/bs/extra_info for use in
     // reset(). `extra_info` travels to the renderer's OnBrowserCreated and
@@ -175,5 +181,6 @@ private:
     CefRefPtr<CefDictionaryValue> extra_info_;
     State state_ = State::Normal;
     std::string pending_url_;
+    static inline std::vector<CefLayer*> all_;
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

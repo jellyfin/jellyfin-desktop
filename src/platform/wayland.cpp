@@ -619,15 +619,22 @@ static void wl_fade_overlay(float fade_sec,
     stop_fade_thread();
     g_fade_stop.store(false, std::memory_order_release);
 
-    g_fade_thread = std::thread([fade_sec,
+    double fps = mpv::display_hz();
+    if (fps <= 0) {
+        if (on_fade_start) on_fade_start();
+        wl_set_overlay_visible(false);
+        if (on_complete) on_complete();
+        return;
+    }
+
+    g_fade_thread = std::thread([fade_sec, fps,
                  on_fade_start = std::move(on_fade_start),
                  on_complete = std::move(on_complete)]() {
         if (on_fade_start) on_fade_start();
 
-        int fps = g_display_hz.load(std::memory_order_relaxed);
         int total_frames = static_cast<int>(fade_sec * fps);
         if (total_frames < 1) total_frames = 1;
-        auto frame_duration = std::chrono::microseconds(1000000 / fps);
+        auto frame_duration = std::chrono::microseconds(static_cast<int64_t>(1e6 / fps));
 
         bool aborted = false;
         for (int i = 1; i <= total_frames; i++) {

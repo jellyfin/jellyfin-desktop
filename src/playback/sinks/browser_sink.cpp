@@ -88,14 +88,9 @@ void BrowserPlaybackSink::deliver(const PlaybackEvent& ev) {
         break;
     }
     case PlaybackEvent::Kind::DisplayHzChanged: {
-        int hz = snap.display_hz;
-        LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", hz);
-        if (g_web_browser->browser())
-            g_web_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
-        if (g_overlay_browser && g_overlay_browser->browser())
-            g_overlay_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
-        if (g_about_browser && g_about_browser->browser())
-            g_about_browser->browser()->GetHost()->SetWindowlessFrameRate(hz);
+        LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", snap.display_hz);
+        for (auto* layer : CefLayer::all())
+            layer->setRefreshRate(snap.display_hz);
         break;
     }
     case PlaybackEvent::Kind::BufferedRangesChanged: {
