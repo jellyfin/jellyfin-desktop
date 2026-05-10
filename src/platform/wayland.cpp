@@ -45,8 +45,10 @@ struct wl_configure_cb {
 // =====================================================================
 
 // Per-surface state. One per CefLayer (allocated by wl_alloc_surface,
-// destroyed by wl_free_surface). Popup keeps a separate fixed slot in
-// WlState; popups are not CefLayers.
+// destroyed by wl_free_surface). Each surface owns its own popup
+// subsurface so popups (e.g. <select> dropdowns) are children of the
+// layer that spawned them — automatically z-ordered above the layer,
+// no parent inference needed.
 struct PlatformSurface {
     wl_surface*    surface = nullptr;
     wl_subsurface* subsurface = nullptr;
@@ -59,6 +61,15 @@ struct PlatformSurface {
     // configures. Otherwise rendering tracks WlState's mpv_pw/ph.
     int            lw = 0, lh = 0;
     int            pw = 0, ph = 0;
+
+    // Per-surface popup (CEF OSR popup elements, e.g. <select> dropdowns).
+    // The popup subsurface is a child of `surface`, so it draws above this
+    // surface automatically.
+    wl_surface*    popup_surface = nullptr;
+    wl_subsurface* popup_subsurface = nullptr;
+    wp_viewport*   popup_viewport = nullptr;
+    wl_buffer*     popup_buffer = nullptr;
+    bool           popup_visible = false;
 };
 
 struct WlState {
@@ -70,17 +81,8 @@ struct WlState {
     wl_surface* parent = nullptr;
 
     // Current stack order, bottom-to-top. The first (bottom-most) surface
-    // is treated as the cef-main surface for transition / popup-parent
-    // purposes.
+    // is treated as the cef-main surface for transition purposes.
     std::vector<PlatformSurface*> stack;  // guarded by surface_mtx
-
-    // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns)
-    wl_surface* popup_surface = nullptr;
-    wl_subsurface* popup_subsurface = nullptr;
-    wl_buffer* popup_buffer = nullptr;
-    wp_viewport* popup_viewport = nullptr;
-    bool popup_visible = false;
-    wl_surface* popup_parent = nullptr;  // current parent (cef-main)
 
     // Shared globals
     wl_shm* shm = nullptr;
@@ -377,30 +379,33 @@ static void wl_fade_surface(PlatformSurface* s, float fade_sec,
 // Popup subsurface (CEF OSR <select> dropdowns).
 // =====================================================================
 
-static void wl_popup_show(int x, int y, int lw, int lh) {
+static void wl_popup_show(PlatformSurface* s, const Platform::PopupRequest& req) {
+    if (!s) return;
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    g_wl.popup_visible = true;
-    if (!g_wl.popup_subsurface) return;
-    wl_subsurface_set_position(g_wl.popup_subsurface, x, y);
-    if (g_wl.popup_viewport && lw > 0 && lh > 0)
-        wp_viewport_set_destination(g_wl.popup_viewport, lw, lh);
+    s->popup_visible = true;
+    if (!s->popup_subsurface) return;
+    wl_subsurface_set_position(s->popup_subsurface, req.x, req.y);
+    if (s->popup_viewport && req.lw > 0 && req.lh > 0)
+        wp_viewport_set_destination(s->popup_viewport, req.lw, req.lh);
 }
 
-static void wl_popup_hide() {
+static void wl_popup_hide(PlatformSurface* s) {
+    if (!s) return;
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    g_wl.popup_visible = false;
-    if (!g_wl.popup_surface) return;
-    wl_surface_attach(g_wl.popup_surface, nullptr, 0, 0);
-    wl_surface_commit(g_wl.popup_surface);
+    s->popup_visible = false;
+    if (!s->popup_surface) return;
+    wl_surface_attach(s->popup_surface, nullptr, 0, 0);
+    wl_surface_commit(s->popup_surface);
     wl_display_flush(g_wl.display);
-    if (g_wl.popup_buffer) {
-        wl_buffer_destroy(g_wl.popup_buffer);
-        g_wl.popup_buffer = nullptr;
+    if (s->popup_buffer) {
+        wl_buffer_destroy(s->popup_buffer);
+        s->popup_buffer = nullptr;
     }
 }
 
-static void wl_popup_present(const CefAcceleratedPaintInfo& info, int lw, int lh) {
-    if (lw <= 0 || lh <= 0) return;
+static void wl_popup_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info,
+                             int lw, int lh) {
+    if (!s || lw <= 0 || lh <= 0) return;
     int w = info.extra.coded_size.width;
     int h = info.extra.coded_size.height;
 
@@ -408,51 +413,51 @@ static void wl_popup_present(const CefAcceleratedPaintInfo& info, int lw, int lh
     if (!buf) return;
 
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.popup_surface || !g_wl.popup_visible) {
+    if (!s->popup_surface || !s->popup_visible) {
         wl_buffer_destroy(buf);
         return;
     }
-    if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
-    g_wl.popup_buffer = buf;
-    if (g_wl.popup_viewport) {
-        wp_viewport_set_source(g_wl.popup_viewport,
+    if (s->popup_buffer) wl_buffer_destroy(s->popup_buffer);
+    s->popup_buffer = buf;
+    if (s->popup_viewport) {
+        wp_viewport_set_source(s->popup_viewport,
             wl_fixed_from_int(0), wl_fixed_from_int(0),
             wl_fixed_from_int(w), wl_fixed_from_int(h));
-        wp_viewport_set_destination(g_wl.popup_viewport, lw, lh);
+        wp_viewport_set_destination(s->popup_viewport, lw, lh);
     }
-    wl_surface_attach(g_wl.popup_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.popup_surface, 0, 0, w, h);
-    // Commit popup's parent surface (cef-main) first so set_position takes
-    // effect in the same compositor frame as the popup buffer.
-    if (!g_wl.stack.empty() && g_wl.stack.front()->surface)
-        wl_surface_commit(g_wl.stack.front()->surface);
-    wl_surface_commit(g_wl.popup_surface);
+    wl_surface_attach(s->popup_surface, buf, 0, 0);
+    wl_surface_damage_buffer(s->popup_surface, 0, 0, w, h);
+    // Commit parent (CefLayer surface) first so subsurface state
+    // (set_position) lands in the same compositor frame as the popup
+    // buffer.
+    if (s->surface) wl_surface_commit(s->surface);
+    wl_surface_commit(s->popup_surface);
     wl_display_flush(g_wl.display);
 }
 
-static void wl_popup_present_software(const void* buffer, int pw, int ph, int lw, int lh) {
-    if (lw <= 0 || lh <= 0) return;
+static void wl_popup_present_software(PlatformSurface* s, const void* buffer,
+                                      int pw, int ph, int lw, int lh) {
+    if (!s || lw <= 0 || lh <= 0) return;
     auto* buf = create_shm_buffer(buffer, pw, ph);
     if (!buf) return;
 
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.popup_surface || !g_wl.popup_visible) {
+    if (!s->popup_surface || !s->popup_visible) {
         wl_buffer_destroy(buf);
         return;
     }
-    if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
-    g_wl.popup_buffer = buf;
-    if (g_wl.popup_viewport) {
-        wp_viewport_set_source(g_wl.popup_viewport,
+    if (s->popup_buffer) wl_buffer_destroy(s->popup_buffer);
+    s->popup_buffer = buf;
+    if (s->popup_viewport) {
+        wp_viewport_set_source(s->popup_viewport,
             wl_fixed_from_int(0), wl_fixed_from_int(0),
             wl_fixed_from_int(pw), wl_fixed_from_int(ph));
-        wp_viewport_set_destination(g_wl.popup_viewport, lw, lh);
+        wp_viewport_set_destination(s->popup_viewport, lw, lh);
     }
-    wl_surface_attach(g_wl.popup_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.popup_surface, 0, 0, pw, ph);
-    if (!g_wl.stack.empty() && g_wl.stack.front()->surface)
-        wl_surface_commit(g_wl.stack.front()->surface);
-    wl_surface_commit(g_wl.popup_surface);
+    wl_surface_attach(s->popup_surface, buf, 0, 0);
+    wl_surface_damage_buffer(s->popup_surface, 0, 0, pw, ph);
+    if (s->surface) wl_surface_commit(s->surface);
+    wl_surface_commit(s->popup_surface);
     wl_display_flush(g_wl.display);
 }
 
@@ -476,6 +481,23 @@ static PlatformSurface* wl_alloc_surface() {
     if (g_wl.alpha_modifier)
         s->alpha = wp_alpha_modifier_v1_get_surface(g_wl.alpha_modifier, s->surface);
     wl_surface_commit(s->surface);
+
+    // Per-surface popup. Parented to this surface so it draws above it
+    // automatically; viewport gets size on first present. Defer attach
+    // until popup_present.
+    s->popup_surface = wl_compositor_create_surface(g_wl.compositor);
+    s->popup_subsurface = wl_subcompositor_get_subsurface(
+        g_wl.subcompositor, s->popup_surface, s->surface);
+    wl_subsurface_set_desync(s->popup_subsurface);
+    {
+        wl_region* empty_popup = wl_compositor_create_region(g_wl.compositor);
+        wl_surface_set_input_region(s->popup_surface, empty_popup);
+        wl_region_destroy(empty_popup);
+    }
+    if (g_wl.viewporter)
+        s->popup_viewport = wp_viewporter_get_viewport(g_wl.viewporter, s->popup_surface);
+    wl_surface_commit(s->popup_surface);
+
     wl_display_flush(g_wl.display);
     return s;
 }
@@ -487,6 +509,10 @@ static void wl_free_surface(PlatformSurface* s) {
     // the vector, but defensive removal keeps state coherent on shutdown).
     auto it = std::find(g_wl.stack.begin(), g_wl.stack.end(), s);
     if (it != g_wl.stack.end()) g_wl.stack.erase(it);
+    if (s->popup_viewport) wp_viewport_destroy(s->popup_viewport);
+    if (s->popup_buffer) wl_buffer_destroy(s->popup_buffer);
+    if (s->popup_subsurface) wl_subsurface_destroy(s->popup_subsurface);
+    if (s->popup_surface) wl_surface_destroy(s->popup_surface);
     if (s->alpha) wp_alpha_modifier_surface_v1_destroy(s->alpha);
     if (s->viewport) wp_viewport_destroy(s->viewport);
     if (s->buffer) wl_buffer_destroy(s->buffer);
@@ -511,18 +537,6 @@ static void wl_restack(PlatformSurface* const* ordered, size_t n) {
         if (!s || !s->subsurface || !s->surface) continue;
         wl_subsurface_place_above(s->subsurface, prev);
         prev = s->surface;
-    }
-    // The popup parent follows the cef-main (bottom-most) surface so its
-    // commits land in the right frame.
-    if (!g_wl.stack.empty() && g_wl.stack.front()->surface) {
-        if (g_wl.popup_parent != g_wl.stack.front()->surface) {
-            // For now, popup is created as a child of the original cef-main
-            // surface at init. Reparenting would require destroying and
-            // recreating the wl_subsurface; we capture the new parent here
-            // for future stages and leave the current parent in place.
-            // STUB: stage-1 placeholder, see plan.md
-            g_wl.popup_parent = g_wl.stack.front()->surface;
-        }
     }
     wl_display_flush(g_wl.display);
 }
@@ -930,25 +944,8 @@ static bool wl_init(mpv_handle* mpv) {
         return false;
     }
 
-    // Main/overlay/about subsurfaces are now allocated on-demand by
-    // Browsers via g_platform.alloc_surface/restack.
-    //
-    // STUB: stage-1 placeholder, see plan.md — popup is parented to the
-    // mpv parent surface for now (the active layer's surface isn't known
-    // until Browsers::create runs after platform init). Re-parenting on
-    // restack is a later-stage item; for stage-1 this works for the
-    // single-cef-main case but may misbehave if popup-during-about lands.
-    g_wl.popup_surface = wl_compositor_create_surface(g_wl.compositor);
-    g_wl.popup_subsurface = wl_subcompositor_get_subsurface(g_wl.subcompositor, g_wl.popup_surface, parent);
-    wl_subsurface_set_desync(g_wl.popup_subsurface);
-    {
-        wl_region* empty = wl_compositor_create_region(g_wl.compositor);
-        wl_surface_set_input_region(g_wl.popup_surface, empty);
-        wl_region_destroy(empty);
-    }
-    if (g_wl.viewporter)
-        g_wl.popup_viewport = wp_viewporter_get_viewport(g_wl.viewporter, g_wl.popup_surface);
-    wl_surface_commit(g_wl.popup_surface);
+    // CefLayer subsurfaces (and their popup children) are allocated
+    // on-demand by Browsers via g_platform.alloc_surface/restack.
 
     wl_display_roundtrip_queue(display, g_wl.queue);
 
@@ -1028,13 +1025,9 @@ static void wl_cleanup() {
     clipboard_wayland::cleanup();
     // Input layer owns seat/pointer/keyboard/xkb/cursor-shape-device.
     input::wayland::cleanup();
-    // Popup
-    if (g_wl.popup_viewport) wp_viewport_destroy(g_wl.popup_viewport);
-    if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
-    if (g_wl.popup_subsurface) wl_subsurface_destroy(g_wl.popup_subsurface);
-    if (g_wl.popup_surface) wl_surface_destroy(g_wl.popup_surface);
-    // Per-layer surfaces are owned by Browsers and freed via free_surface
-    // before cleanup; defensively drop any stragglers.
+    // Per-layer surfaces (and their popup children) are owned by Browsers
+    // and freed via free_surface before cleanup; defensively drop any
+    // stragglers.
     for (auto* s : g_wl.stack) wl_free_surface(s);
     g_wl.stack.clear();
     // Globals (must be destroyed before queue — they were bound to it).
@@ -1448,9 +1441,6 @@ Platform make_wayland_platform() {
         .popup_hide = wl_popup_hide,
         .popup_present = wl_popup_present,
         .popup_present_software = wl_popup_present_software,
-        .try_native_popup_menu = [](int, int, int, int,
-                                    const std::vector<std::string>&, int,
-                                    std::function<void(int)>) { return false; },
         .set_fullscreen = wl_set_fullscreen,
         .toggle_fullscreen = wl_toggle_fullscreen,
         .begin_transition = wl_begin_transition,

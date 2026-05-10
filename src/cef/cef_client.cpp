@@ -189,7 +189,7 @@ void CefLayer::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
     popup_visible_ = show;
     reset_popup_state();
     if (!show) {
-        g_platform.popup_hide();
+        if (surface_) g_platform.popup_hide(surface_);
         return;
     }
     if (CefRefPtr<CefFrame> frame = focused_or_main(browser)) {
@@ -208,24 +208,32 @@ void CefLayer::try_show_popup() {
     if (!popup_visible_ || !popup_size_received_ || !popup_options_received_)
         return;
 
-    if (!popup_options_.empty() && g_platform.try_native_popup_menu) {
-        CefRefPtr<CefLayer> self = this;
-        auto on_selected = [self](int index) {
-            CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self, index]() {
-                self->dispatch_popup_selection(index);
-            })));
-        };
-        if (g_platform.try_native_popup_menu(
-                popup_rect_.x, popup_rect_.y,
-                popup_rect_.width, popup_rect_.height,
-                popup_options_, popup_selected_idx_,
-                std::move(on_selected))) {
-            return;
-        }
-    }
+    // on_selected fires only on native-menu backends (macOS). Compositor
+    // backends ignore it; CEF dispatches selection itself on click.
+    CefRefPtr<CefLayer> self = this;
+    auto on_selected = [self](int index) {
+        CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self, index]() {
+            self->dispatch_popup_selection(index);
+        })));
+    };
 
-    g_platform.popup_show(popup_rect_.x, popup_rect_.y,
-                          popup_rect_.width, popup_rect_.height);
+    Platform::PopupRequest req;
+    req.x = popup_rect_.x;
+    req.y = popup_rect_.y;
+    req.lw = popup_rect_.width;
+    req.lh = popup_rect_.height;
+    req.options = popup_options_;
+    req.initial_highlight = popup_selected_idx_;
+    req.on_selected = std::move(on_selected);
+    if (surface_) g_platform.popup_show(surface_, req);
+}
+
+void CefLayer::onDeactivated() {
+    if (popup_visible_) {
+        popup_visible_ = false;
+        reset_popup_state();
+        if (surface_) g_platform.popup_hide(surface_);
+    }
 }
 
 void CefLayer::dispatch_popup_selection(int index) {
@@ -246,8 +254,9 @@ void CefLayer::dispatch_popup_selection(int index) {
 void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                        const void* buffer, int w, int h) {
     if (type == PET_POPUP) {
-        g_platform.popup_present_software(buffer, w, h,
-                                          popup_rect_.width, popup_rect_.height);
+        if (surface_)
+            g_platform.popup_present_software(surface_, buffer, w, h,
+                                              popup_rect_.width, popup_rect_.height);
         return;
     }
     if (type != PET_VIEW) return;
@@ -258,7 +267,8 @@ void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectL
 void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
                                   const RectList&, const CefAcceleratedPaintInfo& info) {
     if (type == PET_POPUP) {
-        g_platform.popup_present(info, popup_rect_.width, popup_rect_.height);
+        if (surface_)
+            g_platform.popup_present(surface_, info, popup_rect_.width, popup_rect_.height);
         return;
     }
     if (type != PET_VIEW) return;
