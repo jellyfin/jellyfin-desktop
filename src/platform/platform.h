@@ -85,6 +85,15 @@ struct Platform {
     // Returns false if unavailable. Used to save/restore window position.
     bool (*query_window_position)(int* x, int* y);
 
+    // Query the current native window client size in physical pixels.
+    // Returns false if unavailable.
+    //
+    // Used on Windows after restoring a saved maximized state. In that path,
+    // the native mpv window may maximize correctly after startup, but CEF can
+    // remain at the saved unmaximized browser viewport size unless we explicitly
+    // resize it to the actual post-maximize HWND client area.
+    bool (*query_window_size)(int* pw, int* ph) = nullptr;
+
     // Clamp saved window geometry so it fits within the primary screen's
     // visible area. Called before mpv init so the window never appears
     // oversized or off-screen. Values are in the same coordinate system
