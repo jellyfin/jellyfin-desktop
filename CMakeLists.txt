@@ -172,7 +172,14 @@ else()
     find_package(PkgConfig REQUIRED)
 
     # Shared Linux deps
-    pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+		pkg_check_modules(SYSTEMD libsystemd QUIET)
+    if (NOT SYSTEMD_FOUND)
+      pkg_check_modules(SYSTEMD libelogind REQUIRED)
+    else()
+      pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+    endif()
+     pkg_check_modules(X11 REQUIRED x11)
+
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     find_package(OpenGL REQUIRED COMPONENTS EGL)
 
