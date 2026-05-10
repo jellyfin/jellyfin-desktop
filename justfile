@@ -2,6 +2,8 @@ import 'dev/linux/linux.just'
 import 'dev/macos/macos.just'
 import 'dev/windows/windows.just'
 
+set positional-arguments
+
 # List available recipes
 list:
     @just --list
@@ -43,7 +45,9 @@ update-deps *args:
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [linux]
 mpv *args: build
-    third_party/mpv/build/mpv {{args}}
+    #!/bin/sh
+    set -eu
+    third_party/mpv/build/mpv "$@"
 
 # Remove build artifacts (keeps CEF SDK download)
 clean:

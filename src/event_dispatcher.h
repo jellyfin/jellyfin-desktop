@@ -2,19 +2,30 @@
 
 #include "mpv/event.h"
 
-// mpv → CEF/MediaSession bridge. mpv_digest_thread normalizes mpv events and
-// publishes them here; cef_consumer_thread drains the queue, fans events out
-// to the active browser (execJs), the OS media session, and platform state.
+#include <memory>
+#include <vector>
+
+class QueuedPlaybackSink;
+class QueuedActionSink;
+
+// mpv → coordinator bridge. mpv_digest_thread normalizes mpv events and
+// publishes them here; cef_consumer_thread routes every playback-relevant
+// MpvEvent to the PlaybackCoordinator and pumps registered cef-thread
+// sinks (BrowserPlaybackSink, IdleInhibitSink, ThemeColorSink,
+// MpvActionSink) so they execute on the cef consumer thread.
 
 void publish(const MpvEvent& ev);
 
+// Called by run_with_cef before starting the consumer thread so the
+// dispatcher knows which sinks to pump. Sinks must outlive the consumer
+// thread.
+void register_queued_sinks(
+    std::vector<std::shared_ptr<QueuedPlaybackSink>> event_sinks,
+    std::vector<std::shared_ptr<QueuedActionSink>> action_sinks);
+
 void cef_consumer_thread();
 
-// Updates the platform's idle inhibit level based on g_playback_state and
-// g_media_type. Called from the consumer thread on state transitions, and
-// from web_browser when it routes Jellyfin's playback state to native.
-void update_idle_inhibit();
-
-// Captured when entering fullscreen so the geometry-save tail can record
-// whether to restore as maximized after exiting fullscreen on next launch.
+// Set by BrowserPlaybackSink on FullscreenChanged events; read by the
+// geometry-save tail in main.cpp at shutdown so we can record whether to
+// restore as maximized after exiting fullscreen on next launch.
 extern bool g_was_maximized_before_fullscreen;

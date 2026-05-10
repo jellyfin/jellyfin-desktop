@@ -126,9 +126,14 @@ if(APPLE)
         src/input/input_macos.mm
         src/wake_event_macos.cpp
         src/paths/macos.cpp
-        src/player/media_session.cpp
-        src/player/macos/media_session_macos.mm
-        src/player/media_session_thread.cpp
+        src/playback/state_machine.cpp
+        src/playback/coordinator.cpp
+        src/playback/sinks/queued_sink.cpp
+        src/playback/sinks/browser_sink.cpp
+        src/playback/sinks/idle_inhibit_sink.cpp
+        src/playback/sinks/theme_color_sink.cpp
+        src/playback/sinks/mpv_action_sink.cpp
+        src/playback/sinks/macos/macos_sink.mm
     )
 
     # LetsMove - prompts user to move app to /Applications (clears quarantine)
@@ -154,9 +159,14 @@ elseif(WIN32)
         src/platform/windows.cpp
         src/input/input_windows.cpp
         src/paths/windows.cpp
-        src/player/media_session.cpp
-        src/player/windows/media_session_windows.cpp
-        src/player/media_session_thread.cpp
+        src/playback/state_machine.cpp
+        src/playback/coordinator.cpp
+        src/playback/sinks/queued_sink.cpp
+        src/playback/sinks/browser_sink.cpp
+        src/playback/sinks/idle_inhibit_sink.cpp
+        src/playback/sinks/theme_color_sink.cpp
+        src/playback/sinks/mpv_action_sink.cpp
+        src/playback/sinks/windows/windows_sink.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
     )
     set(PLATFORM_LIBRARIES
@@ -172,7 +182,13 @@ else()
     find_package(PkgConfig REQUIRED)
 
     # Shared Linux deps
-    pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+	pkg_check_modules(SYSTEMD libsystemd QUIET)
+    if (NOT SYSTEMD_FOUND)
+    	pkg_check_modules(SYSTEMD libelogind REQUIRED)
+    else()
+    	pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+    endif()
+
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     find_package(OpenGL REQUIRED COMPONENTS EGL)
 
@@ -184,7 +200,7 @@ else()
     # X11 (optional)
     option(ENABLE_X11 "X11 backend support" ON)
     if(ENABLE_X11)
-        pkg_check_modules(XCB REQUIRED xcb)
+    	pkg_check_modules(XCB REQUIRED xcb)
         pkg_check_modules(XCB_SHM REQUIRED xcb-shm)
         pkg_check_modules(XCB_SHAPE REQUIRED xcb-shape)
         pkg_check_modules(XCB_CURSOR REQUIRED xcb-cursor)
@@ -329,9 +345,15 @@ else()
         src/platform/open_url_linux.cpp
         src/wake_event_linux.cpp
         src/paths/linux.cpp
-        src/player/media_session.cpp
-        src/player/mpris/media_session_mpris.cpp
-        src/player/media_session_thread.cpp
+        src/playback/state_machine.cpp
+        src/playback/coordinator.cpp
+        src/playback/sinks/queued_sink.cpp
+        src/playback/sinks/browser_sink.cpp
+        src/playback/sinks/idle_inhibit_sink.cpp
+        src/playback/sinks/theme_color_sink.cpp
+        src/playback/sinks/mpv_action_sink.cpp
+        src/playback/sinks/mpris/mpris_sink.cpp
+        src/playback/sinks/mpris/mpris_projection.cpp
         # Wayland
         src/platform/wayland.cpp
         src/clipboard/wayland.cpp
@@ -667,7 +689,7 @@ if(APPLE)
     set_source_files_properties(
         src/platform/macos.mm
         src/input/input_macos.mm
-        src/player/macos/media_session_macos.mm
+        src/playback/sinks/macos/macos_sink.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
 endif()

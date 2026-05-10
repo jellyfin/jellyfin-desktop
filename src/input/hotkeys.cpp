@@ -3,6 +3,7 @@
 #include "input.h"
 #include "../common.h"
 #include "../platform/platform.h"
+#include "../playback/coordinator.h"
 
 namespace input {
 namespace {
@@ -11,8 +12,11 @@ namespace {
 // Music playback ignores fullscreen hotkeys; a paused video still counts as
 // "active" because the user may want to toggle fullscreen while paused.
 bool video_player_active() {
-    return g_media_type.load(std::memory_order_relaxed) == MediaType::Video &&
-           g_playback_state.load(std::memory_order_relaxed) != PlaybackState::Stopped;
+    if (!g_playback_coord) return false;
+    PlaybackSnapshot snap = g_playback_coord->snapshot();
+    return snap.media_type == MediaType::Video
+        && snap.presence == PlayerPresence::Present
+        && snap.phase != PlaybackPhase::Stopped;
 }
 
 }  // namespace

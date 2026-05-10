@@ -6,16 +6,14 @@
 #include "../settings.h"
 #include "logging.h"
 #include "../mpv/event.h"
-#include "../player/media_session.h"
-#include "../player/media_session_thread.h"
+#include "../playback/coordinator.h"
+#include "../playback/event.h"
 #include "../theme_color.h"
 #include "../cef/color.h"
 #include "../input/dispatch.h"
 #include "../cjson/cJSON.h"
 #include "../paths/paths.h"
 #include "../jellyfin/device_profile.h"
-
-extern void update_idle_inhibit();
 
 // =====================================================================
 // Helpers
@@ -27,6 +25,8 @@ static MediaMetadata parseMetadataJson(const std::string& json) {
     if (!root) return meta;
 
     cJSON* item;
+    if ((item = cJSON_GetObjectItem(root, "Id")) && cJSON_IsString(item))
+        meta.id = item->valuestring;
     if ((item = cJSON_GetObjectItem(root, "Name")) && cJSON_IsString(item))
         meta.title = item->valuestring;
     if ((item = cJSON_GetObjectItem(root, "SeriesName")) && cJSON_IsString(item))
@@ -156,6 +156,7 @@ bool WebBrowser::handleMessage(const std::string& name,
         // their audio-add / sub-add can be queued before the FILE_LOADED-
         // driven unpause, gating playback on each external file being
         // opened and its track selected.
+        std::string metadataJson = args->GetSize() > 5 ? args->GetString(5).ToString() : "";
         std::string externalAudioUrl = args->GetSize() > 6 ? args->GetString(6).ToString() : "";
         std::string externalSubUrl = args->GetSize() > 7 ? args->GetString(7).ToString() : "";
         bool isInfiniteStream = args->GetSize() > 8 ? args->GetBool(8) : false;
@@ -167,6 +168,27 @@ bool WebBrowser::handleMessage(const std::string& name,
         LOG_INFO(LOG_CEF, "playerLoad: video={} audio={} sub={} start={}ms infinite={} dolbyVision={} extAudio={} extSub={} url={}",
             videoIdx, audioIdx, subIdx, startMs, isInfiniteStream, isDolbyVision, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
 
+        // Push next-track metadata + load-starting hint atomically before
+        // mpv loadfile. Parse metadata first so the Jellyfin item Id can
+        // ride along with postLoadStarting — SM compares it to the prior
+        // Id to set snapshot.variant_switch_pending on same-item reload
+        // (bitrate / transcode-variant change). Coord seeds
+        // snapshot.position_us with the resume offset so MPRIS/JS see
+        // the start position before mpv has opened the file. Coord also
+        // swallows the resulting END_FILE for the outgoing track
+        // (no Stopped flicker); MPRIS sees phase=Starting with the new
+        // content immediately.
+        MediaMetadata meta = metadataJson.empty()
+            ? MediaMetadata{}
+        : parseMetadataJson(metadataJson);
+        if (g_playback_coord) {
+            g_playback_coord->postLoadStarting(meta.id);
+            g_playback_coord->postPosition(static_cast<int64_t>(startMs) * 1000);
+        }
+        if (!metadataJson.empty()) {
+            if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
+            if (g_playback_coord) g_playback_coord->postMetadata(meta);
+        }
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
         opts.videoTrack = videoIdx;
@@ -239,34 +261,23 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);
-        g_media_type = meta.media_type;
         if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
-        update_idle_inhibit();
-        if (g_media_session)
-            g_media_session->setMetadata(meta);
+        if (g_playback_coord) g_playback_coord->postMetadata(std::move(meta));
     } else if (name == "notifyArtwork") {
         std::string artworkUri = args->GetString(0).ToString();
-        if (g_media_session) g_media_session->setArtwork(artworkUri);
+        if (g_playback_coord) g_playback_coord->postArtwork(std::move(artworkUri));
     } else if (name == "notifyQueueChange") {
         bool canNext = args->GetBool(0);
         bool canPrev = args->GetBool(1);
-        if (g_media_session) {
-            g_media_session->setCanGoNext(canNext);
-            g_media_session->setCanGoPrevious(canPrev);
-        }
+        if (g_playback_coord) g_playback_coord->postQueueCaps(canNext, canPrev);
     } else if (name == "notifyPlaybackState") {
-        std::string state = args->GetString(0).ToString();
-        if (g_media_session) {
-            if (state == "Playing") g_media_session->setPlaybackState(PlaybackState::Playing);
-            else if (state == "Paused") g_media_session->setPlaybackState(PlaybackState::Paused);
-            else g_media_session->setPlaybackState(PlaybackState::Stopped);
-        }
-        if (state != "Playing" && state != "Paused" && g_theme_color)
-            g_theme_color->setVideoMode(false);
+        // mpv is the authoritative playback-state source via the coordinator.
+        // JS still emits this hint as it navigates; ignore it for state but
+        // keep the IPC callable so the JS side does not see a missing handler.
     } else if (name == "notifySeek") {
         int posMs = getIntArg(args, 0);
-        if (g_media_session)
-            g_media_session->emitSeeked(static_cast<int64_t>(posMs) * 1000);
+        if (g_playback_coord)
+            g_playback_coord->postSeeked(static_cast<int64_t>(posMs) * 1000);
     } else if (name == "setCursorVisible") {
         g_platform.set_cursor(args->GetBool(0) ? CT_POINTER : CT_NONE);
     } else if (name == "appExit") {

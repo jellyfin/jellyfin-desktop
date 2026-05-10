@@ -24,8 +24,15 @@
 #include "settings.h"
 #include "theme_color.h"
 
-#include "player/media_session.h"
-#include "player/media_session_thread.h"
+#include "playback/coordinator.h"
+#include "playback/sinks.h"
+#if defined(__APPLE__)
+#include "playback/sinks/macos/macos_sink.h"
+#elif defined(_WIN32)
+#include "playback/sinks/windows/windows_sink.h"
+#else
+#include "playback/sinks/mpris/mpris_sink.h"
+#endif
 
 #include "logging.h"
 #include "signal_guard.h"
@@ -63,8 +70,7 @@
 MpvHandle g_mpv;
 Color g_video_bg;
 
-std::atomic<MediaType> g_media_type{MediaType::Unknown};
-std::atomic<PlaybackState> g_playback_state{PlaybackState::Stopped};
+PlaybackCoordinator* g_playback_coord = nullptr;
 ThemeColor* g_theme_color = nullptr;
 std::atomic<int> g_display_hz{60};
 
@@ -150,7 +156,6 @@ static void mpv_digest_thread() {
     }
 }
 
-MediaSessionThread* g_media_session = nullptr;
 
 // Shutdown order (reverse of declaration):
 //   browsers → CefShutdown → idle_inhibit clear → platform.cleanup
@@ -322,11 +327,33 @@ static int run_with_cef(int mw, int mh,
         LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay) call returned");
     }
 
-    auto media_session_obj = MediaSession::create();
-
-    MediaSessionThread media_session_thread;
-    media_session_thread.start(media_session_obj.get());
-    g_media_session = &media_session_thread;
+    // Coordinator + sinks must exist before any thread can post inputs or
+    // observe playback state. Sinks register before start() so the worker
+    // never delivers to a half-built fanout.
+    PlaybackCoordinatorScope coord_scope;
+    g_playback_coord = &coord_scope.coord();
+    auto browser_sink = std::make_shared<BrowserPlaybackSink>();
+    auto idle_inhibit_sink = std::make_shared<IdleInhibitSink>();
+    auto theme_color_sink = std::make_shared<ThemeColorSink>();
+    auto mpv_action_sink = std::make_shared<MpvActionSink>();
+    coord_scope.coord().addSink(browser_sink);
+    coord_scope.coord().addSink(idle_inhibit_sink);
+    coord_scope.coord().addSink(theme_color_sink);
+#if defined(__APPLE__)
+    auto media_sink = std::make_shared<MacosSink>();
+#elif defined(_WIN32)
+    int64_t wid = 0;
+    g_mpv.GetPropertyInt("window-id", wid);
+    auto media_sink = std::make_shared<WindowsSink>(reinterpret_cast<HWND>(static_cast<intptr_t>(wid)));
+#else
+    auto media_sink = std::make_shared<MprisSink>();
+#endif
+    coord_scope.coord().addSink(media_sink);
+    media_sink->start();
+    coord_scope.coord().addActionSink(mpv_action_sink);
+    register_queued_sinks(
+        {browser_sink, idle_inhibit_sink, theme_color_sink},
+        {mpv_action_sink});
 
     // Start before waitForLoad so mpv events (OSD_DIMS especially) reach
     // the platform/browsers during the overlay-only startup phase, before
@@ -363,13 +390,17 @@ static int run_with_cef(int mw, int mh,
         g_overlay_browser->waitForClose();
 #endif
 
-    g_media_session = nullptr;
     g_theme_color = nullptr;
-    media_session_thread.stop();
+    media_sink->stop();
 
     cef_thread.join();
     g_mpv.Wakeup();
     digest_thread.join();
+
+    // Producers have joined; coordinator drains any in-flight inputs and
+    // stops via PlaybackCoordinatorScope dtor at end of scope. Clear the
+    // global pointer first so any late readers see "no coordinator".
+    g_playback_coord = nullptr;
 
     // Save window geometry while mpv is still alive.
     {
