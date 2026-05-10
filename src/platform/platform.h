@@ -12,6 +12,12 @@ enum class IdleInhibitLevel { None, System, Display };
 #include "display_backend.h"
 #include "../color.h"
 
+#include <cstddef>
+
+// Opaque per-backend surface handle. Each backend defines the layout in
+// its translation unit; callers only ever hold pointers.
+struct PlatformSurface;
+
 struct Platform {
     DisplayBackend display{};
 
@@ -23,27 +29,39 @@ struct Platform {
     // file while the window is still on-screen). May be null.
     void (*post_window_cleanup)();
 
-    // Main browser subsurface
-    void (*present)(const CefAcceleratedPaintInfo& info);
-    void (*present_software)(const CefRenderHandler::RectList& dirty,
-                             const void* buffer, int w, int h);
-    void (*resize)(int lw, int lh, int pw, int ph);
+    // Layer-surface lifecycle. alloc_surface creates a generic surface
+    // for the next CefLayer; free_surface tears it down.
+    PlatformSurface* (*alloc_surface)();
+    void (*free_surface)(PlatformSurface*);
 
-    // Overlay browser subsurface
-    void (*overlay_present)(const CefAcceleratedPaintInfo& info);
-    void (*overlay_present_software)(const CefRenderHandler::RectList& dirty,
+    // Per-surface ops (replace the role-specific present/resize/visible triples).
+    void (*surface_present)(PlatformSurface*, const CefAcceleratedPaintInfo& info);
+    void (*surface_present_software)(PlatformSurface*,
+                                     const CefRenderHandler::RectList& dirty,
                                      const void* buffer, int w, int h);
-    void (*overlay_resize)(int lw, int lh, int pw, int ph);
-    void (*set_overlay_visible)(bool visible);
+    void (*surface_resize)(PlatformSurface*, int lw, int lh, int pw, int ph);
+    void (*surface_set_visible)(PlatformSurface*, bool visible);
 
-    // About browser subsurface (above overlay)
-    void (*about_present)(const CefAcceleratedPaintInfo& info);
-    void (*about_present_software)(const CefRenderHandler::RectList& dirty,
-                                   const void* buffer, int w, int h);
-    void (*about_resize)(int lw, int lh, int pw, int ph);
-    void (*set_about_visible)(bool visible);
+    // Stacking — bottom (index 0) to top (index n-1). Called whenever
+    // the Browsers vector order changes.
+    void (*restack)(PlatformSurface* const* ordered, size_t n);
 
-    // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns)
+    // Window-wide resize broadcast. Fires when mpv reports a new OSD size
+    // (Browsers::setSize is the broadcast point). Backends that maintain
+    // window-scoped state (e.g. wayland's mpv_pw used by present-time size
+    // guards, or the cef-main viewport against compositor bounds) hook this
+    // to stay current. May be null.
+    void (*window_resized)(int lw, int lh, int pw, int ph);
+
+    // Optional per-surface fade — finite UI animation; backends limited
+    // to a single fadeable surface return /no-op for the others.
+    void (*fade_surface)(PlatformSurface*, float fade_sec,
+                         std::function<void()> on_fade_start,
+                         std::function<void()> on_complete);
+
+    // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns).
+    // Parent surface is the currently-painting layer's surface, supplied
+    // by the layer at popup time.
     void (*popup_show)(int x, int y, int lw, int lh);
     void (*popup_hide)();
     void (*popup_present)(const CefAcceleratedPaintInfo& info, int lw, int lh);
@@ -62,12 +80,6 @@ struct Platform {
                                   const std::vector<std::string>& options,
                                   int current_index,
                                   std::function<void(int)> on_selected);
-    // Fade overlay from opaque to transparent over `fade_sec`, then hide.
-    // on_fade_start fires just before the fade begins; on_complete fires after
-    // the fade finishes. Both may fire on any thread.
-    void (*fade_overlay)(float fade_sec,
-                         std::function<void()> on_fade_start,
-                         std::function<void()> on_complete);
 
     // Fullscreen
     void (*set_fullscreen)(bool fullscreen);

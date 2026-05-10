@@ -14,6 +14,9 @@
 #include <string>
 #include <vector>
 
+class Browsers;
+struct PlatformSurface;
+
 // Callback invoked for IPC messages from the renderer process.
 // Returns true if the message was handled.
 using MessageHandler = std::function<bool(const std::string& name,
@@ -31,29 +34,17 @@ using BeforeCloseCallback = std::function<void()>;
 using ContextMenuBuilder = std::function<void(CefRefPtr<CefMenuModel>)>;
 using ContextMenuDispatcher = std::function<bool(int command_id)>;
 
-// Render target callbacks — decouple the client from the platform layer.
-struct RenderTarget {
-    void (*present)(const CefAcceleratedPaintInfo& info);
-    void (*present_software)(const CefRenderHandler::RectList& dirty,
-                             const void* buffer, int w, int h);
-};
-
 // Generic CEF browser client — pure rendering, lifecycle, context menu,
 // keyboard. Business logic is injected via setMessageHandler / setCreatedCallback.
-// Used for both the main browser and overlay browser; the only difference
-// is the RenderTarget passed at construction.
+// CefLayer holds a generic PlatformSurface*; presents/resizes/visibility
+// route through g_platform.surface_*.
 class CefLayer : public CefClient, public CefRenderHandler,
                  public CefLifeSpanHandler, public CefLoadHandler,
                  public CefContextMenuHandler, public CefDisplayHandler,
                  public CefKeyboardHandler {
 public:
-    CefLayer(RenderTarget target, int w, int h, int pw, int ph)
-        : target_(target), width_(w), height_(h),
-          physical_w_(pw), physical_h_(ph) { all_.push_back(this); }
-    ~CefLayer() override { std::erase(all_, this); }
-
-    // Registry of all live CefLayer instances. CEF UI thread only.
-    static const std::vector<CefLayer*>& all() { return all_; }
+    CefLayer(Browsers& browsers, PlatformSurface* surface);
+    ~CefLayer() override;
 
     void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
     void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
@@ -117,44 +108,38 @@ public:
     void waitForLoad();
     void execJs(const std::string& js);
     void setRefreshRate(double hz);
-    static void setRefreshRate(CefBrowserSettings& bs, double hz);
+    void setVisible(bool visible);
+    void fade(float fade_sec,
+              std::function<void()> on_fade_start,
+              std::function<void()> on_complete);
 
-    // Create the underlying CEF browser. Stores wi/bs/extra_info for use in
-    // reset(). `extra_info` travels to the renderer's OnBrowserCreated and
-    // typically carries this browser's native-shim injection profile
-    // (jmpNative function list + script list); may be null.
-    void create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url,
-                CefRefPtr<CefDictionaryValue> extra_info = nullptr);
+    PlatformSurface* surface() const { return surface_; }
+
+    // Native-shim injection profile travels to the renderer's
+    // OnBrowserCreated; carries jmpNative function list + script list.
+    // Set once by the owning subclass; reused across reset() cycles.
+    void setInjectionProfile(CefRefPtr<CefDictionaryValue> p) { extra_info_ = std::move(p); }
+
+    // Create the underlying CEF browser. Builds CefWindowInfo and
+    // CefBrowserSettings from the Browsers display state.
+    void create(const std::string& url);
 
     // Tear down the current browser and recreate with no URL (blank).
-    // Asynchronous: the new browser is ready when OnAfterCreated fires.
-    // Safe to call before the initial create has completed, or while a
-    // previous reset is still in flight — subsequent calls are absorbed
-    // into the pending cycle.
     void reset();
 
-    // Navigate the current browser to `url`. If a reset is in flight or the
-    // initial create hasn't completed yet, the URL is buffered and applied
-    // when the browser becomes ready.
+    // Navigate the current browser to `url`.
     void loadUrl(const std::string& url);
 
 private:
-    // Lifecycle states. Normal is the steady state; PendingReset means
-    // reset() was called before the initial OnAfterCreated and is waiting
-    // for it to fire so it can issue the close; Recreating means CloseBrowser
-    // has been issued (or is about to fire from the one-shot) and we're
-    // awaiting the blank replacement's OnAfterCreated.
     enum class State { Normal, PendingReset, Recreating };
 
-    RenderTarget target_;
-    int width_, height_;
-    int physical_w_, physical_h_;
+    Browsers& browsers_;
+    PlatformSurface* surface_ = nullptr;
+    int width_ = 0, height_ = 0;
+    int physical_w_ = 0, physical_h_ = 0;
+    int frame_rate_ = 0;
     CefRect popup_rect_;
     bool popup_visible_ = false;
-    // Native popup menu orchestration. OnPopupShow fires a renderer query
-    // for the focused <select>'s options; OnPopupSize delivers the rect.
-    // try_show_popup waits for both, then hands off to the platform's
-    // native menu (macOS) or the compositor popup subsurface (Wayland).
     std::vector<std::string> popup_options_;
     int popup_selected_idx_ = -1;
     bool popup_size_received_ = false;
@@ -176,11 +161,8 @@ private:
     BeforeCloseCallback on_before_close_;
     ContextMenuBuilder context_menu_builder_;
     ContextMenuDispatcher context_menu_dispatcher_;
-    CefWindowInfo window_info_;
-    CefBrowserSettings browser_settings_;
     CefRefPtr<CefDictionaryValue> extra_info_;
     State state_ = State::Normal;
     std::string pending_url_;
-    static inline std::vector<CefLayer*> all_;
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

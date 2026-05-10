@@ -586,6 +586,7 @@ if(WIN32)
         src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
         src/browser/about_browser.cpp
@@ -614,6 +615,7 @@ else()
         src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
         src/browser/about_browser.cpp

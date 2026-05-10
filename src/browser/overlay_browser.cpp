@@ -1,12 +1,12 @@
 #include "overlay_browser.h"
 #include "app_menu.h"
+#include "browsers.h"
 #include "web_browser.h"
 #include "../common.h"
 #include "../jellyfin/api.h"
 #include "../settings.h"
 #include "logging.h"
 #include "../theme_color.h"
-#include "../input/dispatch.h"
 #include "include/cef_urlrequest.h"
 
 #include <functional>
@@ -125,7 +125,9 @@ static void applySettingValue(const std::string& section, const std::string& key
 // OverlayBrowser
 // =====================================================================
 
-OverlayBrowser::~OverlayBrowser() = default;
+OverlayBrowser::~OverlayBrowser() {
+    if (g_browsers && layer_) g_browsers->remove(layer_.get());
+}
 
 CefRefPtr<CefDictionaryValue> OverlayBrowser::injectionProfile() {
     static const char* const kFunctions[] = {
@@ -150,22 +152,21 @@ CefRefPtr<CefDictionaryValue> OverlayBrowser::injectionProfile() {
     return d;
 }
 
-OverlayBrowser::OverlayBrowser(RenderTarget target, WebBrowser& main_browser,
-                               int w, int h, int pw, int ph)
-    : client_(new CefLayer(target, w, h, pw, ph))
+OverlayBrowser::OverlayBrowser(CefRefPtr<CefLayer> layer, WebBrowser& main_browser)
+    : layer_(std::move(layer))
     , main_browser_(main_browser)
 {
-    client_->setMessageHandler([this](const std::string& name,
-                                      CefRefPtr<CefListValue> args,
-                                      CefRefPtr<CefBrowser> browser) {
+    layer_->setMessageHandler([this](const std::string& name,
+                                     CefRefPtr<CefListValue> args,
+                                     CefRefPtr<CefBrowser> browser) {
         return handleMessage(name, args, browser);
     });
-    client_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
+    layer_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
         // Overlay wins input whenever it's created.
-        input::set_active_browser(browser);
+        if (g_browsers) g_browsers->setActive(browser);
     });
-    client_->setContextMenuBuilder(&app_menu::build);
-    client_->setContextMenuDispatcher(&app_menu::dispatch);
+    layer_->setContextMenuBuilder(&app_menu::build);
+    layer_->setContextMenuDispatcher(&app_menu::dispatch);
 }
 
 bool OverlayBrowser::handleMessage(const std::string& name,
@@ -191,10 +192,10 @@ bool OverlayBrowser::handleMessage(const std::string& name,
     } else if (name == "dismissOverlay") {
         // Commit: hand input to main, start the fade, close when done.
         LOG_INFO(LOG_CEF, "Overlay: dismissOverlay");
-        if (auto b = main_browser_.browser())
-            input::set_active_browser(b);
+        if (auto b = main_browser_.browser(); b && g_browsers)
+            g_browsers->setActive(b);
         CefRefPtr<CefBrowser> overlay_browser = browser;
-        g_platform.fade_overlay(OVERLAY_FADE_DURATION_SEC,
+        layer_->fade(OVERLAY_FADE_DURATION_SEC,
             []() {
                 if (g_theme_color) g_theme_color->onOverlayDismissed();
             },

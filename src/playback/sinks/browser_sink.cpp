@@ -75,22 +75,17 @@ void BrowserPlaybackSink::deliver(const PlaybackEvent& ev) {
                               + ")");
         break;
     case PlaybackEvent::Kind::OsdDimsChanged: {
-        if (g_web_browser->browser())
-            g_web_browser->resize(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
-        if (g_overlay_browser && g_overlay_browser->browser()) {
-            g_overlay_browser->resize(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
-            g_platform.overlay_resize(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
-        }
-        if (g_about_browser && g_about_browser->browser()) {
-            g_about_browser->resize(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
-            g_platform.about_resize(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
-        }
+        if (g_platform.window_resized)
+            g_platform.window_resized(snap.layout_w, snap.layout_h,
+                                      snap.pixel_w, snap.pixel_h);
+        if (g_browsers)
+            g_browsers->setSize(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
         break;
     }
     case PlaybackEvent::Kind::DisplayHzChanged: {
         LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", snap.display_hz);
-        for (auto* layer : CefLayer::all())
-            layer->setRefreshRate(snap.display_hz);
+        if (g_browsers)
+            g_browsers->setRefreshRate(snap.display_hz);
         break;
     }
     case PlaybackEvent::Kind::BufferedRangesChanged: {

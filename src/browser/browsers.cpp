@@ -1,0 +1,134 @@
+#include "browsers.h"
+
+#include "../input/dispatch.h"
+#include "../platform/platform.h"
+#include "logging.h"
+
+#include <algorithm>
+
+Browsers* g_browsers = nullptr;
+
+Browsers::Browsers(int lw, int lh, int pw, int ph,
+                   double frame_rate, bool use_shared_textures)
+    : lw_(lw), lh_(lh), pw_(pw), ph_(ph),
+      frame_rate_(frame_rate > 0 ? static_cast<int>(frame_rate + 0.5) : 0),
+      use_shared_textures_(use_shared_textures) {}
+
+Browsers::~Browsers() {
+    // Defensive: free any stragglers (owners should normally have released
+    // their refs by this point).
+    for (auto& layer : layers_) {
+        if (auto* s = layer->surface()) {
+            if (g_platform.free_surface) g_platform.free_surface(s);
+        }
+    }
+    layers_.clear();
+}
+
+CefRefPtr<CefLayer> Browsers::create(CefRefPtr<CefDictionaryValue> injection) {
+    PlatformSurface* surface = g_platform.alloc_surface
+        ? g_platform.alloc_surface() : nullptr;
+    CefRefPtr<CefLayer> layer = new CefLayer(*this, surface);
+    layer->resize(lw_, lh_, pw_, ph_);
+    layer->setRefreshRate(frame_rate_);
+    if (injection)
+        layer->setInjectionProfile(std::move(injection));
+    layers_.push_back(layer);
+    restack_locked();
+    return layer;
+}
+
+void Browsers::remove(CefLayer* layer) {
+    if (!layer) return;
+    // Clear active if it pointed at this layer's browser.
+    {
+        auto b = layer->browser();
+        std::lock_guard<std::mutex> lk(active_mtx_);
+        if (b && active_.get() == b.get()) active_ = nullptr;
+    }
+    auto it = std::find_if(layers_.begin(), layers_.end(),
+                           [layer](const CefRefPtr<CefLayer>& l) {
+                               return l.get() == layer;
+                           });
+    if (it == layers_.end()) return;
+    PlatformSurface* s = (*it)->surface();
+    layers_.erase(it);
+    if (s && g_platform.free_surface) g_platform.free_surface(s);
+    restack_locked();
+}
+
+void Browsers::raise_to_top(CefLayer* layer) {
+    auto it = std::find_if(layers_.begin(), layers_.end(),
+                           [layer](const CefRefPtr<CefLayer>& l) {
+                               return l.get() == layer;
+                           });
+    if (it == layers_.end() || it + 1 == layers_.end()) return;
+    CefRefPtr<CefLayer> ref = *it;
+    layers_.erase(it);
+    layers_.push_back(ref);
+    restack_locked();
+}
+
+void Browsers::lower_to_bottom(CefLayer* layer) {
+    auto it = std::find_if(layers_.begin(), layers_.end(),
+                           [layer](const CefRefPtr<CefLayer>& l) {
+                               return l.get() == layer;
+                           });
+    if (it == layers_.end() || it == layers_.begin()) return;
+    CefRefPtr<CefLayer> ref = *it;
+    layers_.erase(it);
+    layers_.insert(layers_.begin(), ref);
+    restack_locked();
+}
+
+void Browsers::restack_locked() {
+    if (!g_platform.restack) return;
+    std::vector<PlatformSurface*> ordered;
+    ordered.reserve(layers_.size());
+    for (auto& l : layers_)
+        if (auto* s = l->surface()) ordered.push_back(s);
+    g_platform.restack(ordered.data(), ordered.size());
+}
+
+void Browsers::setSize(int lw, int lh, int pw, int ph) {
+    lw_ = lw; lh_ = lh; pw_ = pw; ph_ = ph;
+    for (auto& layer : layers_)
+        layer->resize(lw, lh, pw, ph);
+}
+
+void Browsers::setRefreshRate(double hz) {
+    if (hz <= 0) return;
+    frame_rate_ = static_cast<int>(hz + 0.5);
+    for (auto& layer : layers_)
+        layer->setRefreshRate(hz);
+}
+
+CefRefPtr<CefBrowser> Browsers::active() const {
+    std::lock_guard<std::mutex> lk(active_mtx_);
+    return active_;
+}
+
+void Browsers::setActive(CefRefPtr<CefBrowser> browser) {
+    CefRefPtr<CefBrowser> prev;
+    {
+        std::lock_guard<std::mutex> lk(active_mtx_);
+        if (active_.get() == browser.get()) return;
+        prev = active_;
+        active_ = browser;
+    }
+    LOG_DEBUG(LOG_PLATFORM, "[BROWSERS] setActive prev={} new={}",
+              static_cast<void*>(prev.get()), static_cast<void*>(browser.get()));
+    if (prev)    prev->GetHost()->SetFocus(false);
+    if (browser) browser->GetHost()->SetFocus(true);
+
+    // Leave-then-move forces the renderer to re-emit OnCursorChange.
+    if (browser) {
+        auto pos = input::last_mouse_pos();
+        if (pos.valid) {
+            CefMouseEvent me{};
+            me.x = pos.x; me.y = pos.y; me.modifiers = pos.modifiers;
+            browser->GetHost()->SendMouseMoveEvent(me, true);
+            browser->GetHost()->SendMouseMoveEvent(me, false);
+        }
+    }
+}
