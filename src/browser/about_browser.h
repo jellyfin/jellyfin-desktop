@@ -3,12 +3,13 @@
 #include "../cef/cef_client.h"
 
 // Business-logic wrapper for the About panel CEF browser.
+// Lifetime is managed internally — open() creates a singleton instance
+// that self-deletes via BeforeCloseCallback; no external owner pointer.
 class AboutBrowser {
 public:
     static void open();
+    static bool is_open();
 
-    CefRefPtr<CefBrowser> browser() { return layer_->browser(); }
-    bool isClosed() const { return layer_->isClosed(); }
     ~AboutBrowser();
 
     static CefRefPtr<CefDictionaryValue> injectionProfile();

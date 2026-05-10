@@ -5,8 +5,3 @@
 // need this header's other helpers.
 
 void signal_handler(int);
-
-template <typename Browser>
-inline void try_close_browser(Browser* b) {
-    if (b && b->browser()) b->browser()->GetHost()->CloseBrowser(true);
-}

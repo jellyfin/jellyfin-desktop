@@ -4,12 +4,11 @@
 #include "include/cef_values.h"
 #include "../cef/cef_client.h"
 
+#include <functional>
 #include <mutex>
 #include <vector>
 
 class WebBrowser;
-class OverlayBrowser;
-class AboutBrowser;
 
 // Single owner of all live CefLayer instances. Holds the shared display
 // state (size, frame rate, shared-texture flag), the active input target,
@@ -52,6 +51,18 @@ public:
     void setActive(CefRefPtr<CefBrowser> browser);
     CefRefPtr<CefBrowser> active() const;
 
+    // True if every live layer reports closed (or no layers exist).
+    bool allClosed() const;
+
+    // Force-close every live browser. Idempotent.
+    void closeAll();
+
+    // Block until every layer's CefBrowser has reported OnBeforeClose.
+    void waitAllClosed();
+
+    // Run a callback on the underlying CefBrowser of every live layer.
+    void forEachBrowser(const std::function<void(CefRefPtr<CefBrowser>)>& fn);
+
 private:
     void restack_locked();  // caller holds no lock; called on CEF UI thread
 
@@ -67,9 +78,13 @@ private:
 
 extern Browsers* g_browsers;
 
-// Business-class globals — useful for typed access to player IPC,
-// overlay probe state, about lifecycle. Their CefLayers are owned
-// by Browsers; these point at the business wrappers.
+// WebBrowser is the only typed global — playback sinks reach for it to
+// dispatch JS into jellyfin-web. Overlay and About are addressed via
+// Browsers iteration (allClosed/closeAll/forEachBrowser).
 extern WebBrowser* g_web_browser;
-extern OverlayBrowser* g_overlay_browser;
-extern AboutBrowser* g_about_browser;
+
+// Drops the wrapper's CEF-layer reference from Browsers if Browsers is
+// still alive. Used by every business-wrapper dtor.
+inline void release_layer(CefLayer* layer) {
+    if (g_browsers && layer) g_browsers->remove(layer);
+}

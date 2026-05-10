@@ -2,7 +2,6 @@
 #include "app_menu.h"
 #include "browsers.h"
 #include "../common.h"
-#include "../mpv/event.h"
 #include "logging.h"
 #include "../platform/platform.h"
 #include "include/cef_task.h"
@@ -11,9 +10,10 @@
 
 extern Platform g_platform;
 
-AboutBrowser* g_about_browser = nullptr;
-
 namespace {
+
+AboutBrowser* s_self = nullptr;
+
 class FnTask : public CefTask {
 public:
     explicit FnTask(std::function<void()> fn) : fn_(std::move(fn)) {}
@@ -22,29 +22,28 @@ private:
     std::function<void()> fn_;
     IMPLEMENT_REFCOUNTING(FnTask);
 };
-}
+
+}  // namespace
+
+bool AboutBrowser::is_open() { return s_self != nullptr; }
 
 CefRefPtr<CefDictionaryValue> AboutBrowser::injectionProfile() {
     static const char* const kFunctions[] = {
         "aboutOpenPath", "aboutDismiss",
-        "menuItemSelected", "menuDismissed",
     };
-    static const char* const kScripts[] = { "context-menu.js" };
     CefRefPtr<CefListValue> fns = CefListValue::Create();
     for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
         fns->SetString(i, kFunctions[i]);
-    CefRefPtr<CefListValue> scripts = CefListValue::Create();
-    for (size_t i = 0; i < sizeof(kScripts) / sizeof(*kScripts); i++)
-        scripts->SetString(i, kScripts[i]);
     CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
     d->SetList("functions", fns);
-    d->SetList("scripts", scripts);
+    d->SetList("scripts", CefListValue::Create());
     return d;
 }
 
 AboutBrowser::AboutBrowser()
     : layer_(g_browsers->create(injectionProfile()))
 {
+    layer_->setName("about");
     prev_active_ = g_browsers->active();
 
     layer_->setMessageHandler([this](const std::string& name,
@@ -58,19 +57,19 @@ AboutBrowser::AboutBrowser()
     layer_->setContextMenuBuilder(&app_menu::build);
     layer_->setContextMenuDispatcher(&app_menu::dispatch);
     layer_->setBeforeCloseCallback([]() {
-        AboutBrowser* self = g_about_browser;
-        g_about_browser = nullptr;
+        AboutBrowser* self = s_self;
+        s_self = nullptr;
         if (!self) return;
         CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() { delete self; })));
     });
 }
 
 AboutBrowser::~AboutBrowser() {
-    if (g_browsers && layer_) g_browsers->remove(layer_.get());
+    release_layer(layer_.get());
 }
 
 void AboutBrowser::open() {
-    if (g_about_browser) {
+    if (s_self) {
         LOG_DEBUG(LOG_CEF, "AboutBrowser::open: already open, ignoring");
         return;
     }
@@ -80,9 +79,9 @@ void AboutBrowser::open() {
     }
     LOG_INFO(LOG_CEF, "AboutBrowser::open");
 
-    g_about_browser = new AboutBrowser();
-    g_about_browser->layer_->setVisible(true);
-    g_about_browser->layer_->create("app://resources/about.html");
+    s_self = new AboutBrowser();
+    s_self->layer_->setVisible(true);
+    s_self->layer_->create("app://resources/about.html");
 }
 
 bool AboutBrowser::handleMessage(const std::string& name,

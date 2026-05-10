@@ -46,6 +46,9 @@ public:
     CefLayer(Browsers& browsers, PlatformSurface* surface);
     ~CefLayer() override;
 
+    void setName(std::string name) { name_ = std::move(name); }
+    const std::string& name() const { return name_; }
+
     void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
     void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
     void setBeforeCloseCallback(BeforeCloseCallback cb) { on_before_close_ = std::move(cb); }
@@ -140,6 +143,7 @@ private:
 
     Browsers& browsers_;
     PlatformSurface* surface_ = nullptr;
+    std::string name_;
     int width_ = 0, height_ = 0;
     int physical_w_ = 0, physical_h_ = 0;
     int frame_rate_ = 0;
