@@ -15,7 +15,6 @@
 #include "browser/browsers.h"
 #include "browser/web_browser.h"
 #include "browser/overlay_browser.h"
-#include "browser/about_browser.h"
 #include "mpv/event.h"
 #include "mpv/options.h"
 #include "mpv/capabilities.h"
@@ -75,9 +74,7 @@ ThemeColor* g_theme_color = nullptr;
 
 Platform g_platform{};
 WebBrowser* g_web_browser = nullptr;
-OverlayBrowser* g_overlay_browser = nullptr;
-// g_about_browser and g_browsers are defined in src/browser/about_browser.cpp
-// and src/browser/browsers.cpp respectively.
+// g_browsers is defined in src/browser/browsers.cpp.
 
 static void log_mpv_message(const mpv_event_log_message* msg) {
     switch (msg->log_level) {
@@ -299,7 +296,6 @@ static int run_with_cef(int mw, int mh,
         overlay_layer->setVisible(true);
         overlay_browser_owner = std::make_unique<OverlayBrowser>(
             overlay_layer, *g_web_browser);
-        g_overlay_browser = overlay_browser_owner.get();
         LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay)");
         overlay_layer->create("app://resources/overlay.html");
         LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay) call returned");
@@ -356,16 +352,12 @@ static int run_with_cef(int mw, int mh,
 
     // CEF may still have browser-close work in flight after the main loop
     // breaks. Spin the runloop event-driven until all browsers report closed.
-    while (!g_web_browser->isClosed() ||
-           (g_overlay_browser && !g_overlay_browser->isClosed()) ||
-           (g_about_browser && !g_about_browser->isClosed())) {
+    while (g_browsers && !g_browsers->allClosed()) {
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, true);
     }
 
 #else
-    g_web_browser->waitForClose();
-    if (g_overlay_browser)
-        g_overlay_browser->waitForClose();
+    if (g_browsers) g_browsers->waitAllClosed();
 #endif
 
     g_theme_color = nullptr;
@@ -434,14 +426,13 @@ static int run_with_cef(int mw, int mh,
     }
 
     // Business owners released first — their dtors call g_browsers->remove,
-    // freeing the platform surfaces and clearing the active pointer.
+    // freeing the platform surfaces and clearing the active pointer. About
+    // is a self-managed singleton: its BeforeCloseCallback already deleted
+    // it during the close drain above. Any straggler surface gets freed by
+    // Browsers' dtor when `browsers` goes out of scope.
     g_web_browser = nullptr;
     web_browser_owner.reset();
-    g_overlay_browser = nullptr;
     overlay_browser_owner.reset();
-    // g_about_browser self-deletes via BeforeCloseCallback; cover the
-    // shutdown race where we got here before the callback ran.
-    if (g_about_browser) { delete g_about_browser; g_about_browser = nullptr; }
     g_browsers = nullptr;
     // `browsers` itself goes out of scope here; any straggler surfaces
     // get freed by its dtor.

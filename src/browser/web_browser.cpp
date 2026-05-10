@@ -95,7 +95,6 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "notifyRateChange",
         "appExit", "setSettingValue", "themeColor",
         "setOsdVisible", "setCursorVisible", "toggleFullscreen",
-        "menuItemSelected", "menuDismissed",
     };
     static const char* const kScripts[] = {
         "native-shim.js",
@@ -104,7 +103,6 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "mpv-audio-player.js",
         "input-plugin.js",
         "client-settings.js",
-        "context-menu.js",
     };
 
     CefRefPtr<CefListValue> fns = CefListValue::Create();
@@ -126,14 +124,16 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
 WebBrowser::WebBrowser(CefRefPtr<CefLayer> layer)
     : layer_(std::move(layer))
 {
+    layer_->setName("web");
     layer_->setMessageHandler([this](const std::string& name,
                                      CefRefPtr<CefListValue> args,
                                      CefRefPtr<CefBrowser> browser) {
         return handleMessage(name, args, browser);
     });
     layer_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
-        // Main browser takes input only if the overlay isn't currently active.
-        if (g_browsers && !g_overlay_browser)
+        // Main browser takes input only if no other layer has already
+        // claimed it (e.g. the server-selection overlay).
+        if (g_browsers && !g_browsers->active())
             g_browsers->setActive(browser);
     });
     layer_->setContextMenuBuilder(&app_menu::build);
@@ -141,7 +141,7 @@ WebBrowser::WebBrowser(CefRefPtr<CefLayer> layer)
 }
 
 WebBrowser::~WebBrowser() {
-    if (g_browsers && layer_) g_browsers->remove(layer_.get());
+    release_layer(layer_.get());
 }
 
 bool WebBrowser::handleMessage(const std::string& name,

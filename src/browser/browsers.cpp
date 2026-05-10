@@ -110,6 +110,32 @@ CefRefPtr<CefBrowser> Browsers::active() const {
     return active_;
 }
 
+bool Browsers::allClosed() const {
+    for (auto& l : layers_)
+        if (!l->isClosed()) return false;
+    return true;
+}
+
+void Browsers::closeAll() {
+    for (auto& l : layers_) {
+        if (auto b = l->browser()) b->GetHost()->CloseBrowser(true);
+    }
+}
+
+void Browsers::waitAllClosed() {
+    // layers_ is mutated only on the CEF UI thread; close happens via CEF
+    // and pulses each layer's condvar. Walk a snapshot so erase-during-
+    // close can't trip the iterator.
+    std::vector<CefRefPtr<CefLayer>> snapshot = layers_;
+    for (auto& l : snapshot) l->waitForClose();
+}
+
+void Browsers::forEachBrowser(const std::function<void(CefRefPtr<CefBrowser>)>& fn) {
+    for (auto& l : layers_) {
+        if (auto b = l->browser()) fn(b);
+    }
+}
+
 void Browsers::setActive(CefRefPtr<CefBrowser> browser) {
     CefRefPtr<CefBrowser> prev;
     {
@@ -118,8 +144,15 @@ void Browsers::setActive(CefRefPtr<CefBrowser> browser) {
         prev = active_;
         active_ = browser;
     }
+    auto name_for = [this](CefRefPtr<CefBrowser> b) -> std::string {
+        if (!b) return {};
+        for (auto& l : layers_)
+            if (auto lb = l->browser(); lb && lb.get() == b.get())
+                return l->name();
+        return {};
+    };
     LOG_DEBUG(LOG_PLATFORM, "[BROWSERS] setActive prev={} new={}",
-              static_cast<void*>(prev.get()), static_cast<void*>(browser.get()));
+              name_for(prev).c_str(), name_for(browser).c_str());
     if (prev) {
         prev->GetHost()->SetFocus(false);
         // Notify the prior active layer it's no longer the input target so

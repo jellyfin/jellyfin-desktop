@@ -136,8 +136,8 @@ bool CefLayer::GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) {
 }
 
 void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
-    LOG_TRACE(LOG_CEF, "CefLayer::resize logical={}x{} physical={}x{} browser={}",
-             w, h, physical_w, physical_h, static_cast<void*>(browser_.get()));
+    LOG_TRACE(LOG_CEF, "CefLayer::resize name={} logical={}x{} physical={}x{}",
+             name_.c_str(), w, h, physical_w, physical_h);
     width_ = w;
     height_ = h;
     physical_w_ = physical_w;
@@ -277,8 +277,7 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-    LOG_DEBUG(LOG_CEF, "CefLayer::OnAfterCreated browser={} id={}",
-             static_cast<void*>(browser.get()), browser ? browser->GetIdentifier() : -1);
+    LOG_DEBUG(LOG_CEF, "CefLayer::OnAfterCreated name={}", name_.c_str());
     browser_ = browser;
     closed_ = false;
     loaded_ = false;
@@ -358,7 +357,25 @@ void CefLayer::create(const std::string& url) {
     CefBrowserSettings bs;
     bs.background_color = 0;
     bs.windowless_frame_rate = frame_rate_ > 0 ? frame_rate_ : browsers_.frame_rate();
-    CefBrowserHost::CreateBrowser(wi, this, url, bs, extra_info_, nullptr);
+
+    // Auto-inject context-menu shim when the layer has a builder configured.
+    // Every wrapper that wires setContextMenuBuilder also needs the JS-side
+    // menuItemSelected/menuDismissed IPCs and the context-menu.js script;
+    // central them here so wrappers don't repeat the listing.
+    CefRefPtr<CefDictionaryValue> info = extra_info_;
+    if (context_menu_builder_ && info) {
+        info = info->Copy(false);
+        auto fns = info->HasKey("functions") ? info->GetList("functions") : CefListValue::Create();
+        fns = fns->Copy();
+        fns->SetString(fns->GetSize(), "menuItemSelected");
+        fns->SetString(fns->GetSize(), "menuDismissed");
+        info->SetList("functions", fns);
+        auto scripts = info->HasKey("scripts") ? info->GetList("scripts") : CefListValue::Create();
+        scripts = scripts->Copy();
+        scripts->SetString(scripts->GetSize(), "context-menu.js");
+        info->SetList("scripts", scripts);
+    }
+    CefBrowserHost::CreateBrowser(wi, this, url, bs, info, nullptr);
 }
 
 void CefLayer::reset() {
@@ -406,8 +423,8 @@ void CefLayer::waitForClose() {
 }
 
 void CefLayer::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int code) {
-    LOG_INFO(LOG_CEF, "CefLayer::OnLoadEnd main={} code={} url={}",
-             frame->IsMain() ? 1 : 0, code,
+    LOG_INFO(LOG_CEF, "CefLayer::OnLoadEnd name={} main={} code={} url={}",
+             name_.c_str(), frame->IsMain() ? 1 : 0, code,
              frame->GetURL().ToString().c_str());
     if (frame->IsMain()) {
         loaded_ = true;
@@ -422,8 +439,8 @@ void CefLayer::waitForLoad() {
 
 void CefLayer::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                            ErrorCode errorCode, const CefString& errorText, const CefString& failedUrl) {
-    LOG_ERROR(LOG_CEF, "OnLoadError: {} error={} {}",
-              failedUrl.ToString(), static_cast<int>(errorCode), errorText.ToString());
+    LOG_ERROR(LOG_CEF, "OnLoadError name={} url={} error={} {}",
+              name_.c_str(), failedUrl.ToString(), static_cast<int>(errorCode), errorText.ToString());
 }
 
 void CefLayer::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {

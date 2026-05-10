@@ -11,8 +11,6 @@
 #include "platform/macos_platform.h"
 #include "common.h"
 #include "browser/browsers.h"
-#include "browser/overlay_browser.h"
-#include "browser/web_browser.h"
 #include "browser/about_browser.h"
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
@@ -322,17 +320,10 @@ static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scal
 - (void)tick:(CADisplayLink*)link {
     (void)link;
     if (g_shutting_down.load(std::memory_order_relaxed)) return;
-    if (g_web_browser) {
-        CefRefPtr<CefBrowser> b = g_web_browser->browser();
-        if (b) b->GetHost()->SendExternalBeginFrame();
-    }
-    if (g_overlay_browser) {
-        CefRefPtr<CefBrowser> b = g_overlay_browser->browser();
-        if (b) b->GetHost()->SendExternalBeginFrame();
-    }
-    if (g_about_browser) {
-        CefRefPtr<CefBrowser> b = g_about_browser->browser();
-        if (b) b->GetHost()->SendExternalBeginFrame();
+    if (g_browsers) {
+        g_browsers->forEachBrowser([](CefRefPtr<CefBrowser> b) {
+            b->GetHost()->SendExternalBeginFrame();
+        });
     }
 }
 @end

@@ -126,7 +126,7 @@ static void applySettingValue(const std::string& section, const std::string& key
 // =====================================================================
 
 OverlayBrowser::~OverlayBrowser() {
-    if (g_browsers && layer_) g_browsers->remove(layer_.get());
+    release_layer(layer_.get());
 }
 
 CefRefPtr<CefDictionaryValue> OverlayBrowser::injectionProfile() {
@@ -135,20 +135,13 @@ CefRefPtr<CefDictionaryValue> OverlayBrowser::injectionProfile() {
         "saveServerUrl", "navigateMain", "dismissOverlay",
         "checkServerConnectivity", "cancelServerConnectivity",
         "overlayFadeComplete",
-        "menuItemSelected", "menuDismissed",
-    };
-    static const char* const kScripts[] = {
-        "context-menu.js",
     };
     CefRefPtr<CefListValue> fns = CefListValue::Create();
     for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
         fns->SetString(i, kFunctions[i]);
-    CefRefPtr<CefListValue> scripts = CefListValue::Create();
-    for (size_t i = 0; i < sizeof(kScripts) / sizeof(*kScripts); i++)
-        scripts->SetString(i, kScripts[i]);
     CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
     d->SetList("functions", fns);
-    d->SetList("scripts", scripts);
+    d->SetList("scripts", CefListValue::Create());
     return d;
 }
 
@@ -156,6 +149,7 @@ OverlayBrowser::OverlayBrowser(CefRefPtr<CefLayer> layer, WebBrowser& main_brows
     : layer_(std::move(layer))
     , main_browser_(main_browser)
 {
+    layer_->setName("overlay");
     layer_->setMessageHandler([this](const std::string& name,
                                      CefRefPtr<CefListValue> args,
                                      CefRefPtr<CefBrowser> browser) {
