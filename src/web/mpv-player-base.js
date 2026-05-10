@@ -114,12 +114,29 @@
                 this._currentTime = ms;
 
                 const { videoParam, audioParam, subParam, externalAudioUrl, externalSubUrl } = this._resolveTracks(options);
+
+                // Detect Dolby Vision content so downstream playback logic can
+                // distinguish DV from HDR10 and avoid incorrect color handling.
+                const videoStream = options.mediaSource?.MediaStreams?.find(s => s.Type === 'Video');
+                const videoStreamText = JSON.stringify(videoStream || {}).toLowerCase();
+                const mediaSourceText = JSON.stringify(options.mediaSource || {}).toLowerCase();
+
+                const isDolbyVision = (
+                    videoStreamText.includes('dovi')
+                    || videoStreamText.includes('dvhe')
+                    || videoStreamText.includes('dvh1')
+                    || mediaSourceText.includes('dovi')
+                    || mediaSourceText.includes('dvhe')
+                    || mediaSourceText.includes('dvh1')
+                );
+
                 this._beforeLoad(options);
                 window.api.player.load(val,
                     {
                         startMilliseconds: ms,
                         autoplay: true,
-                        isInfiniteStream: !!options.mediaSource?.IsInfiniteStream
+                        isInfiniteStream: !!options.mediaSource?.IsInfiniteStream,
+                        isDolbyVision
                     },
                     { type: this.mediaType, metadata: options.item },
                     videoParam,

@@ -207,7 +207,9 @@
                 }
                 if (window.jmpNative && window.jmpNative.playerLoad) {
                     const metadataJson = streamdata?.metadata ? JSON.stringify(streamdata.metadata) : '{}';
-                    window.jmpNative.playerLoad(url, options.startMilliseconds, videoStream, audioStream, subtitleStream, metadataJson, externalAudioUrl || '', externalSubUrl || '', !!options.isInfiniteStream);
+                    // Pass Dolby Vision detection state through the native playerLoad path
+                    // so platform-specific playback handling can distinguish DV from HDR10.
+                    window.jmpNative.playerLoad(url, options.startMilliseconds, videoStream, audioStream, subtitleStream, metadataJson, externalAudioUrl || '', externalSubUrl || '', !!options.isInfiniteStream, !!options.isDolbyVision);
                 }
             },
             stop() {
