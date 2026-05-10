@@ -123,21 +123,25 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     return d;
 }
 
-WebBrowser::WebBrowser(RenderTarget target, int w, int h, int pw, int ph)
-    : client_(new CefLayer(target, w, h, pw, ph))
+WebBrowser::WebBrowser(CefRefPtr<CefLayer> layer)
+    : layer_(std::move(layer))
 {
-    client_->setMessageHandler([this](const std::string& name,
-                                      CefRefPtr<CefListValue> args,
-                                      CefRefPtr<CefBrowser> browser) {
+    layer_->setMessageHandler([this](const std::string& name,
+                                     CefRefPtr<CefListValue> args,
+                                     CefRefPtr<CefBrowser> browser) {
         return handleMessage(name, args, browser);
     });
-    client_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
+    layer_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
         // Main browser takes input only if the overlay isn't currently active.
-        if (!g_overlay_browser)
-            input::set_active_browser(browser);
+        if (g_browsers && !g_overlay_browser)
+            g_browsers->setActive(browser);
     });
-    client_->setContextMenuBuilder(&app_menu::build);
-    client_->setContextMenuDispatcher(&app_menu::dispatch);
+    layer_->setContextMenuBuilder(&app_menu::build);
+    layer_->setContextMenuDispatcher(&app_menu::dispatch);
+}
+
+WebBrowser::~WebBrowser() {
+    if (g_browsers && layer_) g_browsers->remove(layer_.get());
 }
 
 bool WebBrowser::handleMessage(const std::string& name,

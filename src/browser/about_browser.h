@@ -3,27 +3,14 @@
 #include "../cef/cef_client.h"
 
 // Business-logic wrapper for the About panel CEF browser.
-//
-// Lifecycle: create-on-open, destroy-on-close. Static AboutBrowser::open()
-// is a no-op if a panel is already up; otherwise it allocates the singleton,
-// creates the CEF browser at app://resources/about.html, and hands it input.
-//
-// On dismiss (aboutDismiss IPC), the instance restores input to whatever
-// browser had it before, hides the platform subsurface, and closes the CEF
-// browser. OnBeforeClose nulls g_about_browser and posts a deferred
-// self-delete on the CEF UI thread so the instance is freed after the
-// callback returns rather than mid-invocation.
 class AboutBrowser {
 public:
     static void open();
 
-    CefRefPtr<CefBrowser> browser() { return client_->browser(); }
-    void resize(int w, int h, int pw, int ph) { client_->resize(w, h, pw, ph); }
-    bool isClosed() const { return client_->isClosed(); }
+    CefRefPtr<CefBrowser> browser() { return layer_->browser(); }
+    bool isClosed() const { return layer_->isClosed(); }
+    ~AboutBrowser();
 
-    // Native-shim injection profile for this browser. See WebBrowser for
-    // details. About only needs two jmpNative functions and no scripts —
-    // about.html loads its own JS via <script>.
     static CefRefPtr<CefDictionaryValue> injectionProfile();
 
 private:
@@ -33,6 +20,6 @@ private:
                        CefRefPtr<CefListValue> args,
                        CefRefPtr<CefBrowser> browser);
 
-    CefRefPtr<CefLayer> client_;
+    CefRefPtr<CefLayer> layer_;
     CefRefPtr<CefBrowser> prev_active_;
 };

@@ -1,5 +1,6 @@
 #include "cef_client.h"
 #include "logging.h"
+#include "../browser/browsers.h"
 #include "../cjson/cJSON.h"
 #include "../platform/platform.h"
 #include "include/cef_task.h"
@@ -115,6 +116,11 @@ static bool try_intercept_paste(CefRefPtr<CefBrowser> browser,
 // CefLayer
 // =====================================================================
 
+CefLayer::CefLayer(Browsers& browsers, PlatformSurface* surface)
+    : browsers_(browsers), surface_(surface) {}
+
+CefLayer::~CefLayer() = default;
+
 void CefLayer::GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) {
     rect.Set(0, 0, width_, height_);
 }
@@ -136,6 +142,8 @@ void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
     height_ = h;
     physical_w_ = physical_w;
     physical_h_ = physical_h;
+    if (surface_ && g_platform.surface_resize)
+        g_platform.surface_resize(surface_, w, h, physical_w, physical_h);
     if (browser_) {
         browser_->GetHost()->NotifyScreenInfoChanged();
         browser_->GetHost()->WasResized();
@@ -143,16 +151,31 @@ void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
     }
 }
 
-void CefLayer::setRefreshRate(CefBrowserSettings& bs, double hz) {
-    if (hz <= 0) return;
-    bs.windowless_frame_rate = static_cast<int>(std::ceil(hz));
+void CefLayer::setVisible(bool visible) {
+    if (surface_ && g_platform.surface_set_visible)
+        g_platform.surface_set_visible(surface_, visible);
+}
+
+void CefLayer::fade(float fade_sec,
+                    std::function<void()> on_fade_start,
+                    std::function<void()> on_complete) {
+    if (surface_ && g_platform.fade_surface) {
+        g_platform.fade_surface(surface_, fade_sec,
+                                std::move(on_fade_start),
+                                std::move(on_complete));
+        return;
+    }
+    // Backend without fade support — fire callbacks and hide synchronously.
+    if (on_fade_start) on_fade_start();
+    setVisible(false);
+    if (on_complete) on_complete();
 }
 
 void CefLayer::setRefreshRate(double hz) {
     if (hz <= 0) return;
-    setRefreshRate(browser_settings_, hz);
+    frame_rate_ = static_cast<int>(std::ceil(hz));
     if (browser_)
-        browser_->GetHost()->SetWindowlessFrameRate(browser_settings_.windowless_frame_rate);
+        browser_->GetHost()->SetWindowlessFrameRate(frame_rate_);
 }
 
 void CefLayer::reset_popup_state() {
@@ -228,7 +251,8 @@ void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectL
         return;
     }
     if (type != PET_VIEW) return;
-    target_.present_software(dirty, buffer, w, h);
+    if (surface_ && g_platform.surface_present_software)
+        g_platform.surface_present_software(surface_, dirty, buffer, w, h);
 }
 
 void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
@@ -238,7 +262,8 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
         return;
     }
     if (type != PET_VIEW) return;
-    target_.present(info);
+    if (surface_ && g_platform.surface_present)
+        g_platform.surface_present(surface_, info);
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
@@ -309,12 +334,21 @@ void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     if (cb) cb();
 }
 
-void CefLayer::create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url,
-                      CefRefPtr<CefDictionaryValue> extra_info) {
-    window_info_ = wi;
-    browser_settings_ = bs;
-    extra_info_ = extra_info;
-    CefBrowserHost::CreateBrowser(wi, this, url, bs, extra_info, nullptr);
+void CefLayer::create(const std::string& url) {
+    CefWindowInfo wi;
+    wi.SetAsWindowless(0);
+    wi.shared_texture_enabled = browsers_.use_shared_textures();
+#ifdef __APPLE__
+    // Drive BeginFrames from CVDisplayLink to eliminate phase lag against
+    // CEF's internal 60Hz timer.
+    wi.external_begin_frame_enabled = true;
+#else
+    wi.external_begin_frame_enabled = false;
+#endif
+    CefBrowserSettings bs;
+    bs.background_color = 0;
+    bs.windowless_frame_rate = frame_rate_ > 0 ? frame_rate_ : browsers_.frame_rate();
+    CefBrowserHost::CreateBrowser(wi, this, url, bs, extra_info_, nullptr);
 }
 
 void CefLayer::reset() {
@@ -333,7 +367,7 @@ void CefLayer::reset() {
         CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
             // Go through create() so requested_url_ is cleared alongside the
             // actual CreateBrowser call.
-            self->create(self->window_info_, self->browser_settings_, "", self->extra_info_);
+            self->create("");
         })));
     });
 

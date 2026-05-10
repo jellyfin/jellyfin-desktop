@@ -3,6 +3,7 @@
 #include "input.h"
 #include "dispatch.h"
 #include "logging.h"
+#include "../browser/browsers.h"
 
 #import <Cocoa/Cocoa.h>
 #include <mach/mach_time.h>
@@ -566,42 +567,42 @@ static void flush_scroll_accumulator() {
 
 - (IBAction)undo:(id)sender {
     (void)sender;
-    auto browser = input::active_browser();
+    auto browser = (g_browsers ? g_browsers->active() : nullptr);
     if (!browser) return;
     if (auto frame = browser->GetFocusedFrame()) frame->Undo();
 }
 
 - (IBAction)redo:(id)sender {
     (void)sender;
-    auto browser = input::active_browser();
+    auto browser = (g_browsers ? g_browsers->active() : nullptr);
     if (!browser) return;
     if (auto frame = browser->GetFocusedFrame()) frame->Redo();
 }
 
 - (IBAction)cut:(id)sender {
     (void)sender;
-    auto browser = input::active_browser();
+    auto browser = (g_browsers ? g_browsers->active() : nullptr);
     if (!browser) return;
     if (auto frame = browser->GetFocusedFrame()) frame->Cut();
 }
 
 - (IBAction)copy:(id)sender {
     (void)sender;
-    auto browser = input::active_browser();
+    auto browser = (g_browsers ? g_browsers->active() : nullptr);
     if (!browser) return;
     if (auto frame = browser->GetFocusedFrame()) frame->Copy();
 }
 
 - (IBAction)paste:(id)sender {
     (void)sender;
-    auto browser = input::active_browser();
+    auto browser = (g_browsers ? g_browsers->active() : nullptr);
     if (!browser) return;
     if (auto frame = browser->GetFocusedFrame()) frame->Paste();
 }
 
 - (IBAction)selectAll:(id)sender {
     (void)sender;
-    auto browser = input::active_browser();
+    auto browser = (g_browsers ? g_browsers->active() : nullptr);
     if (!browser) return;
     if (auto frame = browser->GetFocusedFrame()) frame->SelectAll();
 }

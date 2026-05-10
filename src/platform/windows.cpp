@@ -5,10 +5,6 @@
 
 #include "platform/platform.h"
 #include "common.h"
-#include "cef/cef_client.h"
-#include "browser/browsers.h"
-#include "browser/web_browser.h"
-#include "browser/overlay_browser.h"
 #include "input/input_windows.h"
 #include "logging.h"
 #include "mpv/event.h"
@@ -25,6 +21,9 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <vector>
+#include <algorithm>
+#include <chrono>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -35,6 +34,19 @@
 // =====================================================================
 // Windows state (file-static)
 // =====================================================================
+
+// Per-CefLayer surface: its own composition swap chain + DComp visual.
+// Stacking is managed by win_restack rebuilding the child-list under
+// dcomp_root in the order supplied by Browsers.
+struct PlatformSurface {
+    IDXGISwapChain1* swap_chain = nullptr;
+    IDCompositionVisual* visual = nullptr;
+    IDCompositionEffectGroup* effect = nullptr;  // per-surface fade effect
+    int sw = 0, sh = 0;       // swap chain backing-buffer size
+    bool visible = true;      // detach content when false
+    bool in_tree = false;     // whether visual is currently a child of dcomp_root
+    std::atomic<bool> fading{false};
+};
 
 struct WinState {
     std::mutex surface_mtx;  // protects swap chain ops during transitions
@@ -50,25 +62,17 @@ struct WinState {
     IDCompositionDevice* dcomp_device = nullptr;
     IDCompositionTarget* dcomp_target = nullptr;
     IDCompositionVisual* dcomp_root = nullptr;
-    IDCompositionVisual* dcomp_main_visual = nullptr;
-    IDCompositionVisual* dcomp_overlay_visual = nullptr;
-    IDCompositionEffectGroup* dcomp_overlay_effect = nullptr;
-    IDCompositionVisual* dcomp_about_visual = nullptr;
 
-    // Main browser swap chain
-    IDXGISwapChain1* main_swap_chain = nullptr;
-    int main_sw = 0, main_sh = 0;
+    // All live PlatformSurfaces and the current stack order (bottom -> top).
+    // `stack` is rebuilt by win_restack; `live` mirrors alloc/free.
+    std::vector<PlatformSurface*> live;
+    std::vector<PlatformSurface*> stack;
+    // Bottom-most surface; receives fullscreen-transition frame-drop and
+    // content detach. Tracked as stack.front() after restack, or the first
+    // allocated surface as a pre-restack fallback.
+    PlatformSurface* main_surface = nullptr;
 
-    // Overlay browser swap chain
-    IDXGISwapChain1* overlay_swap_chain = nullptr;
-    int overlay_sw = 0, overlay_sh = 0;
-    bool overlay_visible = false;
-
-    // About browser swap chain (above overlay)
-    IDXGISwapChain1* about_swap_chain = nullptr;
-    int about_sw = 0, about_sh = 0;
-    bool about_visible = false;
-
+    // Popup remains role-specific per plan.
     IDCompositionVisual* dcomp_popup_visual = nullptr;
     IDXGISwapChain1* popup_swap_chain = nullptr;
     int popup_sw = 0, popup_sh = 0;
@@ -148,20 +152,11 @@ static bool init_dcomp() {
         return false;
     }
 
-    // Visual tree: root -> main (bottom), overlay (top)
+    // Visual tree: root holds per-surface visuals (added by win_alloc_surface
+    // / reordered by win_restack) plus the popup visual on top.
     g_win.dcomp_device->CreateVisual(&g_win.dcomp_root);
-    g_win.dcomp_device->CreateVisual(&g_win.dcomp_main_visual);
-    g_win.dcomp_device->CreateVisual(&g_win.dcomp_overlay_visual);
-    g_win.dcomp_device->CreateEffectGroup(&g_win.dcomp_overlay_effect);
-    g_win.dcomp_overlay_visual->SetEffect(g_win.dcomp_overlay_effect);
-
-    g_win.dcomp_root->AddVisual(g_win.dcomp_main_visual, TRUE, nullptr);
-    g_win.dcomp_root->AddVisual(g_win.dcomp_overlay_visual, TRUE, g_win.dcomp_main_visual);
-    g_win.dcomp_device->CreateVisual(&g_win.dcomp_about_visual);
-    g_win.dcomp_root->AddVisual(g_win.dcomp_about_visual, TRUE, g_win.dcomp_overlay_visual);
-
     g_win.dcomp_device->CreateVisual(&g_win.dcomp_popup_visual);
-    g_win.dcomp_root->AddVisual(g_win.dcomp_popup_visual, TRUE, g_win.dcomp_about_visual);
+    g_win.dcomp_root->AddVisual(g_win.dcomp_popup_visual, TRUE, nullptr);
 
     g_win.dcomp_target->SetRoot(g_win.dcomp_root);
     g_win.dcomp_device->Commit();
@@ -218,18 +213,41 @@ static void ensure_swap_chain(IDXGISwapChain1*& sc, int& sw, int& sh,
 }
 
 // =====================================================================
-// Present CEF shared texture -- main browser
+// Generic per-surface ops
 // =====================================================================
 
-static void win_present(const CefAcceleratedPaintInfo& info) {
+// Shared accelerated-present helper: copies the CEF shared texture into the
+// surface's swap chain, sizing 1:1 to the CEF buffer (never stretch).
+// Caller must NOT hold surface_mtx; this function takes it.
+static void present_to_surface_locked(PlatformSurface* s, ID3D11Texture2D* src,
+                                      int w, int h) {
+    ensure_swap_chain(s->swap_chain, s->sw, s->sh, s->visual, w, h);
+    if (!s->swap_chain) return;
+
+    ID3D11Texture2D* bb = nullptr;
+    HRESULT hr = s->swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    if (FAILED(hr) || !bb) {
+        LOG_ERROR(LOG_PLATFORM, "swap_chain->GetBuffer failed: 0x{:08x}", hr);
+        return;
+    }
+    g_win.d3d_context->CopyResource(bb, src);
+    bb->Release();
+    s->swap_chain->Present(0, 0);
+    g_win.dcomp_device->Commit();
+}
+
+static void win_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
+    if (!s) return;
     HANDLE handle = info.shared_texture_handle;
     if (!handle) return;
 
-    // Open shared texture to query dimensions
     ID3D11Texture2D* src = nullptr;
     HRESULT hr = g_win.d3d_device->OpenSharedResource1(handle,
         __uuidof(ID3D11Texture2D), (void**)&src);
-    if (FAILED(hr) || !src) return;
+    if (FAILED(hr) || !src) {
+        LOG_ERROR(LOG_PLATFORM, "OpenSharedResource1 failed: 0x{:08x}", hr);
+        return;
+    }
 
     D3D11_TEXTURE2D_DESC td;
     src->GetDesc(&td);
@@ -238,8 +256,11 @@ static void win_present(const CefAcceleratedPaintInfo& info) {
 
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
 
-    // Drop frames during transition (same logic as Wayland)
-    if (g_win.transitioning) {
+    // Transition logic applies only to the bottom-most ("main") surface:
+    // mpv resizes the HWND on fullscreen toggle, so we drop CEF frames that
+    // still match the pre-transition size until CEF catches up.
+    bool is_main = (s == g_win.main_surface);
+    if (is_main && g_win.transitioning) {
         if (g_win.expected_w <= 0 || (w == g_win.transition_pw && h == g_win.transition_ph)) {
             src->Release();
             return;
@@ -248,188 +269,73 @@ static void win_present(const CefAcceleratedPaintInfo& info) {
         win_end_transition_locked();
     }
 
-    // Drop oversized buffers
-    if (g_win.mpv_pw > 0 && (w > g_win.mpv_pw + 2 || h > g_win.mpv_ph + 2)) {
+    // Drop oversized buffers (main only — overlay/about can legitimately be
+    // larger than the window during resize churn historically; preserve old
+    // semantics where only the main path enforced this).
+    if (is_main && g_win.mpv_pw > 0 && (w > g_win.mpv_pw + 2 || h > g_win.mpv_ph + 2)) {
         src->Release();
         return;
     }
 
-    // 1:1 pixel mapping: swap chain matches CEF buffer size (never stretch)
-    ensure_swap_chain(g_win.main_swap_chain, g_win.main_sw, g_win.main_sh,
-                      g_win.dcomp_main_visual, w, h);
-    if (!g_win.main_swap_chain) { src->Release(); return; }
+    if (!s->visible) { src->Release(); return; }
 
-    ID3D11Texture2D* bb = nullptr;
-    g_win.main_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
-    g_win.d3d_context->CopyResource(bb, src);
-    bb->Release();
+    present_to_surface_locked(s, src, w, h);
     src->Release();
-
-    g_win.main_swap_chain->Present(0, 0);
-    g_win.dcomp_device->Commit();
 }
 
-static void win_present_software(const CefRenderHandler::RectList&, const void*, int, int) {
-    // Software fallback not implemented for Windows
+// Software fallback: Windows is shared-textures-only in practice.
+// Kept as a no-op to match prior overlay/about behavior; the main path
+// historically also no-op'd here.
+static void win_surface_present_software(PlatformSurface*,
+                                         const CefRenderHandler::RectList&,
+                                         const void*, int, int) {
 }
 
-// =====================================================================
-// Present CEF shared texture -- overlay browser
-// =====================================================================
-
-static void win_overlay_present(const CefAcceleratedPaintInfo& info) {
-    HANDLE handle = info.shared_texture_handle;
-    if (!handle) return;
-
-    ID3D11Texture2D* src = nullptr;
-    HRESULT hr = g_win.d3d_device->OpenSharedResource1(handle,
-        __uuidof(ID3D11Texture2D), (void**)&src);
-    if (FAILED(hr) || !src) return;
-
-    D3D11_TEXTURE2D_DESC td;
-    src->GetDesc(&td);
-    int w = static_cast<int>(td.Width);
-    int h = static_cast<int>(td.Height);
-
+static void win_surface_resize(PlatformSurface* s, int /*lw*/, int /*lh*/, int pw, int ph) {
+    if (!s || pw <= 0 || ph <= 0) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    if (!g_win.overlay_visible) { src->Release(); return; }
-
-    ensure_swap_chain(g_win.overlay_swap_chain, g_win.overlay_sw, g_win.overlay_sh,
-                      g_win.dcomp_overlay_visual, w, h);
-    if (!g_win.overlay_swap_chain) { src->Release(); return; }
-
-    ID3D11Texture2D* bb = nullptr;
-    g_win.overlay_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
-    g_win.d3d_context->CopyResource(bb, src);
-    bb->Release();
-    src->Release();
-
-    g_win.overlay_swap_chain->Present(0, 0);
+    // CEF presents at its own buffer size and ensure_swap_chain rebinds at
+    // present time, so we only adjust the swap chain if it already exists
+    // (matches prior overlay/about resize semantics). This avoids forcing
+    // a stale physical size between a window resize and the next CEF paint.
+    if (!s->swap_chain) return;
+    ensure_swap_chain(s->swap_chain, s->sw, s->sh, s->visual, pw, ph);
     g_win.dcomp_device->Commit();
 }
 
-static void win_overlay_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
-
-static void win_overlay_resize(int, int, int pw, int ph) {
+static void win_surface_set_visible(PlatformSurface* s, bool visible) {
+    if (!s) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    if (!g_win.overlay_swap_chain) return;
-    ensure_swap_chain(g_win.overlay_swap_chain, g_win.overlay_sw, g_win.overlay_sh,
-                      g_win.dcomp_overlay_visual, pw, ph);
-    g_win.dcomp_device->Commit();
-}
+    if (s->visible == visible) return;
+    s->visible = visible;
+    if (!s->visual) return;
 
-// =====================================================================
-// Overlay visibility + fade
-// =====================================================================
-
-static void win_set_overlay_visible(bool visible) {
-    {
-        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-        g_win.overlay_visible = visible;
-        if (!visible && g_win.dcomp_overlay_visual) {
-            g_win.dcomp_overlay_visual->SetContent(nullptr);
-            if (g_win.overlay_swap_chain) {
-                g_win.overlay_swap_chain->Release();
-                g_win.overlay_swap_chain = nullptr;
-                g_win.overlay_sw = 0;
-                g_win.overlay_sh = 0;
-            }
-            g_win.dcomp_device->Commit();
+    if (!visible) {
+        // Detach content and drop the swap chain so we don't display a
+        // stale frame when the surface is shown again at a different size.
+        s->visual->SetContent(nullptr);
+        if (s->swap_chain) {
+            s->swap_chain->Release();
+            s->swap_chain = nullptr;
+            s->sw = 0;
+            s->sh = 0;
         }
-    }
-
-    // Route keyboard focus to the newly-active browser. Without this, CEF
-    // thinks the just-activated browser has no window focus, so text inputs
-    // don't show a caret and focus rings don't render. Matches the "active
-    // tab" semantics: only one browser at a time holds focus.
-    auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-    auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-    if (visible) {
-        if (main) main->GetHost()->SetFocus(false);
-        if (ovl)  ovl->GetHost()->SetFocus(true);
     } else {
-        if (ovl)  ovl->GetHost()->SetFocus(false);
-        if (main) main->GetHost()->SetFocus(true);
+        // Content will be re-bound on next ensure_swap_chain via
+        // surface_present.
     }
-}
-
-// =====================================================================
-// Present CEF shared texture -- about browser
-// =====================================================================
-
-static void win_about_present(const CefAcceleratedPaintInfo& info) {
-    HANDLE handle = info.shared_texture_handle;
-    if (!handle) return;
-
-    ID3D11Texture2D* src = nullptr;
-    HRESULT hr = g_win.d3d_device->OpenSharedResource1(handle,
-        __uuidof(ID3D11Texture2D), (void**)&src);
-    if (FAILED(hr) || !src) return;
-
-    D3D11_TEXTURE2D_DESC td;
-    src->GetDesc(&td);
-    int w = static_cast<int>(td.Width);
-    int h = static_cast<int>(td.Height);
-
-    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    if (!g_win.about_visible) { src->Release(); return; }
-
-    ensure_swap_chain(g_win.about_swap_chain, g_win.about_sw, g_win.about_sh,
-                      g_win.dcomp_about_visual, w, h);
-    if (!g_win.about_swap_chain) { src->Release(); return; }
-
-    ID3D11Texture2D* bb = nullptr;
-    g_win.about_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
-    g_win.d3d_context->CopyResource(bb, src);
-    bb->Release();
-    src->Release();
-
-    g_win.about_swap_chain->Present(0, 0);
     g_win.dcomp_device->Commit();
 }
 
-static void win_about_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
-
-static void win_about_resize(int, int, int pw, int ph) {
-    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    if (!g_win.about_swap_chain) return;
-    ensure_swap_chain(g_win.about_swap_chain, g_win.about_sw, g_win.about_sh,
-                      g_win.dcomp_about_visual, pw, ph);
-    g_win.dcomp_device->Commit();
-}
-
-static void win_set_about_visible(bool visible) {
-    {
-        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-        g_win.about_visible = visible;
-        if (!visible && g_win.dcomp_about_visual) {
-            g_win.dcomp_about_visual->SetContent(nullptr);
-            if (g_win.about_swap_chain) {
-                g_win.about_swap_chain->Release();
-                g_win.about_swap_chain = nullptr;
-                g_win.about_sw = 0;
-                g_win.about_sh = 0;
-            }
-            g_win.dcomp_device->Commit();
-        }
-    }
-
-    if (visible) {
-        auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-        auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-        if (main) main->GetHost()->SetFocus(false);
-        if (ovl)  ovl->GetHost()->SetFocus(false);
-    }
-}
-
-// Animate overlay opacity from 1.0 to 0.0 over fade_sec, then hide.
-// Runs on a detached thread -- finite UI animation.
-static void win_fade_overlay(float fade_sec,
+// Animate the surface's effect-group opacity from 1.0 -> 0.0 over fade_sec,
+// then hide. Runs on a detached thread — finite UI animation, no polling
+// (frame-paced sleep matches the display refresh).
+static void win_fade_surface(PlatformSurface* s, float fade_sec,
                              std::function<void()> on_fade_start,
                              std::function<void()> on_complete) {
-    if (!g_win.dcomp_overlay_visual) {
-        win_set_overlay_visible(false);
+    if (!s || !s->visual || !s->effect) {
         if (on_fade_start) on_fade_start();
+        if (s) win_surface_set_visible(s, false);
         if (on_complete) on_complete();
         return;
     }
@@ -437,12 +343,13 @@ static void win_fade_overlay(float fade_sec,
     double fps = mpv::display_hz();
     if (fps <= 0) {
         if (on_fade_start) on_fade_start();
-        win_set_overlay_visible(false);
+        win_surface_set_visible(s, false);
         if (on_complete) on_complete();
         return;
     }
 
-    std::thread([fade_sec, fps,
+    s->fading.store(true);
+    std::thread([s, fade_sec, fps,
                  on_fade_start = std::move(on_fade_start),
                  on_complete = std::move(on_complete)]() {
         if (on_fade_start) on_fade_start();
@@ -454,28 +361,142 @@ static void win_fade_overlay(float fade_sec,
         for (int i = 1; i <= total_frames; i++) {
             float t = static_cast<float>(i) / total_frames;
             float opacity = 1.0f - t;
-
             {
                 std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-                if (!g_win.overlay_visible || !g_win.dcomp_overlay_visual) break;
-                g_win.dcomp_overlay_effect->SetOpacity(opacity);
+                if (!s->visible || !s->visual || !s->effect) break;
+                s->effect->SetOpacity(opacity);
                 g_win.dcomp_device->Commit();
             }
             std::this_thread::sleep_for(frame_duration);
         }
 
-        win_set_overlay_visible(false);
+        win_surface_set_visible(s, false);
 
-        // Reset opacity for next show
+        // Reset opacity for next show.
         {
             std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-            if (g_win.dcomp_overlay_visual) {
-                g_win.dcomp_overlay_effect->SetOpacity(1.0f);
+            if (s->visual && s->effect) {
+                s->effect->SetOpacity(1.0f);
                 g_win.dcomp_device->Commit();
             }
         }
+        s->fading.store(false);
         if (on_complete) on_complete();
     }).detach();
+}
+
+// =====================================================================
+// Surface lifecycle + stacking
+// =====================================================================
+
+static PlatformSurface* win_alloc_surface() {
+    auto* s = new PlatformSurface;
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+
+    HRESULT hr = g_win.dcomp_device->CreateVisual(&s->visual);
+    if (FAILED(hr) || !s->visual) {
+        LOG_ERROR(LOG_PLATFORM, "CreateVisual failed: 0x{:08x}", hr);
+        delete s;
+        return nullptr;
+    }
+    hr = g_win.dcomp_device->CreateEffectGroup(&s->effect);
+    if (FAILED(hr) || !s->effect) {
+        LOG_ERROR(LOG_PLATFORM, "CreateEffectGroup failed: 0x{:08x}", hr);
+        s->visual->Release();
+        delete s;
+        return nullptr;
+    }
+    s->visual->SetEffect(s->effect);
+
+    // Add to the tree just below the popup visual so popup stays on top.
+    // restack() will rebuild order at the next stacking change.
+    hr = g_win.dcomp_root->AddVisual(s->visual, FALSE, g_win.dcomp_popup_visual);
+    if (FAILED(hr))
+        LOG_ERROR(LOG_PLATFORM, "AddVisual failed: 0x{:08x}", hr);
+    else
+        s->in_tree = true;
+
+    g_win.live.push_back(s);
+    if (!g_win.main_surface) g_win.main_surface = s;
+
+    // Defer first size until surface_resize / first present.
+    g_win.dcomp_device->Commit();
+    return s;
+}
+
+static void win_free_surface(PlatformSurface* s) {
+    if (!s) return;
+    // Wait for any in-flight fade thread to finish touching this surface.
+    // It runs frame-paced and is bounded; no polling needed beyond a yield.
+    while (s->fading.load()) std::this_thread::yield();
+
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+
+    auto it = std::find(g_win.live.begin(), g_win.live.end(), s);
+    if (it != g_win.live.end()) g_win.live.erase(it);
+    auto sit = std::find(g_win.stack.begin(), g_win.stack.end(), s);
+    if (sit != g_win.stack.end()) g_win.stack.erase(sit);
+    if (g_win.main_surface == s)
+        g_win.main_surface = g_win.stack.empty() ? (g_win.live.empty() ? nullptr : g_win.live.front())
+                                                 : g_win.stack.front();
+
+    if (s->visual) {
+        if (s->in_tree) g_win.dcomp_root->RemoveVisual(s->visual);
+        s->visual->SetContent(nullptr);
+        s->visual->Release();
+        s->visual = nullptr;
+    }
+    if (s->effect) { s->effect->Release(); s->effect = nullptr; }
+    if (s->swap_chain) { s->swap_chain->Release(); s->swap_chain = nullptr; }
+
+    g_win.dcomp_device->Commit();
+    delete s;
+}
+
+// Rebuild the child-list under dcomp_root in `ordered` order
+// (bottom -> top), keeping the popup visual on top of everything.
+static void win_restack(PlatformSurface* const* ordered, size_t n) {
+    if (!g_win.dcomp_root) return;
+    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+
+    // Remove every live surface visual from the tree first so we can
+    // rebuild order deterministically. Popup stays in the tree.
+    for (auto* s : g_win.live) {
+        if (s->visual && s->in_tree) {
+            g_win.dcomp_root->RemoveVisual(s->visual);
+            s->in_tree = false;
+        }
+    }
+
+    // Re-add in given order: each is placed above the previous (so index 0
+    // ends up bottom-most). First surface goes below all current children
+    // (i.e. below the popup visual).
+    IDCompositionVisual* prev = nullptr;
+    g_win.stack.clear();
+    for (size_t i = 0; i < n; i++) {
+        PlatformSurface* s = ordered[i];
+        if (!s || !s->visual) continue;
+        HRESULT hr;
+        if (!prev) {
+            // First: place at the bottom (below popup_visual which is
+            // currently the only remaining child).
+            hr = g_win.dcomp_root->AddVisual(s->visual, FALSE, g_win.dcomp_popup_visual);
+        } else {
+            hr = g_win.dcomp_root->AddVisual(s->visual, TRUE, prev);
+        }
+        if (FAILED(hr)) {
+            LOG_ERROR(LOG_PLATFORM, "restack AddVisual failed: 0x{:08x}", hr);
+            continue;
+        }
+        s->in_tree = true;
+        g_win.stack.push_back(s);
+        prev = s->visual;
+    }
+    if (!g_win.stack.empty())
+        g_win.main_surface = g_win.stack.front();
+
+    g_win.dcomp_device->Commit();
 }
 
 // =====================================================================
@@ -493,11 +514,6 @@ static void update_surface_size_locked(int lw, int lh, int pw, int ph) {
     g_win.mpv_ph = ph;
 }
 
-static void win_resize(int lw, int lh, int pw, int ph) {
-    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    update_surface_size_locked(lw, lh, pw, ph);
-}
-
 static void win_begin_transition_locked() {
     g_win.transitioning = true;
     g_win.transition_pw = g_win.mpv_pw;
@@ -505,14 +521,16 @@ static void win_begin_transition_locked() {
     g_win.pending_lw = 0;
     g_win.pending_lh = 0;
 
-    // Detach main visual content to avoid stale frames
-    if (g_win.dcomp_main_visual) {
-        g_win.dcomp_main_visual->SetContent(nullptr);
-        if (g_win.main_swap_chain) {
-            g_win.main_swap_chain->Release();
-            g_win.main_swap_chain = nullptr;
-            g_win.main_sw = 0;
-            g_win.main_sh = 0;
+    // Detach the bottom-most ("main") surface's content to avoid stale
+    // frames while the window is resizing.
+    PlatformSurface* s = g_win.main_surface;
+    if (s && s->visual) {
+        s->visual->SetContent(nullptr);
+        if (s->swap_chain) {
+            s->swap_chain->Release();
+            s->swap_chain = nullptr;
+            s->sw = 0;
+            s->sh = 0;
         }
         g_win.dcomp_device->Commit();
     }
@@ -783,18 +801,26 @@ static void win_cleanup() {
         g_win.input_thread.join();
     if (g_wndproc_hook) { UnhookWindowsHookEx(g_wndproc_hook); g_wndproc_hook = nullptr; }
 
-    // Release swap chains
-    if (g_win.main_swap_chain)    { g_win.main_swap_chain->Release();    g_win.main_swap_chain    = nullptr; }
-    if (g_win.overlay_swap_chain) { g_win.overlay_swap_chain->Release(); g_win.overlay_swap_chain = nullptr; }
-    if (g_win.about_swap_chain)   { g_win.about_swap_chain->Release();   g_win.about_swap_chain   = nullptr; }
+    // Release any stragglers — Browsers should normally free its surfaces
+    // before cleanup, but be defensive.
+    for (auto* s : g_win.live) {
+        if (s->visual) {
+            if (s->in_tree && g_win.dcomp_root) g_win.dcomp_root->RemoveVisual(s->visual);
+            s->visual->SetContent(nullptr);
+            s->visual->Release();
+        }
+        if (s->effect) s->effect->Release();
+        if (s->swap_chain) s->swap_chain->Release();
+        delete s;
+    }
+    g_win.live.clear();
+    g_win.stack.clear();
+    g_win.main_surface = nullptr;
+
     if (g_win.popup_swap_chain)   { g_win.popup_swap_chain->Release();   g_win.popup_swap_chain   = nullptr; }
 
     // Release DComp
-    if (g_win.dcomp_overlay_effect)  { g_win.dcomp_overlay_effect->Release();  g_win.dcomp_overlay_effect  = nullptr; }
     if (g_win.dcomp_popup_visual)    { g_win.dcomp_popup_visual->Release();    g_win.dcomp_popup_visual    = nullptr; }
-    if (g_win.dcomp_about_visual)    { g_win.dcomp_about_visual->Release();    g_win.dcomp_about_visual    = nullptr; }
-    if (g_win.dcomp_overlay_visual)  { g_win.dcomp_overlay_visual->Release();  g_win.dcomp_overlay_visual  = nullptr; }
-    if (g_win.dcomp_main_visual)     { g_win.dcomp_main_visual->Release();     g_win.dcomp_main_visual     = nullptr; }
     if (g_win.dcomp_root)            { g_win.dcomp_root->Release();            g_win.dcomp_root            = nullptr; }
     if (g_win.dcomp_target)          { g_win.dcomp_target->Release();          g_win.dcomp_target          = nullptr; }
     if (g_win.dcomp_device)          { g_win.dcomp_device->Release();          g_win.dcomp_device          = nullptr; }
@@ -991,17 +1017,15 @@ Platform make_windows_platform() {
         .early_init = win_early_init,
         .init = win_init,
         .cleanup = win_cleanup,
-        .present = win_present,
-        .present_software = win_present_software,
-        .resize = win_resize,
-        .overlay_present = win_overlay_present,
-        .overlay_present_software = win_overlay_present_software,
-        .overlay_resize = win_overlay_resize,
-        .set_overlay_visible = win_set_overlay_visible,
-        .about_present = win_about_present,
-        .about_present_software = win_about_present_software,
-        .about_resize = win_about_resize,
-        .set_about_visible = win_set_about_visible,
+        .post_window_cleanup = nullptr,
+        .alloc_surface = win_alloc_surface,
+        .free_surface = win_free_surface,
+        .surface_present = win_surface_present,
+        .surface_present_software = win_surface_present_software,
+        .surface_resize = win_surface_resize,
+        .surface_set_visible = win_surface_set_visible,
+        .restack = win_restack,
+        .fade_surface = win_fade_surface,
         .popup_show             = win_popup_show,
         .popup_hide             = win_popup_hide,
         .popup_present          = win_popup_present,
@@ -1009,7 +1033,6 @@ Platform make_windows_platform() {
         .try_native_popup_menu  = [](int, int, int, int,
                                      const std::vector<std::string>&, int,
                                      std::function<void(int)>) { return false; },
-        .fade_overlay = win_fade_overlay,
         .set_fullscreen = win_set_fullscreen,
         .toggle_fullscreen = win_toggle_fullscreen,
         .begin_transition = win_begin_transition,

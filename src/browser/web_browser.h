@@ -4,30 +4,23 @@
 #include <string>
 
 // Business logic wrapper for the main jellyfin-web browser.
-// Owns a CefLayer (pure CEF) and handles all player, media session,
-// settings, and fullscreen policy IPC.
+// Wraps a CefLayer owned by Browsers; configures the player, media session,
+// settings, and fullscreen policy IPC handlers.
 class WebBrowser {
 public:
-    WebBrowser(RenderTarget target, int w, int h, int pw, int ph);
+    explicit WebBrowser(CefRefPtr<CefLayer> layer);
+    ~WebBrowser();
 
-    // Forwarded from the CEF client
-    CefRefPtr<CefBrowser> browser() { return client_->browser(); }
-    void execJs(const std::string& js) { client_->execJs(js); }
-    void resize(int w, int h, int pw, int ph) { client_->resize(w, h, pw, ph); }
-    bool isClosed() const { return client_->isClosed(); }
-    bool isLoaded() const { return client_->isLoaded(); }
-    void waitForClose() { client_->waitForClose(); }
-    void waitForLoad() { client_->waitForLoad(); }
-    void create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url) {
-        client_->create(wi, bs, url, injectionProfile());
-    }
-    void reset() { client_->reset(); }
-    void loadUrl(const std::string& url) { client_->loadUrl(url); }
-    CefRefPtr<CefLayer> client() { return client_; }
+    CefRefPtr<CefBrowser> browser() { return layer_->browser(); }
+    CefRefPtr<CefLayer> layer() { return layer_; }
+    void loadUrl(const std::string& url) { layer_->loadUrl(url); }
+    void reset() { layer_->reset(); }
+    void waitForLoad() { layer_->waitForLoad(); }
+    void waitForClose() { layer_->waitForClose(); }
+    bool isClosed() const { return layer_->isClosed(); }
+    void execJs(const std::string& js) { layer_->execJs(js); }
 
-    // Native-shim injection profile for this browser. Travels through CEF
-    // extra_info to the renderer; App::OnContextCreated binds the listed
-    // jmpNative functions and executes the listed scripts on the top frame.
+    // Native-shim injection profile for this browser.
     static CefRefPtr<CefDictionaryValue> injectionProfile();
 
 private:
@@ -35,6 +28,6 @@ private:
                        CefRefPtr<CefListValue> args,
                        CefRefPtr<CefBrowser> browser);
 
-    CefRefPtr<CefLayer> client_;
+    CefRefPtr<CefLayer> layer_;
     bool was_fullscreen_before_osd_ = false;
 };

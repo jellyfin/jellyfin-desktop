@@ -1,10 +1,11 @@
 // platform_macos.mm — macOS platform layer.
-// Two CAMetalLayers composite CEF content (main + overlay) onto mpv's
-// window. CEF delivers straight-alpha BGRA via OnAcceleratedPaint; a Metal
-// pass converts to premultiplied alpha and renders into the layer's
-// nextDrawable. CAMetalLayer.colorspace = sRGB tells CoreAnimation how to
-// color-manage the content into the window's working space (P3/EDR).
-// Input is owned by src/input/input_macos.mm.
+// CEF content composites onto mpv's window as a stack of CAMetalLayers,
+// one per CefLayer (allocated by macos_alloc_surface, destroyed by
+// macos_free_surface). CEF delivers straight-alpha BGRA via
+// OnAcceleratedPaint; a Metal pass converts to premultiplied alpha and
+// renders into the layer's nextDrawable. CAMetalLayer.colorspace = sRGB
+// tells CoreAnimation how to color-manage the content into the window's
+// working space (P3/EDR). Input is owned by src/input/input_macos.mm.
 
 #include "platform/platform.h"
 #include "platform/macos_platform.h"
@@ -28,6 +29,8 @@
 #include <SystemConfiguration/SystemConfiguration.h>
 #include <mach/mach_time.h>
 #include <objc/runtime.h>
+#include <algorithm>
+#include <vector>
 
 // SCDynamicStoreCopyComputerName returns the freeform "Computer Name" from
 // System Settings — which can contain emoji, smart quotes, CJK, and other
@@ -112,27 +115,24 @@ static id<MTLCommandQueue> g_mtl_queue = nil;
 static id<MTLRenderPipelineState> g_mtl_pipeline = nil;
 
 
-struct LayerState {
-    NSView* __strong view;
-    CAMetalLayer* __strong layer;
+// Per-surface state. One per CefLayer (allocated by macos_alloc_surface,
+// destroyed by macos_free_surface). The bottom-most surface in the
+// current stack is treated as the cef-main surface for fullscreen-
+// transition gating (see g_transitioning / macos_begin_transition).
+struct PlatformSurface {
+    NSView* __strong view = nil;
+    CAMetalLayer* __strong layer = nil;
 
     // Input side: CEF's IOSurface, wrapped as an MTLTexture for sampling.
     // Recreated when the input IOSurface changes (new frame may use a new
     // backing surface from CEF's own pool).
-    IOSurfaceRef cached_input;
-    id<MTLTexture> __strong input_texture;
+    IOSurfaceRef cached_input = nullptr;
+    id<MTLTexture> __strong input_texture = nil;
 };
 
-static LayerState g_main{};
-static LayerState g_overlay{};
-static bool g_overlay_visible = false;
-static LayerState g_about{};
-static bool g_about_visible = false;
-// Deferred-reveal flag: set by macos_set_about_visible(true), consumed by
-// macos_about_present once CEF delivers a frame. Avoids a window of empty
-// transparent layer between unhide and first real paint — the view stays
-// hidden until we actually have something to show.
-static bool g_about_pending_reveal = false;
+// Current stack order, bottom-to-top, as last applied via macos_restack.
+// stack[0] is the cef-main surface for transition-gating purposes.
+static std::vector<PlatformSurface*> g_surface_stack;
 
 // Input NSView (owned by input::macos)
 static NSView* g_input_view = nil;
@@ -188,7 +188,7 @@ fragment float4 fragmentShader(VertexOut in [[stage_in]],
 // when the input surface identity changes. Also updates the layer's
 // colorspace from the IOSurface's kIOSurfaceColorSpace tag (set by
 // Chromium's viz compositor). Falls back to sRGB if untagged.
-static bool wrap_input_surface(LayerState& s, IOSurfaceRef surface, int w, int h) {
+static bool wrap_input_surface(PlatformSurface& s, IOSurfaceRef surface, int w, int h) {
     if (surface == s.cached_input && s.input_texture != nil) return true;
 
     MTLTextureDescriptor* desc = [MTLTextureDescriptor
@@ -224,7 +224,7 @@ static bool wrap_input_surface(LayerState& s, IOSurfaceRef surface, int w, int h
 // CAMetalLayer's next drawable with premultiplied alpha.
 // =====================================================================
 
-static void present_iosurface(LayerState& s, const CefAcceleratedPaintInfo& info) {
+static void present_iosurface(PlatformSurface& s, const CefAcceleratedPaintInfo& info) {
     if (!g_mtl_device || !s.layer) {
         LOG_WARN(LOG_PLATFORM, "[METAL] present skipped: device={} layer={}",
                  (__bridge void*)g_mtl_device, (__bridge void*)s.layer);
@@ -451,27 +451,16 @@ static bool macos_init(mpv_handle* mpv) {
     g_mtl_pipeline = [g_mtl_device newRenderPipelineStateWithDescriptor:pipeDesc error:&error];
     if (!g_mtl_pipeline) { fprintf(stderr, "Metal pipeline: %s\n", [[error localizedDescription] UTF8String]); return false; }
 
-    // Create layers: main (bottom) → overlay (middle) → input (top)
+    // CefLayer surfaces are created on demand via macos_alloc_surface and
+    // ordered by macos_restack. The input NSView sits above whatever
+    // CefLayer subviews currently exist; macos_restack re-anchors it on
+    // top after any reorder.
     CGRect frame = [contentView bounds];
-    CGFloat scale = [g_window backingScaleFactor];
-
-    create_content_layer(contentView, frame, scale, g_main.view, g_main.layer, nil);
-    create_content_layer(contentView, frame, scale, g_overlay.view, g_overlay.layer, g_main.view);
-    create_content_layer(contentView, frame, scale, g_about.view, g_about.layer, g_overlay.view);
-    // Both CEF content views start hidden so nothing from their fresh
-    // (empty) CALayer sublayers can leak stale window-server snapshot
-    // content before CEF has actually painted. The user sees mpv's
-    // contentView backing (which we've set to the startup color) until the
-    // first-frame paths unhide these below. macos_overlay_present
-    // unhides both (overlay covers main as they appear together).
-    [g_main.view setHidden:YES];
-    [g_overlay.view setHidden:YES];
-    [g_about.view setHidden:YES];
 
     g_input_view = input::macos::create_input_view();
     g_input_view.frame = contentView.bounds;
     g_input_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [contentView addSubview:g_input_view positioned:NSWindowAbove relativeTo:g_about.view];
+    [contentView addSubview:g_input_view];
 
     // NSWindow drops mouseMoved: events on the floor unless this is set.
     // Without it, our input view's hover/cursor tracking never fires.
@@ -504,70 +493,16 @@ static bool macos_init(mpv_handle* mpv) {
         return false;
     }
 
-    LOG_INFO(LOG_PLATFORM, "[INIT] Metal compositor initialized (2 layers) frame={:.0f}x{:.0f} scale={:.2f} window.firstResponder={} input_view={}",
-             frame.size.width, frame.size.height, scale,
+    LOG_INFO(LOG_PLATFORM, "[INIT] Metal compositor initialized frame={:.0f}x{:.0f} window.firstResponder={} input_view={}",
+             frame.size.width, frame.size.height,
              (__bridge void*)[g_window firstResponder], (__bridge void*)g_input_view);
     return true;
 }
 
-static void macos_present(const CefAcceleratedPaintInfo& info) {
-    if (g_transitioning) return;
-    present_iosurface(g_main, info);
-    if (g_expected_w > 0) {
-        IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
-        if (surface && (int)IOSurfaceGetWidth(surface) == g_expected_w &&
-            (int)IOSurfaceGetHeight(surface) == g_expected_h) {
-            g_expected_w = 0; g_expected_h = 0;
-            g_transitioning = false;
-        }
-    }
-}
-
-static void macos_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
-
-static void macos_overlay_present(const CefAcceleratedPaintInfo& info) {
-    present_iosurface(g_overlay, info);
-}
-
-static void macos_overlay_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
-
-// The CALayer's frame tracks its hosting NSView via autoresizing. The
-// IOSurface pool is recreated automatically inside present_iosurface
-// when CEF starts delivering frames at a new pixel size, so there is
-// nothing to do here. These entry points remain so the Platform
-// dispatch table stays non-null.
-static void macos_resize(int, int, int, int) {}
-static void macos_overlay_resize(int, int, int, int) {}
-
-static void macos_about_present(const CefAcceleratedPaintInfo& info) {
-    present_iosurface(g_about, info);
-    if (g_about_pending_reveal) {
-        g_about_pending_reveal = false;
-        [g_about.view setHidden:NO];
-    }
-}
-
-static void macos_about_present_software(const CefRenderHandler::RectList&, const void*, int, int) {}
-
-static void macos_about_resize(int, int, int, int) {}
-
-static void macos_set_about_visible(bool visible) {
-    g_about_visible = visible;
-    if (visible) {
-        // Keep the layer hidden until macos_about_present confirms a real
-        // frame — avoids flashing an empty transparent layer.
-        g_about_pending_reveal = true;
-    } else {
-        g_about_pending_reveal = false;
-        [g_about.view setHidden:YES];
-    }
-
-    if (visible) {
-        auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-        auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-        if (main) main->GetHost()->SetFocus(false);
-        if (ovl)  ovl->GetHost()->SetFocus(false);
-    }
+// True when s is the bottom-most surface in the current stack (cef-main).
+// Used to gate fullscreen-transition logic onto the main surface only.
+static bool is_cef_main(PlatformSurface* s) {
+    return !g_surface_stack.empty() && g_surface_stack.front() == s;
 }
 
 // =====================================================================
@@ -651,50 +586,38 @@ static bool macos_try_native_popup_menu(int x, int y, int lw, int /*lh*/,
     return true;
 }
 
-static void macos_set_overlay_visible(bool visible) {
-    g_overlay_visible = visible;
-    [g_overlay.view setHidden:!visible];
-
-    // Route keyboard focus to the newly-active browser. Without this, CEF
-    // thinks the just-activated browser has no window focus, so text inputs
-    // don't show a caret and focus rings don't render. Matches the "active
-    // tab" semantics: only one browser at a time holds focus. Mirrors the
-    // Wayland path in wl_set_overlay_visible.
-    auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-    auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-    if (visible) {
-        if (main) main->GetHost()->SetFocus(false);
-        if (ovl)  ovl->GetHost()->SetFocus(true);
-    } else {
-        if (ovl)  ovl->GetHost()->SetFocus(false);
-        if (main) main->GetHost()->SetFocus(true);
-    }
+// Per-surface visibility. Focus management is owned by Browsers::setActive,
+// not by the platform — matches the Wayland and Windows backends.
+static void macos_surface_set_visible(PlatformSurface* s, bool visible) {
+    if (!s) return;
+    auto apply = ^{
+        if (s->view) [s->view setHidden:!visible];
+    };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
 }
 
-static void macos_fade_overlay(float fade_sec,
+// Per-surface opacity fade. Mirrors the previous overlay-only fade path:
+// animate CALayer.opacity from 1.0 to 0.0 over fade_sec, fire on_fade_start
+// before kicking the animation, fire on_complete from CATransaction's
+// completion block. After the animation we hide the view and reset opacity
+// so a subsequent setVisible(true) shows it fully opaque again.
+static void macos_fade_surface(PlatformSurface* s, float fade_sec,
                                std::function<void()> on_fade_start,
                                std::function<void()> on_complete) {
-    if (!g_overlay.view || !g_overlay.view.layer) {
+    if (!s || !s->view || !s->view.layer) {
         if (on_fade_start) on_fade_start();
+        macos_surface_set_visible(s, false);
         if (on_complete) on_complete();
         return;
     }
     // Copy into block-friendly shared_ptrs so the callbacks survive into the block chain.
     auto start_cb = std::make_shared<std::function<void()>>(std::move(on_fade_start));
     auto done_cb = std::make_shared<std::function<void()>>(std::move(on_complete));
+    PlatformSurface* surface_ptr = s;
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Reveal the main browser view now. The JS side already waited the
-        // full pre-fade interval, so g_main has had that time to load content
-        // into its layer. Held until this moment so the user never sees the
-        // main browser before we've committed to hiding the overlay.
-        // g_overlay is still fully opaque at this point, so g_main is
-        // occluded until the fade actually drops overlay opacity below 1.0.
-        // The AppKit fills behind g_main track ThemeColor — onOverlayDismissed
-        // (fired via start_cb below) pushes the current chrome color through
-        // set_theme_color, so no manual reset here.
-        if ([g_main.view isHidden]) [g_main.view setHidden:NO];
         if (*start_cb) (*start_cb)();
-        if (!g_overlay.view || !g_overlay.view.layer) {
+        if (!surface_ptr->view || !surface_ptr->view.layer) {
             if (*done_cb) (*done_cb)();
             return;
         }
@@ -706,12 +629,14 @@ static void macos_fade_overlay(float fade_sec,
         fade.fillMode = kCAFillModeForwards;
         [CATransaction begin];
         [CATransaction setCompletionBlock:^{
-            macos_set_overlay_visible(false);
-            [g_overlay.view.layer removeAllAnimations];
-            g_overlay.view.layer.opacity = 1.0;
+            if (surface_ptr->view) [surface_ptr->view setHidden:YES];
+            if (surface_ptr->view.layer) {
+                [surface_ptr->view.layer removeAllAnimations];
+                surface_ptr->view.layer.opacity = 1.0;
+            }
             if (*done_cb) (*done_cb)();
         }];
-        [g_overlay.view.layer addAnimation:fade forKey:@"fadeOut"];
+        [surface_ptr->view.layer addAnimation:fade forKey:@"fadeOut"];
         [CATransaction commit];
     });
 }
@@ -728,9 +653,10 @@ static void macos_toggle_fullscreen() {
 
 static void macos_begin_transition() {
     g_transitioning = true;
-    // Drop cached input-surface wrappers so the next paint re-wraps at
-    // the new size. drawableSize is updated in present_iosurface.
-    for (LayerState* s : {&g_main, &g_overlay}) {
+    // Drop cached input-surface wrappers across the whole stack so the
+    // next paint re-wraps at the new size. drawableSize is updated in
+    // present_iosurface.
+    for (PlatformSurface* s : g_surface_stack) {
         s->input_texture = nil;
         s->cached_input = nullptr;
     }
@@ -864,17 +790,20 @@ static void macos_cleanup() {
     // Stop the display link first so no more BeginFrames race the teardown.
     stop_display_link();
 
-    if (g_input_view)    { [g_input_view removeFromSuperview];    g_input_view = nil; }
-    if (g_overlay.view)  { [g_overlay.view removeFromSuperview];  g_overlay.view = nil; }
-    if (g_main.view)     { [g_main.view removeFromSuperview];     g_main.view = nil; }
+    if (g_input_view) { [g_input_view removeFromSuperview]; g_input_view = nil; }
 
-    for (LayerState* s : {&g_main, &g_overlay}) {
+    // Browsers::~Browsers should have called free_surface on each layer,
+    // but defensively tear down any stragglers so AppKit objects are
+    // released before the window goes away.
+    for (PlatformSurface* s : g_surface_stack) {
+        if (s->view) [s->view removeFromSuperview];
+        s->view = nil;
+        s->layer = nil;
         s->input_texture = nil;
         s->cached_input = nullptr;
     }
+    g_surface_stack.clear();
 
-    g_main.layer = nil;
-    g_overlay.layer = nil;
     g_mtl_pipeline = nil; g_mtl_queue = nil; g_mtl_device = nil;
     g_window = nil;
 }
@@ -1047,23 +976,138 @@ static void macos_open_external_url(const std::string& url) {
         LOG_ERROR(LOG_PLATFORM, "NSWorkspace openURL failed: {}", url);
 }
 
+// =====================================================================
+// Generic per-surface lifecycle / present / resize / restack
+// =====================================================================
+
+// All AppKit operations must run on the main thread; if Browsers calls
+// alloc/free/restack/resize off-main, dispatch_sync onto the main queue.
+template <typename Block>
+static void run_on_main_sync(Block block) {
+    if ([NSThread isMainThread]) { block(); return; }
+    dispatch_sync(dispatch_get_main_queue(), block);
+}
+
+static PlatformSurface* macos_alloc_surface() {
+    auto* s = new PlatformSurface;
+    run_on_main_sync(^{
+        if (!g_window) return;
+        NSView* contentView = [g_window contentView];
+        if (!contentView) return;
+        CGRect frame = [contentView bounds];
+        CGFloat scale = [g_window backingScaleFactor];
+        // positionAbove=nil — final ordering is applied by macos_restack
+        // once Browsers pushes the new layer onto the stack.
+        create_content_layer(contentView, frame, scale, s->view, s->layer, nil);
+    });
+    return s;
+}
+
+static void macos_free_surface(PlatformSurface* s) {
+    if (!s) return;
+    run_on_main_sync(^{
+        // Defensive remove from the cached stack — Browsers will normally
+        // restack to a smaller order after this call, but clearing the
+        // entry here keeps is_cef_main coherent in the meantime.
+        auto it = std::find(g_surface_stack.begin(), g_surface_stack.end(), s);
+        if (it != g_surface_stack.end()) g_surface_stack.erase(it);
+        if (s->view) [s->view removeFromSuperview];
+        s->view = nil;
+        s->layer = nil;
+        s->input_texture = nil;
+        s->cached_input = nullptr;
+    });
+    delete s;
+}
+
+static void macos_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
+    if (!s) return;
+    // Fullscreen-transition gating runs only on the cef-main surface
+    // (bottom of stack), matching the pre-refactor macos_present path.
+    if (is_cef_main(s)) {
+        if (g_transitioning) return;
+        present_iosurface(*s, info);
+        if (g_expected_w > 0) {
+            IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
+            if (surface && (int)IOSurfaceGetWidth(surface) == g_expected_w &&
+                (int)IOSurfaceGetHeight(surface) == g_expected_h) {
+                g_expected_w = 0; g_expected_h = 0;
+                g_transitioning = false;
+            }
+        }
+        return;
+    }
+    present_iosurface(*s, info);
+}
+
+static void macos_surface_present_software(PlatformSurface*,
+                                           const CefRenderHandler::RectList&,
+                                           const void*, int, int) {
+    // CEF on macOS runs hardware-accelerated (shared_texture_supported=true);
+    // the software path is not exercised. Kept for API completeness.
+}
+
+static void macos_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {
+    if (!s) return;
+    // The NSView is autoresized to fit the contentView, and present_iosurface
+    // updates the CAMetalLayer.drawableSize when CEF delivers a frame at the
+    // new pixel size. Update contentsScale + drawableSize defensively so
+    // resizes that don't immediately produce a new CEF frame still take
+    // effect on the layer.
+    auto apply = ^{
+        if (!s->view || !s->layer) return;
+        // Setting the NSView frame is redundant under autoresizing but
+        // keeps the layer geometry in sync for late configures.
+        s->view.frame = [[g_window contentView] bounds];
+        CGFloat scale = pw > 0 && lw > 0 ? (CGFloat)pw / (CGFloat)lw
+                                         : [g_window backingScaleFactor];
+        s->layer.contentsScale = scale;
+        if (pw > 0 && ph > 0)
+            s->layer.drawableSize = CGSizeMake(pw, ph);
+        (void)lh;
+    };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
+}
+
+static void macos_restack(PlatformSurface* const* ordered, size_t n) {
+    auto apply = ^{
+        g_surface_stack.assign(ordered, ordered + n);
+        if (!g_window) return;
+        NSView* contentView = [g_window contentView];
+        if (!contentView) return;
+        NSView* prev = nil;
+        for (size_t i = 0; i < n; i++) {
+            PlatformSurface* s = ordered[i];
+            if (!s || !s->view) continue;
+            // addSubview:positioned:relativeTo: re-anchors an existing
+            // subview; safe to call repeatedly.
+            [contentView addSubview:s->view positioned:NSWindowAbove relativeTo:prev];
+            prev = s->view;
+        }
+        // Keep the input view on top of every CefLayer.
+        if (g_input_view)
+            [contentView addSubview:g_input_view positioned:NSWindowAbove relativeTo:prev];
+    };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_sync(dispatch_get_main_queue(), apply);
+}
+
 Platform make_macos_platform() {
     return Platform{
         .display = DisplayBackend::macOS,
         .early_init = macos_early_init,
         .init = macos_init,
         .cleanup = macos_cleanup,
-        .present = macos_present,
-        .present_software = macos_present_software,
-        .resize = macos_resize,
-        .overlay_present = macos_overlay_present,
-        .overlay_present_software = macos_overlay_present_software,
-        .overlay_resize = macos_overlay_resize,
-        .set_overlay_visible = macos_set_overlay_visible,
-        .about_present = macos_about_present,
-        .about_present_software = macos_about_present_software,
-        .about_resize = macos_about_resize,
-        .set_about_visible = macos_set_about_visible,
+        .post_window_cleanup = nullptr,
+        .alloc_surface = macos_alloc_surface,
+        .free_surface = macos_free_surface,
+        .surface_present = macos_surface_present,
+        .surface_present_software = macos_surface_present_software,
+        .surface_resize = macos_surface_resize,
+        .surface_set_visible = macos_surface_set_visible,
+        .restack = macos_restack,
+        .fade_surface = macos_fade_surface,
         // Popup compositor path is unused on macOS — see
         // macos_try_native_popup_menu for the NSMenu substitute.
         .popup_show = [](int, int, int, int) {},
@@ -1071,7 +1115,6 @@ Platform make_macos_platform() {
         .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},
         .popup_present_software = [](const void*, int, int, int, int) {},
         .try_native_popup_menu = macos_try_native_popup_menu,
-        .fade_overlay = macos_fade_overlay,
         .set_fullscreen = macos_set_fullscreen,
         .toggle_fullscreen = macos_toggle_fullscreen,
         .begin_transition = macos_begin_transition,

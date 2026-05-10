@@ -7,26 +7,18 @@ class WebBrowser;
 class ServerProbeClient;
 
 // Business logic wrapper for the server selection overlay browser.
-// Owns an CefLayer (pure CEF) and handles server selection,
+// Wraps a CefLayer owned by Browsers; configures server selection,
 // connectivity checks, and overlay fade/dismiss.
 class OverlayBrowser {
 public:
-    OverlayBrowser(RenderTarget target, WebBrowser& main_browser,
-                   int w, int h, int pw, int ph);
+    OverlayBrowser(CefRefPtr<CefLayer> layer, WebBrowser& main_browser);
     ~OverlayBrowser();
 
-    CefRefPtr<CefBrowser> browser() { return client_->browser(); }
-    void execJs(const std::string& js) { client_->execJs(js); }
-    void resize(int w, int h, int pw, int ph) { client_->resize(w, h, pw, ph); }
-    bool isClosed() const { return client_->isClosed(); }
-    bool isLoaded() const { return client_->isLoaded(); }
-    void waitForClose() { client_->waitForClose(); }
-    void waitForLoad() { client_->waitForLoad(); }
-    CefRefPtr<CefLayer> client() { return client_; }
+    CefRefPtr<CefBrowser> browser() { return layer_->browser(); }
+    CefRefPtr<CefLayer> layer() { return layer_; }
+    void waitForClose() { layer_->waitForClose(); }
+    bool isClosed() const { return layer_->isClosed(); }
 
-    // Native-shim injection profile for this browser. See WebBrowser for
-    // details. Overlay only needs a tiny jmpNative surface and no scripts —
-    // its own JS is loaded by overlay.html via <script> tags.
     static CefRefPtr<CefDictionaryValue> injectionProfile();
 
 private:
@@ -34,7 +26,7 @@ private:
                        CefRefPtr<CefListValue> args,
                        CefRefPtr<CefBrowser> browser);
 
-    CefRefPtr<CefLayer> client_;
+    CefRefPtr<CefLayer> layer_;
     WebBrowser& main_browser_;
     CefRefPtr<ServerProbeClient> active_probe_;
 };
