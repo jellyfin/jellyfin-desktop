@@ -131,7 +131,7 @@ void PlaybackCoordinator::postBufferedRanges(std::vector<PlaybackBufferedRange> 
     enqueue(std::move(in));
 }
 
-void PlaybackCoordinator::postDisplayHz(int hz) {
+void PlaybackCoordinator::postDisplayHz(double hz) {
     Input in{Input::Kind::DisplayHz};
     in.hz = hz;
     enqueue(std::move(in));

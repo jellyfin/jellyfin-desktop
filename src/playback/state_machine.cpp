@@ -265,7 +265,7 @@ std::vector<PlaybackEvent> PlaybackStateMachine::onBufferedRanges(std::vector<Pl
     return {{PlaybackEvent::Kind::BufferedRangesChanged}};
 }
 
-std::vector<PlaybackEvent> PlaybackStateMachine::onDisplayHz(int hz) {
+std::vector<PlaybackEvent> PlaybackStateMachine::onDisplayHz(double hz) {
     if (s_.display_hz == hz) return {};
     s_.display_hz = hz;
     return {{PlaybackEvent::Kind::DisplayHzChanged}};

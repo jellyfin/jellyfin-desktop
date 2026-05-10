@@ -112,7 +112,7 @@ void AboutBrowser::open() {
 #endif
     CefBrowserSettings bs;
     bs.background_color = 0;
-    bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
+    CefLayer::setRefreshRate(bs, mpv::display_hz());
 
     CefBrowserHost::CreateBrowser(wi, g_about_browser->client_,
                                   "app://resources/about.html", bs,

@@ -49,7 +49,7 @@ public:
     void postFullscreen(bool fullscreen, bool was_maximized);
     void postOsdDims(int lw, int lh, int pw, int ph);
     void postBufferedRanges(std::vector<PlaybackBufferedRange> ranges);
-    void postDisplayHz(int hz);
+    void postDisplayHz(double hz);
 
     // Metadata stream — JS-sourced. Bypasses the state machine; coord
     // emits the corresponding MetadataChanged/ArtworkChanged/QueueCapsChanged
@@ -82,9 +82,9 @@ private:
         bool flag2 = false;     // Fullscreen: was_maximized / QueueCaps: can_go_prev
         int64_t i64 = 0;
         double dbl = 0.0;       // Speed
+        double hz = 0.0;        // DisplayHz
         int lw = 0, lh = 0;     // OsdDims
         int pw = 0, ph = 0;     // OsdDims
-        int hz = 0;             // DisplayHz
         EndReason reason = EndReason::Eof;
         ::MediaType media_type = ::MediaType::Unknown;
         std::string str;        // LoadStarting item_id, EndFile error_message, Artwork data URI

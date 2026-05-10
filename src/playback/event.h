@@ -67,7 +67,7 @@ struct PlaybackSnapshot {
     bool maximized_before_fullscreen = false;
     int layout_w = 0, layout_h = 0;
     int pixel_w = 0, pixel_h = 0;
-    int display_hz = 0;
+    double display_hz = 0.0;
     std::vector<PlaybackBufferedRange> buffered;
 };
 

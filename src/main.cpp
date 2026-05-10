@@ -72,7 +72,6 @@ Color g_video_bg;
 
 PlaybackCoordinator* g_playback_coord = nullptr;
 ThemeColor* g_theme_color = nullptr;
-std::atomic<int> g_display_hz{60};
 
 Platform g_platform{};
 WebBrowser* g_web_browser = nullptr;
@@ -216,8 +215,9 @@ static int run_with_cef(int mw, int mh,
                      MPV_FORMAT_DOUBLE, &display_hidpi_scale);
     int fs_flag = 0;
     mpv_get_property(g_mpv.Get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
-    LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={}",
-             display_hidpi_scale, fs_flag);
+    mpv::seed_display_hz_sync(g_mpv);
+    LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={} display-hz={}",
+             display_hidpi_scale, fs_flag, mpv::display_hz());
 
     // If the live display-hidpi-scale differs from the saved scale, the
     // pixels we passed to --geometry were sized for the wrong scale.
@@ -273,7 +273,7 @@ static int run_with_cef(int mw, int mh,
 #endif
     CefBrowserSettings bs;
     bs.background_color = 0;
-    bs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
+    CefLayer::setRefreshRate(bs, mpv::display_hz());
 
     // Must exist before main browser creation: the pre-loaded page fires
     // its initial theme-color IPC at DOMContentLoaded; onOverlayDismissed
@@ -320,7 +320,7 @@ static int run_with_cef(int mw, int mh,
 #endif
         CefBrowserSettings obs;
         obs.background_color = 0;
-        obs.windowless_frame_rate = g_display_hz.load(std::memory_order_relaxed);
+        CefLayer::setRefreshRate(obs, mpv::display_hz());
         LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay)");
         CefBrowserHost::CreateBrowser(owi, g_overlay_browser->client(), "app://resources/overlay.html", obs,
                                       OverlayBrowser::injectionProfile(), nullptr);

@@ -103,7 +103,7 @@ public:
     std::vector<PlaybackEvent> onBufferedRanges(std::vector<PlaybackBufferedRange> ranges);
 
     // Display refresh rate update. Self-edges silent.
-    std::vector<PlaybackEvent> onDisplayHz(int hz);
+    std::vector<PlaybackEvent> onDisplayHz(double hz);
 
     // Drain coord-side actions emitted by the most recent transitions.
     // Coordinator calls after each apply() and fans out to action sinks.

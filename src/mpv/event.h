@@ -83,6 +83,11 @@ namespace mpv {
     // observation. Returns 0 before the first event arrives; callers
     // should treat 0 as "not yet known" and fall back to 1.0.
     double display_scale();
+    // Cached display refresh rate (Hz) from mpv's display-fps observation.
+    // Returns 0 before any value has been seeded.
+    double display_hz();
+    // Sync mpv read; must not be called from an mpv event callback.
+    void seed_display_hz_sync(MpvHandle& mpv);
 
     // Read osd-dimensions 'w' and 'h' from an MPV_EVENT_PROPERTY_CHANGE
     // payload (MPV_FORMAT_NODE / NODE_MAP, per mpv's mp_property_osd_dim
