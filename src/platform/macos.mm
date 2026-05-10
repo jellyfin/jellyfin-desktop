@@ -538,16 +538,15 @@ static bool is_cef_main(PlatformSurface* s) {
 }
 @end
 
-static bool macos_try_native_popup_menu(int x, int y, int lw, int /*lh*/,
-                                        const std::vector<std::string>& options,
-                                        int current_index,
-                                        std::function<void(int)> on_selected) {
-    if (!g_window || !g_input_view || options.empty()) return false;
+static void macos_popup_show(PlatformSurface*, const Platform::PopupRequest& req) {
+    // NSMenu is a window-level OS overlay — not tied to a CefLayer
+    // surface, so the surface arg is ignored.
+    if (!g_window || !g_input_view || req.options.empty()) return;
 
-    auto opts = options;
-    int cur = current_index;
-    int px = x, py = y, plw = lw;
-    auto cb = std::make_shared<std::function<void(int)>>(std::move(on_selected));
+    auto opts = req.options;
+    int cur = req.initial_highlight;
+    int px = req.x, py = req.y, plw = req.lw;
+    auto cb = std::make_shared<std::function<void(int)>>(req.on_selected);
 
     dispatch_async(dispatch_get_main_queue(), ^{
         NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
@@ -582,8 +581,6 @@ static bool macos_try_native_popup_menu(int x, int y, int lw, int /*lh*/,
         // popUpMenuPositioningItem is modal; if no item was picked, cancel.
         [target fireCancelIfNeeded];
     });
-
-    return true;
 }
 
 // Per-surface visibility. Focus management is owned by Browsers::setActive,
@@ -1108,13 +1105,14 @@ Platform make_macos_platform() {
         .surface_set_visible = macos_surface_set_visible,
         .restack = macos_restack,
         .fade_surface = macos_fade_surface,
-        // Popup compositor path is unused on macOS — see
-        // macos_try_native_popup_menu for the NSMenu substitute.
-        .popup_show = [](int, int, int, int) {},
-        .popup_hide = []() {},
-        .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},
-        .popup_present_software = [](const void*, int, int, int, int) {},
-        .try_native_popup_menu = macos_try_native_popup_menu,
+        // macos_popup_show substitutes a native NSMenu for CEF's popup
+        // widget (which renders highlights as opaque black on macOS).
+        // popup_present[_software] / popup_hide are no-ops — NSMenu owns
+        // its own pixels and lifecycle.
+        .popup_show = macos_popup_show,
+        .popup_hide = [](PlatformSurface*) {},
+        .popup_present = [](PlatformSurface*, const CefAcceleratedPaintInfo&, int, int) {},
+        .popup_present_software = [](PlatformSurface*, const void*, int, int, int, int) {},
         .set_fullscreen = macos_set_fullscreen,
         .toggle_fullscreen = macos_toggle_fullscreen,
         .begin_transition = macos_begin_transition,

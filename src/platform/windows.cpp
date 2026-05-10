@@ -46,6 +46,13 @@ struct PlatformSurface {
     bool visible = true;      // detach content when false
     bool in_tree = false;     // whether visual is currently a child of dcomp_root
     std::atomic<bool> fading{false};
+
+    // Per-surface popup. popup_visual is a child of visual, so popup is
+    // automatically composited above this surface's main content.
+    IDCompositionVisual* popup_visual = nullptr;
+    IDXGISwapChain1* popup_swap_chain = nullptr;
+    int popup_sw = 0, popup_sh = 0;
+    bool popup_visible = false;
 };
 
 struct WinState {
@@ -71,12 +78,6 @@ struct WinState {
     // content detach. Tracked as stack.front() after restack, or the first
     // allocated surface as a pre-restack fallback.
     PlatformSurface* main_surface = nullptr;
-
-    // Popup remains role-specific per plan.
-    IDCompositionVisual* dcomp_popup_visual = nullptr;
-    IDXGISwapChain1* popup_swap_chain = nullptr;
-    int popup_sw = 0, popup_sh = 0;
-    bool popup_visible = false;
 
     // Window state
     float cached_scale = 1.0f;
@@ -153,11 +154,9 @@ static bool init_dcomp() {
     }
 
     // Visual tree: root holds per-surface visuals (added by win_alloc_surface
-    // / reordered by win_restack) plus the popup visual on top.
+    // / reordered by win_restack). Each surface owns its own popup visual
+    // as a child of its main visual.
     g_win.dcomp_device->CreateVisual(&g_win.dcomp_root);
-    g_win.dcomp_device->CreateVisual(&g_win.dcomp_popup_visual);
-    g_win.dcomp_root->AddVisual(g_win.dcomp_popup_visual, TRUE, nullptr);
-
     g_win.dcomp_target->SetRoot(g_win.dcomp_root);
     g_win.dcomp_device->Commit();
 
@@ -409,9 +408,19 @@ static PlatformSurface* win_alloc_surface() {
     }
     s->visual->SetEffect(s->effect);
 
-    // Add to the tree just below the popup visual so popup stays on top.
-    // restack() will rebuild order at the next stacking change.
-    hr = g_win.dcomp_root->AddVisual(s->visual, FALSE, g_win.dcomp_popup_visual);
+    // Per-surface popup visual nested under the main visual so popup
+    // composites above its surface automatically; restack only reorders
+    // main visuals.
+    hr = g_win.dcomp_device->CreateVisual(&s->popup_visual);
+    if (FAILED(hr) || !s->popup_visual) {
+        LOG_ERROR(LOG_PLATFORM, "CreateVisual(popup) failed: 0x{:08x}", hr);
+    } else {
+        s->visual->AddVisual(s->popup_visual, TRUE, nullptr);
+    }
+
+    // Add to the tree at the top; restack() will rebuild order at the
+    // next stacking change.
+    hr = g_win.dcomp_root->AddVisual(s->visual, TRUE, nullptr);
     if (FAILED(hr))
         LOG_ERROR(LOG_PLATFORM, "AddVisual failed: 0x{:08x}", hr);
     else
@@ -441,6 +450,13 @@ static void win_free_surface(PlatformSurface* s) {
         g_win.main_surface = g_win.stack.empty() ? (g_win.live.empty() ? nullptr : g_win.live.front())
                                                  : g_win.stack.front();
 
+    if (s->popup_visual) {
+        if (s->visual) s->visual->RemoveVisual(s->popup_visual);
+        s->popup_visual->SetContent(nullptr);
+        s->popup_visual->Release();
+        s->popup_visual = nullptr;
+    }
+    if (s->popup_swap_chain) { s->popup_swap_chain->Release(); s->popup_swap_chain = nullptr; }
     if (s->visual) {
         if (s->in_tree) g_win.dcomp_root->RemoveVisual(s->visual);
         s->visual->SetContent(nullptr);
@@ -455,13 +471,14 @@ static void win_free_surface(PlatformSurface* s) {
 }
 
 // Rebuild the child-list under dcomp_root in `ordered` order
-// (bottom -> top), keeping the popup visual on top of everything.
+// (bottom -> top). Each surface's popup visual is nested under its
+// main visual so it stays above its surface automatically.
 static void win_restack(PlatformSurface* const* ordered, size_t n) {
     if (!g_win.dcomp_root) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
 
     // Remove every live surface visual from the tree first so we can
-    // rebuild order deterministically. Popup stays in the tree.
+    // rebuild order deterministically.
     for (auto* s : g_win.live) {
         if (s->visual && s->in_tree) {
             g_win.dcomp_root->RemoveVisual(s->visual);
@@ -469,22 +486,16 @@ static void win_restack(PlatformSurface* const* ordered, size_t n) {
         }
     }
 
-    // Re-add in given order: each is placed above the previous (so index 0
-    // ends up bottom-most). First surface goes below all current children
-    // (i.e. below the popup visual).
+    // Re-add in given order: each is placed above the previous (so
+    // index 0 ends up bottom-most).
     IDCompositionVisual* prev = nullptr;
     g_win.stack.clear();
     for (size_t i = 0; i < n; i++) {
         PlatformSurface* s = ordered[i];
         if (!s || !s->visual) continue;
-        HRESULT hr;
-        if (!prev) {
-            // First: place at the bottom (below popup_visual which is
-            // currently the only remaining child).
-            hr = g_win.dcomp_root->AddVisual(s->visual, FALSE, g_win.dcomp_popup_visual);
-        } else {
-            hr = g_win.dcomp_root->AddVisual(s->visual, TRUE, prev);
-        }
+        HRESULT hr = prev
+            ? g_win.dcomp_root->AddVisual(s->visual, TRUE, prev)
+            : g_win.dcomp_root->AddVisual(s->visual, FALSE, nullptr);
         if (FAILED(hr)) {
             LOG_ERROR(LOG_PLATFORM, "restack AddVisual failed: 0x{:08x}", hr);
             continue;
@@ -804,6 +815,12 @@ static void win_cleanup() {
     // Release any stragglers — Browsers should normally free its surfaces
     // before cleanup, but be defensive.
     for (auto* s : g_win.live) {
+        if (s->popup_visual) {
+            if (s->visual) s->visual->RemoveVisual(s->popup_visual);
+            s->popup_visual->SetContent(nullptr);
+            s->popup_visual->Release();
+        }
+        if (s->popup_swap_chain) s->popup_swap_chain->Release();
         if (s->visual) {
             if (s->in_tree && g_win.dcomp_root) g_win.dcomp_root->RemoveVisual(s->visual);
             s->visual->SetContent(nullptr);
@@ -817,10 +834,7 @@ static void win_cleanup() {
     g_win.stack.clear();
     g_win.main_surface = nullptr;
 
-    if (g_win.popup_swap_chain)   { g_win.popup_swap_chain->Release();   g_win.popup_swap_chain   = nullptr; }
-
     // Release DComp
-    if (g_win.dcomp_popup_visual)    { g_win.dcomp_popup_visual->Release();    g_win.dcomp_popup_visual    = nullptr; }
     if (g_win.dcomp_root)            { g_win.dcomp_root->Release();            g_win.dcomp_root            = nullptr; }
     if (g_win.dcomp_target)          { g_win.dcomp_target->Release();          g_win.dcomp_target          = nullptr; }
     if (g_win.dcomp_device)          { g_win.dcomp_device->Release();          g_win.dcomp_device          = nullptr; }
@@ -914,31 +928,35 @@ static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     if (*y < 0) *y = 0;
 }
 
-static void win_popup_show(int x, int y, int /*lw*/, int /*lh*/) {
+static void win_popup_show(PlatformSurface* s, const Platform::PopupRequest& req) {
+    if (!s) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    g_win.popup_visible = true;
-    if (!g_win.dcomp_popup_visual) return;
+    s->popup_visible = true;
+    if (!s->popup_visual) return;
     float scale = win_get_scale();
-    g_win.dcomp_popup_visual->SetOffsetX(static_cast<float>(x) * scale);
-    g_win.dcomp_popup_visual->SetOffsetY(static_cast<float>(y) * scale);
+    s->popup_visual->SetOffsetX(static_cast<float>(req.x) * scale);
+    s->popup_visual->SetOffsetY(static_cast<float>(req.y) * scale);
 }
 
-static void win_popup_hide() {
+static void win_popup_hide(PlatformSurface* s) {
+    if (!s) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    g_win.popup_visible = false;
-    if (!g_win.dcomp_popup_visual) return;
+    s->popup_visible = false;
+    if (!s->popup_visual) return;
 
-    g_win.dcomp_popup_visual->SetContent(nullptr);
-    if (g_win.popup_swap_chain) {
-        g_win.popup_swap_chain->Release();
-        g_win.popup_swap_chain = nullptr;
-        g_win.popup_sw = 0;
-        g_win.popup_sh = 0;
+    s->popup_visual->SetContent(nullptr);
+    if (s->popup_swap_chain) {
+        s->popup_swap_chain->Release();
+        s->popup_swap_chain = nullptr;
+        s->popup_sw = 0;
+        s->popup_sh = 0;
     }
     g_win.dcomp_device->Commit();
 }
 
-static void win_popup_present(const CefAcceleratedPaintInfo& info, int /*lw*/, int /*lh*/) {
+static void win_popup_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info,
+                              int /*lw*/, int /*lh*/) {
+    if (!s) return;
     HANDLE handle = info.shared_texture_handle;
     if (!handle) return;
 
@@ -953,28 +971,29 @@ static void win_popup_present(const CefAcceleratedPaintInfo& info, int /*lw*/, i
     int h = static_cast<int>(td.Height);
 
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    if (!g_win.popup_visible) { src->Release(); return; }
+    if (!s->popup_visible || !s->popup_visual) { src->Release(); return; }
 
-    ensure_swap_chain(g_win.popup_swap_chain, g_win.popup_sw, g_win.popup_sh,
-                      g_win.dcomp_popup_visual, w, h);
-    if (!g_win.popup_swap_chain) { src->Release(); return; }
+    ensure_swap_chain(s->popup_swap_chain, s->popup_sw, s->popup_sh,
+                      s->popup_visual, w, h);
+    if (!s->popup_swap_chain) { src->Release(); return; }
 
     ID3D11Texture2D* bb = nullptr;
-    g_win.popup_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    s->popup_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
     g_win.d3d_context->CopyResource(bb, src);
     bb->Release();
     src->Release();
 
-    g_win.popup_swap_chain->Present(0, 0);
+    s->popup_swap_chain->Present(0, 0);
     g_win.dcomp_device->Commit();
 }
 
-static void win_popup_present_software(const void* buffer, int pw, int ph,
+static void win_popup_present_software(PlatformSurface* s, const void* buffer,
+                                       int pw, int ph,
                                        int /*lw*/, int /*lh*/) {
-    if (!buffer || pw <= 0 || ph <= 0) return;
+    if (!s || !buffer || pw <= 0 || ph <= 0) return;
 
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    if (!g_win.popup_visible || !g_win.d3d_device) return;
+    if (!s->popup_visible || !s->popup_visual || !g_win.d3d_device) return;
 
     D3D11_TEXTURE2D_DESC desc = {};
     desc.Width             = static_cast<UINT>(pw);
@@ -993,17 +1012,17 @@ static void win_popup_present_software(const void* buffer, int pw, int ph,
     ID3D11Texture2D* src = nullptr;
     if (FAILED(g_win.d3d_device->CreateTexture2D(&desc, &init, &src))) return;
 
-    ensure_swap_chain(g_win.popup_swap_chain, g_win.popup_sw, g_win.popup_sh,
-                      g_win.dcomp_popup_visual, pw, ph);
-    if (!g_win.popup_swap_chain) { src->Release(); return; }
+    ensure_swap_chain(s->popup_swap_chain, s->popup_sw, s->popup_sh,
+                      s->popup_visual, pw, ph);
+    if (!s->popup_swap_chain) { src->Release(); return; }
 
     ID3D11Texture2D* bb = nullptr;
-    g_win.popup_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    s->popup_swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
     g_win.d3d_context->CopyResource(bb, src);
     bb->Release();
     src->Release();
 
-    g_win.popup_swap_chain->Present(0, 0);
+    s->popup_swap_chain->Present(0, 0);
     g_win.dcomp_device->Commit();
 }
 
@@ -1030,9 +1049,6 @@ Platform make_windows_platform() {
         .popup_hide             = win_popup_hide,
         .popup_present          = win_popup_present,
         .popup_present_software = win_popup_present_software,
-        .try_native_popup_menu  = [](int, int, int, int,
-                                     const std::vector<std::string>&, int,
-                                     std::function<void(int)>) { return false; },
         .set_fullscreen = win_set_fullscreen,
         .toggle_fullscreen = win_toggle_fullscreen,
         .begin_transition = win_begin_transition,

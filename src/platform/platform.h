@@ -59,27 +59,28 @@ struct Platform {
                          std::function<void()> on_fade_start,
                          std::function<void()> on_complete);
 
-    // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns).
-    // Parent surface is the currently-painting layer's surface, supplied
-    // by the layer at popup time.
-    void (*popup_show)(int x, int y, int lw, int lh);
-    void (*popup_hide)();
-    void (*popup_present)(const CefAcceleratedPaintInfo& info, int lw, int lh);
-    void (*popup_present_software)(const void* buffer, int pw, int ph, int lw, int lh);
-
-    // Attempt to show the platform's native popup menu for a <select>
-    // dropdown. Returns true if the native menu will be shown (in which
-    // case the compositor-based popup_show path should NOT be used).
-    // Returns false on platforms without a native path; caller falls back
-    // to the compositor popup subsurface.
+    // Popup (CEF OSR popup elements, e.g. <select> dropdowns).
     //
-    // on_selected is invoked with the chosen option index, or -1 if the
-    // user dismissed without selecting. Callers must assume it may fire
-    // on any thread (e.g. macOS invokes it from the AppKit main thread).
-    bool (*try_native_popup_menu)(int x, int y, int lw, int lh,
-                                  const std::vector<std::string>& options,
-                                  int current_index,
-                                  std::function<void(int)> on_selected);
+    // CefLayer calls popup_show once per popup with everything any backend
+    // might need; the backend picks what it uses. Compositor backends
+    // (Wayland, Windows) use rect + popup_present[_software] frames and
+    // ignore options/initial_highlight/on_selected — CEF dispatches
+    // selection internally on click. Native-menu backends (macOS / NSMenu)
+    // use options + initial_highlight + on_selected and ignore the
+    // present frames.
+    //
+    // on_selected may fire on any thread.
+    struct PopupRequest {
+        int x, y;
+        int lw, lh;
+        std::vector<std::string> options;
+        int initial_highlight;  // -1 if none
+        std::function<void(int)> on_selected;  // -1 = dismissed
+    };
+    void (*popup_show)(PlatformSurface*, const PopupRequest& req);
+    void (*popup_hide)(PlatformSurface*);
+    void (*popup_present)(PlatformSurface*, const CefAcceleratedPaintInfo& info, int lw, int lh);
+    void (*popup_present_software)(PlatformSurface*, const void* buffer, int pw, int ph, int lw, int lh);
 
     // Fullscreen
     void (*set_fullscreen)(bool fullscreen);

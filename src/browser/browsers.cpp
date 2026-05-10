@@ -40,6 +40,8 @@ CefRefPtr<CefLayer> Browsers::create(CefRefPtr<CefDictionaryValue> injection) {
 
 void Browsers::remove(CefLayer* layer) {
     if (!layer) return;
+    // Tear down anything inactive-only (popup) before the surface goes.
+    layer->onDeactivated();
     // Clear active if it pointed at this layer's browser.
     {
         auto b = layer->browser();
@@ -118,7 +120,17 @@ void Browsers::setActive(CefRefPtr<CefBrowser> browser) {
     }
     LOG_DEBUG(LOG_PLATFORM, "[BROWSERS] setActive prev={} new={}",
               static_cast<void*>(prev.get()), static_cast<void*>(browser.get()));
-    if (prev)    prev->GetHost()->SetFocus(false);
+    if (prev) {
+        prev->GetHost()->SetFocus(false);
+        // Notify the prior active layer it's no longer the input target so
+        // it can tear down popup state etc.
+        for (auto& l : layers_) {
+            if (auto lb = l->browser(); lb && lb.get() == prev.get()) {
+                l->onDeactivated();
+                break;
+            }
+        }
+    }
     if (browser) browser->GetHost()->SetFocus(true);
 
     // Leave-then-move forces the renderer to re-emit OnCursorChange.

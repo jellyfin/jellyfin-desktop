@@ -130,6 +130,11 @@ public:
     // Navigate the current browser to `url`.
     void loadUrl(const std::string& url);
 
+    // Called by Browsers when this layer stops being the input target,
+    // or just before its surface is freed. Tears down anything that
+    // shouldn't outlive active status — currently the popup.
+    void onDeactivated();
+
 private:
     enum class State { Normal, PendingReset, Recreating };
 
@@ -138,6 +143,9 @@ private:
     int width_ = 0, height_ = 0;
     int physical_w_ = 0, physical_h_ = 0;
     int frame_rate_ = 0;
+    // Popup state pairs 1:1 with its surface — each CefLayer owns its
+    // popup on the platform side (PlatformSurface gains popup fields per
+    // backend).
     CefRect popup_rect_;
     bool popup_visible_ = false;
     std::vector<std::string> popup_options_;
