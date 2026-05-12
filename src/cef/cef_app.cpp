@@ -407,6 +407,35 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
     }
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
 
+    // After each window resize, keep producing compositor frames for a
+    // sliding 5s window so the renderer emits buffers at the new viewport
+    // until it converges. Each resize bumps the deadline; the rAF chain
+    // stops once no resize has fired for 5s. Native side (wayland) gates
+    // buffers within a small size tolerance and unmaps out-of-tolerance,
+    // so the loop is what gets a fresh in-tolerance buffer landed.
+    frame->ExecuteJavaScript(
+        R"(
+            (function () {
+                var deadline = 0;
+                var running = false;
+                function tick() {
+                    if (performance.now() < deadline) {
+                        requestAnimationFrame(tick);
+                    } else {
+                        running = false;
+                    }
+                }
+                window.addEventListener('resize', function () {
+                    deadline = performance.now() + 5000;
+                    if (!running) {
+                        running = true;
+                        requestAnimationFrame(tick);
+                    }
+                });
+            })();
+        )",
+        frame->GetURL(), 0);
+
     if (!scripts || scripts->GetSize() == 0) return;
 
     // Renderer process is separate from browser process; settings need to be

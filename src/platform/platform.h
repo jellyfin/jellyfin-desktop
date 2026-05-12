@@ -46,13 +46,7 @@ struct Platform {
     // the Browsers vector order changes.
     void (*restack)(PlatformSurface* const* ordered, size_t n);
 
-    // Window-wide resize broadcast. Fires when mpv reports a new OSD size
-    // (Browsers::setSize is the broadcast point). Backends that maintain
-    // window-scoped state (e.g. wayland's mpv_pw used by present-time size
-    // guards, or the cef-main viewport against compositor bounds) hook this
-    // to stay current. May be null.
-    void (*window_resized)(int lw, int lh, int pw, int ph);
-
+    // Window-resize signal — outbound from the platform. Fires when the
     // Optional per-surface fade — finite UI animation; backends limited
     // to a single fadeable surface return /no-op for the others.
     void (*fade_surface)(PlatformSurface*, float fade_sec,

@@ -104,6 +104,12 @@ public:
                         CefRefPtr<CefRunContextMenuCallback>) override;
 
     void resize(int w, int h, int physical_w, int physical_h);
+    // Mirror of the renderer-side rAF deadline loop (cef_app.cpp). Each
+    // resize bumps a 5s sliding deadline; while live, periodic
+    // Invalidate(PET_VIEW) on TID_UI keeps the host nudging the renderer
+    // even when JS rAF wouldn't fire (e.g. when the page is static and
+    // the renderer skipped a compositor frame).
+    void kickInvalidateLoop();
     bool isClosed() const { return closed_; }
     bool isLoaded() const { return loaded_; }
     CefRefPtr<CefBrowser> browser() { return browser_; }
@@ -176,5 +182,17 @@ private:
     CefRefPtr<CefDictionaryValue> extra_info_;
     State state_ = State::Normal;
     std::string pending_url_;
+    std::atomic<int64_t> invalidate_deadline_ns_{0};
+    std::atomic<bool> invalidate_running_{false};
+    int saved_frame_rate_ = 0;  // TID_UI-only: nonzero while boosted
+    void invalidateTick();
+
+    // Debounced WasResized: many WM configures per drag would each fire
+    // a CEF re-layout. Wayland viewport (surface_resize) still applies
+    // immediately; only the CEF host notify is coalesced to one per
+    // display-refresh period.
+    std::atomic<bool> resize_scheduled_{false};
+    std::atomic<int64_t> last_was_resized_ns_{0};
+    void applyPendingResize();
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

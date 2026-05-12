@@ -142,10 +142,6 @@ static void mpv_digest_thread() {
             if (me.type == MpvEventType::NONE) continue;
             if (me.type == MpvEventType::OSD_DIMS) {
                 if (me.lw <= 0 || me.lh <= 0) continue;
-                if (g_platform.in_transition())
-                    g_platform.set_expected_size(me.pw, me.ph);
-                // Surface-resize broadcast happens via Browsers (driven by
-                // browser_sink's OsdDimsChanged); nothing to do here.
             }
             if (me.type == MpvEventType::FULLSCREEN) {
                 g_platform.set_fullscreen(me.flag);
