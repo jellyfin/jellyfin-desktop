@@ -197,10 +197,7 @@ void CefLayer::applyPendingResize() {
 }
 
 void CefLayer::kickInvalidateLoop() {
-    using namespace std::chrono;
-    int64_t deadline = duration_cast<nanoseconds>(
-        steady_clock::now().time_since_epoch()).count() + 5'000'000'000LL;
-    invalidate_deadline_ns_.store(deadline, std::memory_order_release);
+    invalidate_stop_.store(false, std::memory_order_release);
     bool expected = false;
     if (!invalidate_running_.compare_exchange_strong(expected, true)) return;
     CefRefPtr<CefLayer> self = this;
@@ -217,10 +214,7 @@ void CefLayer::kickInvalidateLoop() {
 }
 
 void CefLayer::invalidateTick() {
-    using namespace std::chrono;
-    int64_t now = duration_cast<nanoseconds>(
-        steady_clock::now().time_since_epoch()).count();
-    if (now >= invalidate_deadline_ns_.load(std::memory_order_acquire)) {
+    if (invalidate_stop_.load(std::memory_order_acquire)) {
         if (browser_ && saved_frame_rate_ > 0) {
             browser_->GetHost()->SetWindowlessFrameRate(saved_frame_rate_);
             saved_frame_rate_ = 0;
@@ -356,6 +350,7 @@ void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectL
     if (type != PET_VIEW) return;
     if (surface_ && g_platform.surface_present_software)
         g_platform.surface_present_software(surface_, dirty, buffer, w, h);
+    noteStableSize(w, h);
 }
 
 void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
@@ -368,6 +363,23 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
     if (type != PET_VIEW) return;
     if (surface_ && g_platform.surface_present)
         g_platform.surface_present(surface_, info);
+    noteStableSize(info.extra.visible_rect.width, info.extra.visible_rect.height);
+}
+
+void CefLayer::noteStableSize(int w, int h) {
+    // Steady state has no work to do — nothing to stop.
+    if (!invalidate_running_.load(std::memory_order_acquire)) return;
+    if (w != last_paint_w_ || h != last_paint_h_) {
+        last_paint_w_ = w;
+        last_paint_h_ = h;
+        consecutive_size_match_ = 1;
+        return;
+    }
+    if (++consecutive_size_match_ != 3) return;
+    // Renderer stabilised. Signal stop to both the host Invalidate
+    // loop and the renderer's rAF loop.
+    invalidate_stop_.store(true, std::memory_order_release);
+    execJs("window.__cefStopRaf && window.__cefStopRaf();");
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {

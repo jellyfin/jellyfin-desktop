@@ -182,8 +182,8 @@ private:
     CefRefPtr<CefDictionaryValue> extra_info_;
     State state_ = State::Normal;
     std::string pending_url_;
-    std::atomic<int64_t> invalidate_deadline_ns_{0};
     std::atomic<bool> invalidate_running_{false};
+    std::atomic<bool> invalidate_stop_{false};
     int saved_frame_rate_ = 0;  // TID_UI-only: nonzero while boosted
     void invalidateTick();
 
@@ -194,5 +194,12 @@ private:
     std::atomic<bool> resize_scheduled_{false};
     std::atomic<int64_t> last_was_resized_ns_{0};
     void applyPendingResize();
+
+    // Nudge-loop stop heuristic: after 3 consecutive same-size paints
+    // the renderer has stabilised at the post-resize dims, so stop both
+    // the host Invalidate loop and the renderer rAF loop.
+    int last_paint_w_ = 0, last_paint_h_ = 0;
+    int consecutive_size_match_ = 0;
+    void noteStableSize(int w, int h);
     IMPLEMENT_REFCOUNTING(CefLayer);
 };
