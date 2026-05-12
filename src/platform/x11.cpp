@@ -395,11 +395,10 @@ static void x11_restack(PlatformSurface* const* ordered, size_t n) {
 // (no wp_alpha_modifier_v1 analogue; _NET_WM_WINDOW_OPACITY worked only
 // on the legacy overlay window and is unreliable across compositors).
 // Implement as a hard cut, matching the original overlay-fade fallback.
-static void x11_fade_surface(PlatformSurface* s, float /*fade_sec*/,
+static void x11_fade_surface(PlatformSurface* /*s*/, float /*fade_sec*/,
                              std::function<void()> on_fade_start,
                              std::function<void()> on_complete) {
     if (on_fade_start) on_fade_start();
-    x11_surface_set_visible(s, false);
     if (on_complete) on_complete();
 }
 

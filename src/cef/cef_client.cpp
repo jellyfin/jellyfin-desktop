@@ -2,9 +2,11 @@
 #include "logging.h"
 #include "../browser/browsers.h"
 #include "../cjson/cJSON.h"
+#include "../mpv/event.h"
 #include "../platform/platform.h"
 #include "include/cef_task.h"
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 
@@ -142,13 +144,95 @@ void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
     height_ = h;
     physical_w_ = physical_w;
     physical_h_ = physical_h;
+    // Wayland viewport must update on every configure to avoid stale
+    // src/dst — runs immediately.
     if (surface_ && g_platform.surface_resize)
         g_platform.surface_resize(surface_, w, h, physical_w, physical_h);
-    if (browser_) {
+    if (!browser_) {
+        kickInvalidateLoop();
+        return;
+    }
+    // Debounce the CEF host notify (re-layout) to one display-refresh
+    // period. Drag fires many configures per frame; coalescing them
+    // saves N-1 wasted re-layouts.
+    using namespace std::chrono;
+    int64_t now = duration_cast<nanoseconds>(
+        steady_clock::now().time_since_epoch()).count();
+    double hz = mpv::display_hz();
+    int64_t period_ns = (hz > 0) ? static_cast<int64_t>(1e9 / hz) : 16'666'667LL;
+    int64_t last = last_was_resized_ns_.load(std::memory_order_acquire);
+    if (now - last >= period_ns) {
+        last_was_resized_ns_.store(now, std::memory_order_release);
         browser_->GetHost()->NotifyScreenInfoChanged();
         browser_->GetHost()->WasResized();
         browser_->GetHost()->Invalidate(PET_VIEW);
+        kickInvalidateLoop();
+        return;
     }
+    // Within the debounce window. Schedule a single deferred apply if
+    // one isn't already pending; latest width_/height_ are what get
+    // picked up.
+    bool expected = false;
+    if (resize_scheduled_.compare_exchange_strong(expected, true)) {
+        CefRefPtr<CefLayer> self = this;
+        int delay_ms = static_cast<int>((period_ns - (now - last)) / 1'000'000) + 1;
+        if (delay_ms < 1) delay_ms = 1;
+        CefPostDelayedTask(TID_UI,
+            CefRefPtr<CefTask>(new FnTask([self]() { self->applyPendingResize(); })),
+            delay_ms);
+    }
+    kickInvalidateLoop();
+}
+
+void CefLayer::applyPendingResize() {
+    resize_scheduled_.store(false, std::memory_order_release);
+    if (!browser_) return;
+    using namespace std::chrono;
+    int64_t now = duration_cast<nanoseconds>(
+        steady_clock::now().time_since_epoch()).count();
+    last_was_resized_ns_.store(now, std::memory_order_release);
+    browser_->GetHost()->NotifyScreenInfoChanged();
+    browser_->GetHost()->WasResized();
+    browser_->GetHost()->Invalidate(PET_VIEW);
+}
+
+void CefLayer::kickInvalidateLoop() {
+    using namespace std::chrono;
+    int64_t deadline = duration_cast<nanoseconds>(
+        steady_clock::now().time_since_epoch()).count() + 5'000'000'000LL;
+    invalidate_deadline_ns_.store(deadline, std::memory_order_release);
+    bool expected = false;
+    if (!invalidate_running_.compare_exchange_strong(expected, true)) return;
+    CefRefPtr<CefLayer> self = this;
+    CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
+        // Boost CEF compositor rate while the loop is live — JS rAF ties
+        // to compositor rate, so this accelerates frame production for
+        // faster convergence to the post-resize size.
+        if (self->browser_ && self->frame_rate_ > 0 && self->saved_frame_rate_ == 0) {
+            self->saved_frame_rate_ = self->frame_rate_;
+            self->browser_->GetHost()->SetWindowlessFrameRate(480);
+        }
+        self->invalidateTick();
+    })));
+}
+
+void CefLayer::invalidateTick() {
+    using namespace std::chrono;
+    int64_t now = duration_cast<nanoseconds>(
+        steady_clock::now().time_since_epoch()).count();
+    if (now >= invalidate_deadline_ns_.load(std::memory_order_acquire)) {
+        if (browser_ && saved_frame_rate_ > 0) {
+            browser_->GetHost()->SetWindowlessFrameRate(saved_frame_rate_);
+            saved_frame_rate_ = 0;
+        }
+        invalidate_running_.store(false, std::memory_order_release);
+        return;
+    }
+    if (browser_) browser_->GetHost()->Invalidate(PET_VIEW);
+    CefRefPtr<CefLayer> self = this;
+    CefPostDelayedTask(TID_UI,
+        CefRefPtr<CefTask>(new FnTask([self]() { self->invalidateTick(); })),
+        16);
 }
 
 void CefLayer::setVisible(bool visible) {
@@ -165,17 +249,27 @@ void CefLayer::fade(float fade_sec,
                                 std::move(on_complete));
         return;
     }
-    // Backend without fade support — fire callbacks and hide synchronously.
+    // Backend without fade support — fire callbacks; on_complete typically
+    // closes the browser, which destroys the surface via Browsers::remove.
     if (on_fade_start) on_fade_start();
-    setVisible(false);
     if (on_complete) on_complete();
 }
 
 void CefLayer::setRefreshRate(double hz) {
     if (hz <= 0) return;
-    frame_rate_ = static_cast<int>(std::ceil(hz));
-    if (browser_)
-        browser_->GetHost()->SetWindowlessFrameRate(frame_rate_);
+    int target = static_cast<int>(std::ceil(hz));
+    CefRefPtr<CefLayer> self = this;
+    CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self, target]() {
+        self->frame_rate_ = target;
+        // If a nudge-loop boost is active, just update what we'll restore
+        // to and let the boost rate (480) keep running. Otherwise apply
+        // the new rate immediately.
+        if (self->saved_frame_rate_ > 0) {
+            self->saved_frame_rate_ = target;
+        } else if (self->browser_) {
+            self->browser_->GetHost()->SetWindowlessFrameRate(target);
+        }
+    })));
 }
 
 void CefLayer::reset_popup_state() {
@@ -495,7 +589,7 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
         return true;
     }
 
-    // Context menu commands are browser-level, handled here.
+// Context menu commands are browser-level, handled here.
     if (name == "menuItemSelected") {
         int cmd = args->GetInt(0);
         if (pending_menu_callback_) {

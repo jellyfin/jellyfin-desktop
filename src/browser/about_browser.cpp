@@ -90,7 +90,6 @@ bool AboutBrowser::handleMessage(const std::string& name,
     if (name == "aboutDismiss") {
         LOG_INFO(LOG_CEF, "AboutBrowser: aboutDismiss");
         if (g_browsers) g_browsers->setActive(prev_active_);
-        layer_->setVisible(false);
         if (browser) browser->GetHost()->CloseBrowser(false);
         return true;
     }

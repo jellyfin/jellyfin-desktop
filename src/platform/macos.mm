@@ -595,7 +595,6 @@ static void macos_fade_surface(PlatformSurface* s, float fade_sec,
                                std::function<void()> on_complete) {
     if (!s || !s->view || !s->view.layer) {
         if (on_fade_start) on_fade_start();
-        macos_surface_set_visible(s, false);
         if (on_complete) on_complete();
         return;
     }

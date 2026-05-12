@@ -334,7 +334,6 @@ static void win_fade_surface(PlatformSurface* s, float fade_sec,
                              std::function<void()> on_complete) {
     if (!s || !s->visual || !s->effect) {
         if (on_fade_start) on_fade_start();
-        if (s) win_surface_set_visible(s, false);
         if (on_complete) on_complete();
         return;
     }
@@ -342,7 +341,6 @@ static void win_fade_surface(PlatformSurface* s, float fade_sec,
     double fps = mpv::display_hz();
     if (fps <= 0) {
         if (on_fade_start) on_fade_start();
-        win_surface_set_visible(s, false);
         if (on_complete) on_complete();
         return;
     }
@@ -369,16 +367,6 @@ static void win_fade_surface(PlatformSurface* s, float fade_sec,
             std::this_thread::sleep_for(frame_duration);
         }
 
-        win_surface_set_visible(s, false);
-
-        // Reset opacity for next show.
-        {
-            std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-            if (s->visual && s->effect) {
-                s->effect->SetOpacity(1.0f);
-                g_win.dcomp_device->Commit();
-            }
-        }
         s->fading.store(false);
         if (on_complete) on_complete();
     }).detach();

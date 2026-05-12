@@ -74,14 +74,11 @@ void BrowserPlaybackSink::deliver(const PlaybackEvent& ev) {
                               + std::string(snap.fullscreen ? "true" : "false")
                               + ")");
         break;
-    case PlaybackEvent::Kind::OsdDimsChanged: {
-        if (g_platform.window_resized)
-            g_platform.window_resized(snap.layout_w, snap.layout_h,
-                                      snap.pixel_w, snap.pixel_h);
+    case PlaybackEvent::Kind::OsdDimsChanged:
         if (g_browsers)
-            g_browsers->setSize(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
+            g_browsers->setSize(snap.layout_w, snap.layout_h,
+                                snap.pixel_w, snap.pixel_h);
         break;
-    }
     case PlaybackEvent::Kind::DisplayHzChanged: {
         LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", snap.display_hz);
         if (g_browsers)
