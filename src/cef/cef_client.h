@@ -200,6 +200,18 @@ private:
     // the host Invalidate loop and the renderer rAF loop.
     int last_paint_w_ = 0, last_paint_h_ = 0;
     int consecutive_size_match_ = 0;
+    // Tracks the rate currently applied via setFrameRate so the
+    // stable-streak target and CEF compositor rate stay in lockstep.
+    int stable_match_target_ = 0;
+    static constexpr int kBoostFrameRate = 480;
+    // Single source of truth: sets CEF windowless rate AND derives the
+    // stable-size streak target (1 frame per 20Hz, ceil).
+    void setFrameRate(int hz);
+    // Bumped on every resize(); noteStableSize requires the generation
+    // observed when its run started to still match — otherwise a resize
+    // landed mid-run and the stable-size signal is stale.
+    std::atomic<uint64_t> resize_gen_{0};
+    uint64_t run_start_gen_ = 0;
     void noteStableSize(int w, int h);
     IMPLEMENT_REFCOUNTING(CefLayer);
 };
