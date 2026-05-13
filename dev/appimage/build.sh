@@ -30,4 +30,4 @@ ${CONTAINER_CMD} run --rm \
     jellyfin-desktop-appimage
 
 echo ""
-echo "AppImage: ${OUTPUT_DIR}/JellyfinDesktop-${VERSION}-linux-x86_64.AppImage"
+echo "AppImage: ${OUTPUT_DIR}/JellyfinDesktop-${VERSION}-x86_64.AppImage"
