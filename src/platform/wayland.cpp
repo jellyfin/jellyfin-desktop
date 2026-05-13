@@ -58,16 +58,17 @@ struct PlatformSurface {
     int            buffer_w = 0, buffer_h = 0;  // physical pixels of `buffer`
     bool           visible = true;       // unmapped surfaces don't present
     bool           placeholder = false;  // true while showing solid-color placeholder
-    // Per-surface logical/physical size — used by surface_resize for late
-    // configures. Otherwise rendering tracks WlState's mpv_pw/ph.
+    bool           null_attached = false;// true while surface has wl_surface_attach(nullptr)
+    // Per-surface logical/physical size — written by wl_surface_resize
+    // (OSD_DIMS path) and on_mpv_configure (xdg_toplevel.configure fan-
+    // out). Authoritative target for this surface's viewport math and
+    // tolerance gate.
     int            lw = 0, lh = 0;
     int            pw = 0, ph = 0;
-    // Count of consecutive in-tolerance frames since last mpv_pw change.
-    // Reset to 0 by update_surface_size_locked. present_attach skips the
-    // first matching frame (often a partial/placeholder CEF paint) and
-    // attaches the second. While < 2 (and not in an FS transition), the
-    // previously-attached buffer stays mapped so the user sees the old
-    // content instead of intermediate flicker.
+    // Count of consecutive in-tolerance frames since this surface last
+    // saw its pw/ph change. present_attach skips the first matching
+    // frame (often a partial/placeholder CEF paint) and attaches the
+    // second. Reset by the writers above on dim change.
     int            match_count = 0;
 
     // Per-surface popup (CEF OSR popup elements, e.g. <select> dropdowns).
@@ -100,23 +101,12 @@ struct WlState {
     wp_alpha_modifier_v1* alpha_modifier = nullptr;
 
     float cached_scale = 1.0f;
-    // mpv window size — physical and logical. Updated under surface_mtx by
-    // on_mpv_configure (mpv VO thread) and read by CEF paint threads to
-    // clamp viewport source/dest. Hard invariant: applied subsurface size
-    // never exceeds these.
-    int mpv_pw = 0, mpv_ph = 0;
-    int mpv_lw = 0, mpv_lh = 0;
     bool was_fullscreen = false;
     // Resize transition state. transitioning gates non-paint paths
     // (resize, configure, fullscreen reject). Paint path uses a function-
     // pointer swap (g_present) — see present_drop / present_match_or_drop
     // / present_attach.
     bool transitioning = false;
-    // Wall-clock of last per-surface match_count reset. Reset is debounced
-    // by one display-refresh period — rapid configures within a single
-    // refresh share a single reset so a gradual drag converges in two
-    // frames total rather than two per WM configure step.
-    int64_t last_match_reset_ns = 0;
 
 #ifdef HAVE_KDE_DECORATION_PALETTE
     org_kde_kwin_server_decoration_palette_manager* palette_manager = nullptr;
@@ -226,6 +216,7 @@ static wl_buffer* create_shm_buffer(const void* pixels, int w, int h) {
 // Per-surface s->lw/pw is intentionally not consulted: it lags mpv during
 // exactly the race window we care about, and every layer in this
 // architecture is sized to the full window.
+
 static void attach_and_commit_locked(PlatformSurface* s, wl_buffer* buf,
                                      int buf_w, int buf_h) {
     if (s->buffer) wl_buffer_destroy(s->buffer);
@@ -233,11 +224,12 @@ static void attach_and_commit_locked(PlatformSurface* s, wl_buffer* buf,
     s->buffer_w = buf_w;
     s->buffer_h = buf_h;
     s->placeholder = false;
-    if (s->viewport && g_wl.mpv_pw > 0 && g_wl.mpv_lw > 0) {
-        int src_w = std::min(buf_w, g_wl.mpv_pw);
-        int src_h = std::min(buf_h, g_wl.mpv_ph);
-        int dst_w = (src_w * g_wl.mpv_lw) / g_wl.mpv_pw;
-        int dst_h = (src_h * g_wl.mpv_lh) / g_wl.mpv_ph;
+    s->null_attached = false;
+    if (s->viewport && s->pw > 0 && s->lw > 0) {
+        int src_w = std::min(buf_w, s->pw);
+        int src_h = std::min(buf_h, s->ph);
+        int dst_w = (src_w * s->lw) / s->pw;
+        int dst_h = (src_h * s->lh) / s->ph;
         wp_viewport_set_source(s->viewport,
             wl_fixed_from_int(0), wl_fixed_from_int(0),
             wl_fixed_from_int(src_w), wl_fixed_from_int(src_h));
@@ -279,12 +271,13 @@ static void unmap_locked(PlatformSurface* s) {
         wp_viewport_set_destination(s->viewport, -1, -1);
     wl_surface_commit(s->surface);
     wl_display_flush(g_wl.display);
+    s->null_attached = true;
 }
 
-static bool size_in_tolerance_locked(int vw, int vh) {
-    if (g_wl.mpv_pw <= 0) return true;
-    return std::abs(vw - g_wl.mpv_pw) <= kTransitionToleranceTexels &&
-           std::abs(vh - g_wl.mpv_ph) <= kTransitionToleranceTexels;
+static bool size_in_tolerance_locked(PlatformSurface* s, int vw, int vh) {
+    if (!s || s->pw <= 0) return true;
+    return std::abs(vw - s->pw) <= kTransitionToleranceTexels &&
+           std::abs(vh - s->ph) <= kTransitionToleranceTexels;
 }
 
 static bool present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
@@ -295,7 +288,7 @@ static bool present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& in
     {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
         if (!s || !s->surface || !s->visible || !g_wl.dmabuf) return false;
-        if (g_wl.transitioning && !size_in_tolerance_locked(vw, vh)) {
+        if (g_wl.transitioning && !size_in_tolerance_locked(s, vw, vh)) {
             unmap_locked(s);
             return false;
         }
@@ -306,7 +299,7 @@ static bool present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& in
 
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
     if (!s->surface || !s->visible) { wl_buffer_destroy(buf); return false; }
-    if (g_wl.transitioning && !size_in_tolerance_locked(vw, vh)) {
+    if (g_wl.transitioning && !size_in_tolerance_locked(s, vw, vh)) {
         wl_buffer_destroy(buf);
         unmap_locked(s);
         return false;
@@ -318,11 +311,21 @@ static bool present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& in
         attach_and_commit_locked(s, buf, w, h);
         return true;
     }
+    // Recovery: a previously-null-attached surface (e.g., dropped by gap
+    // detect during a transition that never recovered) must attach the
+    // first paint it sees, regardless of gate state. Otherwise the
+    // subsurface stays unmapped indefinitely.
+    if (s->null_attached) {
+        attach_and_commit_locked(s, buf, w, h);
+        return true;
+    }
     // Non-FS resize path: skip the first in-tolerance frame after each
-    // mpv_pw change (often a partial/placeholder CEF paint), attach the
+    // size change (often a partial/placeholder CEF paint), attach the
     // second. Out-of-tolerance frames neither count nor attach — the
-    // previous buffer remains mapped.
-    if (g_wl.mpv_pw > 0 && !size_in_tolerance_locked(vw, vh)) {
+    // previous buffer remains mapped. Per-surface dims (s->pw/ph) are
+    // the target; match_count is reset by writers (wl_surface_resize,
+    // on_mpv_configure fan-out) when those dims move.
+    if (s->pw > 0 && !size_in_tolerance_locked(s, vw, vh)) {
         wl_buffer_destroy(buf);
         return false;
     }
@@ -359,7 +362,10 @@ static bool wl_surface_present_software(PlatformSurface* s,
 static void wl_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {
     if (!s) return;
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    bool dim_changed = (s->lw != lw || s->lh != lh ||
+                        s->pw != pw || s->ph != ph);
     s->lw = lw; s->lh = lh; s->pw = pw; s->ph = ph;
+    if (dim_changed) s->match_count = 0;
     if (!s->surface || !s->viewport) return;
     bool is_main = !g_wl.stack.empty() && s == g_wl.stack[0];
     if (g_wl.transitioning && is_main) {
@@ -404,6 +410,7 @@ static void wl_surface_set_visible(PlatformSurface* s, bool visible) {
             wl_surface_damage_buffer(s->surface, 0, 0, 1, 1);
             wl_surface_commit(s->surface);
             wl_display_flush(g_wl.display);
+            s->null_attached = false;
         }
     } else {
         // Reset alpha to fully opaque for next time (post-fade).
@@ -414,6 +421,7 @@ static void wl_surface_set_visible(PlatformSurface* s, bool visible) {
         wl_display_flush(g_wl.display);
         if (s->buffer) { wl_buffer_destroy(s->buffer); s->buffer = nullptr; }
         s->placeholder = false;
+        s->null_attached = true;
     }
 }
 
@@ -700,22 +708,34 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
         g_wl.was_fullscreen = fs;
     }
 
+    // Fan the configure values out to every surface in the stack. Each
+    // CEF layer covers the full window, so they all share these dims.
+    // Doing it here (xdg_toplevel.configure callback) leads the slower
+    // OSD_DIMS → wl_surface_resize path during FS transitions.
+    for (auto* s : g_wl.stack) {
+        if (!s) continue;
+        bool dim_changed = (s->lw != lw || s->lh != lh ||
+                            s->pw != pw || s->ph != ph);
+        s->lw = lw; s->lh = lh; s->pw = pw; s->ph = ph;
+        if (dim_changed) s->match_count = 0;
+    }
+
     update_surface_size_locked(lw, lh, pw, ph);
 
-    // mpv_pw is now NEW. Flip paint gate back to present_attach but keep
+    // pw is now NEW. Flip paint gate back to present_attach but keep
     // transitioning=true — present_attach's transition branch will unmap
     // stale-OLD frames and clear transitioning on first matching frame.
     // Restore stack[0] viewport so the first matching frame attaches at
-    // the correct src/dst proportional to the new mpv size.
+    // the correct src/dst proportional to the new window size.
     if (g_wl.transitioning) {
         g_present = present_attach;
-        if (!g_wl.stack.empty() && g_wl.mpv_pw > 0 && g_wl.mpv_lw > 0) {
+        if (!g_wl.stack.empty()) {
             auto* main = g_wl.stack[0];
-            if (main && main->viewport) {
+            if (main && main->viewport && main->pw > 0 && main->lw > 0) {
                 wp_viewport_set_source(main->viewport,
                     wl_fixed_from_int(0), wl_fixed_from_int(0),
-                    wl_fixed_from_int(g_wl.mpv_pw), wl_fixed_from_int(g_wl.mpv_ph));
-                wp_viewport_set_destination(main->viewport, g_wl.mpv_lw, g_wl.mpv_lh);
+                    wl_fixed_from_int(main->pw), wl_fixed_from_int(main->ph));
+                wp_viewport_set_destination(main->viewport, main->lw, main->lh);
             }
         }
     }
@@ -1153,64 +1173,37 @@ static void wl_cleanup() {
     if (g_wl.queue) wl_event_queue_destroy(g_wl.queue);
 }
 
-// Update every subsurface's viewport in response to a window resize.
-// Caller must hold surface_mtx.
-//
-// Updates tracked mpv window size only — CEF paints drive their own
-// commits via attach_and_commit_locked using the latest mpv_pw/lh.
+// Push a fresh viewport onto cef-main in response to an mpv configure.
+// Caller must hold surface_mtx. mpv dims are NOT cached here — every
+// reader pulls from mpv::osd_* atomics on demand.
 static void update_surface_size_locked(int lw, int lh, int pw, int ph) {
-    // During transition: push a dest update on the cef-main layer so its
-    // (null-attached) subsurface knows the target size. end_transition
-    // applies the final viewport src+dst from mpv_lw/lh.
+    if (g_wl.stack.empty()) return;
+    auto* s = g_wl.stack[0];
+    if (!s || !s->surface || !s->viewport) return;
     if (g_wl.transitioning) {
-        if (!g_wl.stack.empty()) {
-            auto* s = g_wl.stack[0];
-            if (s && s->surface && s->viewport) {
-                wp_viewport_set_destination(s->viewport, lw, lh);
-                wl_surface_commit(s->surface);
-                wl_display_flush(g_wl.display);
-            }
-        }
-    } else if (!g_wl.stack.empty()) {
-        // Non-transition path: push viewport on cef-main, clamping src
-        // to the currently-attached buffer dims (not new mpv dims).
-        // Setting src beyond the buffer makes the compositor clamp-to-
-        // edge and repeat the last row/col until a fresh paint lands.
-        auto* s = g_wl.stack[0];
-        if (s && s->surface && s->viewport &&
-            s->buffer_w > 0 && s->buffer_h > 0) {
-            int src_w = std::min(s->buffer_w, pw);
-            int src_h = std::min(s->buffer_h, ph);
-            int dst_w = (src_w * lw) / pw;
-            int dst_h = (src_h * lh) / ph;
-            wp_viewport_set_source(s->viewport,
-                wl_fixed_from_int(0), wl_fixed_from_int(0),
-                wl_fixed_from_int(src_w), wl_fixed_from_int(src_h));
-            wp_viewport_set_destination(s->viewport, dst_w, dst_h);
-            wl_surface_commit(s->surface);
-            wl_display_flush(g_wl.display);
-        }
+        // During transition: push a dest update on the cef-main layer so
+        // its (null-attached) subsurface knows the target size.
+        // end_transition applies the final viewport src+dst.
+        wp_viewport_set_destination(s->viewport, lw, lh);
+        wl_surface_commit(s->surface);
+        wl_display_flush(g_wl.display);
+        return;
     }
-    bool size_changed = (pw != g_wl.mpv_pw) || (ph != g_wl.mpv_ph);
-    g_wl.mpv_pw = pw;
-    g_wl.mpv_ph = ph;
-    g_wl.mpv_lw = lw;
-    g_wl.mpv_lh = lh;
-    if (size_changed) {
-        // Debounce match_count reset by one display-refresh period.
-        // Drag fires many configures per frame; resetting on each would
-        // re-skip the first match every step (sluggish). Sharing one
-        // reset per refresh lets the second matching frame attach
-        // quickly during gradual resize.
-        using namespace std::chrono;
-        int64_t now_ns = duration_cast<nanoseconds>(
-            steady_clock::now().time_since_epoch()).count();
-        double hz = mpv::display_hz();
-        int64_t period_ns = (hz > 0) ? static_cast<int64_t>(1e9 / hz) : 16'666'667LL;
-        if (now_ns - g_wl.last_match_reset_ns > period_ns) {
-            for (auto* s : g_wl.stack) if (s) s->match_count = 0;
-            g_wl.last_match_reset_ns = now_ns;
-        }
+    // Non-transition path: push viewport on cef-main, clamping src to
+    // the currently-attached buffer dims (not new mpv dims). Setting src
+    // beyond the buffer makes the compositor clamp-to-edge and repeat
+    // the last row/col until a fresh paint lands.
+    if (s->buffer_w > 0 && s->buffer_h > 0 && pw > 0 && ph > 0) {
+        int src_w = std::min(s->buffer_w, pw);
+        int src_h = std::min(s->buffer_h, ph);
+        int dst_w = (src_w * lw) / pw;
+        int dst_h = (src_h * lh) / ph;
+        wp_viewport_set_source(s->viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(src_w), wl_fixed_from_int(src_h));
+        wp_viewport_set_destination(s->viewport, dst_w, dst_h);
+        wl_surface_commit(s->surface);
+        wl_display_flush(g_wl.display);
     }
 }
 
@@ -1237,6 +1230,7 @@ static void wl_begin_transition_locked() {
         if (s->viewport)
             wp_viewport_set_destination(s->viewport, -1, -1);
         wl_surface_commit(s->surface);
+        s->null_attached = true;
     }
     wl_display_flush(g_wl.display);
 }
@@ -1244,14 +1238,13 @@ static void wl_begin_transition_locked() {
 static void wl_end_transition_locked() {
     g_wl.transitioning = false;
     g_present = present_attach;
-    if (!g_wl.stack.empty() && g_wl.mpv_pw > 0 && g_wl.mpv_lw > 0) {
-        auto* s = g_wl.stack[0];
-        if (s && s->viewport) {
-            wp_viewport_set_source(s->viewport,
-                wl_fixed_from_int(0), wl_fixed_from_int(0),
-                wl_fixed_from_int(g_wl.mpv_pw), wl_fixed_from_int(g_wl.mpv_ph));
-            wp_viewport_set_destination(s->viewport, g_wl.mpv_lw, g_wl.mpv_lh);
-        }
+    if (g_wl.stack.empty()) return;
+    auto* s = g_wl.stack[0];
+    if (s && s->viewport && s->pw > 0 && s->lw > 0) {
+        wp_viewport_set_source(s->viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(s->pw), wl_fixed_from_int(s->ph));
+        wp_viewport_set_destination(s->viewport, s->lw, s->lh);
     }
 }
 
