@@ -274,18 +274,18 @@ static void x11_free_surface(PlatformSurface* s) {
 }
 
 // X11 backend is software-only — no accelerated/shared-texture path.
-static void x11_surface_present(PlatformSurface*, const CefAcceleratedPaintInfo&) {}
+static bool x11_surface_present(PlatformSurface*, const CefAcceleratedPaintInfo&) { return false; }
 
-static void x11_surface_present_software(PlatformSurface* s,
+static bool x11_surface_present_software(PlatformSurface* s,
                                          const CefRenderHandler::RectList& dirty,
                                          const void* buffer, int w, int h) {
-    if (g_shutting_down.load(std::memory_order_relaxed)) return;
-    if (!s) return;
+    if (g_shutting_down.load(std::memory_order_relaxed)) return false;
+    if (!s) return false;
     std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-    if (s->window == XCB_NONE || !s->visible) return;
+    if (s->window == XCB_NONE || !s->visible) return false;
 
     auto& buf = s->bufs[s->buf_idx];
-    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
+    if (!shm_alloc(buf, g_x11.conn, w, h)) return false;
 
     int stride = w * 4;
     const auto* src = static_cast<const uint8_t*>(buffer);
@@ -315,6 +315,7 @@ static void x11_surface_present_software(PlatformSurface* s,
 
     s->buf_idx ^= 1;
     xcb_flush(g_x11.conn);
+    return true;
 }
 
 static void x11_surface_resize(PlatformSurface* s, int /*lw*/, int /*lh*/, int pw, int ph) {
