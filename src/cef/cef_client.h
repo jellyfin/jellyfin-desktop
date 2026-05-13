@@ -195,23 +195,33 @@ private:
     std::atomic<int64_t> last_was_resized_ns_{0};
     void applyPendingResize();
 
-    // Nudge-loop stop heuristic: after 3 consecutive same-size paints
-    // the renderer has stabilised at the post-resize dims, so stop both
-    // the host Invalidate loop and the renderer rAF loop.
-    int last_paint_w_ = 0, last_paint_h_ = 0;
-    int consecutive_size_match_ = 0;
-    // Tracks the rate currently applied via setFrameRate so the
-    // stable-streak target and CEF compositor rate stay in lockstep.
-    int stable_match_target_ = 0;
-    static constexpr int kBoostFrameRate = 480;
-    // Single source of truth: sets CEF windowless rate AND derives the
-    // stable-size streak target (1 frame per 20Hz, ceil).
+    // Per-FPS resize-recovery thresholds, computed at kick time from
+    // frame_rate_:
+    //   skip = ceil(fps / 20)         — drop the first N paints (partial /
+    //                                   placeholder while renderer relays out)
+    //   pump = skip + fps             — total paints before stopping the loop
+    //                                   (~1s of additional paints after skip)
+    int skip_paints_after_resize_ = 0;
+    int pump_paint_count_ = 0;
+    // Boost the CEF compositor rate by this factor while the nudge loop
+    // is live so post-resize convergence outpaces steady-state cadence.
+    static constexpr int kBoostMultiplier = 2;
+    // Last rate applied via setFrameRate; drives the invalidate tick
+    // cadence so the host nudge matches what the compositor will produce.
+    int current_frame_rate_ = 0;
     void setFrameRate(int hz);
     // Bumped on every resize(); noteStableSize requires the generation
     // observed when its run started to still match — otherwise a resize
     // landed mid-run and the stable-size signal is stale.
     std::atomic<uint64_t> resize_gen_{0};
-    uint64_t run_start_gen_ = 0;
-    void noteStableSize(int w, int h);
+    // Tracks the resize gen at the last paint dispatch; reset
+    // paints_since_resize_ when it advances.
+    uint64_t last_paint_gen_ = 0;
+    int paints_since_resize_ = 0;
+    // Wall-clock of the last paints_since_resize_ reset. Used to rate-
+    // clamp resets during continuous drags so the skip counter doesn't
+    // keep wiping before any paint clears the skip threshold.
+    int64_t last_skip_reset_ns_ = 0;
+    bool shouldPresentPaint();
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

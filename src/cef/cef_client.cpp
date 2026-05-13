@@ -149,10 +149,8 @@ void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
     // src/dst — runs immediately.
     if (surface_ && g_platform.surface_resize)
         g_platform.surface_resize(surface_, w, h, physical_w, physical_h);
-    if (!browser_) {
-        kickInvalidateLoop();
-        return;
-    }
+    // Defer kick until the browser exists; OnAfterCreated will fire it.
+    if (!browser_) return;
     // Debounce the CEF host notify (re-layout) to one display-refresh
     // period. Drag fires many configures per frame; coalescing them
     // saves N-1 wasted re-layouts.
@@ -188,6 +186,8 @@ void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
 void CefLayer::applyPendingResize() {
     resize_scheduled_.store(false, std::memory_order_release);
     if (!browser_) return;
+    LOG_TRACE(LOG_CEF, "CefLayer::applyPendingResize name={} logical={}x{} physical={}x{}",
+              name_.c_str(), width_, height_, physical_w_, physical_h_);
     using namespace std::chrono;
     int64_t now = duration_cast<nanoseconds>(
         steady_clock::now().time_since_epoch()).count();
@@ -203,18 +203,20 @@ void CefLayer::applyPendingResize() {
 }
 
 void CefLayer::setFrameRate(int hz) {
-    if (hz <= 0) return;
-    if (browser_) browser_->GetHost()->SetWindowlessFrameRate(hz);
-    // 1 stable frame per 20Hz of compositor rate, ceil.
-    stable_match_target_ = (hz + 19) / 20;
+    if (hz <= 0 || !browser_) return;
+    browser_->GetHost()->SetWindowlessFrameRate(hz);
+    current_frame_rate_ = hz;
 }
 
 void CefLayer::kickInvalidateLoop() {
     invalidate_stop_.store(false, std::memory_order_release);
     bool expected = false;
-    if (!invalidate_running_.compare_exchange_strong(expected, true)) return;
-    run_start_gen_ = resize_gen_.load(std::memory_order_acquire);
-    consecutive_size_match_ = 0;
+    if (!invalidate_running_.compare_exchange_strong(expected, true)) {
+        LOG_TRACE(LOG_CEF, "CefLayer::kickInvalidateLoop name={} already running",
+                  name_.c_str());
+        return;
+    }
+    LOG_TRACE(LOG_CEF, "CefLayer::kickInvalidateLoop name={} start", name_.c_str());
     CefRefPtr<CefLayer> self = this;
     CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
         // Boost CEF compositor rate while the loop is live — JS rAF ties
@@ -222,7 +224,7 @@ void CefLayer::kickInvalidateLoop() {
         // faster convergence to the post-resize size.
         if (self->browser_ && self->frame_rate_ > 0 && self->saved_frame_rate_ == 0) {
             self->saved_frame_rate_ = self->frame_rate_;
-            self->setFrameRate(kBoostFrameRate);
+            self->setFrameRate(self->frame_rate_ * kBoostMultiplier);
         }
         self->invalidateTick();
     })));
@@ -238,11 +240,26 @@ void CefLayer::invalidateTick() {
         LOG_DEBUG(LOG_CEF, "CefLayer::invalidateTick stopped name={}", name_.c_str());
         return;
     }
+    LOG_TRACE(LOG_CEF, "CefLayer::invalidateTick name={} fps={}",
+              name_.c_str(), frame_rate_);
     if (browser_) browser_->GetHost()->Invalidate(PET_VIEW);
     CefRefPtr<CefLayer> self = this;
+    // Tick at 4x display refresh so the compositor gets nudged more
+    // often than the boosted output rate (2x) — keeps frame production
+    // ahead of the present cadence during a resize. If fps isn't known
+    // yet, clear running so a later kick can restart cleanly.
+    if (frame_rate_ <= 0) {
+        invalidate_running_.store(false, std::memory_order_release);
+        LOG_DEBUG(LOG_CEF, "CefLayer::invalidateTick bailed (fps=0) name={}",
+                  name_.c_str());
+        return;
+    }
+    int tick_hz = frame_rate_ * 4;
+    int delay_ms = static_cast<int>(1000.0 / tick_hz + 0.5);
+    if (delay_ms < 1) delay_ms = 1;
     CefPostDelayedTask(TID_UI,
         CefRefPtr<CefTask>(new FnTask([self]() { self->invalidateTick(); })),
-        4);
+        delay_ms);
 }
 
 void CefLayer::setVisible(bool visible) {
@@ -355,6 +372,56 @@ void CefLayer::dispatch_popup_selection(int index) {
     browser_->GetHost()->SendMouseWheelEvent(me, /*deltaX=*/0, /*deltaY=*/1);
 }
 
+// Drop the first kSkipPaintsAfterResize CEF paints after each resize.
+// They're frequently partial/placeholder frames produced while the
+// renderer is still re-laying out at the new dims. Returns true when
+// this paint should be passed on to the platform present path.
+bool CefLayer::shouldPresentPaint() {
+    uint64_t gen = resize_gen_.load(std::memory_order_acquire);
+    if (gen != last_paint_gen_) {
+        last_paint_gen_ = gen;
+        // Rate-clamp the skip-counter reset. Continuous drag bumps gen
+        // many times per second; resetting on every bump would keep
+        // wiping the counter before any paint clears the skip threshold,
+        // so paints never reach the present path. Apply at most one
+        // reset per display-refresh period.
+        using namespace std::chrono;
+        int64_t now_ns = duration_cast<nanoseconds>(
+            steady_clock::now().time_since_epoch()).count();
+        double hz = mpv::display_hz();
+        int64_t period_ns = (hz > 0) ? static_cast<int64_t>(1e9 / hz) : 16'666'667LL;
+        if (now_ns - last_skip_reset_ns_ >= period_ns) {
+            last_skip_reset_ns_ = now_ns;
+            // Recompute the FPS-derived thresholds. If frame_rate_ isn't
+            // known yet, leave both at 0: all paints present, pump-stop
+            // never fires (loop won't be running anyway).
+            skip_paints_after_resize_ = 1;
+            pump_paint_count_ = (frame_rate_ > 0) ? skip_paints_after_resize_ + frame_rate_ : 0;
+            paints_since_resize_ = 0;
+            LOG_TRACE(LOG_CEF, "CefLayer::shouldPresentPaint name={} gen advanced to {} fps={} skip={} pump={} (reset)",
+                      name_.c_str(), gen, frame_rate_,
+                      skip_paints_after_resize_, pump_paint_count_);
+        } else {
+            LOG_TRACE(LOG_CEF, "CefLayer::shouldPresentPaint name={} gen advanced to {} (clamp held)",
+                      name_.c_str(), gen);
+        }
+    }
+    ++paints_since_resize_;
+    bool present = paints_since_resize_ > skip_paints_after_resize_;
+    LOG_TRACE(LOG_CEF, "CefLayer::shouldPresentPaint name={} count={} present={}",
+              name_.c_str(), paints_since_resize_, present ? 1 : 0);
+    if (paints_since_resize_ == pump_paint_count_) {
+        // Pumped enough frames. Signal stop to host Invalidate loop and
+        // renderer's rAF loop. Counter remains past pump_paint_count_ so
+        // subsequent paints don't re-fire.
+        LOG_DEBUG(LOG_CEF, "CefLayer::shouldPresentPaint pump stop name={}",
+                  name_.c_str());
+        invalidate_stop_.store(true, std::memory_order_release);
+        execJs("window.__cefStopRaf && window.__cefStopRaf();");
+    }
+    return present;
+}
+
 void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                        const void* buffer, int w, int h) {
     if (type == PET_POPUP) {
@@ -364,14 +431,9 @@ void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectL
         return;
     }
     if (type != PET_VIEW) return;
-    bool attached = false;
+    if (!shouldPresentPaint()) return;
     if (surface_ && g_platform.surface_present_software)
-        attached = g_platform.surface_present_software(surface_, dirty, buffer, w, h);
-    // Only paints that actually landed on the surface count toward the
-    // stable-size streak. The Wayland platform drops paints whose size
-    // doesn't match mpv's current geometry; counting those would fire
-    // stop while the surface still has no buffer attached.
-    if (attached) noteStableSize(w, h);
+        g_platform.surface_present_software(surface_, dirty, buffer, w, h);
 }
 
 void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
@@ -382,37 +444,9 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
         return;
     }
     if (type != PET_VIEW) return;
-    bool attached = false;
+    if (!shouldPresentPaint()) return;
     if (surface_ && g_platform.surface_present)
-        attached = g_platform.surface_present(surface_, info);
-    if (attached)
-        noteStableSize(info.extra.visible_rect.width, info.extra.visible_rect.height);
-}
-
-void CefLayer::noteStableSize(int w, int h) {
-    // Steady state has no work to do — nothing to stop.
-    if (!invalidate_running_.load(std::memory_order_acquire)) return;
-    // A resize after this run started invalidates any stable-size streak —
-    // the matching paints may predate the new target.
-    uint64_t gen = resize_gen_.load(std::memory_order_acquire);
-    if (gen != run_start_gen_) {
-        run_start_gen_ = gen;
-        consecutive_size_match_ = 0;
-        return;
-    }
-    if (w != last_paint_w_ || h != last_paint_h_) {
-        last_paint_w_ = w;
-        last_paint_h_ = h;
-        consecutive_size_match_ = 1;
-        return;
-    }
-    if (++consecutive_size_match_ != stable_match_target_) return;
-    // Renderer stabilised. Signal stop to both the host Invalidate
-    // loop and the renderer's rAF loop.
-    LOG_DEBUG(LOG_CEF, "CefLayer::noteStableSize stop name={} size={}x{}",
-              name_.c_str(), w, h);
-    invalidate_stop_.store(true, std::memory_order_release);
-    execJs("window.__cefStopRaf && window.__cefStopRaf();");
+        g_platform.surface_present(surface_, info);
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
@@ -420,13 +454,20 @@ void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     browser_ = browser;
     closed_ = false;
     loaded_ = false;
+    // Track the rate CEF was created with so the invalidate loop has
+    // a valid cadence before any explicit setFrameRate call lands.
+    if (frame_rate_ > 0) current_frame_rate_ = frame_rate_;
     if (g_shutting_down.load(std::memory_order_relaxed)) {
         browser->GetHost()->CloseBrowser(true);
         return;
     }
+    // WasResized fires here, so bump gen so shouldPresentPaint
+    // recomputes skip/pump from frame_rate_ on the first paint.
+    resize_gen_.fetch_add(1, std::memory_order_acq_rel);
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);
+    kickInvalidateLoop();
 
     // Reset state machine: if reset() was called before the initial
     // OnAfterCreated, close the freshly created browser so the one-shot
@@ -472,6 +513,9 @@ void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     browser_ = nullptr;
     closed_ = true;
     loaded_ = true;
+    // Signal the nudge loop to exit so the posted-task ref keeping
+    // this CefLayer alive can drop and the object can destruct.
+    invalidate_stop_.store(true, std::memory_order_release);
     close_cv_.notify_all();
     load_cv_.notify_all();
     // Move out before invoking. The callback can safely install a new one
