@@ -98,6 +98,13 @@ void Browsers::setSize(int lw, int lh, int pw, int ph) {
         layer->resize(lw, lh, pw, ph);
 }
 
+void Browsers::setScale(double scale) {
+    if (scale <= 0 || pw_ <= 0 || ph_ <= 0) return;
+    int new_lw = static_cast<int>(pw_ / scale);
+    int new_lh = static_cast<int>(ph_ / scale);
+    setSize(new_lw, new_lh, pw_, ph_);
+}
+
 void Browsers::setRefreshRate(double hz) {
     if (hz <= 0) return;
     frame_rate_ = static_cast<int>(hz + 0.5);

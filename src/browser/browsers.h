@@ -40,6 +40,10 @@ public:
     // Display-state broadcast.
     void setSize(int lw, int lh, int pw, int ph);
     void setRefreshRate(double hz);
+    // Re-derive lw/lh from the cached pw/ph using the new display scale,
+    // then forward through setSize. Used when only the display scale
+    // changes (compositor preferred_scale event, no xdg_toplevel.configure).
+    void setScale(double scale);
     int logical_w() const { return lw_; }
     int logical_h() const { return lh_; }
     int physical_w() const { return pw_; }

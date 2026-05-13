@@ -15,6 +15,7 @@ enum class MpvEventType {
     DURATION,
     FULLSCREEN,
     OSD_DIMS,
+    DISPLAY_SCALE,
     SPEED,
     SEEKING,
     DISPLAY_FPS,
