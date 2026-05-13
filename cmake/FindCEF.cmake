@@ -133,7 +133,7 @@ elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
         if(CMAKE_GENERATOR)
             list(APPEND _CEF_CMAKE_ARGS -G "${CMAKE_GENERATOR}")
         endif()
-        if(WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
             list(APPEND _CEF_CMAKE_ARGS -DPROJECT_ARCH=arm64)
         endif()
         execute_process(

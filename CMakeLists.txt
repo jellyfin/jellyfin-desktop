@@ -443,15 +443,7 @@ endif()
 # mpv configuration
 option(BUILD_MPV_CLI "Also build the standalone mpv CLI binary from the submodule (for rendering comparisons; requires building mpv from submodule, not EXTERNAL_MPV_DIR)" OFF)
 
-# Auto-detect external mpv from /opt if it exists
-set(_DEFAULT_EXTERNAL_MPV_DIR "")
-if(EXISTS "/opt/jellyfin-desktop/libmpv/lib/libmpv.so")
-    set(_DEFAULT_EXTERNAL_MPV_DIR "/opt/jellyfin-desktop/libmpv")
-elseif(APPLE AND EXISTS "/opt/jellyfin-desktop/libmpv/lib/libmpv.dylib")
-    set(_DEFAULT_EXTERNAL_MPV_DIR "/opt/jellyfin-desktop/libmpv")
-endif()
-
-set(EXTERNAL_MPV_DIR "${_DEFAULT_EXTERNAL_MPV_DIR}" CACHE PATH "Path to external mpv installation (must contain include/ and lib/)")
+set(EXTERNAL_MPV_DIR "" CACHE PATH "Path to external mpv installation (must contain include/ and lib/); leave empty to build from third_party/mpv submodule")
 
 if(EXTERNAL_MPV_DIR)
     message(STATUS "Using external mpv from: ${EXTERNAL_MPV_DIR}")
@@ -490,7 +482,7 @@ else()
     if(NOT EXISTS "${MPV_BUILD_DIR}/build.ninja")
         message(STATUS "Configuring mpv with meson (cplayer=${_MPV_CPLAYER})...")
         execute_process(
-            COMMAND meson setup build --default-library=shared -Dlibmpv=true -Dcplayer=${_MPV_CPLAYER}
+            COMMAND meson setup build --default-library=shared -Dlibmpv=true -Dcplayer=${_MPV_CPLAYER} -Dpipewire=disabled
             WORKING_DIRECTORY ${MPV_SOURCE_DIR}
             RESULT_VARIABLE MPV_SETUP_RESULT
         )
@@ -885,6 +877,9 @@ else()
     install(DIRECTORY "${CEF_RESOURCE_DIR}/locales" DESTINATION .)
     if(EXTERNAL_MPV_DIR)
         install(FILES "${EXTERNAL_MPV_DIR}/lib/libmpv.so" DESTINATION .)
+    else()
+        install(FILES "${MPV_BUILD_DIR}/libmpv.so.2" DESTINATION .)
+        install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink libmpv.so.2 \"\${CMAKE_INSTALL_PREFIX}/libmpv.so\")")
     endif()
 endif()
 

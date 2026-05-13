@@ -1,5 +1,10 @@
 # Linux-specific recipes (imported by top-level justfile)
 
+# Install build dependencies on Fedora/RHEL
+[linux]
+install-deps-fedora:
+    ./dev/linux/install-deps-fedora.sh
+
 # Build AppImage (outputs to dist/)
 [linux]
 appimage:
