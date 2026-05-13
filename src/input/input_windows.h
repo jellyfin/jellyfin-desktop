@@ -15,9 +15,10 @@ void run_input_thread(HWND mpv_hwnd);
 // Posts WM_QUIT to the input thread. Safe to call from any thread.
 void stop_input_thread();
 
-// Resizes the child input HWND to match mpv's HWND size. Called from
-// platform_windows's mpv WndProc hook on WM_SIZE.
-void resize_to_parent(int pw, int ph);
+// Resizes the child input HWND to match mpv's HWND size and updates the
+// display scale factor for physical-to-logical coordinate conversion.
+// Called from platform_windows's mpv WndProc hook on WM_SIZE.
+void resize_to_parent(int pw, int ph, float scale);
 
 // Called via Platform::set_cursor vtable. Safe to call from any thread.
 // Updates the stored cursor type; the actual SetCursor() happens on the
