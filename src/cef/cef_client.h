@@ -184,6 +184,7 @@ private:
     std::string pending_url_;
     std::atomic<bool> invalidate_running_{false};
     std::atomic<bool> invalidate_stop_{false};
+    int invalidate_tick_count_ = 0;
     int saved_frame_rate_ = 0;  // TID_UI-only: nonzero while boosted
     void invalidateTick();
 
