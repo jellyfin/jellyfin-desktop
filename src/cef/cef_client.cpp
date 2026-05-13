@@ -242,7 +242,16 @@ void CefLayer::invalidateTick() {
     }
     LOG_TRACE(LOG_CEF, "CefLayer::invalidateTick name={} fps={}",
               name_.c_str(), frame_rate_);
-    if (browser_) browser_->GetHost()->Invalidate(PET_VIEW);
+    if (browser_) {
+        browser_->GetHost()->Invalidate(PET_VIEW);
+#ifdef __APPLE__
+        // external_begin_frame_enabled is true on macOS — Invalidate alone
+        // doesn't drive the renderer, only SendExternalBeginFrame does.
+        // CADisplayLink fans BeginFrames out at display rate, but during
+        // resize/recovery we need the boosted cadence too.
+        browser_->GetHost()->SendExternalBeginFrame();
+#endif
+    }
     CefRefPtr<CefLayer> self = this;
     // Tick at 4x display refresh so the compositor gets nudged more
     // often than the boosted output rate (2x) — keeps frame production
