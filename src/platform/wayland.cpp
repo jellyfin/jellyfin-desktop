@@ -270,7 +270,7 @@ static void attach_and_commit_locked(PlatformSurface* s, wl_buffer* buf,
 // Invalidate in cef_client.cpp) drive convergence within the window.
 constexpr int kTransitionToleranceTexels = 32;
 
-static void present_drop(PlatformSurface*, const CefAcceleratedPaintInfo&) {}
+static bool present_drop(PlatformSurface*, const CefAcceleratedPaintInfo&) { return false; }
 
 static void unmap_locked(PlatformSurface* s) {
     if (!s || !s->surface) return;
@@ -287,36 +287,36 @@ static bool size_in_tolerance_locked(int vw, int vh) {
            std::abs(vh - g_wl.mpv_ph) <= kTransitionToleranceTexels;
 }
 
-static void present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
+static bool present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
     int w = info.extra.coded_size.width;
     int h = info.extra.coded_size.height;
     int vw = info.extra.visible_rect.width;
     int vh = info.extra.visible_rect.height;
     {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-        if (!s || !s->surface || !s->visible || !g_wl.dmabuf) return;
+        if (!s || !s->surface || !s->visible || !g_wl.dmabuf) return false;
         if (g_wl.transitioning && !size_in_tolerance_locked(vw, vh)) {
             unmap_locked(s);
-            return;
+            return false;
         }
     }
 
     auto* buf = create_dmabuf_buffer(info);
-    if (!buf) return;
+    if (!buf) return false;
 
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!s->surface || !s->visible) { wl_buffer_destroy(buf); return; }
+    if (!s->surface || !s->visible) { wl_buffer_destroy(buf); return false; }
     if (g_wl.transitioning && !size_in_tolerance_locked(vw, vh)) {
         wl_buffer_destroy(buf);
         unmap_locked(s);
-        return;
+        return false;
     }
     if (g_wl.transitioning) {
         // First in-tolerance frame ends the FS transition.
         g_wl.transitioning = false;
         s->match_count = 0;
         attach_and_commit_locked(s, buf, w, h);
-        return;
+        return true;
     }
     // Non-FS resize path: skip the first in-tolerance frame after each
     // mpv_pw change (often a partial/placeholder CEF paint), attach the
@@ -324,29 +324,31 @@ static void present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& in
     // previous buffer remains mapped.
     if (g_wl.mpv_pw > 0 && !size_in_tolerance_locked(vw, vh)) {
         wl_buffer_destroy(buf);
-        return;
+        return false;
     }
     if (++s->match_count < 2) {
         wl_buffer_destroy(buf);
-        return;
+        return false;
     }
     attach_and_commit_locked(s, buf, w, h);
+    return true;
 }
 
-static void (*g_present)(PlatformSurface*, const CefAcceleratedPaintInfo&) = present_attach;
+static bool (*g_present)(PlatformSurface*, const CefAcceleratedPaintInfo&) = present_attach;
 
-static void wl_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
-    g_present(s, info);
+static bool wl_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
+    return g_present(s, info);
 }
 
-static void wl_surface_present_software(PlatformSurface* s,
+static bool wl_surface_present_software(PlatformSurface* s,
                                         const CefRenderHandler::RectList&,
                                         const void* buffer, int w, int h) {
     auto* buf = create_shm_buffer(buffer, w, h);
-    if (!buf) return;
+    if (!buf) return false;
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!s || !s->surface || !s->visible) { wl_buffer_destroy(buf); return; }
+    if (!s || !s->surface || !s->visible) { wl_buffer_destroy(buf); return false; }
     attach_and_commit_locked(s, buf, w, h);
+    return true;
 }
 
 // Push viewport src/dest + commit so the subsurface knows its target

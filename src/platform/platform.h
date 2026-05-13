@@ -35,11 +35,16 @@ struct Platform {
     void (*free_surface)(PlatformSurface*);
 
     // Per-surface ops (replace the role-specific present/resize/visible triples).
-    void (*surface_present)(PlatformSurface*, const CefAcceleratedPaintInfo& info);
-    void (*surface_present_software)(PlatformSurface*,
+    // present/present_software return true when the buffer was attached to
+    // the surface. A false return means the platform dropped this paint
+    // (e.g. Wayland tolerance gate during a resize transition); callers
+    // that track "renderer stabilised" state must not count dropped paints.
+    bool (*surface_present)(PlatformSurface*, const CefAcceleratedPaintInfo& info);
+    bool (*surface_present_software)(PlatformSurface*,
                                      const CefRenderHandler::RectList& dirty,
                                      const void* buffer, int w, int h);
     void (*surface_resize)(PlatformSurface*, int lw, int lh, int pw, int ph);
+
     void (*surface_set_visible)(PlatformSurface*, bool visible);
 
     // Stacking — bottom (index 0) to top (index n-1). Called whenever

@@ -1007,12 +1007,12 @@ static void macos_free_surface(PlatformSurface* s) {
     delete s;
 }
 
-static void macos_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
-    if (!s) return;
+static bool macos_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
+    if (!s) return false;
     // Fullscreen-transition gating runs only on the cef-main surface
     // (bottom of stack), matching the pre-refactor macos_present path.
     if (is_cef_main(s)) {
-        if (g_transitioning) return;
+        if (g_transitioning) return false;
         present_iosurface(*s, info);
         if (g_expected_w > 0) {
             IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
@@ -1022,16 +1022,18 @@ static void macos_surface_present(PlatformSurface* s, const CefAcceleratedPaintI
                 g_transitioning = false;
             }
         }
-        return;
+        return true;
     }
     present_iosurface(*s, info);
+    return true;
 }
 
-static void macos_surface_present_software(PlatformSurface*,
+static bool macos_surface_present_software(PlatformSurface*,
                                            const CefRenderHandler::RectList&,
                                            const void*, int, int) {
     // CEF on macOS runs hardware-accelerated (shared_texture_supported=true);
     // the software path is not exercised. Kept for API completeness.
+    return false;
 }
 
 static void macos_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {

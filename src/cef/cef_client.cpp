@@ -348,9 +348,14 @@ void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectL
         return;
     }
     if (type != PET_VIEW) return;
+    bool attached = false;
     if (surface_ && g_platform.surface_present_software)
-        g_platform.surface_present_software(surface_, dirty, buffer, w, h);
-    noteStableSize(w, h);
+        attached = g_platform.surface_present_software(surface_, dirty, buffer, w, h);
+    // Only paints that actually landed on the surface count toward the
+    // stable-size streak. The Wayland platform drops paints whose size
+    // doesn't match mpv's current geometry; counting those would fire
+    // stop while the surface still has no buffer attached.
+    if (attached) noteStableSize(w, h);
 }
 
 void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
@@ -361,9 +366,11 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
         return;
     }
     if (type != PET_VIEW) return;
+    bool attached = false;
     if (surface_ && g_platform.surface_present)
-        g_platform.surface_present(surface_, info);
-    noteStableSize(info.extra.visible_rect.width, info.extra.visible_rect.height);
+        attached = g_platform.surface_present(surface_, info);
+    if (attached)
+        noteStableSize(info.extra.visible_rect.width, info.extra.visible_rect.height);
 }
 
 void CefLayer::noteStableSize(int w, int h) {

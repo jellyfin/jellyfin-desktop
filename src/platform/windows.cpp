@@ -235,17 +235,17 @@ static void present_to_surface_locked(PlatformSurface* s, ID3D11Texture2D* src,
     g_win.dcomp_device->Commit();
 }
 
-static void win_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
-    if (!s) return;
+static bool win_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
+    if (!s) return false;
     HANDLE handle = info.shared_texture_handle;
-    if (!handle) return;
+    if (!handle) return false;
 
     ID3D11Texture2D* src = nullptr;
     HRESULT hr = g_win.d3d_device->OpenSharedResource1(handle,
         __uuidof(ID3D11Texture2D), (void**)&src);
     if (FAILED(hr) || !src) {
         LOG_ERROR(LOG_PLATFORM, "OpenSharedResource1 failed: 0x{:08x}", hr);
-        return;
+        return false;
     }
 
     D3D11_TEXTURE2D_DESC td;
@@ -262,7 +262,7 @@ static void win_surface_present(PlatformSurface* s, const CefAcceleratedPaintInf
     if (is_main && g_win.transitioning) {
         if (g_win.expected_w <= 0 || (w == g_win.transition_pw && h == g_win.transition_ph)) {
             src->Release();
-            return;
+            return false;
         }
         // New frame matches expected size -- end transition
         win_end_transition_locked();
@@ -273,21 +273,23 @@ static void win_surface_present(PlatformSurface* s, const CefAcceleratedPaintInf
     // semantics where only the main path enforced this).
     if (is_main && g_win.mpv_pw > 0 && (w > g_win.mpv_pw + 2 || h > g_win.mpv_ph + 2)) {
         src->Release();
-        return;
+        return false;
     }
 
-    if (!s->visible) { src->Release(); return; }
+    if (!s->visible) { src->Release(); return false; }
 
     present_to_surface_locked(s, src, w, h);
     src->Release();
+    return true;
 }
 
 // Software fallback: Windows is shared-textures-only in practice.
 // Kept as a no-op to match prior overlay/about behavior; the main path
 // historically also no-op'd here.
-static void win_surface_present_software(PlatformSurface*,
+static bool win_surface_present_software(PlatformSurface*,
                                          const CefRenderHandler::RectList&,
                                          const void*, int, int) {
+    return false;
 }
 
 static void win_surface_resize(PlatformSurface* s, int /*lw*/, int /*lh*/, int pw, int ph) {
