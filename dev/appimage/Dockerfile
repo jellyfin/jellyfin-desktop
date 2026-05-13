@@ -201,4 +201,4 @@ RUN mkdir -p /output && \
     --runtime-file /opt/tools/runtime-x86_64 \
     /AppDir /output/JellyfinDesktop-x86_64.AppImage
 
-CMD ["sh", "-c", "cp /output/JellyfinDesktop-x86_64.AppImage /host-output/JellyfinDesktop-${VERSION}-linux-x86_64.AppImage"]
+CMD ["sh", "-c", "cp /output/JellyfinDesktop-x86_64.AppImage /host-output/JellyfinDesktop-${VERSION}-x86_64.AppImage"]
