@@ -216,6 +216,7 @@ void CefLayer::kickInvalidateLoop() {
                   name_.c_str());
         return;
     }
+    invalidate_tick_count_ = 0;
     LOG_TRACE(LOG_CEF, "CefLayer::kickInvalidateLoop name={} start", name_.c_str());
     CefRefPtr<CefLayer> self = this;
     CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
@@ -231,6 +232,8 @@ void CefLayer::kickInvalidateLoop() {
 }
 
 void CefLayer::invalidateTick() {
+    if (++invalidate_tick_count_ > 1000)
+        invalidate_stop_.store(true, std::memory_order_release);
     if (invalidate_stop_.load(std::memory_order_acquire)) {
         if (browser_ && saved_frame_rate_ > 0) {
             setFrameRate(saved_frame_rate_);
