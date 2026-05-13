@@ -65,11 +65,6 @@ struct PlatformSurface {
     // tolerance gate.
     int            lw = 0, lh = 0;
     int            pw = 0, ph = 0;
-    // Count of consecutive in-tolerance frames since this surface last
-    // saw its pw/ph change. present_attach skips the first matching
-    // frame (often a partial/placeholder CEF paint) and attaches the
-    // second. Reset by the writers above on dim change.
-    int            match_count = 0;
 
     // Per-surface popup (CEF OSR popup elements, e.g. <select> dropdowns).
     // The popup subsurface is a child of `surface`, so it draws above this
@@ -307,7 +302,6 @@ static bool present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& in
     if (g_wl.transitioning) {
         // First in-tolerance frame ends the FS transition.
         g_wl.transitioning = false;
-        s->match_count = 0;
         attach_and_commit_locked(s, buf, w, h);
         return true;
     }
@@ -319,17 +313,10 @@ static bool present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& in
         attach_and_commit_locked(s, buf, w, h);
         return true;
     }
-    // Non-FS resize path: skip the first in-tolerance frame after each
-    // size change (often a partial/placeholder CEF paint), attach the
-    // second. Out-of-tolerance frames neither count nor attach — the
-    // previous buffer remains mapped. Per-surface dims (s->pw/ph) are
-    // the target; match_count is reset by writers (wl_surface_resize,
-    // on_mpv_configure fan-out) when those dims move.
+    // Out-of-tolerance frames don't attach — the previous buffer
+    // remains mapped until the renderer catches up to s->pw/ph.
+    // Skip-first-N-paints-after-resize lives in CefLayer.
     if (s->pw > 0 && !size_in_tolerance_locked(s, vw, vh)) {
-        wl_buffer_destroy(buf);
-        return false;
-    }
-    if (++s->match_count < 2) {
         wl_buffer_destroy(buf);
         return false;
     }
@@ -362,10 +349,7 @@ static bool wl_surface_present_software(PlatformSurface* s,
 static void wl_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {
     if (!s) return;
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    bool dim_changed = (s->lw != lw || s->lh != lh ||
-                        s->pw != pw || s->ph != ph);
     s->lw = lw; s->lh = lh; s->pw = pw; s->ph = ph;
-    if (dim_changed) s->match_count = 0;
     if (!s->surface || !s->viewport) return;
     bool is_main = !g_wl.stack.empty() && s == g_wl.stack[0];
     if (g_wl.transitioning && is_main) {
@@ -714,10 +698,7 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
     // OSD_DIMS → wl_surface_resize path during FS transitions.
     for (auto* s : g_wl.stack) {
         if (!s) continue;
-        bool dim_changed = (s->lw != lw || s->lh != lh ||
-                            s->pw != pw || s->ph != ph);
         s->lw = lw; s->lh = lh; s->pw = pw; s->ph = ph;
-        if (dim_changed) s->match_count = 0;
     }
 
     update_surface_size_locked(lw, lh, pw, ph);
