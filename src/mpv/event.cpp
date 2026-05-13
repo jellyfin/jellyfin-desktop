@@ -158,12 +158,17 @@ MpvEvent digest_property(uint64_t id, mpv_event_property* p) {
         s_window_maximized.store(*static_cast<int*>(p->data) != 0,
                                  std::memory_order_relaxed);
         break;
-    case MPV_OBSERVE_DISPLAY_SCALE:
-        // Silent update: callers read mpv::display_scale() on demand.
+    case MPV_OBSERVE_DISPLAY_SCALE: {
         if (p->format != MPV_FORMAT_DOUBLE) break;
-        s_display_scale.store(*static_cast<double*>(p->data),
-                              std::memory_order_relaxed);
+        double new_scale = *static_cast<double*>(p->data);
+        double old_scale = s_display_scale.exchange(new_scale,
+            std::memory_order_relaxed);
+        if (new_scale != old_scale) {
+            ev.type = MpvEventType::DISPLAY_SCALE;
+            ev.dbl = new_scale;
+        }
         break;
+    }
     case MPV_OBSERVE_DISPLAY_FPS: {
         if (p->format != MPV_FORMAT_DOUBLE) break;
         double fps = *static_cast<double*>(p->data);

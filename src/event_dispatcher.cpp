@@ -1,5 +1,6 @@
 #include "event_dispatcher.h"
 
+#include "browser/browsers.h"
 #include "common.h"
 #include "event_queue.h"
 #include "logging.h"
@@ -93,6 +94,9 @@ void route_to_coordinator(const MpvEvent& ev) {
         break;
     case MpvEventType::OSD_DIMS:
         g_playback_coord->postOsdDims(ev.lw, ev.lh, ev.pw, ev.ph);
+        break;
+    case MpvEventType::DISPLAY_SCALE:
+        if (g_browsers && ev.dbl > 0) g_browsers->setScale(ev.dbl);
         break;
     case MpvEventType::BUFFERED_RANGES: {
         std::vector<PlaybackBufferedRange> ranges;
