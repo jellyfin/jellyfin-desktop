@@ -47,8 +47,8 @@ update-deps *args:
 mpv *args: build
     #!/bin/sh
     set -eu
-    third_party/mpv/build/mpv "$@"
+    build/mpv-build/mpv "$@"
 
 # Remove build artifacts (keeps CEF SDK download)
 clean:
-    rm -rf build dist third_party/mpv/build
+    rm -rf build dist
