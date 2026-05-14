@@ -1,11 +1,34 @@
 # Linux-specific recipes (imported by top-level justfile)
 
-# Build AppImage (outputs to dist/)
-[linux]
-appimage:
-    ./dev/linux/appimage/build.sh
+[private]
+mod linux_common 'linux_common.just'
 
-# Build Flatpak bundle (outputs to dist/)
+# Build the app
 [linux]
-flatpak:
-    ./dev/linux/flatpak/build.sh
+build: linux_common::deps
+    #!/bin/sh
+    set -eu
+    if ! [ -f build/CMakeCache.txt ]; then
+        cmake -S . -B build -G Ninja -DBUILD_TESTING=ON -DBUILD_MPV_CLI=ON -DEXTERNAL_MPV_DIR=
+    fi
+    cmake --build build
+
+# Run tests
+[linux]
+test: build
+    ctest --test-dir build --output-on-failure
+
+# Run the app
+[linux]
+run *args: build
+    build/jellyfin-desktop --log-level=debug --log-file=build/run.log {{args}}
+
+# Run the mpv CLI
+[linux]
+run-mpv *args: build
+    #!/bin/sh
+    set -eu
+    build/mpv-build/mpv "$@"
+
+mod appimage 'appimage/appimage.just'
+mod flatpak 'flatpak/flatpak.just'

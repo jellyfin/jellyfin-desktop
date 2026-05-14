@@ -18,5 +18,5 @@ run *args: build
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [windows]
-mpv *args: build
+run-mpv *args: build
     build\mpv-build\mpv.exe {{args}}

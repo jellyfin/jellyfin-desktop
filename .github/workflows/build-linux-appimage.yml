@@ -15,7 +15,18 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          # archlinux:latest base image is x86_64-only; needs Dockerfile +
+          # container-build.sh changes (alt base, dynamic appimagetool/ld
+          # interpreter) before this can build.
+          # - arch: aarch64
+          #   runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout
@@ -23,26 +34,20 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Build AppImage
-        run: |
-          docker build \
-            -t jellyfin-desktop-appimage \
-            -f dev/linux/appimage/Dockerfile \
-            .
+      - name: Cache CEF SDK
+        uses: actions/cache@v4
+        with:
+          path: third_party/cef*
+          key: cef-appimage-${{ matrix.arch }}-${{ hashFiles('CEF_VERSION') }}
 
-      - name: Extract AppImage
-        env:
-          WORKSPACE: ${{ github.workspace }}
-        run: |
-          mkdir -p dist
-          VERSION=$(dev/tools/version.sh)
-          docker run --rm \
-            -v "${WORKSPACE}/dist:/host-output" \
-            -e VERSION="${VERSION}" \
-            jellyfin-desktop-appimage
+      - name: Download CEF SDK
+        run: python3 dev/tools/download_cef.py
+
+      - name: Build AppImage
+        run: ./dev/linux/appimage/build.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: linux-appimage-x86_64
+          name: linux-appimage-${{ matrix.arch }}
           path: dist/JellyfinDesktop-*.AppImage
