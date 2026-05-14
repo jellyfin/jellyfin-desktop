@@ -470,7 +470,7 @@ if(EXTERNAL_MPV_DIR)
 else()
     # Build mpv from submodule using meson
     set(MPV_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/mpv")
-    set(MPV_BUILD_DIR "${MPV_SOURCE_DIR}/build")
+    set(MPV_BUILD_DIR "${CMAKE_BINARY_DIR}/mpv-build")
 
     if(APPLE)
         set(MPV_LIBRARY "${MPV_BUILD_DIR}/libmpv.dylib")
@@ -490,8 +490,8 @@ else()
     if(NOT EXISTS "${MPV_BUILD_DIR}/build.ninja")
         message(STATUS "Configuring mpv with meson (cplayer=${_MPV_CPLAYER})...")
         execute_process(
-            COMMAND meson setup build --default-library=shared -Dlibmpv=true -Dcplayer=${_MPV_CPLAYER}
-            WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+            COMMAND meson setup ${MPV_BUILD_DIR} ${MPV_SOURCE_DIR}
+                    --default-library=shared -Dlibmpv=true -Dcplayer=${_MPV_CPLAYER}
             RESULT_VARIABLE MPV_SETUP_RESULT
         )
         if(NOT MPV_SETUP_RESULT EQUAL 0)
@@ -499,8 +499,7 @@ else()
         endif()
     else()
         execute_process(
-            COMMAND meson configure build -Dcplayer=${_MPV_CPLAYER}
-            WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+            COMMAND meson configure ${MPV_BUILD_DIR} -Dcplayer=${_MPV_CPLAYER}
             RESULT_VARIABLE MPV_RECONFIG_RESULT
         )
         if(NOT MPV_RECONFIG_RESULT EQUAL 0)
@@ -510,8 +509,7 @@ else()
 
     # Custom target that always invokes meson compile (meson handles incremental builds)
     add_custom_target(mpv_build
-        COMMAND meson compile -C build
-        WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+        COMMAND meson compile -C ${MPV_BUILD_DIR}
         COMMENT "Building mpv (meson handles incremental builds)"
         BYPRODUCTS ${MPV_LIBRARY}
     )

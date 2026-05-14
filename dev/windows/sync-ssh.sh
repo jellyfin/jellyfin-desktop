@@ -24,7 +24,6 @@ sync_to_remote() {
         --exclude '.mcp.json' \
         --exclude '.flatpak-builder/**' \
         --exclude 'build-dir/**' \
-        --filter '- /third_party/mpv/build/**' \
         --filter '+ /third_party/mpv/**' \
         --filter '+ /third_party/letsmove/**' \
         --filter '+ /third_party/quill/**' \
