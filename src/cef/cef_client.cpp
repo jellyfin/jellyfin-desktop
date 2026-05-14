@@ -763,10 +763,19 @@ bool CefLayer::RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>
     if (pending_menu_callback_) pending_menu_callback_->Cancel();
     pending_menu_callback_ = callback;
 
+    // GetXCoord/GetYCoord return coordinates in the paint-buffer (physical)
+    // space, but the JS menu uses CSS position:fixed in logical/CSS pixels.
+    // Divide by device_scale_factor to convert.
+    float scale = (physical_w_ > 0 && width_ > 0)
+        ? static_cast<float>(physical_w_) / width_
+        : 1.0f;
+    int cx = static_cast<int>(params->GetXCoord() / scale);
+    int cy = static_cast<int>(params->GetYCoord() / scale);
+
     cJSON* call_args = cJSON_CreateArray();
     cJSON_AddItemToArray(call_args, serializeMenuModel(model));
-    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetXCoord()));
-    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetYCoord()));
+    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(cx));
+    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(cy));
     char* json = cJSON_PrintUnformatted(call_args);
     browser->GetMainFrame()->ExecuteJavaScript(
         "window._showContextMenu.apply(null," + std::string(json) + ")",

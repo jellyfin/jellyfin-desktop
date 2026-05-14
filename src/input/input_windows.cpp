@@ -18,6 +18,8 @@ struct State {
     HWND  input_hwnd = nullptr;
     DWORD thread_id  = 0;
 
+    float scale = 1.0f;  // physical-to-logical ratio; updated on resize
+
     cef_cursor_type_t cursor_type = CT_POINTER;
 };
 
@@ -174,6 +176,15 @@ LPCTSTR cef_cursor_to_win(cef_cursor_type_t type) {
     }
 }
 
+// --- Coordinate scaling -----------------------------------------------------
+// CEF expects mouse coordinates in logical (CSS) pixels matching GetViewRect.
+// The input HWND is sized to physical pixels, so WM_MOUSEMOVE et al. deliver
+// physical coordinates. Divide by the display scale to get logical pixels.
+int to_logical(int physical) {
+    float s = g.scale;
+    return (s > 1.0f) ? static_cast<int>(physical / s) : physical;
+}
+
 // --- Input WndProc ----------------------------------------------------------
 
 LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -191,7 +202,8 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // --- Mouse move ---
     case WM_MOUSEMOVE:
         dispatch_mouse_move({
-            .x = GET_X_LPARAM(lp), .y = GET_Y_LPARAM(lp),
+            .x = to_logical(GET_X_LPARAM(lp)),
+            .y = to_logical(GET_Y_LPARAM(lp)),
             .modifiers = mouse_modifiers(wp),
             .leave = false,
         });
@@ -213,8 +225,8 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         dispatch_mouse_button({
             .button      = msg_to_button(msg),
             .pressed     = is_button_down(msg),
-            .x           = GET_X_LPARAM(lp),
-            .y           = GET_Y_LPARAM(lp),
+            .x           = to_logical(GET_X_LPARAM(lp)),
+            .y           = to_logical(GET_Y_LPARAM(lp)),
             .click_count = 1,
             .modifiers   = mouse_modifiers(wp),
         });
@@ -255,7 +267,7 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ScreenToClient(hwnd, &pt);
         dispatch_scroll({
-            .x = pt.x, .y = pt.y,
+            .x = to_logical(pt.x), .y = to_logical(pt.y),
             .dx = 0,   .dy = GET_WHEEL_DELTA_WPARAM(wp),
             .modifiers = mouse_modifiers(wp),
         });
@@ -266,7 +278,7 @@ LRESULT CALLBACK input_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ScreenToClient(hwnd, &pt);
         dispatch_scroll({
-            .x = pt.x, .y = pt.y,
+            .x = to_logical(pt.x), .y = to_logical(pt.y),
             .dx = GET_WHEEL_DELTA_WPARAM(wp), .dy = 0,
             .modifiers = mouse_modifiers(wp),
         });
@@ -371,7 +383,8 @@ void stop_input_thread() {
         PostThreadMessage(g.thread_id, WM_QUIT, 0, 0);
 }
 
-void resize_to_parent(int pw, int ph) {
+void resize_to_parent(int pw, int ph, float scale) {
+    if (scale > 0.0f) g.scale = scale;
     if (g.input_hwnd)
         SetWindowPos(g.input_hwnd, nullptr, 0, 0, pw, ph,
                      SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);

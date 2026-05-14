@@ -644,13 +644,22 @@ static void win_toggle_fullscreen() {
 // =====================================================================
 
 static float win_get_scale() {
+    // Prefer the per-window DPI from Windows — mpv's display-hidpi-scale
+    // reports 1.0 in per-monitor DPI-aware mode even when the display is
+    // scaled, causing a mismatch with CEF's own DPI detection.
+    if (g_win.mpv_hwnd) {
+        UINT dpi = GetDpiForWindow(g_win.mpv_hwnd);
+        if (dpi > 0) {
+            g_win.cached_scale = static_cast<float>(dpi) / 96.0f;
+            return g_win.cached_scale;
+        }
+    }
     double scale = mpv::display_scale();
     if (scale > 0) {
         g_win.cached_scale = static_cast<float>(scale);
         return g_win.cached_scale;
     }
     if (g_win.cached_scale > 0) return g_win.cached_scale;
-    // Pre-mpv (e.g. default-geometry sizing at startup): ask the OS directly.
     UINT dpi = GetDpiForSystem();
     if (dpi > 0) return static_cast<float>(dpi) / 96.0f;
     return 1.0f;
@@ -708,9 +717,8 @@ static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
                 int pw = LOWORD(msg->lParam);
                 int ph = HIWORD(msg->lParam);
                 if (pw > 0 && ph > 0) {
-                    input::windows::resize_to_parent(pw, ph);
-
-                    float scale = g_win.cached_scale > 0 ? g_win.cached_scale : 1.0f;
+                    float scale = win_get_scale();
+                    input::windows::resize_to_parent(pw, ph, scale);
                     int lw = static_cast<int>(pw / scale);
                     int lh = static_cast<int>(ph / scale);
 
