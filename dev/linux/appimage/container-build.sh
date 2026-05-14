@@ -10,6 +10,13 @@ set -eu
 
 : "${VERSION:?VERSION env must be set}"
 
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64)  LD_SONAME=ld-linux-x86-64.so.2 ;;
+    aarch64) LD_SONAME=ld-linux-aarch64.so.1 ;;
+    *) echo "unsupported arch: $ARCH" >&2; exit 1 ;;
+esac
+
 cd /src
 
 # Build (cmake's mpv_build target invokes meson)
@@ -144,7 +151,7 @@ done
 # Patch ELF interpreter to a runtime symlink so /proc/self/exe still points at
 # the binary itself — required for CEF, which re-execs /proc/self/exe for its
 # renderer/GPU/utility subprocesses. AppRun creates the symlink at startup.
-patchelf --set-interpreter /tmp/.jf-cef-interp/ld-linux-x86-64.so.2 \
+patchelf --set-interpreter "/tmp/.jf-cef-interp/${LD_SONAME}" \
     "$APPDIR/usr/bin/jellyfin-desktop"
 
 # AppDir root files (per AppImage spec)
@@ -155,6 +162,6 @@ cp /src/dev/linux/appimage/AppRun "$APPDIR/AppRun"
 chmod +x "$APPDIR/AppRun"
 
 # Package
-ARCH=x86_64 /opt/tools/appimagetool/AppRun --no-appstream \
-    --runtime-file /opt/tools/runtime-x86_64 \
-    "$APPDIR" "/host-output/JellyfinDesktop-${VERSION}-x86_64.AppImage"
+ARCH="$ARCH" /opt/tools/appimagetool/AppRun --no-appstream \
+    --runtime-file "/opt/tools/runtime-${ARCH}" \
+    "$APPDIR" "/host-output/JellyfinDesktop-${VERSION}-${ARCH}.AppImage"

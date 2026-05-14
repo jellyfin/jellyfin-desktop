@@ -23,10 +23,11 @@ RUN dnf -y upgrade && \
     dnf clean all
 
 WORKDIR /opt/tools
-RUN wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" && \
-    chmod +x appimagetool-x86_64.AppImage && \
-    ./appimagetool-x86_64.AppImage --appimage-extract && \
-    mv squashfs-root appimagetool && rm appimagetool-x86_64.AppImage && \
-    wget -q -O /opt/tools/runtime-x86_64 \
-    "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
+RUN ARCH="$(uname -m)" && \
+    wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage" && \
+    chmod +x "appimagetool-${ARCH}.AppImage" && \
+    "./appimagetool-${ARCH}.AppImage" --appimage-extract && \
+    mv squashfs-root appimagetool && rm "appimagetool-${ARCH}.AppImage" && \
+    wget -q -O "/opt/tools/runtime-${ARCH}" \
+    "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${ARCH}"
 
