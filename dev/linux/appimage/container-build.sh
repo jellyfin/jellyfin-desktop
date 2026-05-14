@@ -47,10 +47,17 @@ cp "$BUILD"/libvk_swiftshader.so "$APPDIR/usr/bin/"
 
 # Ship the full system library stack (junest approach: glibc + ld-linux
 # bundled so the AppImage works regardless of host glibc version).
-cp -a /usr/lib "$APPDIR/usr/lib"
+# Fedora x86_64: shared libs live in /usr/lib64; /usr/lib holds noarch only.
+cp -a /usr/lib64 "$APPDIR/usr/lib"
 
 # mpv lib (cmake post-build copies it next to jellyfin-desktop)
 cp "$BUILD"/libmpv.so.2 "$APPDIR/usr/lib/"
+
+# Fedora's ffmpeg-free links GnuTLS; GnuTLS needs a system priority file from
+# crypto-policies. Bundle the DEFAULT one; AppRun points GNUTLS_SYSTEM_PRIORITY_FILE at it.
+mkdir -p "$APPDIR/usr/share/crypto-policies/DEFAULT"
+cp /usr/share/crypto-policies/DEFAULT/gnutls.txt \
+   "$APPDIR/usr/share/crypto-policies/DEFAULT/gnutls.txt"
 
 # Desktop integration
 mkdir -p "$APPDIR/usr/share/applications" \
@@ -76,6 +83,8 @@ rm -rf "$APPDIR/usr/lib/pkgconfig" \
        "$APPDIR/usr/lib/ldscripts" \
        "$APPDIR/usr/lib/systemd" \
        "$APPDIR"/usr/lib/libLLVM* \
+       "$APPDIR"/usr/lib/llvm* \
+       "$APPDIR"/usr/lib/clang* \
        "$APPDIR"/usr/lib/LLVMgold* \
        "$APPDIR"/usr/lib/libLTO* \
        "$APPDIR"/usr/lib/libgallium* \
