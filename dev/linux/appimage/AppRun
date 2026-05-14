@@ -20,6 +20,9 @@ ln -sf "${HERE}/usr/lib/ld-linux-x86-64.so.2" "$INTERP_DIR/ld-linux-x86-64.so.2"
 export SPA_PLUGIN_DIR="${HERE}/usr/lib/spa-0.2"
 export PIPEWIRE_MODULE_DIR="${HERE}/usr/lib/pipewire-0.3"
 
+# Fedora's ffmpeg-free uses GnuTLS, which requires a crypto-policies priority file.
+export GNUTLS_SYSTEM_PRIORITY_FILE="${HERE}/usr/share/crypto-policies/DEFAULT/gnutls.txt"
+
 # LD_LIBRARY_PATH for library resolution (bundled first, host fallback for GPU).
 export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
