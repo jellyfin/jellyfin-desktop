@@ -13,8 +13,13 @@ export APPDIR="${HERE}"
 # to the actual binary — critical for CEF, which re-executes /proc/self/exe
 # for renderer/GPU/utility subprocesses.
 INTERP_DIR="/tmp/.jf-cef-interp"
+case "$(uname -m)" in
+    x86_64)  LD_SONAME=ld-linux-x86-64.so.2 ;;
+    aarch64) LD_SONAME=ld-linux-aarch64.so.1 ;;
+    *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+esac
 mkdir -p "$INTERP_DIR"
-ln -sf "${HERE}/usr/lib/ld-linux-x86-64.so.2" "$INTERP_DIR/ld-linux-x86-64.so.2"
+ln -sf "${HERE}/usr/lib/${LD_SONAME}" "${INTERP_DIR}/${LD_SONAME}"
 
 # PipeWire/SPA plugin discovery
 export SPA_PLUGIN_DIR="${HERE}/usr/lib/spa-0.2"
