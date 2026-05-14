@@ -27,7 +27,7 @@ jobs:
         run: |
           docker build \
             -t jellyfin-desktop-appimage \
-            -f dev/appimage/Dockerfile \
+            -f dev/linux/appimage/Dockerfile \
             .
 
       - name: Extract AppImage

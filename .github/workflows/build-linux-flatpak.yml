@@ -37,7 +37,7 @@ jobs:
           flatpak install --user -y flathub org.freedesktop.Sdk//25.08 org.freedesktop.Platform//25.08
 
       - name: Build Flatpak
-        run: ./dev/flatpak/build.sh
+        run: ./dev/linux/flatpak/build.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

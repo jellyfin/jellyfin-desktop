@@ -2,7 +2,7 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 OUTPUT_DIR="${1:-${PROJECT_ROOT}/dist}"
 VERSION="$("${PROJECT_ROOT}/dev/tools/version.sh")"
 

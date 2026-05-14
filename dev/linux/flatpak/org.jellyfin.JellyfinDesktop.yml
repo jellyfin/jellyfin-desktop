@@ -42,7 +42,7 @@ modules:
       - cp libcef_dll_wrapper/libcef_dll_wrapper.a /app/cef/lib/
     sources:
       - type: dir
-        path: ../../third_party/cef
+        path: ../../../third_party/cef
 
   - name: libmpv
     buildsystem: meson
@@ -63,7 +63,7 @@ modules:
       - /share/zsh
     sources:
       - type: dir
-        path: ../../third_party/mpv
+        path: ../../../third_party/mpv
     modules:
       - name: luajit
         no-autogen: true
@@ -176,4 +176,4 @@ modules:
       - install -Dm644 build/flatpak/generated.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
     sources:
       - type: dir
-        path: ../..
+        path: ../../..
