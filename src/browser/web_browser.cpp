@@ -164,8 +164,14 @@ bool WebBrowser::handleMessage(const std::string& name,
         std::string externalAudioUrl = args->GetSize() > 6 ? args->GetString(6).ToString() : "";
         std::string externalSubUrl = args->GetSize() > 7 ? args->GetString(7).ToString() : "";
         bool isInfiniteStream = args->GetSize() > 8 ? args->GetBool(8) : false;
-        LOG_INFO(LOG_CEF, "playerLoad: video={} audio={} sub={} start={}ms infinite={} extAudio={} extSub={} url={}",
-                 videoIdx, audioIdx, subIdx, startMs, isInfiniteStream, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
+
+        // Distinguish Dolby Vision from HDR10 so mpv playback options can
+        // apply platform-specific color handling only for DV content.
+        bool isDolbyVision = args->GetSize() > 9 ? args->GetBool(9) : false;
+
+        LOG_INFO(LOG_CEF, "playerLoad: video={} audio={} sub={} start={}ms infinite={} dolbyVision={} extAudio={} extSub={} url={}",
+            videoIdx, audioIdx, subIdx, startMs, isInfiniteStream, isDolbyVision, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
+
         // Push next-track metadata + load-starting hint atomically before
         // mpv loadfile. Parse metadata first so the Jellyfin item Id can
         // ride along with postLoadStarting — SM compares it to the prior
@@ -178,7 +184,7 @@ bool WebBrowser::handleMessage(const std::string& name,
         // content immediately.
         MediaMetadata meta = metadataJson.empty()
             ? MediaMetadata{}
-            : parseMetadataJson(metadataJson);
+        : parseMetadataJson(metadataJson);
         if (g_playback_coord) {
             g_playback_coord->postLoadStarting(meta.id);
             g_playback_coord->postPosition(static_cast<int64_t>(startMs) * 1000);
@@ -195,6 +201,9 @@ bool WebBrowser::handleMessage(const std::string& name,
         opts.externalAudioUrl = externalAudioUrl;
         opts.externalSubUrl = externalSubUrl;
         opts.isInfiniteStream = isInfiniteStream;
+        // Preserve Dolby Vision state through native playback setup so
+        // mpv-specific handling can be applied only to DV content.
+        opts.isDolbyVision = isDolbyVision;
         g_mpv.LoadFile(url, opts);
     } else if (name == "playerStop") {
         g_mpv.Stop();

@@ -156,6 +156,10 @@ public:
         // honor jellyfin-web's choice; combined with non-live we still
         // honor explicit disables.
         bool isInfiniteStream = false;
+
+        // Indicates Dolby Vision content detected upstream in jellyfin-web.
+        // Used to selectively adjust mpv color handling for DV playback.
+        bool isDolbyVision = false;
     };
 
     void LoadFile(const std::string& path, const LoadOptions& opts) {
@@ -176,6 +180,11 @@ public:
                                && opts.externalAudioUrl.empty();
         pendingValid_ = true;
 
+     #ifdef _WIN32
+        // Windows DV playback falls back to HDR during active playback unless
+        // mpv colorspace hinting is disabled for detected Dolby Vision media.
+        SetOptionString("target-colorspace-hint", opts.isDolbyVision ? "no" : "yes");
+     #endif
         std::string optsStr = "start=" + std::to_string(opts.startSecs)
                             + ",pause=yes";
         if (pendingDeferAudioToMpv_) {
