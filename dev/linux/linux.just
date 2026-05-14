@@ -3,9 +3,9 @@
 # Build AppImage (outputs to dist/)
 [linux]
 appimage:
-    ./dev/appimage/build.sh
+    ./dev/linux/appimage/build.sh
 
 # Build Flatpak bundle (outputs to dist/)
 [linux]
 flatpak:
-    ./dev/flatpak/build.sh
+    ./dev/linux/flatpak/build.sh

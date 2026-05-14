@@ -2,7 +2,7 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BUILD_OUT="${REPO_ROOT}/build/flatpak"
 DIST_DIR="${REPO_ROOT}/dist"
 mkdir -p "$BUILD_OUT" "$DIST_DIR"
