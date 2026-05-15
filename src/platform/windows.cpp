@@ -656,6 +656,13 @@ static float win_get_scale() {
     return 1.0f;
 }
 
+// Per-monitor DPI (GetDpiForMonitor) lives in Shcore.dll which isn't
+// currently linked; fall back to system DPI and ignore (x, y).
+static float win_get_display_scale(int /*x*/, int /*y*/) {
+    UINT dpi = GetDpiForSystem();
+    return dpi > 0 ? static_cast<float>(dpi) / 96.0f : 1.0f;
+}
+
 // =====================================================================
 // Input thread: transparent child HWND -> CEF events
 // =====================================================================
@@ -1046,6 +1053,7 @@ Platform make_windows_platform() {
         .in_transition = win_in_transition,
         .set_expected_size = win_set_expected_size,
         .get_scale = win_get_scale,
+        .get_display_scale = win_get_display_scale,
         .query_window_position = win_query_window_position,
         .clamp_window_geometry = win_clamp_window_geometry,
         .pump = win_pump,

@@ -667,6 +667,13 @@ static float macos_get_scale() {
     return 1.0f;
 }
 
+// Saved (x, y) in backing pixels can't be unambiguously mapped to an
+// NSScreen without identity persistence — use mainScreen.
+static float macos_get_display_scale(int /*x*/, int /*y*/) {
+    NSScreen* screen = [NSScreen mainScreen];
+    return screen ? static_cast<float>([screen backingScaleFactor]) : 1.0f;
+}
+
 namespace macos_platform {
 bool query_logical_content_size(int* w, int* h) {
     if (!g_window) return false;
@@ -1112,6 +1119,7 @@ Platform make_macos_platform() {
         .in_transition = macos_in_transition,
         .set_expected_size = macos_set_expected_size,
         .get_scale = macos_get_scale,
+        .get_display_scale = macos_get_display_scale,
         .query_window_position = macos_query_window_position,
         .clamp_window_geometry = macos_clamp_window_geometry,
         .pump = macos_pump,

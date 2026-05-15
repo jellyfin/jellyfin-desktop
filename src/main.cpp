@@ -45,10 +45,6 @@
 #include "single_instance.h"
 #endif
 
-#ifdef __linux__
-#include "platform/wayland_scale_probe.h"
-#endif
-
 #include "include/cef_version.h"
 
 #include <cmath>
@@ -668,35 +664,19 @@ int main(int argc, char* argv[]) {
         auto saved_geom = Settings::instance().windowGeometry();
 
         int x = saved_geom.x, y = saved_geom.y;
-
-        // Pre-init scale probe via own wl_display: needed because mpv only
-        // learns the live fractional scale after vo_wayland_init has already
-        // committed --geometry, which is too late to scale-correct the
-        // initial window. With this, we pass --geometry already in physical
-        // pixels for the live scale, so the window opens at the right size.
+        float scale = g_platform.get_display_scale(x, y);
         int w, h;
-#ifdef __linux__
-        if (g_platform.display == DisplayBackend::Wayland) {
-            int logical_w = saved_geom.logical_width  > 0 ? saved_geom.logical_width
-                                                          : WG::kDefaultLogicalWidth;
-            int logical_h = saved_geom.logical_height > 0 ? saved_geom.logical_height
-                                                          : WG::kDefaultLogicalHeight;
-            double live_scale = wayland_scale_probe::query_scale(x, y);
-            if (live_scale <= 0.0)
-                live_scale = saved_geom.scale > 0.f ? saved_geom.scale : WG::kDefaultScale;
-            w = static_cast<int>(std::lround(logical_w * live_scale));
-            h = static_cast<int>(std::lround(logical_h * live_scale));
-            LOG_INFO(LOG_MAIN, "[FLOW] wayland scale probe: live={} logical={}x{} -> {}x{}",
-                     live_scale, logical_w, logical_h, w, h);
-        } else
-#endif
-        if (saved_geom.width > 0 && saved_geom.height > 0) {
+        if (saved_geom.logical_width > 0 && saved_geom.logical_height > 0) {
+            w = static_cast<int>(std::lround(saved_geom.logical_width  * scale));
+            h = static_cast<int>(std::lround(saved_geom.logical_height * scale));
+        } else if (saved_geom.width > 0 && saved_geom.height > 0) {
             w = saved_geom.width;
             h = saved_geom.height;
         } else {
-            w = WG::kDefaultPhysicalWidth;
-            h = WG::kDefaultPhysicalHeight;
+            w = static_cast<int>(std::lround(WG::kDefaultLogicalWidth  * scale));
+            h = static_cast<int>(std::lround(WG::kDefaultLogicalHeight * scale));
         }
+        LOG_DEBUG(LOG_MAIN, "initial scale: {} -> {}x{}", scale, w, h);
 
         if (g_platform.clamp_window_geometry)
             g_platform.clamp_window_geometry(&w, &h, &x, &y);

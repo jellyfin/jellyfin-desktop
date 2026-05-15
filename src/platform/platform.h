@@ -93,6 +93,10 @@ struct Platform {
 
     float (*get_scale)();
 
+    // Live display scale at screen point (x, y), queried from the OS.
+    // Returns a positive float; backends return 1.0f on query failure.
+    float (*get_display_scale)(int x, int y);
+
     // Query the window's top-left screen position in logical pixels.
     // Returns false if unavailable. Used to save/restore window position.
     bool (*query_window_position)(int* x, int* y);
