@@ -1,6 +1,7 @@
 #include "common.h"
 #include "cef/cef_client.h"
 #include "platform/platform.h"
+#include "platform/wayland_scale_probe.h"
 #include "clipboard/wayland.h"
 #include "idle_inhibit_linux.h"
 #include "open_url_linux.h"
@@ -1111,6 +1112,11 @@ static float wl_get_scale() {
     return g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
 }
 
+static float wl_get_display_scale(int x, int y) {
+    double s = wayland_scale_probe::query_scale(x, y);
+    return s > 0.0 ? static_cast<float>(s) : 1.0f;
+}
+
 static void wl_cleanup() {
     stop_fade_thread();
 
@@ -1558,6 +1564,7 @@ Platform make_wayland_platform() {
         .in_transition = wl_in_transition,
         .set_expected_size = wl_set_expected_size,
         .get_scale = wl_get_scale,
+        .get_display_scale = wl_get_display_scale,
         .query_window_position = [](int*, int*) -> bool { return false; },
         .clamp_window_geometry = nullptr,
         .pump = wl_pump,

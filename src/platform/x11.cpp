@@ -610,6 +610,7 @@ Platform make_x11_platform() {
         .in_transition = x11_in_transition,
         .set_expected_size = x11_set_expected_size,
         .get_scale = x11_get_scale,
+        .get_display_scale = [](int, int) -> float { return 1.0f; },
         .query_window_position = [](int* x, int* y) -> bool {
             if (!g_x11.conn || g_x11.parent == XCB_NONE) return false;
             auto cookie = xcb_translate_coordinates(g_x11.conn,
