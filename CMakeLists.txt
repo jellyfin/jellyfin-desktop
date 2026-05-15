@@ -236,6 +236,10 @@ else()
     set(EXT_DATA_CONTROL_CLIENT_H "${WAYLAND_GENERATED_DIR}/ext-data-control-v1-client.h")
     set(EXT_DATA_CONTROL_CODE_C "${WAYLAND_GENERATED_DIR}/ext-data-control-v1-code.c")
 
+    set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output-unstable-v1.xml")
+    set(XDG_OUTPUT_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-client.h")
+    set(XDG_OUTPUT_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-code.c")
+
     # tablet-v2 interface symbols are referenced by cursor-shape-v1 generated code
     set(TABLET_V2_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/stable/tablet/tablet-v2.xml")
     set(TABLET_V2_CLIENT_H "${WAYLAND_GENERATED_DIR}/tablet-v2-client.h")
@@ -313,6 +317,18 @@ else()
         COMMENT "Generating ext-data-control-v1 code"
     )
     add_custom_command(
+        OUTPUT ${XDG_OUTPUT_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${XDG_OUTPUT_PROTOCOL} ${XDG_OUTPUT_CLIENT_H}
+        DEPENDS ${XDG_OUTPUT_PROTOCOL}
+        COMMENT "Generating xdg-output-unstable-v1 client header"
+    )
+    add_custom_command(
+        OUTPUT ${XDG_OUTPUT_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${XDG_OUTPUT_PROTOCOL} ${XDG_OUTPUT_CODE_C}
+        DEPENDS ${XDG_OUTPUT_PROTOCOL}
+        COMMENT "Generating xdg-output-unstable-v1 code"
+    )
+    add_custom_command(
         OUTPUT ${TABLET_V2_CLIENT_H}
         COMMAND ${WAYLAND_SCANNER} client-header ${TABLET_V2_PROTOCOL} ${TABLET_V2_CLIENT_H}
         DEPENDS ${TABLET_V2_PROTOCOL}
@@ -356,6 +372,7 @@ else()
         src/playback/sinks/mpris/mpris_projection.cpp
         # Wayland
         src/platform/wayland.cpp
+        src/platform/wayland_scale_probe.cpp
         src/clipboard/wayland.cpp
         src/input/input_wayland.cpp
         # Generated Wayland protocols
@@ -371,6 +388,8 @@ else()
         ${EXT_DATA_CONTROL_CLIENT_H}
         ${TABLET_V2_CODE_C}
         ${TABLET_V2_CLIENT_H}
+        ${XDG_OUTPUT_CODE_C}
+        ${XDG_OUTPUT_CLIENT_H}
     )
     if(ENABLE_KDE_PALETTE)
         list(APPEND PLATFORM_SOURCES
