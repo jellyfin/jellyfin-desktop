@@ -56,10 +56,15 @@ window._showContextMenu = function(items, x, y) {
     }
 
     var done = false;
+    function onDismiss() { finish(null); }
+    function onContextMenu(e) { e.preventDefault(); finish(null); }
     function finish(id) {
         if (done) return;
         done = true;
         window.removeEventListener('keydown', onKeyDown, true);
+        window.removeEventListener('blur', onDismiss);
+        window.removeEventListener('resize', onDismiss);
+        window.removeEventListener('contextmenu', onContextMenu, true);
         host.remove();
         if (id != null) { if (window.jmpNative) jmpNative.menuItemSelected(id); }
         else { if (window.jmpNative) jmpNative.menuDismissed(); }
@@ -81,12 +86,20 @@ window._showContextMenu = function(items, x, y) {
     // preventDefault on mousedown keeps focus on the text input so edit
     // commands (Paste, etc.) target the right element.
     menu.addEventListener('mousedown', function(e) {
+        if (e.button === 2) return;  // contextmenu handler closes
         e.preventDefault();
         var t = e.target.closest('.i:not(.off)');
         if (t) finish(parseInt(t.dataset.id));
     });
-    bg.addEventListener('mousedown', function(e) { e.preventDefault(); finish(null); });
+    bg.addEventListener('mousedown', function(e) {
+        if (e.button === 2) return;  // contextmenu handler closes
+        e.preventDefault();
+        finish(null);
+    });
     window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('blur', onDismiss);
+    window.addEventListener('resize', onDismiss);
+    window.addEventListener('contextmenu', onContextMenu, true);
 
     document.body.appendChild(host);
 };
