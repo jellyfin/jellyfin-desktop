@@ -215,14 +215,17 @@ static int run_with_cef(int mw, int mh,
     LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={} display-hz={}",
              display_hidpi_scale, fs_flag, mpv::display_hz());
 
-    // If the live display-hidpi-scale differs from the saved scale, the
-    // pixels we passed to --geometry were sized for the wrong scale.
-    // Resize using the saved logical × the live scale.
-    //
-    // When the compositor has forced fullscreen, still issue SetGeometry so
-    // mpv's stored unfullscreen size (wl->window_size) is scale-corrected for
-    // the eventual restore, but don't overwrite mw/mh — the fullscreen surface
-    // size is authoritative for browser creation.
+    // Scale-correct the window size when live display scale differs from
+    // saved. Skip while the compositor has the surface locked
+    // (fullscreen/maximized): mpv's wayland set_geometry runtime path
+    // unconditionally writes wl->window_size and fires VO_EVENT_RESIZE,
+    // which makes osd-dimensions emit the corrected size and CEF resize to
+    // it — while the actual surface stays at the locked size. Internal/
+    // visual size diverge ("sometimes" depending on whether the compositor
+    // re-issues a configure). Defer: the next clean unmaximize/unfullscreen
+    // restores to mpv's pre-init geometry value, the user resizes once, and
+    // shutdown saves a matching scale so subsequent launches need no
+    // correction.
     {
         using WG = Settings::WindowGeometry;
         const auto& saved = Settings::instance().windowGeometry();
@@ -231,7 +234,8 @@ static int run_with_cef(int mw, int mh,
                                                  : WG::kDefaultLogicalWidth;
         int logical_h = saved.logical_height > 0 ? saved.logical_height
                                                  : WG::kDefaultLogicalHeight;
-        if (display_hidpi_scale > 0.0 &&
+        bool locked = fs_flag || mpv::window_maximized();
+        if (!locked && display_hidpi_scale > 0.0 &&
             std::fabs(display_hidpi_scale - saved_scale) >= 0.01) {
             int new_pw = static_cast<int>(
                 std::lround(logical_w * display_hidpi_scale));
@@ -243,10 +247,8 @@ static int run_with_cef(int mw, int mh,
                      "[FLOW] scale {:.3f} -> {:.3f}, resize to {}",
                      saved_scale, display_hidpi_scale, geom_str.c_str());
             g_mpv.SetGeometry(geom_str);
-            if (!fs_flag) {
-                mw = new_pw;
-                mh = new_ph;
-            }
+            mw = new_pw;
+            mh = new_ph;
         }
         mpv::set_window_pixels(mw, mh);
     }
@@ -742,18 +744,24 @@ int main(int argc, char* argv[]) {
     // DispatchQueue.main.sync deadlock against core_thread on macOS.
     LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
     int64_t mw = 0, mh = 0;
-    // Route every PROPERTY_CHANGE through digest_property — this seeds the
-    // s_osd_pw/ph, s_fullscreen, s_display_scale atomics from mpv's initial-
-    // value events so platform init can read them without sync API calls.
-    auto try_consume_osd_dims = [&](mpv_event* ev) -> bool {
+    // First OSD_DIMS event reflects the pre-configure geometry hint, not the
+    // post-configure surface size. When maximized startup is requested, also
+    // wait for the window-maximized property to flip true (proves mpv has
+    // processed the compositor's maximize configure) and take the OSD_DIMS
+    // that follows.
+    bool need_max = Settings::instance().windowGeometry().maximized;
+    auto consume = [&](mpv_event* ev) -> bool {
         if (ev->event_id != MPV_EVENT_PROPERTY_CHANGE) return false;
         MpvEvent me = digest_property(
             ev->reply_userdata, static_cast<mpv_event_property*>(ev->data));
-        if (me.type != MpvEventType::OSD_DIMS || me.pw <= 0 || me.ph <= 0)
-            return false;
-        mw = me.pw;
-        mh = me.ph;
-        return true;
+        if (ev->reply_userdata == MPV_OBSERVE_WINDOW_MAX &&
+            mpv::window_maximized())
+            need_max = false;
+        if (me.type == MpvEventType::OSD_DIMS && me.pw > 0 && me.ph > 0) {
+            mw = me.pw;
+            mh = me.ph;
+        }
+        return mw > 0 && !need_max;
     };
 
 #ifdef __APPLE__
@@ -768,7 +776,7 @@ int main(int argc, char* argv[]) {
         if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
             return 0;
         }
-        if (try_consume_osd_dims(ev)) break;
+        if (consume(ev)) break;
     }
 #else
     while (true) {
@@ -779,7 +787,7 @@ int main(int argc, char* argv[]) {
         }
         if (ev->event_id == MPV_EVENT_SHUTDOWN) return 0;
         if (ev->event_id == MPV_EVENT_END_FILE) return 0;
-        if (try_consume_osd_dims(ev)) break;
+        if (consume(ev)) break;
     }
 #endif
 
