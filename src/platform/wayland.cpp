@@ -682,23 +682,11 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
     int lw = static_cast<int>(pw / scale);
     int lh = static_cast<int>(ph / scale);
 
-    // Detect shrink BEFORE updating per-surface dims — compare against the
-    // current authoritative pw/ph on cef-main. Any axis shrinking risks
-    // stale-large CEF buffers exceeding the new mpv size, so the bounding-
-    // box release must run (same as FS toggle).
-    bool shrink = false;
-    if (!g_wl.stack.empty() && g_wl.stack[0]) {
-        auto* main = g_wl.stack[0];
-        shrink = (main->pw > 0 && pw < main->pw)
-              || (main->ph > 0 && ph < main->ph);
-    }
-
-    if (fs != g_wl.was_fullscreen || shrink) {
-        // Begin if not already (covers WM-initiated FS and WM-driven shrink).
+    if (fs != g_wl.was_fullscreen) {
+        // Begin if not already (covers WM-initiated FS).
         if (!g_wl.transitioning)
             wl_begin_transition_locked();
-        if (fs != g_wl.was_fullscreen)
-            g_wl.was_fullscreen = fs;
+        g_wl.was_fullscreen = fs;
     }
 
     // Fan the configure values out to every surface in the stack. Each
