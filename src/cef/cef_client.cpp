@@ -1,10 +1,11 @@
 #include "cef_client.h"
 #include "logging.h"
 #include "../browser/browsers.h"
-#include "../cjson/cJSON.h"
 #include "../mpv/event.h"
 #include "../platform/platform.h"
+#include "include/cef_parser.h"
 #include "include/cef_task.h"
+#include "include/cef_values.h"
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -46,21 +47,21 @@ static std::string stripAccelerator(const std::string& label) {
     return out;
 }
 
-static cJSON* serializeMenuModel(CefRefPtr<CefMenuModel> model) {
-    cJSON* arr = cJSON_CreateArray();
+static CefRefPtr<CefListValue> serializeMenuModel(CefRefPtr<CefMenuModel> model) {
+    CefRefPtr<CefListValue> arr = CefListValue::Create();
     for (size_t i = 0; i < model->GetCount(); i++) {
-        cJSON* item = cJSON_CreateObject();
+        CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
         auto type = model->GetTypeAt(i);
         if (type == MENUITEMTYPE_SEPARATOR) {
-            cJSON_AddBoolToObject(item, "sep", 1);
+            item->SetBool("sep", true);
         } else {
             int id = model->GetCommandIdAt(i);
             std::string label = stripAccelerator(model->GetLabelAt(i).ToString());
-            cJSON_AddNumberToObject(item, "id", id);
-            cJSON_AddStringToObject(item, "label", label.c_str());
-            cJSON_AddBoolToObject(item, "enabled", model->IsEnabledAt(i));
+            item->SetInt("id", id);
+            item->SetString("label", label);
+            item->SetBool("enabled", model->IsEnabledAt(i));
         }
-        cJSON_AddItemToArray(arr, item);
+        arr->SetDictionary(arr->GetSize(), item);
     }
     return arr;
 }
@@ -79,13 +80,18 @@ static bool is_paste_shortcut(const CefKeyEvent& e) {
 }
 
 static std::string js_string_literal(const std::string& text) {
-    cJSON* j = cJSON_CreateString(text.c_str());
-    if (!j) return "\"\"";
-    char* s = cJSON_PrintUnformatted(j);
-    std::string result = s ? s : "\"\"";
-    if (s) cJSON_free(s);
-    cJSON_Delete(j);
-    return result;
+    CefRefPtr<CefValue> v = CefValue::Create();
+    v->SetString(text);
+    // CefWriteJSON requires a dictionary/list root; wrap the string in a
+    // 1-element list and strip the brackets to recover a bare JSON string.
+    CefRefPtr<CefListValue> wrapper = CefListValue::Create();
+    wrapper->SetValue(0, v);
+    CefRefPtr<CefValue> root = CefValue::Create();
+    root->SetList(wrapper);
+    std::string s = CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString();
+    if (s.size() >= 2 && s.front() == '[' && s.back() == ']')
+        return s.substr(1, s.size() - 2);
+    return "\"\"";
 }
 
 static void paste_via_platform_clipboard(CefRefPtr<CefBrowser> browser) {
@@ -763,15 +769,15 @@ bool CefLayer::RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>
     if (pending_menu_callback_) pending_menu_callback_->Cancel();
     pending_menu_callback_ = callback;
 
-    cJSON* call_args = cJSON_CreateArray();
-    cJSON_AddItemToArray(call_args, serializeMenuModel(model));
-    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetXCoord()));
-    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetYCoord()));
-    char* json = cJSON_PrintUnformatted(call_args);
+    CefRefPtr<CefListValue> call_args = CefListValue::Create();
+    call_args->SetList(0, serializeMenuModel(model));
+    call_args->SetInt(1, params->GetXCoord());
+    call_args->SetInt(2, params->GetYCoord());
+    CefRefPtr<CefValue> root = CefValue::Create();
+    root->SetList(call_args);
+    std::string json = CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString();
     browser->GetMainFrame()->ExecuteJavaScript(
-        "window._showContextMenu.apply(null," + std::string(json) + ")",
+        "window._showContextMenu.apply(null," + json + ")",
         "", 0);
-    cJSON_free(json);
-    cJSON_Delete(call_args);
     return true;
 }

@@ -1,6 +1,6 @@
 #include "api.h"
 
-#include "../cjson/cJSON.h"
+#include "../config/config.h"
 
 #include <cctype>
 #include <cstring>
@@ -77,17 +77,7 @@ std::string extract_base_url(std::string_view url) {
 }
 
 bool is_valid_public_info(std::string_view body) {
-    cJSON* root = cJSON_ParseWithLength(body.data(), body.size());
-    if (!root) return false;
-    bool ok = false;
-    if (cJSON_IsObject(root)) {
-        cJSON* id = cJSON_GetObjectItem(root, "Id");
-        if (id && cJSON_IsString(id) && id->valuestring && id->valuestring[0] != '\0') {
-            ok = true;
-        }
-    }
-    cJSON_Delete(root);
-    return ok;
+    return jfn_jellyfin_is_valid_public_info(body.data(), body.size());
 }
 
 }  // namespace jellyfin_api
