@@ -7,18 +7,13 @@
 #include "open_url_linux.h"
 #include "input/input_wayland.h"
 #include "mpv/event.h"
+#include "wlproxy/wlproxy.h"
 
 #include <wayland-client.h>
 #include "linux-dmabuf-v1-client.h"
 #include "viewporter-client.h"
 #include "alpha-modifier-v1-client.h"
 #include "cursor-shape-v1-client.h"
-// Callback fields in mpv's vo_wayland_state -- set via wayland-state property.
-// Must match the struct layout in wayland_common.h.
-struct wl_configure_cb {
-    void (*fn)(void *data, int width, int height, bool fullscreen);
-    void *data;
-};
 #include <drm/drm_fourcc.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -1012,19 +1007,11 @@ static bool wl_init(mpv_handle* mpv) {
     // fullscreen property-change event, so s_fullscreen is up to date.
     g_wl.was_fullscreen = mpv::fullscreen();
 
-    // Register mpv configure callback early — mpv's VO thread is already
-    // processing configures in parallel, and we need to catch them all.
-    // on_mpv_configure is safe before surfaces exist (null checks throughout).
-    {
-        intptr_t cb_ptr = 0;
-        g_mpv.GetWaylandConfigureCbPtr(cb_ptr);
-        if (cb_ptr) {
-            auto* fn = reinterpret_cast<void(**)(void*, int, int, bool)>(cb_ptr);
-            auto* data = reinterpret_cast<void**>(cb_ptr + sizeof(void*));
-            *fn = [](void*, int w, int h, bool fs) { on_mpv_configure(nullptr, w, h, fs); };
-            *data = nullptr;
-        }
-    }
+    // Intercept xdg_toplevel.configure in the proxy and route to the existing
+    // on_mpv_configure path. Fires from the proxy's per-client thread; the
+    // g_wl.surface_mtx inside on_mpv_configure makes it safe.
+    jfn_wlproxy_set_configure_callback(
+        [](int w, int h, int fs) { on_mpv_configure(nullptr, w, h, fs != 0); });
 
     intptr_t dp = 0, sp = 0;
     g_mpv.GetWaylandDisplay(dp);
