@@ -429,8 +429,6 @@ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
 [[package]]
 name = "wl-proxy"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "733c75a9bf2f04ab2a88da68a37f0293324f458fe45b2ef0e3889d7a54b62818"
 dependencies = [
  "debug-fn",
  "error_reporter",

@@ -9,7 +9,10 @@ name = "jfn_wlproxy"
 crate-type = ["staticlib"]
 
 [dependencies]
-wl-proxy = { version = "0.1.2", features = ["all-protocols"] }
+# Vendored under third_party/wl-proxy so we can drop additional protocol
+# XMLs into protocols/external/ that the upstream crates.io release doesn't
+# ship (e.g. KDE server-decoration-palette for titlebar theming on KWin).
+wl-proxy = { path = "../../third_party/wl-proxy/wl-proxy", features = ["all-protocols"] }
 error_reporter = "1.0.0"
 log = "0.4"
 
