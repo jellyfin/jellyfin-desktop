@@ -478,6 +478,43 @@ else()
         pthread dl m rt util)
 endif()
 
+# jfn-jellyfin — Rust static lib for building the Jellyfin DeviceProfile JSON.
+# Replaces the CEF-JSON-based builder previously in
+# src/jellyfin/device_profile.cpp.
+set(JELLYFIN_DIR "${CMAKE_SOURCE_DIR}/src/jellyfin")
+set(JELLYFIN_TARGET_DIR "${CMAKE_BINARY_DIR}/jellyfin-target")
+set(JELLYFIN_LIB "${JELLYFIN_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_jellyfin${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE JELLYFIN_SOURCES CONFIGURE_DEPENDS
+    "${JELLYFIN_DIR}/src/*.rs"
+    "${JELLYFIN_DIR}/Cargo.toml"
+)
+add_custom_command(
+    OUTPUT ${JELLYFIN_LIB}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${JELLYFIN_TARGET_DIR}
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${JELLYFIN_DIR}/Cargo.toml
+    DEPENDS ${JELLYFIN_SOURCES}
+    COMMENT "Building jfn-jellyfin (Rust)"
+    VERBATIM
+)
+add_custom_target(jfn_jellyfin_build DEPENDS ${JELLYFIN_LIB})
+add_library(jfn_jellyfin STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_jellyfin jfn_jellyfin_build)
+set_target_properties(jfn_jellyfin PROPERTIES
+    IMPORTED_LOCATION ${JELLYFIN_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${JELLYFIN_DIR}
+)
+if(WIN32)
+    set_property(TARGET jfn_jellyfin APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ws2_32 userenv advapi32 bcrypt ntdll)
+elseif(APPLE)
+    set_property(TARGET jfn_jellyfin APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework CoreFoundation" "-framework Security")
+else()
+    set_property(TARGET jfn_jellyfin APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        pthread dl m rt util)
+endif()
+
 # jfn-cli — Rust static lib for argv parsing (clap). Replaces the hand-rolled
 # parser previously in src/cli.cpp.
 set(CLI_DIR "${CMAKE_SOURCE_DIR}/src/cli")
@@ -983,13 +1020,13 @@ if(WIN32)
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
-target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact jfn_paths jfn_wake_event jfn_single_instance)
+target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_jellyfin jfn_log_redact jfn_paths jfn_wake_event jfn_single_instance)
 if(NOT WIN32)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_signal_guard)
 endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
-    # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_wlproxy) each embed a
+    # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_jellyfin, jfn_wlproxy) each embed a
     # copy of the Rust standard library. GNU ld refuses to deduplicate identical
     # monomorphized std symbols across two static archives; tell it to accept
     # the duplicates. The symbols are bit-identical (same rustc toolchain,
