@@ -50,7 +50,7 @@ target_include_directories(cli_test PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/cef
 )
 
-target_link_libraries(cli_test PRIVATE ${MPV_LIBRARIES} quill::quill)
+target_link_libraries(cli_test PRIVATE ${MPV_LIBRARIES} quill::quill jfn_cli)
 
 add_test(NAME cli_test COMMAND cli_test)
 

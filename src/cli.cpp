@@ -3,13 +3,12 @@
 #include "version.h"
 #include "logging.h"
 #include "mpv/options.h"
+#include "cli/cli.h"
 
 #include <mpv/client.h>
 #include <include/cef_version.h>
 
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 
 namespace cli {
 
@@ -49,71 +48,45 @@ void print_version() {
     if (h) mpv_terminate_destroy(h);
 }
 
-namespace {
-
-const char* match_value(int argc, char* argv[], int* i, const char* name) {
-    size_t nlen = strlen(name);
-    const char* a = argv[*i];
-    if (strcmp(a, name) == 0 && *i + 1 < argc) {
-        ++*i;
-        return argv[*i];
-    }
-    if (strncmp(a, name, nlen) == 0 && a[nlen] == '=')
-        return a + nlen + 1;
-    return nullptr;
-}
-
-} // namespace
-
 Result parse(int argc, char* argv[], Args& args) {
-    for (int i = 1; i < argc; i++) {
-        const char* a = argv[i];
-        if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0)
-            return {Result::Kind::Help, {}};
-        if (strcmp(a, "-v") == 0 || strcmp(a, "--version") == 0)
-            return {Result::Kind::Version, {}};
-        if (strcmp(a, "--audio-exclusive") == 0) {
-            args.audio_exclusive = true;
-            continue;
-        }
-        if (strcmp(a, "--disable-gpu-compositing") == 0) {
-            args.disable_gpu_compositing = true;
-            continue;
-        }
-        if (const char* v = match_value(argc, argv, &i, "--log-level")) {
-            args.log_level = v;
-            continue;
-        }
-        if (const char* v = match_value(argc, argv, &i, "--log-file")) {
-            args.log_file = v;
-            continue;
-        }
-        if (const char* v = match_value(argc, argv, &i, "--hwdec")) {
-            args.hwdec = v;
-            continue;
-        }
-        if (const char* v = match_value(argc, argv, &i, "--audio-passthrough")) {
-            args.audio_passthrough = v;
-            continue;
-        }
-        if (const char* v = match_value(argc, argv, &i, "--audio-channels")) {
-            args.audio_channels = v;
-            continue;
-        }
-        if (const char* v = match_value(argc, argv, &i, "--remote-debug-port")) {
-            args.remote_debugging_port = atoi(v);
-            continue;
-        }
-        if (const char* v = match_value(argc, argv, &i, "--ozone-platform")) {
-            args.ozone_platform = v;
-            continue;
-        }
-        if (const char* v = match_value(argc, argv, &i, "--platform")) {
-            args.platform_override = v;
-            continue;
-        }
-        return {Result::Kind::Error, a};
+#ifdef HAVE_X11
+    constexpr bool have_x11 = true;
+#else
+    constexpr bool have_x11 = false;
+#endif
+    JfnCliResult* r = jfn_cli_parse(argc, const_cast<const char* const*>(argv), have_x11);
+    if (!r) return {Result::Kind::Error, ""};
+
+    Result out;
+    switch (r->kind) {
+    case JFN_CLI_HELP:
+        out = {Result::Kind::Help, {}};
+        jfn_cli_result_free(r);
+        return out;
+    case JFN_CLI_VERSION:
+        out = {Result::Kind::Version, {}};
+        jfn_cli_result_free(r);
+        return out;
+    case JFN_CLI_ERROR:
+        out = {Result::Kind::Error, r->unknown_arg ? r->unknown_arg : ""};
+        jfn_cli_result_free(r);
+        return out;
+    case JFN_CLI_CONTINUE:
+        break;
     }
+
+    if (r->hwdec) args.hwdec = r->hwdec;
+    if (r->audio_passthrough) args.audio_passthrough = r->audio_passthrough;
+    if (r->audio_channels) args.audio_channels = r->audio_channels;
+    if (r->log_level) args.log_level = r->log_level;
+    if (r->log_file_set) args.log_file = r->log_file ? r->log_file : "";
+    if (r->ozone_platform) args.ozone_platform = r->ozone_platform;
+    if (r->platform_override) args.platform_override = r->platform_override;
+    if (r->audio_exclusive_set) args.audio_exclusive = true;
+    if (r->disable_gpu_compositing_set) args.disable_gpu_compositing = true;
+    if (r->remote_debugging_port != -1) args.remote_debugging_port = r->remote_debugging_port;
+
+    jfn_cli_result_free(r);
     return {Result::Kind::Continue, {}};
 }
 
