@@ -20,8 +20,8 @@ public:
         // display, regardless of scale factor.
         static constexpr int kDefaultLogicalWidth = 1280;
         static constexpr int kDefaultLogicalHeight = 720;
-        static constexpr int kDefaultPhysicalWidth = 1280;
-        static constexpr int kDefaultPhysicalHeight = 720;
+        static constexpr int kDefaultPhysicalWidth = kDefaultLogicalWidth;
+        static constexpr int kDefaultPhysicalHeight = kDefaultLogicalHeight;
         static constexpr float kDefaultScale = 1.0f;
 
         int x = -1;          // -1 = not set (use default centering)
