@@ -623,6 +623,43 @@ else()
         pthread dl m rt util)
 endif()
 
+# jfn-single-instance — Rust static lib gating second-instance launches.
+# AF_UNIX socket on Linux/macOS, named pipe on Windows. Replaces the
+# hand-rolled platform code in src/single_instance.cpp.
+set(SINGLE_INSTANCE_DIR "${CMAKE_SOURCE_DIR}/src/single_instance")
+set(SINGLE_INSTANCE_TARGET_DIR "${CMAKE_BINARY_DIR}/single_instance-target")
+set(SINGLE_INSTANCE_LIB "${SINGLE_INSTANCE_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_single_instance${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE SINGLE_INSTANCE_SOURCES CONFIGURE_DEPENDS
+    "${SINGLE_INSTANCE_DIR}/src/*.rs"
+    "${SINGLE_INSTANCE_DIR}/Cargo.toml"
+)
+add_custom_command(
+    OUTPUT ${SINGLE_INSTANCE_LIB}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${SINGLE_INSTANCE_TARGET_DIR}
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${SINGLE_INSTANCE_DIR}/Cargo.toml
+    DEPENDS ${SINGLE_INSTANCE_SOURCES}
+    COMMENT "Building jfn-single-instance (Rust)"
+    VERBATIM
+)
+add_custom_target(jfn_single_instance_build DEPENDS ${SINGLE_INSTANCE_LIB})
+add_library(jfn_single_instance STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_single_instance jfn_single_instance_build)
+set_target_properties(jfn_single_instance PROPERTIES
+    IMPORTED_LOCATION ${SINGLE_INSTANCE_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${SINGLE_INSTANCE_DIR}
+)
+if(WIN32)
+    set_property(TARGET jfn_single_instance APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ws2_32 userenv advapi32 bcrypt ntdll)
+elseif(APPLE)
+    set_property(TARGET jfn_single_instance APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework CoreFoundation" "-framework Security")
+else()
+    set_property(TARGET jfn_single_instance APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        pthread dl m rt util)
+endif()
+
 # jfn-wlproxy — Rust static lib hosting a forward-everything Wayland proxy
 # between mpv and the compositor. Vet-only: no interception yet. Linux only.
 if(UNIX AND NOT APPLE)
@@ -910,7 +947,7 @@ if(WIN32)
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
-target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact jfn_paths jfn_wake_event)
+target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact jfn_paths jfn_wake_event jfn_single_instance)
 if(UNIX AND NOT APPLE)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
     # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_wlproxy) each embed a
