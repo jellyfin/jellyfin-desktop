@@ -1,0 +1,21 @@
+[package]
+name = "jfn-wlproxy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_wlproxy"
+crate-type = ["staticlib"]
+
+[dependencies]
+wl-proxy = { version = "0.1.2", features = ["all-protocols"] }
+error_reporter = "1.0.0"
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
