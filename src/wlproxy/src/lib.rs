@@ -1,8 +1,11 @@
-//! Pure-forwarder Wayland proxy. Vet-only — no interception.
+//! Wayland proxy between mpv and the compositor.
 //!
 //! mpv connects here instead of the real compositor (via WAYLAND_DISPLAY env).
-//! Every byte forwards untouched in both directions. Default wl-proxy handler
-//! impls forward all messages, so empty handler stubs suffice.
+//! Messages forward in both directions; selected events are intercepted.
+//!
+//! Interceptions:
+//! - `xdg_toplevel.configure` → fan width/height/fullscreen out to a C callback
+//!   registered via `jfn_wlproxy_set_configure_callback`, then forward to mpv.
 //!
 //! We don't use `SimpleProxy` because it builds each per-client `State` using
 //! the current process `WAYLAND_DISPLAY` env to find the upstream compositor —
@@ -11,16 +14,31 @@
 //! override) and pass it explicitly via `with_server_display_name`.
 
 use std::ffi::CString;
-use std::os::raw::c_char;
+use std::os::fd::OwnedFd;
+use std::os::raw::{c_char, c_int};
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::thread;
 
 use error_reporter::Report;
 use wl_proxy::acceptor::Acceptor;
 use wl_proxy::baseline::Baseline;
 use wl_proxy::client::ClientHandler;
-use wl_proxy::protocols::wayland::wl_display::WlDisplayHandler;
+use wl_proxy::object::{ConcreteObject, Object, ObjectCoreApi, ObjectRcUtils};
+use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::{
+    WpFractionalScaleManagerV1, WpFractionalScaleManagerV1Handler,
+};
+use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
+    WpFractionalScaleV1, WpFractionalScaleV1Handler,
+};
+use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
+use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
+use wl_proxy::protocols::wayland::wl_surface::WlSurface;
+use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
+use wl_proxy::protocols::xdg_shell::xdg_toplevel::{
+    XdgToplevel, XdgToplevelHandler, XdgToplevelState,
+};
+use wl_proxy::protocols::xdg_shell::xdg_wm_base::{XdgWmBase, XdgWmBaseHandler};
 use wl_proxy::state::State;
 
 pub struct Proxy {
@@ -28,13 +46,55 @@ pub struct Proxy {
     _thread: thread::JoinHandle<()>,
 }
 
-struct PassthroughDisplay;
-impl WlDisplayHandler for PassthroughDisplay {}
+type ConfigureCb = extern "C" fn(c_int, c_int, c_int);
 
-struct NoopClient;
-impl ClientHandler for NoopClient {
-    fn disconnected(self: Box<Self>) {}
+// Single proxy per process — callback is global. Fires from the per-client
+// proxy thread; the C side guards against thread-safety with its own mutex.
+static CONFIGURE_CB: Mutex<Option<ConfigureCb>> = Mutex::new(None);
+
+// Pending state for configure synthesis. We own the scale tracking via
+// wp_fractional_scale_v1.preferred_scale and convert the logical width/height
+// from xdg_toplevel.configure into physical pixels before invoking the
+// callback. Either event (configure or preferred_scale) can fire first; the
+// last-known values from both sides are recombined on every change.
+//
+// Scale wire encoding: numerator over WAYLAND_SCALE_FACTOR = 120. Default 120
+// means scale = 1.0 (matches behavior on non-fractional compositors before any
+// preferred_scale event has been seen).
+struct PendingConfigure {
+    have_configure: bool,
+    logical_w: i32,
+    logical_h: i32,
+    fullscreen: c_int,
+    scale_120: u32,
 }
+
+static PENDING: Mutex<PendingConfigure> = Mutex::new(PendingConfigure {
+    have_configure: false,
+    logical_w: 0,
+    logical_h: 0,
+    fullscreen: 0,
+    scale_120: 120,
+});
+
+fn fire_configure() {
+    let p = PENDING.lock().unwrap();
+    if !p.have_configure {
+        return;
+    }
+    // Round half-up: (logical * scale_120 + WAYLAND_SCALE_FACTOR/2) / WAYLAND_SCALE_FACTOR.
+    let pw = ((p.logical_w as i64 * p.scale_120 as i64 + 60) / 120) as c_int;
+    let ph = ((p.logical_h as i64 * p.scale_120 as i64 + 60) / 120) as c_int;
+    let fs = p.fullscreen;
+    drop(p);
+    if let Some(cb) = *CONFIGURE_CB.lock().unwrap() {
+        cb(pw, ph, fs);
+    }
+}
+
+// =========================================================================
+// FFI
+// =========================================================================
 
 /// Start the proxy. Spawns a listener thread that owns the `Acceptor` (which
 /// is `!Send` because it holds `Rc` internally, so it must be constructed
@@ -76,6 +136,43 @@ pub extern "C" fn jfn_wlproxy_start() -> *mut Proxy {
     }))
 }
 
+/// Returns the WAYLAND_DISPLAY value clients should connect to (e.g. "wayland-1").
+/// Returns null if `p` is null. Pointer is valid until `jfn_wlproxy_stop`.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
+    if p.is_null() {
+        return std::ptr::null();
+    }
+    unsafe { (*p).display_name.as_ptr() }
+}
+
+/// Drop the proxy handle. The listener thread is detached; OS cleans up on
+/// process exit. Safe to call with null.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_wlproxy_stop(p: *mut Proxy) {
+    if p.is_null() {
+        return;
+    }
+    unsafe { drop(Box::from_raw(p)) };
+}
+
+/// Register the xdg_toplevel.configure interception callback.
+///
+/// Fires from the proxy's per-client thread whenever the compositor sends an
+/// `xdg_toplevel.configure` event. Arguments are `(width, height, fullscreen)`
+/// — fullscreen is 1 if the configure's states[] array contains
+/// `XDG_TOPLEVEL_STATE_FULLSCREEN`, 0 otherwise.
+///
+/// The event still forwards to mpv after the callback runs.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
+    *CONFIGURE_CB.lock().unwrap() = Some(cb);
+}
+
+// =========================================================================
+// Listener / per-client thread
+// =========================================================================
+
 fn run_listener(tx: mpsc::SyncSender<Result<CString, String>>, upstream: Option<String>) {
     let acceptor = match Acceptor::new(1000, false) {
         Ok(a) => a,
@@ -113,7 +210,7 @@ fn run_listener(tx: mpsc::SyncSender<Result<CString, String>>, upstream: Option<
     }
 }
 
-fn run_client(socket: std::os::fd::OwnedFd, upstream: Option<String>) {
+fn run_client(socket: OwnedFd, upstream: Option<String>) {
     let mut builder = State::builder(Baseline::ALL_OF_THEM).with_log_prefix("jfn");
     if let Some(name) = &upstream {
         builder = builder.with_server_display_name(name);
@@ -133,7 +230,7 @@ fn run_client(socket: std::os::fd::OwnedFd, upstream: Option<String>) {
         }
     };
     client.set_handler(NoopClient);
-    client.display().set_handler(PassthroughDisplay);
+    client.display().set_handler(DisplayH);
     while state.is_not_destroyed() {
         if let Err(e) = state.dispatch_blocking() {
             eprintln!("wlproxy: dispatch: {}", Report::new(e));
@@ -142,22 +239,110 @@ fn run_client(socket: std::os::fd::OwnedFd, upstream: Option<String>) {
     }
 }
 
-/// Returns the WAYLAND_DISPLAY value clients should connect to (e.g. "wayland-1").
-/// Returns null if `p` is null. Pointer is valid until `jfn_wlproxy_stop`.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
-    if p.is_null() {
-        return std::ptr::null();
-    }
-    unsafe { (*p).display_name.as_ptr() }
+// =========================================================================
+// Handler chain: WlDisplay → WlRegistry → XdgWmBase → XdgSurface → XdgToplevel
+// =========================================================================
+
+struct NoopClient;
+impl ClientHandler for NoopClient {
+    fn disconnected(self: Box<Self>) {}
 }
 
-/// Drop the proxy handle. The listener thread is detached; OS cleans up on
-/// process exit. Safe to call with null.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_wlproxy_stop(p: *mut Proxy) {
-    if p.is_null() {
-        return;
+struct DisplayH;
+impl WlDisplayHandler for DisplayH {
+    fn handle_get_registry(&mut self, slf: &Rc<WlDisplay>, registry: &Rc<WlRegistry>) {
+        registry.set_handler(RegistryH);
+        slf.send_get_registry(registry);
     }
-    unsafe { drop(Box::from_raw(p)) };
+}
+
+struct RegistryH;
+impl WlRegistryHandler for RegistryH {
+    fn handle_bind(&mut self, slf: &Rc<WlRegistry>, name: u32, id: Rc<dyn Object>) {
+        match id.interface() {
+            XdgWmBase::INTERFACE => {
+                id.downcast::<XdgWmBase>().set_handler(WmBaseH);
+            }
+            WpFractionalScaleManagerV1::INTERFACE => {
+                id.downcast::<WpFractionalScaleManagerV1>()
+                    .set_handler(FracScaleMgrH);
+            }
+            _ => {}
+        }
+        slf.send_bind(name, id);
+    }
+}
+
+struct FracScaleMgrH;
+impl WpFractionalScaleManagerV1Handler for FracScaleMgrH {
+    fn handle_get_fractional_scale(
+        &mut self,
+        slf: &Rc<WpFractionalScaleManagerV1>,
+        id: &Rc<WpFractionalScaleV1>,
+        surface: &Rc<WlSurface>,
+    ) {
+        id.set_handler(FracScaleH);
+        slf.send_get_fractional_scale(id, surface);
+    }
+}
+
+struct FracScaleH;
+impl WpFractionalScaleV1Handler for FracScaleH {
+    fn handle_preferred_scale(&mut self, slf: &Rc<WpFractionalScaleV1>, scale: u32) {
+        PENDING.lock().unwrap().scale_120 = scale;
+        fire_configure();
+        slf.send_preferred_scale(scale);
+    }
+}
+
+struct WmBaseH;
+impl XdgWmBaseHandler for WmBaseH {
+    fn handle_get_xdg_surface(
+        &mut self,
+        slf: &Rc<XdgWmBase>,
+        id: &Rc<XdgSurface>,
+        surface: &Rc<WlSurface>,
+    ) {
+        id.set_handler(SurfaceH);
+        slf.send_get_xdg_surface(id, surface);
+    }
+}
+
+struct SurfaceH;
+impl XdgSurfaceHandler for SurfaceH {
+    fn handle_get_toplevel(&mut self, slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
+        id.set_handler(ToplevelH);
+        slf.send_get_toplevel(id);
+    }
+}
+
+struct ToplevelH;
+impl XdgToplevelHandler for ToplevelH {
+    fn handle_configure(
+        &mut self,
+        slf: &Rc<XdgToplevel>,
+        width: i32,
+        height: i32,
+        states: &[u8],
+    ) {
+        // states is a wire-encoded wl_array of uint32 XdgToplevelState values
+        // in native byte order. Scan for FULLSCREEN; ignore other states.
+        let mut fullscreen: c_int = 0;
+        for chunk in states.chunks_exact(4) {
+            let v = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            if XdgToplevelState(v) == XdgToplevelState::FULLSCREEN {
+                fullscreen = 1;
+                break;
+            }
+        }
+        {
+            let mut p = PENDING.lock().unwrap();
+            p.have_configure = true;
+            p.logical_w = width;
+            p.logical_h = height;
+            p.fullscreen = fullscreen;
+        }
+        fire_configure();
+        slf.send_configure(width, height, states);
+    }
 }
