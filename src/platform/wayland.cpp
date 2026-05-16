@@ -1030,7 +1030,7 @@ static bool wl_init(mpv_handle* mpv) {
     g_mpv.GetWaylandDisplay(dp);
     g_mpv.GetWaylandSurface(sp);
     if (!dp || !sp) {
-        fprintf(stderr, "Failed to get Wayland display/surface from mpv\n");
+        LOG_ERROR(LOG_PLATFORM, "Failed to get Wayland display/surface from mpv");
         return false;
     }
 
@@ -1054,7 +1054,7 @@ static bool wl_init(mpv_handle* mpv) {
     wl_registry_destroy(reg);
 
     if (!g_wl.compositor || !g_wl.subcompositor) {
-        fprintf(stderr, "platform_wayland: missing compositor globals\n");
+        LOG_ERROR(LOG_PLATFORM, "platform_wayland: missing compositor globals");
         return false;
     }
 
