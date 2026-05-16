@@ -457,7 +457,7 @@ static bool x11_init(mpv_handle*) {
     int64_t wid = 0;
     g_mpv.GetWindowId(wid);
     if (wid <= 0) {
-        fprintf(stderr, "Failed to get window-id from mpv\n");
+        LOG_ERROR(LOG_PLATFORM, "Failed to get window-id from mpv");
         return false;
     }
     g_x11.parent = static_cast<xcb_window_t>(wid);
@@ -465,7 +465,7 @@ static bool x11_init(mpv_handle*) {
     // Open XCB connection
     g_x11.conn = xcb_connect(nullptr, &g_x11.screen_num);
     if (xcb_connection_has_error(g_x11.conn)) {
-        fprintf(stderr, "Failed to connect to X11\n");
+        LOG_ERROR(LOG_PLATFORM, "Failed to connect to X11");
         return false;
     }
 
@@ -479,7 +479,7 @@ static bool x11_init(mpv_handle*) {
     // Find 32-bit ARGB visual
     g_x11.argb_visual = find_argb_visual(g_x11.screen, &g_x11.argb_depth);
     if (!g_x11.argb_visual) {
-        fprintf(stderr, "No 32-bit ARGB visual found\n");
+        LOG_ERROR(LOG_PLATFORM, "No 32-bit ARGB visual found");
         xcb_disconnect(g_x11.conn);
         return false;
     }
@@ -504,7 +504,7 @@ static bool x11_init(mpv_handle*) {
     auto shm_cookie = xcb_shm_query_version(g_x11.conn);
     auto* shm_reply = xcb_shm_query_version_reply(g_x11.conn, shm_cookie, nullptr);
     if (!shm_reply) {
-        fprintf(stderr, "X11 MIT-SHM extension not available\n");
+        LOG_ERROR(LOG_PLATFORM, "X11 MIT-SHM extension not available");
         xcb_free_colormap(g_x11.conn, g_x11.colormap);
         xcb_disconnect(g_x11.conn);
         return false;

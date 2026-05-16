@@ -424,12 +424,12 @@ static bool macos_init(mpv_handle* mpv) {
 
     // Metal setup
     g_mtl_device = MTLCreateSystemDefaultDevice();
-    if (!g_mtl_device) { fprintf(stderr, "Metal device creation failed\n"); return false; }
+    if (!g_mtl_device) { LOG_ERROR(LOG_PLATFORM, "Metal device creation failed"); return false; }
     g_mtl_queue = [g_mtl_device newCommandQueue];
 
     NSError* error = nil;
     id<MTLLibrary> library = [g_mtl_device newLibraryWithSource:g_shader_source options:nil error:&error];
-    if (!library) { fprintf(stderr, "Metal shader compile: %s\n", [[error localizedDescription] UTF8String]); return false; }
+    if (!library) { LOG_ERROR(LOG_PLATFORM, "Metal shader compile: {}", [[error localizedDescription] UTF8String]); return false; }
 
     // Render pipeline: writes straight → premultiplied conversion into a
     // plain BGRA8 render target (no blending; the render target is our
@@ -440,7 +440,7 @@ static bool macos_init(mpv_handle* mpv) {
     pipeDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
     pipeDesc.colorAttachments[0].blendingEnabled = NO;
     g_mtl_pipeline = [g_mtl_device newRenderPipelineStateWithDescriptor:pipeDesc error:&error];
-    if (!g_mtl_pipeline) { fprintf(stderr, "Metal pipeline: %s\n", [[error localizedDescription] UTF8String]); return false; }
+    if (!g_mtl_pipeline) { LOG_ERROR(LOG_PLATFORM, "Metal pipeline: {}", [[error localizedDescription] UTF8String]); return false; }
 
     // CefLayer surfaces are created on demand via macos_alloc_surface and
     // ordered by macos_restack. The input NSView sits above whatever
