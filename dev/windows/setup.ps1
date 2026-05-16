@@ -26,12 +26,20 @@ $Prerequisites = @(
     @{ Command = "cmake";  Name = "CMake";     WingetId = "Kitware.CMake" },
     @{ Command = "ninja";  Name = "Ninja";     WingetId = "Ninja-build.Ninja" },
     @{ Command = "7z";     Name = "7-Zip";     WingetId = "7zip.7zip" },
-    @{ Command = "git";    Name = "Git";       WingetId = "Git.Git" }
+    @{ Command = "git";    Name = "Git";       WingetId = "Git.Git" },
+    @{ Command = "cargo";  Name = "Rust";      WingetId = "Rustlang.Rustup" }
 )
 
 function Find-Command($Command) {
     # Check PATH first
     if (Test-Command $Command) { return $true }
+    # Rustup installs cargo/rustc under %USERPROFILE%\.cargo\bin, not in PATH
+    # until shell restart
+    $CargoBin = Join-Path $env:USERPROFILE ".cargo\bin\$Command.exe"
+    if (Test-Path $CargoBin) {
+        $env:Path += ";$(Split-Path $CargoBin)"
+        return $true
+    }
     # Some installers (e.g. 7-Zip) don't add to PATH - search Program Files
     $Exe = Get-ChildItem -Path "$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LocalAppData" `
         -Filter "$Command.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
