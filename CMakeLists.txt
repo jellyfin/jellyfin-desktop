@@ -623,6 +623,42 @@ else()
         pthread dl m rt util)
 endif()
 
+# jfn-signal-guard — Rust static lib that snapshots/restores SIGINT and
+# SIGTERM dispositions around a custom handler. Unix only; the Windows
+# build uses SetConsoleCtrlHandler instead and never links this.
+if(NOT WIN32)
+    set(SIGNAL_GUARD_DIR "${CMAKE_SOURCE_DIR}/src/signal_guard")
+    set(SIGNAL_GUARD_TARGET_DIR "${CMAKE_BINARY_DIR}/signal_guard-target")
+    set(SIGNAL_GUARD_LIB "${SIGNAL_GUARD_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_signal_guard${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    file(GLOB_RECURSE SIGNAL_GUARD_SOURCES CONFIGURE_DEPENDS
+        "${SIGNAL_GUARD_DIR}/src/*.rs"
+        "${SIGNAL_GUARD_DIR}/Cargo.toml"
+    )
+    add_custom_command(
+        OUTPUT ${SIGNAL_GUARD_LIB}
+        COMMAND ${CMAKE_COMMAND} -E env
+            CARGO_TARGET_DIR=${SIGNAL_GUARD_TARGET_DIR}
+            ${CARGO_EXECUTABLE} build --release --manifest-path ${SIGNAL_GUARD_DIR}/Cargo.toml
+        DEPENDS ${SIGNAL_GUARD_SOURCES}
+        COMMENT "Building jfn-signal-guard (Rust)"
+        VERBATIM
+    )
+    add_custom_target(jfn_signal_guard_build DEPENDS ${SIGNAL_GUARD_LIB})
+    add_library(jfn_signal_guard STATIC IMPORTED GLOBAL)
+    add_dependencies(jfn_signal_guard jfn_signal_guard_build)
+    set_target_properties(jfn_signal_guard PROPERTIES
+        IMPORTED_LOCATION ${SIGNAL_GUARD_LIB}
+        INTERFACE_INCLUDE_DIRECTORIES ${SIGNAL_GUARD_DIR}
+    )
+    if(APPLE)
+        set_property(TARGET jfn_signal_guard APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+            "-framework CoreFoundation" "-framework Security")
+    else()
+        set_property(TARGET jfn_signal_guard APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+            pthread dl m rt util)
+    endif()
+endif()
+
 # jfn-single-instance — Rust static lib gating second-instance launches.
 # AF_UNIX socket on Linux/macOS, named pipe on Windows. Replaces the
 # hand-rolled platform code in src/single_instance.cpp.
@@ -948,6 +984,9 @@ else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
 target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact jfn_paths jfn_wake_event jfn_single_instance)
+if(NOT WIN32)
+    target_link_libraries(jellyfin-desktop PRIVATE jfn_signal_guard)
+endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
     # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_wlproxy) each embed a
