@@ -2,6 +2,8 @@ app-id: org.jellyfin.JellyfinDesktop
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
 command: jellyfin-desktop
 finish-args:
   - --socket=wayland
@@ -165,6 +167,12 @@ modules:
       # the codecs-extra extension that the ldconfig cache otherwise
       # returns first. Runtime loader still uses the cache.
       ldflags: -Wl,-rpath-link=/usr/lib/x86_64-linux-gnu
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/jellyfin-desktop/cargo
+      build-args:
+        # cargo fetches crates from crates.io during the build
+        - --share=network
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DEXTERNAL_CEF_DIR=/app/cef

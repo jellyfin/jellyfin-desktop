@@ -27,6 +27,13 @@ if ! flatpak info --user org.freedesktop.Sdk//$RUNTIME_VERSION >/dev/null 2>&1 &
     flatpak install --user -y flathub org.freedesktop.Sdk//$RUNTIME_VERSION org.freedesktop.Platform//$RUNTIME_VERSION
 fi
 
+# rust-stable SDK extension provides cargo/rustc for jfn-wlproxy
+if ! flatpak info --user org.freedesktop.Sdk.Extension.rust-stable//$RUNTIME_VERSION >/dev/null 2>&1 && \
+   ! flatpak info --system org.freedesktop.Sdk.Extension.rust-stable//$RUNTIME_VERSION >/dev/null 2>&1; then
+    echo "Installing Freedesktop Rust SDK extension $RUNTIME_VERSION..."
+    flatpak install --user -y flathub org.freedesktop.Sdk.Extension.rust-stable//$RUNTIME_VERSION
+fi
+
 # Ensure CEF is extracted at third_party/cef
 if [ ! -d "${REPO_ROOT}/third_party/cef" ]; then
     python3 "${REPO_ROOT}/dev/tools/download_cef.py"
