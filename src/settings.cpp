@@ -1,10 +1,9 @@
 #include "settings.h"
-#include "cjson/cJSON.h"
+#include "config/config.h"
 #include "mpv/options.h"
 #include "paths/paths.h"
-#include <fstream>
-#include <sstream>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -24,155 +23,154 @@ std::string Settings::getConfigPath() {
     return paths::getConfigDir() + "/settings.json";
 }
 
-static const char* jsonStr(const cJSON* root, const char* key, const char* fallback = "") {
-    const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
-    if (cJSON_IsString(item) && item->valuestring) return item->valuestring;
-    return fallback;
+namespace {
+
+// Build a JfnConfigData populated from the C++ Settings. String fields point
+// into the Settings instance, so the data struct is only valid for the
+// duration of one synchronous call into the Rust crate. Pass strings
+// through a temporary buffer when the Rust call may run after this returns
+// (see saveAsync).
+JfnConfigData toData(const Settings& s) {
+    JfnConfigData d{};
+    jfn_config_init_defaults(&d);
+    // Caller-owned strings: cast away const to fit the C struct definition;
+    // the Rust side only reads them.
+    d.server_url = const_cast<char*>(s.serverUrl().c_str());
+    d.hwdec = const_cast<char*>(s.hwdec().c_str());
+    d.audio_passthrough = const_cast<char*>(s.audioPassthrough().c_str());
+    d.audio_channels = const_cast<char*>(s.audioChannels().c_str());
+    d.log_level = const_cast<char*>(s.logLevel().c_str());
+    d.device_name = const_cast<char*>(s.deviceName().c_str());
+
+    const auto& g = s.windowGeometry();
+    d.window_x = g.x;
+    d.window_y = g.y;
+    d.window_width = g.width;
+    d.window_height = g.height;
+    d.window_logical_width = g.logical_width;
+    d.window_logical_height = g.logical_height;
+    d.window_scale = g.scale;
+    d.window_maximized = g.maximized;
+
+    d.audio_exclusive = s.audioExclusive();
+    d.disable_gpu_compositing = s.disableGpuCompositing();
+    d.titlebar_theme_color = s.titlebarThemeColor();
+    d.transparent_titlebar = s.transparentTitlebar();
+    d.force_transcoding = s.forceTranscoding();
+    // init_defaults zeroed the pointers; replace with our borrowed buffers
+    // after, so the above pointer assignments stick.
+    return d;
 }
 
-static int jsonInt(const cJSON* root, const char* key, int fallback) {
-    const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
-    if (cJSON_IsNumber(item)) return item->valueint;
-    return fallback;
+std::string takeString(char* p) {
+    if (!p) return {};
+    std::string s(p);
+    return s;
 }
 
-static double jsonDouble(const cJSON* root, const char* key, double fallback) {
-    const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
-    if (cJSON_IsNumber(item)) return item->valuedouble;
-    return fallback;
-}
-
-static bool jsonBool(const cJSON* root, const char* key, bool fallback) {
-    const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
-    if (cJSON_IsBool(item)) return cJSON_IsTrue(item);
-    return fallback;
-}
+}  // namespace
 
 bool Settings::load() {
-    std::ifstream file(getConfigPath());
-    if (!file.is_open())
+    JfnConfigData d{};
+    jfn_config_init_defaults(&d);
+    bool ok = jfn_config_load(getConfigPath().c_str(), &d);
+    if (!ok) {
+        jfn_config_free_data(&d);
         return false;
+    }
 
-    std::stringstream buf;
-    buf << file.rdbuf();
-    std::string contents = buf.str();
+    if (d.server_url) server_url_ = d.server_url;
+    if (d.hwdec) hwdec_ = d.hwdec;
+    if (d.audio_passthrough) audio_passthrough_ = d.audio_passthrough;
+    if (d.audio_channels) audio_channels_ = d.audio_channels;
+    if (d.log_level) log_level_ = d.log_level;
+    if (d.device_name) {
+        device_name_ = d.device_name;
+        if (device_name_.size() > kDeviceNameMax) device_name_.resize(kDeviceNameMax);
+    }
 
-    cJSON* root = cJSON_Parse(contents.c_str());
-    if (!root)
-        return false;
+    window_geometry_.x = d.window_x;
+    window_geometry_.y = d.window_y;
+    window_geometry_.width = d.window_width;
+    window_geometry_.height = d.window_height;
+    window_geometry_.logical_width = d.window_logical_width;
+    window_geometry_.logical_height = d.window_logical_height;
+    window_geometry_.scale = d.window_scale;
+    window_geometry_.maximized = d.window_maximized;
 
-    server_url_ = jsonStr(root, "serverUrl");
+    audio_exclusive_ = d.audio_exclusive;
+    disable_gpu_compositing_ = d.disable_gpu_compositing;
+    titlebar_theme_color_ = d.titlebar_theme_color;
+    transparent_titlebar_ = d.transparent_titlebar;
+    force_transcoding_ = d.force_transcoding;
 
-    window_geometry_.width = jsonInt(root, "windowWidth", 0);
-    window_geometry_.height = jsonInt(root, "windowHeight", 0);
-    window_geometry_.logical_width = jsonInt(root, "windowLogicalWidth", 0);
-    window_geometry_.logical_height = jsonInt(root, "windowLogicalHeight", 0);
-    window_geometry_.scale = static_cast<float>(jsonDouble(root, "windowScale", 0.0));
-    window_geometry_.x = jsonInt(root, "windowX", -1);
-    window_geometry_.y = jsonInt(root, "windowY", -1);
-    window_geometry_.maximized = jsonBool(root, "windowMaximized", false);
-
-    hwdec_ = jsonStr(root, "hwdec");
-    audio_passthrough_ = jsonStr(root, "audioPassthrough");
-    audio_exclusive_ = jsonBool(root, "audioExclusive", false);
-    audio_channels_ = jsonStr(root, "audioChannels");
-    disable_gpu_compositing_ = jsonBool(root, "disableGpuCompositing", false);
-    titlebar_theme_color_ = jsonBool(root, "titlebarThemeColor", true);
-    transparent_titlebar_ = jsonBool(root, "transparentTitlebar", true);
-    log_level_ = jsonStr(root, "logLevel");
-    force_transcoding_ = jsonBool(root, "forceTranscoding", false);
-    device_name_ = jsonStr(root, "deviceName");
-    if (device_name_.size() > kDeviceNameMax) device_name_.resize(kDeviceNameMax);
-
-    cJSON_Delete(root);
+    jfn_config_free_data(&d);
     return true;
-}
-
-static std::string buildSettingsJson(const Settings& s, bool pretty) {
-    cJSON* root = cJSON_CreateObject();
-
-    cJSON_AddStringToObject(root, "serverUrl", s.serverUrl().c_str());
-
-    auto& geom = s.windowGeometry();
-    if (geom.width > 0 && geom.height > 0) {
-        cJSON_AddNumberToObject(root, "windowWidth", geom.width);
-        cJSON_AddNumberToObject(root, "windowHeight", geom.height);
-    }
-    if (geom.logical_width > 0 && geom.logical_height > 0) {
-        cJSON_AddNumberToObject(root, "windowLogicalWidth", geom.logical_width);
-        cJSON_AddNumberToObject(root, "windowLogicalHeight", geom.logical_height);
-    }
-    if (geom.scale > 0.f)
-        cJSON_AddNumberToObject(root, "windowScale", geom.scale);
-    if (geom.x >= 0 && geom.y >= 0) {
-        cJSON_AddNumberToObject(root, "windowX", geom.x);
-        cJSON_AddNumberToObject(root, "windowY", geom.y);
-    }
-    cJSON_AddBoolToObject(root, "windowMaximized", geom.maximized);
-
-    if (!s.hwdec().empty() && s.hwdec() != kHwdecDefault) cJSON_AddStringToObject(root, "hwdec", s.hwdec().c_str());
-    if (!s.audioPassthrough().empty()) cJSON_AddStringToObject(root, "audioPassthrough", s.audioPassthrough().c_str());
-    if (s.audioExclusive()) cJSON_AddBoolToObject(root, "audioExclusive", true);
-    if (!s.audioChannels().empty()) cJSON_AddStringToObject(root, "audioChannels", s.audioChannels().c_str());
-    if (s.disableGpuCompositing()) cJSON_AddBoolToObject(root, "disableGpuCompositing", true);
-    if (!s.titlebarThemeColor()) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
-    if (!s.transparentTitlebar()) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
-    if (!s.logLevel().empty()) cJSON_AddStringToObject(root, "logLevel", s.logLevel().c_str());
-    if (s.forceTranscoding()) cJSON_AddBoolToObject(root, "forceTranscoding", true);
-    if (!s.deviceName().empty()) cJSON_AddStringToObject(root, "deviceName", s.deviceName().c_str());
-
-    char* str = pretty ? cJSON_Print(root) : cJSON_PrintUnformatted(root);
-    std::string result(str);
-    cJSON_free(str);
-    cJSON_Delete(root);
-    return result;
 }
 
 bool Settings::save() {
-    std::ofstream file(getConfigPath());
-    if (!file.is_open())
-        return false;
-
-    file << buildSettingsJson(*this, true) << '\n';
-    return true;
+    JfnConfigData d = toData(*this);
+    return jfn_config_save(getConfigPath().c_str(), &d, kHwdecDefault);
 }
 
 void Settings::saveAsync() {
+    // Snapshot data into owned strings so the worker thread doesn't race
+    // with mutations on the main thread.
     std::string path = getConfigPath();
-    std::string data = buildSettingsJson(*this, true);
+    struct Snapshot {
+        std::string server_url, hwdec, audio_passthrough, audio_channels, log_level, device_name;
+        Settings::WindowGeometry geom;
+        bool audio_exclusive, disable_gpu_compositing, titlebar_theme_color,
+             transparent_titlebar, force_transcoding;
+    };
+    Snapshot snap{
+        server_url_, hwdec_, audio_passthrough_, audio_channels_, log_level_, device_name_,
+        window_geometry_,
+        audio_exclusive_, disable_gpu_compositing_, titlebar_theme_color_,
+        transparent_titlebar_, force_transcoding_,
+    };
 
-    std::thread([this, path, data]() {
+    std::thread([this, path = std::move(path), snap = std::move(snap)]() {
         std::lock_guard<std::mutex> lock(save_mutex_);
-        std::ofstream file(path);
-        if (file.is_open()) {
-            file << data << '\n';
-        }
+        JfnConfigData d{};
+        jfn_config_init_defaults(&d);
+        d.server_url = const_cast<char*>(snap.server_url.c_str());
+        d.hwdec = const_cast<char*>(snap.hwdec.c_str());
+        d.audio_passthrough = const_cast<char*>(snap.audio_passthrough.c_str());
+        d.audio_channels = const_cast<char*>(snap.audio_channels.c_str());
+        d.log_level = const_cast<char*>(snap.log_level.c_str());
+        d.device_name = const_cast<char*>(snap.device_name.c_str());
+        d.window_x = snap.geom.x;
+        d.window_y = snap.geom.y;
+        d.window_width = snap.geom.width;
+        d.window_height = snap.geom.height;
+        d.window_logical_width = snap.geom.logical_width;
+        d.window_logical_height = snap.geom.logical_height;
+        d.window_scale = snap.geom.scale;
+        d.window_maximized = snap.geom.maximized;
+        d.audio_exclusive = snap.audio_exclusive;
+        d.disable_gpu_compositing = snap.disable_gpu_compositing;
+        d.titlebar_theme_color = snap.titlebar_theme_color;
+        d.transparent_titlebar = snap.transparent_titlebar;
+        d.force_transcoding = snap.force_transcoding;
+        jfn_config_save(path.c_str(), &d, kHwdecDefault);
     }).detach();
 }
 
 std::string Settings::cliSettingsJson() const {
-    cJSON* root = cJSON_CreateObject();
+    JfnConfigData d = toData(*this);
+    std::string platform_default = platformDeviceName();
 
-    if (!hwdec_.empty()) cJSON_AddStringToObject(root, "hwdec", hwdec_.c_str());
-    if (!audio_passthrough_.empty()) cJSON_AddStringToObject(root, "audioPassthrough", audio_passthrough_.c_str());
-    if (audio_exclusive_) cJSON_AddBoolToObject(root, "audioExclusive", true);
-    if (!audio_channels_.empty()) cJSON_AddStringToObject(root, "audioChannels", audio_channels_.c_str());
-    if (disable_gpu_compositing_) cJSON_AddBoolToObject(root, "disableGpuCompositing", true);
-    if (!titlebar_theme_color_) cJSON_AddBoolToObject(root, "titlebarThemeColor", false);
-    if (!transparent_titlebar_) cJSON_AddBoolToObject(root, "transparentTitlebar", false);
-    if (!log_level_.empty()) cJSON_AddStringToObject(root, "logLevel", log_level_.c_str());
-    cJSON_AddBoolToObject(root, "forceTranscoding", force_transcoding_);
-    if (!device_name_.empty()) cJSON_AddStringToObject(root, "deviceName", device_name_.c_str());
-    cJSON_AddStringToObject(root, "deviceNameDefault", platformDeviceName().c_str());
+    auto opts = hwdecOptions();
+    std::vector<const char*> opt_ptrs;
+    opt_ptrs.reserve(opts.size());
+    for (const auto& o : opts) opt_ptrs.push_back(o.c_str());
 
-    cJSON* opts = cJSON_AddArrayToObject(root, "hwdecOptions");
-    for (const auto& o : hwdecOptions())
-        cJSON_AddItemToArray(opts, cJSON_CreateString(o.c_str()));
-
-    char* str = cJSON_PrintUnformatted(root);
-    std::string result(str);
-    cJSON_free(str);
-    cJSON_Delete(root);
+    char* json = jfn_config_cli_json(&d, platform_default.c_str(),
+                                     opt_ptrs.empty() ? nullptr : opt_ptrs.data(),
+                                     opt_ptrs.size());
+    std::string result = takeString(json);
+    jfn_config_free_string(json);
     return result;
 }
 

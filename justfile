@@ -15,3 +15,10 @@ update-deps *args:
 # Remove build artifacts
 clean:
     rm -rf build dist
+
+# Lint Rust crates (rustfmt --check + clippy -D warnings).
+lint:
+    #!/bin/sh
+    set -eu
+    cargo fmt --manifest-path src/config/Cargo.toml -- --check
+    cargo clippy --manifest-path src/config/Cargo.toml --all-targets -- -D warnings

@@ -11,7 +11,8 @@
 #include "../theme_color.h"
 #include "../cef/color.h"
 #include "../input/dispatch.h"
-#include "../cjson/cJSON.h"
+#include "include/cef_parser.h"
+#include "include/cef_values.h"
 #include "../paths/paths.h"
 #include "../jellyfin/device_profile.h"
 
@@ -21,40 +22,40 @@
 
 static MediaMetadata parseMetadataJson(const std::string& json) {
     MediaMetadata meta;
-    cJSON* root = cJSON_Parse(json.c_str());
-    if (!root) return meta;
+    CefRefPtr<CefValue> root = CefParseJSON(json, JSON_PARSER_RFC);
+    if (!root || root->GetType() != VTYPE_DICTIONARY) return meta;
+    CefRefPtr<CefDictionaryValue> d = root->GetDictionary();
+    if (!d) return meta;
 
-    cJSON* item;
-    if ((item = cJSON_GetObjectItem(root, "Id")) && cJSON_IsString(item))
-        meta.id = item->valuestring;
-    if ((item = cJSON_GetObjectItem(root, "Name")) && cJSON_IsString(item))
-        meta.title = item->valuestring;
-    if ((item = cJSON_GetObjectItem(root, "SeriesName")) && cJSON_IsString(item))
-        meta.artist = item->valuestring;
-    if (meta.artist.empty()) {
-        if ((item = cJSON_GetObjectItem(root, "Artists")) && cJSON_IsArray(item)) {
-            cJSON* first = cJSON_GetArrayItem(item, 0);
-            if (first && cJSON_IsString(first))
-                meta.artist = first->valuestring;
-        }
+    auto getString = [&](const char* k) -> std::string {
+        return d->HasKey(k) && d->GetType(k) == VTYPE_STRING
+                   ? d->GetString(k).ToString()
+                   : std::string();
+    };
+
+    meta.id = getString("Id");
+    meta.title = getString("Name");
+    meta.artist = getString("SeriesName");
+    if (meta.artist.empty() && d->HasKey("Artists") && d->GetType("Artists") == VTYPE_LIST) {
+        CefRefPtr<CefListValue> arr = d->GetList("Artists");
+        if (arr && arr->GetSize() > 0 && arr->GetType(0) == VTYPE_STRING)
+            meta.artist = arr->GetString(0).ToString();
     }
-    if ((item = cJSON_GetObjectItem(root, "SeasonName")) && cJSON_IsString(item))
-        meta.album = item->valuestring;
-    if (meta.album.empty()) {
-        if ((item = cJSON_GetObjectItem(root, "Album")) && cJSON_IsString(item))
-            meta.album = item->valuestring;
+    meta.album = getString("SeasonName");
+    if (meta.album.empty()) meta.album = getString("Album");
+    if (d->HasKey("IndexNumber") && d->GetType("IndexNumber") == VTYPE_INT)
+        meta.track_number = d->GetInt("IndexNumber");
+    if (d->HasKey("RunTimeTicks")) {
+        auto t = d->GetType("RunTimeTicks");
+        double ticks = 0.0;
+        if (t == VTYPE_DOUBLE) ticks = d->GetDouble("RunTimeTicks");
+        else if (t == VTYPE_INT) ticks = static_cast<double>(d->GetInt("RunTimeTicks"));
+        meta.duration_us = static_cast<int64_t>(ticks) / 10;
     }
-    if ((item = cJSON_GetObjectItem(root, "IndexNumber")) && cJSON_IsNumber(item))
-        meta.track_number = item->valueint;
-    if ((item = cJSON_GetObjectItem(root, "RunTimeTicks")) && cJSON_IsNumber(item))
-        meta.duration_us = static_cast<int64_t>(item->valuedouble) / 10;
-    if ((item = cJSON_GetObjectItem(root, "Type")) && cJSON_IsString(item)) {
-        std::string type = item->valuestring;
-        if (type == "Audio") meta.media_type = MediaType::Audio;
-        else if (type == "Movie" || type == "Episode" || type == "Video" || type == "MusicVideo")
-            meta.media_type = MediaType::Video;
-    }
-    cJSON_Delete(root);
+    std::string type = getString("Type");
+    if (type == "Audio") meta.media_type = MediaType::Audio;
+    else if (type == "Movie" || type == "Episode" || type == "Video" || type == "MusicVideo")
+        meta.media_type = MediaType::Video;
     return meta;
 }
 

@@ -441,10 +441,51 @@ else()
     endif()
 endif()
 
+# Rust toolchain is required for jfn-config (all platforms) and jfn-wlproxy
+# (Linux only). Locate cargo once here so both blocks share the result.
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+
+# jfn-config — Rust static lib for settings.json (de)serialization. Replaces
+# the vendored cJSON parser used by the C++ Settings class.
+set(CONFIG_DIR "${CMAKE_SOURCE_DIR}/src/config")
+set(CONFIG_TARGET_DIR "${CMAKE_BINARY_DIR}/config-target")
+set(CONFIG_LIB "${CONFIG_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_config${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE CONFIG_SOURCES CONFIGURE_DEPENDS
+    "${CONFIG_DIR}/src/*.rs"
+    "${CONFIG_DIR}/Cargo.toml"
+)
+add_custom_command(
+    OUTPUT ${CONFIG_LIB}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${CONFIG_TARGET_DIR}
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${CONFIG_DIR}/Cargo.toml
+    DEPENDS ${CONFIG_SOURCES}
+    COMMENT "Building jfn-config (Rust)"
+    VERBATIM
+)
+add_custom_target(jfn_config_build DEPENDS ${CONFIG_LIB})
+add_library(jfn_config STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_config jfn_config_build)
+set_target_properties(jfn_config PROPERTIES
+    IMPORTED_LOCATION ${CONFIG_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${CONFIG_DIR}
+)
+# Rust staticlib transitive deps (std + serde_json). cargo rustc
+# --print=native-static-libs emits the exact set per platform.
+if(WIN32)
+    set_property(TARGET jfn_config APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ws2_32 userenv advapi32 bcrypt ntdll)
+elseif(APPLE)
+    set_property(TARGET jfn_config APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework CoreFoundation" "-framework Security")
+else()
+    set_property(TARGET jfn_config APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        pthread dl m rt util)
+endif()
+
 # jfn-wlproxy — Rust static lib hosting a forward-everything Wayland proxy
 # between mpv and the compositor. Vet-only: no interception yet. Linux only.
 if(UNIX AND NOT APPLE)
-    find_program(CARGO_EXECUTABLE cargo REQUIRED)
     set(WLPROXY_DIR "${CMAKE_SOURCE_DIR}/src/wlproxy")
     set(WLPROXY_TARGET_DIR "${CMAKE_BINARY_DIR}/wlproxy-target")
     set(WLPROXY_LIB "${WLPROXY_TARGET_DIR}/release/libjfn_wlproxy.a")
@@ -644,7 +685,6 @@ if(WIN32)
         src/browser/app_menu.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
-        src/cjson/cJSON.c
         src/jellyfin/api.cpp
         src/settings.cpp
         src/paths/paths.cpp
@@ -677,7 +717,6 @@ else()
         src/single_instance.cpp
         src/settings.cpp
         src/paths/paths.cpp
-        src/cjson/cJSON.c
         src/jellyfin/api.cpp
     )
 endif()
@@ -730,8 +769,15 @@ if(WIN32)
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
+target_link_libraries(jellyfin-desktop PRIVATE jfn_config)
 if(UNIX AND NOT APPLE)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
+    # Two Rust staticlibs (jfn_config, jfn_wlproxy) each embed a copy of the
+    # Rust standard library. GNU ld refuses to deduplicate identical
+    # monomorphized std symbols across two static archives; tell it to accept
+    # the duplicates. The symbols are bit-identical (same rustc toolchain,
+    # same target) so picking either copy is safe.
+    target_link_options(jellyfin-desktop PRIVATE -Wl,--allow-multiple-definition)
 endif()
 
 # When using external/system CEF, tell the app where to find resources
