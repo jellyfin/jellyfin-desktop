@@ -6,7 +6,7 @@ publish = false
 
 [lib]
 name = "jfn_wake_event"
-crate-type = ["staticlib"]
+crate-type = ["rlib"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -15,11 +15,5 @@ libc = "0.2"
 windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_Foundation",
+    "Win32_Security",
 ] }
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-panic = "abort"
-strip = true

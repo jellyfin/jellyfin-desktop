@@ -440,329 +440,48 @@ endif()
 # (Linux only). Locate cargo once here so both blocks share the result.
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
 
-# jfn-config — Rust static lib for settings.json (de)serialization. Replaces
-# the vendored cJSON parser used by the C++ Settings class.
-set(CONFIG_DIR "${CMAKE_SOURCE_DIR}/src/config")
-set(CONFIG_TARGET_DIR "${CMAKE_BINARY_DIR}/config-target")
-set(CONFIG_LIB "${CONFIG_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_config${CMAKE_STATIC_LIBRARY_SUFFIX}")
-file(GLOB_RECURSE CONFIG_SOURCES CONFIGURE_DEPENDS
-    "${CONFIG_DIR}/src/*.rs"
-    "${CONFIG_DIR}/Cargo.toml"
+# jfn-rust — single Rust staticlib that bundles every Rust crate in this repo.
+# Each crate is a workspace rlib member; this umbrella staticlib re-exports
+# them so the final C++ link sees one copy of std/core. MSVC link.exe rejects
+# duplicate symbols across staticlibs, so we cannot ship one staticlib per
+# crate. The workspace lives at src/Cargo.toml.
+set(JFN_RUST_DIR "${CMAKE_SOURCE_DIR}/src/jfn_rust")
+set(JFN_RUST_WORKSPACE_DIR "${CMAKE_SOURCE_DIR}/src")
+set(JFN_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/jfn-rust-target")
+set(JFN_RUST_LIB "${JFN_RUST_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_rust${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE JFN_RUST_SOURCES CONFIGURE_DEPENDS
+    "${JFN_RUST_WORKSPACE_DIR}/*/src/*.rs"
+    "${JFN_RUST_WORKSPACE_DIR}/*/Cargo.toml"
+    "${JFN_RUST_WORKSPACE_DIR}/Cargo.toml"
 )
 add_custom_command(
-    OUTPUT ${CONFIG_LIB}
+    OUTPUT ${JFN_RUST_LIB}
     COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TARGET_DIR=${CONFIG_TARGET_DIR}
-        ${CARGO_EXECUTABLE} build --release --manifest-path ${CONFIG_DIR}/Cargo.toml
-    DEPENDS ${CONFIG_SOURCES}
-    COMMENT "Building jfn-config (Rust)"
+        CARGO_TARGET_DIR=${JFN_RUST_TARGET_DIR}
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${JFN_RUST_DIR}/Cargo.toml
+    DEPENDS ${JFN_RUST_SOURCES}
+    COMMENT "Building jfn-rust (Rust workspace)"
     VERBATIM
 )
-add_custom_target(jfn_config_build DEPENDS ${CONFIG_LIB})
-add_library(jfn_config STATIC IMPORTED GLOBAL)
-add_dependencies(jfn_config jfn_config_build)
-set_target_properties(jfn_config PROPERTIES
-    IMPORTED_LOCATION ${CONFIG_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES ${CONFIG_DIR}
+add_custom_target(jfn_rust_build DEPENDS ${JFN_RUST_LIB})
+add_library(jfn_rust STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_rust jfn_rust_build)
+set_target_properties(jfn_rust PROPERTIES
+    IMPORTED_LOCATION ${JFN_RUST_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/log_redact;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wake_event;${CMAKE_SOURCE_DIR}/src/wlproxy"
 )
-# Rust staticlib transitive deps (std + serde_json). cargo rustc
-# --print=native-static-libs emits the exact set per platform.
+# Native deps pulled in by the Rust standard library and our crate deps.
+# cargo rustc --print=native-static-libs emits the exact set per platform.
 if(WIN32)
-    set_property(TARGET jfn_config APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
         ws2_32 userenv advapi32 bcrypt ntdll)
 elseif(APPLE)
-    set_property(TARGET jfn_config APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
         "-framework CoreFoundation" "-framework Security")
 else()
-    set_property(TARGET jfn_config APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
         pthread dl m rt util)
-endif()
-
-# jfn-jellyfin — Rust static lib for building the Jellyfin DeviceProfile JSON.
-# Replaces the CEF-JSON-based builder previously in
-# src/jellyfin/device_profile.cpp.
-set(JELLYFIN_DIR "${CMAKE_SOURCE_DIR}/src/jellyfin")
-set(JELLYFIN_TARGET_DIR "${CMAKE_BINARY_DIR}/jellyfin-target")
-set(JELLYFIN_LIB "${JELLYFIN_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_jellyfin${CMAKE_STATIC_LIBRARY_SUFFIX}")
-file(GLOB_RECURSE JELLYFIN_SOURCES CONFIGURE_DEPENDS
-    "${JELLYFIN_DIR}/src/*.rs"
-    "${JELLYFIN_DIR}/Cargo.toml"
-)
-add_custom_command(
-    OUTPUT ${JELLYFIN_LIB}
-    COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TARGET_DIR=${JELLYFIN_TARGET_DIR}
-        ${CARGO_EXECUTABLE} build --release --manifest-path ${JELLYFIN_DIR}/Cargo.toml
-    DEPENDS ${JELLYFIN_SOURCES}
-    COMMENT "Building jfn-jellyfin (Rust)"
-    VERBATIM
-)
-add_custom_target(jfn_jellyfin_build DEPENDS ${JELLYFIN_LIB})
-add_library(jfn_jellyfin STATIC IMPORTED GLOBAL)
-add_dependencies(jfn_jellyfin jfn_jellyfin_build)
-set_target_properties(jfn_jellyfin PROPERTIES
-    IMPORTED_LOCATION ${JELLYFIN_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES ${JELLYFIN_DIR}
-)
-if(WIN32)
-    set_property(TARGET jfn_jellyfin APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        ws2_32 userenv advapi32 bcrypt ntdll)
-elseif(APPLE)
-    set_property(TARGET jfn_jellyfin APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        "-framework CoreFoundation" "-framework Security")
-else()
-    set_property(TARGET jfn_jellyfin APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        pthread dl m rt util)
-endif()
-
-# jfn-cli — Rust static lib for argv parsing (clap). Replaces the hand-rolled
-# parser previously in src/cli.cpp.
-set(CLI_DIR "${CMAKE_SOURCE_DIR}/src/cli")
-set(CLI_TARGET_DIR "${CMAKE_BINARY_DIR}/cli-target")
-set(CLI_LIB "${CLI_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_cli${CMAKE_STATIC_LIBRARY_SUFFIX}")
-file(GLOB_RECURSE CLI_SOURCES CONFIGURE_DEPENDS
-    "${CLI_DIR}/src/*.rs"
-    "${CLI_DIR}/Cargo.toml"
-)
-add_custom_command(
-    OUTPUT ${CLI_LIB}
-    COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TARGET_DIR=${CLI_TARGET_DIR}
-        ${CARGO_EXECUTABLE} build --release --manifest-path ${CLI_DIR}/Cargo.toml
-    DEPENDS ${CLI_SOURCES}
-    COMMENT "Building jfn-cli (Rust)"
-    VERBATIM
-)
-add_custom_target(jfn_cli_build DEPENDS ${CLI_LIB})
-add_library(jfn_cli STATIC IMPORTED GLOBAL)
-add_dependencies(jfn_cli jfn_cli_build)
-set_target_properties(jfn_cli PROPERTIES
-    IMPORTED_LOCATION ${CLI_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES ${CLI_DIR}
-)
-if(WIN32)
-    set_property(TARGET jfn_cli APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        ws2_32 userenv advapi32 bcrypt ntdll)
-elseif(APPLE)
-    set_property(TARGET jfn_cli APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        "-framework CoreFoundation" "-framework Security")
-else()
-    set_property(TARGET jfn_cli APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        pthread dl m rt util)
-endif()
-
-# jfn-log-redact — Rust static lib for in-place log-line secret redaction.
-# Replaces src/log_redact.cpp's hand-rolled URL/JSON token scrubber.
-set(LOG_REDACT_DIR "${CMAKE_SOURCE_DIR}/src/log_redact")
-set(LOG_REDACT_TARGET_DIR "${CMAKE_BINARY_DIR}/log_redact-target")
-set(LOG_REDACT_LIB "${LOG_REDACT_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_log_redact${CMAKE_STATIC_LIBRARY_SUFFIX}")
-file(GLOB_RECURSE LOG_REDACT_SOURCES CONFIGURE_DEPENDS
-    "${LOG_REDACT_DIR}/src/*.rs"
-    "${LOG_REDACT_DIR}/Cargo.toml"
-)
-add_custom_command(
-    OUTPUT ${LOG_REDACT_LIB}
-    COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TARGET_DIR=${LOG_REDACT_TARGET_DIR}
-        ${CARGO_EXECUTABLE} build --release --manifest-path ${LOG_REDACT_DIR}/Cargo.toml
-    DEPENDS ${LOG_REDACT_SOURCES}
-    COMMENT "Building jfn-log-redact (Rust)"
-    VERBATIM
-)
-add_custom_target(jfn_log_redact_build DEPENDS ${LOG_REDACT_LIB})
-add_library(jfn_log_redact STATIC IMPORTED GLOBAL)
-add_dependencies(jfn_log_redact jfn_log_redact_build)
-set_target_properties(jfn_log_redact PROPERTIES
-    IMPORTED_LOCATION ${LOG_REDACT_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES ${LOG_REDACT_DIR}
-)
-if(WIN32)
-    set_property(TARGET jfn_log_redact APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        ws2_32 userenv advapi32 bcrypt ntdll)
-elseif(APPLE)
-    set_property(TARGET jfn_log_redact APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        "-framework CoreFoundation" "-framework Security")
-else()
-    set_property(TARGET jfn_log_redact APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        pthread dl m rt util)
-endif()
-
-# jfn-paths — Rust static lib for per-user filesystem locations
-# (config/cache/state dirs, mpv home, default log path). Replaces the
-# per-platform implementations under src/paths/{linux,macos,windows}.cpp.
-set(PATHS_DIR "${CMAKE_SOURCE_DIR}/src/paths")
-set(PATHS_TARGET_DIR "${CMAKE_BINARY_DIR}/paths-target")
-set(PATHS_LIB "${PATHS_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_paths${CMAKE_STATIC_LIBRARY_SUFFIX}")
-file(GLOB_RECURSE PATHS_SOURCES CONFIGURE_DEPENDS
-    "${PATHS_DIR}/src/*.rs"
-    "${PATHS_DIR}/Cargo.toml"
-)
-add_custom_command(
-    OUTPUT ${PATHS_LIB}
-    COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TARGET_DIR=${PATHS_TARGET_DIR}
-        ${CARGO_EXECUTABLE} build --release --manifest-path ${PATHS_DIR}/Cargo.toml
-    DEPENDS ${PATHS_SOURCES}
-    COMMENT "Building jfn-paths (Rust)"
-    VERBATIM
-)
-add_custom_target(jfn_paths_build DEPENDS ${PATHS_LIB})
-add_library(jfn_paths STATIC IMPORTED GLOBAL)
-add_dependencies(jfn_paths jfn_paths_build)
-set_target_properties(jfn_paths PROPERTIES
-    IMPORTED_LOCATION ${PATHS_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES ${PATHS_DIR}
-)
-if(WIN32)
-    set_property(TARGET jfn_paths APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        ws2_32 userenv advapi32 bcrypt ntdll)
-elseif(APPLE)
-    set_property(TARGET jfn_paths APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        "-framework CoreFoundation" "-framework Security")
-else()
-    set_property(TARGET jfn_paths APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        pthread dl m rt util)
-endif()
-
-# jfn-wake-event — Rust static lib backing the WakeEvent primitive
-# (eventfd on Linux, pipe on macOS, manual-reset event on Windows).
-set(WAKE_EVENT_DIR "${CMAKE_SOURCE_DIR}/src/wake_event")
-set(WAKE_EVENT_TARGET_DIR "${CMAKE_BINARY_DIR}/wake_event-target")
-set(WAKE_EVENT_LIB "${WAKE_EVENT_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_wake_event${CMAKE_STATIC_LIBRARY_SUFFIX}")
-file(GLOB_RECURSE WAKE_EVENT_SOURCES CONFIGURE_DEPENDS
-    "${WAKE_EVENT_DIR}/src/*.rs"
-    "${WAKE_EVENT_DIR}/Cargo.toml"
-)
-add_custom_command(
-    OUTPUT ${WAKE_EVENT_LIB}
-    COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TARGET_DIR=${WAKE_EVENT_TARGET_DIR}
-        ${CARGO_EXECUTABLE} build --release --manifest-path ${WAKE_EVENT_DIR}/Cargo.toml
-    DEPENDS ${WAKE_EVENT_SOURCES}
-    COMMENT "Building jfn-wake-event (Rust)"
-    VERBATIM
-)
-add_custom_target(jfn_wake_event_build DEPENDS ${WAKE_EVENT_LIB})
-add_library(jfn_wake_event STATIC IMPORTED GLOBAL)
-add_dependencies(jfn_wake_event jfn_wake_event_build)
-set_target_properties(jfn_wake_event PROPERTIES
-    IMPORTED_LOCATION ${WAKE_EVENT_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES ${WAKE_EVENT_DIR}
-)
-if(WIN32)
-    set_property(TARGET jfn_wake_event APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        ws2_32 userenv advapi32 bcrypt ntdll)
-elseif(APPLE)
-    set_property(TARGET jfn_wake_event APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        "-framework CoreFoundation" "-framework Security")
-else()
-    set_property(TARGET jfn_wake_event APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        pthread dl m rt util)
-endif()
-
-# jfn-signal-guard — Rust static lib that snapshots/restores SIGINT and
-# SIGTERM dispositions around a custom handler. Unix only; the Windows
-# build uses SetConsoleCtrlHandler instead and never links this.
-if(NOT WIN32)
-    set(SIGNAL_GUARD_DIR "${CMAKE_SOURCE_DIR}/src/signal_guard")
-    set(SIGNAL_GUARD_TARGET_DIR "${CMAKE_BINARY_DIR}/signal_guard-target")
-    set(SIGNAL_GUARD_LIB "${SIGNAL_GUARD_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_signal_guard${CMAKE_STATIC_LIBRARY_SUFFIX}")
-    file(GLOB_RECURSE SIGNAL_GUARD_SOURCES CONFIGURE_DEPENDS
-        "${SIGNAL_GUARD_DIR}/src/*.rs"
-        "${SIGNAL_GUARD_DIR}/Cargo.toml"
-    )
-    add_custom_command(
-        OUTPUT ${SIGNAL_GUARD_LIB}
-        COMMAND ${CMAKE_COMMAND} -E env
-            CARGO_TARGET_DIR=${SIGNAL_GUARD_TARGET_DIR}
-            ${CARGO_EXECUTABLE} build --release --manifest-path ${SIGNAL_GUARD_DIR}/Cargo.toml
-        DEPENDS ${SIGNAL_GUARD_SOURCES}
-        COMMENT "Building jfn-signal-guard (Rust)"
-        VERBATIM
-    )
-    add_custom_target(jfn_signal_guard_build DEPENDS ${SIGNAL_GUARD_LIB})
-    add_library(jfn_signal_guard STATIC IMPORTED GLOBAL)
-    add_dependencies(jfn_signal_guard jfn_signal_guard_build)
-    set_target_properties(jfn_signal_guard PROPERTIES
-        IMPORTED_LOCATION ${SIGNAL_GUARD_LIB}
-        INTERFACE_INCLUDE_DIRECTORIES ${SIGNAL_GUARD_DIR}
-    )
-    if(APPLE)
-        set_property(TARGET jfn_signal_guard APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-            "-framework CoreFoundation" "-framework Security")
-    else()
-        set_property(TARGET jfn_signal_guard APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-            pthread dl m rt util)
-    endif()
-endif()
-
-# jfn-single-instance — Rust static lib gating second-instance launches.
-# AF_UNIX socket on Linux/macOS, named pipe on Windows. Replaces the
-# hand-rolled platform code in src/single_instance.cpp.
-set(SINGLE_INSTANCE_DIR "${CMAKE_SOURCE_DIR}/src/single_instance")
-set(SINGLE_INSTANCE_TARGET_DIR "${CMAKE_BINARY_DIR}/single_instance-target")
-set(SINGLE_INSTANCE_LIB "${SINGLE_INSTANCE_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_single_instance${CMAKE_STATIC_LIBRARY_SUFFIX}")
-file(GLOB_RECURSE SINGLE_INSTANCE_SOURCES CONFIGURE_DEPENDS
-    "${SINGLE_INSTANCE_DIR}/src/*.rs"
-    "${SINGLE_INSTANCE_DIR}/Cargo.toml"
-)
-add_custom_command(
-    OUTPUT ${SINGLE_INSTANCE_LIB}
-    COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TARGET_DIR=${SINGLE_INSTANCE_TARGET_DIR}
-        ${CARGO_EXECUTABLE} build --release --manifest-path ${SINGLE_INSTANCE_DIR}/Cargo.toml
-    DEPENDS ${SINGLE_INSTANCE_SOURCES}
-    COMMENT "Building jfn-single-instance (Rust)"
-    VERBATIM
-)
-add_custom_target(jfn_single_instance_build DEPENDS ${SINGLE_INSTANCE_LIB})
-add_library(jfn_single_instance STATIC IMPORTED GLOBAL)
-add_dependencies(jfn_single_instance jfn_single_instance_build)
-set_target_properties(jfn_single_instance PROPERTIES
-    IMPORTED_LOCATION ${SINGLE_INSTANCE_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES ${SINGLE_INSTANCE_DIR}
-)
-if(WIN32)
-    set_property(TARGET jfn_single_instance APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        ws2_32 userenv advapi32 bcrypt ntdll)
-elseif(APPLE)
-    set_property(TARGET jfn_single_instance APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        "-framework CoreFoundation" "-framework Security")
-else()
-    set_property(TARGET jfn_single_instance APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        pthread dl m rt util)
-endif()
-
-# jfn-wlproxy — Rust static lib hosting a forward-everything Wayland proxy
-# between mpv and the compositor. Vet-only: no interception yet. Linux only.
-if(UNIX AND NOT APPLE)
-    set(WLPROXY_DIR "${CMAKE_SOURCE_DIR}/src/wlproxy")
-    set(WLPROXY_TARGET_DIR "${CMAKE_BINARY_DIR}/wlproxy-target")
-    set(WLPROXY_LIB "${WLPROXY_TARGET_DIR}/release/libjfn_wlproxy.a")
-    file(GLOB_RECURSE WLPROXY_SOURCES CONFIGURE_DEPENDS
-        "${WLPROXY_DIR}/src/*.rs"
-        "${WLPROXY_DIR}/Cargo.toml"
-    )
-    add_custom_command(
-        OUTPUT ${WLPROXY_LIB}
-        COMMAND ${CMAKE_COMMAND} -E env
-            CARGO_TARGET_DIR=${WLPROXY_TARGET_DIR}
-            ${CARGO_EXECUTABLE} build --release --manifest-path ${WLPROXY_DIR}/Cargo.toml
-        DEPENDS ${WLPROXY_SOURCES}
-        COMMENT "Building jfn-wlproxy (Rust)"
-        VERBATIM
-    )
-    add_custom_target(jfn_wlproxy_build DEPENDS ${WLPROXY_LIB})
-    add_library(jfn_wlproxy STATIC IMPORTED GLOBAL)
-    add_dependencies(jfn_wlproxy jfn_wlproxy_build)
-    set_target_properties(jfn_wlproxy PROPERTIES
-        IMPORTED_LOCATION ${WLPROXY_LIB}
-        INTERFACE_INCLUDE_DIRECTORIES ${WLPROXY_DIR}
-        # Common native deps for Rust staticlibs on Linux. cargo rustc
-        # --print=native-static-libs would emit the exact set, but these
-        # cover wl-proxy's transitive deps (parking_lot, uapi, std).
-        INTERFACE_LINK_LIBRARIES "pthread;dl;m;rt;util"
-    )
 endif()
 
 # libavcodec — used to enumerate the decoders mpv will route through ffmpeg.
@@ -1020,19 +739,7 @@ if(WIN32)
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
-target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_jellyfin jfn_log_redact jfn_paths jfn_wake_event jfn_single_instance)
-if(NOT WIN32)
-    target_link_libraries(jellyfin-desktop PRIVATE jfn_signal_guard)
-endif()
-if(UNIX AND NOT APPLE)
-    target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
-    # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_jellyfin, jfn_wlproxy) each embed a
-    # copy of the Rust standard library. GNU ld refuses to deduplicate identical
-    # monomorphized std symbols across two static archives; tell it to accept
-    # the duplicates. The symbols are bit-identical (same rustc toolchain,
-    # same target) so picking either copy is safe.
-    target_link_options(jellyfin-desktop PRIVATE -Wl,--allow-multiple-definition)
-endif()
+target_link_libraries(jellyfin-desktop PRIVATE jfn_rust)
 
 # When using external/system CEF, tell the app where to find resources
 if(EXTERNAL_CEF_DIR OR USE_SYSTEM_CEF)

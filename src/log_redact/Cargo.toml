@@ -6,11 +6,4 @@ publish = false
 
 [lib]
 name = "jfn_log_redact"
-crate-type = ["staticlib"]
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-panic = "abort"
-strip = true
+crate-type = ["rlib"]

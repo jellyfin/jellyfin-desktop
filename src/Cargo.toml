@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = [
+    "cli",
+    "config",
+    "jellyfin",
+    "jfn_rust",
+    "log_redact",
+    "paths",
+    "signal_guard",
+    "single_instance",
+    "wake_event",
+    "wlproxy",
+]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
