@@ -1013,6 +1013,12 @@ static bool wl_init(mpv_handle* mpv) {
     jfn_wlproxy_set_configure_callback(
         [](int w, int h, int fs) { on_mpv_configure(nullptr, w, h, fs != 0); });
 
+    // Drive g_wl.cached_scale from wp_fractional_scale_v1.preferred_scale
+    // directly. Removes the round-trip through mpv's display-hidpi-scale
+    // property observation.
+    jfn_wlproxy_set_scale_callback(
+        [](int scale_120) { g_wl.cached_scale = scale_120 / 120.0f; });
+
     intptr_t dp = 0, sp = 0;
     g_mpv.GetWaylandDisplay(dp);
     g_mpv.GetWaylandSurface(sp);
@@ -1091,11 +1097,8 @@ static bool wl_init(mpv_handle* mpv) {
 }
 
 static float wl_get_scale() {
-    double scale = mpv::display_scale();
-    if (scale > 0) {
-        g_wl.cached_scale = static_cast<float>(scale);
-        return g_wl.cached_scale;
-    }
+    // g_wl.cached_scale is driven by jfn_wlproxy_set_scale_callback (registered
+    // in wl_init). Falls back to 1.0 before the compositor sends preferred_scale.
     return g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
 }
 
@@ -1107,16 +1110,12 @@ static float wl_get_display_scale(int x, int y) {
 static void wl_cleanup() {
     stop_fade_thread();
 
-    // Null the trampolines we installed into mpv's configure/close hooks
-    // before destroying the g_wl state they read. They keep being invoked
-    // until mpv itself is torn down, which happens after this function.
+    // Null the close trampoline we installed into mpv's hook before
+    // destroying the g_wl state it reads. It keeps being invoked until mpv
+    // itself is torn down, which happens after this function. (The configure
+    // hook is no longer used — proxy-side interception replaced it.)
     {
         intptr_t cb_ptr = 0;
-        g_mpv.GetWaylandConfigureCbPtr(cb_ptr);
-        if (cb_ptr) {
-            auto* fn = reinterpret_cast<void(**)(void*, int, int, bool)>(cb_ptr);
-            *fn = nullptr;
-        }
         g_mpv.GetWaylandCloseCbPtr(cb_ptr);
         if (cb_ptr) {
             auto* fn = reinterpret_cast<void(**)(void*)>(cb_ptr);
@@ -1223,16 +1222,14 @@ static void wl_end_transition_locked() {
 }
 
 static void wl_set_fullscreen(bool fullscreen) {
-    if (!g_mpv.IsValid()) return;
-    // Only transition if state actually changes. Read the cached value
-    // populated from mpv's fullscreen property observation — avoids a
-    // sync mpv_get_property from callers on the event thread.
-    if (mpv::fullscreen() == fullscreen) {
+    // Use g_wl.was_fullscreen (synced from xdg_toplevel.configure via
+    // on_mpv_configure) as the current state — no libmpv property involved.
+    if (g_wl.was_fullscreen == fullscreen) {
         // Compositor may have rejected our fullscreen change. If we're
         // mid-transition and the state matches the pre-toggle value
         // (was_fullscreen), the compositor forced us back — cancel.
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-        if (g_wl.transitioning && fullscreen == g_wl.was_fullscreen)
+        if (g_wl.transitioning)
             wl_end_transition_locked();
         return;
     }
@@ -1240,7 +1237,7 @@ static void wl_set_fullscreen(bool fullscreen) {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
         wl_begin_transition_locked();
     }
-    g_mpv.SetFullscreen(fullscreen);
+    jfn_wlproxy_set_fullscreen(fullscreen ? 1 : 0);
 }
 
 static void wl_toggle_fullscreen() {
@@ -1248,9 +1245,7 @@ static void wl_toggle_fullscreen() {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
         wl_begin_transition_locked();
     }
-    if (g_mpv.IsValid()) {
-        g_mpv.ToggleFullscreen();
-    }
+    jfn_wlproxy_set_fullscreen(g_wl.was_fullscreen ? 0 : 1);
 }
 
 static void wl_begin_transition() {

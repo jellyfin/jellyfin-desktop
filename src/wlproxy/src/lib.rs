@@ -4,8 +4,13 @@
 //! Messages forward in both directions; selected events are intercepted.
 //!
 //! Interceptions:
-//! - `xdg_toplevel.configure` → fan width/height/fullscreen out to a C callback
-//!   registered via `jfn_wlproxy_set_configure_callback`, then forward to mpv.
+//! - `xdg_toplevel.configure` → fan width/height/fullscreen out to a C callback.
+//! - `wp_fractional_scale_v1.preferred_scale` → drives scale_120; fires a
+//!   separate C callback so the host owns scale state instead of routing
+//!   through libmpv's `display-hidpi-scale` property.
+//! - `xdg_toplevel.set_fullscreen` / `set_maximized` / unset variants — host
+//!   drives these from C via a command queue; the per-client dispatch loop
+//!   drains the queue between Wayland event batches.
 //!
 //! We don't use `SimpleProxy` because it builds each per-client `State` using
 //! the current process `WAYLAND_DISPLAY` env to find the upstream compositor —
@@ -13,12 +18,15 @@
 //! must capture the original `WAYLAND_DISPLAY` here at `start` (before any
 //! override) and pass it explicitly via `with_server_display_name`.
 
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::ffi::CString;
 use std::os::fd::OwnedFd;
 use std::os::raw::{c_char, c_int};
 use std::rc::Rc;
 use std::sync::{Mutex, mpsc};
 use std::thread;
+use std::time::Duration;
 
 use error_reporter::Report;
 use wl_proxy::acceptor::Acceptor;
@@ -47,10 +55,25 @@ pub struct Proxy {
 }
 
 type ConfigureCb = extern "C" fn(c_int, c_int, c_int);
+type ScaleCb = extern "C" fn(c_int);
 
-// Single proxy per process — callback is global. Fires from the per-client
+// Single proxy per process — callbacks are global. Fire from the per-client
 // proxy thread; the C side guards against thread-safety with its own mutex.
 static CONFIGURE_CB: Mutex<Option<ConfigureCb>> = Mutex::new(None);
+static SCALE_CB: Mutex<Option<ScaleCb>> = Mutex::new(None);
+
+enum HostCommand {
+    SetFullscreen(bool),
+    SetMaximized(bool),
+}
+
+static COMMANDS: Mutex<VecDeque<HostCommand>> = Mutex::new(VecDeque::new());
+
+thread_local! {
+    // Per-client thread stores the XdgToplevel it manages so the command
+    // drain (which runs on the same thread) can issue requests on it.
+    static TOPLEVEL: RefCell<Option<Rc<XdgToplevel>>> = const { RefCell::new(None) };
+}
 
 // Pending state for configure synthesis. We own the scale tracking via
 // wp_fractional_scale_v1.preferred_scale and convert the logical width/height
@@ -161,12 +184,43 @@ pub extern "C" fn jfn_wlproxy_stop(p: *mut Proxy) {
 /// Fires from the proxy's per-client thread whenever the compositor sends an
 /// `xdg_toplevel.configure` event. Arguments are `(width, height, fullscreen)`
 /// — fullscreen is 1 if the configure's states[] array contains
-/// `XDG_TOPLEVEL_STATE_FULLSCREEN`, 0 otherwise.
+/// `XDG_TOPLEVEL_STATE_FULLSCREEN`, 0 otherwise. width/height are physical
+/// pixels (scaled by the current `scale_120 / 120` factor).
 ///
 /// The event still forwards to mpv after the callback runs.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
     *CONFIGURE_CB.lock().unwrap() = Some(cb);
+}
+
+/// Register the wp_fractional_scale_v1.preferred_scale callback.
+///
+/// Argument is the scale numerator over `WAYLAND_SCALE_FACTOR=120` (so 120 =
+/// 1.0x, 180 = 1.5x, 240 = 2.0x). Fires once whenever the compositor sends a
+/// new preferred scale for the toplevel's surface.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_wlproxy_set_scale_callback(cb: ScaleCb) {
+    *SCALE_CB.lock().unwrap() = Some(cb);
+}
+
+/// Queue an xdg_toplevel.set_fullscreen / unset_fullscreen request. Applied
+/// from the proxy's per-client thread on its next dispatch iteration.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_wlproxy_set_fullscreen(enable: c_int) {
+    COMMANDS
+        .lock()
+        .unwrap()
+        .push_back(HostCommand::SetFullscreen(enable != 0));
+}
+
+/// Queue an xdg_toplevel.set_maximized / unset_maximized request. Applied
+/// from the proxy's per-client thread on its next dispatch iteration.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_wlproxy_set_maximized(enable: c_int) {
+    COMMANDS
+        .lock()
+        .unwrap()
+        .push_back(HostCommand::SetMaximized(enable != 0));
 }
 
 // =========================================================================
@@ -231,12 +285,46 @@ fn run_client(socket: OwnedFd, upstream: Option<String>) {
     };
     client.set_handler(NoopClient);
     client.display().set_handler(DisplayH);
+
+    // Dispatch with a short timeout so the loop also services the host
+    // command queue (set_fullscreen / set_maximized) within ~16ms even when
+    // no Wayland events are arriving. Real events return immediately from
+    // poll — the timeout only fires during idle periods.
     while state.is_not_destroyed() {
-        if let Err(e) = state.dispatch_blocking() {
-            eprintln!("wlproxy: dispatch: {}", Report::new(e));
-            return;
+        match state.dispatch(Some(Duration::from_millis(16))) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("wlproxy: dispatch: {}", Report::new(e));
+                return;
+            }
         }
+        drain_host_commands();
     }
+}
+
+fn drain_host_commands() {
+    let cmds: Vec<HostCommand> = COMMANDS.lock().unwrap().drain(..).collect();
+    if cmds.is_empty() {
+        return;
+    }
+    TOPLEVEL.with(|t| {
+        let tl_ref = t.borrow();
+        let Some(tl) = tl_ref.as_ref() else {
+            // No toplevel in this thread (e.g. early commands queued before
+            // mpv got to xdg_surface.get_toplevel). Drop silently — the
+            // commands aren't replayed, but for the current contract (host
+            // calls only after the window exists) that's fine.
+            return;
+        };
+        for cmd in cmds {
+            match cmd {
+                HostCommand::SetFullscreen(true) => tl.send_set_fullscreen(None),
+                HostCommand::SetFullscreen(false) => tl.send_unset_fullscreen(),
+                HostCommand::SetMaximized(true) => tl.send_set_maximized(),
+                HostCommand::SetMaximized(false) => tl.send_unset_maximized(),
+            }
+        }
+    });
 }
 
 // =========================================================================
@@ -290,6 +378,9 @@ struct FracScaleH;
 impl WpFractionalScaleV1Handler for FracScaleH {
     fn handle_preferred_scale(&mut self, slf: &Rc<WpFractionalScaleV1>, scale: u32) {
         PENDING.lock().unwrap().scale_120 = scale;
+        if let Some(cb) = *SCALE_CB.lock().unwrap() {
+            cb(scale as c_int);
+        }
         fire_configure();
         slf.send_preferred_scale(scale);
     }
@@ -312,6 +403,7 @@ struct SurfaceH;
 impl XdgSurfaceHandler for SurfaceH {
     fn handle_get_toplevel(&mut self, slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
         id.set_handler(ToplevelH);
+        TOPLEVEL.with(|t| *t.borrow_mut() = Some(id.clone()));
         slf.send_get_toplevel(id);
     }
 }
