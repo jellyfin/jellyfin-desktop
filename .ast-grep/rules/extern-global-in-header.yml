@@ -1,0 +1,17 @@
+id: extern-global-in-header
+language: cpp
+severity: info
+message: >
+  `extern` global in a header leaks state across every TU that includes it.
+  Tighten to a namespaced accessor / singleton / DI parameter where
+  possible. Existing g_platform / g_mpv are grandfathered.
+files:
+  - "src/**/*.h"
+ignores:
+  - "src/main.cpp"
+  - "src/common.h"
+  - "src/platform/platform.h"
+  - "src/mpv/handle.h"
+  - "third_party/**"
+rule:
+  pattern: extern $TYPE $NAME;

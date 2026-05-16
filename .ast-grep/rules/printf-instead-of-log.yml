@@ -1,0 +1,28 @@
+id: printf-instead-of-log
+language: cpp
+severity: info
+message: >
+  Direct stdout/stderr bypasses LOG_* (no level routing, no redaction,
+  no log-file capture on macOS/Windows GUI builds). Use LOG_INFO / LOG_WARN /
+  LOG_ERROR. The only legitimate exceptions are pre-LoggingScope paths:
+  CLI parsing in main.cpp/cli.cpp and CEF subprocess bootstrap in cef_app.cpp
+  (Start() runs before LoggingScope is constructed).
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "src/main.cpp"
+  - "src/cli.cpp"
+  - "src/cef/cef_app.cpp"
+  - "src/logging.cpp"
+  - "src/cjson/**"
+  - "third_party/**"
+  - "tests/**"
+rule:
+  any:
+    - pattern: printf($$$)
+    - pattern: fprintf($$$)
+    - pattern: std::cout << $$$
+    - pattern: std::cerr << $$$
+    - pattern: puts($$$)

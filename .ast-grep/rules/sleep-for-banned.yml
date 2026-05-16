@@ -1,0 +1,22 @@
+id: sleep-for-banned
+language: cpp
+severity: error
+message: >
+  Artificial sleep / busy wait. CLAUDE.md: event-driven only, no polling,
+  no timeout-based bailouts in shutdown. Fix the root cause — wire to the
+  proper event source.
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "tests/**"
+  - "src/cjson/**"
+  - "third_party/**"
+rule:
+  any:
+    - pattern: std::this_thread::sleep_for($$$)
+    - pattern: std::this_thread::sleep_until($$$)
+    - pattern: usleep($$$)
+    - pattern: nanosleep($$$)
+    - pattern: Sleep($$$)
