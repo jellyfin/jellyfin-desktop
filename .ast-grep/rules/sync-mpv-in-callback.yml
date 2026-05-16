@@ -1,0 +1,31 @@
+id: sync-mpv-in-callback
+language: cpp
+severity: error
+message: >
+  Synchronous mpv API in an event-handling function causes deadlock during
+  video init (CLAUDE.md). Use property observation or the mpv_*_async
+  variants. If you must read state, do it on the digest thread, not from a
+  wakeup/observe callback.
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "third_party/**"
+  - "tests/**"
+rule:
+  any:
+    - pattern: mpv_get_property($$$)
+    - pattern: mpv_get_property_string($$$)
+    - pattern: mpv_get_property_async($$$)
+    - pattern: mpv_set_property($$$)
+    - pattern: mpv_set_property_string($$$)
+    - pattern: mpv_command($$$)
+    - pattern: mpv_command_string($$$)
+  inside:
+    stopBy: end
+    kind: function_definition
+    has:
+      stopBy: end
+      kind: identifier
+      regex: "(?i)(callback|wakeup|on_property|on_event|handle_mpv|observe_property)"

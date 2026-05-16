@@ -1,0 +1,25 @@
+id: cef-init-outside-cef-layer
+language: cpp
+severity: warning
+message: >
+  CEF lifecycle / process-message construction leaking outside src/cef/.
+  Keep CefInitialize, CefShutdown, CefDoMessageLoopWork, and
+  CefProcessMessage::Create inside the CEF layer; expose typed entry points
+  to the rest of the app.
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "src/cef/**"
+  - "src/main.cpp"
+  - "third_party/**"
+  - "tests/**"
+rule:
+  any:
+    - pattern: CefInitialize($$$)
+    - pattern: CefShutdown($$$)
+    - pattern: CefDoMessageLoopWork($$$)
+    - pattern: CefRunMessageLoop($$$)
+    - pattern: CefQuitMessageLoop($$$)
+    - pattern: CefProcessMessage::Create($$$)

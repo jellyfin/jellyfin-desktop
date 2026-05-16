@@ -1,0 +1,21 @@
+id: lambda-capture-this-async
+language: cpp
+severity: warning
+message: >
+  Lambda capturing `this` or `&` posted to a different thread / runloop —
+  the captured object may be destroyed before the task runs. Capture a
+  CefRefPtr / shared_ptr / weak_ptr by value instead, and re-lock inside.
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "third_party/**"
+  - "tests/**"
+rule:
+  kind: call_expression
+  any:
+    - pattern: CefPostTask($_, [this]($$$) { $$$ })
+    - pattern: CefPostTask($_, [&]($$$) { $$$ })
+    - pattern: CefPostDelayedTask($_, [this]($$$) { $$$ }, $_)
+    - pattern: CefPostDelayedTask($_, [&]($$$) { $$$ }, $_)
