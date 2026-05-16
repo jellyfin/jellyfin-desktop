@@ -40,8 +40,8 @@ use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
     WpFractionalScaleV1, WpFractionalScaleV1Handler,
 };
 use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
-use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
 use wl_proxy::protocols::wayland::wl_output::WlOutput;
+use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
 use wl_proxy::protocols::wayland::wl_surface::WlSurface;
 use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
 use wl_proxy::protocols::xdg_shell::xdg_toplevel::{
@@ -162,8 +162,12 @@ pub extern "C" fn jfn_wlproxy_start() -> *mut Proxy {
 
 /// Returns the WAYLAND_DISPLAY value clients should connect to (e.g. "wayland-1").
 /// Returns null if `p` is null. Pointer is valid until `jfn_wlproxy_stop`.
+///
+/// # Safety
+/// `p` must be null or a pointer previously returned by `jfn_wlproxy_start`
+/// that has not yet been passed to `jfn_wlproxy_stop`.
 #[unsafe(no_mangle)]
-pub extern "C" fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
+pub unsafe extern "C" fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
     if p.is_null() {
         return std::ptr::null();
     }
@@ -172,8 +176,12 @@ pub extern "C" fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
 
 /// Drop the proxy handle. The listener thread is detached; OS cleans up on
 /// process exit. Safe to call with null.
+///
+/// # Safety
+/// `p` must be null or a pointer previously returned by `jfn_wlproxy_start`.
+/// Each non-null pointer may only be passed here once.
 #[unsafe(no_mangle)]
-pub extern "C" fn jfn_wlproxy_stop(p: *mut Proxy) {
+pub unsafe extern "C" fn jfn_wlproxy_stop(p: *mut Proxy) {
     if p.is_null() {
         return;
     }
@@ -429,12 +437,7 @@ impl XdgToplevelHandler for ToplevelH {
     // set_maximized (which fire send_* from the proxy directly). mpv's
     // outgoing state requests are dropped so they can't race the host.
 
-    fn handle_set_fullscreen(
-        &mut self,
-        _slf: &Rc<XdgToplevel>,
-        _output: Option<&Rc<WlOutput>>,
-    ) {
-    }
+    fn handle_set_fullscreen(&mut self, _slf: &Rc<XdgToplevel>, _output: Option<&Rc<WlOutput>>) {}
     fn handle_unset_fullscreen(&mut self, _slf: &Rc<XdgToplevel>) {}
     fn handle_set_maximized(&mut self, _slf: &Rc<XdgToplevel>) {}
     fn handle_unset_maximized(&mut self, _slf: &Rc<XdgToplevel>) {}
@@ -442,13 +445,7 @@ impl XdgToplevelHandler for ToplevelH {
     fn handle_set_min_size(&mut self, _slf: &Rc<XdgToplevel>, _w: i32, _h: i32) {}
     fn handle_set_max_size(&mut self, _slf: &Rc<XdgToplevel>, _w: i32, _h: i32) {}
 
-    fn handle_configure(
-        &mut self,
-        slf: &Rc<XdgToplevel>,
-        width: i32,
-        height: i32,
-        states: &[u8],
-    ) {
+    fn handle_configure(&mut self, slf: &Rc<XdgToplevel>, width: i32, height: i32, states: &[u8]) {
         // states is a wire-encoded wl_array of uint32 XdgToplevelState values
         // in native byte order. Scan for FULLSCREEN; ignore other states.
         let mut fullscreen: c_int = 0;
