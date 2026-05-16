@@ -276,12 +276,6 @@ public:
         out = static_cast<intptr_t>(val);
         return err;
     }
-    int GetWaylandConfigureCbPtr(intptr_t& out) {
-        int64_t val = 0;
-        int err = GetPropertyInt("wayland-configure-cb-ptr", val);
-        out = static_cast<intptr_t>(val);
-        return err;
-    }
     int GetWaylandCloseCbPtr(intptr_t& out) {
         int64_t val = 0;
         int err = GetPropertyInt("wayland-close-cb-ptr", val);
