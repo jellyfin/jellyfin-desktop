@@ -6,7 +6,7 @@ publish = false
 
 [lib]
 name = "jfn_wlproxy"
-crate-type = ["staticlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 # Vendored under third_party/wl-proxy so we can drop additional protocol
@@ -15,10 +15,3 @@ crate-type = ["staticlib"]
 wl-proxy = { path = "../../third_party/wl-proxy/wl-proxy", features = ["all-protocols"] }
 error_reporter = "1.0.0"
 log = "0.4"
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-panic = "abort"
-strip = true

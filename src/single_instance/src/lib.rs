@@ -273,12 +273,12 @@ mod imp {
     use std::thread::{self, JoinHandle};
     use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileA, OPEN_EXISTING, ReadFile, WriteFile,
+        CreateFileA, OPEN_EXISTING, PIPE_ACCESS_INBOUND, ReadFile, WriteFile,
     };
     use windows_sys::Win32::System::IO::{CancelIo, OVERLAPPED};
     use windows_sys::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeA, DisconnectNamedPipe, PIPE_ACCESS_INBOUND,
-        PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+        ConnectNamedPipe, CreateNamedPipeA, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+        PIPE_TYPE_BYTE, PIPE_WAIT,
     };
     use windows_sys::Win32::System::Threading::{
         CreateEventA, INFINITE, SetEvent, WaitForMultipleObjects,

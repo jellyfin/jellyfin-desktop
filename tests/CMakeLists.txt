@@ -8,7 +8,7 @@ target_include_directories(jellyfin_api_test PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/doctest/include
 )
 
-target_link_libraries(jellyfin_api_test PRIVATE jfn_config)
+target_link_libraries(jellyfin_api_test PRIVATE jfn_rust)
 
 add_test(NAME jellyfin_api_test COMMAND jellyfin_api_test)
 
@@ -23,12 +23,7 @@ target_include_directories(settings_test PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/doctest/include
 )
 
-target_link_libraries(settings_test PRIVATE jfn_config jfn_paths)
-if(UNIX AND NOT APPLE)
-    # jfn_config and jfn_paths each embed a copy of the Rust std library.
-    # See the matching note on the main executable in the top-level CMakeLists.
-    target_link_options(settings_test PRIVATE -Wl,--allow-multiple-definition)
-endif()
+target_link_libraries(settings_test PRIVATE jfn_rust)
 
 add_test(NAME settings_test COMMAND settings_test)
 
@@ -44,7 +39,7 @@ target_include_directories(cli_test PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/cef
 )
 
-target_link_libraries(cli_test PRIVATE ${MPV_LIBRARIES} quill::quill jfn_cli)
+target_link_libraries(cli_test PRIVATE ${MPV_LIBRARIES} quill::quill jfn_rust)
 
 add_test(NAME cli_test COMMAND cli_test)
 
@@ -58,7 +53,7 @@ target_include_directories(log_redact_test PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/doctest/include
 )
 
-target_link_libraries(log_redact_test PRIVATE jfn_log_redact)
+target_link_libraries(log_redact_test PRIVATE jfn_rust)
 
 add_test(NAME log_redact_test COMMAND log_redact_test)
 
@@ -106,7 +101,7 @@ target_include_directories(playback_coordinator_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/doctest/include
 )
-target_link_libraries(playback_coordinator_test PRIVATE jfn_wake_event)
+target_link_libraries(playback_coordinator_test PRIVATE jfn_rust)
 if(NOT WIN32)
     target_link_libraries(playback_coordinator_test PRIVATE pthread)
 endif()

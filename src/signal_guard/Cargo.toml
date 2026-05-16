@@ -6,14 +6,7 @@ publish = false
 
 [lib]
 name = "jfn_signal_guard"
-crate-type = ["staticlib"]
+crate-type = ["rlib"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-panic = "abort"
-strip = true

@@ -1,0 +1,24 @@
+[package]
+name = "jfn-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_rust"
+crate-type = ["staticlib"]
+
+[dependencies]
+jfn-cli = { path = "../cli" }
+jfn-config = { path = "../config" }
+jfn-jellyfin = { path = "../jellyfin" }
+jfn-log-redact = { path = "../log_redact" }
+jfn-paths = { path = "../paths" }
+jfn-single-instance = { path = "../single_instance" }
+jfn-wake-event = { path = "../wake_event" }
+
+[target.'cfg(unix)'.dependencies]
+jfn-signal-guard = { path = "../signal_guard" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+jfn-wlproxy = { path = "../wlproxy" }
