@@ -483,6 +483,42 @@ else()
         pthread dl m rt util)
 endif()
 
+# jfn-cli — Rust static lib for argv parsing (clap). Replaces the hand-rolled
+# parser previously in src/cli.cpp.
+set(CLI_DIR "${CMAKE_SOURCE_DIR}/src/cli")
+set(CLI_TARGET_DIR "${CMAKE_BINARY_DIR}/cli-target")
+set(CLI_LIB "${CLI_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_cli${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE CLI_SOURCES CONFIGURE_DEPENDS
+    "${CLI_DIR}/src/*.rs"
+    "${CLI_DIR}/Cargo.toml"
+)
+add_custom_command(
+    OUTPUT ${CLI_LIB}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${CLI_TARGET_DIR}
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${CLI_DIR}/Cargo.toml
+    DEPENDS ${CLI_SOURCES}
+    COMMENT "Building jfn-cli (Rust)"
+    VERBATIM
+)
+add_custom_target(jfn_cli_build DEPENDS ${CLI_LIB})
+add_library(jfn_cli STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_cli jfn_cli_build)
+set_target_properties(jfn_cli PROPERTIES
+    IMPORTED_LOCATION ${CLI_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${CLI_DIR}
+)
+if(WIN32)
+    set_property(TARGET jfn_cli APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ws2_32 userenv advapi32 bcrypt ntdll)
+elseif(APPLE)
+    set_property(TARGET jfn_cli APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework CoreFoundation" "-framework Security")
+else()
+    set_property(TARGET jfn_cli APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        pthread dl m rt util)
+endif()
+
 # jfn-wlproxy — Rust static lib hosting a forward-everything Wayland proxy
 # between mpv and the compositor. Vet-only: no interception yet. Linux only.
 if(UNIX AND NOT APPLE)
@@ -769,11 +805,11 @@ if(WIN32)
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
-target_link_libraries(jellyfin-desktop PRIVATE jfn_config)
+target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli)
 if(UNIX AND NOT APPLE)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
-    # Two Rust staticlibs (jfn_config, jfn_wlproxy) each embed a copy of the
-    # Rust standard library. GNU ld refuses to deduplicate identical
+    # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_wlproxy) each embed a
+    # copy of the Rust standard library. GNU ld refuses to deduplicate identical
     # monomorphized std symbols across two static archives; tell it to accept
     # the duplicates. The symbols are bit-identical (same rustc toolchain,
     # same target) so picking either copy is safe.

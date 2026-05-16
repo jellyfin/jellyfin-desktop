@@ -220,11 +220,11 @@ TEST_CASE("parse: defaults preserved when matching flag absent") {
     CHECK(args.audio_channels == "stereo");
 }
 
-TEST_CASE("parse: --remote-debug-port non-numeric becomes 0 (atoi)") {
+TEST_CASE("parse: --remote-debug-port non-numeric is a parse error") {
     Argv av{"app", "--remote-debug-port=bogus"};
     cli::Args args;
-    REQUIRE(cli::parse(av.argc(), av.argv(), args).kind == K::Continue);
-    CHECK(args.remote_debugging_port == 0);
+    auto r = cli::parse(av.argc(), av.argv(), args);
+    CHECK(r.kind == K::Error);
 }
 
 TEST_CASE("parse: prefix collision — --log-level= does not eat --log-file=") {
@@ -236,12 +236,13 @@ TEST_CASE("parse: prefix collision — --log-level= does not eat --log-file=") {
     CHECK(args.log_level == "trace");
 }
 
-TEST_CASE("parse: stops at first unknown arg, partially populates") {
+TEST_CASE("parse: unknown arg leaves args untouched (atomic parse)") {
     Argv av{"app", "--hwdec", "vaapi", "--garbage", "--log-level", "debug"};
     cli::Args args;
+    args.hwdec = "auto";
     auto r = cli::parse(av.argc(), av.argv(), args);
     CHECK(r.kind == K::Error);
     CHECK(r.unknown_arg == "--garbage");
-    CHECK(args.hwdec == "vaapi");
-    CHECK(args.log_level == "");  // not reached
+    CHECK(args.hwdec == "auto");
+    CHECK(args.log_level == "");
 }
