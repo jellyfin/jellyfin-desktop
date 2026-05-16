@@ -34,7 +34,10 @@ jobs:
 
       - name: Install SDK
         run: |
-          flatpak install --user -y flathub org.freedesktop.Sdk//25.08 org.freedesktop.Platform//25.08
+          flatpak install --user -y flathub \
+            org.freedesktop.Sdk//25.08 \
+            org.freedesktop.Platform//25.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
 
       - name: Build Flatpak
         run: ./dev/linux/flatpak/build.sh
