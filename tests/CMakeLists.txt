@@ -36,6 +36,22 @@ target_include_directories(settings_test PRIVATE
 
 add_test(NAME settings_test COMMAND settings_test)
 
+add_executable(cli_test
+    cli_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/cli.cpp
+)
+
+target_include_directories(cli_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
+    ${MPV_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/third_party/cef
+)
+
+target_link_libraries(cli_test PRIVATE ${MPV_LIBRARIES} quill::quill)
+
+add_test(NAME cli_test COMMAND cli_test)
+
 add_executable(log_redact_test
     log_redact_test.cpp
     ${CMAKE_SOURCE_DIR}/src/log_redact.cpp
