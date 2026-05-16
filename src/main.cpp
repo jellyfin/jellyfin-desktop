@@ -46,6 +46,10 @@
 #include "single_instance.h"
 #endif
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+#include "wlproxy/wlproxy.h"
+#endif
+
 #include "include/cef_version.h"
 
 #include <cmath>
@@ -566,6 +570,29 @@ int main(int argc, char* argv[]) {
     setenv("MPV_HOME", mpv_home.c_str(), 1);
 #endif
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+    // Wire mpv through wl-proxy: mpv connects to our listener instead of
+    // the compositor; messages forward untouched (vet only — no interception).
+    // Wayland backend only; X11 path unaffected.
+    JfnWlproxy* wlproxy = nullptr;
+    if (g_platform.display == DisplayBackend::Wayland) {
+        wlproxy = jfn_wlproxy_start();
+        if (wlproxy) {
+            const char* disp = jfn_wlproxy_display_name(wlproxy);
+            if (disp && *disp) {
+                LOG_INFO(LOG_MAIN, "wlproxy listening on {}", disp);
+                setenv("WAYLAND_DISPLAY", disp, 1);
+            } else {
+                LOG_ERROR(LOG_MAIN, "wlproxy display name empty; aborting proxy");
+                jfn_wlproxy_stop(wlproxy);
+                wlproxy = nullptr;
+            }
+        } else {
+            LOG_ERROR(LOG_MAIN, "wlproxy start failed; continuing without proxy");
+        }
+    }
+#endif
+
     g_mpv = MpvHandle::Create(g_platform.display);
     if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
 
@@ -753,6 +780,10 @@ int main(int argc, char* argv[]) {
     mpv_teardown.join();
 #else
     g_mpv.TerminateDestroy();
+#endif
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+    if (wlproxy) jfn_wlproxy_stop(wlproxy);
 #endif
 
     if (g_platform.post_window_cleanup)

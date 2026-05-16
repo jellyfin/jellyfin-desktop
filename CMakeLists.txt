@@ -441,6 +441,39 @@ else()
     endif()
 endif()
 
+# jfn-wlproxy — Rust static lib hosting a forward-everything Wayland proxy
+# between mpv and the compositor. Vet-only: no interception yet. Linux only.
+if(UNIX AND NOT APPLE)
+    find_program(CARGO_EXECUTABLE cargo REQUIRED)
+    set(WLPROXY_DIR "${CMAKE_SOURCE_DIR}/src/wlproxy")
+    set(WLPROXY_TARGET_DIR "${CMAKE_BINARY_DIR}/wlproxy-target")
+    set(WLPROXY_LIB "${WLPROXY_TARGET_DIR}/release/libjfn_wlproxy.a")
+    file(GLOB_RECURSE WLPROXY_SOURCES CONFIGURE_DEPENDS
+        "${WLPROXY_DIR}/src/*.rs"
+        "${WLPROXY_DIR}/Cargo.toml"
+    )
+    add_custom_command(
+        OUTPUT ${WLPROXY_LIB}
+        COMMAND ${CMAKE_COMMAND} -E env
+            CARGO_TARGET_DIR=${WLPROXY_TARGET_DIR}
+            ${CARGO_EXECUTABLE} build --release --manifest-path ${WLPROXY_DIR}/Cargo.toml
+        DEPENDS ${WLPROXY_SOURCES}
+        COMMENT "Building jfn-wlproxy (Rust)"
+        VERBATIM
+    )
+    add_custom_target(jfn_wlproxy_build DEPENDS ${WLPROXY_LIB})
+    add_library(jfn_wlproxy STATIC IMPORTED GLOBAL)
+    add_dependencies(jfn_wlproxy jfn_wlproxy_build)
+    set_target_properties(jfn_wlproxy PROPERTIES
+        IMPORTED_LOCATION ${WLPROXY_LIB}
+        INTERFACE_INCLUDE_DIRECTORIES ${WLPROXY_DIR}
+        # Common native deps for Rust staticlibs on Linux. cargo rustc
+        # --print=native-static-libs would emit the exact set, but these
+        # cover wl-proxy's transitive deps (parking_lot, uapi, std).
+        INTERFACE_LINK_LIBRARIES "pthread;dl;m;rt;util"
+    )
+endif()
+
 # libavcodec — used to enumerate the decoders mpv will route through ffmpeg.
 # Source of truth for the device profile's codec lists; mpv links the same
 # libavcodec at runtime, so what we enumerate here matches what mpv decodes.
@@ -696,6 +729,9 @@ if(WIN32)
     target_link_libraries(jellyfin-desktop PRIVATE ${LIBAVCODEC_LIBRARIES})
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
+endif()
+if(UNIX AND NOT APPLE)
+    target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
 endif()
 
 # When using external/system CEF, tell the app where to find resources
