@@ -18,8 +18,8 @@ public:
         // Defaults are in logical units. Scaled by the display DPI at
         // restore time so the window has the same apparent size on any
         // display, regardless of scale factor.
-        static constexpr int kDefaultLogicalWidth = 1280;
-        static constexpr int kDefaultLogicalHeight = 720;
+        static constexpr int kDefaultLogicalWidth = 1600;
+        static constexpr int kDefaultLogicalHeight = 900;
         static constexpr int kDefaultPhysicalWidth = kDefaultLogicalWidth;
         static constexpr int kDefaultPhysicalHeight = kDefaultLogicalHeight;
         static constexpr float kDefaultScale = 1.0f;

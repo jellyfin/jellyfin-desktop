@@ -579,6 +579,25 @@ static void x11_cleanup() {
     }
 }
 
+// Standalone (own xcb_connect): runs before x11_init, so g_x11.screen
+// is null at this point. The whole-root width/height covers the entire
+// X virtual screen — for multi-monitor setups this is the union of all
+// monitors, which is fine for "shrink-to-fit" purposes.
+static void x11_clamp_window_geometry(int* w, int* h, int* /*x*/, int* /*y*/) {
+    xcb_connection_t* c = xcb_connect(nullptr, nullptr);
+    if (!c || xcb_connection_has_error(c)) {
+        if (c) xcb_disconnect(c);
+        return;
+    }
+    auto iter = xcb_setup_roots_iterator(xcb_get_setup(c));
+    if (!iter.data) { xcb_disconnect(c); return; }
+    int sw = iter.data->width_in_pixels;
+    int sh = iter.data->height_in_pixels;
+    xcb_disconnect(c);
+    if (sw > 0 && *w > sw) *w = sw;
+    if (sh > 0 && *h > sh) *h = sh;
+}
+
 // =====================================================================
 // Platform factory
 // =====================================================================
@@ -622,7 +641,7 @@ Platform make_x11_platform() {
             free(reply);
             return true;
         },
-        .clamp_window_geometry = nullptr,
+        .clamp_window_geometry = x11_clamp_window_geometry,
         .pump = []() {},
         .run_main_loop = nullptr,
         .wake_main_loop = nullptr,

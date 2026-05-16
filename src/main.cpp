@@ -227,25 +227,27 @@ static int run_with_cef(int mw, int mh,
     // shutdown saves a matching scale so subsequent launches need no
     // correction.
     {
-        using WG = Settings::WindowGeometry;
         const auto& saved = Settings::instance().windowGeometry();
-        float saved_scale = saved.scale > 0.f ? saved.scale : WG::kDefaultScale;
-        int logical_w = saved.logical_width  > 0 ? saved.logical_width
-                                                 : WG::kDefaultLogicalWidth;
-        int logical_h = saved.logical_height > 0 ? saved.logical_height
-                                                 : WG::kDefaultLogicalHeight;
         bool locked = fs_flag || mpv::window_maximized();
-        if (!locked && display_hidpi_scale > 0.0 &&
-            std::fabs(display_hidpi_scale - saved_scale) >= 0.01) {
+        // Only correct when we have a real saved scale that differs from
+        // live. Fresh-config (saved.scale == 0) was already computed at the
+        // live scale by the pre-init probe; re-issuing SetGeometry here
+        // takes mpv's runtime geometry path which bypasses configure_bounds.
+        if (!locked && display_hidpi_scale > 0.0 && saved.scale > 0.f &&
+            std::fabs(display_hidpi_scale - saved.scale) >= 0.01) {
             int new_pw = static_cast<int>(
-                std::lround(logical_w * display_hidpi_scale));
+                std::lround(saved.logical_width  * display_hidpi_scale));
             int new_ph = static_cast<int>(
-                std::lround(logical_h * display_hidpi_scale));
+                std::lround(saved.logical_height * display_hidpi_scale));
+            int dummy_x = -1, dummy_y = -1;
+            if (g_platform.clamp_window_geometry)
+                g_platform.clamp_window_geometry(&new_pw, &new_ph,
+                                                 &dummy_x, &dummy_y);
             std::string geom_str = std::to_string(new_pw) + "x"
                                  + std::to_string(new_ph);
             LOG_INFO(LOG_MAIN,
                      "[FLOW] scale {:.3f} -> {:.3f}, resize to {}",
-                     saved_scale, display_hidpi_scale, geom_str.c_str());
+                     saved.scale, display_hidpi_scale, geom_str.c_str());
             g_mpv.SetGeometry(geom_str);
             mw = new_pw;
             mh = new_ph;
@@ -577,6 +579,9 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("ytdl", "no");
 
     g_mpv.SetOptionString("user-agent", APP_USER_AGENT);
+
+    // 'auto' skips bounds when --geometry is set; force 'yes'.
+    g_mpv.SetOptionString("wayland-configure-bounds", "yes");
 
     g_mpv.SetHwdec(args.hwdec);
 
