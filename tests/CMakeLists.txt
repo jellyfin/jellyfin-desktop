@@ -12,21 +12,10 @@ target_link_libraries(jellyfin_api_test PRIVATE jfn_config)
 
 add_test(NAME jellyfin_api_test COMMAND jellyfin_api_test)
 
-set(_settings_test_paths
-    ${CMAKE_SOURCE_DIR}/src/paths/paths.cpp
-)
-if(APPLE)
-    list(APPEND _settings_test_paths ${CMAKE_SOURCE_DIR}/src/paths/macos.cpp)
-elseif(WIN32)
-    list(APPEND _settings_test_paths ${CMAKE_SOURCE_DIR}/src/paths/windows.cpp)
-else()
-    list(APPEND _settings_test_paths ${CMAKE_SOURCE_DIR}/src/paths/linux.cpp)
-endif()
-
 add_executable(settings_test
     settings_test.cpp
     ${CMAKE_SOURCE_DIR}/src/settings.cpp
-    ${_settings_test_paths}
+    ${CMAKE_SOURCE_DIR}/src/paths/paths.cpp
 )
 
 target_include_directories(settings_test PRIVATE
@@ -34,7 +23,12 @@ target_include_directories(settings_test PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/doctest/include
 )
 
-target_link_libraries(settings_test PRIVATE jfn_config)
+target_link_libraries(settings_test PRIVATE jfn_config jfn_paths)
+if(UNIX AND NOT APPLE)
+    # jfn_config and jfn_paths each embed a copy of the Rust std library.
+    # See the matching note on the main executable in the top-level CMakeLists.
+    target_link_options(settings_test PRIVATE -Wl,--allow-multiple-definition)
+endif()
 
 add_test(NAME settings_test COMMAND settings_test)
 

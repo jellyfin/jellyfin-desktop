@@ -125,7 +125,6 @@ if(APPLE)
         src/platform/macos.mm
         src/input/input_macos.mm
         src/wake_event_macos.cpp
-        src/paths/macos.cpp
         src/playback/state_machine.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
@@ -158,7 +157,6 @@ elseif(WIN32)
     set(PLATFORM_SOURCES
         src/platform/windows.cpp
         src/input/input_windows.cpp
-        src/paths/windows.cpp
         src/playback/state_machine.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
@@ -360,7 +358,6 @@ else()
         src/platform/idle_inhibit_linux.cpp
         src/platform/open_url_linux.cpp
         src/wake_event_linux.cpp
-        src/paths/linux.cpp
         src/playback/state_machine.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
@@ -552,6 +549,43 @@ elseif(APPLE)
         "-framework CoreFoundation" "-framework Security")
 else()
     set_property(TARGET jfn_log_redact APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        pthread dl m rt util)
+endif()
+
+# jfn-paths — Rust static lib for per-user filesystem locations
+# (config/cache/state dirs, mpv home, default log path). Replaces the
+# per-platform implementations under src/paths/{linux,macos,windows}.cpp.
+set(PATHS_DIR "${CMAKE_SOURCE_DIR}/src/paths")
+set(PATHS_TARGET_DIR "${CMAKE_BINARY_DIR}/paths-target")
+set(PATHS_LIB "${PATHS_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_paths${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE PATHS_SOURCES CONFIGURE_DEPENDS
+    "${PATHS_DIR}/src/*.rs"
+    "${PATHS_DIR}/Cargo.toml"
+)
+add_custom_command(
+    OUTPUT ${PATHS_LIB}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${PATHS_TARGET_DIR}
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${PATHS_DIR}/Cargo.toml
+    DEPENDS ${PATHS_SOURCES}
+    COMMENT "Building jfn-paths (Rust)"
+    VERBATIM
+)
+add_custom_target(jfn_paths_build DEPENDS ${PATHS_LIB})
+add_library(jfn_paths STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_paths jfn_paths_build)
+set_target_properties(jfn_paths PROPERTIES
+    IMPORTED_LOCATION ${PATHS_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${PATHS_DIR}
+)
+if(WIN32)
+    set_property(TARGET jfn_paths APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ws2_32 userenv advapi32 bcrypt ntdll)
+elseif(APPLE)
+    set_property(TARGET jfn_paths APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework CoreFoundation" "-framework Security")
+else()
+    set_property(TARGET jfn_paths APPEND PROPERTY INTERFACE_LINK_LIBRARIES
         pthread dl m rt util)
 endif()
 
@@ -841,7 +875,7 @@ if(WIN32)
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
-target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact)
+target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact jfn_paths)
 if(UNIX AND NOT APPLE)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
     # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_wlproxy) each embed a
