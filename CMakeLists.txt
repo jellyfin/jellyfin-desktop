@@ -124,7 +124,6 @@ if(APPLE)
     set(PLATFORM_SOURCES
         src/platform/macos.mm
         src/input/input_macos.mm
-        src/wake_event_macos.cpp
         src/playback/state_machine.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
@@ -357,7 +356,6 @@ else()
         # Shared Linux
         src/platform/idle_inhibit_linux.cpp
         src/platform/open_url_linux.cpp
-        src/wake_event_linux.cpp
         src/playback/state_machine.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
@@ -589,6 +587,42 @@ else()
         pthread dl m rt util)
 endif()
 
+# jfn-wake-event — Rust static lib backing the WakeEvent primitive
+# (eventfd on Linux, pipe on macOS, manual-reset event on Windows).
+set(WAKE_EVENT_DIR "${CMAKE_SOURCE_DIR}/src/wake_event")
+set(WAKE_EVENT_TARGET_DIR "${CMAKE_BINARY_DIR}/wake_event-target")
+set(WAKE_EVENT_LIB "${WAKE_EVENT_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_wake_event${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE WAKE_EVENT_SOURCES CONFIGURE_DEPENDS
+    "${WAKE_EVENT_DIR}/src/*.rs"
+    "${WAKE_EVENT_DIR}/Cargo.toml"
+)
+add_custom_command(
+    OUTPUT ${WAKE_EVENT_LIB}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${WAKE_EVENT_TARGET_DIR}
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${WAKE_EVENT_DIR}/Cargo.toml
+    DEPENDS ${WAKE_EVENT_SOURCES}
+    COMMENT "Building jfn-wake-event (Rust)"
+    VERBATIM
+)
+add_custom_target(jfn_wake_event_build DEPENDS ${WAKE_EVENT_LIB})
+add_library(jfn_wake_event STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_wake_event jfn_wake_event_build)
+set_target_properties(jfn_wake_event PROPERTIES
+    IMPORTED_LOCATION ${WAKE_EVENT_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${WAKE_EVENT_DIR}
+)
+if(WIN32)
+    set_property(TARGET jfn_wake_event APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ws2_32 userenv advapi32 bcrypt ntdll)
+elseif(APPLE)
+    set_property(TARGET jfn_wake_event APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework CoreFoundation" "-framework Security")
+else()
+    set_property(TARGET jfn_wake_event APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        pthread dl m rt util)
+endif()
+
 # jfn-wlproxy — Rust static lib hosting a forward-everything Wayland proxy
 # between mpv and the compositor. Vet-only: no interception yet. Linux only.
 if(UNIX AND NOT APPLE)
@@ -794,7 +828,7 @@ if(WIN32)
         src/jellyfin/api.cpp
         src/settings.cpp
         src/paths/paths.cpp
-        src/wake_event_windows.cpp
+        src/wake_event.cpp
     )
 else()
     # Linux + macOS: shared main with platform abstraction
@@ -823,6 +857,7 @@ else()
         src/single_instance.cpp
         src/settings.cpp
         src/paths/paths.cpp
+        src/wake_event.cpp
         src/jellyfin/api.cpp
     )
 endif()
@@ -875,7 +910,7 @@ if(WIN32)
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
-target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact jfn_paths)
+target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact jfn_paths jfn_wake_event)
 if(UNIX AND NOT APPLE)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
     # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_wlproxy) each embed a

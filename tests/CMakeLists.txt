@@ -96,23 +96,17 @@ target_include_directories(playback_state_machine_test PRIVATE
 )
 add_test(NAME playback_state_machine_test COMMAND playback_state_machine_test)
 
-set(_wake_event_src ${CMAKE_SOURCE_DIR}/src/wake_event_linux.cpp)
-if(APPLE)
-    set(_wake_event_src ${CMAKE_SOURCE_DIR}/src/wake_event_macos.cpp)
-elseif(WIN32)
-    set(_wake_event_src ${CMAKE_SOURCE_DIR}/src/wake_event_windows.cpp)
-endif()
-
 add_executable(playback_coordinator_test
     playback_coordinator_test.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/state_machine.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/coordinator.cpp
-    ${_wake_event_src}
+    ${CMAKE_SOURCE_DIR}/src/wake_event.cpp
 )
 target_include_directories(playback_coordinator_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/doctest/include
 )
+target_link_libraries(playback_coordinator_test PRIVATE jfn_wake_event)
 if(NOT WIN32)
     target_link_libraries(playback_coordinator_test PRIVATE pthread)
 endif()
