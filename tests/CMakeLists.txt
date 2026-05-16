@@ -64,6 +64,8 @@ target_include_directories(log_redact_test PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/doctest/include
 )
 
+target_link_libraries(log_redact_test PRIVATE jfn_log_redact)
+
 add_test(NAME log_redact_test COMMAND log_redact_test)
 
 add_executable(mpv_color_test

@@ -519,6 +519,42 @@ else()
         pthread dl m rt util)
 endif()
 
+# jfn-log-redact — Rust static lib for in-place log-line secret redaction.
+# Replaces src/log_redact.cpp's hand-rolled URL/JSON token scrubber.
+set(LOG_REDACT_DIR "${CMAKE_SOURCE_DIR}/src/log_redact")
+set(LOG_REDACT_TARGET_DIR "${CMAKE_BINARY_DIR}/log_redact-target")
+set(LOG_REDACT_LIB "${LOG_REDACT_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_log_redact${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE LOG_REDACT_SOURCES CONFIGURE_DEPENDS
+    "${LOG_REDACT_DIR}/src/*.rs"
+    "${LOG_REDACT_DIR}/Cargo.toml"
+)
+add_custom_command(
+    OUTPUT ${LOG_REDACT_LIB}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${LOG_REDACT_TARGET_DIR}
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${LOG_REDACT_DIR}/Cargo.toml
+    DEPENDS ${LOG_REDACT_SOURCES}
+    COMMENT "Building jfn-log-redact (Rust)"
+    VERBATIM
+)
+add_custom_target(jfn_log_redact_build DEPENDS ${LOG_REDACT_LIB})
+add_library(jfn_log_redact STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_log_redact jfn_log_redact_build)
+set_target_properties(jfn_log_redact PROPERTIES
+    IMPORTED_LOCATION ${LOG_REDACT_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${LOG_REDACT_DIR}
+)
+if(WIN32)
+    set_property(TARGET jfn_log_redact APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ws2_32 userenv advapi32 bcrypt ntdll)
+elseif(APPLE)
+    set_property(TARGET jfn_log_redact APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework CoreFoundation" "-framework Security")
+else()
+    set_property(TARGET jfn_log_redact APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        pthread dl m rt util)
+endif()
+
 # jfn-wlproxy — Rust static lib hosting a forward-everything Wayland proxy
 # between mpv and the compositor. Vet-only: no interception yet. Linux only.
 if(UNIX AND NOT APPLE)
@@ -805,7 +841,7 @@ if(WIN32)
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
-target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli)
+target_link_libraries(jellyfin-desktop PRIVATE jfn_config jfn_cli jfn_log_redact)
 if(UNIX AND NOT APPLE)
     target_link_libraries(jellyfin-desktop PRIVATE jfn_wlproxy)
     # Multiple Rust staticlibs (jfn_config, jfn_cli, jfn_wlproxy) each embed a
