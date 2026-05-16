@@ -17,8 +17,13 @@ clean:
     rm -rf build dist
 
 # Lint Rust crates (rustfmt --check + clippy -D warnings).
+# jfn-wlproxy is Linux-only and skipped on other platforms.
 lint:
     #!/bin/sh
     set -eu
     cargo fmt --manifest-path src/config/Cargo.toml -- --check
     cargo clippy --manifest-path src/config/Cargo.toml --all-targets -- -D warnings
+    if [ "$(uname)" = "Linux" ]; then
+        cargo fmt --manifest-path src/wlproxy/Cargo.toml -- --check
+        cargo clippy --manifest-path src/wlproxy/Cargo.toml --all-targets -- -D warnings
+    fi
