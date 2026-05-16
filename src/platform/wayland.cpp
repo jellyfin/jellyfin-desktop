@@ -1,6 +1,7 @@
 #include "common.h"
 #include "cef/cef_client.h"
 #include "platform/platform.h"
+#include "platform/wayland.h"
 #include "platform/wayland_scale_probe.h"
 #include "clipboard/wayland.h"
 #include "idle_inhibit_linux.h"
@@ -91,7 +92,7 @@ struct WlState {
     wp_viewporter* viewporter = nullptr;
     wp_alpha_modifier_v1* alpha_modifier = nullptr;
 
-    float cached_scale = 1.0f;
+    float cached_scale = 0.0f;  // 0 = unknown; wl_get_scale falls back to 1.0
     bool was_fullscreen = false;
     // Resize transition state. transitioning gates non-paint paths
     // (resize, configure, fullscreen reject). Paint path uses a function-
@@ -681,11 +682,23 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
     int lw = static_cast<int>(pw / scale);
     int lh = static_cast<int>(ph / scale);
 
-    if (fs != g_wl.was_fullscreen) {
-        // Begin if not already (covers WM-initiated FS).
+    // Detect shrink BEFORE updating per-surface dims — compare against the
+    // current authoritative pw/ph on cef-main. Any axis shrinking risks
+    // stale-large CEF buffers exceeding the new mpv size, so the bounding-
+    // box release must run (same as FS toggle).
+    bool shrink = false;
+    if (!g_wl.stack.empty() && g_wl.stack[0]) {
+        auto* main = g_wl.stack[0];
+        shrink = (main->pw > 0 && pw < main->pw)
+              || (main->ph > 0 && ph < main->ph);
+    }
+
+    if (fs != g_wl.was_fullscreen || shrink) {
+        // Begin if not already (covers WM-initiated FS and WM-driven shrink).
         if (!g_wl.transitioning)
             wl_begin_transition_locked();
-        g_wl.was_fullscreen = fs;
+        if (fs != g_wl.was_fullscreen)
+            g_wl.was_fullscreen = fs;
     }
 
     // Fan the configure values out to every surface in the stack. Each
@@ -716,6 +729,41 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
             }
         }
     }
+}
+
+// =====================================================================
+// Proxy configure intercept
+// =====================================================================
+
+// Fires from the wl-proxy per-client thread for every xdg_toplevel.configure
+// from the compositor. Authoritative size source on Wayland: updates the
+// mpv::osd_pw/osd_ph atomics + posts to the playback coordinator, replacing
+// the osd-dimensions observation that the rest of the codebase used to
+// consume.
+//
+// Safe before wl_init runs — on_mpv_configure early-outs on empty
+// g_wl.stack, and mpv::set_osd_dims null-checks g_playback_coord.
+extern "C" {
+static void on_proxy_configure(int physical_w, int physical_h, int fullscreen) {
+    on_mpv_configure(nullptr, physical_w, physical_h, fullscreen != 0);
+    mpv::set_osd_dims(physical_w, physical_h);
+}
+static void on_proxy_scale(int scale_120) {
+    if (scale_120 > 0)
+        g_wl.cached_scale = scale_120 / 120.0f;
+}
+}
+
+namespace platform::wayland {
+bool scale_known() { return g_wl.cached_scale > 0.f; }
+void register_proxy_callbacks() {
+    // Both callbacks register BEFORE mpv_create so the first compositor
+    // configure + preferred_scale events are caught. Otherwise registering
+    // them in wl_init misses the initial values — main.cpp computes initial
+    // logical dims using g_wl.cached_scale (still 1.0) and CEF overshoots.
+    jfn_wlproxy_set_configure_callback(on_proxy_configure);
+    jfn_wlproxy_set_scale_callback(on_proxy_scale);
+}
 }
 
 // =====================================================================
@@ -1007,17 +1055,8 @@ static bool wl_init(mpv_handle* mpv) {
     // fullscreen property-change event, so s_fullscreen is up to date.
     g_wl.was_fullscreen = mpv::fullscreen();
 
-    // Intercept xdg_toplevel.configure in the proxy and route to the existing
-    // on_mpv_configure path. Fires from the proxy's per-client thread; the
-    // g_wl.surface_mtx inside on_mpv_configure makes it safe.
-    jfn_wlproxy_set_configure_callback(
-        [](int w, int h, int fs) { on_mpv_configure(nullptr, w, h, fs != 0); });
-
-    // Drive g_wl.cached_scale from wp_fractional_scale_v1.preferred_scale
-    // directly. Removes the round-trip through mpv's display-hidpi-scale
-    // property observation.
-    jfn_wlproxy_set_scale_callback(
-        [](int scale_120) { g_wl.cached_scale = scale_120 / 120.0f; });
+    // Proxy configure + scale callbacks are wired by
+    // platform::wayland::register_proxy_callbacks before mpv_create.
 
     intptr_t dp = 0, sp = 0;
     g_mpv.GetWaylandDisplay(dp);

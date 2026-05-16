@@ -41,6 +41,7 @@ use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
 };
 use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
+use wl_proxy::protocols::wayland::wl_output::WlOutput;
 use wl_proxy::protocols::wayland::wl_surface::WlSurface;
 use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
 use wl_proxy::protocols::xdg_shell::xdg_toplevel::{
@@ -406,10 +407,41 @@ impl XdgSurfaceHandler for SurfaceH {
         TOPLEVEL.with(|t| *t.borrow_mut() = Some(id.clone()));
         slf.send_get_toplevel(id);
     }
+
+    // Eat mpv's window-geometry hint. On Wayland the host (C++) is the sole
+    // authority for window state; mpv shouldn't be telling the compositor
+    // anything about geometry.
+    fn handle_set_window_geometry(
+        &mut self,
+        _slf: &Rc<XdgSurface>,
+        _x: i32,
+        _y: i32,
+        _width: i32,
+        _height: i32,
+    ) {
+    }
 }
 
 struct ToplevelH;
 impl XdgToplevelHandler for ToplevelH {
+    // ===== Eat mpv's state-change requests =====
+    // C++ drives all window state via jfn_wlproxy_set_fullscreen /
+    // set_maximized (which fire send_* from the proxy directly). mpv's
+    // outgoing state requests are dropped so they can't race the host.
+
+    fn handle_set_fullscreen(
+        &mut self,
+        _slf: &Rc<XdgToplevel>,
+        _output: Option<&Rc<WlOutput>>,
+    ) {
+    }
+    fn handle_unset_fullscreen(&mut self, _slf: &Rc<XdgToplevel>) {}
+    fn handle_set_maximized(&mut self, _slf: &Rc<XdgToplevel>) {}
+    fn handle_unset_maximized(&mut self, _slf: &Rc<XdgToplevel>) {}
+    fn handle_set_minimized(&mut self, _slf: &Rc<XdgToplevel>) {}
+    fn handle_set_min_size(&mut self, _slf: &Rc<XdgToplevel>, _w: i32, _h: i32) {}
+    fn handle_set_max_size(&mut self, _slf: &Rc<XdgToplevel>, _w: i32, _h: i32) {}
+
     fn handle_configure(
         &mut self,
         slf: &Rc<XdgToplevel>,

@@ -62,8 +62,9 @@ enum MpvObserveId : uint64_t {
 };
 
 class MpvHandle;
+enum class DisplayBackend;
 
-void observe_properties(MpvHandle& mpv);
+void observe_properties(MpvHandle& mpv, DisplayBackend backend);
 MpvEvent digest_property(uint64_t id, mpv_event_property* p);
 
 namespace mpv {
@@ -80,6 +81,12 @@ namespace mpv {
     int  window_pw();
     int  window_ph();
     void set_window_pixels(int pw, int ph);
+    // Wayland authoritative size update: replaces the osd-dimensions
+    // observation path on Wayland. Updates the same atomics digest_property
+    // would for OSD_DIMS, then publishes the equivalent OSD_DIMS event to
+    // the playback coordinator (if it has been constructed). Logical dims
+    // are derived from g_platform.get_scale() at call time.
+    void set_osd_dims(int pw, int ph);
     // Cached value of mpv's display-hidpi-scale, updated from property
     // observation. Returns 0 before the first event arrives; callers
     // should treat 0 as "not yet known" and fall back to 1.0.

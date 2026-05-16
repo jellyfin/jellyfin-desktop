@@ -1,6 +1,8 @@
 #include "event.h"
 #include "handle.h"
 #include "../common.h"
+#include "../platform/display_backend.h"
+#include "../playback/coordinator.h"
 #ifdef __APPLE__
 #include "../platform/macos_platform.h"
 #endif
@@ -37,6 +39,22 @@ namespace mpv {
         s_window_ph.store(ph, std::memory_order_relaxed);
     }
 
+    void set_osd_dims(int pw, int ph) {
+        if (pw <= 0 || ph <= 0) return;
+        s_osd_pw.store(pw, std::memory_order_relaxed);
+        s_osd_ph.store(ph, std::memory_order_relaxed);
+        set_window_pixels(pw, ph);
+        float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+        if (scale <= 0.f) scale = 1.0f;
+        int lw = static_cast<int>(pw / scale);
+        int lh = static_cast<int>(ph / scale);
+        // g_playback_coord is null at the very earliest boot (configure may
+        // fire before the coordinator is constructed in run_with_cef). Skip
+        // the post in that window — the next configure picks it up.
+        if (g_playback_coord)
+            g_playback_coord->postOsdDims(lw, lh, pw, ph);
+    }
+
     bool read_osd_dims_from_event(mpv_event_property* p, int64_t* w, int64_t* h) {
         if (!p || p->format != MPV_FORMAT_NODE || !p->data) return false;
         auto* n = static_cast<mpv_node*>(p->data);
@@ -55,13 +73,18 @@ namespace mpv {
     }
 }
 
-void observe_properties(MpvHandle& mpv) {
+void observe_properties(MpvHandle& mpv, DisplayBackend backend) {
     // Register display-hidpi-scale before osd-dimensions so mpv's initial
     // value delivery (FIFO by observation time) seeds s_display_scale
     // before the first osd-dimensions event, which consumes the scale to
     // compute logical dims.
     mpv.ObservePropertyDouble(MPV_OBSERVE_DISPLAY_SCALE, "display-hidpi-scale");
-    mpv.ObservePropertyNode(MPV_OBSERVE_OSD_DIMS, "osd-dimensions");
+    // On Wayland the proxy's xdg_toplevel.configure intercept drives the
+    // OSD_DIMS path (see platform::wayland::on_proxy_configure +
+    // mpv::set_osd_dims). Observing mpv's osd-dimensions there would
+    // double-post identical values to the coordinator.
+    if (backend != DisplayBackend::Wayland)
+        mpv.ObservePropertyNode(MPV_OBSERVE_OSD_DIMS, "osd-dimensions");
     mpv.ObservePropertyFlag(MPV_OBSERVE_FULLSCREEN, "fullscreen");
     mpv.ObservePropertyFlag(MPV_OBSERVE_PAUSE, "pause");
     mpv.ObservePropertyDouble(MPV_OBSERVE_TIME_POS, "time-pos");
