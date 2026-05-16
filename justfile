@@ -27,6 +27,8 @@ lint:
     cargo clippy --manifest-path src/cli/Cargo.toml --all-targets -- -D warnings
     cargo fmt --manifest-path src/log_redact/Cargo.toml -- --check
     cargo clippy --manifest-path src/log_redact/Cargo.toml --all-targets -- -D warnings
+    cargo fmt --manifest-path src/paths/Cargo.toml -- --check
+    cargo clippy --manifest-path src/paths/Cargo.toml --all-targets -- -D warnings
     if [ "$(uname)" = "Linux" ]; then
         cargo fmt --manifest-path src/wlproxy/Cargo.toml -- --check
         cargo clippy --manifest-path src/wlproxy/Cargo.toml --all-targets -- -D warnings
