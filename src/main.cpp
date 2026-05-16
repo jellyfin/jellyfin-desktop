@@ -48,6 +48,7 @@
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include "wlproxy/wlproxy.h"
+#include "platform/wayland.h"
 #endif
 
 #include "include/cef_version.h"
@@ -572,7 +573,8 @@ int main(int argc, char* argv[]) {
 
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Wire mpv through wl-proxy: mpv connects to our listener instead of
-    // the compositor; messages forward untouched (vet only — no interception).
+    // the compositor; the proxy intercepts xdg_toplevel.configure +
+    // fractional_scale + drives set_fullscreen/maximized from C++.
     // Wayland backend only; X11 path unaffected.
     JfnWlproxy* wlproxy = nullptr;
     if (g_platform.display == DisplayBackend::Wayland) {
@@ -582,6 +584,11 @@ int main(int argc, char* argv[]) {
             if (disp && *disp) {
                 LOG_INFO(LOG_MAIN, "wlproxy listening on {}", disp);
                 setenv("WAYLAND_DISPLAY", disp, 1);
+                // Register the configure intercept BEFORE mpv_create so the
+                // first compositor configure (which arrives shortly after
+                // mpv_initialize) is captured. wl_init runs later and the
+                // same callback then drives the surface-side resize path.
+                platform::wayland::register_proxy_callbacks();
             } else {
                 LOG_ERROR(LOG_MAIN, "wlproxy display name empty; aborting proxy");
                 jfn_wlproxy_stop(wlproxy);
@@ -606,9 +613,6 @@ int main(int argc, char* argv[]) {
     g_mpv.SetOptionString("ytdl", "no");
 
     g_mpv.SetOptionString("user-agent", APP_USER_AGENT);
-
-    // 'auto' skips bounds when --geometry is set; force 'yes'.
-    g_mpv.SetOptionString("wayland-configure-bounds", "yes");
 
     g_mpv.SetHwdec(args.hwdec);
 
@@ -677,7 +681,7 @@ int main(int argc, char* argv[]) {
     // core_thread races to DispatchQueue.main.sync immediately after init
     // returns — main must enter the GCD pump loop without delay.
     g_mpv.SetWakeupCallback([](void*) {}, nullptr);
-    observe_properties(g_mpv);
+    observe_properties(g_mpv, g_platform.display);
 
     int init_err = g_mpv.Initialize();
     if (init_err < 0) {
@@ -713,19 +717,40 @@ int main(int argc, char* argv[]) {
     // wait for the window-maximized property to flip true (proves mpv has
     // processed the compositor's maximize configure) and take the OSD_DIMS
     // that follows.
+    //
+    // On Wayland we don't observe osd-dimensions: the proxy's
+    // wl_on_proxy_configure drives mpv::set_osd_dims directly, so the same
+    // osd_pw/osd_ph atomics fill from a non-mpv-event source. The poll
+    // below reads the atomics every iteration to pick up the value
+    // regardless of whether a mpv property-change event arrived.
     bool need_max = Settings::instance().windowGeometry().maximized;
+    // On Wayland the initial logical-pixel computation in run_with_cef
+    // needs cached_scale populated by the proxy's preferred_scale callback.
+    // Wait for it explicitly — otherwise CEF starts at physical*1.0 size on
+    // fractional displays.
+#if !defined(_WIN32) && !defined(__APPLE__)
+    const bool wait_for_scale = g_platform.display == DisplayBackend::Wayland;
+#else
+    const bool wait_for_scale = false;
+#endif
     auto consume = [&](mpv_event* ev) -> bool {
-        if (ev->event_id != MPV_EVENT_PROPERTY_CHANGE) return false;
-        MpvEvent me = digest_property(
-            ev->reply_userdata, static_cast<mpv_event_property*>(ev->data));
-        if (ev->reply_userdata == MPV_OBSERVE_WINDOW_MAX &&
-            mpv::window_maximized())
-            need_max = false;
-        if (me.type == MpvEventType::OSD_DIMS && me.pw > 0 && me.ph > 0) {
-            mw = me.pw;
-            mh = me.ph;
+        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
+            digest_property(ev->reply_userdata,
+                            static_cast<mpv_event_property*>(ev->data));
+            if (ev->reply_userdata == MPV_OBSERVE_WINDOW_MAX &&
+                mpv::window_maximized())
+                need_max = false;
         }
-        return mw > 0 && !need_max;
+        if (mpv::osd_pw() > 0 && mpv::osd_ph() > 0) {
+            mw = mpv::osd_pw();
+            mh = mpv::osd_ph();
+        }
+#if !defined(_WIN32) && !defined(__APPLE__)
+        bool scale_ready = !wait_for_scale || platform::wayland::scale_known();
+#else
+        bool scale_ready = true;
+#endif
+        return mw > 0 && !need_max && scale_ready;
     };
 
 #ifdef __APPLE__
@@ -743,8 +768,12 @@ int main(int argc, char* argv[]) {
         if (consume(ev)) break;
     }
 #else
+    // Short timeout so the loop polls mpv::osd_pw/ph on Wayland too — the
+    // proxy can update those atomics without producing any mpv event.
+    const double wait_timeout = g_platform.display == DisplayBackend::Wayland
+        ? 0.1 : 1.0;
     while (true) {
-        mpv_event* ev = g_mpv.WaitEvent(1.0);
+        mpv_event* ev = g_mpv.WaitEvent(wait_timeout);
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
             continue;
