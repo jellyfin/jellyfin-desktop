@@ -1,0 +1,13 @@
+[package]
+name = "jfn-idle-inhibit-linux"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_idle_inhibit_linux"
+crate-type = ["rlib"]
+
+[dependencies]
+log = "0.4"
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }

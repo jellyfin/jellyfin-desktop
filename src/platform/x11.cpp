@@ -1,6 +1,6 @@
 #include "common.h"
 #include "cef/cef_client.h"
-#include "idle_inhibit_linux.h"
+#include "jfn_idle_inhibit_linux.h"
 #include "jfn_open_url_linux.h"
 #include "input/input_x11.h"
 #include "mpv/event.h"
@@ -534,8 +534,6 @@ static bool x11_init(mpv_handle*) {
     });
     input::x11::start_input_thread();
 
-    idle_inhibit::init();
-
     LOG_INFO(LOG_PLATFORM, "X11 platform initialized (parent=0x{:x})", g_x11.parent);
     return true;
 }
@@ -553,7 +551,7 @@ static void x11_cleanup() {
         hide_all_live_locked();
     }
 
-    idle_inhibit::cleanup();
+    jfn_idle_inhibit_cleanup();
     input::x11::cleanup();
 
     // Free any surface that outlived Browsers (defensive — Browsers dtor
@@ -646,7 +644,7 @@ Platform make_x11_platform() {
         .run_main_loop = nullptr,
         .wake_main_loop = nullptr,
         .set_cursor = input::x11::set_cursor,
-        .set_idle_inhibit = [](IdleInhibitLevel level) { idle_inhibit::set(level); },
+        .set_idle_inhibit = [](IdleInhibitLevel level) { jfn_idle_inhibit_set(static_cast<uint32_t>(level)); },
         .set_theme_color = [](const Color&) {},
         .shared_texture_supported = false,
         .clipboard_read_text_async = nullptr,
