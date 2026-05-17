@@ -11,6 +11,7 @@ pub use jfn_color::*;
 pub use jfn_config::*;
 pub use jfn_jellyfin::*;
 pub use jfn_logging::*;
+pub use jfn_mpv::boot::*;
 pub use jfn_mpv::probe::*;
 pub use jfn_paths::*;
 pub use jfn_playback::*;
