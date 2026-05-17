@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 jfn-color = { path = "../color" }
 libc = "0.2"
+tracing = "0.1"
 
 [build-dependencies]
 bindgen = "0.71"

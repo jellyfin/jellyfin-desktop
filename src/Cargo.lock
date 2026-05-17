@@ -628,6 +628,7 @@ dependencies = [
  "jfn-color",
  "libc",
  "pkg-config",
+ "tracing",
 ]
 
 [[package]]
