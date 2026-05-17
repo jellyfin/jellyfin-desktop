@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "cli",
     "config",
+    "idle_inhibit_linux",
     "jellyfin",
     "jfn_rust",
     "log_redact",

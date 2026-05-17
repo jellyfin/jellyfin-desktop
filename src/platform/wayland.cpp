@@ -4,7 +4,7 @@
 #include "platform/wayland.h"
 #include "jfn_wayland_scale_probe.h"
 #include "clipboard/wayland.h"
-#include "idle_inhibit_linux.h"
+#include "jfn_idle_inhibit_linux.h"
 #include "jfn_open_url_linux.h"
 #include "input/input_wayland.h"
 #include "mpv/event.h"
@@ -1151,7 +1151,7 @@ static void wl_cleanup() {
     }
 
     wl_cleanup_kde_palette();
-    idle_inhibit::cleanup();
+    jfn_idle_inhibit_cleanup();
     // Clipboard worker owns its own thread + wl_event_queue; must shut
     // down before input::wayland::cleanup destroys the seat it borrowed.
     clipboard_wayland::cleanup();
@@ -1294,7 +1294,7 @@ static void wl_set_expected_size(int, int) {}
 static void wl_pump() {}
 
 static void wl_set_idle_inhibit(IdleInhibitLevel level) {
-    idle_inhibit::set(level);
+    jfn_idle_inhibit_set(static_cast<uint32_t>(level));
 }
 
 // =====================================================================

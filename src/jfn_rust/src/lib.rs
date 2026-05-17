@@ -18,6 +18,9 @@ pub use jfn_wake_event::*;
 pub use jfn_signal_guard::*;
 
 #[cfg(target_os = "linux")]
+pub use jfn_idle_inhibit_linux::*;
+
+#[cfg(target_os = "linux")]
 pub use jfn_open_url_linux::*;
 
 #[cfg(target_os = "linux")]
