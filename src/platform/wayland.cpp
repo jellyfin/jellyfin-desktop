@@ -5,7 +5,7 @@
 #include "jfn_wayland_scale_probe.h"
 #include "clipboard/wayland.h"
 #include "idle_inhibit_linux.h"
-#include "open_url_linux.h"
+#include "jfn_open_url_linux.h"
 #include "input/input_wayland.h"
 #include "mpv/event.h"
 #include "wlproxy/wlproxy.h"
@@ -1581,6 +1581,6 @@ Platform make_wayland_platform() {
         .set_idle_inhibit = wl_set_idle_inhibit,
         .set_theme_color = wl_set_theme_color,
         .clipboard_read_text_async = clipboard_wayland::read_text_async,
-        .open_external_url = open_url_linux::open,
+        .open_external_url = [](const std::string& url) { jfn_open_url(url.c_str()); },
     };
 }
