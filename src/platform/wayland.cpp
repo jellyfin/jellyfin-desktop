@@ -2,7 +2,7 @@
 #include "cef/cef_client.h"
 #include "platform/platform.h"
 #include "platform/wayland.h"
-#include "platform/wayland_scale_probe.h"
+#include "jfn_wayland_scale_probe.h"
 #include "clipboard/wayland.h"
 #include "idle_inhibit_linux.h"
 #include "open_url_linux.h"
@@ -1130,7 +1130,7 @@ static float wl_get_scale() {
 }
 
 static float wl_get_display_scale(int x, int y) {
-    double s = wayland_scale_probe::query_scale(x, y);
+    double s = jfn_wayland_scale_probe(x, y);
     return s > 0.0 ? static_cast<float>(s) : 1.0f;
 }
 
