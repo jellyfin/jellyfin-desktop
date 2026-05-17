@@ -13,10 +13,11 @@ build: linux_common::deps
     fi
     cmake --build build
 
-# Run tests
+# Run tests (ctest + cargo workspace)
 [linux]
 test: build
     ctest --test-dir build --output-on-failure
+    cargo test --manifest-path src/Cargo.toml --workspace
 
 # Run the app
 [linux]
