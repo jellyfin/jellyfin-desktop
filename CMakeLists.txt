@@ -64,9 +64,7 @@ endif()
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_compile_definitions(NOMINMAX)
-    # Conforming preprocessor: quill (and fmt) rely on standard ##__VA_ARGS__
-    # handling. MSVC's legacy preprocessor mis-expands the variadic, which
-    # leaks format args into MacroMetadata's constructor call.
+    # Conforming preprocessor: fmt relies on standard ##__VA_ARGS__ handling.
     add_compile_options(/Zc:preprocessor)
 endif()
 
@@ -415,7 +413,7 @@ add_dependencies(jfn_rust jfn_rust_build)
 set_target_properties(jfn_rust PROPERTIES
     IMPORTED_LOCATION ${JFN_RUST_LIB}
     INTERFACE_INCLUDE_DIRECTORIES
-        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/clipboard_wayland;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/input_wayland;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/log_redact;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wake_event;${CMAKE_SOURCE_DIR}/src/wayland_scale_probe;${CMAKE_SOURCE_DIR}/src/wlproxy"
+        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/clipboard_wayland;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/input_wayland;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/log_redact;${CMAKE_SOURCE_DIR}/src/logging;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wake_event;${CMAKE_SOURCE_DIR}/src/wayland_scale_probe;${CMAKE_SOURCE_DIR}/src/wlproxy"
 )
 # Native deps pulled in by the Rust standard library and our crate deps.
 # cargo rustc --print=native-static-libs emits the exact set per platform.
@@ -582,8 +580,6 @@ if(WIN32)
         src/cli.cpp
         src/event_dispatcher.cpp
         src/shutdown.cpp
-        src/logging.cpp
-        src/log_redact.cpp
         src/single_instance.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
@@ -611,8 +607,6 @@ else()
         src/cli.cpp
         src/event_dispatcher.cpp
         src/shutdown.cpp
-        src/logging.cpp
-        src/log_redact.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
@@ -651,14 +645,11 @@ if(WIN32)
     endif()
 endif()
 
-# quill (vendored, header-only). Disable quill's own LOG_* macros so they
-# don't collide with ours. Our pattern doesn't reference file/line/function
-# metadata, so strip it — also sidesteps MSVC's refusal to treat __FUNCTION__
-# as a constant expression in constexpr MacroMetadata initializers.
-set(QUILL_DISABLE_NON_PREFIXED_MACROS ON CACHE BOOL "" FORCE)
-set(QUILL_DISABLE_FUNCTION_NAME ON CACHE BOOL "" FORCE)
-set(QUILL_DISABLE_FILE_INFO ON CACHE BOOL "" FORCE)
-add_subdirectory(third_party/quill EXCLUDE_FROM_ALL)
+# fmt (vendored, third_party/fmt). Built static; consumed via fmt::fmt.
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/fmt EXCLUDE_FROM_ALL)
 
 # Ensure JS shims are embedded before compiling cef_app.cpp
 add_dependencies(jellyfin-desktop embedded_js embedded_resources generate_version)
@@ -676,7 +667,7 @@ target_link_libraries(jellyfin-desktop PRIVATE
     ${CEF_LIBRARIES}
     ${MPV_LIBRARIES}
     ${PLATFORM_LIBRARIES}
-    quill::quill
+    fmt::fmt
 )
 if(WIN32)
     target_link_libraries(jellyfin-desktop PRIVATE ${LIBAVCODEC_LIBRARIES})

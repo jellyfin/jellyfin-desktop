@@ -85,6 +85,18 @@ fn contains_any(buf: &[u8]) -> bool {
     false
 }
 
+/// Rust-side API for in-process callers. Identical semantics to the FFI
+/// entry points below.
+pub fn contains_secret(buf: &[u8]) -> bool {
+    contains_any(buf)
+}
+
+pub fn censor(buf: &mut [u8]) {
+    for rule in RULES {
+        elide(buf, rule);
+    }
+}
+
 /// Returns true if `msg` contains a redactable pattern with a non-empty token.
 ///
 /// # Safety

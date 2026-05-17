@@ -10,6 +10,7 @@ pub use jfn_cli::*;
 pub use jfn_config::*;
 pub use jfn_jellyfin::*;
 pub use jfn_log_redact::*;
+pub use jfn_logging::*;
 pub use jfn_paths::*;
 pub use jfn_single_instance::*;
 pub use jfn_wake_event::*;

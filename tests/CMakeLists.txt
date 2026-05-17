@@ -24,23 +24,9 @@ target_include_directories(cli_test PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/cef
 )
 
-target_link_libraries(cli_test PRIVATE ${MPV_LIBRARIES} quill::quill jfn_rust)
+target_link_libraries(cli_test PRIVATE ${MPV_LIBRARIES} fmt::fmt jfn_rust)
 
 add_test(NAME cli_test COMMAND cli_test)
-
-add_executable(log_redact_test
-    log_redact_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/log_redact.cpp
-)
-
-target_include_directories(log_redact_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
-)
-
-target_link_libraries(log_redact_test PRIVATE jfn_rust)
-
-add_test(NAME log_redact_test COMMAND log_redact_test)
 
 add_executable(mpv_color_test
     mpv_color_test.cpp

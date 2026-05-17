@@ -13,6 +13,7 @@ jfn-cli = { path = "../cli" }
 jfn-config = { path = "../config" }
 jfn-jellyfin = { path = "../jellyfin" }
 jfn-log-redact = { path = "../log_redact" }
+jfn-logging = { path = "../logging" }
 jfn-paths = { path = "../paths" }
 jfn-single-instance = { path = "../single_instance" }
 jfn-wake-event = { path = "../wake_event" }
