@@ -8,64 +8,69 @@
 extern "C" {
 #endif
 
-// Flat data struct shared with C++. String fields are owned by the caller that
-// allocates them. After jfn_config_load() populates strings, free the struct
-// with jfn_config_free_data(). When passing a struct to jfn_config_save() or
-// jfn_config_cli_json(), the caller retains ownership of its string buffers;
-// the Rust side never frees inputs.
+// Window geometry shared with Rust. Layout must match
+// jfn_config::JfnWindowGeometry.
 typedef struct {
-    char* server_url;
-    char* hwdec;
-    char* audio_passthrough;
-    char* audio_channels;
-    char* log_level;
-    char* device_name;
+    int32_t x;
+    int32_t y;
+    int32_t width;
+    int32_t height;
+    int32_t logical_width;
+    int32_t logical_height;
+    float   scale;
+    bool    maximized;
+} JfnWindowGeometry;
 
-    int32_t window_x;
-    int32_t window_y;
-    int32_t window_width;
-    int32_t window_height;
-    int32_t window_logical_width;
-    int32_t window_logical_height;
-    float window_scale;
-    bool window_maximized;
+// One-shot init with the on-disk config file path. Idempotent.
+void jfn_settings_init(const char* path);
 
-    bool audio_exclusive;
-    bool disable_gpu_compositing;
-    bool titlebar_theme_color;
-    bool transparent_titlebar;
-    bool force_transcoding;
-} JfnConfigData;
+bool jfn_settings_load(void);
+bool jfn_settings_save(void);
+void jfn_settings_save_async(void);
 
-// Initialize a JfnConfigData to defaults (all strings NULL, numeric defaults
-// matching the C++ Settings constructor).
-void jfn_config_init_defaults(JfnConfigData* d);
+// String getters: returned pointer is heap-allocated; caller frees with
+// jfn_settings_free_string. Returns a non-null pointer (possibly empty
+// string) for known fields.
+char* jfn_settings_get_server_url(void);
+char* jfn_settings_get_hwdec(void);
+char* jfn_settings_get_audio_passthrough(void);
+char* jfn_settings_get_audio_channels(void);
+char* jfn_settings_get_log_level(void);
+char* jfn_settings_get_device_name(void);
 
-// Parse JSON file at path into out. Fields absent from JSON keep their
-// initial values from `out` (caller must call jfn_config_init_defaults
-// first if they want defaults). Returns false if the file is missing or
-// invalid JSON; in that case `out` is unchanged.
-bool jfn_config_load(const char* path, JfnConfigData* out);
+void jfn_settings_set_server_url(const char* v);
+void jfn_settings_set_hwdec(const char* v);
+void jfn_settings_set_audio_passthrough(const char* v);
+void jfn_settings_set_audio_channels(const char* v);
+void jfn_settings_set_log_level(const char* v);
+// Trims whitespace, truncates to 64 chars, and clears the override if it
+// matches `platform_default`.
+void jfn_settings_set_device_name(const char* v, const char* platform_default);
 
-// Serialize `in` to JSON and write atomically to path. `hwdec_default` is the
-// sentinel value that suppresses writing the hwdec key (e.g. "no"). Returns
-// false on I/O error.
-bool jfn_config_save(const char* path, const JfnConfigData* in, const char* hwdec_default);
+bool jfn_settings_get_audio_exclusive(void);
+bool jfn_settings_get_disable_gpu_compositing(void);
+bool jfn_settings_get_titlebar_theme_color(void);
+bool jfn_settings_get_transparent_titlebar(void);
+bool jfn_settings_get_force_transcoding(void);
 
-// Free strings stored inside `d` by jfn_config_load(). Sets each char* to NULL.
-void jfn_config_free_data(JfnConfigData* d);
+void jfn_settings_set_audio_exclusive(bool v);
+void jfn_settings_set_disable_gpu_compositing(bool v);
+void jfn_settings_set_titlebar_theme_color(bool v);
+void jfn_settings_set_transparent_titlebar(bool v);
+void jfn_settings_set_force_transcoding(bool v);
+
+void jfn_settings_get_window_geometry(JfnWindowGeometry* out);
+void jfn_settings_set_window_geometry(const JfnWindowGeometry* in_);
 
 // Build the CLI-equivalent JSON string injected into JS. Caller frees with
-// jfn_config_free_string. platform_default is the platform's hostname-derived
-// device name. hwdec_opts is an array of `n_opts` C strings; each becomes an
-// entry in the `hwdecOptions` JSON array.
-char* jfn_config_cli_json(const JfnConfigData* in,
-                          const char* platform_default,
-                          const char* const* hwdec_opts,
-                          size_t n_opts);
+// jfn_settings_free_string. platform_default is the platform's hostname-
+// derived device name. hwdec_opts is an array of `n_opts` C strings; each
+// becomes an entry in the `hwdecOptions` JSON array.
+char* jfn_settings_cli_json(const char* platform_default,
+                            const char* const* hwdec_opts,
+                            size_t n_opts);
 
-// Free a string returned by jfn_config_cli_json.
-void jfn_config_free_string(char* s);
+void jfn_settings_free_string(char* s);
 
 // Validate a Jellyfin /System/Info/Public response body: returns true iff the
 // body is a JSON object containing a non-empty string `Id` field.
