@@ -64,6 +64,68 @@ fn main() {
     bindings
         .write_to_file(&out_path)
         .expect("failed to write bindings.rs");
+
+    generate_avcodec_bindings();
+}
+
+/// Narrow libavcodec bindings: only the four symbols `capabilities`
+/// needs (`av_codec_iterate`, `av_codec_is_decoder`, `avcodec_get_name`)
+/// plus the `AVCodec` / `AVCodecID` / `AVMediaType` types they reference.
+/// pkg-config provides `libavcodec` include + linker flags.
+fn generate_avcodec_bindings() {
+    let lib = pkg_config::Config::new()
+        .probe("libavcodec")
+        .expect("libavcodec via pkg-config");
+
+    let header_dir = lib
+        .include_paths
+        .iter()
+        .find(|p| p.join("libavcodec/avcodec.h").exists())
+        .cloned()
+        .unwrap_or_else(|| {
+            // pkg-config may report the parent include dir only; fall back
+            // to a candidate scan of every reported dir.
+            for p in &lib.include_paths {
+                if p.join("libavcodec/avcodec.h").exists() {
+                    return p.clone();
+                }
+            }
+            panic!(
+                "could not locate libavcodec/avcodec.h in pkg-config dirs: {:?}",
+                lib.include_paths
+            )
+        });
+    let header = header_dir.join("libavcodec/avcodec.h");
+    println!("cargo:rerun-if-changed={}", header.display());
+
+    let mut builder = bindgen::Builder::default()
+        .header(header.to_string_lossy().to_string())
+        .allowlist_function("av_codec_iterate")
+        .allowlist_function("av_codec_is_decoder")
+        .allowlist_function("avcodec_get_name")
+        .allowlist_type("AVCodec")
+        .allowlist_type("AVCodecID")
+        .allowlist_type("AVMediaType")
+        .newtype_enum("AVMediaType")
+        .newtype_enum("AVCodecID")
+        .derive_debug(true)
+        .layout_tests(false)
+        .generate_comments(false)
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
+    for dir in &lib.include_paths {
+        builder = builder.clang_arg(format!("-I{}", dir.display()));
+    }
+
+    let bindings = builder
+        .generate()
+        .expect("failed to generate libavcodec bindings");
+
+    let out_path =
+        PathBuf::from(env::var("OUT_DIR").unwrap()).join("avcodec_bindings.rs");
+    bindings
+        .write_to_file(&out_path)
+        .expect("failed to write avcodec_bindings.rs");
 }
 
 fn resolve_paths() -> (Vec<PathBuf>, bool) {

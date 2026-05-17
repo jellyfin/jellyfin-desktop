@@ -8,6 +8,7 @@ use crate::command::Command;
 use crate::error::{Error, Result, check};
 use crate::event::Event;
 use crate::log::LogLevel;
+use crate::node::Node;
 use crate::property::{Flag, Format};
 use crate::sys;
 use std::ffi::CString;
@@ -138,6 +139,25 @@ impl Handle {
             )
         })?;
         Ok(out != 0)
+    }
+
+    /// Fetch a property as an owned [`Node`]. libmpv's `mpv_node` payload is
+    /// copied into Rust ownership, then `mpv_free_node_contents` is called
+    /// before returning.
+    pub fn get_property_node(&self, name: &str) -> Result<Node> {
+        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0 as i32))?;
+        let mut raw: sys::mpv_node = unsafe { std::mem::zeroed() };
+        check(unsafe {
+            sys::mpv_get_property(
+                self.raw,
+                n.as_ptr(),
+                sys::mpv_format::MPV_FORMAT_NODE,
+                &mut raw as *mut _ as *mut c_void,
+            )
+        })?;
+        let owned = unsafe { Node::from_raw(&raw) };
+        unsafe { sys::mpv_free_node_contents(&mut raw) };
+        Ok(owned)
     }
 
     pub fn get_property_string(&self, name: &str) -> Result<String> {
