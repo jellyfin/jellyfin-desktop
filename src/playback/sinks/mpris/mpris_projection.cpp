@@ -1,24 +1,15 @@
 #include "mpris_projection.h"
 
+#include "../../jfn_playback.h"
+
 namespace {
 
-// MPRIS only recognizes Playing/Paused/Stopped. Pre-roll (phase=Starting)
-// reflects user intent: the user pressed play, so PlaybackStatus reads
-// Playing. The fact that frames aren't actually rolling yet is signalled
-// through Rate=0 in project(). Paused means an explicit user pause.
-const char* statusFor(const PlaybackSnapshot& s) {
-    switch (s.phase) {
-    case PlaybackPhase::Playing:  return "Playing";
-    case PlaybackPhase::Starting: return "Playing";
-    case PlaybackPhase::Paused:   return "Paused";
-    default:                      return "Stopped";
-}
-}
-
-bool isActive(PlaybackPhase p) {
-    return p == PlaybackPhase::Playing
-        || p == PlaybackPhase::Paused
-        || p == PlaybackPhase::Starting;
+const char* statusName(uint8_t s) {
+    switch (s) {
+    case 1:  return "Playing";
+    case 2:  return "Paused";
+    default: return "Stopped";
+    }
 }
 
 }  // namespace
@@ -38,32 +29,24 @@ bool MprisView::operator==(const MprisView& o) const {
 
 MprisView project(const PlaybackSnapshot& playback,
                   const MprisContent& content) {
+    JfnMprisDerivedC d;
+    jfn_mpris_project(static_cast<uint8_t>(playback.phase),
+                      playback.seeking,
+                      playback.buffering,
+                      content.metadata.duration_us,
+                      content.pending_rate,
+                      &d);
     MprisView v;
-    v.playback_status = statusFor(playback);
-
-    bool active = isActive(playback.phase);
-    v.can_play = active;
-    // CanPause is true while we're committed to playing — Playing or
-    // Starting (user already pressed play). Paused exposes Play, not
-    // Pause; Stopped exposes neither.
-    v.can_pause = playback.phase == PlaybackPhase::Playing
-               || playback.phase == PlaybackPhase::Starting;
-    v.can_control = active;
-
-    // Metadata is suppressed while not active so MPRIS clients see a
-    // clean transport when nothing is loaded. content.metadata stays
-    // intact for the next active transition; the projection just hides
-    // it for one render pass.
-    v.metadata = active ? content.metadata : MediaMetadata{};
-    v.can_seek = active && v.metadata.duration_us > 0;
-
-    // Rate reflects actual frame motion, not user intent. Anything
-    // other than steady playback (pre-roll, seek, buffer underrun)
-    // pins it to 0 so MPRIS clients don't extrapolate position.
-    bool rolling = playback.phase == PlaybackPhase::Playing
-                && !playback.seeking
-                && !playback.buffering;
-    v.rate = rolling ? content.pending_rate : 0.0;
+    v.playback_status = statusName(d.status);
+    v.can_play = d.can_play;
+    v.can_pause = d.can_pause;
+    v.can_seek = d.can_seek;
+    v.can_control = d.can_control;
+    // Caller-side metadata pass-through: hold onto MediaMetadata in C++ so it
+    // doesn't ride through FFI just to come back unchanged. metadata_active
+    // false -> clean transport while no media is loaded.
+    v.metadata = d.metadata_active ? content.metadata : MediaMetadata{};
+    v.rate = d.rate;
     v.volume = content.volume;
     v.can_go_next = content.can_go_next;
     v.can_go_previous = content.can_go_previous;

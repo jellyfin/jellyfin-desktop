@@ -118,6 +118,28 @@ void jfn_playback_post_artwork(const char* data_uri);
 void jfn_playback_post_queue_caps(bool can_go_next, bool can_go_prev);
 void jfn_playback_post_seeked(int64_t position_us);
 
+// =====================================================================
+// MPRIS projection (Linux MPRIS Player interface derivation rules)
+// =====================================================================
+
+typedef struct {
+    uint8_t status;            // 0=Stopped 1=Playing 2=Paused
+    bool    can_play;
+    bool    can_pause;
+    bool    can_seek;
+    bool    can_control;
+    bool    metadata_active;   // false -> caller substitutes empty metadata
+    double  rate;
+} JfnMprisDerivedC;
+
+void jfn_mpris_project(
+    uint8_t phase,                    // PlaybackPhase discriminant
+    bool seeking,
+    bool buffering,
+    int64_t metadata_duration_us,     // from MprisContent.metadata, not snapshot
+    double pending_rate,
+    JfnMprisDerivedC* out);
+
 #ifdef __cplusplus
 }
 #endif
