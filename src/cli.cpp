@@ -17,7 +17,7 @@ void print_help() {
            "\nOptions:\n"
            "  -h, --help                Show this help\n"
            "  -v, --version             Show version\n"
-           "  --log-level <level>       trace|debug|info|warn|error (default: %s)\n"
+           "  --log-level <filter>      e.g. info | debug | debug,mpv=trace,CEF=off (default: %s)\n"
            "  --log-file <path>         Write logs to file ('' to disable)\n"
            "  --hwdec <mode>            Hardware decoding mode (default: %s)\n"
            "  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd\n"
@@ -30,7 +30,7 @@ void print_help() {
            "  --platform <wayland|x11>  Force display backend (Linux only)\n"
 #endif
            ,
-           kDefaultLogLevelName, kHwdecDefault);
+           kDefaultLogFilter, kHwdecDefault);
 }
 
 void print_version() {

@@ -13,9 +13,10 @@ extern "C" {
 //   Level:    0=Trace 1=Debug 2=Info 3=Warn 4=Error
 
 // Initialize the logging subsystem. `path` is the file log path, or NULL/""
-// to disable file logging. `min_level` is the minimum level emitted.
+// to disable file logging. `filter` is a filter directive string
+// (e.g. "info", "debug,mpv=trace,CEF=off"); NULL/"" → "info".
 // Idempotent on a second call.
-void jfn_log_init(const char* path, uint8_t min_level);
+void jfn_log_init(const char* path, const char* filter);
 
 // Flush + drop sinks. Restores stderr if capture was active.
 void jfn_log_shutdown(void);
