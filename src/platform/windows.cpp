@@ -906,6 +906,27 @@ static bool win_query_window_position(int* x, int* y) {
     return true;
 }
 
+// Query the current native window client size in physical pixels.
+// Used after deferred saved-maximized restore to force CEF to match the
+// actual Windows HWND client area. This avoids the case where the native
+// mpv window maximizes correctly, but the CEF browser viewport remains at
+// the saved unmaximized startup size.
+static bool win_query_window_size(int* pw, int* ph) {
+    if (!g_win.mpv_hwnd) return false;
+
+    RECT cr;
+    if (!GetClientRect(g_win.mpv_hwnd, &cr)) return false;
+
+    int w = cr.right - cr.left;
+    int h = cr.bottom - cr.top;
+
+    if (w <= 0 || h <= 0) return false;
+
+    *pw = w;
+    *ph = h;
+    return true;
+}
+
 // Resolve saved geometry against the primary monitor's working area so the
 // window never opens larger than the screen or off-screen, and center any
 // unset axis (mpv's own centering misbehaves when we override --geometry's
@@ -1024,7 +1045,7 @@ static void win_popup_present_software(PlatformSurface* s, const void* buffer,
 }
 
 // =====================================================================
-// make_windows_platform
+// make_windows_platform, added 1035 for proper window sizing
 // =====================================================================
 
 Platform make_windows_platform() {
@@ -1055,6 +1076,7 @@ Platform make_windows_platform() {
         .get_scale = win_get_scale,
         .get_display_scale = win_get_display_scale,
         .query_window_position = win_query_window_position,
+        .query_window_size = win_query_window_size,
         .clamp_window_geometry = win_clamp_window_geometry,
         .pump = win_pump,
         .set_cursor = input::windows::set_cursor,

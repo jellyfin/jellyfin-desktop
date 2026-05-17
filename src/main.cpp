@@ -341,6 +341,49 @@ static int run_with_cef(int mw, int mh,
     std::thread digest_thread(mpv_digest_thread);
     dispatcher::start();
 
+#ifdef _WIN32
+    // Apply saved maximized state only after:
+    // 1) mpv has created the native window,
+    // 2) the Windows platform layer has installed its HWND hook,
+    // 3) CEF main/overlay browsers exist, and
+    // 4) the mpv digest + CEF consumer threads are running.
+    //
+    // Then force CEF to the actual HWND client size. On some high-DPI / TV
+    // setups, the native window maximizes correctly but the browser viewport
+    // remains at the saved unmaximized size unless explicitly resized.
+    if (Settings::instance().windowGeometry().maximized) {
+        LOG_INFO(LOG_MAIN, "[FLOW] applying deferred saved maximize after CEF/platform init");
+        g_mpv.SetWindowMaximized(true);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+        int pw = 0;
+        int ph = 0;
+        if (g_platform.query_window_size && g_platform.query_window_size(&pw, &ph)) {
+            float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+            if (scale <= 0.0f) scale = 1.0f;
+
+            int lw = static_cast<int>(pw / scale);
+            int lh = static_cast<int>(ph / scale);
+
+            LOG_INFO(LOG_MAIN,
+                "[FLOW] forced post-maximize browser resize lw={} lh={} pw={} ph={} scale={}",
+                lw, lh, pw, ph, scale);
+
+            g_platform.resize(lw, lh, pw, ph);
+
+            if (g_web_browser)
+                g_web_browser->resize(lw, lh, pw, ph);
+
+            if (g_overlay_browser)
+                g_overlay_browser->resize(lw, lh, pw, ph);
+        }
+        else {
+            LOG_WARN(LOG_MAIN, "[FLOW] post-maximize query_window_size failed");
+        }
+    }
+#endif
+
 #ifndef __APPLE__
     g_web_browser->waitForLoad();
 #endif
@@ -639,8 +682,21 @@ int main(int argc, char* argv[]) {
             g_mpv.SetOptionString("force-window-position", "yes");
         }
         g_mpv.SetOptionString("geometry", geom_str);
+
+#ifdef _WIN32
+        // Do not ask mpv to create the VO window already maximized on Windows.
+        // On high-DPI / TV setups, the first osd-dimensions event can report the
+        // saved unmaximized size even though the native window later appears
+        // maximized. That leaves CEF stuck at the small startup viewport.
+        //
+        // Instead, defer the saved maximized state until after the native mpv
+        // window, Windows platform hook, and CEF browsers exist.
+        if (saved_geom.maximized)
+            LOG_INFO(LOG_MAIN, "[FLOW] deferring saved maximized state until after CEF/platform init");
+#else
         if (saved_geom.maximized)
             g_mpv.SetOptionString("window-maximized", "yes");
+#endif
     }
 
     if (!args.audio_passthrough.empty()) {
