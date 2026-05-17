@@ -122,7 +122,6 @@ if(APPLE)
     set(PLATFORM_SOURCES
         src/platform/macos.mm
         src/input/input_macos.mm
-        src/playback/state_machine.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
         src/playback/sinks/browser_sink.cpp
@@ -154,7 +153,6 @@ elseif(WIN32)
     set(PLATFORM_SOURCES
         src/platform/windows.cpp
         src/input/input_windows.cpp
-        src/playback/state_machine.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
         src/playback/sinks/browser_sink.cpp
@@ -303,7 +301,6 @@ if(ENABLE_KDE_PALETTE)
 
     set(PLATFORM_SOURCES
         # Shared Linux
-        src/playback/state_machine.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
         src/playback/sinks/browser_sink.cpp

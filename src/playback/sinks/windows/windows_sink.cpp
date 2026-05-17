@@ -155,15 +155,15 @@ void WindowsSink::onButtonPressed(int button) {
     }
 }
 
-static PlaybackState mapEventToState(PlaybackEvent::Kind k) {
+static PlaybackPhase mapEventToState(PlaybackEvent::Kind k) {
     switch (k) {
-    case PlaybackEvent::Kind::Started:     return PlaybackState::Playing;
-    case PlaybackEvent::Kind::Paused:      return PlaybackState::Paused;
-    case PlaybackEvent::Kind::TrackLoaded: return PlaybackState::Paused;
+    case PlaybackEvent::Kind::Started:     return PlaybackPhase::Playing;
+    case PlaybackEvent::Kind::Paused:      return PlaybackPhase::Paused;
+    case PlaybackEvent::Kind::TrackLoaded: return PlaybackPhase::Paused;
     case PlaybackEvent::Kind::Finished:
     case PlaybackEvent::Kind::Canceled:
-    case PlaybackEvent::Kind::Error:       return PlaybackState::Stopped;
-    default:                               return PlaybackState::Stopped;
+    case PlaybackEvent::Kind::Error:       return PlaybackPhase::Stopped;
+    default:                               return PlaybackPhase::Stopped;
     }
 }
 
@@ -172,7 +172,7 @@ void WindowsSink::deliver(const PlaybackEvent& ev) {
     case PlaybackEvent::Kind::MetadataChanged:
         if (!ev.metadata.id.empty() && ev.metadata.id == metadata_.id) break;
         metadata_ = ev.metadata;
-        if (playback_state_ != PlaybackState::Stopped)
+        if (playback_state_ != PlaybackPhase::Stopped)
             updateDisplayProperties();
         break;
     case PlaybackEvent::Kind::ArtworkChanged: {
@@ -222,15 +222,15 @@ void WindowsSink::deliver(const PlaybackEvent& ev) {
         playback_state_ = mapEventToState(ev.kind);
         if (!state_) break;
         switch (playback_state_) {
-        case PlaybackState::Playing:
+        case PlaybackPhase::Playing:
             state_->smtc.PlaybackStatus(MediaPlaybackStatus::Playing);
             updateDisplayProperties();
             break;
-        case PlaybackState::Paused:
+        case PlaybackPhase::Paused:
             state_->smtc.PlaybackStatus(MediaPlaybackStatus::Paused);
             updateTimeline();
             break;
-        case PlaybackState::Stopped:
+        case PlaybackPhase::Stopped:
             metadata_ = MediaMetadata{};
             position_us_ = 0;
             state_->cached_thumbnail = nullptr;
@@ -274,7 +274,7 @@ void WindowsSink::deliver(const PlaybackEvent& ev) {
 }
 
 void WindowsSink::updateDisplayProperties() {
-    if (!state_ || playback_state_ == PlaybackState::Stopped) return;
+    if (!state_ || playback_state_ == PlaybackPhase::Stopped) return;
 
     state_->updater.ClearAll();
 

@@ -75,7 +75,6 @@
 MpvHandle g_mpv;
 Color g_video_bg;
 
-PlaybackCoordinator* g_playback_coord = nullptr;
 ThemeColor* g_theme_color = nullptr;
 
 Platform g_platform{};
@@ -310,14 +309,13 @@ static int run_with_cef(int mw, int mh,
     // observe playback state. Sinks register before start() so the worker
     // never delivers to a half-built fanout.
     PlaybackCoordinatorScope coord_scope;
-    g_playback_coord = &coord_scope.coord();
     auto browser_sink = std::make_shared<BrowserPlaybackSink>();
     auto idle_inhibit_sink = std::make_shared<IdleInhibitSink>();
     auto theme_color_sink = std::make_shared<ThemeColorSink>();
     auto mpv_action_sink = std::make_shared<MpvActionSink>();
-    coord_scope.coord().addSink(browser_sink);
-    coord_scope.coord().addSink(idle_inhibit_sink);
-    coord_scope.coord().addSink(theme_color_sink);
+    playback::register_event_sink(browser_sink);
+    playback::register_event_sink(idle_inhibit_sink);
+    playback::register_event_sink(theme_color_sink);
 #if defined(__APPLE__)
     auto media_sink = std::make_shared<MacosSink>();
 #elif defined(_WIN32)
@@ -327,9 +325,9 @@ static int run_with_cef(int mw, int mh,
 #else
     auto media_sink = std::make_shared<MprisSink>();
 #endif
-    coord_scope.coord().addSink(media_sink);
+    playback::register_event_sink(media_sink);
     media_sink->start();
-    coord_scope.coord().addActionSink(mpv_action_sink);
+    playback::register_action_sink(mpv_action_sink);
     register_queued_sinks(
         {browser_sink, idle_inhibit_sink, theme_color_sink},
         {mpv_action_sink});
@@ -373,9 +371,7 @@ static int run_with_cef(int mw, int mh,
     digest_thread.join();
 
     // Producers have joined; coordinator drains any in-flight inputs and
-    // stops via PlaybackCoordinatorScope dtor at end of scope. Clear the
-    // global pointer first so any late readers see "no coordinator".
-    g_playback_coord = nullptr;
+    // stops via PlaybackCoordinatorScope dtor at end of scope.
 
     // Save window geometry while mpv is still alive.
     {

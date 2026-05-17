@@ -12,8 +12,8 @@ namespace {
 // Music playback ignores fullscreen hotkeys; a paused video still counts as
 // "active" because the user may want to toggle fullscreen while paused.
 bool video_player_active() {
-    if (!g_playback_coord) return false;
-    PlaybackSnapshot snap = g_playback_coord->snapshot();
+    if (!g_playback_coord_running.load(std::memory_order_acquire)) return false;
+    PlaybackSnapshot snap = playback::snapshot();
     return snap.media_type == MediaType::Video
         && snap.presence == PlayerPresence::Present
         && snap.phase != PlaybackPhase::Stopped;

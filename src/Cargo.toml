@@ -12,6 +12,7 @@ members = [
     "logging",
     "open_url_linux",
     "paths",
+    "playback",
     "signal_guard",
     "single_instance",
     "wake_event",

@@ -52,32 +52,6 @@ target_include_directories(cef_color_test PRIVATE
 
 add_test(NAME cef_color_test COMMAND cef_color_test)
 
-add_executable(playback_state_machine_test
-    playback_state_machine_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/playback/state_machine.cpp
-)
-target_include_directories(playback_state_machine_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
-)
-add_test(NAME playback_state_machine_test COMMAND playback_state_machine_test)
-
-add_executable(playback_coordinator_test
-    playback_coordinator_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/playback/state_machine.cpp
-    ${CMAKE_SOURCE_DIR}/src/playback/coordinator.cpp
-    ${CMAKE_SOURCE_DIR}/src/wake_event.cpp
-)
-target_include_directories(playback_coordinator_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
-)
-target_link_libraries(playback_coordinator_test PRIVATE jfn_rust)
-if(NOT WIN32)
-    target_link_libraries(playback_coordinator_test PRIVATE pthread)
-endif()
-add_test(NAME playback_coordinator_test COMMAND playback_coordinator_test)
-
 if(UNIX AND NOT APPLE)
     add_executable(mpris_projection_test
         mpris_projection_test.cpp

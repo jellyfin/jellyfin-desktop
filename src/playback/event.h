@@ -1,47 +1,60 @@
 #pragma once
 
+#include "jfn_playback.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-enum class MediaType { Unknown, Audio, Video };
+// C++-side data types used by sinks. The coordinator + state machine live
+// in the Rust `jfn-playback` crate; these structs mirror the FFI shapes
+// in jfn_playback.h with std::string / std::vector for C++ ergonomics.
+
+enum class MediaType : uint8_t {
+    Unknown = 0,
+    Audio = 1,
+    Video = 2,
+};
+
+enum class PlayerPresence : uint8_t {
+    None = 0,
+    Present = 1,
+};
+
+enum class PlaybackPhase : uint8_t {
+    Starting = 0,
+    Playing = 1,
+    Paused = 2,
+    Stopped = 3,
+};
+
+enum class EndReason : uint8_t {
+    Eof = 0,
+    Error = 1,
+    Canceled = 2,
+};
 
 struct MediaMetadata {
-    std::string id;            // Jellyfin item Id; identity across bitrate / variant switches
+    std::string id;
     std::string title;
     std::string artist;
     std::string album;
     int track_number = 0;
     int64_t duration_us = 0;
-    std::string art_url;       // Jellyfin URL
-    std::string art_data_uri;  // base64 data URI after fetch
+    std::string art_url;
+    std::string art_data_uri;
     MediaType media_type = MediaType::Unknown;
 
     bool operator==(const MediaMetadata& o) const {
-        return id == o.id && title == o.title && artist == o.artist && album == o.album
-            && track_number == o.track_number && duration_us == o.duration_us
-            && art_url == o.art_url && art_data_uri == o.art_data_uri
-            && media_type == o.media_type;
+        return id == o.id && title == o.title && artist == o.artist
+            && album == o.album && track_number == o.track_number
+            && duration_us == o.duration_us && art_url == o.art_url
+            && art_data_uri == o.art_data_uri && media_type == o.media_type;
     }
 };
 
-enum class PlaybackState { Stopped, Playing, Paused };
-
-// Whether mpv has a player loaded. Cleared on terminal events; set on file-loaded.
-enum class PlayerPresence { None, Present };
-
-// Coarse playback phase. Distinct from MPRIS-facing PlaybackState because
-// "Starting" is meaningful internally while pause flips through false → true
-// during track-switch reinits, but is not exposed to consumers.
-enum class PlaybackPhase { Starting, Playing, Paused, Stopped };
-
-// Reason an mpv END_FILE event fired. Mirrors mpv's MPV_END_FILE_REASON_*.
-enum class EndReason { Eof, Error, Canceled };
-
-// Mirror of mpv's BufferedRange in coord/SM-facing form. Decoupled from
-// the mpv-side fixed-size array so the SM has no mpv dependency.
 struct PlaybackBufferedRange {
-    int64_t start_ticks = 0;  // 100ns units
+    int64_t start_ticks = 0;
     int64_t end_ticks = 0;
 };
 
@@ -52,15 +65,7 @@ struct PlaybackSnapshot {
     bool buffering = false;
     MediaType media_type = MediaType::Unknown;
     int64_t position_us = 0;
-    // True between a load-starting hint whose Jellyfin item Id matches
-    // the previous load's Id (bitrate change, transcode-audio change,
-    // any same-item reload) and the next FILE_LOADED. Lets consumers
-    // distinguish "user is reloading the same item" from a fresh track
-    // change without re-deriving identity.
     bool variant_switch_pending = false;
-
-    // mpv-derived state mirrored into the SM so every consumer sees one
-    // coherent snapshot at event-emission time. No pull from coord.
     double rate = 1.0;
     int64_t duration_us = 0;
     bool fullscreen = false;
@@ -71,64 +76,46 @@ struct PlaybackSnapshot {
     std::vector<PlaybackBufferedRange> buffered;
 };
 
-// Semantic playback events emitted by the state machine to all sinks.
-// Each event carries a full snapshot of post-transition state so sinks
-// never need to pull from the coordinator.
 struct PlaybackEvent {
-    enum class Kind {
-        Started,
-        Paused,
-        Finished,
-        Canceled,
-        Error,
-        SeekingChanged,
-        BufferingChanged,
-        MediaTypeChanged,
-        TrackLoaded,
-        PositionChanged,
-        DurationChanged,
-        RateChanged,
-        FullscreenChanged,
-        OsdDimsChanged,
-        BufferedRangesChanged,
-        DisplayHzChanged,
-        // Metadata stream — JS-sourced, not mpv-derived. Carried via event
-        // payload (NOT snapshot); SM ignores. Sinks that surface track info
-        // to a media-session backend dispatch on these.
-        MetadataChanged,
-        ArtworkChanged,
-        QueueCapsChanged,
-        // Explicit seek-completion signal from JS (notifySeek). Sinks that
-        // expose a "Seeked" notification (MPRIS) emit it with snapshot.position_us.
-        Seeked,
+    enum class Kind : uint8_t {
+        Started = 0,
+        Paused = 1,
+        Finished = 2,
+        Canceled = 3,
+        Error = 4,
+        SeekingChanged = 5,
+        BufferingChanged = 6,
+        MediaTypeChanged = 7,
+        TrackLoaded = 8,
+        PositionChanged = 9,
+        DurationChanged = 10,
+        RateChanged = 11,
+        FullscreenChanged = 12,
+        OsdDimsChanged = 13,
+        BufferedRangesChanged = 14,
+        DisplayHzChanged = 15,
+        MetadataChanged = 16,
+        ArtworkChanged = 17,
+        QueueCapsChanged = 18,
+        Seeked = 19,
     };
     Kind kind = Kind::Started;
-    bool flag = false;          // SeekingChanged/BufferingChanged value
-    std::string error_message;  // Error
-    PlaybackSnapshot snapshot;  // post-transition state
-
-    // Per-event payload for the metadata stream. Empty/default on every
-    // other event kind.
-    MediaMetadata metadata;     // MetadataChanged
-    std::string artwork_uri;    // ArtworkChanged (data URI)
-    bool can_go_next = false;   // QueueCapsChanged
-    bool can_go_prev = false;   // QueueCapsChanged
+    bool flag = false;
+    std::string error_message;
+    PlaybackSnapshot snapshot;
+    MediaMetadata metadata;
+    std::string artwork_uri;
+    bool can_go_next = false;
+    bool can_go_prev = false;
 };
 
-// Coord-side actions emitted by the SM alongside events. Distinct from
-// events because these fire side-effecting commands (e.g. mpv async
-// property writes) rather than notifying observers of state changes.
 struct PlaybackAction {
-    enum class Kind {
-        ApplyPendingTrackSelectionAndPlay,
+    enum class Kind : uint8_t {
+        ApplyPendingTrackSelectionAndPlay = 0,
     };
-    Kind kind;
+    Kind kind = Kind::ApplyPendingTrackSelectionAndPlay;
 };
 
-// Narrow non-blocking interface. Coordinator calls tryPost from the
-// coordinator worker thread; sinks must enqueue/handoff and return
-// immediately. Returning false signals a full queue (sink is responsible
-// for its own coalescing/drop policy as documented per sink).
 class PlaybackEventSink {
 public:
     virtual ~PlaybackEventSink() = default;

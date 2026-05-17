@@ -170,7 +170,7 @@ mod imp {
     }
 }
 
-use imp::WakeEvent;
+pub use imp::WakeEvent;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_wake_event_new() -> *mut WakeEvent {
