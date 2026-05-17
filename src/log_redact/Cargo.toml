@@ -1,9 +1,0 @@
-[package]
-name = "jfn-log-redact"
-version = "0.1.0"
-edition = "2024"
-publish = false
-
-[lib]
-name = "jfn_log_redact"
-crate-type = ["rlib"]

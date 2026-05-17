@@ -27,8 +27,6 @@ lint:
     cargo clippy --manifest-path src/cli/Cargo.toml --all-targets -- -D warnings
     cargo fmt --manifest-path src/jellyfin/Cargo.toml -- --check
     cargo clippy --manifest-path src/jellyfin/Cargo.toml --all-targets -- -D warnings
-    cargo fmt --manifest-path src/log_redact/Cargo.toml -- --check
-    cargo clippy --manifest-path src/log_redact/Cargo.toml --all-targets -- -D warnings
     cargo fmt --manifest-path src/paths/Cargo.toml -- --check
     cargo clippy --manifest-path src/paths/Cargo.toml --all-targets -- -D warnings
     cargo fmt --manifest-path src/wake_event/Cargo.toml -- --check

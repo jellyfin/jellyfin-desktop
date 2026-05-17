@@ -9,7 +9,6 @@ name = "jfn_logging"
 crate-type = ["rlib"]
 
 [dependencies]
-jfn-log-redact = { path = "../log_redact" }
 tracing = "0.1"
 tracing-core = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [

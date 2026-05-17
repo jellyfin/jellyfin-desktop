@@ -567,14 +567,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "jfn-log-redact"
-version = "0.1.0"
-
-[[package]]
 name = "jfn-logging"
 version = "0.1.0"
 dependencies = [
- "jfn-log-redact",
  "libc",
  "time",
  "tracing",
@@ -613,7 +608,6 @@ dependencies = [
  "jfn-idle-inhibit-linux",
  "jfn-input-wayland",
  "jfn-jellyfin",
- "jfn-log-redact",
  "jfn-logging",
  "jfn-open-url-linux",
  "jfn-paths",

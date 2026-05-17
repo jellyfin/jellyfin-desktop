@@ -4,10 +4,12 @@
 //! - stderr (always)
 //! - size-rotated file (optional, when `path` is non-empty)
 //!
-//! Every emitted line is filtered through `jfn_log_redact` so auth tokens
+//! Every emitted line is filtered through the `redact` module so auth tokens
 //! are 'x'-ed out. Anything other code writes to the real stderr (CEF
 //! subprocesses, ffmpeg) is captured by a pipe-and-poll thread and
 //! re-emitted as `[CEF]` debug records.
+
+mod redact;
 
 use std::ffi::{CString, c_char};
 use std::fs::{File, OpenOptions};
@@ -802,8 +804,8 @@ impl<W: Write> Write for RedactGuard<W> {
 
 impl<W: Write> Drop for RedactGuard<W> {
     fn drop(&mut self) {
-        if jfn_log_redact::contains_secret(&self.buf) {
-            jfn_log_redact::censor(&mut self.buf);
+        if redact::contains_secret(&self.buf) {
+            redact::censor(&mut self.buf);
         }
         let _ = self.inner.write_all(&self.buf);
     }
