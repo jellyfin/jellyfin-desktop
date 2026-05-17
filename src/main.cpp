@@ -19,6 +19,7 @@
 #include "mpv/event.h"
 #include "mpv/options.h"
 #include "mpv/capabilities.h"
+#include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
 #include "paths/paths.h"
 #include "settings.h"
@@ -570,28 +571,15 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    g_mpv = MpvHandle::Create(g_platform.display);
-    if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
-
-    // libmpv defaults config=no (opposite of the mpv CLI); enable it so
-    // users' $MPV_HOME/mpv.conf is loaded.
-    g_mpv.SetOptionString("config", "yes");
-
-    // We only ever feed mpv direct media URLs from the Jellyfin server;
-    // the youtube-dl/yt-dlp hook would just add startup latency and a
-    // failure mode for nothing.
-    g_mpv.SetOptionString("ytdl", "no");
-
-    g_mpv.SetOptionString("user-agent", APP_USER_AGENT);
-
-    g_mpv.SetHwdec(args.hwdec);
-
     // Restore saved window geometry. mpv's --geometry is always physical
     // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
     // assigns gm->w/h to widw/widh without applying dpi_scale), so we pass
     // physical pixels here. If the live display scale differs from what
     // these pixels were computed against, the post-CEF-init resize block
     // below corrects the window size once display-hidpi-scale is known.
+    std::string boot_geometry;
+    bool boot_force_position = false;
+    bool boot_window_max = false;
     {
         using WG = Settings::WindowGeometry;
         auto saved_geom = Settings::instance().windowGeometry();
@@ -613,14 +601,12 @@ int main(int argc, char* argv[]) {
 
         if (g_platform.clamp_window_geometry)
             g_platform.clamp_window_geometry(&w, &h, &x, &y);
-        std::string geom_str = std::to_string(w) + "x" + std::to_string(h);
+        boot_geometry = std::to_string(w) + "x" + std::to_string(h);
         if (x >= 0 && y >= 0) {
-            geom_str += "+" + std::to_string(x) + "+" + std::to_string(y);
-            g_mpv.SetOptionString("force-window-position", "yes");
+            boot_geometry += "+" + std::to_string(x) + "+" + std::to_string(y);
+            boot_force_position = true;
         }
-        g_mpv.SetOptionString("geometry", geom_str);
-        if (saved_geom.maximized)
-            g_mpv.SetOptionString("window-maximized", "yes");
+        boot_window_max = saved_geom.maximized;
     }
 
     if (!args.audio_passthrough.empty()) {
@@ -640,25 +626,40 @@ int main(int argc, char* argv[]) {
             }
             args.audio_passthrough = filtered;
         }
-        g_mpv.SetAudioSpdif(args.audio_passthrough);
     }
-    if (args.audio_exclusive)
-        g_mpv.SetAudioExclusive(true);
-    if (!args.audio_channels.empty())
-        g_mpv.SetAudioChannels(args.audio_channels);
 
-    // Register property observations before mpv_initialize. On macOS,
-    // core_thread races to DispatchQueue.main.sync immediately after init
-    // returns — main must enter the GCD pump loop without delay.
-    g_mpv.SetWakeupCallback([](void*) {}, nullptr);
+    // Pick the libmpv log subscription level to match what jfn-logging
+    // would actually surface for LOG_MPV. Cap at "debug"; mpv's "trace"
+    // is extreme and not worth the IPC. mpv's "v" maps to our Debug;
+    // mpv's "debug" maps to our Trace.
+    const char* mpv_log_level = "no";
+    if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Trace))      mpv_log_level = "debug";
+    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Debug)) mpv_log_level = "v";
+    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Info))  mpv_log_level = "info";
+    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Warn))  mpv_log_level = "warn";
+    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Error)) mpv_log_level = "error";
+
+    JfnMpvBoot boot{};
+    boot.display_backend          = static_cast<uint8_t>(g_platform.display);
+    boot.hwdec                    = args.hwdec.c_str();
+    boot.user_agent               = APP_USER_AGENT;
+    boot.audio_passthrough        = args.audio_passthrough.empty()
+                                  ? nullptr : args.audio_passthrough.c_str();
+    boot.audio_exclusive          = args.audio_exclusive;
+    boot.audio_channels           = args.audio_channels.empty()
+                                  ? nullptr : args.audio_channels.c_str();
+    boot.geometry                 = boot_geometry.c_str();
+    boot.force_window_position    = boot_force_position;
+    boot.window_maximized_at_boot = boot_window_max;
+    boot.mpv_log_level            = mpv_log_level;
+
+    mpv_handle* raw = jfn_mpv_handle_init(&boot);
+    if (!raw) { LOG_ERROR(LOG_MAIN, "mpv handle init failed"); return 1; }
+    g_mpv.Set(raw);
+
+    // Register property observations after init — observe_properties
+    // is post-init-safe and reaches mpv through the wrapped pointer.
     observe_properties(g_mpv, g_platform.display);
-
-    int init_err = g_mpv.Initialize();
-    if (init_err < 0) {
-        LOG_ERROR(LOG_MAIN, "mpv_initialize failed: {}", init_err);
-        return 1;
-    }
-    g_mpv.SetLogLevel();
 
     // Capture user's mpv.conf bg, then force startup color. Safe here:
     // force-window=yes (not "immediate") defers VO creation, so the user's
