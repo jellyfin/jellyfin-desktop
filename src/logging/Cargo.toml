@@ -10,6 +10,15 @@ crate-type = ["rlib"]
 
 [dependencies]
 jfn-log-redact = { path = "../log_redact" }
+tracing = "0.1"
+tracing-core = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "std",
+    "fmt",
+    "ansi",
+    "registry",
+    "env-filter",
+] }
 tracing-appender = "0.2"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 libc = "0.2"

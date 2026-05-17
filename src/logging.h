@@ -4,7 +4,6 @@
 #include "include/internal/cef_types.h"
 
 #include <cstdint>
-#include <cstring>
 #include <string>
 
 #include <fmt/format.h>
@@ -30,15 +29,17 @@ enum class LogLevel : uint8_t {
 };
 
 inline constexpr LogLevel kDefaultLogLevel = LogLevel::Info;
-inline constexpr const char* kDefaultLogLevelName = "info";
+inline constexpr const char* kDefaultLogFilter = "info";
 
-inline LogLevel parseLogLevel(const char* level) {
-    if (strcmp(level, "trace") == 0) return LogLevel::Trace;
-    if (strcmp(level, "debug") == 0) return LogLevel::Debug;
-    if (strcmp(level, "info")  == 0) return LogLevel::Info;
-    if (strcmp(level, "warn")  == 0) return LogLevel::Warn;
-    if (strcmp(level, "error") == 0) return LogLevel::Error;
-    return LogLevel::Default;
+// Most-verbose level still surfaced by the active filter for `cat`.
+// Used to derive integration-level subscription thresholds (mpv log
+// subscription, CEF log severity) from the unified filter directive.
+inline LogLevel effectiveLogLevel(LogCategory cat) {
+    if (jfn_log_enabled(cat, static_cast<uint8_t>(LogLevel::Trace))) return LogLevel::Trace;
+    if (jfn_log_enabled(cat, static_cast<uint8_t>(LogLevel::Debug))) return LogLevel::Debug;
+    if (jfn_log_enabled(cat, static_cast<uint8_t>(LogLevel::Info)))  return LogLevel::Info;
+    if (jfn_log_enabled(cat, static_cast<uint8_t>(LogLevel::Warn)))  return LogLevel::Warn;
+    return LogLevel::Error;
 }
 
 inline cef_log_severity_t toCefSeverity(LogLevel level) {
@@ -81,9 +82,8 @@ inline void emit_args(LogCategory cat, LogLevel level, fmt::format_string<Args..
 
 class LoggingScope {
 public:
-    LoggingScope(const char* path, LogLevel min_level) {
-        LogLevel effective = min_level == LogLevel::Default ? kDefaultLogLevel : min_level;
-        jfn_log_init(path, static_cast<uint8_t>(effective));
+    LoggingScope(const char* path, const char* filter) {
+        jfn_log_init(path, (filter && *filter) ? filter : kDefaultLogFilter);
     }
     ~LoggingScope() { jfn_log_shutdown(); }
 };

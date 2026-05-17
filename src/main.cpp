@@ -161,8 +161,7 @@ static void mpv_digest_thread() {
 //   browsers → CefShutdown → idle_inhibit clear → platform.cleanup
 // then main runs mpv terminate + post_window_cleanup.
 static int run_with_cef(int mw, int mh,
-                        const cli::Args& args,
-                        LogLevel log_level) {
+                        const cli::Args& args) {
     std::string ozone_platform = args.ozone_platform;
 #if !defined(_WIN32) && !defined(__APPLE__)
     if (ozone_platform.empty())
@@ -196,7 +195,7 @@ static int run_with_cef(int mw, int mh,
 
     bool use_shared_textures = g_platform.shared_texture_supported && !args.disable_gpu_compositing;
 
-    CefRuntime::SetLogSeverity(toCefSeverity(log_level));
+    CefRuntime::SetLogSeverity(toCefSeverity(effectiveLogLevel(LOG_CEF)));
     CefRuntime::SetRemoteDebuggingPort(args.remote_debugging_port);
     CefRuntime::SetDisableGpuCompositing(!use_shared_textures);
 #ifdef __linux__
@@ -500,16 +499,7 @@ int main(int argc, char* argv[]) {
         log_path = paths::getLogPath();
 #endif
     }
-    LogLevel log_level = LogLevel::Default;
-    if (!args.log_level.empty()) {
-        log_level = parseLogLevel(args.log_level.c_str());
-        if (log_level == LogLevel::Default) {
-            fprintf(stderr, "Invalid log level: '%s' (expected trace|debug|info|warn|error)\n",
-                    args.log_level.c_str());
-            return 1;
-        }
-    }
-    LoggingScope logging(log_path.c_str(), log_level);
+    LoggingScope logging(log_path.c_str(), args.log_level.c_str());
 
     LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_FULL);
     LOG_INFO(LOG_MAIN, "CEF {}", CEF_VERSION);
@@ -688,7 +678,7 @@ int main(int argc, char* argv[]) {
         LOG_ERROR(LOG_MAIN, "mpv_initialize failed: {}", init_err);
         return 1;
     }
-    g_mpv.SetLogLevel(log_level);
+    g_mpv.SetLogLevel();
 
     // Capture user's mpv.conf bg, then force startup color. Safe here:
     // force-window=yes (not "immediate") defers VO creation, so the user's
@@ -784,8 +774,7 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    int rc = run_with_cef(static_cast<int>(mw), static_cast<int>(mh),
-                          args, log_level);
+    int rc = run_with_cef(static_cast<int>(mw), static_cast<int>(mh), args);
     if (rc != 0) return rc;
 
 #ifdef __APPLE__

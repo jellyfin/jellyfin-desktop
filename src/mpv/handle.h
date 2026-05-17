@@ -449,19 +449,17 @@ public:
     }
 
     // Subscribe mpv at the most verbose level our log filter would actually
-    // surface, so mpv doesn't waste IPC on messages we'd discard.
-    // We cap mpv at "debug" — mpv's "trace" is extreme and not worth the IPC.
-    // mpv's "v" maps to our Debug; mpv's "debug" maps to our Trace.
-    void SetLogLevel(LogLevel level) {
-        const char* mpv_level = "debug";
-        switch (level) {
-            case LogLevel::Debug: mpv_level = "v";     break;
-            case LogLevel::Info:  mpv_level = "info";  break;
-            case LogLevel::Warn:  mpv_level = "warn";  break;
-            case LogLevel::Error: mpv_level = "error"; break;
-            case LogLevel::Trace:
-            case LogLevel::Default: break; // subscribe to "debug" (cap)
-        }
+    // surface for the LOG_MPV category, so mpv doesn't waste IPC on
+    // messages we'd discard. We cap at "debug" — mpv's "trace" is extreme
+    // and not worth the IPC. mpv's "v" maps to our Debug; mpv's "debug"
+    // maps to our Trace.
+    void SetLogLevel() {
+        const char* mpv_level = "no";
+        if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Trace))      mpv_level = "debug";
+        else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Debug)) mpv_level = "v";
+        else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Info))  mpv_level = "info";
+        else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Warn))  mpv_level = "warn";
+        else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Error)) mpv_level = "error";
         mpv_request_log_messages(handle_, mpv_level);
     }
 
