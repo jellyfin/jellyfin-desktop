@@ -592,6 +592,14 @@ name = "jfn-paths"
 version = "0.1.0"
 
 [[package]]
+name = "jfn-playback"
+version = "0.1.0"
+dependencies = [
+ "jfn-wake-event",
+ "libc",
+]
+
+[[package]]
 name = "jfn-rust"
 version = "0.1.0"
 dependencies = [
@@ -605,6 +613,7 @@ dependencies = [
  "jfn-logging",
  "jfn-open-url-linux",
  "jfn-paths",
+ "jfn-playback",
  "jfn-signal-guard",
  "jfn-single-instance",
  "jfn-wake-event",

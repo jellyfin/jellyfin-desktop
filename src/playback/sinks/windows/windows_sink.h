@@ -40,7 +40,7 @@ private:
     std::unique_ptr<WinRTState> state_;
 
     MediaMetadata metadata_;
-    PlaybackState playback_state_ = PlaybackState::Stopped;
+    PlaybackPhase playback_state_ = PlaybackPhase::Stopped;
     int64_t position_us_ = 0;
     bool pending_update_ = false;
     std::chrono::steady_clock::time_point last_position_update_;

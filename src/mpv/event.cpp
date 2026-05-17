@@ -48,11 +48,12 @@ namespace mpv {
         if (scale <= 0.f) scale = 1.0f;
         int lw = static_cast<int>(pw / scale);
         int lh = static_cast<int>(ph / scale);
-        // g_playback_coord is null at the very earliest boot (configure may
-        // fire before the coordinator is constructed in run_with_cef). Skip
-        // the post in that window — the next configure picks it up.
-        if (g_playback_coord)
-            g_playback_coord->postOsdDims(lw, lh, pw, ph);
+        // Coordinator isn't running at the very earliest boot (configure
+        // may fire before PlaybackCoordinatorScope is constructed in
+        // run_with_cef). Skip the post in that window — the next configure
+        // picks it up.
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_osd_dims(lw, lh, pw, ph);
     }
 
     bool read_osd_dims_from_event(mpv_event_property* p, int64_t* w, int64_t* h) {

@@ -16,8 +16,10 @@ extern MpvHandle g_mpv;
 extern Platform g_platform;
 
 class ThemeColor;
-class PlaybackCoordinator;
-extern PlaybackCoordinator* g_playback_coord;
+// Set true between PlaybackCoordinatorScope construction and destruction;
+// producers gate their `playback::post_*` calls on this to avoid posting
+// during shutdown.
+extern std::atomic<bool> g_playback_coord_running;
 
 void initiate_shutdown();
 extern std::atomic<bool> g_shutting_down;

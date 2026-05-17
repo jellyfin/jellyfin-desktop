@@ -162,24 +162,24 @@ void MacosSink::threadFunc() {
     teardownRemote();
 }
 
-static MPNowPlayingPlaybackState convertState(PlaybackState state) {
+static MPNowPlayingPlaybackState convertState(PlaybackPhase state) {
     switch (state) {
-        case PlaybackState::Playing: return MPNowPlayingPlaybackStatePlaying;
-        case PlaybackState::Paused: return MPNowPlayingPlaybackStatePaused;
-        case PlaybackState::Stopped: return MPNowPlayingPlaybackStateStopped;
+        case PlaybackPhase::Playing: return MPNowPlayingPlaybackStatePlaying;
+        case PlaybackPhase::Paused: return MPNowPlayingPlaybackStatePaused;
+        case PlaybackPhase::Stopped: return MPNowPlayingPlaybackStateStopped;
         default: return MPNowPlayingPlaybackStateUnknown;
     }
 }
 
-static PlaybackState mapEventToState(PlaybackEvent::Kind k) {
+static PlaybackPhase mapEventToState(PlaybackEvent::Kind k) {
     switch (k) {
-    case PlaybackEvent::Kind::Started:     return PlaybackState::Playing;
-    case PlaybackEvent::Kind::Paused:      return PlaybackState::Paused;
-    case PlaybackEvent::Kind::TrackLoaded: return PlaybackState::Paused;
+    case PlaybackEvent::Kind::Started:     return PlaybackPhase::Playing;
+    case PlaybackEvent::Kind::Paused:      return PlaybackPhase::Paused;
+    case PlaybackEvent::Kind::TrackLoaded: return PlaybackPhase::Paused;
     case PlaybackEvent::Kind::Finished:
     case PlaybackEvent::Kind::Canceled:
-    case PlaybackEvent::Kind::Error:       return PlaybackState::Stopped;
-    default:                               return PlaybackState::Stopped;
+    case PlaybackEvent::Kind::Error:       return PlaybackPhase::Stopped;
+    default:                               return PlaybackPhase::Stopped;
     }
 }
 
@@ -222,8 +222,8 @@ void MacosSink::deliver(const PlaybackEvent& ev) {
     case PlaybackEvent::Kind::Finished:
     case PlaybackEvent::Kind::Canceled:
     case PlaybackEvent::Kind::Error: {
-        PlaybackState st = mapEventToState(ev.kind);
-        if (st == PlaybackState::Stopped) {
+        PlaybackPhase st = mapEventToState(ev.kind);
+        if (st == PlaybackPhase::Stopped) {
             metadata_ = MediaMetadata{};
             position_us_ = 0;
             [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = nil;
@@ -235,12 +235,12 @@ void MacosSink::deliver(const PlaybackEvent& ev) {
         if (SetNowPlayingVisibility_ && GetLocalOrigin_) {
             void* origin = GetLocalOrigin_();
             SetNowPlayingVisibility_(origin,
-                st == PlaybackState::Stopped
+                st == PlaybackPhase::Stopped
                     ? MRNowPlayingClientVisibilityNeverVisible
                     : MRNowPlayingClientVisibilityAlwaysVisible);
         }
         // State change forces an immediate timeline tick.
-        if (st != PlaybackState::Stopped)
+        if (st != PlaybackPhase::Stopped)
             updateTimelineThrottled(ev.snapshot.position_us, true);
         break;
     }

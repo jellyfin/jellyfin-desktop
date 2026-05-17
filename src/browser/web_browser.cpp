@@ -180,13 +180,14 @@ bool WebBrowser::handleMessage(const std::string& name,
         MediaMetadata meta = metadataJson.empty()
             ? MediaMetadata{}
             : parseMetadataJson(metadataJson);
-        if (g_playback_coord) {
-            g_playback_coord->postLoadStarting(meta.id);
-            g_playback_coord->postPosition(static_cast<int64_t>(startMs) * 1000);
+        if (g_playback_coord_running.load(std::memory_order_acquire)) {
+            playback::post_load_starting(meta.id);
+            playback::post_position(static_cast<int64_t>(startMs) * 1000);
         }
         if (!metadataJson.empty()) {
             if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
-            if (g_playback_coord) g_playback_coord->postMetadata(meta);
+            if (g_playback_coord_running.load(std::memory_order_acquire))
+                playback::post_metadata(meta);
         }
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
@@ -258,22 +259,25 @@ bool WebBrowser::handleMessage(const std::string& name,
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);
         if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
-        if (g_playback_coord) g_playback_coord->postMetadata(std::move(meta));
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_metadata(meta);
     } else if (name == "notifyArtwork") {
         std::string artworkUri = args->GetString(0).ToString();
-        if (g_playback_coord) g_playback_coord->postArtwork(std::move(artworkUri));
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_artwork(artworkUri);
     } else if (name == "notifyQueueChange") {
         bool canNext = args->GetBool(0);
         bool canPrev = args->GetBool(1);
-        if (g_playback_coord) g_playback_coord->postQueueCaps(canNext, canPrev);
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_queue_caps(canNext, canPrev);
     } else if (name == "notifyPlaybackState") {
         // mpv is the authoritative playback-state source via the coordinator.
         // JS still emits this hint as it navigates; ignore it for state but
         // keep the IPC callable so the JS side does not see a missing handler.
     } else if (name == "notifySeek") {
         int posMs = getIntArg(args, 0);
-        if (g_playback_coord)
-            g_playback_coord->postSeeked(static_cast<int64_t>(posMs) * 1000);
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_seeked(static_cast<int64_t>(posMs) * 1000);
     } else if (name == "setCursorVisible") {
         g_platform.set_cursor(args->GetBool(0) ? CT_POINTER : CT_NONE);
     } else if (name == "appExit") {

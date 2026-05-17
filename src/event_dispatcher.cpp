@@ -38,62 +38,62 @@ void publish(const MpvEvent& ev) {
 namespace {
 
 void route_to_coordinator(const MpvEvent& ev) {
-    if (!g_playback_coord) return;
+    if (!g_playback_coord_running.load(std::memory_order_acquire)) return;
     switch (ev.type) {
     case MpvEventType::PAUSE:
         LOG_INFO(LOG_MPV, "mpv: pause={}", ev.flag);
-        g_playback_coord->postPauseChanged(ev.flag);
+        playback::post_pause_changed(ev.flag);
         break;
     case MpvEventType::FILE_LOADED:
         LOG_INFO(LOG_MPV, "mpv: FILE_LOADED");
-        g_playback_coord->postFileLoaded();
+        playback::post_file_loaded();
         break;
     case MpvEventType::END_FILE_EOF:
         LOG_INFO(LOG_MPV, "mpv: END_FILE eof");
-        g_playback_coord->postEndFile(EndReason::Eof);
+        playback::post_end_file(EndReason::Eof);
         break;
     case MpvEventType::END_FILE_ERROR:
         LOG_INFO(LOG_MPV, "mpv: END_FILE error msg={}", ev.err_msg ? ev.err_msg : "");
-        g_playback_coord->postEndFile(EndReason::Error,
-                                      ev.err_msg ? ev.err_msg : "");
+        playback::post_end_file(EndReason::Error,
+                                ev.err_msg ? ev.err_msg : "");
         break;
     case MpvEventType::END_FILE_CANCEL:
         LOG_INFO(LOG_MPV, "mpv: END_FILE cancel");
-        g_playback_coord->postEndFile(EndReason::Canceled);
+        playback::post_end_file(EndReason::Canceled);
         break;
     case MpvEventType::SEEKING:
         LOG_INFO(LOG_MPV, "mpv: seeking={}", ev.flag);
-        g_playback_coord->postSeekingChanged(ev.flag);
+        playback::post_seeking_changed(ev.flag);
         break;
     case MpvEventType::PAUSED_FOR_CACHE:
         LOG_INFO(LOG_MPV, "mpv: paused-for-cache={}", ev.flag);
-        g_playback_coord->postPausedForCache(ev.flag);
+        playback::post_paused_for_cache(ev.flag);
         break;
     case MpvEventType::CORE_IDLE:
         LOG_INFO(LOG_MPV, "mpv: core-idle={}", ev.flag);
-        g_playback_coord->postCoreIdle(ev.flag);
+        playback::post_core_idle(ev.flag);
         break;
     case MpvEventType::TIME_POS:
-        g_playback_coord->postPosition(static_cast<int64_t>(ev.dbl * 1000000.0));
+        playback::post_position(static_cast<int64_t>(ev.dbl * 1000000.0));
         break;
     case MpvEventType::VIDEO_FRAME_INFO:
-        g_playback_coord->postVideoFrameAvailable(ev.flag);
+        playback::post_video_frame_available(ev.flag);
         break;
     case MpvEventType::DURATION:
-        g_playback_coord->postDuration(static_cast<int64_t>(ev.dbl * 1000000.0));
+        playback::post_duration(static_cast<int64_t>(ev.dbl * 1000000.0));
         break;
     case MpvEventType::SPEED:
-        g_playback_coord->postSpeed(ev.dbl);
+        playback::post_speed(ev.dbl);
         break;
     case MpvEventType::FULLSCREEN:
         // Capture the maximized state at the dispatcher boundary so the
         // SM stays free of platform calls. Read mirrors the prior inline
         // capture (only meaningful when entering fullscreen).
-        g_playback_coord->postFullscreen(
+        playback::post_fullscreen(
             ev.flag, ev.flag ? mpv::window_maximized() : false);
         break;
     case MpvEventType::OSD_DIMS:
-        g_playback_coord->postOsdDims(ev.lw, ev.lh, ev.pw, ev.ph);
+        playback::post_osd_dims(ev.lw, ev.lh, ev.pw, ev.ph);
         break;
     case MpvEventType::DISPLAY_SCALE:
         if (g_browsers && ev.dbl > 0) g_browsers->setScale(ev.dbl);
@@ -104,11 +104,11 @@ void route_to_coordinator(const MpvEvent& ev) {
         for (int i = 0; i < ev.range_count; i++) {
             ranges.push_back({ev.ranges[i].start_ticks, ev.ranges[i].end_ticks});
         }
-        g_playback_coord->postBufferedRanges(std::move(ranges));
+        playback::post_buffered_ranges(ranges);
         break;
     }
     case MpvEventType::DISPLAY_FPS:
-        g_playback_coord->postDisplayHz(mpv::display_hz());
+        playback::post_display_hz(mpv::display_hz());
         break;
     default:
         break;
