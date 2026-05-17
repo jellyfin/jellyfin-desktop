@@ -191,6 +191,13 @@ name = "jfn-log-redact"
 version = "0.1.0"
 
 [[package]]
+name = "jfn-open-url-linux"
+version = "0.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "jfn-paths"
 version = "0.1.0"
 
@@ -202,6 +209,7 @@ dependencies = [
  "jfn-config",
  "jfn-jellyfin",
  "jfn-log-redact",
+ "jfn-open-url-linux",
  "jfn-paths",
  "jfn-signal-guard",
  "jfn-single-instance",

@@ -6,6 +6,7 @@ members = [
     "jellyfin",
     "jfn_rust",
     "log_redact",
+    "open_url_linux",
     "paths",
     "signal_guard",
     "single_instance",

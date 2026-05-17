@@ -1,7 +1,7 @@
 #include "common.h"
 #include "cef/cef_client.h"
 #include "idle_inhibit_linux.h"
-#include "open_url_linux.h"
+#include "jfn_open_url_linux.h"
 #include "input/input_x11.h"
 #include "mpv/event.h"
 
@@ -650,6 +650,6 @@ Platform make_x11_platform() {
         .set_theme_color = [](const Color&) {},
         .shared_texture_supported = false,
         .clipboard_read_text_async = nullptr,
-        .open_external_url = open_url_linux::open,
+        .open_external_url = [](const std::string& url) { jfn_open_url(url.c_str()); },
     };
 }
