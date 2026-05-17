@@ -29,8 +29,6 @@ lint:
     cargo clippy --manifest-path src/jellyfin/Cargo.toml --all-targets -- -D warnings
     cargo fmt --manifest-path src/paths/Cargo.toml -- --check
     cargo clippy --manifest-path src/paths/Cargo.toml --all-targets -- -D warnings
-    cargo fmt --manifest-path src/wake_event/Cargo.toml -- --check
-    cargo clippy --manifest-path src/wake_event/Cargo.toml --all-targets -- -D warnings
     cargo fmt --manifest-path src/single_instance/Cargo.toml -- --check
     cargo clippy --manifest-path src/single_instance/Cargo.toml --all-targets -- -D warnings
     if [ "$(uname)" != "MINGW64_NT" ] && [ "$(uname)" != "MSYS_NT" ]; then

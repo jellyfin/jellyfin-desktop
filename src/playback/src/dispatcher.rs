@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 
-use jfn_wake_event::WakeEvent;
+use crate::wake_event::WakeEvent;
 
 use crate::coordinator::Input;
 use crate::types::*;

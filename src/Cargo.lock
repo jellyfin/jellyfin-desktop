@@ -593,7 +593,6 @@ version = "0.1.0"
 name = "jfn-playback"
 version = "0.1.0"
 dependencies = [
- "jfn-wake-event",
  "libc",
  "windows-sys",
 ]
@@ -614,7 +613,6 @@ dependencies = [
  "jfn-playback",
  "jfn-signal-guard",
  "jfn-single-instance",
- "jfn-wake-event",
  "jfn-wayland-scale-probe",
  "jfn-wlproxy",
 ]
@@ -628,14 +626,6 @@ dependencies = [
 
 [[package]]
 name = "jfn-single-instance"
-version = "0.1.0"
-dependencies = [
- "libc",
- "windows-sys",
-]
-
-[[package]]
-name = "jfn-wake-event"
 version = "0.1.0"
 dependencies = [
  "libc",

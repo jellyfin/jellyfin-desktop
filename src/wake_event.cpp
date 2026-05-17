@@ -1,6 +1,6 @@
 #include "wake_event.h"
 
-#include "wake_event/jfn_wake_event.h"
+#include "playback/jfn_wake_event.h"
 
 WakeEvent::WakeEvent() : impl_(jfn_wake_event_new()) {}
 
