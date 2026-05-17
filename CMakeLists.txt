@@ -454,10 +454,14 @@ file(GLOB_RECURSE JFN_RUST_SOURCES CONFIGURE_DEPENDS
     "${JFN_RUST_WORKSPACE_DIR}/*/Cargo.toml"
     "${JFN_RUST_WORKSPACE_DIR}/Cargo.toml"
 )
+# -ffat-lto-objects: distro CFLAGS may set -flto, which makes cc-crate
+# emit slim objects whose symbols vanish from the archive index.
 add_custom_command(
     OUTPUT ${JFN_RUST_LIB}
     COMMAND ${CMAKE_COMMAND} -E env
         CARGO_TARGET_DIR=${JFN_RUST_TARGET_DIR}
+        "CFLAGS=$ENV{CFLAGS} -ffat-lto-objects"
+        "CXXFLAGS=$ENV{CXXFLAGS} -ffat-lto-objects"
         ${CARGO_EXECUTABLE} build --release --manifest-path ${JFN_RUST_DIR}/Cargo.toml
     DEPENDS ${JFN_RUST_SOURCES}
     COMMENT "Building jfn-rust (Rust workspace)"
