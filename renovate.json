@@ -3,6 +3,7 @@
   "extends": [
     "config:recommended"
   ],
+  "ignorePaths": ["third_party/**"],
   "customDatasources": {
     "cef": {
       "defaultRegistryUrlTemplate": "https://cef-builds.spotifycdn.com/index.json",
@@ -19,35 +20,12 @@
       "matchStrings": ["^(?<currentValue>\\S+)"],
       "datasourceTemplate": "custom.cef",
       "depNameTemplate": "cef"
-    },
-    {
-      "customType": "regex",
-      "fileMatch": ["^third_party/doctest/VERSION$"],
-      "matchStrings": ["^(?<currentValue>\\S+)"],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "doctest/doctest",
-      "extractVersionTemplate": "^v(?<version>.+)$"
-    },
-    {
-      "customType": "regex",
-      "fileMatch": ["^third_party/fmt/VERSION$"],
-      "matchStrings": ["^(?<currentValue>\\S+)"],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "fmtlib/fmt"
     }
   ],
   "packageRules": [
     {
       "matchDatasources": ["custom.cef"],
       "commitMessageTopic": "CEF"
-    },
-    {
-      "matchDepNames": ["doctest/doctest"],
-      "commitMessageTopic": "doctest"
-    },
-    {
-      "matchDepNames": ["fmtlib/fmt"],
-      "commitMessageTopic": "fmt"
     }
   ]
 }
