@@ -2,16 +2,15 @@
 
 #include "mpv/event.h"
 #include "playback/jfn_dispatcher.h"
-#include "playback/sinks/queued_sink.h"
 
 #include <cstring>
-#include <memory>
 
 // mpv → coordinator bridge. mpv_digest_thread normalizes mpv events into
 // MpvEvent values and calls publish(); the Rust jfn-playback dispatcher
-// thread routes them into the playback coordinator and pumps the C++
-// sink queues (BrowserPlaybackSink, IdleInhibitSink, ThemeColorSink,
-// MpvActionSink) so they execute on the cef consumer thread.
+// thread routes them into the playback coordinator. The coordinator
+// delivers events to its registered sinks (BrowserPlaybackSink,
+// IdleInhibitSink, ThemeColorSink, MpvActionSink) inline on its own
+// worker thread.
 
 // Set by BrowserPlaybackSink on FullscreenChanged events; read by the
 // geometry-save tail in main.cpp at shutdown.
@@ -37,24 +36,10 @@ inline void publish(const MpvEvent& ev) {
     jfn_dispatcher_publish(&c);
 }
 
-// Thunks for the dispatcher's per-sink pump callback. Both queued sink
-// classes share the same shape; route through their virtual `pump()`.
-extern "C" void jfn_event_sink_pump_thunk(void* ctx);
-extern "C" void jfn_action_sink_pump_thunk(void* ctx);
-
 namespace dispatcher {
 
 inline void init() { jfn_dispatcher_init(); }
 inline void shutdown() { jfn_dispatcher_shutdown(); }
-
-inline void register_event_sink(const std::shared_ptr<QueuedPlaybackSink>& s) {
-    jfn_dispatcher_register_sink_pump(s.get(), s->wake().fd(),
-                                      &jfn_event_sink_pump_thunk);
-}
-inline void register_action_sink(const std::shared_ptr<QueuedActionSink>& s) {
-    jfn_dispatcher_register_sink_pump(s.get(), s->wake().fd(),
-                                      &jfn_action_sink_pump_thunk);
-}
 
 inline void set_display_scale_handler(void (*cb)(double)) {
     jfn_dispatcher_set_display_scale_handler(cb);

@@ -14,8 +14,8 @@
 
 #include <string>
 
-void BrowserPlaybackSink::deliver(const PlaybackEvent& ev) {
-    if (!g_web_browser) return;
+bool BrowserPlaybackSink::tryPost(const PlaybackEvent& ev) {
+    if (!g_web_browser) return true;
     const auto& snap = ev.snapshot;
     switch (ev.kind) {
     case PlaybackEvent::Kind::Started:
@@ -109,4 +109,5 @@ void BrowserPlaybackSink::deliver(const PlaybackEvent& ev) {
         // Not surfaced via this sink. JS already owns metadata.
         break;
     }
+    return true;
 }

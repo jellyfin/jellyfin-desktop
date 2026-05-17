@@ -2,10 +2,11 @@
 
 #include "../../common.h"
 
-void MpvActionSink::deliver(const PlaybackAction& act) {
+bool MpvActionSink::tryPost(const PlaybackAction& act) {
     switch (act.kind) {
     case PlaybackAction::Kind::ApplyPendingTrackSelectionAndPlay:
         g_mpv.ApplyPendingTrackSelectionAndPlay();
         break;
     }
+    return true;
 }

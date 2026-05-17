@@ -2,8 +2,8 @@
 
 #include "../../theme_color.h"
 
-void ThemeColorSink::deliver(const PlaybackEvent& ev) {
-    if (!g_theme_color) return;
+bool ThemeColorSink::tryPost(const PlaybackEvent& ev) {
+    if (!g_theme_color) return true;
     switch (ev.kind) {
     case PlaybackEvent::Kind::Finished:
     case PlaybackEvent::Kind::Canceled:
@@ -13,4 +13,5 @@ void ThemeColorSink::deliver(const PlaybackEvent& ev) {
     default:
         break;
     }
+    return true;
 }

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "queued_sink.h"
+#include "../event.h"
 
 // Forwards UI-affecting events to g_web_browser via execJs. Reads only
 // from ev.snapshot — never pulls from coord.
-class BrowserPlaybackSink final : public QueuedPlaybackSink {
-protected:
-    void deliver(const PlaybackEvent& ev) override;
+class BrowserPlaybackSink final : public PlaybackEventSink {
+public:
+    bool tryPost(const PlaybackEvent& ev) override;
 };
