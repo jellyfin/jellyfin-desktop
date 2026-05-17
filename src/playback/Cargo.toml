@@ -8,6 +8,9 @@ publish = false
 name = "jfn_playback"
 crate-type = ["rlib"]
 
+[dependencies]
+jfn-mpv = { path = "../mpv" }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
