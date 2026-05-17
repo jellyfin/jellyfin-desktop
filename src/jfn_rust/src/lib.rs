@@ -24,6 +24,9 @@ pub use jfn_clipboard_wayland::*;
 pub use jfn_idle_inhibit_linux::*;
 
 #[cfg(target_os = "linux")]
+pub use jfn_input_wayland::*;
+
+#[cfg(target_os = "linux")]
 pub use jfn_open_url_linux::*;
 
 #[cfg(target_os = "linux")]

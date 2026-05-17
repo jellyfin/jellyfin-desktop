@@ -5,6 +5,7 @@ members = [
     "clipboard_wayland",
     "config",
     "idle_inhibit_linux",
+    "input_wayland",
     "jellyfin",
     "jfn_rust",
     "log_redact",
