@@ -520,16 +520,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jfn-clipboard-wayland"
-version = "0.1.0"
-dependencies = [
- "libc",
- "log",
- "wayland-client",
- "wayland-protocols",
-]
-
-[[package]]
 name = "jfn-config"
 version = "0.1.0"
 dependencies = [
@@ -543,19 +533,6 @@ version = "0.1.0"
 dependencies = [
  "log",
  "zbus",
-]
-
-[[package]]
-name = "jfn-input-wayland"
-version = "0.1.0"
-dependencies = [
- "libc",
- "log",
- "memmap2",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "xkbcommon",
 ]
 
 [[package]]
@@ -602,10 +579,8 @@ name = "jfn-rust"
 version = "0.1.0"
 dependencies = [
  "jfn-cli",
- "jfn-clipboard-wayland",
  "jfn-config",
  "jfn-idle-inhibit-linux",
- "jfn-input-wayland",
  "jfn-jellyfin",
  "jfn-logging",
  "jfn-open-url-linux",
@@ -613,7 +588,7 @@ dependencies = [
  "jfn-playback",
  "jfn-signal-guard",
  "jfn-single-instance",
- "jfn-wayland-scale-probe",
+ "jfn-wayland",
  "jfn-wlproxy",
 ]
 
@@ -633,11 +608,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "jfn-wayland-scale-probe"
+name = "jfn-wayland"
 version = "0.1.0"
 dependencies = [
+ "libc",
+ "log",
+ "memmap2",
  "smithay-client-toolkit",
+ "wayland-backend",
  "wayland-client",
+ "wayland-protocols",
+ "xkbcommon",
 ]
 
 [[package]]

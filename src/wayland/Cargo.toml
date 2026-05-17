@@ -1,17 +1,18 @@
 [package]
-name = "jfn-input-wayland"
+name = "jfn-wayland"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [lib]
-name = "jfn_input_wayland"
+name = "jfn_wayland"
 crate-type = ["rlib"]
 
 [dependencies]
 libc = "0.2"
 log = "0.4"
 memmap2 = "0.9"
+smithay-client-toolkit = { version = "0.20", default-features = false }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
