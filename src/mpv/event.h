@@ -35,7 +35,8 @@ struct BufferedRange {
 struct MpvEvent {
     MpvEventType type;
     bool flag;              // PAUSE, FULLSCREEN, SEEKING
-    double dbl;             // TIME_POS, DURATION, SPEED
+    bool flag2;             // FULLSCREEN: was_maximized
+    double dbl;             // TIME_POS, DURATION, SPEED, DISPLAY_FPS, DISPLAY_SCALE
     int pw, ph, lw, lh;    // OSD_DIMS
     int range_count;                            // BUFFERED_RANGES
     BufferedRange ranges[MAX_BUFFERED_RANGES];  // BUFFERED_RANGES
