@@ -9,7 +9,8 @@
 use std::ffi::{CStr, c_char, c_void};
 use std::sync::{Mutex, OnceLock};
 
-use crate::coordinator::{Input, PlaybackCoordinator};
+pub(crate) use crate::coordinator::Input;
+use crate::coordinator::PlaybackCoordinator;
 use crate::types::*;
 
 // =====================================================================
@@ -323,7 +324,7 @@ pub unsafe extern "C" fn jfn_playback_snapshot(out: *mut JfnPlaybackSnapshotC) {
 // Producers
 // =====================================================================
 
-fn post(in_: Input) {
+pub(crate) fn post(in_: Input) {
     with_coord(|c| c.enqueue(in_));
 }
 

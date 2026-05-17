@@ -328,16 +328,21 @@ static int run_with_cef(int mw, int mh,
     playback::register_event_sink(media_sink);
     media_sink->start();
     playback::register_action_sink(mpv_action_sink);
-    register_queued_sinks(
-        {browser_sink, idle_inhibit_sink, theme_color_sink},
-        {mpv_action_sink});
+    dispatcher::init();
+    dispatcher::register_event_sink(browser_sink);
+    dispatcher::register_event_sink(idle_inhibit_sink);
+    dispatcher::register_event_sink(theme_color_sink);
+    dispatcher::register_action_sink(mpv_action_sink);
+    dispatcher::set_display_scale_handler([](double s) {
+        if (g_browsers && s > 0) g_browsers->setScale(s);
+    });
 
     // Start before waitForLoad so mpv events (OSD_DIMS especially) reach
     // the platform/browsers during the overlay-only startup phase, before
     // the main browser finishes loading.
-    LOG_INFO(LOG_MAIN, "[FLOW] starting digest + cef_consumer threads");
+    LOG_INFO(LOG_MAIN, "[FLOW] starting digest + dispatcher threads");
     std::thread digest_thread(mpv_digest_thread);
-    std::thread cef_thread(cef_consumer_thread);
+    dispatcher::start();
 
 #ifndef __APPLE__
     g_web_browser->waitForLoad();
@@ -366,7 +371,8 @@ static int run_with_cef(int mw, int mh,
     g_theme_color = nullptr;
     media_sink->stop();
 
-    cef_thread.join();
+    dispatcher::stop();
+    dispatcher::shutdown();
     g_mpv.Wakeup();
     digest_thread.join();
 
