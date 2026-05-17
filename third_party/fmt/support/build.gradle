@@ -13,7 +13,7 @@ buildscript {
         // Notice that 4.0.0 here is the version of [Android Gradle Plugin]
         // According to URL above you will need Gradle 6.1 or higher
         //
-        classpath "com.android.tools.build:gradle:4.1.1"
+        classpath "com.android.tools.build:gradle:4.2.2"
     }
 }
 repositories {
