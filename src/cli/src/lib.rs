@@ -258,4 +258,113 @@ mod tests {
         let r = parse_inner(args, false);
         assert!(matches!(r.kind, JfnCliResultKind::Error));
     }
+
+    #[test]
+    fn no_args_continue_all_unset() {
+        let r = parse(&["app"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Continue));
+        assert!(r.hwdec.is_null());
+        assert!(r.audio_passthrough.is_null());
+        assert!(r.audio_channels.is_null());
+        assert!(r.log_level.is_null());
+        assert!(r.log_file.is_null());
+        assert!(r.ozone_platform.is_null());
+        assert!(r.platform_override.is_null());
+        assert!(!r.log_file_set);
+        assert!(!r.audio_exclusive_set);
+        assert!(!r.disable_gpu_compositing_set);
+        assert_eq!(r.remote_debugging_port, -1);
+    }
+
+    #[test]
+    fn help_long() {
+        let r = parse(&["app", "--help"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Help));
+    }
+
+    #[test]
+    fn version_short() {
+        let r = parse(&["app", "-v"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Version));
+    }
+
+    #[test]
+    fn unknown_short_flag() {
+        let r = parse(&["app", "-x"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Error));
+        let s = unsafe { CStr::from_ptr(r.unknown_arg) }.to_str().unwrap();
+        assert!(s.contains("-x"));
+    }
+
+    #[test]
+    fn positional_is_error() {
+        let r = parse(&["app", "positional"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Error));
+    }
+
+    #[test]
+    fn missing_trailing_value_is_error() {
+        let r = parse(&["app", "--log-level"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Error));
+        let s = unsafe { CStr::from_ptr(r.unknown_arg) }.to_str().unwrap();
+        assert_eq!(s, "--log-level");
+    }
+
+    #[test]
+    fn space_form_all_flags() {
+        let r = parse(&[
+            "app",
+            "--hwdec", "vaapi",
+            "--log-level", "debug",
+            "--log-file", "/tmp/x.log",
+            "--audio-passthrough", "ac3,dts-hd",
+            "--audio-channels", "5.1",
+            "--remote-debug-port", "9222",
+            "--ozone-platform", "wayland",
+            "--platform", "x11",
+        ]);
+        assert!(matches!(r.kind, JfnCliResultKind::Continue));
+        let cs = |p| unsafe { CStr::from_ptr(p) }.to_str().unwrap();
+        assert_eq!(cs(r.hwdec), "vaapi");
+        assert_eq!(cs(r.log_level), "debug");
+        assert!(r.log_file_set);
+        assert_eq!(cs(r.log_file), "/tmp/x.log");
+        assert_eq!(cs(r.audio_passthrough), "ac3,dts-hd");
+        assert_eq!(cs(r.audio_channels), "5.1");
+        assert_eq!(r.remote_debugging_port, 9222);
+        assert_eq!(cs(r.ozone_platform), "wayland");
+        assert_eq!(cs(r.platform_override), "x11");
+    }
+
+    #[test]
+    fn log_file_unset_vs_explicit_empty() {
+        let r = parse(&["app"]);
+        assert!(!r.log_file_set);
+        let r = parse(&["app", "--log-file="]);
+        assert!(r.log_file_set);
+        assert_eq!(unsafe { CStr::from_ptr(r.log_file) }.to_str().unwrap(), "");
+    }
+
+    #[test]
+    fn remote_debug_port_non_numeric_error() {
+        let r = parse(&["app", "--remote-debug-port=bogus"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Error));
+    }
+
+    #[test]
+    fn prefix_collision_log_level_vs_log_file() {
+        let r = parse(&["app", "--log-file=path", "--log-level=trace"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Continue));
+        let cs = |p| unsafe { CStr::from_ptr(p) }.to_str().unwrap();
+        assert_eq!(cs(r.log_file), "path");
+        assert_eq!(cs(r.log_level), "trace");
+    }
+
+    #[test]
+    fn error_leaves_value_fields_null() {
+        let r = parse(&["app", "--hwdec", "vaapi", "--garbage", "--log-level", "debug"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Error));
+        assert!(r.hwdec.is_null());
+        assert!(r.log_level.is_null());
+    }
 }
