@@ -12,7 +12,6 @@ crate-type = ["staticlib"]
 jfn-cli = { path = "../cli" }
 jfn-config = { path = "../config" }
 jfn-jellyfin = { path = "../jellyfin" }
-jfn-log-redact = { path = "../log_redact" }
 jfn-logging = { path = "../logging" }
 jfn-paths = { path = "../paths" }
 jfn-playback = { path = "../playback" }

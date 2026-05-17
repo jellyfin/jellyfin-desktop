@@ -8,7 +8,6 @@ members = [
     "input_wayland",
     "jellyfin",
     "jfn_rust",
-    "log_redact",
     "logging",
     "open_url_linux",
     "paths",
