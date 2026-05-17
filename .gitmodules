@@ -1,9 +1,3 @@
 [submodule "third_party/mpv"]
 	path = third_party/mpv
 	url = https://github.com/andrewrabert/mpv
-[submodule "third_party/wl-proxy"]
-	path = third_party/wl-proxy
-	url = https://github.com/mahkoh/wl-proxy
-	# Overlay XMLs + regenerated bindings live in the working tree by design
-	# (just deps); don't surface as dirty in parent status.
-	ignore = dirty
