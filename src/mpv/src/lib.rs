@@ -20,6 +20,7 @@ mod node;
 mod options;
 mod property;
 
+pub mod capabilities;
 pub mod color;
 
 pub use command::Command;
