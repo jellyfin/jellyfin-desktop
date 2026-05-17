@@ -646,6 +646,7 @@ version = "0.1.0"
 name = "jfn-playback"
 version = "0.1.0"
 dependencies = [
+ "jfn-mpv",
  "libc",
  "windows-sys",
 ]
