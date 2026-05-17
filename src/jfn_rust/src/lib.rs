@@ -18,19 +18,19 @@ pub use jfn_single_instance::*;
 pub use jfn_signal_guard::*;
 
 #[cfg(target_os = "linux")]
-pub use jfn_clipboard_wayland::*;
-
-#[cfg(target_os = "linux")]
 pub use jfn_idle_inhibit_linux::*;
-
-#[cfg(target_os = "linux")]
-pub use jfn_input_wayland::*;
 
 #[cfg(target_os = "linux")]
 pub use jfn_open_url_linux::*;
 
 #[cfg(target_os = "linux")]
-pub use jfn_wayland_scale_probe::*;
+pub use jfn_wayland::clipboard::*;
+
+#[cfg(target_os = "linux")]
+pub use jfn_wayland::input::*;
+
+#[cfg(target_os = "linux")]
+pub use jfn_wayland::scale_probe::*;
 
 #[cfg(target_os = "linux")]
 pub use jfn_wlproxy::*;

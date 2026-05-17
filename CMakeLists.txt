@@ -410,7 +410,7 @@ add_dependencies(jfn_rust jfn_rust_build)
 set_target_properties(jfn_rust PROPERTIES
     IMPORTED_LOCATION ${JFN_RUST_LIB}
     INTERFACE_INCLUDE_DIRECTORIES
-        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/clipboard_wayland;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/input_wayland;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/logging;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wayland_scale_probe;${CMAKE_SOURCE_DIR}/src/wlproxy"
+        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/logging;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wayland;${CMAKE_SOURCE_DIR}/src/wlproxy"
 )
 # Native deps pulled in by the Rust standard library and our crate deps.
 # cargo rustc --print=native-static-libs emits the exact set per platform.
