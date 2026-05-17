@@ -151,20 +151,29 @@ def download_file(url, dest_path, expected_sha256=None):
     temp_path = dest_path.parent / f".{dest_path.name}.tmp"
     sha256_path = dest_path.parent / f"{dest_path.name}.sha256"
 
+    is_tty = sys.stdout.isatty()
+    last_percent = [-1]
+
     def report_progress(block_num, block_size, total_size):
+        if total_size <= 0:
+            return
         downloaded = block_num * block_size
-        if total_size > 0:
-            percent = min(100, downloaded * 100 // total_size)
-            mb_downloaded = downloaded / (1024 * 1024)
-            mb_total = total_size / (1024 * 1024)
+        percent = min(100, downloaded * 100 // total_size)
+        mb_downloaded = downloaded / (1024 * 1024)
+        mb_total = total_size / (1024 * 1024)
+        if is_tty:
             sys.stdout.write(
                 f"\r  {mb_downloaded:.1f}/{mb_total:.1f} MB ({percent}%)"
             )
             sys.stdout.flush()
+        elif percent >= last_percent[0] + 10 or percent == 100:
+            last_percent[0] = percent - (percent % 10)
+            log.info("  %.1f/%.1f MB (%d%%)", mb_downloaded, mb_total, percent)
 
     try:
         urllib.request.urlretrieve(url, temp_path, reporthook=report_progress)
-        print()  # newline after progress
+        if is_tty:
+            print()  # newline after progress
 
         if expected_sha256:
             verify_sha256(temp_path, expected_sha256)
