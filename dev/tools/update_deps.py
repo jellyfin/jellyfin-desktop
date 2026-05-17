@@ -6,7 +6,6 @@ import logging
 import sys
 
 import update_cef
-import update_doctest
 import update_fmt
 
 
@@ -22,11 +21,10 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if args.check:
-        results = [update_cef.check(), update_doctest.check(), update_fmt.check()]
+        results = [update_cef.check(), update_fmt.check()]
         sys.exit(0 if all(results) else 1)
 
     update_cef.update()
-    update_doctest.update()
     update_fmt.update()
 
 

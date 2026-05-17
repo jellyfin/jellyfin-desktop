@@ -878,15 +878,6 @@ else()
     endif()
 endif()
 
-# Tests (opt-in; existing packagers and CI are unaffected by default).
-# Default BUILD_TESTING to OFF before include(CTest) so distro builds
-# running plain `cmake ..` stay behavior-identical.
-set(BUILD_TESTING OFF CACHE BOOL "Build unit tests")
-include(CTest)
-if(BUILD_TESTING)
-    add_subdirectory(tests)
-endif()
-
 # CPack for creating distribution packages
 set(CPACK_PACKAGE_NAME "jellyfin-desktop")
 set(CPACK_PACKAGE_VENDOR "Jellyfin")

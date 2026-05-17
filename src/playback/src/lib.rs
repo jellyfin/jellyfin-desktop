@@ -8,6 +8,7 @@
 mod coordinator;
 mod dispatcher;
 mod ffi;
+mod mpris;
 mod state_machine;
 mod types;
 mod wake_event;
