@@ -10,8 +10,10 @@ mod dispatcher;
 mod ffi;
 mod state_machine;
 mod types;
+mod wake_event;
 
 pub use coordinator::PlaybackCoordinator;
 pub use ffi::*;
 pub use state_machine::PlaybackStateMachine;
 pub use types::*;
+pub use wake_event::WakeEvent;

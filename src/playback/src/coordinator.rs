@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use jfn_wake_event::WakeEvent;
+use crate::wake_event::WakeEvent;
 
 use crate::ffi::{ActionSinkEntry, EventSinkEntry};
 use crate::state_machine::PlaybackStateMachine;

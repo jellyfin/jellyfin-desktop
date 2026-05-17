@@ -8,9 +8,6 @@ publish = false
 name = "jfn_playback"
 crate-type = ["rlib"]
 
-[dependencies]
-jfn-wake-event = { path = "../wake_event" }
-
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

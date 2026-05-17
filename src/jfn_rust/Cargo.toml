@@ -16,7 +16,6 @@ jfn-logging = { path = "../logging" }
 jfn-paths = { path = "../paths" }
 jfn-playback = { path = "../playback" }
 jfn-single-instance = { path = "../single_instance" }
-jfn-wake-event = { path = "../wake_event" }
 
 [target.'cfg(unix)'.dependencies]
 jfn-signal-guard = { path = "../signal_guard" }
