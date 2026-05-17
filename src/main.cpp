@@ -83,6 +83,9 @@ Platform g_platform{};
 WebBrowser* g_web_browser = nullptr;
 // g_browsers is defined in src/browser/browsers.cpp.
 
+// Boot-time mpv log forwarder. Used only by the pre-CEF event loop;
+// the Rust-owned event thread routes its own log messages via
+// jfn_mpv::forward_log_to_tracing.
 static void log_mpv_message(const mpv_event_log_message* msg) {
     switch (msg->log_level) {
     case MPV_LOG_LEVEL_FATAL:
@@ -96,50 +99,36 @@ static void log_mpv_message(const mpv_event_log_message* msg) {
         LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
     case MPV_LOG_LEVEL_DEBUG:
         LOG_TRACE(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
-    default: // unexpected (e.g. TRACE — we cap subscription at debug) or new mpv level
+    default:
         LOG_WARN(LOG_MPV, "[unhandled mpv level {}] {}: {}",
                  (int)msg->log_level, msg->prefix, msg->text); break;
     }
 }
 
-static void mpv_digest_thread() {
-    while (!g_shutting_down.load(std::memory_order_relaxed)) {
-        mpv_event* ev = g_mpv.WaitEvent(-1);
-        if (ev->event_id == MPV_EVENT_NONE) continue;
+// Callbacks consumed by the Rust-owned mpv event thread. The platform
+// vtable + macOS query_logical_content_size aren't bridged into Rust,
+// so jfn_playback_set_*_provider wires them through here.
 
-        if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
-            continue;
-        }
-
-        // Pre-route platform fullscreen state change. The Rust ingest layer
-        // owns the coordinator event; the platform set_fullscreen call must
-        // happen in C++ (the platform vtable is not bridged into Rust).
-        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            auto* p = static_cast<mpv_event_property*>(ev->data);
-            if (ev->reply_userdata == MPV_OBSERVE_FULLSCREEN &&
-                p && p->format == MPV_FORMAT_FLAG && p->data) {
-                g_platform.set_fullscreen(*static_cast<int*>(p->data) != 0);
-            }
-        }
-
-        float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
-        if (scale <= 0.f) scale = 1.0f;
-        bool has_macos_logical = false;
-        int  mac_lw = 0, mac_lh = 0;
-#ifdef __APPLE__
-        has_macos_logical = macos_platform::query_logical_content_size(
-            &mac_lw, &mac_lh);
-#endif
-        uint8_t flags = jfn_playback_ingest_mpv_event(
-            ev, scale, has_macos_logical, mac_lw, mac_lh);
-        if (flags & JFN_INGEST_FLAG_SHUTDOWN) {
-            LOG_INFO(LOG_MAIN, "MPV_EVENT_SHUTDOWN received");
-            initiate_shutdown();
-            return;
-        }
-    }
+static float mpv_event_scale_provider() {
+    float s = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+    return s > 0.f ? s : 1.0f;
 }
+
+#ifdef __APPLE__
+static bool mpv_event_macos_logical(int* lw, int* lh) {
+    return macos_platform::query_logical_content_size(lw, lh);
+}
+#endif
+
+static void mpv_event_fullscreen_handler(bool fs) {
+    if (g_platform.set_fullscreen) g_platform.set_fullscreen(fs);
+}
+
+static void mpv_event_shutdown_handler() {
+    LOG_INFO(LOG_MAIN, "MPV_EVENT_SHUTDOWN received");
+    initiate_shutdown();
+}
+
 
 
 // Shutdown order (reverse of declaration):
@@ -317,12 +306,21 @@ static int run_with_cef(int mw, int mh,
     jfn_playback_set_display_scale_handler([](double s) {
         if (g_browsers && s > 0) g_browsers->setScale(s);
     });
+    jfn_playback_set_scale_provider(&mpv_event_scale_provider);
+#ifdef __APPLE__
+    jfn_playback_set_macos_logical_provider(&mpv_event_macos_logical);
+#endif
+    jfn_playback_set_fullscreen_handler(&mpv_event_fullscreen_handler);
+    jfn_playback_set_shutdown_handler(&mpv_event_shutdown_handler);
 
     // Start before waitForLoad so mpv events (OSD_DIMS especially) reach
     // the platform/browsers during the overlay-only startup phase, before
     // the main browser finishes loading.
-    LOG_INFO(LOG_MAIN, "[FLOW] starting mpv digest thread");
-    std::thread digest_thread(mpv_digest_thread);
+    LOG_INFO(LOG_MAIN, "[FLOW] starting Rust-owned mpv event thread");
+    if (!jfn_playback_start_mpv_event_thread()) {
+        LOG_ERROR(LOG_MAIN, "failed to start mpv event thread");
+        return 1;
+    }
 
 #ifndef __APPLE__
     g_web_browser->waitForLoad();
@@ -351,8 +349,7 @@ static int run_with_cef(int mw, int mh,
     g_theme_color = nullptr;
     media_sink->stop();
 
-    g_mpv.Wakeup();
-    digest_thread.join();
+    jfn_playback_stop_mpv_event_thread();
 
     // Producers have joined; coordinator drains any in-flight inputs and
     // stops via PlaybackCoordinatorScope dtor at end of scope.

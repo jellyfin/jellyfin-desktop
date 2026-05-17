@@ -15,6 +15,26 @@ extern "C" {
 // DISPLAY_SCALE property changes. Replaces any prior callback.
 void jfn_playback_set_display_scale_handler(void (*cb)(double));
 
+// Provider + handler hooks consumed by the Rust-owned mpv event
+// thread (jfn_playback_start_mpv_event_thread).
+//
+//   scale_provider    : returns device pixel scale (> 0)
+//   macos_logical     : optional, fills *lw/*lh and returns true when
+//                       a macOS logical-content-size override applies
+//   fullscreen        : invoked on each `fullscreen` property change
+//   shutdown          : invoked when MPV_EVENT_SHUTDOWN is observed
+void jfn_playback_set_scale_provider(float (*cb)(void));
+void jfn_playback_set_macos_logical_provider(bool (*cb)(int*, int*));
+void jfn_playback_set_fullscreen_handler(void (*cb)(bool));
+void jfn_playback_set_shutdown_handler(void (*cb)(void));
+
+// Spawn / join the Rust-owned mpv event thread. The handle must be
+// initialized (jfn_mpv_handle_init returned non-NULL) before start.
+// Returns false if the handle is missing or the thread is already
+// running. Stop is idempotent.
+bool jfn_playback_start_mpv_event_thread(void);
+void jfn_playback_stop_mpv_event_thread(void);
+
 // Decode one raw mpv_event* (returned by mpv_wait_event) into
 // coordinator inputs + side-channel callbacks. Returns flag bits.
 //

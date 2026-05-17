@@ -256,10 +256,24 @@ pub extern "C" fn jfn_mpv_handle_terminate() {
 /// [`jfn_mpv_handle_terminate`].
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_mpv_handle_get() -> *mut sys::mpv_handle {
+    current_raw_handle().unwrap_or(ptr::null_mut())
+}
+
+/// Rust-side accessor used by sibling crates (e.g. `jfn-playback`) that
+/// want to talk to the live handle without round-tripping through the
+/// C ABI. Returns `None` until [`jfn_mpv_handle_init`] has succeeded.
+pub fn current_raw_handle() -> Option<*mut sys::mpv_handle> {
     handle_slot()
         .lock()
         .unwrap()
         .as_ref()
         .map(|h| h.raw())
-        .unwrap_or(ptr::null_mut())
+}
+
+/// Wake the live handle's `mpv_wait_event` from any thread. No-op if
+/// the handle is not currently initialized.
+pub fn wakeup_current() {
+    if let Some(raw) = current_raw_handle() {
+        unsafe { sys::mpv_wakeup(raw) };
+    }
 }
