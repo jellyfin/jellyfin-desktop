@@ -22,6 +22,7 @@ mod property;
 
 pub mod capabilities;
 pub mod color;
+pub mod probe;
 
 pub use command::Command;
 pub use error::{Error, Result};
