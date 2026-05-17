@@ -30,11 +30,10 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["^third_party/quill/VERSION$"],
+      "fileMatch": ["^third_party/fmt/VERSION$"],
       "matchStrings": ["^(?<currentValue>\\S+)"],
       "datasourceTemplate": "github-releases",
-      "depNameTemplate": "odygrd/quill",
-      "extractVersionTemplate": "^v(?<version>.+)$"
+      "depNameTemplate": "fmtlib/fmt"
     }
   ],
   "packageRules": [
@@ -47,8 +46,8 @@
       "commitMessageTopic": "doctest"
     },
     {
-      "matchDepNames": ["odygrd/quill"],
-      "commitMessageTopic": "quill"
+      "matchDepNames": ["fmtlib/fmt"],
+      "commitMessageTopic": "fmt"
     }
   ]
 }

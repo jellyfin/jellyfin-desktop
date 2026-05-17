@@ -1,0 +1,15 @@
+[package]
+name = "jfn-logging"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_logging"
+crate-type = ["rlib"]
+
+[dependencies]
+jfn-log-redact = { path = "../log_redact" }
+tracing-appender = "0.2"
+time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
+libc = "0.2"
