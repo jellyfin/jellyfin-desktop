@@ -34,6 +34,14 @@ if ! flatpak info --user org.freedesktop.Sdk.Extension.rust-stable//$RUNTIME_VER
     flatpak install --user -y flathub org.freedesktop.Sdk.Extension.rust-stable//$RUNTIME_VERSION
 fi
 
+# llvm SDK extension provides libclang.so for bindgen (jfn-mpv's
+# build.rs runs bindgen on mpv + libavcodec headers).
+if ! flatpak info --user org.freedesktop.Sdk.Extension.llvm20//$RUNTIME_VERSION >/dev/null 2>&1 && \
+   ! flatpak info --system org.freedesktop.Sdk.Extension.llvm20//$RUNTIME_VERSION >/dev/null 2>&1; then
+    echo "Installing Freedesktop llvm SDK extension $RUNTIME_VERSION..."
+    flatpak install --user -y flathub org.freedesktop.Sdk.Extension.llvm20//$RUNTIME_VERSION
+fi
+
 # Ensure CEF is extracted at third_party/cef
 if [ ! -d "${REPO_ROOT}/third_party/cef" ]; then
     python3 "${REPO_ROOT}/dev/tools/download_cef.py"
