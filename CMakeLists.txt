@@ -581,7 +581,6 @@ if(WIN32)
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
-        src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
         src/cef/color.cpp
         src/cef/cef_client.cpp
@@ -593,7 +592,6 @@ if(WIN32)
         src/browser/app_menu.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
-        src/jellyfin/api.cpp
         src/paths/paths.cpp
         src/wake_event.cpp
     )
@@ -607,7 +605,6 @@ else()
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
-        src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
         src/cef/color.cpp
         src/cef/cef_client.cpp
@@ -622,7 +619,6 @@ else()
         src/single_instance.cpp
         src/paths/paths.cpp
         src/wake_event.cpp
-        src/jellyfin/api.cpp
     )
 endif()
 

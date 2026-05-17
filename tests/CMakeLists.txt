@@ -1,17 +1,3 @@
-add_executable(jellyfin_api_test
-    jellyfin_api_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/jellyfin/api.cpp
-)
-
-target_include_directories(jellyfin_api_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
-)
-
-target_link_libraries(jellyfin_api_test PRIVATE jfn_rust)
-
-add_test(NAME jellyfin_api_test COMMAND jellyfin_api_test)
-
 add_executable(cli_test
     cli_test.cpp
     ${CMAKE_SOURCE_DIR}/src/cli.cpp

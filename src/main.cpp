@@ -187,9 +187,11 @@ static int run_with_cef(int mw, int mh,
     // deadlock against core_thread's DispatchQueue.main.sync on macOS.
     {
         auto caps = mpv_capabilities::Query(g_mpv.Get());
-        jellyfin_device_profile::SetCachedJson(jellyfin_device_profile::Build(
+        std::string profile = jellyfin_device_profile::Build(
             caps, "Jellyfin Desktop", APP_VERSION_FULL,
-            Settings::instance().forceTranscoding()));
+            Settings::instance().forceTranscoding());
+        LOG_INFO(LOG_MAIN, "Device profile: {}", profile);
+        jellyfin_device_profile::SetCachedJson(profile);
     }
 
     bool use_shared_textures = g_platform.shared_texture_supported && !args.disable_gpu_compositing;
