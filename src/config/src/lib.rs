@@ -1,335 +1,286 @@
-//! Backing store for the C++ `Settings` class. The C++ side owns string
-//! buffers passed in; on load we hand back heap-allocated C strings that the
-//! caller frees via `jfn_config_free_data`.
+//! Settings store. Owns the in-memory state, JSON persistence, and the
+//! singleton accessor that the C++ side calls through.
 //!
-//! The on-disk schema mirrors what `src/settings.cpp` wrote with cJSON. Field
-//! presence is preserved: missing keys leave the corresponding struct field
-//! untouched, and save-time suppression rules (empty strings, sentinel
-//! values, zero geometry) match the legacy serializer so existing config
-//! files round-trip unchanged.
+//! On-disk schema is a JSON object with the field names used by
+//! [`SettingsData::to_json`]. Missing keys keep their defaults on load; save
+//! suppresses fields that are at their default (empty strings, sentinel
+//! values, zero geometry) so existing config files round-trip unchanged.
 
 use serde_json::{Map, Value, json};
 use std::ffi::{CStr, CString, c_char};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::{Mutex, OnceLock};
+use std::thread;
 
 const DEVICE_NAME_MAX: usize = 64;
+const HWDEC_DEFAULT: &str = "no";
 
 #[repr(C)]
-pub struct JfnConfigData {
-    pub server_url: *mut c_char,
-    pub hwdec: *mut c_char,
-    pub audio_passthrough: *mut c_char,
-    pub audio_channels: *mut c_char,
-    pub log_level: *mut c_char,
-    pub device_name: *mut c_char,
-
-    pub window_x: i32,
-    pub window_y: i32,
-    pub window_width: i32,
-    pub window_height: i32,
-    pub window_logical_width: i32,
-    pub window_logical_height: i32,
-    pub window_scale: f32,
-    pub window_maximized: bool,
-
-    pub audio_exclusive: bool,
-    pub disable_gpu_compositing: bool,
-    pub titlebar_theme_color: bool,
-    pub transparent_titlebar: bool,
-    pub force_transcoding: bool,
+#[derive(Clone, Copy, Debug)]
+pub struct JfnWindowGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub logical_width: i32,
+    pub logical_height: i32,
+    pub scale: f32,
+    pub maximized: bool,
 }
 
-fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
-}
-
-fn string_to_cstr(s: &str) -> *mut c_char {
-    CString::new(s).unwrap_or_default().into_raw()
-}
-
-fn drop_cstr(p: *mut c_char) {
-    if !p.is_null() {
-        unsafe { drop(CString::from_raw(p)) };
-    }
-}
-
-fn replace_string_field(slot: &mut *mut c_char, s: &str) {
-    drop_cstr(*slot);
-    *slot = string_to_cstr(s);
-}
-
-/// Initialize a [`JfnConfigData`] to default values.
-///
-/// # Safety
-/// `d` must be a valid, properly aligned pointer to writable storage of size
-/// at least `sizeof(JfnConfigData)`. Existing contents are overwritten without
-/// being dropped — call [`jfn_config_free_data`] first if the struct was
-/// previously populated. Passing a null pointer is a no-op.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_config_init_defaults(d: *mut JfnConfigData) {
-    if d.is_null() {
-        return;
-    }
-    unsafe {
-        ptr::write(
-            d,
-            JfnConfigData {
-                server_url: ptr::null_mut(),
-                hwdec: ptr::null_mut(),
-                audio_passthrough: ptr::null_mut(),
-                audio_channels: ptr::null_mut(),
-                log_level: ptr::null_mut(),
-                device_name: ptr::null_mut(),
-                window_x: -1,
-                window_y: -1,
-                window_width: 0,
-                window_height: 0,
-                window_logical_width: 0,
-                window_logical_height: 0,
-                window_scale: 0.0,
-                window_maximized: false,
-                audio_exclusive: false,
-                disable_gpu_compositing: false,
-                titlebar_theme_color: true,
-                transparent_titlebar: true,
-                force_transcoding: false,
-            },
-        );
-    }
-}
-
-/// Free the heap-allocated C strings inside a [`JfnConfigData`] and null the
-/// pointers. Numeric/bool fields are untouched.
-///
-/// # Safety
-/// `d` must point to a valid `JfnConfigData` whose string fields were either
-/// null or allocated by this crate (i.e. populated by [`jfn_config_load`] or
-/// [`jfn_config_init_defaults`]). Strings borrowed from the caller must not
-/// be passed here. Passing a null pointer is a no-op.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_config_free_data(d: *mut JfnConfigData) {
-    if d.is_null() {
-        return;
-    }
-    unsafe {
-        let d = &mut *d;
-        drop_cstr(d.server_url);
-        drop_cstr(d.hwdec);
-        drop_cstr(d.audio_passthrough);
-        drop_cstr(d.audio_channels);
-        drop_cstr(d.log_level);
-        drop_cstr(d.device_name);
-        d.server_url = ptr::null_mut();
-        d.hwdec = ptr::null_mut();
-        d.audio_passthrough = ptr::null_mut();
-        d.audio_channels = ptr::null_mut();
-        d.log_level = ptr::null_mut();
-        d.device_name = ptr::null_mut();
-    }
-}
-
-fn get_str<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
-    v.get(k).and_then(Value::as_str)
-}
-fn get_bool(v: &Value, k: &str) -> Option<bool> {
-    v.get(k).and_then(Value::as_bool)
-}
-fn get_i32(v: &Value, k: &str) -> Option<i32> {
-    v.get(k).and_then(Value::as_i64).map(|n| n as i32)
-}
-fn get_f32(v: &Value, k: &str) -> Option<f32> {
-    v.get(k).and_then(Value::as_f64).map(|n| n as f32)
-}
-
-/// Parse `path` as JSON and overlay any present keys onto `out`. Missing
-/// keys leave the corresponding field unchanged.
-///
-/// # Safety
-/// `path` must be a valid NUL-terminated C string. `out` must point to a
-/// `JfnConfigData` previously initialized via [`jfn_config_init_defaults`];
-/// any existing string fields will be replaced and freed when overwritten.
-/// Returns false (leaving `out` unchanged) if either pointer is null, the
-/// file is missing, or the JSON is invalid.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_config_load(path: *const c_char, out: *mut JfnConfigData) -> bool {
-    if path.is_null() || out.is_null() {
-        return false;
-    }
-    let path = cstr_to_string(path);
-    let Ok(contents) = fs::read_to_string(&path) else {
-        return false;
-    };
-    let Ok(v) = serde_json::from_str::<Value>(&contents) else {
-        return false;
-    };
-    if !v.is_object() {
-        return false;
-    }
-    let d = unsafe { &mut *out };
-
-    if let Some(s) = get_str(&v, "serverUrl") {
-        replace_string_field(&mut d.server_url, s);
-    }
-    if let Some(s) = get_str(&v, "hwdec") {
-        replace_string_field(&mut d.hwdec, s);
-    }
-    if let Some(s) = get_str(&v, "audioPassthrough") {
-        replace_string_field(&mut d.audio_passthrough, s);
-    }
-    if let Some(s) = get_str(&v, "audioChannels") {
-        replace_string_field(&mut d.audio_channels, s);
-    }
-    if let Some(s) = get_str(&v, "logLevel") {
-        replace_string_field(&mut d.log_level, s);
-    }
-    if let Some(s) = get_str(&v, "deviceName") {
-        let mut s = s.to_string();
-        if s.len() > DEVICE_NAME_MAX {
-            s.truncate(DEVICE_NAME_MAX);
+impl Default for JfnWindowGeometry {
+    fn default() -> Self {
+        Self {
+            x: -1,
+            y: -1,
+            width: 0,
+            height: 0,
+            logical_width: 0,
+            logical_height: 0,
+            scale: 0.0,
+            maximized: false,
         }
-        replace_string_field(&mut d.device_name, &s);
     }
-
-    if let Some(n) = get_i32(&v, "windowWidth") {
-        d.window_width = n;
-    }
-    if let Some(n) = get_i32(&v, "windowHeight") {
-        d.window_height = n;
-    }
-    if let Some(n) = get_i32(&v, "windowLogicalWidth") {
-        d.window_logical_width = n;
-    }
-    if let Some(n) = get_i32(&v, "windowLogicalHeight") {
-        d.window_logical_height = n;
-    }
-    if let Some(n) = get_f32(&v, "windowScale") {
-        d.window_scale = n;
-    }
-    if let Some(n) = get_i32(&v, "windowX") {
-        d.window_x = n;
-    }
-    if let Some(n) = get_i32(&v, "windowY") {
-        d.window_y = n;
-    }
-    if let Some(b) = get_bool(&v, "windowMaximized") {
-        d.window_maximized = b;
-    }
-    if let Some(b) = get_bool(&v, "audioExclusive") {
-        d.audio_exclusive = b;
-    }
-    if let Some(b) = get_bool(&v, "disableGpuCompositing") {
-        d.disable_gpu_compositing = b;
-    }
-    if let Some(b) = get_bool(&v, "titlebarThemeColor") {
-        d.titlebar_theme_color = b;
-    }
-    if let Some(b) = get_bool(&v, "transparentTitlebar") {
-        d.transparent_titlebar = b;
-    }
-    if let Some(b) = get_bool(&v, "forceTranscoding") {
-        d.force_transcoding = b;
-    }
-
-    true
 }
 
-fn data_to_json(d: &JfnConfigData, hwdec_default: &str) -> Value {
-    let mut o = Map::new();
-
-    o.insert(
-        "serverUrl".into(),
-        Value::String(cstr_to_string(d.server_url)),
-    );
-
-    if d.window_width > 0 && d.window_height > 0 {
-        o.insert("windowWidth".into(), json!(d.window_width));
-        o.insert("windowHeight".into(), json!(d.window_height));
-    }
-    if d.window_logical_width > 0 && d.window_logical_height > 0 {
-        o.insert("windowLogicalWidth".into(), json!(d.window_logical_width));
-        o.insert("windowLogicalHeight".into(), json!(d.window_logical_height));
-    }
-    if d.window_scale > 0.0 {
-        o.insert("windowScale".into(), json!(d.window_scale));
-    }
-    if d.window_x >= 0 && d.window_y >= 0 {
-        o.insert("windowX".into(), json!(d.window_x));
-        o.insert("windowY".into(), json!(d.window_y));
-    }
-    o.insert("windowMaximized".into(), Value::Bool(d.window_maximized));
-
-    let hwdec = cstr_to_string(d.hwdec);
-    if !hwdec.is_empty() && hwdec != hwdec_default {
-        o.insert("hwdec".into(), Value::String(hwdec));
-    }
-    let ap = cstr_to_string(d.audio_passthrough);
-    if !ap.is_empty() {
-        o.insert("audioPassthrough".into(), Value::String(ap));
-    }
-    if d.audio_exclusive {
-        o.insert("audioExclusive".into(), Value::Bool(true));
-    }
-    let ac = cstr_to_string(d.audio_channels);
-    if !ac.is_empty() {
-        o.insert("audioChannels".into(), Value::String(ac));
-    }
-    if d.disable_gpu_compositing {
-        o.insert("disableGpuCompositing".into(), Value::Bool(true));
-    }
-    if !d.titlebar_theme_color {
-        o.insert("titlebarThemeColor".into(), Value::Bool(false));
-    }
-    if !d.transparent_titlebar {
-        o.insert("transparentTitlebar".into(), Value::Bool(false));
-    }
-    let ll = cstr_to_string(d.log_level);
-    if !ll.is_empty() {
-        o.insert("logLevel".into(), Value::String(ll));
-    }
-    if d.force_transcoding {
-        o.insert("forceTranscoding".into(), Value::Bool(true));
-    }
-    let dn = cstr_to_string(d.device_name);
-    if !dn.is_empty() {
-        o.insert("deviceName".into(), Value::String(dn));
-    }
-
-    Value::Object(o)
+#[derive(Clone, Debug)]
+struct SettingsData {
+    server_url: String,
+    hwdec: String,
+    audio_passthrough: String,
+    audio_channels: String,
+    log_level: String,
+    device_name: String,
+    window: JfnWindowGeometry,
+    audio_exclusive: bool,
+    disable_gpu_compositing: bool,
+    titlebar_theme_color: bool,
+    transparent_titlebar: bool,
+    force_transcoding: bool,
 }
 
-/// Serialize `in_` to JSON and atomically write to `path`.
-///
-/// # Safety
-/// `path` and `hwdec_default` must be valid NUL-terminated C strings. `in_`
-/// must point to a valid `JfnConfigData` whose string fields are either null
-/// or valid NUL-terminated C strings. The Rust side only reads through these
-/// pointers and does not take ownership. Returns false on I/O or
-/// serialization error.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_config_save(
-    path: *const c_char,
-    in_: *const JfnConfigData,
-    hwdec_default: *const c_char,
-) -> bool {
-    if path.is_null() || in_.is_null() {
-        return false;
+impl Default for SettingsData {
+    fn default() -> Self {
+        Self {
+            server_url: String::new(),
+            hwdec: String::new(),
+            audio_passthrough: String::new(),
+            audio_channels: String::new(),
+            log_level: String::new(),
+            device_name: String::new(),
+            window: JfnWindowGeometry::default(),
+            audio_exclusive: false,
+            disable_gpu_compositing: false,
+            titlebar_theme_color: true,
+            transparent_titlebar: true,
+            force_transcoding: false,
+        }
     }
-    let path = cstr_to_string(path);
-    let hwdec_default = cstr_to_string(hwdec_default);
-    let d = unsafe { &*in_ };
-    let v = data_to_json(d, &hwdec_default);
-    let Ok(mut text) = serde_json::to_string_pretty(&v) else {
-        return false;
-    };
-    text.push('\n');
-    write_atomic(Path::new(&path), text.as_bytes()).is_ok()
 }
+
+impl SettingsData {
+    fn overlay_json(&mut self, v: &Value) {
+        let Some(_) = v.as_object() else {
+            return;
+        };
+        if let Some(s) = v.get("serverUrl").and_then(Value::as_str) {
+            self.server_url = s.into();
+        }
+        if let Some(s) = v.get("hwdec").and_then(Value::as_str) {
+            self.hwdec = s.into();
+        }
+        if let Some(s) = v.get("audioPassthrough").and_then(Value::as_str) {
+            self.audio_passthrough = s.into();
+        }
+        if let Some(s) = v.get("audioChannels").and_then(Value::as_str) {
+            self.audio_channels = s.into();
+        }
+        if let Some(s) = v.get("logLevel").and_then(Value::as_str) {
+            self.log_level = s.into();
+        }
+        if let Some(s) = v.get("deviceName").and_then(Value::as_str) {
+            let mut s = s.to_string();
+            if s.len() > DEVICE_NAME_MAX {
+                s.truncate(DEVICE_NAME_MAX);
+            }
+            self.device_name = s;
+        }
+        if let Some(n) = v.get("windowWidth").and_then(Value::as_i64) {
+            self.window.width = n as i32;
+        }
+        if let Some(n) = v.get("windowHeight").and_then(Value::as_i64) {
+            self.window.height = n as i32;
+        }
+        if let Some(n) = v.get("windowLogicalWidth").and_then(Value::as_i64) {
+            self.window.logical_width = n as i32;
+        }
+        if let Some(n) = v.get("windowLogicalHeight").and_then(Value::as_i64) {
+            self.window.logical_height = n as i32;
+        }
+        if let Some(n) = v.get("windowScale").and_then(Value::as_f64) {
+            self.window.scale = n as f32;
+        }
+        if let Some(n) = v.get("windowX").and_then(Value::as_i64) {
+            self.window.x = n as i32;
+        }
+        if let Some(n) = v.get("windowY").and_then(Value::as_i64) {
+            self.window.y = n as i32;
+        }
+        if let Some(b) = v.get("windowMaximized").and_then(Value::as_bool) {
+            self.window.maximized = b;
+        }
+        if let Some(b) = v.get("audioExclusive").and_then(Value::as_bool) {
+            self.audio_exclusive = b;
+        }
+        if let Some(b) = v.get("disableGpuCompositing").and_then(Value::as_bool) {
+            self.disable_gpu_compositing = b;
+        }
+        if let Some(b) = v.get("titlebarThemeColor").and_then(Value::as_bool) {
+            self.titlebar_theme_color = b;
+        }
+        if let Some(b) = v.get("transparentTitlebar").and_then(Value::as_bool) {
+            self.transparent_titlebar = b;
+        }
+        if let Some(b) = v.get("forceTranscoding").and_then(Value::as_bool) {
+            self.force_transcoding = b;
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        let mut o = Map::new();
+        o.insert("serverUrl".into(), Value::String(self.server_url.clone()));
+        if self.window.width > 0 && self.window.height > 0 {
+            o.insert("windowWidth".into(), json!(self.window.width));
+            o.insert("windowHeight".into(), json!(self.window.height));
+        }
+        if self.window.logical_width > 0 && self.window.logical_height > 0 {
+            o.insert("windowLogicalWidth".into(), json!(self.window.logical_width));
+            o.insert(
+                "windowLogicalHeight".into(),
+                json!(self.window.logical_height),
+            );
+        }
+        if self.window.scale > 0.0 {
+            o.insert("windowScale".into(), json!(self.window.scale));
+        }
+        if self.window.x >= 0 && self.window.y >= 0 {
+            o.insert("windowX".into(), json!(self.window.x));
+            o.insert("windowY".into(), json!(self.window.y));
+        }
+        o.insert(
+            "windowMaximized".into(),
+            Value::Bool(self.window.maximized),
+        );
+        if !self.hwdec.is_empty() && self.hwdec != HWDEC_DEFAULT {
+            o.insert("hwdec".into(), Value::String(self.hwdec.clone()));
+        }
+        if !self.audio_passthrough.is_empty() {
+            o.insert(
+                "audioPassthrough".into(),
+                Value::String(self.audio_passthrough.clone()),
+            );
+        }
+        if self.audio_exclusive {
+            o.insert("audioExclusive".into(), Value::Bool(true));
+        }
+        if !self.audio_channels.is_empty() {
+            o.insert(
+                "audioChannels".into(),
+                Value::String(self.audio_channels.clone()),
+            );
+        }
+        if self.disable_gpu_compositing {
+            o.insert("disableGpuCompositing".into(), Value::Bool(true));
+        }
+        if !self.titlebar_theme_color {
+            o.insert("titlebarThemeColor".into(), Value::Bool(false));
+        }
+        if !self.transparent_titlebar {
+            o.insert("transparentTitlebar".into(), Value::Bool(false));
+        }
+        if !self.log_level.is_empty() {
+            o.insert("logLevel".into(), Value::String(self.log_level.clone()));
+        }
+        if self.force_transcoding {
+            o.insert("forceTranscoding".into(), Value::Bool(true));
+        }
+        if !self.device_name.is_empty() {
+            o.insert("deviceName".into(), Value::String(self.device_name.clone()));
+        }
+        Value::Object(o)
+    }
+
+    fn cli_json(&self, platform_default: &str, hwdec_opts: &[String]) -> String {
+        let mut o = Map::new();
+        if !self.hwdec.is_empty() {
+            o.insert("hwdec".into(), Value::String(self.hwdec.clone()));
+        }
+        if !self.audio_passthrough.is_empty() {
+            o.insert(
+                "audioPassthrough".into(),
+                Value::String(self.audio_passthrough.clone()),
+            );
+        }
+        if self.audio_exclusive {
+            o.insert("audioExclusive".into(), Value::Bool(true));
+        }
+        if !self.audio_channels.is_empty() {
+            o.insert(
+                "audioChannels".into(),
+                Value::String(self.audio_channels.clone()),
+            );
+        }
+        if self.disable_gpu_compositing {
+            o.insert("disableGpuCompositing".into(), Value::Bool(true));
+        }
+        if !self.titlebar_theme_color {
+            o.insert("titlebarThemeColor".into(), Value::Bool(false));
+        }
+        if !self.transparent_titlebar {
+            o.insert("transparentTitlebar".into(), Value::Bool(false));
+        }
+        if !self.log_level.is_empty() {
+            o.insert("logLevel".into(), Value::String(self.log_level.clone()));
+        }
+        o.insert(
+            "forceTranscoding".into(),
+            Value::Bool(self.force_transcoding),
+        );
+        if !self.device_name.is_empty() {
+            o.insert("deviceName".into(), Value::String(self.device_name.clone()));
+        }
+        o.insert(
+            "deviceNameDefault".into(),
+            Value::String(platform_default.into()),
+        );
+        let opts: Vec<Value> = hwdec_opts
+            .iter()
+            .map(|s| Value::String(s.clone()))
+            .collect();
+        o.insert("hwdecOptions".into(), Value::Array(opts));
+        serde_json::to_string(&Value::Object(o)).unwrap_or_default()
+    }
+}
+
+struct State {
+    data: SettingsData,
+    path: PathBuf,
+}
+
+fn state() -> &'static Mutex<State> {
+    STATE.get_or_init(|| {
+        Mutex::new(State {
+            data: SettingsData::default(),
+            path: PathBuf::new(),
+        })
+    })
+}
+
+static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
@@ -347,92 +298,324 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-/// Build the CLI-equivalent settings JSON string injected into the web UI.
-/// Caller frees the returned string with [`jfn_config_free_string`].
+fn save_data(path: &Path, data: &SettingsData) -> bool {
+    let v = data.to_json();
+    let Ok(mut text) = serde_json::to_string_pretty(&v) else {
+        return false;
+    };
+    text.push('\n');
+    let _guard = SAVE_LOCK.lock().unwrap();
+    write_atomic(path, text.as_bytes()).is_ok()
+}
+
+fn cstr_to_string(p: *const c_char) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+}
+
+fn string_to_cstr(s: &str) -> *mut c_char {
+    CString::new(s).unwrap_or_default().into_raw()
+}
+
+// =====================================================================
+// FFI — settings singleton
+// =====================================================================
+
+/// Initialize the settings store with the on-disk path. Idempotent: only the
+/// first call sets the path; subsequent calls are ignored.
 ///
 /// # Safety
-/// `in_` must point to a valid `JfnConfigData` (see [`jfn_config_save`] for
-/// string field requirements). `platform_default` must be a valid
-/// NUL-terminated C string. `hwdec_opts`, if non-null, must point to an
-/// array of `n_opts` valid NUL-terminated C strings. Returns null on
-/// serialization failure.
+/// `path` must be a valid NUL-terminated C string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_config_cli_json(
-    in_: *const JfnConfigData,
+pub unsafe extern "C" fn jfn_settings_init(path: *const c_char) {
+    let s = cstr_to_string(path);
+    let mut st = state().lock().unwrap();
+    if st.path.as_os_str().is_empty() {
+        st.path = PathBuf::from(s);
+    }
+}
+
+/// Load settings from the configured path. Missing keys keep their defaults.
+/// Returns false if the file is missing or contains invalid JSON.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_settings_load() -> bool {
+    let mut st = state().lock().unwrap();
+    let path = st.path.clone();
+    let Ok(contents) = fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&contents) else {
+        return false;
+    };
+    if !v.is_object() {
+        return false;
+    }
+    st.data.overlay_json(&v);
+    true
+}
+
+/// Serialize current state and atomically write to the configured path.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_settings_save() -> bool {
+    let (path, snap) = {
+        let st = state().lock().unwrap();
+        (st.path.clone(), st.data.clone())
+    };
+    save_data(&path, &snap)
+}
+
+/// Snapshot current state and save on a detached thread. Concurrent saves are
+/// serialized by an internal mutex.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_settings_save_async() {
+    let (path, snap) = {
+        let st = state().lock().unwrap();
+        (st.path.clone(), st.data.clone())
+    };
+    thread::spawn(move || {
+        save_data(&path, &snap);
+    });
+}
+
+/// Free a string previously returned by this module.
+///
+/// # Safety
+/// `s` must be null or a pointer returned by one of the `jfn_settings_*`
+/// string-returning functions, freed at most once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_settings_free_string(s: *mut c_char) {
+    if !s.is_null() {
+        unsafe { drop(CString::from_raw(s)) };
+    }
+}
+
+macro_rules! string_getter {
+    ($name:ident, $field:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name() -> *mut c_char {
+            let st = state().lock().unwrap();
+            string_to_cstr(&st.data.$field)
+        }
+    };
+}
+
+macro_rules! string_setter {
+    ($name:ident, $field:ident) => {
+        /// # Safety
+        /// `v` must be null or a valid NUL-terminated C string.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(v: *const c_char) {
+            let s = cstr_to_string(v);
+            let mut st = state().lock().unwrap();
+            st.data.$field = s;
+        }
+    };
+}
+
+macro_rules! bool_getter {
+    ($name:ident, $field:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name() -> bool {
+            state().lock().unwrap().data.$field
+        }
+    };
+}
+
+macro_rules! bool_setter {
+    ($name:ident, $field:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name(v: bool) {
+            state().lock().unwrap().data.$field = v;
+        }
+    };
+}
+
+string_getter!(jfn_settings_get_server_url, server_url);
+string_setter!(jfn_settings_set_server_url, server_url);
+string_getter!(jfn_settings_get_hwdec, hwdec);
+string_setter!(jfn_settings_set_hwdec, hwdec);
+string_getter!(jfn_settings_get_audio_passthrough, audio_passthrough);
+string_setter!(jfn_settings_set_audio_passthrough, audio_passthrough);
+string_getter!(jfn_settings_get_audio_channels, audio_channels);
+string_setter!(jfn_settings_set_audio_channels, audio_channels);
+string_getter!(jfn_settings_get_log_level, log_level);
+string_setter!(jfn_settings_set_log_level, log_level);
+string_getter!(jfn_settings_get_device_name, device_name);
+
+/// Setter for device_name. Trims and collapses whitespace, truncates to the
+/// server's 64-char DeviceName column limit, and clears the override when the
+/// result matches `platform_default` (so hostname changes propagate
+/// automatically on the next launch).
+///
+/// # Safety
+/// `v` and `platform_default` must each be null or a valid NUL-terminated C
+/// string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_settings_set_device_name(
+    v: *const c_char,
+    platform_default: *const c_char,
+) {
+    let raw = cstr_to_string(v);
+    let platform = cstr_to_string(platform_default);
+    let cleaned = normalize_device_name(&raw, &platform);
+    let mut st = state().lock().unwrap();
+    st.data.device_name = cleaned;
+}
+
+fn normalize_device_name(raw: &str, platform_default: &str) -> String {
+    // Server's auth header parser preserves whitespace verbatim, so " foo "
+    // would round-trip into the Devices table.
+    let mut trimmed = String::with_capacity(raw.len());
+    let mut in_space = true;
+    for c in raw.chars() {
+        let ws = matches!(c, ' ' | '\t' | '\r' | '\n' | '\u{0b}' | '\u{0c}');
+        if ws {
+            if !in_space {
+                trimmed.push(' ');
+            }
+            in_space = true;
+        } else {
+            trimmed.push(c);
+            in_space = false;
+        }
+    }
+    if trimmed.ends_with(' ') {
+        trimmed.pop();
+    }
+    if trimmed.len() > DEVICE_NAME_MAX {
+        trimmed.truncate(DEVICE_NAME_MAX);
+    }
+    if trimmed == platform_default {
+        trimmed.clear();
+    }
+    trimmed
+}
+
+bool_getter!(jfn_settings_get_audio_exclusive, audio_exclusive);
+bool_setter!(jfn_settings_set_audio_exclusive, audio_exclusive);
+bool_getter!(jfn_settings_get_disable_gpu_compositing, disable_gpu_compositing);
+bool_setter!(jfn_settings_set_disable_gpu_compositing, disable_gpu_compositing);
+bool_getter!(jfn_settings_get_titlebar_theme_color, titlebar_theme_color);
+bool_setter!(jfn_settings_set_titlebar_theme_color, titlebar_theme_color);
+bool_getter!(jfn_settings_get_transparent_titlebar, transparent_titlebar);
+bool_setter!(jfn_settings_set_transparent_titlebar, transparent_titlebar);
+bool_getter!(jfn_settings_get_force_transcoding, force_transcoding);
+bool_setter!(jfn_settings_set_force_transcoding, force_transcoding);
+
+/// Copy the window geometry into `out`.
+///
+/// # Safety
+/// `out` must be non-null and point to writable storage for a
+/// [`JfnWindowGeometry`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_settings_get_window_geometry(out: *mut JfnWindowGeometry) {
+    if out.is_null() {
+        return;
+    }
+    let g = state().lock().unwrap().data.window;
+    unsafe { ptr::write(out, g) };
+}
+
+/// Overwrite the window geometry from `in_`.
+///
+/// # Safety
+/// `in_` must be non-null and point to a valid [`JfnWindowGeometry`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_settings_set_window_geometry(in_: *const JfnWindowGeometry) {
+    if in_.is_null() {
+        return;
+    }
+    let g = unsafe { *in_ };
+    state().lock().unwrap().data.window = g;
+}
+
+/// Build the CLI-equivalent settings JSON string for injection into the web
+/// UI. Caller frees with [`jfn_settings_free_string`].
+///
+/// # Safety
+/// `platform_default` must be a valid NUL-terminated C string. `hwdec_opts`,
+/// if non-null, must point to an array of `n_opts` valid NUL-terminated C
+/// strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_settings_cli_json(
     platform_default: *const c_char,
     hwdec_opts: *const *const c_char,
     n_opts: usize,
 ) -> *mut c_char {
-    if in_.is_null() {
-        return ptr::null_mut();
-    }
-    let d = unsafe { &*in_ };
-    let mut o = Map::new();
-
-    let hwdec = cstr_to_string(d.hwdec);
-    if !hwdec.is_empty() {
-        o.insert("hwdec".into(), Value::String(hwdec));
-    }
-    let ap = cstr_to_string(d.audio_passthrough);
-    if !ap.is_empty() {
-        o.insert("audioPassthrough".into(), Value::String(ap));
-    }
-    if d.audio_exclusive {
-        o.insert("audioExclusive".into(), Value::Bool(true));
-    }
-    let ac = cstr_to_string(d.audio_channels);
-    if !ac.is_empty() {
-        o.insert("audioChannels".into(), Value::String(ac));
-    }
-    if d.disable_gpu_compositing {
-        o.insert("disableGpuCompositing".into(), Value::Bool(true));
-    }
-    if !d.titlebar_theme_color {
-        o.insert("titlebarThemeColor".into(), Value::Bool(false));
-    }
-    if !d.transparent_titlebar {
-        o.insert("transparentTitlebar".into(), Value::Bool(false));
-    }
-    let ll = cstr_to_string(d.log_level);
-    if !ll.is_empty() {
-        o.insert("logLevel".into(), Value::String(ll));
-    }
-    o.insert("forceTranscoding".into(), Value::Bool(d.force_transcoding));
-    let dn = cstr_to_string(d.device_name);
-    if !dn.is_empty() {
-        o.insert("deviceName".into(), Value::String(dn));
-    }
-    o.insert(
-        "deviceNameDefault".into(),
-        Value::String(cstr_to_string(platform_default)),
-    );
-
-    let mut opts = Vec::with_capacity(n_opts);
+    let platform_default = cstr_to_string(platform_default);
+    let mut opts: Vec<String> = Vec::with_capacity(n_opts);
     if !hwdec_opts.is_null() {
         for i in 0..n_opts {
             let p = unsafe { *hwdec_opts.add(i) };
-            opts.push(Value::String(cstr_to_string(p)));
+            opts.push(cstr_to_string(p));
         }
     }
-    o.insert("hwdecOptions".into(), Value::Array(opts));
-
-    let text = match serde_json::to_string(&Value::Object(o)) {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    CString::new(text)
+    let snap = state().lock().unwrap().data.clone();
+    let s = snap.cli_json(&platform_default, &opts);
+    CString::new(s)
         .map(|c| c.into_raw())
         .unwrap_or(ptr::null_mut())
 }
 
-/// Free a string previously returned by [`jfn_config_cli_json`].
-///
-/// # Safety
-/// `s` must either be null or a pointer previously returned by this crate
-/// (e.g. from [`jfn_config_cli_json`]). Each pointer may only be freed once.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_config_free_string(s: *mut c_char) {
-    drop_cstr(s);
+#[cfg(test)]
+mod tests {
+    use super::normalize_device_name;
+
+    const PLATFORM: &str = "platform-host";
+
+    #[test]
+    fn trims_leading_and_trailing_whitespace() {
+        assert_eq!(normalize_device_name("  foo  ", PLATFORM), "foo");
+        assert_eq!(normalize_device_name("\t\nfoo\r\n", PLATFORM), "foo");
+    }
+
+    #[test]
+    fn collapses_internal_whitespace_runs() {
+        assert_eq!(normalize_device_name("foo  bar", PLATFORM), "foo bar");
+        assert_eq!(normalize_device_name("foo\t\tbar", PLATFORM), "foo bar");
+        assert_eq!(
+            normalize_device_name("foo \t\nbar   baz", PLATFORM),
+            "foo bar baz"
+        );
+    }
+
+    #[test]
+    fn whitespace_only_is_empty() {
+        assert_eq!(normalize_device_name("   \t\n  ", PLATFORM), "");
+    }
+
+    #[test]
+    fn preserves_single_internal_spaces() {
+        assert_eq!(
+            normalize_device_name("Andrew's MacBook Pro", PLATFORM),
+            "Andrew's MacBook Pro"
+        );
+    }
+
+    #[test]
+    fn clamps_to_64_chars() {
+        let long_name = "x".repeat(100);
+        assert_eq!(normalize_device_name(&long_name, PLATFORM), "x".repeat(64));
+    }
+
+    #[test]
+    fn clamps_after_whitespace_normalization() {
+        let padded = format!("  {}  ", "x".repeat(70));
+        assert_eq!(normalize_device_name(&padded, PLATFORM).len(), 64);
+    }
+
+    #[test]
+    fn clears_override_when_value_equals_platform_default() {
+        assert_eq!(normalize_device_name(PLATFORM, PLATFORM), "");
+    }
+
+    #[test]
+    fn clears_override_when_whitespace_padded_default() {
+        let padded = format!("  {}  ", PLATFORM);
+        assert_eq!(normalize_device_name(&padded, PLATFORM), "");
+    }
 }
 
 /// Validate that a Jellyfin /System/Info/Public response body is a JSON

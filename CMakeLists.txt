@@ -601,7 +601,6 @@ if(WIN32)
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/jellyfin/api.cpp
-        src/settings.cpp
         src/paths/paths.cpp
         src/wake_event.cpp
     )
@@ -630,7 +629,6 @@ else()
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/single_instance.cpp
-        src/settings.cpp
         src/paths/paths.cpp
         src/wake_event.cpp
         src/jellyfin/api.cpp

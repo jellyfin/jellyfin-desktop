@@ -12,21 +12,6 @@ target_link_libraries(jellyfin_api_test PRIVATE jfn_rust)
 
 add_test(NAME jellyfin_api_test COMMAND jellyfin_api_test)
 
-add_executable(settings_test
-    settings_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/settings.cpp
-    ${CMAKE_SOURCE_DIR}/src/paths/paths.cpp
-)
-
-target_include_directories(settings_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
-)
-
-target_link_libraries(settings_test PRIVATE jfn_rust)
-
-add_test(NAME settings_test COMMAND settings_test)
-
 add_executable(cli_test
     cli_test.cpp
     ${CMAKE_SOURCE_DIR}/src/cli.cpp
