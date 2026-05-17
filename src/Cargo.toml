@@ -8,6 +8,7 @@ members = [
     "jellyfin",
     "jfn_rust",
     "logging",
+    "mpv",
     "open_url_linux",
     "paths",
     "playback",
