@@ -10,6 +10,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 jfn-cli = { path = "../cli" }
+jfn-color = { path = "../color" }
 jfn-config = { path = "../config" }
 jfn-jellyfin = { path = "../jellyfin" }
 jfn-logging = { path = "../logging" }

@@ -520,6 +520,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "jfn-color"
+version = "0.1.0"
+
+[[package]]
 name = "jfn-config"
 version = "0.1.0"
 dependencies = [
@@ -579,6 +583,7 @@ name = "jfn-rust"
 version = "0.1.0"
 dependencies = [
  "jfn-cli",
+ "jfn-color",
  "jfn-config",
  "jfn-idle-inhibit-linux",
  "jfn-jellyfin",
