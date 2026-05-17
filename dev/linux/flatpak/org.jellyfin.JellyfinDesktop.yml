@@ -4,6 +4,9 @@ runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
+  # libclang.so for bindgen (jfn-mpv build.rs runs bindgen on mpv +
+  # libavcodec headers; bindgen dlopens libclang at build time).
+  - org.freedesktop.Sdk.Extension.llvm20
 command: jellyfin-desktop
 finish-args:
   - --socket=wayland
@@ -167,9 +170,12 @@ modules:
       # the codecs-extra extension that the ldconfig cache otherwise
       # returns first. Runtime loader still uses the cache.
       ldflags: -Wl,-rpath-link=/usr/lib/x86_64-linux-gnu
-      append-path: /usr/lib/sdk/rust-stable/bin
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm20/bin
+      prepend-ld-library-path: /usr/lib/sdk/llvm20/lib
       env:
         CARGO_HOME: /run/build/jellyfin-desktop/cargo
+        # bindgen dlopens libclang from this SDK extension dir.
+        LIBCLANG_PATH: /usr/lib/sdk/llvm20/lib
       build-args:
         # cargo fetches crates from crates.io during the build
         - --share=network

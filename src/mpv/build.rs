@@ -71,28 +71,57 @@ fn main() {
 /// Narrow libavcodec bindings: only the four symbols `capabilities`
 /// needs (`av_codec_iterate`, `av_codec_is_decoder`, `avcodec_get_name`)
 /// plus the `AVCodec` / `AVCodecID` / `AVMediaType` types they reference.
-/// pkg-config provides `libavcodec` include + linker flags.
+///
+/// Header source order:
+///   1. `EXTERNAL_AVCODEC_DIR` env override.
+///   2. `EXTERNAL_MPV_DIR` env override (Windows ships ffmpeg headers
+///      under the same prefix — see `dev/windows/build_mpv_source.ps1`).
+///   3. pkg-config `libavcodec`.
 fn generate_avcodec_bindings() {
-    let lib = pkg_config::Config::new()
-        .probe("libavcodec")
-        .expect("libavcodec via pkg-config");
+    println!("cargo:rerun-if-env-changed=EXTERNAL_AVCODEC_DIR");
 
-    let header_dir = lib
-        .include_paths
+    let mut include_dirs: Vec<PathBuf> = Vec::new();
+    let mut linked_via_pkgconfig = false;
+
+    if let Ok(dir) = env::var("EXTERNAL_AVCODEC_DIR") {
+        let root = PathBuf::from(&dir);
+        include_dirs.push(root.join("include"));
+        let libdir = root.join("lib");
+        println!("cargo:rustc-link-search=native={}", libdir.display());
+        println!("cargo:rustc-link-lib=avcodec");
+    } else if let Ok(dir) = env::var("EXTERNAL_MPV_DIR") {
+        // Windows ps1 copies libavcodec/libavutil headers next to mpv
+        // headers and emits an avcodec.lib import library alongside
+        // mpv.lib. Detect that layout and reuse it.
+        let root = PathBuf::from(&dir);
+        let candidate = root.join("include").join("libavcodec").join("avcodec.h");
+        if candidate.exists() {
+            include_dirs.push(root.join("include"));
+            let libdir = root.join("lib");
+            println!("cargo:rustc-link-search=native={}", libdir.display());
+            println!("cargo:rustc-link-lib=avcodec");
+        }
+    }
+
+    if include_dirs.is_empty() {
+        let lib = pkg_config::Config::new()
+            .probe("libavcodec")
+            .expect("libavcodec via pkg-config");
+        include_dirs.extend(lib.include_paths.iter().cloned());
+        linked_via_pkgconfig = true;
+    }
+    let _ = linked_via_pkgconfig;
+
+    let header_dir = include_dirs
         .iter()
         .find(|p| p.join("libavcodec/avcodec.h").exists())
         .cloned()
         .unwrap_or_else(|| {
-            // pkg-config may report the parent include dir only; fall back
-            // to a candidate scan of every reported dir.
-            for p in &lib.include_paths {
-                if p.join("libavcodec/avcodec.h").exists() {
-                    return p.clone();
-                }
-            }
             panic!(
-                "could not locate libavcodec/avcodec.h in pkg-config dirs: {:?}",
-                lib.include_paths
+                "could not locate libavcodec/avcodec.h in any of: {:?}\n\
+                 Set EXTERNAL_AVCODEC_DIR, EXTERNAL_MPV_DIR (with ffmpeg \
+                 headers under include/), or install libavcodec via pkg-config.",
+                include_dirs
             )
         });
     let header = header_dir.join("libavcodec/avcodec.h");
@@ -113,7 +142,7 @@ fn generate_avcodec_bindings() {
         .generate_comments(false)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
-    for dir in &lib.include_paths {
+    for dir in &include_dirs {
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
 
