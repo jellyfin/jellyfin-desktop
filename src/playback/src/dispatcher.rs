@@ -1,20 +1,19 @@
 //! mpv → playback coordinator bridge.
 //!
 //! Owns a queue of `MpvEvent`s and a consumer thread that drains the
-//! queue (routing each event into the playback coordinator) and pumps
-//! the C++ sink wake fds it was given so the per-sink queues
-//! (BrowserPlaybackSink, MpvActionSink, …) flush onto the cef thread.
+//! queue and routes each event into the playback coordinator. Sinks
+//! deliver inline on the coordinator's own worker thread (see
+//! `coordinator.rs`); the dispatcher no longer pumps them.
 //!
 //! Lifecycle:
 //!   `jfn_dispatcher_init`
-//!   `jfn_dispatcher_register_sink_pump(ctx, fd, pump)` for each sink
 //!   `jfn_dispatcher_set_display_scale_handler(fn)` (browsers setScale)
 //!   `jfn_dispatcher_start`
 //!   ... `jfn_dispatcher_publish` from any thread ...
 //!   `jfn_dispatcher_stop` then `jfn_dispatcher_shutdown`
 
 use std::collections::VecDeque;
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, c_char};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -120,20 +119,10 @@ impl MpvEventOwned {
     }
 }
 
-#[derive(Clone, Copy)]
-struct PumpSink {
-    ctx: *mut c_void,
-    fd: libc::c_int,
-    pump: extern "C" fn(*mut c_void),
-}
-unsafe impl Send for PumpSink {}
-unsafe impl Sync for PumpSink {}
-
 struct Shared {
     queue: Mutex<VecDeque<MpvEventOwned>>,
     queue_wake: WakeEvent,
     shutdown_wake: WakeEvent,
-    sinks: Mutex<Vec<PumpSink>>,
     running: AtomicBool,
     display_scale_cb: Mutex<Option<extern "C" fn(f64)>>,
 }
@@ -172,26 +161,11 @@ pub extern "C" fn jfn_dispatcher_init() {
             queue: Mutex::new(VecDeque::new()),
             queue_wake: WakeEvent::new().expect("WakeEvent queue"),
             shutdown_wake: WakeEvent::new().expect("WakeEvent shutdown"),
-            sinks: Mutex::new(Vec::new()),
             running: AtomicBool::new(false),
             display_scale_cb: Mutex::new(None),
         }),
         join: None,
     });
-}
-
-/// # Safety
-/// `ctx` must remain valid until `jfn_dispatcher_stop`. `pump` is invoked
-/// from the dispatcher thread.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_dispatcher_register_sink_pump(
-    ctx: *mut c_void,
-    fd: libc::c_int,
-    pump: extern "C" fn(*mut c_void),
-) {
-    if let Some(s) = shared() {
-        s.sinks.lock().unwrap().push(PumpSink { ctx, fd, pump });
-    }
 }
 
 /// # Safety
@@ -264,53 +238,50 @@ pub extern "C" fn jfn_dispatcher_shutdown() {
 // =====================================================================
 
 fn worker(shared: Arc<Shared>) {
-    let sinks = shared.sinks.lock().unwrap().clone();
-    let mut pfds: Vec<libc::pollfd> = Vec::with_capacity(sinks.len() + 2);
-    pfds.push(libc::pollfd {
-        fd: shared.queue_wake.fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    });
-    for s in &sinks {
-        pfds.push(libc::pollfd {
-            fd: s.fd,
-            events: libc::POLLIN,
-            revents: 0,
-        });
-    }
-    pfds.push(libc::pollfd {
-        fd: shared.shutdown_wake.fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    });
-    let shutdown_idx = pfds.len() - 1;
-
-    loop {
-        unsafe {
-            libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, -1);
-        }
-        if pfds[shutdown_idx].revents & libc::POLLIN != 0 {
-            return;
-        }
-
-        // Pump sinks before draining the queue so any events the
-        // coordinator emitted during the prior cycle are delivered before
-        // the next mpv event flips state. (Freshness preference; not a
-        // correctness requirement since sinks no longer pull from coord.)
-        for (i, sink) in sinks.iter().enumerate() {
-            if pfds[1 + i].revents & libc::POLLIN != 0 {
-                (sink.pump)(sink.ctx);
-            }
-        }
-
-        shared.queue_wake.drain();
+    while shared.running.load(Ordering::Relaxed) {
         let work: VecDeque<MpvEventOwned> = {
             let mut q = shared.queue.lock().unwrap();
             std::mem::take(&mut *q)
         };
+
+        if work.is_empty() {
+            wait_for_wake(&shared);
+            shared.queue_wake.drain();
+            continue;
+        }
+
         for ev in work {
             route(&shared, &ev);
         }
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_wake(shared: &Shared) {
+    let mut pfds = [
+        libc::pollfd {
+            fd: shared.queue_wake.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: shared.shutdown_wake.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    unsafe {
+        libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, -1);
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_wake(shared: &Shared) {
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::Threading::{INFINITE, WaitForMultipleObjects};
+    let handles: [HANDLE; 2] = [shared.queue_wake.handle(), shared.shutdown_wake.handle()];
+    unsafe {
+        WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, INFINITE);
     }
 }
 

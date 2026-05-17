@@ -331,10 +331,6 @@ static int run_with_cef(int mw, int mh,
     media_sink->start();
     playback::register_action_sink(mpv_action_sink);
     dispatcher::init();
-    dispatcher::register_event_sink(browser_sink);
-    dispatcher::register_event_sink(idle_inhibit_sink);
-    dispatcher::register_event_sink(theme_color_sink);
-    dispatcher::register_action_sink(mpv_action_sink);
     dispatcher::set_display_scale_handler([](double s) {
         if (g_browsers && s > 0) g_browsers->setScale(s);
     });

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "queued_sink.h"
+#include "../event.h"
 
 // Watches phase + media_type from ev.snapshot and updates the platform
 // idle inhibit level.
-class IdleInhibitSink final : public QueuedPlaybackSink {
-protected:
-    void deliver(const PlaybackEvent& ev) override;
+class IdleInhibitSink final : public PlaybackEventSink {
+public:
+    bool tryPost(const PlaybackEvent& ev) override;
 };

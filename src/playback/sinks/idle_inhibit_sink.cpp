@@ -14,7 +14,7 @@ void apply_idle_inhibit(const PlaybackSnapshot& snap) {
 }
 }  // namespace
 
-void IdleInhibitSink::deliver(const PlaybackEvent& ev) {
+bool IdleInhibitSink::tryPost(const PlaybackEvent& ev) {
     switch (ev.kind) {
     case PlaybackEvent::Kind::Started:
     case PlaybackEvent::Kind::Paused:
@@ -27,4 +27,5 @@ void IdleInhibitSink::deliver(const PlaybackEvent& ev) {
     default:
         break;
     }
+    return true;
 }

@@ -134,6 +134,11 @@ mod imp {
         handle: HANDLE,
     }
 
+    // Win32 event HANDLEs are kernel objects; concurrent SetEvent/ResetEvent/Wait*
+    // are documented thread-safe.
+    unsafe impl Send for WakeEvent {}
+    unsafe impl Sync for WakeEvent {}
+
     impl WakeEvent {
         pub fn new() -> Option<Self> {
             // manual-reset, initially non-signaled

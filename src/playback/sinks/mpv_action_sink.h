@@ -1,12 +1,13 @@
 #pragma once
 
-#include "queued_sink.h"
+#include "../event.h"
 
-// Runs g_mpv.ApplyPendingTrackSelectionAndPlay() on cef_consumer_thread
-// in response to ApplyPendingTrackSelectionAndPlay actions emitted by
-// the SM on FILE_LOADED. Preserves the prior ordering relative to the
-// FILE_LOADED drain.
-class MpvActionSink final : public QueuedActionSink {
-protected:
-    void deliver(const PlaybackAction& act) override;
+// Runs g_mpv.ApplyPendingTrackSelectionAndPlay() in response to
+// ApplyPendingTrackSelectionAndPlay actions emitted by the SM on
+// FILE_LOADED. Preserves the prior ordering relative to the FILE_LOADED
+// drain (coordinator emits events first, actions after, all on the
+// coordinator worker thread).
+class MpvActionSink final : public PlaybackActionSink {
+public:
+    bool tryPost(const PlaybackAction& act) override;
 };

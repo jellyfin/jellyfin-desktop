@@ -35,14 +35,6 @@ typedef struct {
 void jfn_dispatcher_init(void);
 void jfn_dispatcher_shutdown(void);
 
-// Sink registration: pass the wake fd to poll on and a pump callback that
-// drains the sink's queue. Both QueuedPlaybackSink and QueuedActionSink
-// have identical pump shapes so a single registration entry point suffices.
-void jfn_dispatcher_register_sink_pump(
-    void* ctx,
-    int fd,
-    void (*pump)(void* ctx));
-
 // Install the browsers.setScale handler used to resolve DISPLAY_SCALE
 // events. The C++ side passes a thunk that calls g_browsers->setScale.
 void jfn_dispatcher_set_display_scale_handler(void (*cb)(double));
