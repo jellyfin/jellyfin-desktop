@@ -1895,7 +1895,7 @@ dependencies = [
 [[package]]
 name = "wl-proxy"
 version = "0.1.2"
-source = "git+https://github.com/andrewrabert/wl-proxy?branch=server-decoration-palette#980522950d3c020bc98f278b9722acdb34fa56db"
+source = "git+https://github.com/mahkoh/wl-proxy#61a70117344d6a70c6e6aa8725cbc4c19963f594"
 dependencies = [
  "debug-fn",
  "error_reporter",
