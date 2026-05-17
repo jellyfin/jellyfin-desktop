@@ -229,11 +229,7 @@ else()
     set(CURSOR_SHAPE_CLIENT_H "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-client.h")
     set(CURSOR_SHAPE_CODE_C "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-code.c")
 
-    set(EXT_DATA_CONTROL_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/ext-data-control/ext-data-control-v1.xml")
-    set(EXT_DATA_CONTROL_CLIENT_H "${WAYLAND_GENERATED_DIR}/ext-data-control-v1-client.h")
-    set(EXT_DATA_CONTROL_CODE_C "${WAYLAND_GENERATED_DIR}/ext-data-control-v1-code.c")
-
-    set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output-unstable-v1.xml")
+set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output-unstable-v1.xml")
     set(XDG_OUTPUT_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-client.h")
     set(XDG_OUTPUT_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-code.c")
 
@@ -301,19 +297,7 @@ else()
         DEPENDS ${CURSOR_SHAPE_PROTOCOL}
         COMMENT "Generating cursor-shape-v1 code"
     )
-    add_custom_command(
-        OUTPUT ${EXT_DATA_CONTROL_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${EXT_DATA_CONTROL_PROTOCOL} ${EXT_DATA_CONTROL_CLIENT_H}
-        DEPENDS ${EXT_DATA_CONTROL_PROTOCOL}
-        COMMENT "Generating ext-data-control-v1 client header"
-    )
-    add_custom_command(
-        OUTPUT ${EXT_DATA_CONTROL_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${EXT_DATA_CONTROL_PROTOCOL} ${EXT_DATA_CONTROL_CODE_C}
-        DEPENDS ${EXT_DATA_CONTROL_PROTOCOL}
-        COMMENT "Generating ext-data-control-v1 code"
-    )
-    add_custom_command(
+add_custom_command(
         OUTPUT ${XDG_OUTPUT_CLIENT_H}
         COMMAND ${WAYLAND_SCANNER} client-header ${XDG_OUTPUT_PROTOCOL} ${XDG_OUTPUT_CLIENT_H}
         DEPENDS ${XDG_OUTPUT_PROTOCOL}
@@ -376,9 +360,7 @@ else()
         ${ALPHA_MODIFIER_CLIENT_H}
         ${CURSOR_SHAPE_CODE_C}
         ${CURSOR_SHAPE_CLIENT_H}
-        ${EXT_DATA_CONTROL_CODE_C}
-        ${EXT_DATA_CONTROL_CLIENT_H}
-        ${TABLET_V2_CODE_C}
+${TABLET_V2_CODE_C}
         ${TABLET_V2_CLIENT_H}
         ${XDG_OUTPUT_CODE_C}
         ${XDG_OUTPUT_CLIENT_H}
@@ -470,7 +452,7 @@ add_dependencies(jfn_rust jfn_rust_build)
 set_target_properties(jfn_rust PROPERTIES
     IMPORTED_LOCATION ${JFN_RUST_LIB}
     INTERFACE_INCLUDE_DIRECTORIES
-        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/log_redact;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wake_event;${CMAKE_SOURCE_DIR}/src/wayland_scale_probe;${CMAKE_SOURCE_DIR}/src/wlproxy"
+        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/clipboard_wayland;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/log_redact;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wake_event;${CMAKE_SOURCE_DIR}/src/wayland_scale_probe;${CMAKE_SOURCE_DIR}/src/wlproxy"
 )
 # Native deps pulled in by the Rust standard library and our crate deps.
 # cargo rustc --print=native-static-libs emits the exact set per platform.

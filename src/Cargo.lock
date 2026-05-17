@@ -493,6 +493,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jfn-clipboard-wayland"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "wayland-client",
+ "wayland-protocols",
+]
+
+[[package]]
 name = "jfn-config"
 version = "0.1.0"
 dependencies = [
@@ -536,6 +546,7 @@ name = "jfn-rust"
 version = "0.1.0"
 dependencies = [
  "jfn-cli",
+ "jfn-clipboard-wayland",
  "jfn-config",
  "jfn-idle-inhibit-linux",
  "jfn-jellyfin",

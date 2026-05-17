@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "cli",
+    "clipboard_wayland",
     "config",
     "idle_inhibit_linux",
     "jellyfin",
