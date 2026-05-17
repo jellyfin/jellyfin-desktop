@@ -84,7 +84,7 @@ jobs:
           MSYS_BIN: C:\msys64\${{ matrix.msystem }}\bin
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
-          set "PATH=%MSYS_BIN%;%PATH%"
+          set "PATH=%PATH%;%MSYS_BIN%"
           cmake -B build -G Ninja ^
             -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
             -DEXTERNAL_MPV_DIR=%CD%\third_party\mpv-install
