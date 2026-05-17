@@ -11,6 +11,7 @@ build: deps
 [windows]
 test: build
     ctest --test-dir build --output-on-failure
+    cargo test --manifest-path src/Cargo.toml --workspace --exclude jfn-wlproxy --exclude jfn-signal-guard
 
 [windows]
 run *args: build
