@@ -10,18 +10,6 @@ target_include_directories(mpv_color_test PRIVATE
 
 add_test(NAME mpv_color_test COMMAND mpv_color_test)
 
-add_executable(cef_color_test
-    cef_color_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/cef/color.cpp
-)
-
-target_include_directories(cef_color_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/third_party/doctest/include
-)
-
-add_test(NAME cef_color_test COMMAND cef_color_test)
-
 if(UNIX AND NOT APPLE)
     add_executable(mpris_projection_test
         mpris_projection_test.cpp
