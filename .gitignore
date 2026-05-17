@@ -12,9 +12,7 @@ third_party/*
 !third_party/letsmove
 !third_party/GL
 !third_party/KHR
-!third_party/doctest
 !third_party/fmt
-!third_party/wl-proxy
 
 # Project-scoped MCP
 .mcp.json
