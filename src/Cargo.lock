@@ -661,6 +661,7 @@ dependencies = [
  "jfn-idle-inhibit-linux",
  "jfn-jellyfin",
  "jfn-logging",
+ "jfn-mpv",
  "jfn-open-url-linux",
  "jfn-paths",
  "jfn-playback",

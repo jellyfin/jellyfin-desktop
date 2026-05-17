@@ -5,10 +5,11 @@
 #include "mpv/options.h"
 #include "cli/cli.h"
 
-#include <mpv/client.h>
 #include <include/cef_version.h>
 
 #include <cstdio>
+
+extern "C" void jfn_mpv_print_version_info(void);
 
 namespace cli {
 
@@ -35,17 +36,8 @@ void print_help() {
 
 void print_version() {
     printf("jellyfin-desktop %s\n\nCEF %s\n\n", APP_VERSION_FULL, CEF_VERSION);
-    mpv_handle* h = mpv_create();
-    if (h && mpv_initialize(h) >= 0) {
-        for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
-            char* v = mpv_get_property_string(h, prop);
-            if (v) {
-                printf("%s %s\n", prop, v);
-                mpv_free(v);
-            }
-        }
-    }
-    if (h) mpv_terminate_destroy(h);
+    fflush(stdout);
+    jfn_mpv_print_version_info();
 }
 
 Result parse(int argc, char* argv[], Args& args) {
