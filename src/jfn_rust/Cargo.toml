@@ -23,6 +23,7 @@ jfn-signal-guard = { path = "../signal_guard" }
 [target.'cfg(target_os = "linux")'.dependencies]
 jfn-clipboard-wayland = { path = "../clipboard_wayland" }
 jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
+jfn-input-wayland = { path = "../input_wayland" }
 jfn-open-url-linux = { path = "../open_url_linux" }
 jfn-wayland-scale-probe = { path = "../wayland_scale_probe" }
 jfn-wlproxy = { path = "../wlproxy" }

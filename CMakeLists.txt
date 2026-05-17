@@ -225,18 +225,9 @@ else()
     set(ALPHA_MODIFIER_CLIENT_H "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-client.h")
     set(ALPHA_MODIFIER_CODE_C "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-code.c")
 
-    set(CURSOR_SHAPE_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/cursor-shape/cursor-shape-v1.xml")
-    set(CURSOR_SHAPE_CLIENT_H "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-client.h")
-    set(CURSOR_SHAPE_CODE_C "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-code.c")
-
 set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output-unstable-v1.xml")
     set(XDG_OUTPUT_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-client.h")
     set(XDG_OUTPUT_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-code.c")
-
-    # tablet-v2 interface symbols are referenced by cursor-shape-v1 generated code
-    set(TABLET_V2_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/stable/tablet/tablet-v2.xml")
-    set(TABLET_V2_CLIENT_H "${WAYLAND_GENERATED_DIR}/tablet-v2-client.h")
-    set(TABLET_V2_CODE_C "${WAYLAND_GENERATED_DIR}/tablet-v2-code.c")
 
     # KDE server decoration palette (per-window titlebar colors on KWin)
     option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support" ON)
@@ -286,18 +277,6 @@ set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output
         COMMENT "Generating alpha-modifier-v1 code"
     )
     add_custom_command(
-        OUTPUT ${CURSOR_SHAPE_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${CURSOR_SHAPE_PROTOCOL} ${CURSOR_SHAPE_CLIENT_H}
-        DEPENDS ${CURSOR_SHAPE_PROTOCOL}
-        COMMENT "Generating cursor-shape-v1 client header"
-    )
-    add_custom_command(
-        OUTPUT ${CURSOR_SHAPE_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${CURSOR_SHAPE_PROTOCOL} ${CURSOR_SHAPE_CODE_C}
-        DEPENDS ${CURSOR_SHAPE_PROTOCOL}
-        COMMENT "Generating cursor-shape-v1 code"
-    )
-add_custom_command(
         OUTPUT ${XDG_OUTPUT_CLIENT_H}
         COMMAND ${WAYLAND_SCANNER} client-header ${XDG_OUTPUT_PROTOCOL} ${XDG_OUTPUT_CLIENT_H}
         DEPENDS ${XDG_OUTPUT_PROTOCOL}
@@ -309,19 +288,7 @@ add_custom_command(
         DEPENDS ${XDG_OUTPUT_PROTOCOL}
         COMMENT "Generating xdg-output-unstable-v1 code"
     )
-    add_custom_command(
-        OUTPUT ${TABLET_V2_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${TABLET_V2_PROTOCOL} ${TABLET_V2_CLIENT_H}
-        DEPENDS ${TABLET_V2_PROTOCOL}
-        COMMENT "Generating tablet-v2 client header"
-    )
-    add_custom_command(
-        OUTPUT ${TABLET_V2_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${TABLET_V2_PROTOCOL} ${TABLET_V2_CODE_C}
-        DEPENDS ${TABLET_V2_PROTOCOL}
-        COMMENT "Generating tablet-v2 code"
-    )
-    if(ENABLE_KDE_PALETTE)
+if(ENABLE_KDE_PALETTE)
         add_custom_command(
             OUTPUT ${DECO_PALETTE_CLIENT_H}
             COMMAND ${WAYLAND_SCANNER} client-header ${DECO_PALETTE_PROTOCOL} ${DECO_PALETTE_CLIENT_H}
@@ -358,10 +325,6 @@ add_custom_command(
         ${VIEWPORTER_CLIENT_H}
         ${ALPHA_MODIFIER_CODE_C}
         ${ALPHA_MODIFIER_CLIENT_H}
-        ${CURSOR_SHAPE_CODE_C}
-        ${CURSOR_SHAPE_CLIENT_H}
-${TABLET_V2_CODE_C}
-        ${TABLET_V2_CLIENT_H}
         ${XDG_OUTPUT_CODE_C}
         ${XDG_OUTPUT_CLIENT_H}
     )
@@ -452,7 +415,7 @@ add_dependencies(jfn_rust jfn_rust_build)
 set_target_properties(jfn_rust PROPERTIES
     IMPORTED_LOCATION ${JFN_RUST_LIB}
     INTERFACE_INCLUDE_DIRECTORIES
-        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/clipboard_wayland;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/log_redact;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wake_event;${CMAKE_SOURCE_DIR}/src/wayland_scale_probe;${CMAKE_SOURCE_DIR}/src/wlproxy"
+        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/clipboard_wayland;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/input_wayland;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/log_redact;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wake_event;${CMAKE_SOURCE_DIR}/src/wayland_scale_probe;${CMAKE_SOURCE_DIR}/src/wlproxy"
 )
 # Native deps pulled in by the Rust standard library and our crate deps.
 # cargo rustc --print=native-static-libs emits the exact set per platform.

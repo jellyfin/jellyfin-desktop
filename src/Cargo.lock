@@ -273,6 +273,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24efe21bd9a78102d1225f10f0a41d9d5b43f4df7ae8235f39a9c79e4d476c1e"
 
 [[package]]
+name = "dlib"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
+dependencies = [
+ "libloading",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -519,6 +528,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "jfn-input-wayland"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "memmap2",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "xkbcommon",
+]
+
+[[package]]
 name = "jfn-jellyfin"
 version = "0.1.0"
 dependencies = [
@@ -549,6 +571,7 @@ dependencies = [
  "jfn-clipboard-wayland",
  "jfn-config",
  "jfn-idle-inhibit-linux",
+ "jfn-input-wayland",
  "jfn-jellyfin",
  "jfn-log-redact",
  "jfn-open-url-linux",
@@ -629,6 +652,16 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
 
 [[package]]
 name = "linearize"
@@ -968,6 +1001,12 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "scoped-tls"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
 
 [[package]]
 name = "scopeguard"
@@ -1383,6 +1422,7 @@ dependencies = [
  "cc",
  "downcast-rs",
  "rustix",
+ "scoped-tls",
  "smallvec",
  "wayland-sys",
 ]
@@ -1489,6 +1529,8 @@ version = "0.31.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8eab23fefc9e41f8e841df4a9c707e8a8c4ed26e944ef69297184de2785e3be"
 dependencies = [
+ "dlib",
+ "log",
  "pkg-config",
 ]
 
@@ -1633,6 +1675,17 @@ name = "xcursor"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
+
+[[package]]
+name = "xkbcommon"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7a974f48060a14e95705c01f24ad9c3345022f4d97441b8a36beb7ed5c4a02d"
+dependencies = [
+ "libc",
+ "memmap2",
+ "xkeysym",
+]
 
 [[package]]
 name = "xkeysym"

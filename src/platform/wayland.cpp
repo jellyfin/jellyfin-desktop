@@ -14,7 +14,6 @@
 #include "linux-dmabuf-v1-client.h"
 #include "viewporter-client.h"
 #include "alpha-modifier-v1-client.h"
-#include "cursor-shape-v1-client.h"
 #include <drm/drm_fourcc.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -635,14 +634,8 @@ static void reg_global(void*, wl_registry* reg, uint32_t name, const char* iface
         g_wl.viewporter = static_cast<wp_viewporter*>(wl_registry_bind(reg, name, &wp_viewporter_interface, 1));
     else if (strcmp(iface, wp_alpha_modifier_v1_interface.name) == 0)
         g_wl.alpha_modifier = static_cast<wp_alpha_modifier_v1*>(wl_registry_bind(reg, name, &wp_alpha_modifier_v1_interface, 1));
-    else if (strcmp(iface, wp_cursor_shape_manager_v1_interface.name) == 0) {
-        auto* mgr = static_cast<wp_cursor_shape_manager_v1*>(wl_registry_bind(reg, name, &wp_cursor_shape_manager_v1_interface, 1));
-        input::wayland::attach_cursor_shape_manager(mgr);
-    }
-    else if (strcmp(iface, wl_seat_interface.name) == 0) {
-        auto* seat = static_cast<wl_seat*>(wl_registry_bind(reg, name, &wl_seat_interface, std::min(ver, 5u)));
-        input::wayland::attach_seat(seat);
-    }
+    // wl_seat + wp_cursor_shape_manager_v1 are bound by the Rust input layer
+    // on its own registry view, not here.
 #ifdef HAVE_KDE_DECORATION_PALETTE
     else if (strcmp(iface, org_kde_kwin_server_decoration_palette_manager_interface.name) == 0) {
         g_wl.palette_manager = static_cast<org_kde_kwin_server_decoration_palette_manager*>(
@@ -1065,7 +1058,7 @@ static bool wl_init(mpv_handle* mpv) {
 
     // Prepare the input layer so its xkb context is ready before the registry
     // callbacks land (seat_caps wires up keyboard listeners that need xkb).
-    input::wayland::init(display, g_wl.queue);
+    input::wayland::init(display);
 
     auto* reg = wl_display_get_registry(display);
     wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(reg), g_wl.queue);
