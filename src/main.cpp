@@ -37,11 +37,12 @@
 #include "logging.h"
 #include "signal_guard.h"
 #include "shutdown.h"
-#include "event_dispatcher.h"
+#include "playback/jfn_ingest.h"
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #include <signal.h>
+#include "platform/macos_platform.h"
 #else
 #include "single_instance.h"
 #endif
@@ -110,48 +111,31 @@ static void mpv_digest_thread() {
             continue;
         }
 
-        if (ev->event_id == MPV_EVENT_SHUTDOWN) {
-            LOG_INFO(LOG_MAIN, "MPV_EVENT_SHUTDOWN received");
-            MpvEvent se{MpvEventType::SHUTDOWN};
-            publish(se);
-            initiate_shutdown();
-            return;
-        }
-
-        if (ev->event_id == MPV_EVENT_FILE_LOADED) {
-            MpvEvent fe{MpvEventType::FILE_LOADED};
-            publish(fe);
-            continue;
-        }
-
-        if (ev->event_id == MPV_EVENT_END_FILE) {
-            auto* d = static_cast<mpv_event_end_file*>(ev->data);
-            MpvEvent fe{};
-            if (d->reason == MPV_END_FILE_REASON_EOF)
-                fe.type = MpvEventType::END_FILE_EOF;
-            else if (d->reason == MPV_END_FILE_REASON_STOP)
-                fe.type = MpvEventType::END_FILE_CANCEL;
-            else {
-                fe.type = MpvEventType::END_FILE_ERROR;
-                // mpv_error_string returns a pointer to a static, never-freed
-                // string — safe to carry across threads via MpvEvent.
-                fe.err_msg = mpv_error_string(d->error);
-            }
-            publish(fe);
-            continue;
-        }
-
+        // Pre-route platform fullscreen state change. The Rust ingest layer
+        // owns the coordinator event; the platform set_fullscreen call must
+        // happen in C++ (the platform vtable is not bridged into Rust).
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
             auto* p = static_cast<mpv_event_property*>(ev->data);
-            MpvEvent me = digest_property(ev->reply_userdata, p);
-            if (me.type == MpvEventType::NONE) continue;
-            if (me.type == MpvEventType::OSD_DIMS) {
-                if (me.lw <= 0 || me.lh <= 0) continue;
+            if (ev->reply_userdata == MPV_OBSERVE_FULLSCREEN &&
+                p && p->format == MPV_FORMAT_FLAG && p->data) {
+                g_platform.set_fullscreen(*static_cast<int*>(p->data) != 0);
             }
-            if (me.type == MpvEventType::FULLSCREEN) {
-                g_platform.set_fullscreen(me.flag);
-            }
-            publish(me);
+        }
+
+        float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+        if (scale <= 0.f) scale = 1.0f;
+        bool has_macos_logical = false;
+        int  mac_lw = 0, mac_lh = 0;
+#ifdef __APPLE__
+        has_macos_logical = macos_platform::query_logical_content_size(
+            &mac_lw, &mac_lh);
+#endif
+        uint8_t flags = jfn_playback_ingest_mpv_event(
+            ev, scale, has_macos_logical, mac_lw, mac_lh);
+        if (flags & JFN_INGEST_FLAG_SHUTDOWN) {
+            LOG_INFO(LOG_MAIN, "MPV_EVENT_SHUTDOWN received");
+            initiate_shutdown();
+            return;
         }
     }
 }
@@ -329,17 +313,15 @@ static int run_with_cef(int mw, int mh,
     playback::register_event_sink(media_sink);
     media_sink->start();
     playback::register_action_sink(mpv_action_sink);
-    dispatcher::init();
-    dispatcher::set_display_scale_handler([](double s) {
+    jfn_playback_set_display_scale_handler([](double s) {
         if (g_browsers && s > 0) g_browsers->setScale(s);
     });
 
     // Start before waitForLoad so mpv events (OSD_DIMS especially) reach
     // the platform/browsers during the overlay-only startup phase, before
     // the main browser finishes loading.
-    LOG_INFO(LOG_MAIN, "[FLOW] starting digest + dispatcher threads");
+    LOG_INFO(LOG_MAIN, "[FLOW] starting mpv digest thread");
     std::thread digest_thread(mpv_digest_thread);
-    dispatcher::start();
 
 #ifndef __APPLE__
     g_web_browser->waitForLoad();
@@ -368,8 +350,6 @@ static int run_with_cef(int mw, int mh,
     g_theme_color = nullptr;
     media_sink->stop();
 
-    dispatcher::stop();
-    dispatcher::shutdown();
     g_mpv.Wakeup();
     digest_thread.join();
 
@@ -725,8 +705,16 @@ int main(int argc, char* argv[]) {
 #endif
     auto consume = [&](mpv_event* ev) -> bool {
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            digest_property(ev->reply_userdata,
-                            static_cast<mpv_event_property*>(ev->data));
+            float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+            if (scale <= 0.f) scale = 1.0f;
+            bool has_macos_logical = false;
+            int  mac_lw = 0, mac_lh = 0;
+#ifdef __APPLE__
+            has_macos_logical = macos_platform::query_logical_content_size(
+                &mac_lw, &mac_lh);
+#endif
+            jfn_playback_ingest_mpv_event(
+                ev, scale, has_macos_logical, mac_lw, mac_lh);
             if (ev->reply_userdata == MPV_OBSERVE_WINDOW_MAX &&
                 mpv::window_maximized())
                 need_max = false;

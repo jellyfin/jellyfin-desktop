@@ -66,10 +66,6 @@ pub(crate) enum IngestOut {
     /// `mpv::display-hidpi-scale` changed. Forwarded to the
     /// browser-side `setScale` handler.
     DisplayScaleChanged(f64),
-    /// Mirrors `mpv::set_window_pixels` — the geometry-save cache wants
-    /// the latest device-pixel size we asked mpv for, independent of
-    /// the per-event OSD dims we feed the coordinator.
-    WindowPixels { pw: i32, ph: i32 },
     /// Terminal: libmpv has shut down. Caller breaks out of the event
     /// loop and triggers the rest of the app's teardown.
     Shutdown,
@@ -87,6 +83,11 @@ pub struct IngestState {
     window_maximized: AtomicBool,
     osd_pw: AtomicI64,
     osd_ph: AtomicI64,
+    /// Last device-pixel window size the app pushed (boot geometry,
+    /// runtime resize, or the most recent osd-dimensions event). Read
+    /// by the geometry-save tail at shutdown.
+    window_pw: AtomicI64,
+    window_ph: AtomicI64,
     /// `f64` bit pattern stored as `u64` — `AtomicF64` isn't stable.
     display_scale_bits: AtomicU64,
     display_hz_bits: AtomicU64,
@@ -109,17 +110,50 @@ impl IngestState {
     pub fn osd_ph(&self) -> i32 {
         self.osd_ph.load(Ordering::Relaxed) as i32
     }
+    pub fn window_pw(&self) -> i32 {
+        self.window_pw.load(Ordering::Relaxed) as i32
+    }
+    pub fn window_ph(&self) -> i32 {
+        self.window_ph.load(Ordering::Relaxed) as i32
+    }
+    pub fn set_window_pixels(&self, pw: i32, ph: i32) {
+        self.window_pw.store(pw as i64, Ordering::Relaxed);
+        self.window_ph.store(ph as i64, Ordering::Relaxed);
+    }
     pub fn display_scale(&self) -> f64 {
         f64::from_bits(self.display_scale_bits.load(Ordering::Relaxed))
     }
     pub fn display_hz(&self) -> f64 {
         f64::from_bits(self.display_hz_bits.load(Ordering::Relaxed))
     }
+    pub fn set_display_hz(&self, hz: f64) {
+        self.display_hz_bits.store(hz.to_bits(), Ordering::Relaxed);
+    }
 }
 
 /// Decode one [`Event`] into zero or more [`IngestOut`]s. Mirrors
 /// `mpv_digest_thread` in `src/main.cpp` plus `digest_property` in
 /// `src/mpv/event.cpp`.
+/// Re-exported under stable FFI-facing name for [`crate::ingest_driver`].
+pub(crate) fn ingest_event_for_ffi<C: IngestCtx>(
+    event: &Event,
+    state: &IngestState,
+    ctx: &C,
+) -> Vec<IngestOut> {
+    ingest(event, state, ctx)
+}
+
+/// Run only the property-digest path. Used by the Wayland fast path
+/// that synthesizes osd-dimension updates outside the mpv event stream.
+pub(crate) fn ingest_property_for_ffi<C: IngestCtx>(
+    id: ObserveId,
+    value: &PropertyValue,
+    state: &IngestState,
+    ctx: &C,
+) -> Vec<IngestOut> {
+    digest_property(id, value, state, ctx)
+}
+
 pub(crate) fn ingest<C: IngestCtx>(
     event: &Event,
     state: &IngestState,
@@ -283,10 +317,10 @@ fn digest_osd_dims<C: IngestCtx>(
     if lw <= 0 || lh <= 0 {
         return Vec::new();
     }
-    vec![
-        IngestOut::Input(Input::OsdDims { lw, lh, pw, ph }),
-        IngestOut::WindowPixels { pw, ph },
-    ]
+    // Keep the effective-pixel cache current so a later geometry save
+    // reads the latest resize rather than the boot-time seed.
+    state.set_window_pixels(pw, ph);
+    vec![IngestOut::Input(Input::OsdDims { lw, lh, pw, ph })]
 }
 
 fn digest_cache_state(value: &PropertyValue) -> Vec<IngestOut> {
@@ -455,17 +489,15 @@ mod tests {
             &state,
             &ctx(2.0),
         );
-        assert_eq!(out.len(), 2);
+        assert_eq!(out.len(), 1);
         let IngestOut::Input(Input::OsdDims { lw, lh, pw, ph }) = out[0] else {
             panic!("expected OsdDims");
         };
         assert_eq!((lw, lh, pw, ph), (1920, 1080, 3840, 2160));
-        let IngestOut::WindowPixels { pw, ph } = out[1] else {
-            panic!("expected WindowPixels");
-        };
-        assert_eq!((pw, ph), (3840, 2160));
         assert_eq!(state.osd_pw(), 3840);
         assert_eq!(state.osd_ph(), 2160);
+        assert_eq!(state.window_pw(), 3840);
+        assert_eq!(state.window_ph(), 2160);
     }
 
     #[test]

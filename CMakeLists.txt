@@ -575,7 +575,6 @@ if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
         src/cli.cpp
-        src/event_dispatcher.cpp
         src/shutdown.cpp
         src/single_instance.cpp
         src/mpv/event.cpp
@@ -600,7 +599,6 @@ else()
     set(COMMON_SOURCES
         src/main.cpp
         src/cli.cpp
-        src/event_dispatcher.cpp
         src/shutdown.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
