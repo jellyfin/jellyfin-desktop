@@ -618,29 +618,3 @@ mod tests {
     }
 }
 
-/// Validate that a Jellyfin /System/Info/Public response body is a JSON
-/// object with a non-empty string `Id` field. Used at server-probe time to
-/// distinguish real Jellyfin servers from arbitrary HTTP responders that
-/// happen to return 200 OK.
-///
-/// # Safety
-/// `body` must point to at least `len` bytes of readable memory (need not be
-/// NUL-terminated). Passing a null pointer or zero length returns false.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_is_valid_public_info(
-    body: *const c_char,
-    len: usize,
-) -> bool {
-    if body.is_null() || len == 0 {
-        return false;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(body as *const u8, len) };
-    let Ok(v) = serde_json::from_slice::<Value>(slice) else {
-        return false;
-    };
-    let Some(o) = v.as_object() else { return false };
-    o.get("Id")
-        .and_then(Value::as_str)
-        .map(|s| !s.is_empty())
-        .unwrap_or(false)
-}

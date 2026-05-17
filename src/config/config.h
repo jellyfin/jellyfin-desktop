@@ -72,10 +72,6 @@ char* jfn_settings_cli_json(const char* platform_default,
 
 void jfn_settings_free_string(char* s);
 
-// Validate a Jellyfin /System/Info/Public response body: returns true iff the
-// body is a JSON object containing a non-empty string `Id` field.
-bool jfn_jellyfin_is_valid_public_info(const char* body, size_t len);
-
 #ifdef __cplusplus
 }
 #endif

@@ -116,7 +116,7 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
     d->SetList("functions", fns);
     d->SetList("scripts", scripts);
-    const std::string& profile_json = jellyfin_device_profile::CachedJson();
+    std::string profile_json = jellyfin_device_profile::CachedJson();
     if (!profile_json.empty())
         d->SetString("device_profile_json", profile_json);
     return d;
