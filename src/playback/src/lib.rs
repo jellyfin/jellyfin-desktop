@@ -6,8 +6,9 @@
 //! non-blocking: sinks own their own consumer threads.
 
 mod coordinator;
-mod dispatcher;
 mod ffi;
+mod ingest;
+mod ingest_driver;
 mod mpris;
 mod state_machine;
 mod types;

@@ -1,0 +1,19 @@
+[package]
+name = "jfn-mpv"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_mpv"
+crate-type = ["rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+jfn-color = { path = "../color" }
+libc = "0.2"
+tracing = "0.1"
+
+[build-dependencies]
+bindgen = "0.71"
+pkg-config = "0.3"

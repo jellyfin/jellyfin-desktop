@@ -399,6 +399,11 @@ add_custom_command(
         CARGO_TARGET_DIR=${JFN_RUST_TARGET_DIR}
         "CFLAGS=$ENV{CFLAGS} -ffat-lto-objects"
         "CXXFLAGS=$ENV{CXXFLAGS} -ffat-lto-objects"
+        # Forward libmpv / libavcodec discovery paths to jfn-mpv's
+        # build.rs. On Windows pkg-config can't find these from the
+        # cmd.exe shell that runs cmake; the build.rs falls back to
+        # these env overrides (see src/mpv/build.rs).
+        "EXTERNAL_MPV_DIR=${EXTERNAL_MPV_DIR}"
         ${CARGO_EXECUTABLE} build --release --manifest-path ${JFN_RUST_DIR}/Cargo.toml
     DEPENDS ${JFN_RUST_SOURCES}
     COMMENT "Building jfn-rust (Rust workspace)"
@@ -575,7 +580,6 @@ if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
         src/cli.cpp
-        src/event_dispatcher.cpp
         src/shutdown.cpp
         src/single_instance.cpp
         src/mpv/event.cpp
@@ -600,7 +604,6 @@ else()
     set(COMMON_SOURCES
         src/main.cpp
         src/cli.cpp
-        src/event_dispatcher.cpp
         src/shutdown.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp

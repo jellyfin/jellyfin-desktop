@@ -5,7 +5,7 @@
 #include "../../browser/web_browser.h"
 #include "../../browser/overlay_browser.h"
 #include "../../browser/about_browser.h"
-#include "../../event_dispatcher.h"
+#include "../../shutdown.h"
 #include "../../logging.h"
 #include "../../platform/platform.h"
 

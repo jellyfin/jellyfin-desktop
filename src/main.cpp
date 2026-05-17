@@ -19,6 +19,7 @@
 #include "mpv/event.h"
 #include "mpv/options.h"
 #include "mpv/capabilities.h"
+#include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
 #include "paths/paths.h"
 #include "settings.h"
@@ -37,11 +38,12 @@
 #include "logging.h"
 #include "signal_guard.h"
 #include "shutdown.h"
-#include "event_dispatcher.h"
+#include "playback/jfn_ingest.h"
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #include <signal.h>
+#include "platform/macos_platform.h"
 #else
 #include "single_instance.h"
 #endif
@@ -81,6 +83,9 @@ Platform g_platform{};
 WebBrowser* g_web_browser = nullptr;
 // g_browsers is defined in src/browser/browsers.cpp.
 
+// Boot-time mpv log forwarder. Used only by the pre-CEF event loop;
+// the Rust-owned event thread routes its own log messages via
+// jfn_mpv::forward_log_to_tracing.
 static void log_mpv_message(const mpv_event_log_message* msg) {
     switch (msg->log_level) {
     case MPV_LOG_LEVEL_FATAL:
@@ -94,67 +99,36 @@ static void log_mpv_message(const mpv_event_log_message* msg) {
         LOG_DEBUG(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
     case MPV_LOG_LEVEL_DEBUG:
         LOG_TRACE(LOG_MPV, "{}: {}", msg->prefix, msg->text); break;
-    default: // unexpected (e.g. TRACE — we cap subscription at debug) or new mpv level
+    default:
         LOG_WARN(LOG_MPV, "[unhandled mpv level {}] {}: {}",
                  (int)msg->log_level, msg->prefix, msg->text); break;
     }
 }
 
-static void mpv_digest_thread() {
-    while (!g_shutting_down.load(std::memory_order_relaxed)) {
-        mpv_event* ev = g_mpv.WaitEvent(-1);
-        if (ev->event_id == MPV_EVENT_NONE) continue;
+// Callbacks consumed by the Rust-owned mpv event thread. The platform
+// vtable + macOS query_logical_content_size aren't bridged into Rust,
+// so jfn_playback_set_*_provider wires them through here.
 
-        if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
-            continue;
-        }
-
-        if (ev->event_id == MPV_EVENT_SHUTDOWN) {
-            LOG_INFO(LOG_MAIN, "MPV_EVENT_SHUTDOWN received");
-            MpvEvent se{MpvEventType::SHUTDOWN};
-            publish(se);
-            initiate_shutdown();
-            return;
-        }
-
-        if (ev->event_id == MPV_EVENT_FILE_LOADED) {
-            MpvEvent fe{MpvEventType::FILE_LOADED};
-            publish(fe);
-            continue;
-        }
-
-        if (ev->event_id == MPV_EVENT_END_FILE) {
-            auto* d = static_cast<mpv_event_end_file*>(ev->data);
-            MpvEvent fe{};
-            if (d->reason == MPV_END_FILE_REASON_EOF)
-                fe.type = MpvEventType::END_FILE_EOF;
-            else if (d->reason == MPV_END_FILE_REASON_STOP)
-                fe.type = MpvEventType::END_FILE_CANCEL;
-            else {
-                fe.type = MpvEventType::END_FILE_ERROR;
-                // mpv_error_string returns a pointer to a static, never-freed
-                // string — safe to carry across threads via MpvEvent.
-                fe.err_msg = mpv_error_string(d->error);
-            }
-            publish(fe);
-            continue;
-        }
-
-        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            auto* p = static_cast<mpv_event_property*>(ev->data);
-            MpvEvent me = digest_property(ev->reply_userdata, p);
-            if (me.type == MpvEventType::NONE) continue;
-            if (me.type == MpvEventType::OSD_DIMS) {
-                if (me.lw <= 0 || me.lh <= 0) continue;
-            }
-            if (me.type == MpvEventType::FULLSCREEN) {
-                g_platform.set_fullscreen(me.flag);
-            }
-            publish(me);
-        }
-    }
+static float mpv_event_scale_provider() {
+    float s = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+    return s > 0.f ? s : 1.0f;
 }
+
+#ifdef __APPLE__
+static bool mpv_event_macos_logical(int* lw, int* lh) {
+    return macos_platform::query_logical_content_size(lw, lh);
+}
+#endif
+
+static void mpv_event_fullscreen_handler(bool fs) {
+    if (g_platform.set_fullscreen) g_platform.set_fullscreen(fs);
+}
+
+static void mpv_event_shutdown_handler() {
+    LOG_INFO(LOG_MAIN, "MPV_EVENT_SHUTDOWN received");
+    initiate_shutdown();
+}
+
 
 
 // Shutdown order (reverse of declaration):
@@ -329,17 +303,24 @@ static int run_with_cef(int mw, int mh,
     playback::register_event_sink(media_sink);
     media_sink->start();
     playback::register_action_sink(mpv_action_sink);
-    dispatcher::init();
-    dispatcher::set_display_scale_handler([](double s) {
+    jfn_playback_set_display_scale_handler([](double s) {
         if (g_browsers && s > 0) g_browsers->setScale(s);
     });
+    jfn_playback_set_scale_provider(&mpv_event_scale_provider);
+#ifdef __APPLE__
+    jfn_playback_set_macos_logical_provider(&mpv_event_macos_logical);
+#endif
+    jfn_playback_set_fullscreen_handler(&mpv_event_fullscreen_handler);
+    jfn_playback_set_shutdown_handler(&mpv_event_shutdown_handler);
 
     // Start before waitForLoad so mpv events (OSD_DIMS especially) reach
     // the platform/browsers during the overlay-only startup phase, before
     // the main browser finishes loading.
-    LOG_INFO(LOG_MAIN, "[FLOW] starting digest + dispatcher threads");
-    std::thread digest_thread(mpv_digest_thread);
-    dispatcher::start();
+    LOG_INFO(LOG_MAIN, "[FLOW] starting Rust-owned mpv event thread");
+    if (!jfn_playback_start_mpv_event_thread()) {
+        LOG_ERROR(LOG_MAIN, "failed to start mpv event thread");
+        return 1;
+    }
 
 #ifndef __APPLE__
     g_web_browser->waitForLoad();
@@ -368,10 +349,7 @@ static int run_with_cef(int mw, int mh,
     g_theme_color = nullptr;
     media_sink->stop();
 
-    dispatcher::stop();
-    dispatcher::shutdown();
-    g_mpv.Wakeup();
-    digest_thread.join();
+    jfn_playback_stop_mpv_event_thread();
 
     // Producers have joined; coordinator drains any in-flight inputs and
     // stops via PlaybackCoordinatorScope dtor at end of scope.
@@ -590,28 +568,15 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    g_mpv = MpvHandle::Create(g_platform.display);
-    if (!g_mpv.IsValid()) { LOG_ERROR(LOG_MAIN, "mpv_create failed"); return 1; }
-
-    // libmpv defaults config=no (opposite of the mpv CLI); enable it so
-    // users' $MPV_HOME/mpv.conf is loaded.
-    g_mpv.SetOptionString("config", "yes");
-
-    // We only ever feed mpv direct media URLs from the Jellyfin server;
-    // the youtube-dl/yt-dlp hook would just add startup latency and a
-    // failure mode for nothing.
-    g_mpv.SetOptionString("ytdl", "no");
-
-    g_mpv.SetOptionString("user-agent", APP_USER_AGENT);
-
-    g_mpv.SetHwdec(args.hwdec);
-
     // Restore saved window geometry. mpv's --geometry is always physical
     // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
     // assigns gm->w/h to widw/widh without applying dpi_scale), so we pass
     // physical pixels here. If the live display scale differs from what
     // these pixels were computed against, the post-CEF-init resize block
     // below corrects the window size once display-hidpi-scale is known.
+    std::string boot_geometry;
+    bool boot_force_position = false;
+    bool boot_window_max = false;
     {
         using WG = Settings::WindowGeometry;
         auto saved_geom = Settings::instance().windowGeometry();
@@ -633,14 +598,12 @@ int main(int argc, char* argv[]) {
 
         if (g_platform.clamp_window_geometry)
             g_platform.clamp_window_geometry(&w, &h, &x, &y);
-        std::string geom_str = std::to_string(w) + "x" + std::to_string(h);
+        boot_geometry = std::to_string(w) + "x" + std::to_string(h);
         if (x >= 0 && y >= 0) {
-            geom_str += "+" + std::to_string(x) + "+" + std::to_string(y);
-            g_mpv.SetOptionString("force-window-position", "yes");
+            boot_geometry += "+" + std::to_string(x) + "+" + std::to_string(y);
+            boot_force_position = true;
         }
-        g_mpv.SetOptionString("geometry", geom_str);
-        if (saved_geom.maximized)
-            g_mpv.SetOptionString("window-maximized", "yes");
+        boot_window_max = saved_geom.maximized;
     }
 
     if (!args.audio_passthrough.empty()) {
@@ -660,25 +623,40 @@ int main(int argc, char* argv[]) {
             }
             args.audio_passthrough = filtered;
         }
-        g_mpv.SetAudioSpdif(args.audio_passthrough);
     }
-    if (args.audio_exclusive)
-        g_mpv.SetAudioExclusive(true);
-    if (!args.audio_channels.empty())
-        g_mpv.SetAudioChannels(args.audio_channels);
 
-    // Register property observations before mpv_initialize. On macOS,
-    // core_thread races to DispatchQueue.main.sync immediately after init
-    // returns — main must enter the GCD pump loop without delay.
-    g_mpv.SetWakeupCallback([](void*) {}, nullptr);
+    // Pick the libmpv log subscription level to match what jfn-logging
+    // would actually surface for LOG_MPV. Cap at "debug"; mpv's "trace"
+    // is extreme and not worth the IPC. mpv's "v" maps to our Debug;
+    // mpv's "debug" maps to our Trace.
+    const char* mpv_log_level = "no";
+    if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Trace))      mpv_log_level = "debug";
+    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Debug)) mpv_log_level = "v";
+    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Info))  mpv_log_level = "info";
+    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Warn))  mpv_log_level = "warn";
+    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Error)) mpv_log_level = "error";
+
+    JfnMpvBoot boot{};
+    boot.display_backend          = static_cast<uint8_t>(g_platform.display);
+    boot.hwdec                    = args.hwdec.c_str();
+    boot.user_agent               = APP_USER_AGENT;
+    boot.audio_passthrough        = args.audio_passthrough.empty()
+                                  ? nullptr : args.audio_passthrough.c_str();
+    boot.audio_exclusive          = args.audio_exclusive;
+    boot.audio_channels           = args.audio_channels.empty()
+                                  ? nullptr : args.audio_channels.c_str();
+    boot.geometry                 = boot_geometry.c_str();
+    boot.force_window_position    = boot_force_position;
+    boot.window_maximized_at_boot = boot_window_max;
+    boot.mpv_log_level            = mpv_log_level;
+
+    mpv_handle* raw = jfn_mpv_handle_init(&boot);
+    if (!raw) { LOG_ERROR(LOG_MAIN, "mpv handle init failed"); return 1; }
+    g_mpv.Set(raw);
+
+    // Register property observations after init — observe_properties
+    // is post-init-safe and reaches mpv through the wrapped pointer.
     observe_properties(g_mpv, g_platform.display);
-
-    int init_err = g_mpv.Initialize();
-    if (init_err < 0) {
-        LOG_ERROR(LOG_MAIN, "mpv_initialize failed: {}", init_err);
-        return 1;
-    }
-    g_mpv.SetLogLevel();
 
     // Capture user's mpv.conf bg, then force startup color. Safe here:
     // force-window=yes (not "immediate") defers VO creation, so the user's
@@ -725,8 +703,16 @@ int main(int argc, char* argv[]) {
 #endif
     auto consume = [&](mpv_event* ev) -> bool {
         if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            digest_property(ev->reply_userdata,
-                            static_cast<mpv_event_property*>(ev->data));
+            float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+            if (scale <= 0.f) scale = 1.0f;
+            bool has_macos_logical = false;
+            int  mac_lw = 0, mac_lh = 0;
+#ifdef __APPLE__
+            has_macos_logical = macos_platform::query_logical_content_size(
+                &mac_lw, &mac_lh);
+#endif
+            jfn_playback_ingest_mpv_event(
+                ev, scale, has_macos_logical, mac_lw, mac_lh);
             if (ev->reply_userdata == MPV_OBSERVE_WINDOW_MAX &&
                 mpv::window_maximized())
                 need_max = false;
