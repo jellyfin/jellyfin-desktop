@@ -8,6 +8,7 @@ RUN dnf -y upgrade && \
     dnf -y install \
         gcc gcc-c++ make cmake git ninja-build meson python3 pkgconf-pkg-config \
         cargo rust \
+        clang-devel \
         glibc-devel \
         alsa-lib-devel at-spi2-core-devel at-spi2-atk-devel atk-devel cairo-devel cups-devel \
         libXcomposite-devel libXdamage-devel libxkbcommon-devel \
