@@ -5,3 +5,7 @@
 // need this header's other helpers.
 
 void signal_handler(int);
+
+// Set by BrowserPlaybackSink on FullscreenChanged events; read by the
+// geometry-save tail in main.cpp at shutdown.
+extern bool g_was_maximized_before_fullscreen;
