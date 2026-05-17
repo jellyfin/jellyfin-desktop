@@ -18,7 +18,7 @@
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && window._isFullscreen) {
-            document.exitFullscreen().catch(() => {});
+            window.jmpNative.toggleFullscreen();
         }
     });
 
