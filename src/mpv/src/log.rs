@@ -1,5 +1,6 @@
-//! libmpv log-level mapping.
+//! libmpv log-level mapping and forwarding to `tracing`.
 
+use crate::event::LogMessage;
 use crate::sys;
 
 /// libmpv log severities, in the order libmpv defines them. `Off` disables
@@ -47,5 +48,40 @@ impl LogLevel {
             sys::mpv_log_level::MPV_LOG_LEVEL_TRACE => LogLevel::Trace,
             _ => LogLevel::Off,
         }
+    }
+}
+
+/// Forward an `MPV_EVENT_LOG_MESSAGE` payload to `tracing` under target
+/// `"mpv"`. Level mapping mirrors the historical C++ `log_mpv_message`:
+/// mpv's `v` lands at DEBUG and mpv's `debug` lands at TRACE so the
+/// console isn't flooded at default verbosity. Unknown/`trace` levels
+/// surface as WARN with an unhandled-level marker.
+pub fn forward_to_tracing(msg: &LogMessage) {
+    let text = msg.text.trim_end_matches(['\r', '\n']);
+    let prefix = msg.prefix.as_str();
+    match msg.level {
+        LogLevel::Fatal | LogLevel::Error => {
+            tracing::event!(target: "mpv", tracing::Level::ERROR, "{}: {}", prefix, text)
+        }
+        LogLevel::Warn => {
+            tracing::event!(target: "mpv", tracing::Level::WARN, "{}: {}", prefix, text)
+        }
+        LogLevel::Info => {
+            tracing::event!(target: "mpv", tracing::Level::INFO, "{}: {}", prefix, text)
+        }
+        LogLevel::Verbose => {
+            tracing::event!(target: "mpv", tracing::Level::DEBUG, "{}: {}", prefix, text)
+        }
+        LogLevel::Debug => {
+            tracing::event!(target: "mpv", tracing::Level::TRACE, "{}: {}", prefix, text)
+        }
+        LogLevel::Trace | LogLevel::Off => tracing::event!(
+            target: "mpv",
+            tracing::Level::WARN,
+            "[unhandled mpv level {:?}] {}: {}",
+            msg.level,
+            prefix,
+            text
+        ),
     }
 }
