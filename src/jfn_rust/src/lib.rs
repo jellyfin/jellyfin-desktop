@@ -18,4 +18,7 @@ pub use jfn_wake_event::*;
 pub use jfn_signal_guard::*;
 
 #[cfg(target_os = "linux")]
+pub use jfn_wayland_scale_probe::*;
+
+#[cfg(target_os = "linux")]
 pub use jfn_wlproxy::*;

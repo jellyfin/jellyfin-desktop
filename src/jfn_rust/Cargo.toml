@@ -21,4 +21,5 @@ jfn-wake-event = { path = "../wake_event" }
 jfn-signal-guard = { path = "../signal_guard" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+jfn-wayland-scale-probe = { path = "../wayland_scale_probe" }
 jfn-wlproxy = { path = "../wlproxy" }

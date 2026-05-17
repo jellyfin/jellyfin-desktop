@@ -10,6 +10,7 @@ members = [
     "signal_guard",
     "single_instance",
     "wake_event",
+    "wayland_scale_probe",
     "wlproxy",
 ]
 
