@@ -42,6 +42,34 @@ if (-not $env:VSINSTALLDIR) {
     }
 }
 
+# bindgen (used by jfn-mpv's build.rs) dlopens libclang at build time.
+# The mingw-w64-clang-*-llvm package ships libclang.dll under msys64's
+# msystem prefix; point bindgen at it (mirrors .github/workflows/build-windows.yml).
+if (-not $env:LIBCLANG_PATH) {
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
+    if ($arch -eq "arm64") {
+        $MsysBin = "C:\msys64\clangarm64\bin"
+        $Triple = "aarch64-pc-windows-msvc"
+    } else {
+        $MsysBin = "C:\msys64\clang64\bin"
+        $Triple = "x86_64-pc-windows-msvc"
+    }
+    if (Test-Path (Join-Path $MsysBin "libclang.dll")) {
+        $env:LIBCLANG_PATH = $MsysBin
+        # mingw's libclang doesn't auto-pick the MSVC target triple, so pin it
+        # so MSVC's arch-specific headers parse against the right default.
+        if (-not $env:BINDGEN_EXTRA_CLANG_ARGS) {
+            $env:BINDGEN_EXTRA_CLANG_ARGS = "--target=$Triple"
+        }
+        # Append (not prepend) so MSVC compilers from vcvars stay primary.
+        $env:PATH = "$env:PATH;$MsysBin"
+    } else {
+        Write-Host "libclang.dll not found at $MsysBin" -ForegroundColor Red
+        Write-Host "Run 'just deps' or install mingw-w64-clang-*-llvm via MSYS2 pacman."
+        exit 1
+    }
+}
+
 # Clean if requested
 if ($Clean -and (Test-Path $BuildDir)) {
     Write-Host "Cleaning build directory..."
