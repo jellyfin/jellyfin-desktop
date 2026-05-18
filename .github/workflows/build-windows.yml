@@ -24,11 +24,13 @@ jobs:
             platform: windows64
             msystem: CLANG64
             pkg_prefix: mingw-w64-clang-x86_64
+            triple: x86_64-pc-windows-msvc
           - arch: arm64
             runner: windows-11-arm
             platform: windowsarm64
             msystem: CLANGARM64
             pkg_prefix: mingw-w64-clang-aarch64
+            triple: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -82,6 +84,10 @@ jobs:
           # at it explicitly.
           LIBCLANG_PATH: C:\msys64\${{ matrix.msystem }}\bin
           MSYS_BIN: C:\msys64\${{ matrix.msystem }}\bin
+          # mingw's libclang doesn't auto-pick the MSVC target triple, so
+          # MSVC's arch-specific headers (__int64, vcruntime intrinsics,
+          # etc.) get parsed against the wrong default target. Pin it.
+          BINDGEN_EXTRA_CLANG_ARGS: --target=${{ matrix.triple }}
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
           set "PATH=%PATH%;%MSYS_BIN%"
