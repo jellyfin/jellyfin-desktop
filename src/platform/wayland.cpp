@@ -410,8 +410,18 @@ static void wl_surface_set_visible(PlatformSurface* s, bool visible) {
 static void wl_fade_surface(PlatformSurface* s, float fade_sec,
                             std::function<void()> on_fade_start,
                             std::function<void()> on_complete) {
-    if (!s || !s->alpha || !s->surface) {
+    if (!s || !s->surface) {
         if (on_fade_start) on_fade_start();
+        if (on_complete) on_complete();
+        return;
+    }
+
+    // Compositor lacks wp_alpha_modifier_v1 (e.g. niri): can't animate alpha.
+    // Unmap the surface immediately so it doesn't linger on screen while the
+    // CEF browser tears down asynchronously after on_complete runs.
+    if (!s->alpha) {
+        if (on_fade_start) on_fade_start();
+        wl_surface_set_visible(s, false);
         if (on_complete) on_complete();
         return;
     }
