@@ -594,8 +594,11 @@ void CefLayer::reset() {
         // so we don't need to (and must not) clear it ourselves.
         CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
             // Go through create() so requested_url_ is cleared alongside the
-            // actual CreateBrowser call.
-            self->create("");
+            // actual CreateBrowser call. Skip during shutdown: CefShutdown()
+            // drains pending tasks, and creating a browser here would race
+            // with the shutdown teardown and cause a hang.
+            if (!g_shutting_down.load(std::memory_order_relaxed))
+                self->create("");
         })));
     });
 
