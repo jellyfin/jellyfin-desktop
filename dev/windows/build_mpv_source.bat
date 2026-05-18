@@ -6,4 +6,4 @@ if not defined VS_PATH (
     exit /b 1
 )
 call "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat"
-powershell -ExecutionPolicy Bypass -File "%~dp0build_mpv_source.ps1" %*
+"C:\Program Files\PowerShell\7\pwsh.exe" -ExecutionPolicy Bypass -File "%~dp0build_mpv_source.ps1" %*
