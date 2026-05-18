@@ -113,7 +113,8 @@ pacman -S --needed --noconfirm \
     $PkgPrefix-vulkan-loader \
     $PkgPrefix-shaderc \
     $PkgPrefix-spirv-cross \
-    $PkgPrefix-llvm
+    $PkgPrefix-llvm \
+    $PkgPrefix-tools
 "@ -Description "Installing MSYS2 dependencies"
 
 # Clean previous build if forcing
@@ -201,14 +202,18 @@ if ($env:VSINSTALLDIR -and (Get-Command lib.exe -ErrorAction SilentlyContinue)) 
 } else {
     $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $VsWhere) {
-        $VsPath = & $VsWhere -latest -products * -property installationPath
+        $VsPath = & $VsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
         $VcVars = Join-Path $VsPath "VC\Auxiliary\Build\vcvars64.bat"
         if (Test-Path $VcVars) {
-            cmd /c "`"$VcVars`" && set" | ForEach-Object {
+            $TempBat = Join-Path $env:TEMP "jfn_vcvars_mpv.bat"
+            Set-Content $TempBat -Value ('@call "' + $VcVars + '"') -Encoding ASCII
+            Add-Content $TempBat -Value '@set' -Encoding ASCII
+            cmd /c $TempBat | ForEach-Object {
                 if ($_ -match "^([^=]+)=(.*)$") {
                     [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
                 }
             }
+            Remove-Item $TempBat -ErrorAction SilentlyContinue
             if (Get-Command lib.exe -ErrorAction SilentlyContinue) {
                 $HasMsvc = $true
             }

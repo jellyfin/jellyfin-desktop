@@ -108,7 +108,13 @@ if (-not $SkipCef) {
 if (-not $SkipMpv) {
     Write-Host ""
     Write-Host "=== libmpv ===" -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot "build_mpv_source.ps1")
+    if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+        Write-Host "PowerShell 7 not found, installing via winget..." -ForegroundColor Yellow
+        winget install --source winget --accept-package-agreements --accept-source-agreements Microsoft.PowerShell
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
+    }
+    pwsh -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build_mpv_source.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "libmpv build failed" }
 }
 
 Write-Host ""

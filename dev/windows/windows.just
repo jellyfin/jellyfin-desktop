@@ -12,7 +12,7 @@ deps:
 
 [windows]
 build: deps
-    & 'dev/windows/build.bat'
+    & 'dev/windows/build.ps1'
 
 [windows]
 test: build
