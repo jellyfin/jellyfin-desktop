@@ -75,24 +75,57 @@ unsafe fn cstr_opt(p: *const c_char) -> Option<String> {
     Some(unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
 }
 
+/// Set a string option, tolerating options absent from the linked libmpv build
+/// (e.g. wayland-app-id on the windows build). Warns and continues on
+/// MPV_ERROR_OPTION_NOT_FOUND; propagates other errors after logging the name.
+fn set_option_or_skip(handle: &Handle, name: &str, value: &str) -> crate::error::Result<()> {
+    match handle.set_option_string(name, value) {
+        Ok(()) => Ok(()),
+        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 as i32 => {
+            tracing::warn!(target: "mpv", "option {} not supported by this libmpv build; skipping", name);
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(target: "mpv", "set_option_string({}={}) failed: {:?}", name, value, e);
+            Err(e)
+        }
+    }
+}
+
+/// Flag variant of [`set_option_or_skip`].
+fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::error::Result<()> {
+    match handle.set_option_flag(name, value) {
+        Ok(()) => Ok(()),
+        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 as i32 => {
+            tracing::warn!(target: "mpv", "option {} not supported by this libmpv build; skipping", name);
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(target: "mpv", "set_option_flag({}={}) failed: {:?}", name, value, e);
+            Err(e)
+        }
+    }
+}
+
 fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Result<()> {
     // Mirror src/mpv/handle.h `SetDefaults`.
+    let set = |name: &str, value: &str| set_option_or_skip(handle, name, value);
 
     // OSD/OSC off — CEF overlay handles all UI.
-    handle.set_option_string("osd-level", "0")?;
-    handle.set_option_string("osc", "no")?;
-    handle.set_option_string("display-tags", "")?;
+    set("osd-level", "0")?;
+    set("osc", "no")?;
+    set("display-tags", "")?;
 
     // Track selection is owned by Jellyfin. Disable mpv's heuristic
     // so unspecified tracks stay disabled instead of being auto-picked
     // by language / default-flag / codec scoring.
-    handle.set_option_string("track-auto-selection", "no")?;
+    set("track-auto-selection", "no")?;
 
     // Input: we own all devices and route through CEF.
-    handle.set_option_string("input-default-bindings", "no")?;
-    handle.set_option_string("input-vo-keyboard", "no")?;
-    handle.set_option_string("input-vo-cursor", "no")?;
-    handle.set_option_string("input-cursor", "no")?;
+    set("input-default-bindings", "no")?;
+    set("input-vo-keyboard", "no")?;
+    set("input-vo-cursor", "no")?;
+    set("input-cursor", "no")?;
 
     // X11's WM_DELETE_WINDOW routes through mpv's input system as
     // CLOSE_WIN — input-keyboard=no there drops it, breaking the
@@ -104,24 +137,24 @@ fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Res
     #[cfg(all(unix, not(target_os = "macos")))]
     let disable_input_keyboard = display == DisplayBackend::Wayland;
     if disable_input_keyboard {
-        handle.set_option_string("input-keyboard", "no")?;
+        set("input-keyboard", "no")?;
     }
     let _ = display; // referenced under cfg above; silence on other targets
 
     // Window behavior.
-    handle.set_option_string("stop-screensaver", "no")?;
-    handle.set_option_string("keepaspect-window", "no")?;
-    handle.set_option_string("auto-window-resize", "no")?;
-    handle.set_option_string("border", "yes")?;
-    handle.set_option_string("title", "Jellyfin Desktop")?;
-    handle.set_option_string("wayland-app-id", "org.jellyfin.JellyfinDesktop")?;
+    set("stop-screensaver", "no")?;
+    set("keepaspect-window", "no")?;
+    set("auto-window-resize", "no")?;
+    set("border", "yes")?;
+    set("title", "Jellyfin Desktop")?;
+    set("wayland-app-id", "org.jellyfin.JellyfinDesktop")?;
 
     // Keep window open when idle. `force-window=yes` (not "immediate")
     // avoids a macOS deadlock: "immediate" calls handle_force_window
     // inside `mpv_initialize`, which triggers `DispatchQueue.main.sync`
     // while the main thread is blocked in init.
-    handle.set_option_string("force-window", "yes")?;
-    handle.set_option_string("idle", "yes")?;
+    set("force-window", "yes")?;
+    set("idle", "yes")?;
 
     #[cfg(target_os = "macos")]
     unsafe {
@@ -148,39 +181,42 @@ fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Res
 }
 
 fn apply_boot_options(handle: &Handle, boot: &JfnMpvBoot) -> crate::error::Result<()> {
+    let set = |name: &str, value: &str| set_option_or_skip(handle, name, value);
+    let set_flag = |name: &str, value: bool| set_option_flag_or_skip(handle, name, value);
+
     // libmpv defaults config=no (opposite of the mpv CLI); enable it so
     // users' $MPV_HOME/mpv.conf is loaded.
-    handle.set_option_string("config", "yes")?;
+    set("config", "yes")?;
     // We only feed mpv direct media URLs from the Jellyfin server; the
     // youtube-dl/yt-dlp hook would just add startup latency.
-    handle.set_option_string("ytdl", "no")?;
+    set("ytdl", "no")?;
 
     if let Some(ua) = unsafe { cstr_opt(boot.user_agent) } {
-        handle.set_option_string("user-agent", &ua)?;
+        set("user-agent", &ua)?;
     }
     if let Some(hwdec) = unsafe { cstr_opt(boot.hwdec) } {
-        handle.set_option_string("hwdec", &hwdec)?;
+        set("hwdec", &hwdec)?;
     }
     if let Some(geom) = unsafe { cstr_opt(boot.geometry) } {
-        handle.set_option_string("geometry", &geom)?;
+        set("geometry", &geom)?;
     }
     if boot.force_window_position {
-        handle.set_option_string("force-window-position", "yes")?;
+        set("force-window-position", "yes")?;
     }
     if boot.window_maximized_at_boot {
-        handle.set_option_string("window-maximized", "yes")?;
+        set("window-maximized", "yes")?;
     }
     if let Some(spdif) = unsafe { cstr_opt(boot.audio_passthrough) } {
         if !spdif.is_empty() {
-            handle.set_option_string("audio-spdif", &spdif)?;
+            set("audio-spdif", &spdif)?;
         }
     }
     if boot.audio_exclusive {
-        handle.set_option_flag("audio-exclusive", true)?;
+        set_flag("audio-exclusive", true)?;
     }
     if let Some(ch) = unsafe { cstr_opt(boot.audio_channels) } {
         if !ch.is_empty() {
-            handle.set_option_string("audio-channels", &ch)?;
+            set("audio-channels", &ch)?;
         }
     }
     Ok(())
@@ -204,13 +240,18 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
 
     let handle = match Handle::create() {
         Ok(h) => h,
-        Err(_) => return ptr::null_mut(),
+        Err(e) => {
+            tracing::error!(target: "mpv", "mpv_create failed: {:?}", e);
+            return ptr::null_mut();
+        }
     };
 
-    if apply_defaults(&handle, display).is_err() {
+    if let Err(e) = apply_defaults(&handle, display) {
+        tracing::error!(target: "mpv", "apply_defaults failed: {:?}", e);
         return ptr::null_mut();
     }
-    if apply_boot_options(&handle, boot).is_err() {
+    if let Err(e) = apply_boot_options(&handle, boot) {
+        tracing::error!(target: "mpv", "apply_boot_options failed: {:?}", e);
         return ptr::null_mut();
     }
 
@@ -218,7 +259,8 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
     // shutdown. No-op closure matches the prior C++ behavior.
     handle.set_wakeup_callback(|| {});
 
-    if handle.initialize().is_err() {
+    if let Err(e) = handle.initialize() {
+        tracing::error!(target: "mpv", "mpv_initialize failed: {:?}", e);
         return ptr::null_mut();
     }
 
