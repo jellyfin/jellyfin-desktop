@@ -612,6 +612,7 @@ else()
         src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/cef/macos_pump.cpp
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
@@ -671,6 +672,15 @@ else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
 target_link_libraries(jellyfin-desktop PRIVATE jfn_rust)
+
+# Lock C++ CEF API version to match the cef-rs binding ABI used by jfn-cef
+# (cef-rs 148.1.0+147.0.14 → CEF_API_VERSION_LAST = 14700). Without this,
+# C++ defaults to CEF_API_VERSION_EXPERIMENTAL (999999) which has different
+# struct sizes — wrap fails with "Cannot wrap struct with invalid base.size"
+# at runtime when C++ and Rust hand objects across the CEF API boundary.
+target_compile_definitions(jellyfin-desktop PRIVATE
+    CEF_API_VERSION=14700
+)
 
 # When using external/system CEF, tell the app where to find resources
 if(EXTERNAL_CEF_DIR OR USE_SYSTEM_CEF)

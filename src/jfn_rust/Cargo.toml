@@ -9,6 +9,7 @@ name = "jfn_rust"
 crate-type = ["staticlib"]
 
 [dependencies]
+jfn-cef = { path = "../jfn_cef" }
 jfn-cli = { path = "../cli" }
 jfn-color = { path = "../color" }
 jfn-config = { path = "../config" }

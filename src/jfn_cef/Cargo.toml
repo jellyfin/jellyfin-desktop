@@ -1,0 +1,20 @@
+[package]
+name = "jfn-cef"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_cef"
+crate-type = ["rlib"]
+
+[dependencies]
+cef = { version = "=148.1.0", default-features = false }
+jfn-config = { path = "../config" }
+jfn-logging = { path = "../logging" }
+jfn-paths = { path = "../paths" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
