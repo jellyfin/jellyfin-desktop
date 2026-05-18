@@ -546,7 +546,6 @@ if(WIN32)
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
         src/cef/cef_app.cpp
-        src/cef/color.cpp
         src/cef/cef_client.cpp
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
@@ -568,7 +567,6 @@ else()
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
         src/cef/cef_app.cpp
-        src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/macos_pump.cpp
         src/browser/browsers.cpp

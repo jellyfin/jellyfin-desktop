@@ -9,7 +9,8 @@
 #include "../playback/coordinator.h"
 #include "../playback/event.h"
 #include "../theme_color.h"
-#include "../cef/color.h"
+#include "../color.h"
+#include "../color/color.h"
 #include "../input/dispatch.h"
 #include "include/cef_parser.h"
 #include "include/cef_values.h"
@@ -254,7 +255,7 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "themeColor") {
         std::string color = args->GetString(0).ToString();
         LOG_DEBUG(LOG_CEF, "themeColor IPC: {}", color.c_str());
-        if (g_theme_color) g_theme_color->onThemeColor(cef::parseColor(color));
+        if (g_theme_color) g_theme_color->onThemeColor(Color{jfn_cef_parse_color(color.c_str())});
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);
