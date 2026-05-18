@@ -535,46 +535,6 @@ else()
     endif()
 endif()
 
-# Embed JS shims into generated header
-set(JS_SHIMS
-    ${CMAKE_SOURCE_DIR}/src/web/native-shim.js
-    ${CMAKE_SOURCE_DIR}/src/web/mpv-player-base.js
-    ${CMAKE_SOURCE_DIR}/src/web/mpv-video-player.js
-    ${CMAKE_SOURCE_DIR}/src/web/mpv-audio-player.js
-    ${CMAKE_SOURCE_DIR}/src/web/input-plugin.js
-    ${CMAKE_SOURCE_DIR}/src/web/client-settings.js
-    ${CMAKE_SOURCE_DIR}/src/web/context-menu.js
-)
-set(EMBEDDED_JS_HEADER ${CMAKE_BINARY_DIR}/generated/embedded_js.h)
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated)
-
-add_custom_command(
-    OUTPUT ${EMBEDDED_JS_HEADER}
-    COMMAND ${CMAKE_COMMAND}
-        -DJS_FILES="${JS_SHIMS}"
-        -DOUTPUT_FILE=${EMBEDDED_JS_HEADER}
-        -P ${CMAKE_SOURCE_DIR}/cmake/embed_resources.cmake
-    DEPENDS ${JS_SHIMS}
-    COMMENT "Embedding JS shims"
-)
-add_custom_target(embedded_js DEPENDS ${EMBEDDED_JS_HEADER})
-
-# Embed ALL web resources into generated header
-set(EMBEDDED_RESOURCES_HEADER ${CMAKE_BINARY_DIR}/generated/embedded_resources.h)
-file(GLOB_RECURSE WEB_RESOURCE_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/web/*")
-
-add_custom_command(
-    OUTPUT ${EMBEDDED_RESOURCES_HEADER}
-    COMMAND ${CMAKE_COMMAND}
-        -DRESOURCE_DIR="${CMAKE_SOURCE_DIR}/src/web"
-        -DOUTPUT_FILE=${EMBEDDED_RESOURCES_HEADER}
-        -DBASE_URL="resources"
-        -P ${CMAKE_SOURCE_DIR}/cmake/embed_all_resources.cmake
-    DEPENDS ${WEB_RESOURCE_FILES}
-    COMMENT "Embedding web resources"
-)
-add_custom_target(embedded_resources DEPENDS ${EMBEDDED_RESOURCES_HEADER})
-
 # Common sources
 if(WIN32)
     set(COMMON_SOURCES
@@ -588,7 +548,6 @@ if(WIN32)
         src/cef/cef_app.cpp
         src/cef/color.cpp
         src/cef/cef_client.cpp
-        src/cef/resource_handler.cpp
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
@@ -611,7 +570,6 @@ else()
         src/cef/cef_app.cpp
         src/cef/color.cpp
         src/cef/cef_client.cpp
-        src/cef/resource_handler.cpp
         src/cef/macos_pump.cpp
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
@@ -649,7 +607,7 @@ set(FMT_DOC OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fmt EXCLUDE_FROM_ALL)
 
 # Ensure JS shims are embedded before compiling cef_app.cpp
-add_dependencies(jellyfin-desktop embedded_js embedded_resources generate_version)
+add_dependencies(jellyfin-desktop generate_version)
 
 target_include_directories(jellyfin-desktop PRIVATE
     ${CEF_INCLUDE_DIRS}

@@ -1,10 +1,8 @@
 #include "cef_app.h"
-#include "resource_handler.h"
-#include "include/cef_scheme.h"
 
-// Process bootstrap and App handlers are implemented in the jfn-cef Rust
-// crate. This translation unit is a thin C-ABI shim that preserves the
-// CefRuntime:: API used by main.cpp.
+// Process bootstrap, App handlers, and the app:// scheme resource handler
+// live in the jfn-cef Rust crate. This translation unit is a thin C-ABI
+// shim that preserves the CefRuntime:: API used by main.cpp.
 
 extern "C" {
 
@@ -15,19 +13,10 @@ void jfn_cef_set_disable_gpu_compositing(bool disable);
 #ifdef __linux__
 void jfn_cef_set_ozone_platform(const char* platform_utf8);
 #endif
-void jfn_cef_set_context_initialized_callback(void (*cb)());
 bool jfn_cef_initialize();
 void jfn_cef_shutdown();
 
 }  // extern "C"
-
-// Single seam from Rust back to C++ during the transition: the Rust App's
-// BrowserProcessHandler::OnContextInitialized invokes this; we register
-// the embedded scheme handler factory, which still lives in C++ alongside
-// resource_handler.cpp.
-static void on_context_initialized_trampoline() {
-    CefRegisterSchemeHandlerFactory("app", "", new EmbeddedSchemeHandlerFactory());
-}
 
 namespace CefRuntime {
 
@@ -54,7 +43,6 @@ void SetOzonePlatform(const std::string& platform) {
 #endif
 
 bool Initialize() {
-    jfn_cef_set_context_initialized_callback(&on_context_initialized_trampoline);
     return jfn_cef_initialize();
 }
 

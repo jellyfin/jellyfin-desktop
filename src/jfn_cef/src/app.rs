@@ -158,8 +158,9 @@ wrap_browser_process_handler! {
     impl BrowserProcessHandler {
         fn on_context_initialized(&self) {
             bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, "CEF context initialized");
-            // Hand off to C++. C++ side registers EmbeddedSchemeHandlerFactory
-            // and creates the initial browsers. Single seam during transition.
+            crate::resource::register();
+            // Optional C-side callback (kept for any future C++ context-init
+            // hooks; currently unused now that scheme registration is in Rust).
             if let Some(cb) = state::with_config(|c| c.on_context_initialized) {
                 cb();
             }

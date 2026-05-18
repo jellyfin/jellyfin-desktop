@@ -983,6 +983,7 @@ dependencies = [
  "jfn-logging",
  "jfn-paths",
  "libc",
+ "serde_json",
 ]
 
 [[package]]

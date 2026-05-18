@@ -15,9 +15,12 @@ mod embedded_js;
 pub mod ffi;
 #[cfg(target_os = "macos")]
 mod pump;
+mod resource;
 mod state;
 mod v8_handler;
 
 pub use ffi::*;
 
 pub const APP_VERSION: &str = env!("JFN_APP_VERSION");
+pub const APP_VERSION_FULL: &str = env!("JFN_APP_VERSION_FULL");
+pub const APP_CEF_VERSION: &str = env!("JFN_APP_CEF_VERSION");

@@ -30,14 +30,18 @@ unsafe extern "C" {
 
     fn jfn_log(category: u8, level: u8, msg: *const c_char, len: usize);
     fn jfn_log_enabled(category: u8, level: u8) -> bool;
+    fn jfn_log_active_path() -> *mut c_char;
+    fn jfn_log_free_string(s: *mut c_char);
 }
 
 // Category constants — must match the LogCategory enum in src/logging.h.
 pub const LOG_CEF: u8 = 2;
+pub const LOG_RESOURCE: u8 = 6;
 
 // Level constants — must match LogLevel in src/logging.h.
-pub const LEVEL_INFO: u8 = 2;
 pub const LEVEL_DEBUG: u8 = 1;
+pub const LEVEL_INFO: u8 = 2;
+pub const LEVEL_WARN: u8 = 3;
 
 fn take_c_string(s: *mut c_char, free: unsafe extern "C" fn(*mut c_char)) -> String {
     if s.is_null() {
@@ -98,4 +102,8 @@ pub fn log(category: u8, level: u8, msg: &str) {
 
 pub fn log_enabled(category: u8, level: u8) -> bool {
     unsafe { jfn_log_enabled(category, level) }
+}
+
+pub fn log_active_path() -> String {
+    take_c_string(unsafe { jfn_log_active_path() }, jfn_log_free_string)
 }
