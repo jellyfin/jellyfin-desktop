@@ -14,6 +14,9 @@
 #include <string>
 #include <vector>
 
+class Browsers;
+struct PlatformSurface;
+
 // Callback invoked for IPC messages from the renderer process.
 // Returns true if the message was handled.
 using MessageHandler = std::function<bool(const std::string& name,
@@ -31,25 +34,20 @@ using BeforeCloseCallback = std::function<void()>;
 using ContextMenuBuilder = std::function<void(CefRefPtr<CefMenuModel>)>;
 using ContextMenuDispatcher = std::function<bool(int command_id)>;
 
-// Render target callbacks — decouple the client from the platform layer.
-struct RenderTarget {
-    void (*present)(const CefAcceleratedPaintInfo& info);
-    void (*present_software)(const CefRenderHandler::RectList& dirty,
-                             const void* buffer, int w, int h);
-};
-
 // Generic CEF browser client — pure rendering, lifecycle, context menu,
 // keyboard. Business logic is injected via setMessageHandler / setCreatedCallback.
-// Used for both the main browser and overlay browser; the only difference
-// is the RenderTarget passed at construction.
+// CefLayer holds a generic PlatformSurface*; presents/resizes/visibility
+// route through g_platform.surface_*.
 class CefLayer : public CefClient, public CefRenderHandler,
                  public CefLifeSpanHandler, public CefLoadHandler,
                  public CefContextMenuHandler, public CefDisplayHandler,
                  public CefKeyboardHandler {
 public:
-    CefLayer(RenderTarget target, int w, int h, int pw, int ph)
-        : target_(target), width_(w), height_(h),
-          physical_w_(pw), physical_h_(ph) {}
+    CefLayer(Browsers& browsers, PlatformSurface* surface);
+    ~CefLayer() override;
+
+    void setName(std::string name) { name_ = std::move(name); }
+    const std::string& name() const { return name_; }
 
     void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
     void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
@@ -106,49 +104,60 @@ public:
                         CefRefPtr<CefRunContextMenuCallback>) override;
 
     void resize(int w, int h, int physical_w, int physical_h);
+    // Mirror of the renderer-side rAF deadline loop (cef_app.cpp). Each
+    // resize bumps a 5s sliding deadline; while live, periodic
+    // Invalidate(PET_VIEW) on TID_UI keeps the host nudging the renderer
+    // even when JS rAF wouldn't fire (e.g. when the page is static and
+    // the renderer skipped a compositor frame).
+    void kickInvalidateLoop();
     bool isClosed() const { return closed_; }
     bool isLoaded() const { return loaded_; }
     CefRefPtr<CefBrowser> browser() { return browser_; }
     void waitForClose();
     void waitForLoad();
     void execJs(const std::string& js);
+    void setRefreshRate(double hz);
+    void setVisible(bool visible);
+    void fade(float fade_sec,
+              std::function<void()> on_fade_start,
+              std::function<void()> on_complete);
 
-    // Create the underlying CEF browser. Stores wi/bs/extra_info for use in
-    // reset(). `extra_info` travels to the renderer's OnBrowserCreated and
-    // typically carries this browser's native-shim injection profile
-    // (jmpNative function list + script list); may be null.
-    void create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url,
-                CefRefPtr<CefDictionaryValue> extra_info = nullptr);
+    PlatformSurface* surface() const { return surface_; }
+
+    // Native-shim injection profile travels to the renderer's
+    // OnBrowserCreated; carries jmpNative function list + script list.
+    // Set once by the owning subclass; reused across reset() cycles.
+    void setInjectionProfile(CefRefPtr<CefDictionaryValue> p) { extra_info_ = std::move(p); }
+
+    // Create the underlying CEF browser. Builds CefWindowInfo and
+    // CefBrowserSettings from the Browsers display state.
+    void create(const std::string& url);
 
     // Tear down the current browser and recreate with no URL (blank).
-    // Asynchronous: the new browser is ready when OnAfterCreated fires.
-    // Safe to call before the initial create has completed, or while a
-    // previous reset is still in flight — subsequent calls are absorbed
-    // into the pending cycle.
     void reset();
 
-    // Navigate the current browser to `url`. If a reset is in flight or the
-    // initial create hasn't completed yet, the URL is buffered and applied
-    // when the browser becomes ready.
+    // Navigate the current browser to `url`.
     void loadUrl(const std::string& url);
 
+    // Called by Browsers when this layer stops being the input target,
+    // or just before its surface is freed. Tears down anything that
+    // shouldn't outlive active status — currently the popup.
+    void onDeactivated();
+
 private:
-    // Lifecycle states. Normal is the steady state; PendingReset means
-    // reset() was called before the initial OnAfterCreated and is waiting
-    // for it to fire so it can issue the close; Recreating means CloseBrowser
-    // has been issued (or is about to fire from the one-shot) and we're
-    // awaiting the blank replacement's OnAfterCreated.
     enum class State { Normal, PendingReset, Recreating };
 
-    RenderTarget target_;
-    int width_, height_;
-    int physical_w_, physical_h_;
+    Browsers& browsers_;
+    PlatformSurface* surface_ = nullptr;
+    std::string name_;
+    int width_ = 0, height_ = 0;
+    int physical_w_ = 0, physical_h_ = 0;
+    int frame_rate_ = 0;
+    // Popup state pairs 1:1 with its surface — each CefLayer owns its
+    // popup on the platform side (PlatformSurface gains popup fields per
+    // backend).
     CefRect popup_rect_;
     bool popup_visible_ = false;
-    // Native popup menu orchestration. OnPopupShow fires a renderer query
-    // for the focused <select>'s options; OnPopupSize delivers the rect.
-    // try_show_popup waits for both, then hands off to the platform's
-    // native menu (macOS) or the compositor popup subsurface (Wayland).
     std::vector<std::string> popup_options_;
     int popup_selected_idx_ = -1;
     bool popup_size_received_ = false;
@@ -170,10 +179,50 @@ private:
     BeforeCloseCallback on_before_close_;
     ContextMenuBuilder context_menu_builder_;
     ContextMenuDispatcher context_menu_dispatcher_;
-    CefWindowInfo window_info_;
-    CefBrowserSettings browser_settings_;
     CefRefPtr<CefDictionaryValue> extra_info_;
     State state_ = State::Normal;
     std::string pending_url_;
+    std::atomic<bool> invalidate_running_{false};
+    std::atomic<bool> invalidate_stop_{false};
+    int invalidate_tick_count_ = 0;
+    int saved_frame_rate_ = 0;  // TID_UI-only: nonzero while boosted
+    void invalidateTick();
+
+    // Debounced WasResized: many WM configures per drag would each fire
+    // a CEF re-layout. Wayland viewport (surface_resize) still applies
+    // immediately; only the CEF host notify is coalesced to one per
+    // display-refresh period.
+    std::atomic<bool> resize_scheduled_{false};
+    std::atomic<int64_t> last_was_resized_ns_{0};
+    void applyPendingResize();
+
+    // Per-FPS resize-recovery thresholds, computed at kick time from
+    // frame_rate_:
+    //   skip = ceil(fps / 20)         — drop the first N paints (partial /
+    //                                   placeholder while renderer relays out)
+    //   pump = skip + fps             — total paints before stopping the loop
+    //                                   (~1s of additional paints after skip)
+    int skip_paints_after_resize_ = 0;
+    int pump_paint_count_ = 0;
+    // Boost the CEF compositor rate by this factor while the nudge loop
+    // is live so post-resize convergence outpaces steady-state cadence.
+    static constexpr int kBoostMultiplier = 2;
+    // Last rate applied via setFrameRate; drives the invalidate tick
+    // cadence so the host nudge matches what the compositor will produce.
+    int current_frame_rate_ = 0;
+    void setFrameRate(int hz);
+    // Bumped on every resize(); noteStableSize requires the generation
+    // observed when its run started to still match — otherwise a resize
+    // landed mid-run and the stable-size signal is stale.
+    std::atomic<uint64_t> resize_gen_{0};
+    // Tracks the resize gen at the last paint dispatch; reset
+    // paints_since_resize_ when it advances.
+    uint64_t last_paint_gen_ = 0;
+    int paints_since_resize_ = 0;
+    // Wall-clock of the last paints_since_resize_ reset. Used to rate-
+    // clamp resets during continuous drags so the skip counter doesn't
+    // keep wiping before any paint clears the skip threshold.
+    int64_t last_skip_reset_ns_ = 0;
+    bool shouldPresentPaint();
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

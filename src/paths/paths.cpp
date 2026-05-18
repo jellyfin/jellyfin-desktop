@@ -1,30 +1,27 @@
 #include "paths/paths.h"
 
-
-#include <cstdlib>
-#include <filesystem>
-#include <system_error>
+#include "paths/jfn_paths.h"
 
 namespace paths {
 
-void ensureDir(const std::string& path) {
-    std::error_code ec;
-    std::filesystem::create_directories(path, ec);
+namespace {
+
+std::string take(char* (*fn)()) {
+    char* p = fn();
+    if (!p) return {};
+    std::string out(p);
+    jfn_paths_free(p);
+    return out;
 }
 
-std::string envOr(const char* var, std::string_view fallback) {
-    const char* v = std::getenv(var);
-    return (v && v[0]) ? std::string(v) : std::string(fallback);
-}
+}  // namespace
 
-std::string getLogPath() {
-    return getLogDir() + "/" + kLogFileName;
-}
+std::string getConfigDir() { return take(jfn_paths_config_dir); }
+std::string getCacheDir()  { return take(jfn_paths_cache_dir); }
+std::string getLogDir()    { return take(jfn_paths_log_dir); }
+std::string getLogPath()   { return take(jfn_paths_log_path); }
+std::string getMpvHome()   { return take(jfn_paths_mpv_home); }
 
-std::string getMpvHome() {
-    std::string dir = getConfigDir() + "/mpv";
-    ensureDir(dir);
-    return dir;
-}
+void openMpvHome() { jfn_paths_open_mpv_home(); }
 
 }  // namespace paths

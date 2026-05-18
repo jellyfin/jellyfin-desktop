@@ -6,16 +6,15 @@
 #include "../settings.h"
 #include "logging.h"
 #include "../mpv/event.h"
-#include "../player/media_session.h"
-#include "../player/media_session_thread.h"
+#include "../playback/coordinator.h"
+#include "../playback/event.h"
 #include "../theme_color.h"
 #include "../cef/color.h"
 #include "../input/dispatch.h"
-#include "../cjson/cJSON.h"
+#include "include/cef_parser.h"
+#include "include/cef_values.h"
 #include "../paths/paths.h"
 #include "../jellyfin/device_profile.h"
-
-extern void update_idle_inhibit();
 
 // =====================================================================
 // Helpers
@@ -23,38 +22,40 @@ extern void update_idle_inhibit();
 
 static MediaMetadata parseMetadataJson(const std::string& json) {
     MediaMetadata meta;
-    cJSON* root = cJSON_Parse(json.c_str());
-    if (!root) return meta;
+    CefRefPtr<CefValue> root = CefParseJSON(json, JSON_PARSER_RFC);
+    if (!root || root->GetType() != VTYPE_DICTIONARY) return meta;
+    CefRefPtr<CefDictionaryValue> d = root->GetDictionary();
+    if (!d) return meta;
 
-    cJSON* item;
-    if ((item = cJSON_GetObjectItem(root, "Name")) && cJSON_IsString(item))
-        meta.title = item->valuestring;
-    if ((item = cJSON_GetObjectItem(root, "SeriesName")) && cJSON_IsString(item))
-        meta.artist = item->valuestring;
-    if (meta.artist.empty()) {
-        if ((item = cJSON_GetObjectItem(root, "Artists")) && cJSON_IsArray(item)) {
-            cJSON* first = cJSON_GetArrayItem(item, 0);
-            if (first && cJSON_IsString(first))
-                meta.artist = first->valuestring;
-        }
+    auto getString = [&](const char* k) -> std::string {
+        return d->HasKey(k) && d->GetType(k) == VTYPE_STRING
+                   ? d->GetString(k).ToString()
+                   : std::string();
+    };
+
+    meta.id = getString("Id");
+    meta.title = getString("Name");
+    meta.artist = getString("SeriesName");
+    if (meta.artist.empty() && d->HasKey("Artists") && d->GetType("Artists") == VTYPE_LIST) {
+        CefRefPtr<CefListValue> arr = d->GetList("Artists");
+        if (arr && arr->GetSize() > 0 && arr->GetType(0) == VTYPE_STRING)
+            meta.artist = arr->GetString(0).ToString();
     }
-    if ((item = cJSON_GetObjectItem(root, "SeasonName")) && cJSON_IsString(item))
-        meta.album = item->valuestring;
-    if (meta.album.empty()) {
-        if ((item = cJSON_GetObjectItem(root, "Album")) && cJSON_IsString(item))
-            meta.album = item->valuestring;
+    meta.album = getString("SeasonName");
+    if (meta.album.empty()) meta.album = getString("Album");
+    if (d->HasKey("IndexNumber") && d->GetType("IndexNumber") == VTYPE_INT)
+        meta.track_number = d->GetInt("IndexNumber");
+    if (d->HasKey("RunTimeTicks")) {
+        auto t = d->GetType("RunTimeTicks");
+        double ticks = 0.0;
+        if (t == VTYPE_DOUBLE) ticks = d->GetDouble("RunTimeTicks");
+        else if (t == VTYPE_INT) ticks = static_cast<double>(d->GetInt("RunTimeTicks"));
+        meta.duration_us = static_cast<int64_t>(ticks) / 10;
     }
-    if ((item = cJSON_GetObjectItem(root, "IndexNumber")) && cJSON_IsNumber(item))
-        meta.track_number = item->valueint;
-    if ((item = cJSON_GetObjectItem(root, "RunTimeTicks")) && cJSON_IsNumber(item))
-        meta.duration_us = static_cast<int64_t>(item->valuedouble) / 10;
-    if ((item = cJSON_GetObjectItem(root, "Type")) && cJSON_IsString(item)) {
-        std::string type = item->valuestring;
-        if (type == "Audio") meta.media_type = MediaType::Audio;
-        else if (type == "Movie" || type == "Episode" || type == "Video" || type == "MusicVideo")
-            meta.media_type = MediaType::Video;
-    }
-    cJSON_Delete(root);
+    std::string type = getString("Type");
+    if (type == "Audio") meta.media_type = MediaType::Audio;
+    else if (type == "Movie" || type == "Episode" || type == "Video" || type == "MusicVideo")
+        meta.media_type = MediaType::Video;
     return meta;
 }
 
@@ -95,7 +96,6 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "notifyRateChange",
         "appExit", "setSettingValue", "themeColor",
         "setOsdVisible", "setCursorVisible", "toggleFullscreen",
-        "menuItemSelected", "menuDismissed",
     };
     static const char* const kScripts[] = {
         "native-shim.js",
@@ -104,7 +104,6 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
         "mpv-audio-player.js",
         "input-plugin.js",
         "client-settings.js",
-        "context-menu.js",
     };
 
     CefRefPtr<CefListValue> fns = CefListValue::Create();
@@ -117,27 +116,33 @@ CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
     CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
     d->SetList("functions", fns);
     d->SetList("scripts", scripts);
-    const std::string& profile_json = jellyfin_device_profile::CachedJson();
+    std::string profile_json = jellyfin_device_profile::CachedJson();
     if (!profile_json.empty())
         d->SetString("device_profile_json", profile_json);
     return d;
 }
 
-WebBrowser::WebBrowser(RenderTarget target, int w, int h, int pw, int ph)
-    : client_(new CefLayer(target, w, h, pw, ph))
+WebBrowser::WebBrowser(CefRefPtr<CefLayer> layer)
+    : layer_(std::move(layer))
 {
-    client_->setMessageHandler([this](const std::string& name,
-                                      CefRefPtr<CefListValue> args,
-                                      CefRefPtr<CefBrowser> browser) {
+    layer_->setName("web");
+    layer_->setMessageHandler([this](const std::string& name,
+                                     CefRefPtr<CefListValue> args,
+                                     CefRefPtr<CefBrowser> browser) {
         return handleMessage(name, args, browser);
     });
-    client_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
-        // Main browser takes input only if the overlay isn't currently active.
-        if (!g_overlay_browser)
-            input::set_active_browser(browser);
+    layer_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
+        // Main browser takes input only if no other layer has already
+        // claimed it (e.g. the server-selection overlay).
+        if (g_browsers && !g_browsers->active())
+            g_browsers->setActive(browser);
     });
-    client_->setContextMenuBuilder(&app_menu::build);
-    client_->setContextMenuDispatcher(&app_menu::dispatch);
+    layer_->setContextMenuBuilder(&app_menu::build);
+    layer_->setContextMenuDispatcher(&app_menu::dispatch);
+}
+
+WebBrowser::~WebBrowser() {
+    release_layer(layer_.get());
 }
 
 bool WebBrowser::handleMessage(const std::string& name,
@@ -156,11 +161,34 @@ bool WebBrowser::handleMessage(const std::string& name,
         // their audio-add / sub-add can be queued before the FILE_LOADED-
         // driven unpause, gating playback on each external file being
         // opened and its track selected.
+        std::string metadataJson = args->GetSize() > 5 ? args->GetString(5).ToString() : "";
         std::string externalAudioUrl = args->GetSize() > 6 ? args->GetString(6).ToString() : "";
         std::string externalSubUrl = args->GetSize() > 7 ? args->GetString(7).ToString() : "";
         bool isInfiniteStream = args->GetSize() > 8 ? args->GetBool(8) : false;
         LOG_INFO(LOG_CEF, "playerLoad: video={} audio={} sub={} start={}ms infinite={} extAudio={} extSub={} url={}",
                  videoIdx, audioIdx, subIdx, startMs, isInfiniteStream, externalAudioUrl.c_str(), externalSubUrl.c_str(), url.c_str());
+        // Push next-track metadata + load-starting hint atomically before
+        // mpv loadfile. Parse metadata first so the Jellyfin item Id can
+        // ride along with postLoadStarting — SM compares it to the prior
+        // Id to set snapshot.variant_switch_pending on same-item reload
+        // (bitrate / transcode-variant change). Coord seeds
+        // snapshot.position_us with the resume offset so MPRIS/JS see
+        // the start position before mpv has opened the file. Coord also
+        // swallows the resulting END_FILE for the outgoing track
+        // (no Stopped flicker); MPRIS sees phase=Starting with the new
+        // content immediately.
+        MediaMetadata meta = metadataJson.empty()
+            ? MediaMetadata{}
+            : parseMetadataJson(metadataJson);
+        if (g_playback_coord_running.load(std::memory_order_acquire)) {
+            playback::post_load_starting(meta.id);
+            playback::post_position(static_cast<int64_t>(startMs) * 1000);
+        }
+        if (!metadataJson.empty()) {
+            if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
+            if (g_playback_coord_running.load(std::memory_order_acquire))
+                playback::post_metadata(meta);
+        }
         MpvHandle::LoadOptions opts;
         opts.startSecs = startMs / 1000.0;
         opts.videoTrack = videoIdx;
@@ -230,34 +258,26 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);
-        g_media_type = meta.media_type;
         if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
-        update_idle_inhibit();
-        if (g_media_session)
-            g_media_session->setMetadata(meta);
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_metadata(meta);
     } else if (name == "notifyArtwork") {
         std::string artworkUri = args->GetString(0).ToString();
-        if (g_media_session) g_media_session->setArtwork(artworkUri);
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_artwork(artworkUri);
     } else if (name == "notifyQueueChange") {
         bool canNext = args->GetBool(0);
         bool canPrev = args->GetBool(1);
-        if (g_media_session) {
-            g_media_session->setCanGoNext(canNext);
-            g_media_session->setCanGoPrevious(canPrev);
-        }
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_queue_caps(canNext, canPrev);
     } else if (name == "notifyPlaybackState") {
-        std::string state = args->GetString(0).ToString();
-        if (g_media_session) {
-            if (state == "Playing") g_media_session->setPlaybackState(PlaybackState::Playing);
-            else if (state == "Paused") g_media_session->setPlaybackState(PlaybackState::Paused);
-            else g_media_session->setPlaybackState(PlaybackState::Stopped);
-        }
-        if (state != "Playing" && state != "Paused" && g_theme_color)
-            g_theme_color->setVideoMode(false);
+        // mpv is the authoritative playback-state source via the coordinator.
+        // JS still emits this hint as it navigates; ignore it for state but
+        // keep the IPC callable so the JS side does not see a missing handler.
     } else if (name == "notifySeek") {
         int posMs = getIntArg(args, 0);
-        if (g_media_session)
-            g_media_session->emitSeeked(static_cast<int64_t>(posMs) * 1000);
+        if (g_playback_coord_running.load(std::memory_order_acquire))
+            playback::post_seeked(static_cast<int64_t>(posMs) * 1000);
     } else if (name == "setCursorVisible") {
         g_platform.set_cursor(args->GetBool(0) ? CT_POINTER : CT_NONE);
     } else if (name == "appExit") {

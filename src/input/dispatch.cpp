@@ -3,6 +3,7 @@
 #include "input.h"
 #include "hotkeys.h"
 #include "logging.h"
+#include "../browser/browsers.h"
 
 #include "include/cef_browser.h"
 
@@ -11,15 +12,12 @@
 namespace input {
 namespace {
 
-std::mutex g_active_mtx;
-CefRefPtr<CefBrowser> g_active;  // guarded by g_active_mtx
-
 std::mutex g_last_pos_mtx;
-struct LastPos {
-    bool     valid = false;
-    int      x = 0, y = 0;
-    uint32_t modifiers = 0;
-} g_last_pos;  // guarded by g_last_pos_mtx
+LastMousePos g_last_pos;  // guarded by g_last_pos_mtx
+
+CefRefPtr<CefBrowser> active() {
+    return g_browsers ? g_browsers->active() : nullptr;
+}
 
 cef_mouse_button_type_t to_cef_button(MouseButton b) {
     switch (b) {
@@ -32,46 +30,15 @@ cef_mouse_button_type_t to_cef_button(MouseButton b) {
 
 }  // namespace
 
-CefRefPtr<CefBrowser> active_browser() {
-    std::lock_guard<std::mutex> lk(g_active_mtx);
-    return g_active;
-}
-
-void set_active_browser(CefRefPtr<CefBrowser> browser) {
-    CefRefPtr<CefBrowser> prev;
-    {
-        std::lock_guard<std::mutex> lk(g_active_mtx);
-        if (g_active.get() == browser.get()) return;
-        prev = g_active;
-        g_active = browser;
-    }
-    LOG_DEBUG(LOG_PLATFORM, "[INPUT] set_active_browser prev={} new={}",
-             static_cast<void*>(prev.get()), static_cast<void*>(browser.get()));
-    if (prev)    prev->GetHost()->SetFocus(false);
-    if (browser) browser->GetHost()->SetFocus(true);
-
-    // Leave-then-move forces the renderer to re-emit OnCursorChange even
-    // when its cached cursor matches the new hit-test result; otherwise the
-    // platform cursor stays on whatever the previous active browser set.
-    if (browser) {
-        LastPos pos;
-        {
-            std::lock_guard<std::mutex> lk(g_last_pos_mtx);
-            pos = g_last_pos;
-        }
-        if (pos.valid) {
-            CefMouseEvent me{};
-            me.x = pos.x; me.y = pos.y; me.modifiers = pos.modifiers;
-            browser->GetHost()->SendMouseMoveEvent(me, true);
-            browser->GetHost()->SendMouseMoveEvent(me, false);
-        }
-    }
+LastMousePos last_mouse_pos() {
+    std::lock_guard<std::mutex> lk(g_last_pos_mtx);
+    return g_last_pos;
 }
 
 void dispatch_key(const KeyEvent& e) {
     if (e.action == KeyAction::Down && hotkey_try_consume(e)) return;
 
-    auto b = active_browser();
+    auto b = active();
     if (!b) return;
 
     CefKeyEvent ce{};
@@ -89,7 +56,7 @@ void dispatch_char(uint32_t codepoint, uint32_t modifiers,
                    int native_key_code, bool is_system_key) {
     if (codepoint == 0 || codepoint >= 0x10FFFF) return;
 
-    auto b = active_browser();
+    auto b = active();
     if (!b) return;
 
     CefKeyEvent ce{};
@@ -103,7 +70,7 @@ void dispatch_char(uint32_t codepoint, uint32_t modifiers,
 }
 
 void dispatch_mouse_button(const MouseButtonEvent& e) {
-    auto b = active_browser();
+    auto b = active();
     if (!b) return;
     CefMouseEvent me{};
     me.x = e.x; me.y = e.y; me.modifiers = e.modifiers;
@@ -122,7 +89,7 @@ void dispatch_mouse_move(const MouseMoveEvent& e) {
             g_last_pos.modifiers = e.modifiers;
         }
     }
-    auto b = active_browser();
+    auto b = active();
     if (!b) return;
     CefMouseEvent me{};
     me.x = e.x; me.y = e.y; me.modifiers = e.modifiers;
@@ -130,7 +97,7 @@ void dispatch_mouse_move(const MouseMoveEvent& e) {
 }
 
 void dispatch_history_nav(bool forward) {
-    auto b = active_browser();
+    auto b = active();
     if (!b) return;
     if (forward) {
         if (b->CanGoForward()) b->GoForward();
@@ -140,7 +107,7 @@ void dispatch_history_nav(bool forward) {
 }
 
 void dispatch_scroll(const ScrollEvent& e) {
-    auto b = active_browser();
+    auto b = active();
     if (!b) return;
     CefMouseEvent me{};
     me.x = e.x; me.y = e.y;
@@ -150,7 +117,7 @@ void dispatch_scroll(const ScrollEvent& e) {
 }
 
 void dispatch_keyboard_focus(bool gained) {
-    auto b = active_browser();
+    auto b = active();
     if (b) b->GetHost()->SetFocus(gained);
 }
 

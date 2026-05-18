@@ -1,0 +1,19 @@
+id: g-web-browser-leak
+language: cpp
+severity: error
+message: >
+  `g_web_browser` is the *startup* main browser. Input, IPC dispatch, and
+  per-frame work must target the currently-active browser via
+  active_browser() — otherwise input bleeds into the wrong window when
+  About / overlay / popup browsers are active.
+files:
+  - "src/input/**/*.cpp"
+  - "src/input/**/*.h"
+  - "src/input/**/*.mm"
+  - "src/cef/cef_client.cpp"
+  - "src/browser/**/*.cpp"
+ignores:
+  - "src/main.cpp"
+  - "src/browser/browsers.cpp"
+rule:
+  pattern: g_web_browser

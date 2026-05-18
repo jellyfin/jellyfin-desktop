@@ -24,11 +24,13 @@ jobs:
             platform: windows64
             msystem: CLANG64
             pkg_prefix: mingw-w64-clang-x86_64
+            triple: x86_64-pc-windows-msvc
           - arch: arm64
             runner: windows-11-arm
             platform: windowsarm64
             msystem: CLANGARM64
             pkg_prefix: mingw-w64-clang-aarch64
+            triple: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -55,6 +57,7 @@ jobs:
           msystem: ${{ matrix.msystem }}
           install: >-
             ${{ matrix.pkg_prefix }}-cc
+            ${{ matrix.pkg_prefix }}-clang
             ${{ matrix.pkg_prefix }}-meson
             ${{ matrix.pkg_prefix }}-pkgconf
             ${{ matrix.pkg_prefix }}-ffmpeg
@@ -64,6 +67,7 @@ jobs:
             ${{ matrix.pkg_prefix }}-vulkan-loader
             ${{ matrix.pkg_prefix }}-shaderc
             ${{ matrix.pkg_prefix }}-spirv-cross
+            ${{ matrix.pkg_prefix }}-llvm
 
       - name: Build mpv from source
         shell: pwsh
@@ -72,8 +76,21 @@ jobs:
 
       - name: Configure and build
         shell: cmd
+        env:
+          # bindgen (used by jfn-mpv's build.rs) dlopens libclang at
+          # build time. The mingw-w64-clang-*-llvm package ships
+          # libclang.dll under the msystem prefix's bin/; cmd.exe
+          # doesn't pick that up from setup-msys2, so point bindgen
+          # at it explicitly.
+          LIBCLANG_PATH: C:\msys64\${{ matrix.msystem }}\bin
+          MSYS_BIN: C:\msys64\${{ matrix.msystem }}\bin
+          # mingw's libclang doesn't auto-pick the MSVC target triple, so
+          # MSVC's arch-specific headers (__int64, vcruntime intrinsics,
+          # etc.) get parsed against the wrong default target. Pin it.
+          BINDGEN_EXTRA_CLANG_ARGS: --target=${{ matrix.triple }}
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
+          set "PATH=%PATH%;%MSYS_BIN%"
           cmake -B build -G Ninja ^
             -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
             -DEXTERNAL_MPV_DIR=%CD%\third_party\mpv-install

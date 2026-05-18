@@ -1,0 +1,39 @@
+id: wayland-api-outside-platform
+language: cpp
+severity: warning
+message: >
+  Wayland / X11 / Win32 / Cocoa API leaking outside the platform layer.
+  Add an entry point on Platform (src/platform/platform.h) and call through
+  the vtable so cross-platform code stays portable.
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "src/platform/**"
+  - "src/clipboard/**"
+  - "src/playback/sinks/macos/**"
+  - "src/playback/sinks/windows/**"
+  - "src/playback/sinks/mpris/**"
+  - "src/wake_event_*.cpp"
+  - "third_party/**"
+  - "tests/**"
+rule:
+  any:
+    - pattern: wl_display_$FN($$$)
+    - pattern: wl_registry_$FN($$$)
+    - pattern: wl_surface_$FN($$$)
+    - pattern: wl_compositor_$FN($$$)
+    - pattern: wl_subsurface_$FN($$$)
+    - pattern: wl_subcompositor_$FN($$$)
+    - pattern: wl_seat_$FN($$$)
+    - pattern: wl_keyboard_$FN($$$)
+    - pattern: wl_pointer_$FN($$$)
+    - pattern: wl_output_$FN($$$)
+    - pattern: xdg_surface_$FN($$$)
+    - pattern: xdg_toplevel_$FN($$$)
+    - pattern: XOpenDisplay($$$)
+    - pattern: XCloseDisplay($$$)
+    - pattern: XCreateWindow($$$)
+    - pattern: SetWindowLongPtrW($$$)
+    - pattern: GetWindowLongPtrW($$$)

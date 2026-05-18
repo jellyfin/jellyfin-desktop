@@ -1,0 +1,23 @@
+id: hand-rolled-json
+language: cpp
+severity: warning
+message: >
+  Possible hand-rolled JSON (CLAUDE.md ban). Use CefParseJSON / CefWriteJSON
+  for IPC, or cJSON in subprocesses where CEF isn't available. Manual
+  escaping leaks injection bugs.
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "src/cjson/**"
+  - "third_party/**"
+  - "tests/**"
+rule:
+  any:
+    - pattern: $X += "\""
+    - pattern: $X += "{"
+    - pattern: $X += "}"
+    - pattern: $X += "\":\""
+    - pattern: $X << "\""
+    - pattern: $X << "{\""

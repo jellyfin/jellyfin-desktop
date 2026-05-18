@@ -1,0 +1,16 @@
+id: fopen-raw
+language: cpp
+severity: warning
+message: >
+  Raw FILE* leaks on early return / throw. Use std::ofstream / std::ifstream,
+  or wrap with std::unique_ptr<FILE, decltype(&fclose)>.
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "src/cjson/**"
+  - "third_party/**"
+  - "tests/**"
+rule:
+  pattern: fopen($$$)

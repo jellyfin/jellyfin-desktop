@@ -1,0 +1,12 @@
+[package]
+name = "jfn-cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_cli"
+crate-type = ["rlib"]
+
+[dependencies]
+clap = { version = "4", default-features = false, features = ["std", "derive", "error-context"] }

@@ -24,8 +24,8 @@ run *args: build
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [macos]
-mpv *args: build
-    third_party/mpv/build/mpv {{args}}
+run-mpv *args: build
+    build/mpv-build/mpv {{args}}
 
 # Build app bundle and distributable DMG (outputs to dist/)
 [macos]

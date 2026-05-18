@@ -1,0 +1,16 @@
+id: mpv-command-string
+language: cpp
+severity: info
+message: >
+  mpv_command_string parses shell-like syntax — quoting/escape bugs hide
+  here. Prefer mpv_command(handle, argv[]) with explicit argv, or use the
+  project's mpv:: typed wrappers.
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "third_party/**"
+  - "tests/**"
+rule:
+  pattern: mpv_command_string($$$)

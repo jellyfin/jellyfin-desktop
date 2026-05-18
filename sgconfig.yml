@@ -1,0 +1,10 @@
+ruleDirs:
+  - .ast-grep/rules
+
+# Treat Objective-C++ files as C++. tree-sitter-cpp parses .mm partially:
+# kind/regex rules work, but `pattern:` rules can miss matches near ObjC
+# bracket syntax (the parser produces malformed nodes there). Back up
+# .mm coverage with grep when a pattern-based rule says "clean".
+languageGlobs:
+  cpp:
+    - "*.mm"

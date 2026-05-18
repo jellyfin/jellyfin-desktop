@@ -7,7 +7,9 @@ A [Jellyfin](https://jellyfin.org) desktop client built on [CEF](https://github.
 
 ## Downloads
 ### Linux
-- [AppImage](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-appimage/main/linux-appimage-x86_64.zip)
+- AppImage
+  - [x86_64](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-appimage/main/linux-appimage-x86_64.zip)
+  - [aarch64](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-appimage/main/linux-appimage-aarch64.zip)
 - Arch Linux (AUR): [jellyfin-desktop-git](https://aur.archlinux.org/packages/jellyfin-desktop-git)
 - [Flatpak (non-Flathub bundle)](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-flatpak/main/linux-flatpak-x86_64.zip)
 
@@ -31,14 +33,13 @@ This project uses [just](https://github.com/casey/just) as a command runner.
 
 ```
 Available recipes:
-    appimage          # Build AppImage (outputs to dist/)
-    build             # Configure (if needed) + build the main app
-    clean             # Remove build artifacts (keeps CEF SDK download)
-    deps              # Ensure submodules and CEF are present
-    flatpak           # Build Flatpak bundle (outputs to dist/)
-    list              # List available recipes
-    mpv *args         # Run the standalone mpv CLI built from the submodule (forwards args)
-    run *args         # Run the app with debug logging (logs to build/run.log)
-    test              # Run unit tests
-    update-deps *args # Update vendored/fetched deps (CEF, doctest, quill); pass --check to verify only
+    list              # List recipes
+    update-deps *args # Update vendored deps
+    clean             # Remove build artifacts
+    build             # Build the app
+    test              # Run tests
+    run *args         # Run the app
+    run-mpv *args     # Run the mpv CLI
+    appimage ...
+    flatpak ...
 ```

@@ -7,13 +7,19 @@
 #include <cstring>
 
 #include "logging.h"
-#include "platform/display_backend.h"
 #include "color.h"
+#include "jfn_mpv_boot.h"
 
 /**
- * Typed wrapper for mpv_handle. Encapsulates the mpv instance so it doesn't
- * need to be passed around. All methods are typesafe and handle format
- * conversions internally.
+ * Non-owning wrapper around a libmpv handle whose lifetime is managed
+ * by Rust (see `src/mpv/src/boot.rs`). C++ borrows the raw pointer to
+ * issue commands and read/write properties; teardown is `Rust-side`
+ * (jfn_mpv_handle_terminate).
+ *
+ * All option-application + initialization + log-subscription happens in
+ * `jfn_mpv_handle_init` before C++ gets a pointer; the wrapper exposes
+ * only post-init operations (property R/W, async commands, observation,
+ * event drain).
  */
 class MpvHandle {
 private:
@@ -22,50 +28,33 @@ private:
 public:
     explicit MpvHandle(mpv_handle* h = nullptr) : handle_(h) {}
 
-    // =====================================================================
-    // Creation and initialization
-    // =====================================================================
+    // Non-owning: dtor must not destroy the handle. Rust owns lifetime
+    // via the boot module; jfn_mpv_handle_terminate is the only path
+    // that calls mpv_terminate_destroy.
+    ~MpvHandle() = default;
 
-    static MpvHandle Create(DisplayBackend display) {
-        MpvHandle mpv(mpv_create());
-        if (mpv.IsValid())
-            mpv.SetDefaults(display);
-        return mpv;
+    MpvHandle(const MpvHandle&) = delete;
+    MpvHandle& operator=(const MpvHandle&) = delete;
+
+    MpvHandle(MpvHandle&& other) noexcept : handle_(other.handle_) {
+        other.handle_ = nullptr;
+    }
+    MpvHandle& operator=(MpvHandle&& other) noexcept {
+        if (this != &other) {
+            handle_ = other.handle_;
+            other.handle_ = nullptr;
+        }
+        return *this;
     }
 
-    int Initialize() {
-        return mpv_initialize(handle_);
-    }
-
+    // Tear down the underlying handle. Delegates to Rust which holds
+    // the unique ownership; this wrapper drops its borrow.
     void TerminateDestroy() {
         if (handle_) {
-            mpv_terminate_destroy(handle_);
+            jfn_mpv_handle_terminate();
             handle_ = nullptr;
         }
     }
-
-    // =====================================================================
-    // Options (must be set before Initialize)
-    // =====================================================================
-
-    void SetOptionString(const std::string& name, const std::string& value) {
-        mpv_set_option_string(handle_, name.c_str(), value.c_str());
-    }
-
-    void SetOptionInt(const std::string& name, int64_t value) {
-        mpv_set_option(handle_, name.c_str(), MPV_FORMAT_INT64, &value);
-    }
-
-    void SetOptionFlag(const std::string& name, bool value) {
-        int flag = value ? 1 : 0;
-        mpv_set_option(handle_, name.c_str(), MPV_FORMAT_FLAG, &flag);
-    }
-
-    // Typed option setters (must be called before Initialize)
-    void SetHwdec(const std::string& mode)          { SetOptionString("hwdec", mode); }
-    void SetAudioSpdif(const std::string& codecs)    { SetOptionString("audio-spdif", codecs); }
-    void SetAudioExclusive(bool v)                   { SetOptionFlag("audio-exclusive", v); }
-    void SetAudioChannels(const std::string& layout)  { SetOptionString("audio-channels", layout); }
 
     // =====================================================================
     // Property access (synchronous - safe in main thread)
@@ -113,9 +102,9 @@ public:
     void SubAdd(const std::string& url)   { CommandAsync({"sub-add", url, "select"}); }
     void AudioAdd(const std::string& url) { CommandAsync({"audio-add", url, "select"}); }
     // Public sentinels: 0 = disable, 1+ = specific track id. mpv auto track
-    // selection is completely disabled (track-auto-selection=no in
-    // SetDefaults) as it conflicts with the fact that jellyfin-web is
-    // ultimately responsible for track selection.
+    // selection is completely disabled (track-auto-selection=no applied
+    // by jfn_mpv_handle_init) as it conflicts with the fact that
+    // jellyfin-web is ultimately responsible for track selection.
     static constexpr int64_t kTrackDisable =  0;
 
     struct LoadOptions {
@@ -253,12 +242,6 @@ public:
         out = static_cast<intptr_t>(val);
         return err;
     }
-    int GetWaylandConfigureCbPtr(intptr_t& out) {
-        int64_t val = 0;
-        int err = GetPropertyInt("wayland-configure-cb-ptr", val);
-        out = static_cast<intptr_t>(val);
-        return err;
-    }
     int GetWaylandCloseCbPtr(intptr_t& out) {
         int64_t val = 0;
         int err = GetPropertyInt("wayland-close-cb-ptr", val);
@@ -267,59 +250,6 @@ public:
     }
 
 private:
-    // =====================================================================
-    // Default options (called by Create)
-    // =====================================================================
-
-    void SetDefaults(DisplayBackend display) {
-#ifdef __APPLE__
-        setenv("MPVBUNDLE", "true", 1);
-#endif
-
-        // Disable OSD/OSC — CEF overlay handles all UI
-        SetOptionString("osd-level", "0");
-        SetOptionString("osc", "no");
-        SetOptionString("display-tags", "");
-
-        // Track selection is owned by Jellyfin. Disable mpv's heuristic so
-        // unspecified tracks stay disabled instead of being auto-picked
-        // by language/default-flag/codec scoring.
-        SetOptionString("track-auto-selection", "no");
-
-        // Disable all mpv input — we own input and route through CEF
-        SetOptionString("input-default-bindings", "no");
-        SetOptionString("input-vo-keyboard", "no");
-        SetOptionString("input-vo-cursor", "no");
-        SetOptionString("input-cursor", "no");
-        // X11's WM_DELETE_WINDOW routes through mpv's input system as
-        // CLOSE_WIN — input-keyboard=no drops it, breaking the close button.
-#if defined(_WIN32) || defined(__APPLE__)
-        SetOptionString("input-keyboard", "no");
-#else
-        if (display == DisplayBackend::Wayland)
-            SetOptionString("input-keyboard", "no");
-#endif
-
-        // Window behavior
-        SetOptionString("stop-screensaver", "no");
-        SetOptionString("keepaspect-window", "no");
-        SetOptionString("auto-window-resize", "no");
-        SetOptionString("border", "yes");
-        SetOptionString("title", "Jellyfin Desktop");
-        SetOptionString("wayland-app-id", "org.jellyfin.JellyfinDesktop");
-#ifdef _WIN32
-        // Tell mpv to load window icon from our exe resources
-        _putenv_s("MPV_WINDOW_ICON", "IDI_ICON1");
-#endif
-
-        // Keep window open when idle (no media loaded).
-        // force-window=yes (not "immediate") avoids a macOS deadlock:
-        // "immediate" calls handle_force_window during mpv_initialize, which
-        // triggers DispatchQueue.main.sync while main is blocked in init.
-        SetOptionString("force-window", "yes");
-        SetOptionString("idle", "yes");
-    }
-
     // =====================================================================
     // Property modification (asynchronous - safe from any thread)
     // =====================================================================
@@ -426,27 +356,6 @@ public:
     // =====================================================================
     // Events
     // =====================================================================
-
-    void SetWakeupCallback(void (*cb)(void*), void* data) {
-        mpv_set_wakeup_callback(handle_, cb, data);
-    }
-
-    // Subscribe mpv at the most verbose level our log filter would actually
-    // surface, so mpv doesn't waste IPC on messages we'd discard.
-    // We cap mpv at "debug" — mpv's "trace" is extreme and not worth the IPC.
-    // mpv's "v" maps to our Debug; mpv's "debug" maps to our Trace.
-    void SetLogLevel(LogLevel level) {
-        const char* mpv_level = "debug";
-        switch (level) {
-            case LogLevel::Debug: mpv_level = "v";     break;
-            case LogLevel::Info:  mpv_level = "info";  break;
-            case LogLevel::Warn:  mpv_level = "warn";  break;
-            case LogLevel::Error: mpv_level = "error"; break;
-            case LogLevel::Trace:
-            case LogLevel::Default: break; // subscribe to "debug" (cap)
-        }
-        mpv_request_log_messages(handle_, mpv_level);
-    }
 
     mpv_event* WaitEvent(double timeout) {
         return mpv_wait_event(handle_, timeout);

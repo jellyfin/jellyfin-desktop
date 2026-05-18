@@ -12,6 +12,12 @@ enum class IdleInhibitLevel { None, System, Display };
 #include "display_backend.h"
 #include "../color.h"
 
+#include <cstddef>
+
+// Opaque per-backend surface handle. Each backend defines the layout in
+// its translation unit; callers only ever hold pointers.
+struct PlatformSurface;
+
 struct Platform {
     DisplayBackend display{};
 
@@ -23,51 +29,57 @@ struct Platform {
     // file while the window is still on-screen). May be null.
     void (*post_window_cleanup)();
 
-    // Main browser subsurface
-    void (*present)(const CefAcceleratedPaintInfo& info);
-    void (*present_software)(const CefRenderHandler::RectList& dirty,
-                             const void* buffer, int w, int h);
-    void (*resize)(int lw, int lh, int pw, int ph);
+    // Layer-surface lifecycle. alloc_surface creates a generic surface
+    // for the next CefLayer; free_surface tears it down.
+    PlatformSurface* (*alloc_surface)();
+    void (*free_surface)(PlatformSurface*);
 
-    // Overlay browser subsurface
-    void (*overlay_present)(const CefAcceleratedPaintInfo& info);
-    void (*overlay_present_software)(const CefRenderHandler::RectList& dirty,
+    // Per-surface ops (replace the role-specific present/resize/visible triples).
+    // present/present_software return true when the buffer was attached to
+    // the surface. A false return means the platform dropped this paint
+    // (e.g. Wayland tolerance gate during a resize transition); callers
+    // that track "renderer stabilised" state must not count dropped paints.
+    bool (*surface_present)(PlatformSurface*, const CefAcceleratedPaintInfo& info);
+    bool (*surface_present_software)(PlatformSurface*,
+                                     const CefRenderHandler::RectList& dirty,
                                      const void* buffer, int w, int h);
-    void (*overlay_resize)(int lw, int lh, int pw, int ph);
-    void (*set_overlay_visible)(bool visible);
+    void (*surface_resize)(PlatformSurface*, int lw, int lh, int pw, int ph);
 
-    // About browser subsurface (above overlay)
-    void (*about_present)(const CefAcceleratedPaintInfo& info);
-    void (*about_present_software)(const CefRenderHandler::RectList& dirty,
-                                   const void* buffer, int w, int h);
-    void (*about_resize)(int lw, int lh, int pw, int ph);
-    void (*set_about_visible)(bool visible);
+    void (*surface_set_visible)(PlatformSurface*, bool visible);
 
-    // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns)
-    void (*popup_show)(int x, int y, int lw, int lh);
-    void (*popup_hide)();
-    void (*popup_present)(const CefAcceleratedPaintInfo& info, int lw, int lh);
-    void (*popup_present_software)(const void* buffer, int pw, int ph, int lw, int lh);
+    // Stacking — bottom (index 0) to top (index n-1). Called whenever
+    // the Browsers vector order changes.
+    void (*restack)(PlatformSurface* const* ordered, size_t n);
 
-    // Attempt to show the platform's native popup menu for a <select>
-    // dropdown. Returns true if the native menu will be shown (in which
-    // case the compositor-based popup_show path should NOT be used).
-    // Returns false on platforms without a native path; caller falls back
-    // to the compositor popup subsurface.
-    //
-    // on_selected is invoked with the chosen option index, or -1 if the
-    // user dismissed without selecting. Callers must assume it may fire
-    // on any thread (e.g. macOS invokes it from the AppKit main thread).
-    bool (*try_native_popup_menu)(int x, int y, int lw, int lh,
-                                  const std::vector<std::string>& options,
-                                  int current_index,
-                                  std::function<void(int)> on_selected);
-    // Fade overlay from opaque to transparent over `fade_sec`, then hide.
-    // on_fade_start fires just before the fade begins; on_complete fires after
-    // the fade finishes. Both may fire on any thread.
-    void (*fade_overlay)(float fade_sec,
+    // Window-resize signal — outbound from the platform. Fires when the
+    // Optional per-surface fade — finite UI animation; backends limited
+    // to a single fadeable surface return /no-op for the others.
+    void (*fade_surface)(PlatformSurface*, float fade_sec,
                          std::function<void()> on_fade_start,
                          std::function<void()> on_complete);
+
+    // Popup (CEF OSR popup elements, e.g. <select> dropdowns).
+    //
+    // CefLayer calls popup_show once per popup with everything any backend
+    // might need; the backend picks what it uses. Compositor backends
+    // (Wayland, Windows) use rect + popup_present[_software] frames and
+    // ignore options/initial_highlight/on_selected — CEF dispatches
+    // selection internally on click. Native-menu backends (macOS / NSMenu)
+    // use options + initial_highlight + on_selected and ignore the
+    // present frames.
+    //
+    // on_selected may fire on any thread.
+    struct PopupRequest {
+        int x, y;
+        int lw, lh;
+        std::vector<std::string> options;
+        int initial_highlight;  // -1 if none
+        std::function<void(int)> on_selected;  // -1 = dismissed
+    };
+    void (*popup_show)(PlatformSurface*, const PopupRequest& req);
+    void (*popup_hide)(PlatformSurface*);
+    void (*popup_present)(PlatformSurface*, const CefAcceleratedPaintInfo& info, int lw, int lh);
+    void (*popup_present_software)(PlatformSurface*, const void* buffer, int pw, int ph, int lw, int lh);
 
     // Fullscreen
     void (*set_fullscreen)(bool fullscreen);
@@ -80,6 +92,10 @@ struct Platform {
     void (*set_expected_size)(int w, int h);
 
     float (*get_scale)();
+
+    // Live display scale at screen point (x, y), queried from the OS.
+    // Returns a positive float; backends return 1.0f on query failure.
+    float (*get_display_scale)(int x, int y);
 
     // Query the window's top-left screen position in logical pixels.
     // Returns false if unavailable. Used to save/restore window position.
@@ -141,6 +157,28 @@ struct Platform {
 
     // Caller guarantees non-empty URL not starting with '-'.
     void (*open_external_url)(const std::string& url);
+};
+
+// Platform lifetime. Must destruct after CefRuntimeScope, before mpv teardown.
+class PlatformScope {
+public:
+    PlatformScope(Platform& p, mpv_handle* mpv) : p_(p), ok_(p.init(mpv)) {}
+    ~PlatformScope() { if (ok_) p_.cleanup(); }
+    bool ok() const { return ok_; }
+
+    PlatformScope(const PlatformScope&) = delete;
+    PlatformScope& operator=(const PlatformScope&) = delete;
+private:
+    Platform& p_;
+    bool ok_;
+};
+
+// Defined in main.cpp.
+extern Platform g_platform;
+
+// Releases the platform idle inhibit on any exit path.
+struct IdleInhibitGuard {
+    ~IdleInhibitGuard() { g_platform.set_idle_inhibit(IdleInhibitLevel::None); }
 };
 
 // Internal platform factories — called by make_platform()

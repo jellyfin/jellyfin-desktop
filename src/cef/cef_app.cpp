@@ -23,6 +23,7 @@
 #include <windows.h>
 #else
 #include <cstdlib>
+#include <signal.h>
 #endif
 
 #ifdef __APPLE__
@@ -204,6 +205,7 @@ bool Initialize() {
     settings.multi_threaded_message_loop = true;
 #endif
     settings.no_sandbox = true;
+    settings.disable_signal_handlers = true;
     CefString(&settings.locale).FromASCII("en-US");
     CefString(&settings.user_agent).FromASCII(APP_USER_AGENT);
 
@@ -247,7 +249,24 @@ bool Initialize() {
     App::InitPump();
 #endif
 
-    return CefInitialize(g_main_args, settings, g_app, nullptr);
+    // chrome/browser/chrome_browser_main_posix.cc installs SIGINT/SIGTERM
+    // handlers during CefInitialize and that path is not gated by
+    // disable_signal_handlers. Snapshot the caller's handlers and restore
+    // afterward so Chromium's installs are confined to the init window.
+#ifndef _WIN32
+    struct sigaction prev_int, prev_term;
+    sigaction(SIGINT, nullptr, &prev_int);
+    sigaction(SIGTERM, nullptr, &prev_term);
+#endif
+
+    bool ok = CefInitialize(g_main_args, settings, g_app, nullptr);
+
+#ifndef _WIN32
+    sigaction(SIGINT, &prev_int, nullptr);
+    sigaction(SIGTERM, &prev_term, nullptr);
+#endif
+
+    return ok;
 }
 
 void Shutdown() {
@@ -387,6 +406,35 @@ void App::OnContextCreated(CefRefPtr<CefBrowser> browser,
         }
     }
     window->SetValue("jmpNative", jmpNative, V8_PROPERTY_ATTRIBUTE_READONLY);
+
+    // After each window resize, keep producing compositor frames until
+    // CefLayer::noteStableSize detects 3 consecutive same-size paints
+    // and calls window.__cefStopRaf. No time deadline — relies entirely
+    // on the native stop signal.
+    frame->ExecuteJavaScript(
+        R"(
+            (function () {
+                var running = false;
+                var stop = false;
+                function tick() {
+                    if (stop) {
+                        stop = false;
+                        running = false;
+                        return;
+                    }
+                    requestAnimationFrame(tick);
+                }
+                window.addEventListener('resize', function () {
+                    stop = false;
+                    if (!running) {
+                        running = true;
+                        requestAnimationFrame(tick);
+                    }
+                });
+                window.__cefStopRaf = function () { stop = true; };
+            })();
+        )",
+        frame->GetURL(), 0);
 
     if (!scripts || scripts->GetSize() == 0) return;
 

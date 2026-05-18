@@ -1,0 +1,26 @@
+id: raw-new-unowned
+language: cpp
+severity: warning
+message: >
+  Raw `new` not handed to a smart pointer / CefRefPtr — ownership escapes.
+  Wrap with std::make_unique / std::make_shared, or pass directly into
+  CefRefPtr<T>(new T(...)).
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "src/cjson/**"
+  - "third_party/**"
+  - "tests/**"
+rule:
+  pattern: new $TYPE($$$ARGS)
+  not:
+    inside:
+      stopBy: end
+      any:
+        - pattern: CefRefPtr<$$$>($$$)
+        - pattern: std::unique_ptr<$$$>($$$)
+        - pattern: std::shared_ptr<$$$>($$$)
+        - pattern: std::make_unique<$$$>($$$)
+        - pattern: std::make_shared<$$$>($$$)

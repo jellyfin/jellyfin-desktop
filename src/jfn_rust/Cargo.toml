@@ -1,0 +1,29 @@
+[package]
+name = "jfn-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_rust"
+crate-type = ["staticlib"]
+
+[dependencies]
+jfn-cli = { path = "../cli" }
+jfn-color = { path = "../color" }
+jfn-config = { path = "../config" }
+jfn-jellyfin = { path = "../jellyfin" }
+jfn-logging = { path = "../logging" }
+jfn-mpv = { path = "../mpv" }
+jfn-paths = { path = "../paths" }
+jfn-playback = { path = "../playback" }
+jfn-single-instance = { path = "../single_instance" }
+
+[target.'cfg(unix)'.dependencies]
+jfn-signal-guard = { path = "../signal_guard" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
+jfn-open-url-linux = { path = "../open_url_linux" }
+jfn-wayland = { path = "../wayland" }
+jfn-wlproxy = { path = "../wlproxy" }

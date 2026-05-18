@@ -84,7 +84,11 @@ function(resolve_dependency dep_path out_var)
         list(GET cellar_candidates 0 result)
       endif()
     endif()
-  elseif(dep_path MATCHES "^(/opt/homebrew|/usr/local)")
+  elseif(dep_path MATCHES "^/")
+    # Any absolute path that exists on disk — covers Homebrew prefixes
+    # and custom build prefixes (e.g. $HOME/jellyfin-deps used by the
+    # legacy workflow). System paths are already filtered out by
+    # fix_lib_dependencies before we get here.
     if(EXISTS "${dep_path}")
       set(result "${dep_path}")
     endif()
@@ -111,9 +115,15 @@ function(fix_lib_dependencies lib framework_libs_var)
   foreach(line ${otool_lines})
     string(STRIP "${line}" line)
 
-    # Check if dependency needs fixing
+    # Check if dependency needs fixing.
+    # Any non-system absolute path (e.g. Homebrew, $HOME/jellyfin-deps used
+    # by the legacy workflow) gets bundled. The exclusion list is small
+    # and stable: /usr/lib for libc et al, /System for OS frameworks,
+    # /Library for third-party system-wide installs that should stay
+    # external (e.g. Sparkle).
     set(needs_fix FALSE)
-    if(line MATCHES "^(@rpath|@loader_path|/opt/homebrew|/usr/local)")
+    if(line MATCHES "^(@rpath|@loader_path)" OR
+       (line MATCHES "^/" AND NOT line MATCHES "^(/usr/lib/|/System/|/Library/)"))
       set(needs_fix TRUE)
     endif()
 

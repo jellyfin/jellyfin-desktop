@@ -64,9 +64,7 @@ endif()
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_compile_definitions(NOMINMAX)
-    # Conforming preprocessor: quill (and fmt) rely on standard ##__VA_ARGS__
-    # handling. MSVC's legacy preprocessor mis-expands the variadic, which
-    # leaks format args into MacroMetadata's constructor call.
+    # Conforming preprocessor: fmt relies on standard ##__VA_ARGS__ handling.
     add_compile_options(/Zc:preprocessor)
 endif()
 
@@ -124,11 +122,13 @@ if(APPLE)
     set(PLATFORM_SOURCES
         src/platform/macos.mm
         src/input/input_macos.mm
-        src/wake_event_macos.cpp
-        src/paths/macos.cpp
-        src/player/media_session.cpp
-        src/player/macos/media_session_macos.mm
-        src/player/media_session_thread.cpp
+        src/playback/coordinator.cpp
+        src/playback/sinks/queued_sink.cpp
+        src/playback/sinks/browser_sink.cpp
+        src/playback/sinks/idle_inhibit_sink.cpp
+        src/playback/sinks/theme_color_sink.cpp
+        src/playback/sinks/mpv_action_sink.cpp
+        src/playback/sinks/macos/macos_sink.mm
     )
 
     # LetsMove - prompts user to move app to /Applications (clears quarantine)
@@ -153,10 +153,13 @@ elseif(WIN32)
     set(PLATFORM_SOURCES
         src/platform/windows.cpp
         src/input/input_windows.cpp
-        src/paths/windows.cpp
-        src/player/media_session.cpp
-        src/player/windows/media_session_windows.cpp
-        src/player/media_session_thread.cpp
+        src/playback/coordinator.cpp
+        src/playback/sinks/queued_sink.cpp
+        src/playback/sinks/browser_sink.cpp
+        src/playback/sinks/idle_inhibit_sink.cpp
+        src/playback/sinks/theme_color_sink.cpp
+        src/playback/sinks/mpv_action_sink.cpp
+        src/playback/sinks/windows/windows_sink.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
     )
     set(PLATFORM_LIBRARIES
@@ -172,7 +175,13 @@ else()
     find_package(PkgConfig REQUIRED)
 
     # Shared Linux deps
-    pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+	pkg_check_modules(SYSTEMD libsystemd QUIET)
+    if (NOT SYSTEMD_FOUND)
+    	pkg_check_modules(SYSTEMD libelogind REQUIRED)
+    else()
+    	pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+    endif()
+
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     find_package(OpenGL REQUIRED COMPONENTS EGL)
 
@@ -184,7 +193,7 @@ else()
     # X11 (optional)
     option(ENABLE_X11 "X11 backend support" ON)
     if(ENABLE_X11)
-        pkg_check_modules(XCB REQUIRED xcb)
+    	pkg_check_modules(XCB REQUIRED xcb)
         pkg_check_modules(XCB_SHM REQUIRED xcb-shm)
         pkg_check_modules(XCB_SHAPE REQUIRED xcb-shape)
         pkg_check_modules(XCB_CURSOR REQUIRED xcb-cursor)
@@ -212,18 +221,9 @@ else()
     set(ALPHA_MODIFIER_CLIENT_H "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-client.h")
     set(ALPHA_MODIFIER_CODE_C "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-code.c")
 
-    set(CURSOR_SHAPE_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/cursor-shape/cursor-shape-v1.xml")
-    set(CURSOR_SHAPE_CLIENT_H "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-client.h")
-    set(CURSOR_SHAPE_CODE_C "${WAYLAND_GENERATED_DIR}/cursor-shape-v1-code.c")
-
-    set(EXT_DATA_CONTROL_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/ext-data-control/ext-data-control-v1.xml")
-    set(EXT_DATA_CONTROL_CLIENT_H "${WAYLAND_GENERATED_DIR}/ext-data-control-v1-client.h")
-    set(EXT_DATA_CONTROL_CODE_C "${WAYLAND_GENERATED_DIR}/ext-data-control-v1-code.c")
-
-    # tablet-v2 interface symbols are referenced by cursor-shape-v1 generated code
-    set(TABLET_V2_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/stable/tablet/tablet-v2.xml")
-    set(TABLET_V2_CLIENT_H "${WAYLAND_GENERATED_DIR}/tablet-v2-client.h")
-    set(TABLET_V2_CODE_C "${WAYLAND_GENERATED_DIR}/tablet-v2-code.c")
+set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output-unstable-v1.xml")
+    set(XDG_OUTPUT_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-client.h")
+    set(XDG_OUTPUT_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-code.c")
 
     # KDE server decoration palette (per-window titlebar colors on KWin)
     option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support" ON)
@@ -273,42 +273,18 @@ else()
         COMMENT "Generating alpha-modifier-v1 code"
     )
     add_custom_command(
-        OUTPUT ${CURSOR_SHAPE_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${CURSOR_SHAPE_PROTOCOL} ${CURSOR_SHAPE_CLIENT_H}
-        DEPENDS ${CURSOR_SHAPE_PROTOCOL}
-        COMMENT "Generating cursor-shape-v1 client header"
+        OUTPUT ${XDG_OUTPUT_CLIENT_H}
+        COMMAND ${WAYLAND_SCANNER} client-header ${XDG_OUTPUT_PROTOCOL} ${XDG_OUTPUT_CLIENT_H}
+        DEPENDS ${XDG_OUTPUT_PROTOCOL}
+        COMMENT "Generating xdg-output-unstable-v1 client header"
     )
     add_custom_command(
-        OUTPUT ${CURSOR_SHAPE_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${CURSOR_SHAPE_PROTOCOL} ${CURSOR_SHAPE_CODE_C}
-        DEPENDS ${CURSOR_SHAPE_PROTOCOL}
-        COMMENT "Generating cursor-shape-v1 code"
+        OUTPUT ${XDG_OUTPUT_CODE_C}
+        COMMAND ${WAYLAND_SCANNER} private-code ${XDG_OUTPUT_PROTOCOL} ${XDG_OUTPUT_CODE_C}
+        DEPENDS ${XDG_OUTPUT_PROTOCOL}
+        COMMENT "Generating xdg-output-unstable-v1 code"
     )
-    add_custom_command(
-        OUTPUT ${EXT_DATA_CONTROL_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${EXT_DATA_CONTROL_PROTOCOL} ${EXT_DATA_CONTROL_CLIENT_H}
-        DEPENDS ${EXT_DATA_CONTROL_PROTOCOL}
-        COMMENT "Generating ext-data-control-v1 client header"
-    )
-    add_custom_command(
-        OUTPUT ${EXT_DATA_CONTROL_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${EXT_DATA_CONTROL_PROTOCOL} ${EXT_DATA_CONTROL_CODE_C}
-        DEPENDS ${EXT_DATA_CONTROL_PROTOCOL}
-        COMMENT "Generating ext-data-control-v1 code"
-    )
-    add_custom_command(
-        OUTPUT ${TABLET_V2_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${TABLET_V2_PROTOCOL} ${TABLET_V2_CLIENT_H}
-        DEPENDS ${TABLET_V2_PROTOCOL}
-        COMMENT "Generating tablet-v2 client header"
-    )
-    add_custom_command(
-        OUTPUT ${TABLET_V2_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${TABLET_V2_PROTOCOL} ${TABLET_V2_CODE_C}
-        DEPENDS ${TABLET_V2_PROTOCOL}
-        COMMENT "Generating tablet-v2 code"
-    )
-    if(ENABLE_KDE_PALETTE)
+if(ENABLE_KDE_PALETTE)
         add_custom_command(
             OUTPUT ${DECO_PALETTE_CLIENT_H}
             COMMAND ${WAYLAND_SCANNER} client-header ${DECO_PALETTE_PROTOCOL} ${DECO_PALETTE_CLIENT_H}
@@ -325,13 +301,14 @@ else()
 
     set(PLATFORM_SOURCES
         # Shared Linux
-        src/platform/idle_inhibit_linux.cpp
-        src/platform/open_url_linux.cpp
-        src/wake_event_linux.cpp
-        src/paths/linux.cpp
-        src/player/media_session.cpp
-        src/player/mpris/media_session_mpris.cpp
-        src/player/media_session_thread.cpp
+        src/playback/coordinator.cpp
+        src/playback/sinks/queued_sink.cpp
+        src/playback/sinks/browser_sink.cpp
+        src/playback/sinks/idle_inhibit_sink.cpp
+        src/playback/sinks/theme_color_sink.cpp
+        src/playback/sinks/mpv_action_sink.cpp
+        src/playback/sinks/mpris/mpris_sink.cpp
+        src/playback/sinks/mpris/mpris_projection.cpp
         # Wayland
         src/platform/wayland.cpp
         src/clipboard/wayland.cpp
@@ -343,12 +320,8 @@ else()
         ${VIEWPORTER_CLIENT_H}
         ${ALPHA_MODIFIER_CODE_C}
         ${ALPHA_MODIFIER_CLIENT_H}
-        ${CURSOR_SHAPE_CODE_C}
-        ${CURSOR_SHAPE_CLIENT_H}
-        ${EXT_DATA_CONTROL_CODE_C}
-        ${EXT_DATA_CONTROL_CLIENT_H}
-        ${TABLET_V2_CODE_C}
-        ${TABLET_V2_CLIENT_H}
+        ${XDG_OUTPUT_CODE_C}
+        ${XDG_OUTPUT_CLIENT_H}
     )
     if(ENABLE_KDE_PALETTE)
         list(APPEND PLATFORM_SOURCES
@@ -400,6 +373,63 @@ else()
     endif()
 endif()
 
+# Rust toolchain is required for jfn-config (all platforms) and jfn-wlproxy
+# (Linux only). Locate cargo once here so both blocks share the result.
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+
+# jfn-rust — single Rust staticlib that bundles every Rust crate in this repo.
+# Each crate is a workspace rlib member; this umbrella staticlib re-exports
+# them so the final C++ link sees one copy of std/core. MSVC link.exe rejects
+# duplicate symbols across staticlibs, so we cannot ship one staticlib per
+# crate. The workspace lives at src/Cargo.toml.
+set(JFN_RUST_DIR "${CMAKE_SOURCE_DIR}/src/jfn_rust")
+set(JFN_RUST_WORKSPACE_DIR "${CMAKE_SOURCE_DIR}/src")
+set(JFN_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/jfn-rust-target")
+set(JFN_RUST_LIB "${JFN_RUST_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_rust${CMAKE_STATIC_LIBRARY_SUFFIX}")
+file(GLOB_RECURSE JFN_RUST_SOURCES CONFIGURE_DEPENDS
+    "${JFN_RUST_WORKSPACE_DIR}/*/src/*.rs"
+    "${JFN_RUST_WORKSPACE_DIR}/*/Cargo.toml"
+    "${JFN_RUST_WORKSPACE_DIR}/Cargo.toml"
+)
+# -ffat-lto-objects: distro CFLAGS may set -flto, which makes cc-crate
+# emit slim objects whose symbols vanish from the archive index.
+add_custom_command(
+    OUTPUT ${JFN_RUST_LIB}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${JFN_RUST_TARGET_DIR}
+        "CFLAGS=$ENV{CFLAGS} -ffat-lto-objects"
+        "CXXFLAGS=$ENV{CXXFLAGS} -ffat-lto-objects"
+        # Forward libmpv / libavcodec discovery paths to jfn-mpv's
+        # build.rs. On Windows pkg-config can't find these from the
+        # cmd.exe shell that runs cmake; the build.rs falls back to
+        # these env overrides (see src/mpv/build.rs).
+        "EXTERNAL_MPV_DIR=${EXTERNAL_MPV_DIR}"
+        ${CARGO_EXECUTABLE} build --release --manifest-path ${JFN_RUST_DIR}/Cargo.toml
+    DEPENDS ${JFN_RUST_SOURCES}
+    COMMENT "Building jfn-rust (Rust workspace)"
+    VERBATIM
+)
+add_custom_target(jfn_rust_build DEPENDS ${JFN_RUST_LIB})
+add_library(jfn_rust STATIC IMPORTED GLOBAL)
+add_dependencies(jfn_rust jfn_rust_build)
+set_target_properties(jfn_rust PROPERTIES
+    IMPORTED_LOCATION ${JFN_RUST_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/logging;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wayland;${CMAKE_SOURCE_DIR}/src/wlproxy"
+)
+# Native deps pulled in by the Rust standard library and our crate deps.
+# cargo rustc --print=native-static-libs emits the exact set per platform.
+if(WIN32)
+    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ws2_32 userenv advapi32 bcrypt ntdll)
+elseif(APPLE)
+    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework CoreFoundation" "-framework Security")
+else()
+    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        pthread dl m rt util)
+endif()
+
 # libavcodec — used to enumerate the decoders mpv will route through ffmpeg.
 # Source of truth for the device profile's codec lists; mpv links the same
 # libavcodec at runtime, so what we enumerate here matches what mpv decodes.
@@ -448,7 +478,7 @@ if(EXTERNAL_MPV_DIR)
 else()
     # Build mpv from submodule using meson
     set(MPV_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/mpv")
-    set(MPV_BUILD_DIR "${MPV_SOURCE_DIR}/build")
+    set(MPV_BUILD_DIR "${CMAKE_BINARY_DIR}/mpv-build")
 
     if(APPLE)
         set(MPV_LIBRARY "${MPV_BUILD_DIR}/libmpv.dylib")
@@ -468,8 +498,8 @@ else()
     if(NOT EXISTS "${MPV_BUILD_DIR}/build.ninja")
         message(STATUS "Configuring mpv with meson (cplayer=${_MPV_CPLAYER})...")
         execute_process(
-            COMMAND meson setup build --default-library=shared -Dlibmpv=true -Dcplayer=${_MPV_CPLAYER}
-            WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+            COMMAND meson setup ${MPV_BUILD_DIR} ${MPV_SOURCE_DIR}
+                    --default-library=shared -Dlibmpv=true -Dcplayer=${_MPV_CPLAYER}
             RESULT_VARIABLE MPV_SETUP_RESULT
         )
         if(NOT MPV_SETUP_RESULT EQUAL 0)
@@ -477,8 +507,7 @@ else()
         endif()
     else()
         execute_process(
-            COMMAND meson configure build -Dcplayer=${_MPV_CPLAYER}
-            WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+            COMMAND meson configure ${MPV_BUILD_DIR} -Dcplayer=${_MPV_CPLAYER}
             RESULT_VARIABLE MPV_RECONFIG_RESULT
         )
         if(NOT MPV_RECONFIG_RESULT EQUAL 0)
@@ -488,8 +517,7 @@ else()
 
     # Custom target that always invokes meson compile (meson handles incremental builds)
     add_custom_target(mpv_build
-        COMMAND meson compile -C build
-        WORKING_DIRECTORY ${MPV_SOURCE_DIR}
+        COMMAND meson compile -C ${MPV_BUILD_DIR}
         COMMENT "Building mpv (meson handles incremental builds)"
         BYPRODUCTS ${MPV_LIBRARY}
     )
@@ -551,43 +579,40 @@ add_custom_target(embedded_resources DEPENDS ${EMBEDDED_RESOURCES_HEADER})
 if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
-        src/logging.cpp
-        src/log_redact.cpp
+        src/cli.cpp
+        src/shutdown.cpp
         src/single_instance.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
-        src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
         src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
         src/browser/about_browser.cpp
         src/browser/app_menu.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
-        src/cjson/cJSON.c
-        src/jellyfin/api.cpp
-        src/settings.cpp
         src/paths/paths.cpp
-        src/wake_event_windows.cpp
+        src/wake_event.cpp
     )
 else()
     # Linux + macOS: shared main with platform abstraction
     set(COMMON_SOURCES
         src/main.cpp
-        src/logging.cpp
-        src/log_redact.cpp
+        src/cli.cpp
+        src/shutdown.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
-        src/jellyfin/device_profile.cpp
         src/cef/cef_app.cpp
         src/cef/color.cpp
         src/cef/cef_client.cpp
         src/cef/resource_handler.cpp
+        src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
         src/browser/about_browser.cpp
@@ -595,10 +620,8 @@ else()
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
         src/single_instance.cpp
-        src/settings.cpp
         src/paths/paths.cpp
-        src/cjson/cJSON.c
-        src/jellyfin/api.cpp
+        src/wake_event.cpp
     )
 endif()
 
@@ -618,14 +641,11 @@ if(WIN32)
     endif()
 endif()
 
-# quill (vendored, header-only). Disable quill's own LOG_* macros so they
-# don't collide with ours. Our pattern doesn't reference file/line/function
-# metadata, so strip it — also sidesteps MSVC's refusal to treat __FUNCTION__
-# as a constant expression in constexpr MacroMetadata initializers.
-set(QUILL_DISABLE_NON_PREFIXED_MACROS ON CACHE BOOL "" FORCE)
-set(QUILL_DISABLE_FUNCTION_NAME ON CACHE BOOL "" FORCE)
-set(QUILL_DISABLE_FILE_INFO ON CACHE BOOL "" FORCE)
-add_subdirectory(third_party/quill EXCLUDE_FROM_ALL)
+# fmt (vendored, third_party/fmt). Built static; consumed via fmt::fmt.
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/fmt EXCLUDE_FROM_ALL)
 
 # Ensure JS shims are embedded before compiling cef_app.cpp
 add_dependencies(jellyfin-desktop embedded_js embedded_resources generate_version)
@@ -643,13 +663,14 @@ target_link_libraries(jellyfin-desktop PRIVATE
     ${CEF_LIBRARIES}
     ${MPV_LIBRARIES}
     ${PLATFORM_LIBRARIES}
-    quill::quill
+    fmt::fmt
 )
 if(WIN32)
     target_link_libraries(jellyfin-desktop PRIVATE ${LIBAVCODEC_LIBRARIES})
 else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
+target_link_libraries(jellyfin-desktop PRIVATE jfn_rust)
 
 # When using external/system CEF, tell the app where to find resources
 if(EXTERNAL_CEF_DIR OR USE_SYSTEM_CEF)
@@ -663,7 +684,7 @@ if(APPLE)
     set_source_files_properties(
         src/platform/macos.mm
         src/input/input_macos.mm
-        src/player/macos/media_session_macos.mm
+        src/playback/sinks/macos/macos_sink.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
 endif()
@@ -858,15 +879,6 @@ else()
     if(EXTERNAL_MPV_DIR)
         install(FILES "${EXTERNAL_MPV_DIR}/lib/libmpv.so" DESTINATION .)
     endif()
-endif()
-
-# Tests (opt-in; existing packagers and CI are unaffected by default).
-# Default BUILD_TESTING to OFF before include(CTest) so distro builds
-# running plain `cmake ..` stay behavior-identical.
-set(BUILD_TESTING OFF CACHE BOOL "Build unit tests")
-include(CTest)
-if(BUILD_TESTING)
-    add_subdirectory(tests)
 endif()
 
 # CPack for creating distribution packages

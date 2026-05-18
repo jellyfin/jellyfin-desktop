@@ -1,0 +1,18 @@
+id: raw-delete
+language: cpp
+severity: warning
+message: >
+  Raw `delete` — manual lifetime management leaks on early return / exception.
+  Prefer RAII (unique_ptr / scope guard / CefRefPtr release).
+files:
+  - "src/**/*.cpp"
+  - "src/**/*.h"
+  - "src/**/*.mm"
+ignores:
+  - "src/cjson/**"
+  - "third_party/**"
+  - "tests/**"
+rule:
+  any:
+    - pattern: delete $X;
+    - pattern: delete[] $X;

@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = [
+    "cli",
+    "color",
+    "config",
+    "idle_inhibit_linux",
+    "jellyfin",
+    "jfn_rust",
+    "logging",
+    "mpv",
+    "open_url_linux",
+    "paths",
+    "playback",
+    "signal_guard",
+    "single_instance",
+    "wayland",
+    "wlproxy",
+]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

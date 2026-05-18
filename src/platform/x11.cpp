@@ -1,10 +1,7 @@
 #include "common.h"
 #include "cef/cef_client.h"
-#include "browser/browsers.h"
-#include "browser/web_browser.h"
-#include "browser/overlay_browser.h"
-#include "idle_inhibit_linux.h"
-#include "open_url_linux.h"
+#include "jfn_idle_inhibit_linux.h"
+#include "jfn_open_url_linux.h"
 #include "input/input_x11.h"
 #include "mpv/event.h"
 
@@ -16,8 +13,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <unistd.h>
+#include <algorithm>
 #include <mutex>
-#include <thread>
+#include <vector>
 #include <sys/shm.h>
 #include "logging.h"
 
@@ -34,6 +32,19 @@ struct ShmBuffer {
     size_t size = 0;
 };
 
+// Per-surface state. Each PlatformSurface is a top-level ARGB
+// override-redirect window positioned over mpv's window. The compositor
+// alpha-blends transparent regions against the video behind. X11 backend
+// is software-only — no GL / shared-texture path.
+struct PlatformSurface {
+    xcb_window_t window = XCB_NONE;
+    xcb_gcontext_t gc = XCB_NONE;
+    ShmBuffer bufs[2];
+    int buf_idx = 0;
+    bool visible = true;   // mapped by default at alloc, matches Wayland
+    int pw = 0, ph = 0;    // physical size last applied via surface_resize
+};
+
 struct X11State {
     std::mutex surface_mtx;
     xcb_connection_t* conn = nullptr;
@@ -42,43 +53,19 @@ struct X11State {
 
     xcb_window_t parent = XCB_NONE;  // mpv's window
 
-    // Main browser child window
-    xcb_window_t cef_window = XCB_NONE;
-    ShmBuffer cef_bufs[2];
-    int cef_buf_idx = 0;
-
-    // Overlay browser child window
-    xcb_window_t overlay_window = XCB_NONE;
-    ShmBuffer overlay_bufs[2];
-    int overlay_buf_idx = 0;
-    bool overlay_visible = false;
-
-    // About browser child window (above overlay)
-    xcb_window_t about_window = XCB_NONE;
-    ShmBuffer about_bufs[2];
-    int about_buf_idx = 0;
-    bool about_visible = false;
-
-    // Graphics contexts (one per child window, reused across frames)
-    xcb_gcontext_t cef_gc = XCB_NONE;
-    xcb_gcontext_t overlay_gc = XCB_NONE;
-    xcb_gcontext_t about_gc = XCB_NONE;
-
     // ARGB visual
     xcb_visualid_t argb_visual = 0;
     uint8_t argb_depth = 0;
     xcb_colormap_t colormap = XCB_NONE;
 
-    // Dimensions
+    // Dimensions tracked from latest surface_resize (used to size newly
+    // created surfaces before any resize lands)
     float cached_scale = 1.0f;
     int pw = 0, ph = 0;
 
-    // Fade
-    bool transitioning = false;
-    int transition_pw = 0, transition_ph = 0;
-    int pending_lw = 0, pending_lh = 0;
-    int expected_w = 0, expected_h = 0;
-    bool was_fullscreen = false;
+    // Live surfaces — used by sync_overlay_positions on ConfigureNotify
+    // and by cleanup. Mutated only under surface_mtx.
+    std::vector<PlatformSurface*> live;
 
     // Atoms
     xcb_atom_t net_wm_opacity = XCB_NONE;
@@ -144,10 +131,14 @@ static bool query_parent_geometry(int* x, int* y, int* w, int* h) {
     return true;
 }
 
-// Reposition overlay windows to match mpv's parent window.
-static void sync_overlay_positions() {
+// Reposition every live surface to match mpv's parent window. Called from
+// the input thread on ConfigureNotify. surface_mtx held by caller.
+static void sync_overlay_positions_locked() {
     int px, py, pw, ph;
     if (!query_parent_geometry(&px, &py, &pw, &ph)) return;
+
+    g_x11.parent_x = px;
+    g_x11.parent_y = py;
 
     uint32_t vals[4] = {
         static_cast<uint32_t>(px), static_cast<uint32_t>(py),
@@ -156,12 +147,11 @@ static void sync_overlay_positions() {
     uint32_t mask = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
                     XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
 
-    if (g_x11.cef_window != XCB_NONE)
-        xcb_configure_window(g_x11.conn, g_x11.cef_window, mask, vals);
-    if (g_x11.overlay_window != XCB_NONE && g_x11.overlay_visible)
-        xcb_configure_window(g_x11.conn, g_x11.overlay_window, mask, vals);
-    if (g_x11.about_window != XCB_NONE && g_x11.about_visible)
-        xcb_configure_window(g_x11.conn, g_x11.about_window, mask, vals);
+    for (auto* s : g_x11.live) {
+        if (!s || s->window == XCB_NONE) continue;
+        if (!s->visible) continue;
+        xcb_configure_window(g_x11.conn, s->window, mask, vals);
+    }
     xcb_flush(g_x11.conn);
 }
 
@@ -177,7 +167,6 @@ static bool shm_alloc(ShmBuffer& buf, xcb_connection_t* conn, int w, int h) {
     if (buf.data) {
         xcb_shm_detach(conn, buf.seg);
         shmdt(buf.data);
-        shmctl(buf.shmid, IPC_RMID, nullptr);
         buf.data = nullptr;
     }
 
@@ -204,7 +193,7 @@ static bool shm_alloc(ShmBuffer& buf, xcb_connection_t* conn, int w, int h) {
 
 static void shm_free(ShmBuffer& buf, xcb_connection_t* conn) {
     if (!buf.data) return;
-    xcb_shm_detach(conn, buf.seg);
+    if (conn) xcb_shm_detach(conn, buf.seg);
     shmdt(buf.data);
     buf.data = nullptr;
     buf.w = buf.h = 0;
@@ -212,27 +201,91 @@ static void shm_free(ShmBuffer& buf, xcb_connection_t* conn) {
 }
 
 // =====================================================================
-// Present CEF software -- main browser
+// Window factory — top-level ARGB override-redirect child-of-mpv
 // =====================================================================
 
-static void hide_overlays_locked() {
-    if (g_x11.about_window != XCB_NONE)
-        xcb_unmap_window(g_x11.conn, g_x11.about_window);
-    if (g_x11.overlay_window != XCB_NONE)
-        xcb_unmap_window(g_x11.conn, g_x11.overlay_window);
-    if (g_x11.cef_window != XCB_NONE)
-        xcb_unmap_window(g_x11.conn, g_x11.cef_window);
-    xcb_flush(g_x11.conn);
+// Caller must hold surface_mtx (for live list mutation if it's adding).
+// Creates the window at the current parent position, depth=32 ARGB,
+// override-redirect, input-passthrough, mapped immediately.
+static xcb_window_t create_overlay_window_locked(int x, int y, int w, int h) {
+    xcb_window_t win = xcb_generate_id(g_x11.conn);
+    uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL |
+                    XCB_CW_OVERRIDE_REDIRECT | XCB_CW_COLORMAP;
+    uint32_t vals[4] = {0, 0, 1, g_x11.colormap};
+    xcb_create_window(g_x11.conn, g_x11.argb_depth,
+        win, g_x11.screen->root,
+        x, y, w, h, 0,
+        XCB_WINDOW_CLASS_INPUT_OUTPUT,
+        g_x11.argb_visual, mask, vals);
+
+    // Input-passthrough: empty input shape. All input goes to the mpv
+    // parent window, where the X11 input thread picks it up.
+    xcb_shape_rectangles(g_x11.conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_INPUT,
+        XCB_CLIP_ORDERING_UNSORTED, win, 0, 0, 0, nullptr);
+
+    // Handle WM_DELETE_WINDOW if the WM ever targets this window
+    xcb_change_property(g_x11.conn, XCB_PROP_MODE_REPLACE, win,
+        g_x11.wm_protocols, XCB_ATOM_ATOM, 32, 1,
+        &g_x11.wm_delete_window);
+
+    return win;
 }
 
-static void x11_present_software(const CefRenderHandler::RectList& dirty,
-                                 const void* buffer, int w, int h) {
-    if (g_shutting_down.load(std::memory_order_relaxed)) return;
-    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-    if (g_x11.cef_window == XCB_NONE) return;
+// =====================================================================
+// Generic per-surface ops
+// =====================================================================
 
-    auto& buf = g_x11.cef_bufs[g_x11.cef_buf_idx];
-    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
+static PlatformSurface* x11_alloc_surface() {
+    auto* s = new PlatformSurface;
+    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+    if (!g_x11.conn || g_x11.parent == XCB_NONE) return s;
+
+    int px = g_x11.parent_x, py = g_x11.parent_y;
+    int pw = g_x11.pw > 0 ? g_x11.pw : 1;
+    int ph = g_x11.ph > 0 ? g_x11.ph : 1;
+
+    s->window = create_overlay_window_locked(px, py, pw, ph);
+    s->gc = xcb_generate_id(g_x11.conn);
+    xcb_create_gc(g_x11.conn, s->gc, s->window, 0, nullptr);
+    s->pw = pw;
+    s->ph = ph;
+    s->visible = true;
+    xcb_map_window(g_x11.conn, s->window);
+    xcb_flush(g_x11.conn);
+
+    g_x11.live.push_back(s);
+    return s;
+}
+
+static void x11_free_surface(PlatformSurface* s) {
+    if (!s) return;
+    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+
+    auto it = std::find(g_x11.live.begin(), g_x11.live.end(), s);
+    if (it != g_x11.live.end()) g_x11.live.erase(it);
+
+    for (auto& buf : s->bufs) shm_free(buf, g_x11.conn);
+
+    if (s->window != XCB_NONE) xcb_unmap_window(g_x11.conn, s->window);
+    if (s->gc != XCB_NONE) xcb_free_gc(g_x11.conn, s->gc);
+    if (s->window != XCB_NONE) xcb_destroy_window(g_x11.conn, s->window);
+    xcb_flush(g_x11.conn);
+    delete s;
+}
+
+// X11 backend is software-only — no accelerated/shared-texture path.
+static bool x11_surface_present(PlatformSurface*, const CefAcceleratedPaintInfo&) { return false; }
+
+static bool x11_surface_present_software(PlatformSurface* s,
+                                         const CefRenderHandler::RectList& dirty,
+                                         const void* buffer, int w, int h) {
+    if (g_shutting_down.load(std::memory_order_relaxed)) return false;
+    if (!s) return false;
+    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+    if (s->window == XCB_NONE || !s->visible) return false;
+
+    auto& buf = s->bufs[s->buf_idx];
+    if (!shm_alloc(buf, g_x11.conn, w, h)) return false;
 
     int stride = w * 4;
     const auto* src = static_cast<const uint8_t*>(buffer);
@@ -253,241 +306,101 @@ static void x11_present_software(const CefRenderHandler::RectList& dirty,
                    rw * 4);
         }
 
-        xcb_shm_put_image(g_x11.conn, g_x11.cef_window, g_x11.cef_gc,
+        xcb_shm_put_image(g_x11.conn, s->window, s->gc,
             w, h, rx, ry, rw, rh,
             rx, ry, g_x11.argb_depth,
             XCB_IMAGE_FORMAT_Z_PIXMAP,
             0, buf.seg, 0);
     }
 
-    g_x11.cef_buf_idx ^= 1;
+    s->buf_idx ^= 1;
     xcb_flush(g_x11.conn);
+    return true;
 }
 
-// =====================================================================
-// Present CEF software -- overlay browser
-// =====================================================================
-
-static void x11_overlay_present_software(const CefRenderHandler::RectList& dirty,
-                                         const void* buffer, int w, int h) {
-    if (g_shutting_down.load(std::memory_order_relaxed)) return;
-    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-    if (g_x11.overlay_window == XCB_NONE || !g_x11.overlay_visible) return;
-
-    auto& buf = g_x11.overlay_bufs[g_x11.overlay_buf_idx];
-    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
-
-    int stride = w * 4;
-    const auto* src = static_cast<const uint8_t*>(buffer);
-
-    for (const auto& rect : dirty) {
-        int rx = rect.x, ry = rect.y, rw = rect.width, rh = rect.height;
-        if (rx < 0) { rw += rx; rx = 0; }
-        if (ry < 0) { rh += ry; ry = 0; }
-        if (rx + rw > w) rw = w - rx;
-        if (ry + rh > h) rh = h - ry;
-        if (rw <= 0 || rh <= 0) continue;
-
-        for (int row = ry; row < ry + rh; row++) {
-            memcpy(buf.data + row * stride + rx * 4,
-                   src + row * stride + rx * 4,
-                   rw * 4);
-        }
-
-        xcb_shm_put_image(g_x11.conn, g_x11.overlay_window, g_x11.overlay_gc,
-            w, h, rx, ry, rw, rh,
-            rx, ry, g_x11.argb_depth,
-            XCB_IMAGE_FORMAT_Z_PIXMAP,
-            0, buf.seg, 0);
-    }
-
-    g_x11.overlay_buf_idx ^= 1;
-    xcb_flush(g_x11.conn);
-}
-
-// =====================================================================
-// Resize
-// =====================================================================
-
-static void x11_resize(int lw, int lh, int pw, int ph) {
+static void x11_surface_resize(PlatformSurface* s, int /*lw*/, int /*lh*/, int pw, int ph) {
+    if (!s) return;
     std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
     g_x11.pw = pw;
     g_x11.ph = ph;
+    s->pw = pw;
+    s->ph = ph;
+    if (s->window == XCB_NONE) return;
 
-    // Overlays are top-level — reposition to match mpv's window
-    sync_overlay_positions();
-}
-
-static void x11_overlay_resize(int, int, int, int) {
-    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-    sync_overlay_positions();
-}
-
-// =====================================================================
-// Present CEF software -- about browser
-// =====================================================================
-
-static void x11_about_present_software(const CefRenderHandler::RectList& dirty,
-                                       const void* buffer, int w, int h) {
-    if (g_shutting_down.load(std::memory_order_relaxed)) return;
-    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-    if (g_x11.about_window == XCB_NONE || !g_x11.about_visible) return;
-
-    auto& buf = g_x11.about_bufs[g_x11.about_buf_idx];
-    if (!shm_alloc(buf, g_x11.conn, w, h)) return;
-
-    int stride = w * 4;
-    const auto* src = static_cast<const uint8_t*>(buffer);
-
-    for (const auto& rect : dirty) {
-        int rx = rect.x, ry = rect.y, rw = rect.width, rh = rect.height;
-        if (rx < 0) { rw += rx; rx = 0; }
-        if (ry < 0) { rh += ry; ry = 0; }
-        if (rx + rw > w) rw = w - rx;
-        if (ry + rh > h) rh = h - ry;
-        if (rw <= 0 || rh <= 0) continue;
-
-        for (int row = ry; row < ry + rh; row++) {
-            memcpy(buf.data + row * stride + rx * 4,
-                   src + row * stride + rx * 4,
-                   rw * 4);
-        }
-
-        xcb_shm_put_image(g_x11.conn, g_x11.about_window, g_x11.about_gc,
-            w, h, rx, ry, rw, rh,
-            rx, ry, g_x11.argb_depth,
-            XCB_IMAGE_FORMAT_Z_PIXMAP,
-            0, buf.seg, 0);
+    // Refresh parent position too — fullscreen and inter-monitor moves
+    // both arrive through this path.
+    int px = g_x11.parent_x, py = g_x11.parent_y, ppw = 0, pph = 0;
+    if (query_parent_geometry(&px, &py, &ppw, &pph)) {
+        g_x11.parent_x = px;
+        g_x11.parent_y = py;
     }
 
-    g_x11.about_buf_idx ^= 1;
+    uint32_t vals[4] = {
+        static_cast<uint32_t>(px), static_cast<uint32_t>(py),
+        static_cast<uint32_t>(pw), static_cast<uint32_t>(ph)
+    };
+    uint32_t mask = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
+                    XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
+    xcb_configure_window(g_x11.conn, s->window, mask, vals);
     xcb_flush(g_x11.conn);
 }
 
-static void x11_about_resize(int, int, int, int) {
+static void x11_surface_set_visible(PlatformSurface* s, bool visible) {
+    if (!s) return;
     std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-    sync_overlay_positions();
-}
-
-static void x11_set_about_visible(bool visible) {
-    {
-        std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-        if (g_x11.about_visible == visible) return;
-        g_x11.about_visible = visible;
-        if (g_x11.about_window == XCB_NONE) return;
-
-        if (visible) {
-            if (g_x11.pw > 0 && g_x11.ph > 0) {
-                uint32_t vals[2] = {static_cast<uint32_t>(g_x11.pw),
-                                    static_cast<uint32_t>(g_x11.ph)};
-                xcb_configure_window(g_x11.conn, g_x11.about_window,
-                    XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, vals);
-            }
-            xcb_map_window(g_x11.conn, g_x11.about_window);
-            xcb_flush(g_x11.conn);
-        } else {
-            xcb_unmap_window(g_x11.conn, g_x11.about_window);
-            xcb_flush(g_x11.conn);
-        }
-    }
+    if (s->visible == visible) return;
+    s->visible = visible;
+    if (s->window == XCB_NONE) return;
 
     if (visible) {
-        auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-        auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-        if (main) main->GetHost()->SetFocus(false);
-        if (ovl)  ovl->GetHost()->SetFocus(false);
-    }
-}
-
-// =====================================================================
-// Overlay visibility
-// =====================================================================
-
-static void x11_set_overlay_visible(bool visible) {
-    {
-        std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-        if (g_x11.overlay_visible == visible) return;
-        g_x11.overlay_visible = visible;
-        if (g_x11.overlay_window == XCB_NONE) return;
-
-        if (visible) {
-            // Resize to current window size and map
-            if (g_x11.pw > 0 && g_x11.ph > 0) {
-                uint32_t vals[2] = {static_cast<uint32_t>(g_x11.pw),
-                                    static_cast<uint32_t>(g_x11.ph)};
-                xcb_configure_window(g_x11.conn, g_x11.overlay_window,
-                    XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, vals);
-            }
-            xcb_map_window(g_x11.conn, g_x11.overlay_window);
-            xcb_flush(g_x11.conn);
-        } else {
-            // Reset opacity to fully opaque for next time
-            if (g_x11.net_wm_opacity != XCB_NONE) {
-                uint32_t opacity = 0xFFFFFFFF;
-                xcb_change_property(g_x11.conn, XCB_PROP_MODE_REPLACE,
-                    g_x11.overlay_window, g_x11.net_wm_opacity,
-                    XCB_ATOM_CARDINAL, 32, 1, &opacity);
-            }
-            xcb_unmap_window(g_x11.conn, g_x11.overlay_window);
-            xcb_flush(g_x11.conn);
-        }
-    }
-
-    // Route keyboard focus to the active browser
-    auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-    auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-    if (visible) {
-        if (main) main->GetHost()->SetFocus(false);
-        if (ovl)  ovl->GetHost()->SetFocus(true);
+        // Reposition to current parent geometry before mapping, so the
+        // window appears in the right place if mpv moved while we were
+        // hidden.
+        int px = g_x11.parent_x, py = g_x11.parent_y;
+        int pw = s->pw > 0 ? s->pw : (g_x11.pw > 0 ? g_x11.pw : 1);
+        int ph = s->ph > 0 ? s->ph : (g_x11.ph > 0 ? g_x11.ph : 1);
+        uint32_t vals[4] = {
+            static_cast<uint32_t>(px), static_cast<uint32_t>(py),
+            static_cast<uint32_t>(pw), static_cast<uint32_t>(ph)
+        };
+        uint32_t mask = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
+                        XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
+        xcb_configure_window(g_x11.conn, s->window, mask, vals);
+        xcb_map_window(g_x11.conn, s->window);
     } else {
-        if (ovl)  ovl->GetHost()->SetFocus(false);
-        if (main) main->GetHost()->SetFocus(true);
+        xcb_unmap_window(g_x11.conn, s->window);
     }
+    xcb_flush(g_x11.conn);
 }
 
-// =====================================================================
-// Fade overlay
-// =====================================================================
+// Stack the given surfaces above the mpv parent, in order bottom-to-top.
+// X11 override-redirect windows are root-level, so we chain
+// xcb_configure_window with SIBLING + STACK_MODE=Above over the parent.
+static void x11_restack(PlatformSurface* const* ordered, size_t n) {
+    if (!g_x11.conn || n == 0) return;
+    std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
 
-static void x11_fade_overlay(float fade_sec,
+    xcb_window_t prev = g_x11.parent;
+    for (size_t i = 0; i < n; i++) {
+        PlatformSurface* s = ordered[i];
+        if (!s || s->window == XCB_NONE) continue;
+        uint32_t vals[2] = { prev, XCB_STACK_MODE_ABOVE };
+        uint32_t mask = XCB_CONFIG_WINDOW_SIBLING | XCB_CONFIG_WINDOW_STACK_MODE;
+        xcb_configure_window(g_x11.conn, s->window, mask, vals);
+        prev = s->window;
+    }
+    xcb_flush(g_x11.conn);
+}
+
+// X11 backend has no per-surface alpha modulation through the compositor
+// (no wp_alpha_modifier_v1 analogue; _NET_WM_WINDOW_OPACITY worked only
+// on the legacy overlay window and is unreliable across compositors).
+// Implement as a hard cut, matching the original overlay-fade fallback.
+static void x11_fade_surface(PlatformSurface* /*s*/, float /*fade_sec*/,
                              std::function<void()> on_fade_start,
                              std::function<void()> on_complete) {
-    if (g_x11.net_wm_opacity == XCB_NONE) {
-        // No opacity support — just hide immediately
-        x11_set_overlay_visible(false);
-        if (on_fade_start) on_fade_start();
-        if (on_complete) on_complete();
-        return;
-    }
-
-    std::thread([fade_sec,
-                 on_fade_start = std::move(on_fade_start),
-                 on_complete = std::move(on_complete)]() {
-        if (on_fade_start) on_fade_start();
-
-        int fps = g_display_hz.load(std::memory_order_relaxed);
-        int total_frames = static_cast<int>(fade_sec * fps);
-        if (total_frames < 1) total_frames = 1;
-        auto frame_duration = std::chrono::microseconds(1000000 / fps);
-
-        for (int i = 1; i <= total_frames; i++) {
-            float t = static_cast<float>(i) / total_frames;
-            uint32_t alpha = static_cast<uint32_t>((1.0f - t) * 0xFFFFFFFF);
-
-            {
-                std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-                if (!g_x11.overlay_visible || g_x11.overlay_window == XCB_NONE) break;
-                xcb_change_property(g_x11.conn, XCB_PROP_MODE_REPLACE,
-                    g_x11.overlay_window, g_x11.net_wm_opacity,
-                    XCB_ATOM_CARDINAL, 32, 1, &alpha);
-                xcb_flush(g_x11.conn);
-            }
-            std::this_thread::sleep_for(frame_duration);
-        }
-
-        x11_set_overlay_visible(false);
-        if (on_complete) on_complete();
-    }).detach();
+    if (on_fade_start) on_fade_start();
+    if (on_complete) on_complete();
 }
 
 // =====================================================================
@@ -530,12 +443,21 @@ static float x11_get_scale() {
 // Init
 // =====================================================================
 
+static void hide_all_live_locked() {
+    if (!g_x11.conn) return;
+    for (auto* s : g_x11.live) {
+        if (s && s->window != XCB_NONE)
+            xcb_unmap_window(g_x11.conn, s->window);
+    }
+    xcb_flush(g_x11.conn);
+}
+
 static bool x11_init(mpv_handle*) {
     // Get mpv's window ID
     int64_t wid = 0;
     g_mpv.GetWindowId(wid);
     if (wid <= 0) {
-        fprintf(stderr, "Failed to get window-id from mpv\n");
+        LOG_ERROR(LOG_PLATFORM, "Failed to get window-id from mpv");
         return false;
     }
     g_x11.parent = static_cast<xcb_window_t>(wid);
@@ -543,7 +465,7 @@ static bool x11_init(mpv_handle*) {
     // Open XCB connection
     g_x11.conn = xcb_connect(nullptr, &g_x11.screen_num);
     if (xcb_connection_has_error(g_x11.conn)) {
-        fprintf(stderr, "Failed to connect to X11\n");
+        LOG_ERROR(LOG_PLATFORM, "Failed to connect to X11");
         return false;
     }
 
@@ -557,7 +479,7 @@ static bool x11_init(mpv_handle*) {
     // Find 32-bit ARGB visual
     g_x11.argb_visual = find_argb_visual(g_x11.screen, &g_x11.argb_depth);
     if (!g_x11.argb_visual) {
-        fprintf(stderr, "No 32-bit ARGB visual found\n");
+        LOG_ERROR(LOG_PLATFORM, "No 32-bit ARGB visual found");
         xcb_disconnect(g_x11.conn);
         return false;
     }
@@ -582,7 +504,7 @@ static bool x11_init(mpv_handle*) {
     auto shm_cookie = xcb_shm_query_version(g_x11.conn);
     auto* shm_reply = xcb_shm_query_version_reply(g_x11.conn, shm_cookie, nullptr);
     if (!shm_reply) {
-        fprintf(stderr, "X11 MIT-SHM extension not available\n");
+        LOG_ERROR(LOG_PLATFORM, "X11 MIT-SHM extension not available");
         xcb_free_colormap(g_x11.conn, g_x11.colormap);
         xcb_disconnect(g_x11.conn);
         return false;
@@ -594,67 +516,23 @@ static bool x11_init(mpv_handle*) {
     query_parent_geometry(&px, &py, &pw, &ph);
     g_x11.parent_x = px;
     g_x11.parent_y = py;
+    g_x11.pw = pw;
+    g_x11.ph = ph;
 
-    // Helper: create a top-level ARGB overlay window.
-    // Override-redirect: no WM decoration, no management.
-    // Compositor alpha-blends against windows behind (mpv).
-    auto create_overlay_window = [&](int x, int y, int w, int h) -> xcb_window_t {
-        xcb_window_t win = xcb_generate_id(g_x11.conn);
-        uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL |
-                        XCB_CW_OVERRIDE_REDIRECT | XCB_CW_COLORMAP;
-        uint32_t vals[4] = {0, 0, 1, g_x11.colormap};
-        xcb_create_window(g_x11.conn, g_x11.argb_depth,
-            win, g_x11.screen->root,
-            x, y, w, h, 0,
-            XCB_WINDOW_CLASS_INPUT_OUTPUT,
-            g_x11.argb_visual, mask, vals);
-
-        // Input-passthrough: empty input shape
-        xcb_shape_rectangles(g_x11.conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_INPUT,
-            XCB_CLIP_ORDERING_UNSORTED, win, 0, 0, 0, nullptr);
-
-        // Handle WM_DELETE_WINDOW if the WM ever targets this window
-        xcb_change_property(g_x11.conn, XCB_PROP_MODE_REPLACE, win,
-            g_x11.wm_protocols, XCB_ATOM_ATOM, 32, 1,
-            &g_x11.wm_delete_window);
-
-        return win;
-    };
-
-    // Main CEF overlay (always mapped, alpha-transparent over mpv)
-    g_x11.cef_window = create_overlay_window(px, py, pw, ph);
-    g_x11.cef_gc = xcb_generate_id(g_x11.conn);
-    xcb_create_gc(g_x11.conn, g_x11.cef_gc, g_x11.cef_window, 0, nullptr);
-    xcb_map_window(g_x11.conn, g_x11.cef_window);
-
-    // Overlay CEF window (above main, initially unmapped)
-    g_x11.overlay_window = create_overlay_window(px, py, pw, ph);
-    g_x11.overlay_gc = xcb_generate_id(g_x11.conn);
-    xcb_create_gc(g_x11.conn, g_x11.overlay_gc, g_x11.overlay_window, 0, nullptr);
-
-    // About CEF window (above overlay, initially unmapped)
-    g_x11.about_window = create_overlay_window(px, py, pw, ph);
-    g_x11.about_gc = xcb_generate_id(g_x11.conn);
-    xcb_create_gc(g_x11.conn, g_x11.about_gc, g_x11.about_window, 0, nullptr);
-
-    xcb_flush(g_x11.conn);
-
-    // Note: input::x11::init already selects StructureNotify + input events
-    // on the parent window, so ConfigureNotify is delivered to the input thread.
-
-    // Software rendering only for now
+    // Software rendering only.
     g_platform.shared_texture_supported = false;
 
     // Init input on mpv's parent window
     input::x11::init(g_x11.conn, g_x11.screen, g_x11.parent);
-    input::x11::set_configure_callback([]() { sync_overlay_positions(); });
+    input::x11::set_configure_callback([]() {
+        std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+        sync_overlay_positions_locked();
+    });
     input::x11::set_shutdown_callback([]() {
         std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
-        hide_overlays_locked();
+        hide_all_live_locked();
     });
     input::x11::start_input_thread();
-
-    idle_inhibit::init();
 
     LOG_INFO(LOG_PLATFORM, "X11 platform initialized (parent=0x{:x})", g_x11.parent);
     return true;
@@ -665,45 +543,57 @@ static bool x11_init(mpv_handle*) {
 // =====================================================================
 
 static void x11_cleanup() {
-    // Hide overlay windows immediately so they don't linger during shutdown
+    // Hide any straggler surface windows immediately so they don't linger
+    // during shutdown. Browsers normally frees its surfaces before this
+    // runs; this is defensive.
     if (g_x11.conn) {
-        if (g_x11.about_window != XCB_NONE)
-            xcb_unmap_window(g_x11.conn, g_x11.about_window);
-        if (g_x11.overlay_window != XCB_NONE)
-            xcb_unmap_window(g_x11.conn, g_x11.overlay_window);
-        if (g_x11.cef_window != XCB_NONE)
-            xcb_unmap_window(g_x11.conn, g_x11.cef_window);
-        xcb_flush(g_x11.conn);
+        std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+        hide_all_live_locked();
     }
 
-    idle_inhibit::cleanup();
+    jfn_idle_inhibit_cleanup();
     input::x11::cleanup();
 
-    // Free SHM buffers
-    for (auto& buf : g_x11.cef_bufs)     shm_free(buf, g_x11.conn);
-    for (auto& buf : g_x11.overlay_bufs)  shm_free(buf, g_x11.conn);
-    for (auto& buf : g_x11.about_bufs)    shm_free(buf, g_x11.conn);
+    // Free any surface that outlived Browsers (defensive — Browsers dtor
+    // should already have freed them).
+    {
+        std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
+        for (auto* s : g_x11.live) {
+            if (!s) continue;
+            for (auto& buf : s->bufs) shm_free(buf, g_x11.conn);
+            if (s->gc != XCB_NONE) xcb_free_gc(g_x11.conn, s->gc);
+            if (s->window != XCB_NONE) xcb_destroy_window(g_x11.conn, s->window);
+            delete s;
+        }
+        g_x11.live.clear();
+    }
 
-    // Free GCs and destroy windows
-    if (g_x11.about_gc != XCB_NONE)
-        xcb_free_gc(g_x11.conn, g_x11.about_gc);
-    if (g_x11.about_window != XCB_NONE)
-        xcb_destroy_window(g_x11.conn, g_x11.about_window);
-    if (g_x11.overlay_gc != XCB_NONE)
-        xcb_free_gc(g_x11.conn, g_x11.overlay_gc);
-    if (g_x11.cef_gc != XCB_NONE)
-        xcb_free_gc(g_x11.conn, g_x11.cef_gc);
-    if (g_x11.overlay_window != XCB_NONE)
-        xcb_destroy_window(g_x11.conn, g_x11.overlay_window);
-    if (g_x11.cef_window != XCB_NONE)
-        xcb_destroy_window(g_x11.conn, g_x11.cef_window);
-    if (g_x11.colormap != XCB_NONE)
+    if (g_x11.colormap != XCB_NONE && g_x11.conn)
         xcb_free_colormap(g_x11.conn, g_x11.colormap);
 
     if (g_x11.conn) {
         xcb_disconnect(g_x11.conn);
         g_x11.conn = nullptr;
     }
+}
+
+// Standalone (own xcb_connect): runs before x11_init, so g_x11.screen
+// is null at this point. The whole-root width/height covers the entire
+// X virtual screen — for multi-monitor setups this is the union of all
+// monitors, which is fine for "shrink-to-fit" purposes.
+static void x11_clamp_window_geometry(int* w, int* h, int* /*x*/, int* /*y*/) {
+    xcb_connection_t* c = xcb_connect(nullptr, nullptr);
+    if (!c || xcb_connection_has_error(c)) {
+        if (c) xcb_disconnect(c);
+        return;
+    }
+    auto iter = xcb_setup_roots_iterator(xcb_get_setup(c));
+    if (!iter.data) { xcb_disconnect(c); return; }
+    int sw = iter.data->width_in_pixels;
+    int sh = iter.data->height_in_pixels;
+    xcb_disconnect(c);
+    if (sw > 0 && *w > sw) *w = sw;
+    if (sh > 0 && *h > sh) *h = sh;
 }
 
 // =====================================================================
@@ -716,25 +606,20 @@ Platform make_x11_platform() {
         .early_init = []() {},
         .init = x11_init,
         .cleanup = x11_cleanup,
-        .present = [](const CefAcceleratedPaintInfo&) {},
-        .present_software = x11_present_software,
-        .resize = x11_resize,
-        .overlay_present = [](const CefAcceleratedPaintInfo&) {},
-        .overlay_present_software = x11_overlay_present_software,
-        .overlay_resize = x11_overlay_resize,
-        .set_overlay_visible = x11_set_overlay_visible,
-        .about_present = [](const CefAcceleratedPaintInfo&) {},
-        .about_present_software = x11_about_present_software,
-        .about_resize = x11_about_resize,
-        .set_about_visible = x11_set_about_visible,
-        .popup_show = [](int, int, int, int) {},
-        .popup_hide = []() {},
-        .popup_present = [](const CefAcceleratedPaintInfo&, int, int) {},
-        .popup_present_software = [](const void*, int, int, int, int) {},
-        .try_native_popup_menu = [](int, int, int, int,
-                                    const std::vector<std::string>&, int,
-                                    std::function<void(int)>) { return false; },
-        .fade_overlay = x11_fade_overlay,
+        .post_window_cleanup = nullptr,
+        .alloc_surface = x11_alloc_surface,
+        .free_surface = x11_free_surface,
+        .surface_present = x11_surface_present,
+        .surface_present_software = x11_surface_present_software,
+        .surface_resize = x11_surface_resize,
+        .surface_set_visible = x11_surface_set_visible,
+        .restack = x11_restack,
+        .fade_surface = x11_fade_surface,
+        // X11 popup not implemented (pre-existing gap).
+        .popup_show = [](PlatformSurface*, const Platform::PopupRequest&) {},
+        .popup_hide = [](PlatformSurface*) {},
+        .popup_present = [](PlatformSurface*, const CefAcceleratedPaintInfo&, int, int) {},
+        .popup_present_software = [](PlatformSurface*, const void*, int, int, int, int) {},
         .set_fullscreen = x11_set_fullscreen,
         .toggle_fullscreen = x11_toggle_fullscreen,
         .begin_transition = x11_begin_transition,
@@ -742,6 +627,7 @@ Platform make_x11_platform() {
         .in_transition = x11_in_transition,
         .set_expected_size = x11_set_expected_size,
         .get_scale = x11_get_scale,
+        .get_display_scale = [](int, int) -> float { return 1.0f; },
         .query_window_position = [](int* x, int* y) -> bool {
             if (!g_x11.conn || g_x11.parent == XCB_NONE) return false;
             auto cookie = xcb_translate_coordinates(g_x11.conn,
@@ -753,15 +639,15 @@ Platform make_x11_platform() {
             free(reply);
             return true;
         },
-        .clamp_window_geometry = nullptr,
+        .clamp_window_geometry = x11_clamp_window_geometry,
         .pump = []() {},
         .run_main_loop = nullptr,
         .wake_main_loop = nullptr,
         .set_cursor = input::x11::set_cursor,
-        .set_idle_inhibit = [](IdleInhibitLevel level) { idle_inhibit::set(level); },
+        .set_idle_inhibit = [](IdleInhibitLevel level) { jfn_idle_inhibit_set(static_cast<uint32_t>(level)); },
         .set_theme_color = [](const Color&) {},
         .shared_texture_supported = false,
         .clipboard_read_text_async = nullptr,
-        .open_external_url = open_url_linux::open,
+        .open_external_url = [](const std::string& url) { jfn_open_url(url.c_str()); },
     };
 }

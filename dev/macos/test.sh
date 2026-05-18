@@ -11,4 +11,5 @@ if [ ! -f "${BUILD_DIR}/CMakeCache.txt" ]; then
     exit 1
 fi
 
-exec ctest --test-dir "${BUILD_DIR}" --output-on-failure ${1+"$@"}
+ctest --test-dir "${BUILD_DIR}" --output-on-failure ${1+"$@"}
+exec cargo test --manifest-path "${SCRIPT_DIR}/../../src/Cargo.toml" --workspace --exclude jfn-wlproxy

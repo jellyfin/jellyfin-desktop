@@ -1,25 +1,19 @@
 #include "common.h"
 #include "cef/cef_client.h"
-#include "browser/browsers.h"
-#include "browser/web_browser.h"
-#include "browser/overlay_browser.h"
+#include "platform/platform.h"
+#include "platform/wayland.h"
+#include "jfn_wayland_scale_probe.h"
 #include "clipboard/wayland.h"
-#include "idle_inhibit_linux.h"
-#include "open_url_linux.h"
+#include "jfn_idle_inhibit_linux.h"
+#include "jfn_open_url_linux.h"
 #include "input/input_wayland.h"
 #include "mpv/event.h"
+#include "wlproxy/wlproxy.h"
 
 #include <wayland-client.h>
 #include "linux-dmabuf-v1-client.h"
 #include "viewporter-client.h"
 #include "alpha-modifier-v1-client.h"
-#include "cursor-shape-v1-client.h"
-// Callback fields in mpv's vo_wayland_state -- set via wayland-state property.
-// Must match the struct layout in wayland_common.h.
-struct wl_configure_cb {
-    void (*fn)(void *data, int width, int height, bool fullscreen);
-    void *data;
-};
 #include <drm/drm_fourcc.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -32,8 +26,11 @@ struct wl_configure_cb {
 #include <cstring>
 #include <cstdlib>
 #include <unistd.h>
+#include <algorithm>
+#include <chrono>
 #include <mutex>
 #include <thread>
+#include <vector>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include "logging.h"
@@ -43,6 +40,39 @@ struct wl_configure_cb {
 // Wayland state (file-static)
 // =====================================================================
 
+// Per-surface state. One per CefLayer (allocated by wl_alloc_surface,
+// destroyed by wl_free_surface). Each surface owns its own popup
+// subsurface so popups (e.g. <select> dropdowns) are children of the
+// layer that spawned them — automatically z-ordered above the layer,
+// no parent inference needed.
+struct PlatformSurface {
+    wl_surface*    surface = nullptr;
+    wl_subsurface* subsurface = nullptr;
+    wp_viewport*   viewport = nullptr;
+    wp_alpha_modifier_surface_v1* alpha = nullptr;
+    wl_buffer*     buffer = nullptr;
+    int            buffer_w = 0, buffer_h = 0;  // physical pixels of `buffer`
+    bool           visible = true;       // unmapped surfaces don't present
+    bool           placeholder = false;  // true while showing solid-color placeholder
+    bool           null_attached = false;// true while surface has wl_surface_attach(nullptr)
+    // Per-surface logical/physical size — written by wl_surface_resize
+    // (OSD_DIMS path) and on_mpv_configure (xdg_toplevel.configure fan-
+    // out). Authoritative target for this surface's viewport math and
+    // tolerance gate.
+    int            lw = 0, lh = 0;
+    int            pw = 0, ph = 0;
+
+    // Per-surface popup (CEF OSR popup elements, e.g. <select> dropdowns).
+    // The popup subsurface is a child of `surface`, so it draws above this
+    // surface automatically.
+    wl_surface*    popup_surface = nullptr;
+    wl_subsurface* popup_subsurface = nullptr;
+    wp_viewport*   popup_viewport = nullptr;
+    wl_buffer*     popup_buffer = nullptr;
+    bool           popup_visible = false;
+
+};
+
 struct WlState {
     std::mutex surface_mtx;  // protects surface ops between CEF thread and VO thread
     wl_display* display = nullptr;
@@ -51,48 +81,23 @@ struct WlState {
     wl_subcompositor* subcompositor = nullptr;
     wl_surface* parent = nullptr;
 
-    // Main browser subsurface
-    wl_surface* cef_surface = nullptr;
-    wl_subsurface* cef_subsurface = nullptr;
-    wl_buffer* cef_buffer = nullptr;
-    wp_viewport* cef_viewport = nullptr;
-
-    // Overlay browser subsurface (above main)
-    wl_surface* overlay_surface = nullptr;
-    wl_subsurface* overlay_subsurface = nullptr;
-    wl_buffer* overlay_buffer = nullptr;
-    wp_viewport* overlay_viewport = nullptr;
-    bool overlay_visible = false;
-    bool overlay_placeholder = false;  // true while showing solid-color placeholder
-
-    // About browser subsurface (above overlay)
-    wl_surface* about_surface = nullptr;
-    wl_subsurface* about_subsurface = nullptr;
-    wl_buffer* about_buffer = nullptr;
-    wp_viewport* about_viewport = nullptr;
-    bool about_visible = false;
-
-    // Popup subsurface (CEF OSR popup elements, e.g. <select> dropdowns)
-    wl_surface* popup_surface = nullptr;
-    wl_subsurface* popup_subsurface = nullptr;
-    wl_buffer* popup_buffer = nullptr;
-    wp_viewport* popup_viewport = nullptr;
-    bool popup_visible = false;
+    // Current stack order, bottom-to-top. The first (bottom-most) surface
+    // is treated as the cef-main surface for transition purposes.
+    std::vector<PlatformSurface*> stack;  // guarded by surface_mtx
 
     // Shared globals
     wl_shm* shm = nullptr;
     zwp_linux_dmabuf_v1* dmabuf = nullptr;
     wp_viewporter* viewporter = nullptr;
     wp_alpha_modifier_v1* alpha_modifier = nullptr;
-    wp_alpha_modifier_surface_v1* overlay_alpha = nullptr;
 
-    float cached_scale = 1.0f;
-    int mpv_pw = 0, mpv_ph = 0;      // mpv's current physical size
-    int transition_pw = 0, transition_ph = 0;
-    int pending_lw = 0, pending_lh = 0;
-    int expected_w = 0, expected_h = 0;
-    bool transitioning = false;
+    float cached_scale = 0.0f;  // 0 = unknown; wl_get_scale falls back to 1.0
     bool was_fullscreen = false;
+    // Resize transition state. transitioning gates non-paint paths
+    // (resize, configure, fullscreen reject). Paint path uses a function-
+    // pointer swap (g_present) — see present_drop / present_match_or_drop
+    // / present_attach.
+    bool transitioning = false;
 
 #ifdef HAVE_KDE_DECORATION_PALETTE
     org_kde_kwin_server_decoration_palette_manager* palette_manager = nullptr;
@@ -104,12 +109,26 @@ struct WlState {
 
 static WlState g_wl;
 
+// Fade thread state. Joinable so wl_cleanup can stop it before destroying
+// the surfaces and alpha modifier it touches — Alt+F4 mid-fade otherwise
+// races destruction against the next iteration's set_multiplier/commit.
+static std::thread g_fade_thread;
+static std::atomic<bool> g_fade_stop{false};
+
+static void stop_fade_thread() {
+    if (g_fade_thread.joinable()) {
+        g_fade_stop.store(true, std::memory_order_release);
+        g_fade_thread.join();
+    }
+}
+
 static void update_surface_size_locked(int lw, int lh, int pw, int ph);
 static void wl_begin_transition_locked();
 static void wl_end_transition_locked();
-static void wl_set_expected_size_locked(int w, int h);
 static void wl_begin_transition();
 static void wl_toggle_fullscreen();
+static void popup_create_locked(PlatformSurface* s);
+static void popup_destroy_locked(PlatformSurface* s);
 static void wl_init_kde_palette();
 static void wl_cleanup_kde_palette();
 static void wl_set_theme_color(const Color& c);
@@ -135,7 +154,10 @@ static wl_buffer* create_solid_color_buffer(const Color& c) {
 }
 
 // =====================================================================
-// Present CEF dmabuf -- main browser
+// Generic per-surface present/resize/visibility (called by Browsers via
+// the Platform vtable). The cef-main role lives on stack[0]: its present
+// path participates in fullscreen transitions; other surfaces always
+// pass through.
 // =====================================================================
 
 static wl_buffer* create_dmabuf_buffer(const CefAcceleratedPaintInfo& info) {
@@ -153,107 +175,6 @@ static wl_buffer* create_dmabuf_buffer(const CefAcceleratedPaintInfo& info) {
     close(fd);
     return buf;
 }
-
-static void wl_present(const CefAcceleratedPaintInfo& info) {
-    int w = info.extra.coded_size.width;
-    int h = info.extra.coded_size.height;
-
-    // Phase 1: check if we should drop this frame
-    {
-        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-        if (!g_wl.cef_surface || !g_wl.dmabuf) return;
-        if (g_wl.transitioning) {
-            if (g_wl.expected_w <= 0 || (w == g_wl.transition_pw && h == g_wl.transition_ph))
-                return;
-        }
-    }
-
-    // Phase 2: create dmabuf buffer (expensive, no lock)
-    auto* buf = create_dmabuf_buffer(info);
-    if (!buf) return;
-
-    // Phase 3: attach + commit under lock
-    {
-        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-        if (!g_wl.cef_surface) { wl_buffer_destroy(buf); return; }
-        // Drop oversized buffers
-        if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) {
-            wl_buffer_destroy(buf);
-            return;
-        }
-        if (g_wl.transitioning) {
-            if (g_wl.expected_w <= 0 || (w == g_wl.transition_pw && h == g_wl.transition_ph)) {
-                wl_buffer_destroy(buf);
-                return;
-            }
-            wl_end_transition_locked();
-        }
-
-        if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
-        g_wl.cef_buffer = buf;
-        if (g_wl.cef_viewport && g_wl.mpv_pw > 0) {
-            // Crop source to the smaller of buffer vs mpv window
-            int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
-            int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
-            float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-            wp_viewport_set_source(g_wl.cef_viewport,
-                wl_fixed_from_int(0), wl_fixed_from_int(0),
-                wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-            // Destination must match source at 1:1 pixels — never stretch.
-            // When buffer matches mpv size, this fills the window.
-            // When buffer is smaller (stale frame after resize), this shows
-            // the buffer at correct size with video visible in the gap.
-            wp_viewport_set_destination(g_wl.cef_viewport,
-                static_cast<int>(cw / scale),
-                static_cast<int>(ch / scale));
-        }
-        wl_surface_attach(g_wl.cef_surface, buf, 0, 0);
-        wl_surface_damage_buffer(g_wl.cef_surface, 0, 0, w, h);
-        wl_surface_commit(g_wl.cef_surface);
-        wl_display_flush(g_wl.display);
-    }
-}
-
-// =====================================================================
-// Present CEF dmabuf -- overlay browser
-// =====================================================================
-
-static void wl_overlay_present(const CefAcceleratedPaintInfo& info) {
-    int w = info.extra.coded_size.width;
-    int h = info.extra.coded_size.height;
-
-    auto* buf = create_dmabuf_buffer(info);
-    if (!buf) return;
-
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.overlay_surface || !g_wl.overlay_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
-
-    if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
-    g_wl.overlay_buffer = buf;
-    g_wl.overlay_placeholder = false;
-    if (g_wl.overlay_viewport && g_wl.mpv_pw > 0) {
-        int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
-        int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
-        float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.overlay_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.overlay_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
-    }
-    wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, w, h);
-    wl_surface_commit(g_wl.overlay_surface);
-    wl_display_flush(g_wl.display);
-}
-
-// =====================================================================
-// Software present (wl_shm fallback when shared textures unavailable)
-// =====================================================================
 
 static wl_buffer* create_shm_buffer(const void* pixels, int w, int h) {
     if (!g_wl.shm) return nullptr;
@@ -273,364 +194,428 @@ static wl_buffer* create_shm_buffer(const void* pixels, int w, int h) {
     return buf;
 }
 
-static void wl_present_software(const CefRenderHandler::RectList&,
-                                const void* buffer, int w, int h) {
-    auto* buf = create_shm_buffer(buffer, w, h);
-    if (!buf) return;
+// Common attach/commit body for a surface; expects buf already created.
+// Caller holds surface_mtx.
+//
+// Hard invariant: this function must never produce subsurface state that
+// exceeds the current mpv window size, and must never stretch (src and
+// dst rects must scale by the mpv physical/logical ratio). Source clamped
+// to min(buf, mpv_pw); destination derived proportionally so the ratio is
+// always exactly mpv_pw/mpv_lw — when CEF lags (buf < mpv) the subsurface
+// renders smaller than the window, exposing mpv beneath; when CEF overshoots
+// (buf > mpv) the buffer is cropped to the top-left mpv-sized region.
+// Per-surface s->lw/pw is intentionally not consulted: it lags mpv during
+// exactly the race window we care about, and every layer in this
+// architecture is sized to the full window.
 
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.cef_surface) { wl_buffer_destroy(buf); return; }
-    if (g_wl.mpv_pw > 0 && (w > g_wl.mpv_pw + 2 || h > g_wl.mpv_ph + 2)) {
-        wl_buffer_destroy(buf);
-        return;
-    }
-
-    if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
-    g_wl.cef_buffer = buf;
-    if (g_wl.cef_viewport && g_wl.mpv_pw > 0) {
-        int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
-        int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
-        float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.cef_viewport,
+static void attach_and_commit_locked(PlatformSurface* s, wl_buffer* buf,
+                                     int buf_w, int buf_h) {
+    if (s->buffer) wl_buffer_destroy(s->buffer);
+    s->buffer = buf;
+    s->buffer_w = buf_w;
+    s->buffer_h = buf_h;
+    s->placeholder = false;
+    s->null_attached = false;
+    if (s->viewport && s->pw > 0 && s->lw > 0) {
+        int src_w = std::min(buf_w, s->pw);
+        int src_h = std::min(buf_h, s->ph);
+        int dst_w = (src_w * s->lw) / s->pw;
+        int dst_h = (src_h * s->lh) / s->ph;
+        wp_viewport_set_source(s->viewport,
             wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.cef_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
+            wl_fixed_from_int(src_w), wl_fixed_from_int(src_h));
+        wp_viewport_set_destination(s->viewport, dst_w, dst_h);
     }
-    wl_surface_attach(g_wl.cef_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.cef_surface, 0, 0, w, h);
-    wl_surface_commit(g_wl.cef_surface);
+    wl_surface_attach(s->surface, buf, 0, 0);
+    wl_surface_damage_buffer(s->surface, 0, 0, buf_w, buf_h);
+    wl_surface_commit(s->surface);
     wl_display_flush(g_wl.display);
 }
 
-static void wl_overlay_present_software(const CefRenderHandler::RectList&,
+// Paint path is a vtable: g_present swaps between drop (begin-transition
+// window, before mpv_pw is updated) and attach (steady).
+//
+//   begin_transition  : g_present = present_drop
+//   on_mpv_configure  : g_present = present_attach (via end_transition)
+//
+// present_attach passes most buffers through to attach_and_commit_locked
+// which clamps non-stretched in all directions:
+//   * buf < mpv: src=buf, dst proportional → 1:1 at top-left, gap.
+//   * buf == mpv: full window.
+//   * buf > mpv: full window, top-left crop.
+//
+// Exception: during an FS transition (set by begin_transition_locked,
+// cleared on first in-tolerance frame), require visible_rect within
+// kTransitionToleranceTexels of mpv_pw/ph. FS swaps cause big size
+// jumps; rendering a stale-by-far buf 1:1 at top-left or as a top-left
+// crop is more jarring than unmapping (mpv shows through the gap)
+// until CEF catches up. The 5s nudge loops (rAF in cef_app.cpp +
+// Invalidate in cef_client.cpp) drive convergence within the window.
+constexpr int kTransitionToleranceTexels = 32;
+
+static bool present_drop(PlatformSurface*, const CefAcceleratedPaintInfo&) { return false; }
+
+static void unmap_locked(PlatformSurface* s) {
+    if (!s || !s->surface) return;
+    wl_surface_attach(s->surface, nullptr, 0, 0);
+    if (s->viewport)
+        wp_viewport_set_destination(s->viewport, -1, -1);
+    wl_surface_commit(s->surface);
+    wl_display_flush(g_wl.display);
+    s->null_attached = true;
+}
+
+static bool size_in_tolerance_locked(PlatformSurface* s, int vw, int vh) {
+    if (!s || s->pw <= 0) return true;
+    return std::abs(vw - s->pw) <= kTransitionToleranceTexels &&
+           std::abs(vh - s->ph) <= kTransitionToleranceTexels;
+}
+
+static bool present_attach(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
+    int w = info.extra.coded_size.width;
+    int h = info.extra.coded_size.height;
+    int vw = info.extra.visible_rect.width;
+    int vh = info.extra.visible_rect.height;
+    {
+        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+        if (!s || !s->surface || !s->visible || !g_wl.dmabuf) return false;
+        if (g_wl.transitioning && !size_in_tolerance_locked(s, vw, vh)) {
+            unmap_locked(s);
+            return false;
+        }
+    }
+
+    auto* buf = create_dmabuf_buffer(info);
+    if (!buf) return false;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!s->surface || !s->visible) { wl_buffer_destroy(buf); return false; }
+    if (g_wl.transitioning && !size_in_tolerance_locked(s, vw, vh)) {
+        wl_buffer_destroy(buf);
+        unmap_locked(s);
+        return false;
+    }
+    if (g_wl.transitioning) {
+        // First in-tolerance frame ends the FS transition.
+        g_wl.transitioning = false;
+        attach_and_commit_locked(s, buf, w, h);
+        return true;
+    }
+    // Recovery: a previously-null-attached surface (e.g., dropped by gap
+    // detect during a transition that never recovered) must attach the
+    // first paint it sees, regardless of gate state. Otherwise the
+    // subsurface stays unmapped indefinitely.
+    if (s->null_attached) {
+        attach_and_commit_locked(s, buf, w, h);
+        return true;
+    }
+    // Out-of-tolerance frames don't attach — the previous buffer
+    // remains mapped until the renderer catches up to s->pw/ph.
+    // Skip-first-N-paints-after-resize lives in CefLayer.
+    if (s->pw > 0 && !size_in_tolerance_locked(s, vw, vh)) {
+        wl_buffer_destroy(buf);
+        return false;
+    }
+    attach_and_commit_locked(s, buf, w, h);
+    return true;
+}
+
+static bool (*g_present)(PlatformSurface*, const CefAcceleratedPaintInfo&) = present_attach;
+
+static bool wl_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
+    return g_present(s, info);
+}
+
+static bool wl_surface_present_software(PlatformSurface* s,
+                                        const CefRenderHandler::RectList&,
                                         const void* buffer, int w, int h) {
     auto* buf = create_shm_buffer(buffer, w, h);
-    if (!buf) return;
-
+    if (!buf) return false;
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.overlay_surface || !g_wl.overlay_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
+    if (!s || !s->surface || !s->visible) { wl_buffer_destroy(buf); return false; }
+    attach_and_commit_locked(s, buf, w, h);
+    return true;
+}
 
-    if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
-    g_wl.overlay_buffer = buf;
-    g_wl.overlay_placeholder = false;
-    if (g_wl.overlay_viewport && g_wl.mpv_pw > 0) {
-        int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
-        int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
-        float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.overlay_viewport,
+// Push viewport src/dest + commit so the subsurface knows its target
+// size before the next paint arrives. src is clamped to the current
+// attached buffer's dims (not the new mpv dims) — otherwise the
+// compositor samples beyond the buffer and clamp-to-edge repeats the
+// last row/column until a fresh paint lands.
+static void wl_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {
+    if (!s) return;
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    s->lw = lw; s->lh = lh; s->pw = pw; s->ph = ph;
+    if (!s->surface || !s->viewport) return;
+    bool is_main = !g_wl.stack.empty() && s == g_wl.stack[0];
+    if (g_wl.transitioning && is_main) {
+        // Defer src; dest update is safe.
+        wp_viewport_set_destination(s->viewport, lw, lh);
+    } else if (s->buffer_w > 0 && s->buffer_h > 0 && pw > 0 && ph > 0) {
+        int src_w = std::min(s->buffer_w, pw);
+        int src_h = std::min(s->buffer_h, ph);
+        int dst_w = (src_w * lw) / pw;
+        int dst_h = (src_h * lh) / ph;
+        wp_viewport_set_source(s->viewport,
             wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.overlay_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
-    }
-    wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, w, h);
-    wl_surface_commit(g_wl.overlay_surface);
-    wl_display_flush(g_wl.display);
-}
-
-// =====================================================================
-// Present CEF dmabuf -- about browser
-// =====================================================================
-
-static void wl_about_present(const CefAcceleratedPaintInfo& info) {
-    int w = info.extra.coded_size.width;
-    int h = info.extra.coded_size.height;
-
-    auto* buf = create_dmabuf_buffer(info);
-    if (!buf) return;
-
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.about_surface || !g_wl.about_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
-
-    if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
-    g_wl.about_buffer = buf;
-    if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
-        int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
-        int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
-        float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.about_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.about_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
-    }
-    wl_surface_attach(g_wl.about_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.about_surface, 0, 0, w, h);
-    wl_surface_commit(g_wl.about_surface);
-    wl_display_flush(g_wl.display);
-}
-
-static void wl_about_present_software(const CefRenderHandler::RectList&,
-                                      const void* buffer, int w, int h) {
-    auto* buf = create_shm_buffer(buffer, w, h);
-    if (!buf) return;
-
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.about_surface || !g_wl.about_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
-
-    if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
-    g_wl.about_buffer = buf;
-    if (g_wl.about_viewport && g_wl.mpv_pw > 0) {
-        int cw = w < g_wl.mpv_pw ? w : g_wl.mpv_pw;
-        int ch = h < g_wl.mpv_ph ? h : g_wl.mpv_ph;
-        float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
-        wp_viewport_set_source(g_wl.about_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(cw), wl_fixed_from_int(ch));
-        wp_viewport_set_destination(g_wl.about_viewport,
-            static_cast<int>(cw / scale),
-            static_cast<int>(ch / scale));
-    }
-    wl_surface_attach(g_wl.about_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.about_surface, 0, 0, w, h);
-    wl_surface_commit(g_wl.about_surface);
-    wl_display_flush(g_wl.display);
-}
-
-static void wl_about_resize(int lw, int lh, int pw, int ph) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.about_surface || !g_wl.about_viewport) return;
-    wp_viewport_set_source(g_wl.about_viewport,
-        wl_fixed_from_int(0), wl_fixed_from_int(0),
-        wl_fixed_from_int(pw), wl_fixed_from_int(ph));
-    wp_viewport_set_destination(g_wl.about_viewport, lw, lh);
-    wl_surface_commit(g_wl.about_surface);
-    wl_display_flush(g_wl.display);
-}
-
-static void wl_set_about_visible(bool visible) {
-    {
-        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-        if (g_wl.about_visible == visible) return;
-        g_wl.about_visible = visible;
-        if (!g_wl.about_surface) return;
-        if (!visible) {
-            wl_surface_attach(g_wl.about_surface, nullptr, 0, 0);
-            wl_surface_commit(g_wl.about_surface);
-            wl_display_flush(g_wl.display);
-            if (g_wl.about_buffer) {
-                wl_buffer_destroy(g_wl.about_buffer);
-                g_wl.about_buffer = nullptr;
-            }
-        }
-    }
-
-    // Route keyboard focus. When showing, all lower browsers lose focus;
-    // when hiding, input::set_active_browser (called by AboutBrowser) will
-    // re-apply focus to whatever it was before.
-    if (visible) {
-        if (g_web_browser && g_web_browser->browser())
-            g_web_browser->browser()->GetHost()->SetFocus(false);
-        if (g_overlay_browser && g_overlay_browser->browser())
-            g_overlay_browser->browser()->GetHost()->SetFocus(false);
-    }
-}
-
-// =====================================================================
-// Popup subsurface (CEF OSR popup elements)
-// =====================================================================
-
-static void wl_popup_show(int x, int y, int lw, int lh) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    g_wl.popup_visible = true;
-    if (!g_wl.popup_subsurface) return;
-    wl_subsurface_set_position(g_wl.popup_subsurface, x, y);
-    if (g_wl.popup_viewport && lw > 0 && lh > 0)
-        wp_viewport_set_destination(g_wl.popup_viewport, lw, lh);
-}
-
-static void wl_popup_hide() {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    g_wl.popup_visible = false;
-    if (!g_wl.popup_surface) return;
-    wl_surface_attach(g_wl.popup_surface, nullptr, 0, 0);
-    wl_surface_commit(g_wl.popup_surface);
-    wl_display_flush(g_wl.display);
-    if (g_wl.popup_buffer) {
-        wl_buffer_destroy(g_wl.popup_buffer);
-        g_wl.popup_buffer = nullptr;
-    }
-}
-
-static void wl_popup_present(const CefAcceleratedPaintInfo& info, int lw, int lh) {
-    if (lw <= 0 || lh <= 0) return;
-    int w = info.extra.coded_size.width;
-    int h = info.extra.coded_size.height;
-
-    auto* buf = create_dmabuf_buffer(info);
-    if (!buf) return;
-
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.popup_surface || !g_wl.popup_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
-    if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
-    g_wl.popup_buffer = buf;
-    if (g_wl.popup_viewport) {
-        wp_viewport_set_source(g_wl.popup_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(w), wl_fixed_from_int(h));
-        wp_viewport_set_destination(g_wl.popup_viewport, lw, lh);
-    }
-    wl_surface_attach(g_wl.popup_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.popup_surface, 0, 0, w, h);
-    // Commit cef_surface first so set_position takes effect in the
-    // same compositor frame as the popup buffer.
-    wl_surface_commit(g_wl.cef_surface);
-    wl_surface_commit(g_wl.popup_surface);
-    wl_display_flush(g_wl.display);
-}
-
-static void wl_popup_present_software(const void* buffer, int pw, int ph, int lw, int lh) {
-    if (lw <= 0 || lh <= 0) return;
-    auto* buf = create_shm_buffer(buffer, pw, ph);
-    if (!buf) return;
-
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.popup_surface || !g_wl.popup_visible) {
-        wl_buffer_destroy(buf);
-        return;
-    }
-    if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
-    g_wl.popup_buffer = buf;
-    if (g_wl.popup_viewport) {
-        wp_viewport_set_source(g_wl.popup_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(pw), wl_fixed_from_int(ph));
-        wp_viewport_set_destination(g_wl.popup_viewport, lw, lh);
-    }
-    wl_surface_attach(g_wl.popup_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_wl.popup_surface, 0, 0, pw, ph);
-    wl_surface_commit(g_wl.cef_surface);
-    wl_surface_commit(g_wl.popup_surface);
-    wl_display_flush(g_wl.display);
-}
-
-static void wl_overlay_resize(int lw, int lh, int pw, int ph) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    if (!g_wl.overlay_surface || !g_wl.overlay_viewport) return;
-    // Don't update source while placeholder is active — it's 1x1, not pw×ph.
-    // Destination is safe to update either way.
-    if (!g_wl.overlay_placeholder)
-        wp_viewport_set_source(g_wl.overlay_viewport,
-            wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(pw), wl_fixed_from_int(ph));
-    wp_viewport_set_destination(g_wl.overlay_viewport, lw, lh);
-    wl_surface_commit(g_wl.overlay_surface);
-    wl_display_flush(g_wl.display);
-}
-
-static void wl_set_overlay_visible(bool visible) {
-    {
-        std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-        if (g_wl.overlay_visible == visible) return;
-        g_wl.overlay_visible = visible;
-        if (!g_wl.overlay_surface) return;
-        if (visible) {
-            // Attach a solid placeholder so the user sees the correct
-            // background color immediately, before CEF renders its first frame.
-            auto* buf = create_solid_color_buffer(kBgColor);
-            if (buf) {
-                if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
-                g_wl.overlay_buffer = buf;
-                g_wl.overlay_placeholder = true;
-                // Source covers the whole 1x1 buffer; destination set by overlay_resize.
-                if (g_wl.overlay_viewport)
-                    wp_viewport_set_source(g_wl.overlay_viewport,
-                        wl_fixed_from_int(0), wl_fixed_from_int(0),
-                        wl_fixed_from_int(1), wl_fixed_from_int(1));
-                wl_surface_attach(g_wl.overlay_surface, buf, 0, 0);
-                wl_surface_damage_buffer(g_wl.overlay_surface, 0, 0, 1, 1);
-                wl_surface_commit(g_wl.overlay_surface);
-                wl_display_flush(g_wl.display);
-            }
-        } else {
-            // Reset alpha to fully opaque for next time
-            if (g_wl.overlay_alpha) {
-                wp_alpha_modifier_surface_v1_set_multiplier(g_wl.overlay_alpha, UINT32_MAX);
-            }
-            wl_surface_attach(g_wl.overlay_surface, nullptr, 0, 0);
-            wl_surface_commit(g_wl.overlay_surface);
-            wl_display_flush(g_wl.display);
-            if (g_wl.overlay_buffer) {
-                wl_buffer_destroy(g_wl.overlay_buffer);
-                g_wl.overlay_buffer = nullptr;
-            }
-            g_wl.overlay_placeholder = false;
-        }
-    }
-
-    // Route keyboard focus to the newly-active browser. Without this, CEF
-    // thinks the just-activated browser has no window focus, so text inputs
-    // don't show a caret and focus rings don't render. Matches the "active
-    // tab" semantics: only one browser at a time holds focus.
-    auto main = g_web_browser ? g_web_browser->browser() : nullptr;
-    auto ovl  = g_overlay_browser ? g_overlay_browser->browser() : nullptr;
-    if (visible) {
-        if (main) main->GetHost()->SetFocus(false);
-        if (ovl)  ovl->GetHost()->SetFocus(true);
+            wl_fixed_from_int(src_w), wl_fixed_from_int(src_h));
+        wp_viewport_set_destination(s->viewport, dst_w, dst_h);
     } else {
-        if (ovl)  ovl->GetHost()->SetFocus(false);
-        if (main) main->GetHost()->SetFocus(true);
+        // No buffer yet: just set dst so the next attach has a target.
+        wp_viewport_set_destination(s->viewport, lw, lh);
+    }
+    wl_surface_commit(s->surface);
+    wl_display_flush(g_wl.display);
+}
+
+static void wl_surface_set_visible(PlatformSurface* s, bool visible) {
+    if (!s) return;
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (s->visible == visible) return;
+    s->visible = visible;
+    if (!s->surface) return;
+    if (visible) {
+        // Solid-color placeholder so the user sees the theme background
+        // before CEF's first paint lands.
+        auto* buf = create_solid_color_buffer(kBgColor);
+        if (buf) {
+            if (s->buffer) wl_buffer_destroy(s->buffer);
+            s->buffer = buf;
+            s->placeholder = true;
+            if (s->viewport)
+                wp_viewport_set_source(s->viewport,
+                    wl_fixed_from_int(0), wl_fixed_from_int(0),
+                    wl_fixed_from_int(1), wl_fixed_from_int(1));
+            wl_surface_attach(s->surface, buf, 0, 0);
+            wl_surface_damage_buffer(s->surface, 0, 0, 1, 1);
+            wl_surface_commit(s->surface);
+            wl_display_flush(g_wl.display);
+            s->null_attached = false;
+        }
+    } else {
+        // Reset alpha to fully opaque for next time (post-fade).
+        if (s->alpha)
+            wp_alpha_modifier_surface_v1_set_multiplier(s->alpha, UINT32_MAX);
+        wl_surface_attach(s->surface, nullptr, 0, 0);
+        wl_surface_commit(s->surface);
+        wl_display_flush(g_wl.display);
+        if (s->buffer) { wl_buffer_destroy(s->buffer); s->buffer = nullptr; }
+        s->placeholder = false;
+        s->null_attached = true;
     }
 }
 
-// Animate overlay alpha from opaque to transparent over fade_sec, then hide.
+// Animate alpha from opaque to transparent over fade_sec, then hide.
 // Runs on a detached thread — finite UI animation.
-static void wl_fade_overlay(float fade_sec,
+static void wl_fade_surface(PlatformSurface* s, float fade_sec,
                             std::function<void()> on_fade_start,
                             std::function<void()> on_complete) {
-    if (!g_wl.overlay_alpha || !g_wl.overlay_surface) {
-        // No alpha modifier support — just hide immediately
-        wl_set_overlay_visible(false);
+    if (!s || !s->alpha || !s->surface) {
         if (on_fade_start) on_fade_start();
         if (on_complete) on_complete();
         return;
     }
 
-    std::thread([fade_sec,
+    stop_fade_thread();
+    g_fade_stop.store(false, std::memory_order_release);
+
+    double fps = mpv::display_hz();
+    if (fps <= 0) {
+        if (on_fade_start) on_fade_start();
+        if (on_complete) on_complete();
+        return;
+    }
+
+    g_fade_thread = std::thread([s, fade_sec, fps,
                  on_fade_start = std::move(on_fade_start),
                  on_complete = std::move(on_complete)]() {
         if (on_fade_start) on_fade_start();
 
-        int fps = g_display_hz.load(std::memory_order_relaxed);
         int total_frames = static_cast<int>(fade_sec * fps);
         if (total_frames < 1) total_frames = 1;
-        auto frame_duration = std::chrono::microseconds(1000000 / fps);
+        auto frame_duration = std::chrono::microseconds(static_cast<int64_t>(1e6 / fps));
 
+        bool aborted = false;
         for (int i = 1; i <= total_frames; i++) {
+            if (g_fade_stop.load(std::memory_order_acquire)) { aborted = true; break; }
             float t = static_cast<float>(i) / total_frames;
             uint32_t alpha = static_cast<uint32_t>((1.0f - t) * UINT32_MAX);
-
             {
                 std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-                if (!g_wl.overlay_visible || !g_wl.overlay_surface) break;
-                wp_alpha_modifier_surface_v1_set_multiplier(g_wl.overlay_alpha, alpha);
-                wl_surface_commit(g_wl.overlay_surface);
+                if (!s->visible || !s->surface || !s->alpha) break;
+                wp_alpha_modifier_surface_v1_set_multiplier(s->alpha, alpha);
+                wl_surface_commit(s->surface);
                 wl_display_flush(g_wl.display);
             }
             std::this_thread::sleep_for(frame_duration);
         }
 
-        wl_set_overlay_visible(false);
+        if (aborted) return;
+
         if (on_complete) on_complete();
-    }).detach();
+    });
 }
+
+// =====================================================================
+// Popup subsurface (CEF OSR <select> dropdowns).
+// =====================================================================
+
+static void wl_popup_show(PlatformSurface* s, const Platform::PopupRequest& req) {
+    if (!s) return;
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    popup_create_locked(s);
+    s->popup_visible = true;
+    if (!s->popup_subsurface) return;
+    wl_subsurface_set_position(s->popup_subsurface, req.x, req.y);
+    if (s->popup_viewport && req.lw > 0 && req.lh > 0)
+        wp_viewport_set_destination(s->popup_viewport, req.lw, req.lh);
+}
+
+static void wl_popup_hide(PlatformSurface* s) {
+    if (!s) return;
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    s->popup_visible = false;
+    popup_destroy_locked(s);
+    wl_display_flush(g_wl.display);
+}
+
+static void wl_popup_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info,
+                             int lw, int lh) {
+    if (!s || lw <= 0 || lh <= 0) return;
+    int w = info.extra.coded_size.width;
+    int h = info.extra.coded_size.height;
+
+    auto* buf = create_dmabuf_buffer(info);
+    if (!buf) return;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!s->popup_surface || !s->popup_visible) {
+        wl_buffer_destroy(buf);
+        return;
+    }
+    if (s->popup_buffer) wl_buffer_destroy(s->popup_buffer);
+    s->popup_buffer = buf;
+    if (s->popup_viewport) {
+        wp_viewport_set_source(s->popup_viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(w), wl_fixed_from_int(h));
+        wp_viewport_set_destination(s->popup_viewport, lw, lh);
+    }
+    wl_surface_attach(s->popup_surface, buf, 0, 0);
+    wl_surface_damage_buffer(s->popup_surface, 0, 0, w, h);
+    // Commit parent (CefLayer surface) first so subsurface state
+    // (set_position) lands in the same compositor frame as the popup
+    // buffer.
+    if (s->surface) wl_surface_commit(s->surface);
+    wl_surface_commit(s->popup_surface);
+    wl_display_flush(g_wl.display);
+}
+
+static void wl_popup_present_software(PlatformSurface* s, const void* buffer,
+                                      int pw, int ph, int lw, int lh) {
+    if (!s || lw <= 0 || lh <= 0) return;
+    auto* buf = create_shm_buffer(buffer, pw, ph);
+    if (!buf) return;
+
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!s->popup_surface || !s->popup_visible) {
+        wl_buffer_destroy(buf);
+        return;
+    }
+    if (s->popup_buffer) wl_buffer_destroy(s->popup_buffer);
+    s->popup_buffer = buf;
+    if (s->popup_viewport) {
+        wp_viewport_set_source(s->popup_viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(pw), wl_fixed_from_int(ph));
+        wp_viewport_set_destination(s->popup_viewport, lw, lh);
+    }
+    wl_surface_attach(s->popup_surface, buf, 0, 0);
+    wl_surface_damage_buffer(s->popup_surface, 0, 0, pw, ph);
+    if (s->surface) wl_surface_commit(s->surface);
+    wl_surface_commit(s->popup_surface);
+    wl_display_flush(g_wl.display);
+}
+
+// =====================================================================
+// Surface alloc / free / restack
+// =====================================================================
+
+static PlatformSurface* wl_alloc_surface() {
+    auto* s = new PlatformSurface;
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!g_wl.compositor || !g_wl.subcompositor || !g_wl.parent) return s;
+    s->surface = wl_compositor_create_surface(g_wl.compositor);
+    s->subsurface = wl_subcompositor_get_subsurface(g_wl.subcompositor, s->surface, g_wl.parent);
+    wl_subsurface_set_desync(s->subsurface);
+    // No input region on subsurface — keystrokes/clicks go to parent only.
+    wl_region* empty = wl_compositor_create_region(g_wl.compositor);
+    wl_surface_set_input_region(s->surface, empty);
+    wl_region_destroy(empty);
+    if (g_wl.viewporter)
+        s->viewport = wp_viewporter_get_viewport(g_wl.viewporter, s->surface);
+    if (g_wl.alpha_modifier)
+        s->alpha = wp_alpha_modifier_v1_get_surface(g_wl.alpha_modifier, s->surface);
+    wl_surface_commit(s->surface);
+    wl_display_flush(g_wl.display);
+    return s;
+}
+
+// Caller holds surface_mtx. Idempotent — bails if popup already alive.
+static void popup_create_locked(PlatformSurface* s) {
+    if (!s || !s->surface || !g_wl.compositor || !g_wl.subcompositor) return;
+    if (s->popup_surface) return;
+    s->popup_surface = wl_compositor_create_surface(g_wl.compositor);
+    s->popup_subsurface = wl_subcompositor_get_subsurface(
+        g_wl.subcompositor, s->popup_surface, s->surface);
+    wl_subsurface_set_desync(s->popup_subsurface);
+    wl_region* empty = wl_compositor_create_region(g_wl.compositor);
+    wl_surface_set_input_region(s->popup_surface, empty);
+    wl_region_destroy(empty);
+    if (g_wl.viewporter)
+        s->popup_viewport = wp_viewporter_get_viewport(g_wl.viewporter, s->popup_surface);
+}
+
+// Caller holds surface_mtx. No-op if popup not alive.
+static void popup_destroy_locked(PlatformSurface* s) {
+    if (!s) return;
+    if (s->popup_viewport) { wp_viewport_destroy(s->popup_viewport); s->popup_viewport = nullptr; }
+    if (s->popup_buffer) { wl_buffer_destroy(s->popup_buffer); s->popup_buffer = nullptr; }
+    if (s->popup_subsurface) { wl_subsurface_destroy(s->popup_subsurface); s->popup_subsurface = nullptr; }
+    if (s->popup_surface) { wl_surface_destroy(s->popup_surface); s->popup_surface = nullptr; }
+}
+
+static void wl_free_surface(PlatformSurface* s) {
+    if (!s) return;
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    // Drop from stack if still present (Browsers::remove already updates
+    // the vector, but defensive removal keeps state coherent on shutdown).
+    auto it = std::find(g_wl.stack.begin(), g_wl.stack.end(), s);
+    if (it != g_wl.stack.end()) g_wl.stack.erase(it);
+    popup_destroy_locked(s);
+    if (s->alpha) wp_alpha_modifier_surface_v1_destroy(s->alpha);
+    if (s->viewport) wp_viewport_destroy(s->viewport);
+    if (s->buffer) wl_buffer_destroy(s->buffer);
+    if (s->subsurface) wl_subsurface_destroy(s->subsurface);
+    if (s->surface) wl_surface_destroy(s->surface);
+    wl_display_flush(g_wl.display);
+    delete s;
+}
+
+static void wl_restack(PlatformSurface* const* ordered, size_t n) {
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    g_wl.stack.assign(ordered, ordered + n);
+    if (!g_wl.parent) return;
+    wl_surface* prev = g_wl.parent;
+    for (size_t i = 0; i < n; i++) {
+        PlatformSurface* s = ordered[i];
+        if (!s || !s->subsurface || !s->surface) continue;
+        wl_subsurface_place_above(s->subsurface, prev);
+        prev = s->surface;
+    }
+    wl_display_flush(g_wl.display);
+}
+
 
 // =====================================================================
 // Registry
@@ -649,14 +634,8 @@ static void reg_global(void*, wl_registry* reg, uint32_t name, const char* iface
         g_wl.viewporter = static_cast<wp_viewporter*>(wl_registry_bind(reg, name, &wp_viewporter_interface, 1));
     else if (strcmp(iface, wp_alpha_modifier_v1_interface.name) == 0)
         g_wl.alpha_modifier = static_cast<wp_alpha_modifier_v1*>(wl_registry_bind(reg, name, &wp_alpha_modifier_v1_interface, 1));
-    else if (strcmp(iface, wp_cursor_shape_manager_v1_interface.name) == 0) {
-        auto* mgr = static_cast<wp_cursor_shape_manager_v1*>(wl_registry_bind(reg, name, &wp_cursor_shape_manager_v1_interface, 1));
-        input::wayland::attach_cursor_shape_manager(mgr);
-    }
-    else if (strcmp(iface, wl_seat_interface.name) == 0) {
-        auto* seat = static_cast<wl_seat*>(wl_registry_bind(reg, name, &wl_seat_interface, std::min(ver, 5u)));
-        input::wayland::attach_seat(seat);
-    }
+    // wl_seat + wp_cursor_shape_manager_v1 are bound by the Rust input layer
+    // on its own registry view, not here.
 #ifdef HAVE_KDE_DECORATION_PALETTE
     else if (strcmp(iface, org_kde_kwin_server_decoration_palette_manager_interface.name) == 0) {
         g_wl.palette_manager = static_cast<org_kde_kwin_server_decoration_palette_manager*>(
@@ -672,31 +651,100 @@ static const wl_registry_listener s_reg = { .global = reg_global, .global_remove
 // =====================================================================
 
 // width/height from mpv's geometry are PHYSICAL pixels (already scaled).
+//
+// Fires from mpv's wayland thread inside handle_toplevel_config — BEFORE
+// mpv's xdg_surface ack and before mpv's next render commit on the parent
+// surface. This ordering is what makes the hard invariant achievable:
+// we get to null-attach our subsurfaces (removing them from the KWin
+// bounding box) while mpv's parent is still applied at the old size, so
+// when mpv subsequently commits the parent at the new size, our applied
+// state is empty.
+//
+// Trigger transition on either fullscreen toggle OR window shrink. A
+// shrink without FS toggle (compositor changed our window size on its
+// own, or KWin tile drag) still risks stale-large CEF buffers exceeding
+// the new mpv size — same defense applies.
 static void on_mpv_configure(void*, int width, int height, bool fs) {
     if (width <= 0 || height <= 0) return;
 
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-
     int pw = width;
     int ph = height;
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+
     float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
     int lw = static_cast<int>(pw / scale);
     int lh = static_cast<int>(ph / scale);
 
     if (fs != g_wl.was_fullscreen) {
-        if (!g_wl.transitioning) {
+        // Begin if not already (covers WM-initiated FS).
+        if (!g_wl.transitioning)
             wl_begin_transition_locked();
-            // Set expected size so the transition can end as soon as a
-            // correctly-sized frame arrives, without waiting for an
-            // OSD_DIMS event (which the init loop may have consumed).
-            wl_set_expected_size_locked(pw, ph);
-        } else {
-            wl_end_transition_locked();
-        }
         g_wl.was_fullscreen = fs;
     }
 
+    // Fan the configure values out to every surface in the stack. Each
+    // CEF layer covers the full window, so they all share these dims.
+    // Doing it here (xdg_toplevel.configure callback) leads the slower
+    // OSD_DIMS → wl_surface_resize path during FS transitions.
+    for (auto* s : g_wl.stack) {
+        if (!s) continue;
+        s->lw = lw; s->lh = lh; s->pw = pw; s->ph = ph;
+    }
+
     update_surface_size_locked(lw, lh, pw, ph);
+
+    // pw is now NEW. Flip paint gate back to present_attach but keep
+    // transitioning=true — present_attach's transition branch will unmap
+    // stale-OLD frames and clear transitioning on first matching frame.
+    // Restore stack[0] viewport so the first matching frame attaches at
+    // the correct src/dst proportional to the new window size.
+    if (g_wl.transitioning) {
+        g_present = present_attach;
+        if (!g_wl.stack.empty()) {
+            auto* main = g_wl.stack[0];
+            if (main && main->viewport && main->pw > 0 && main->lw > 0) {
+                wp_viewport_set_source(main->viewport,
+                    wl_fixed_from_int(0), wl_fixed_from_int(0),
+                    wl_fixed_from_int(main->pw), wl_fixed_from_int(main->ph));
+                wp_viewport_set_destination(main->viewport, main->lw, main->lh);
+            }
+        }
+    }
+}
+
+// =====================================================================
+// Proxy configure intercept
+// =====================================================================
+
+// Fires from the wl-proxy per-client thread for every xdg_toplevel.configure
+// from the compositor. Authoritative size source on Wayland: updates the
+// mpv::osd_pw/osd_ph atomics + posts to the playback coordinator, replacing
+// the osd-dimensions observation that the rest of the codebase used to
+// consume.
+//
+// Safe before wl_init runs — on_mpv_configure early-outs on empty
+// g_wl.stack, and mpv::set_osd_dims null-checks g_playback_coord.
+extern "C" {
+static void on_proxy_configure(int physical_w, int physical_h, int fullscreen) {
+    on_mpv_configure(nullptr, physical_w, physical_h, fullscreen != 0);
+    mpv::set_osd_dims(physical_w, physical_h);
+}
+static void on_proxy_scale(int scale_120) {
+    if (scale_120 > 0)
+        g_wl.cached_scale = scale_120 / 120.0f;
+}
+}
+
+namespace platform::wayland {
+bool scale_known() { return g_wl.cached_scale > 0.f; }
+void register_proxy_callbacks() {
+    // Both callbacks register BEFORE mpv_create so the first compositor
+    // configure + preferred_scale events are caught. Otherwise registering
+    // them in wl_init misses the initial values — main.cpp computes initial
+    // logical dims using g_wl.cached_scale (still 1.0) and CEF overshoots.
+    jfn_wlproxy_set_configure_callback(on_proxy_configure);
+    jfn_wlproxy_set_scale_callback(on_proxy_scale);
+}
 }
 
 // =====================================================================
@@ -988,25 +1036,14 @@ static bool wl_init(mpv_handle* mpv) {
     // fullscreen property-change event, so s_fullscreen is up to date.
     g_wl.was_fullscreen = mpv::fullscreen();
 
-    // Register mpv configure callback early — mpv's VO thread is already
-    // processing configures in parallel, and we need to catch them all.
-    // on_mpv_configure is safe before surfaces exist (null checks throughout).
-    {
-        intptr_t cb_ptr = 0;
-        g_mpv.GetWaylandConfigureCbPtr(cb_ptr);
-        if (cb_ptr) {
-            auto* fn = reinterpret_cast<void(**)(void*, int, int, bool)>(cb_ptr);
-            auto* data = reinterpret_cast<void**>(cb_ptr + sizeof(void*));
-            *fn = [](void*, int w, int h, bool fs) { on_mpv_configure(nullptr, w, h, fs); };
-            *data = nullptr;
-        }
-    }
+    // Proxy configure + scale callbacks are wired by
+    // platform::wayland::register_proxy_callbacks before mpv_create.
 
     intptr_t dp = 0, sp = 0;
     g_mpv.GetWaylandDisplay(dp);
     g_mpv.GetWaylandSurface(sp);
     if (!dp || !sp) {
-        fprintf(stderr, "Failed to get Wayland display/surface from mpv\n");
+        LOG_ERROR(LOG_PLATFORM, "Failed to get Wayland display/surface from mpv");
         return false;
     }
 
@@ -1021,7 +1058,7 @@ static bool wl_init(mpv_handle* mpv) {
 
     // Prepare the input layer so its xkb context is ready before the registry
     // callbacks land (seat_caps wires up keyboard listeners that need xkb).
-    input::wayland::init(display, g_wl.queue);
+    input::wayland::init(display);
 
     auto* reg = wl_display_get_registry(display);
     wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(reg), g_wl.queue);
@@ -1030,69 +1067,12 @@ static bool wl_init(mpv_handle* mpv) {
     wl_registry_destroy(reg);
 
     if (!g_wl.compositor || !g_wl.subcompositor) {
-        fprintf(stderr, "platform_wayland: missing compositor globals\n");
+        LOG_ERROR(LOG_PLATFORM, "platform_wayland: missing compositor globals");
         return false;
     }
 
-    // --- Main browser subsurface (above mpv parent) ---
-    g_wl.cef_surface = wl_compositor_create_surface(g_wl.compositor);
-    g_wl.cef_subsurface = wl_subcompositor_get_subsurface(g_wl.subcompositor, g_wl.cef_surface, parent);
-    wl_subsurface_place_above(g_wl.cef_subsurface, parent);
-    wl_subsurface_set_desync(g_wl.cef_subsurface);
-    {
-        wl_region* empty = wl_compositor_create_region(g_wl.compositor);
-        wl_surface_set_input_region(g_wl.cef_surface, empty);
-        wl_region_destroy(empty);
-    }
-    if (g_wl.viewporter)
-        g_wl.cef_viewport = wp_viewporter_get_viewport(g_wl.viewporter, g_wl.cef_surface);
-    wl_surface_commit(g_wl.cef_surface);
-
-    // --- Overlay browser subsurface (above main CEF) ---
-    g_wl.overlay_surface = wl_compositor_create_surface(g_wl.compositor);
-    g_wl.overlay_subsurface = wl_subcompositor_get_subsurface(g_wl.subcompositor, g_wl.overlay_surface, parent);
-    wl_subsurface_place_above(g_wl.overlay_subsurface, g_wl.cef_surface);
-    wl_subsurface_set_desync(g_wl.overlay_subsurface);
-    {
-        wl_region* empty = wl_compositor_create_region(g_wl.compositor);
-        wl_surface_set_input_region(g_wl.overlay_surface, empty);
-        wl_region_destroy(empty);
-    }
-    if (g_wl.viewporter)
-        g_wl.overlay_viewport = wp_viewporter_get_viewport(g_wl.viewporter, g_wl.overlay_surface);
-    if (g_wl.alpha_modifier)
-        g_wl.overlay_alpha = wp_alpha_modifier_v1_get_surface(g_wl.alpha_modifier, g_wl.overlay_surface);
-    wl_surface_commit(g_wl.overlay_surface);
-
-    // --- About browser subsurface (above overlay) ---
-    g_wl.about_surface = wl_compositor_create_surface(g_wl.compositor);
-    g_wl.about_subsurface = wl_subcompositor_get_subsurface(g_wl.subcompositor, g_wl.about_surface, parent);
-    wl_subsurface_place_above(g_wl.about_subsurface, g_wl.overlay_surface);
-    wl_subsurface_set_desync(g_wl.about_subsurface);
-    {
-        wl_region* empty = wl_compositor_create_region(g_wl.compositor);
-        wl_surface_set_input_region(g_wl.about_surface, empty);
-        wl_region_destroy(empty);
-    }
-    if (g_wl.viewporter)
-        g_wl.about_viewport = wp_viewporter_get_viewport(g_wl.viewporter, g_wl.about_surface);
-    wl_surface_commit(g_wl.about_surface);
-
-    // --- Popup subsurface (child of cef_surface, for CEF OSR <select> dropdowns) ---
-    // Must be a child of cef_surface (not the parent) so that
-    // wl_subsurface_set_position takes effect on cef_surface's commit
-    // rather than waiting for mpv's parent commit, which we don't control.
-    g_wl.popup_surface = wl_compositor_create_surface(g_wl.compositor);
-    g_wl.popup_subsurface = wl_subcompositor_get_subsurface(g_wl.subcompositor, g_wl.popup_surface, g_wl.cef_surface);
-    wl_subsurface_set_desync(g_wl.popup_subsurface);
-    {
-        wl_region* empty = wl_compositor_create_region(g_wl.compositor);
-        wl_surface_set_input_region(g_wl.popup_surface, empty);
-        wl_region_destroy(empty);
-    }
-    if (g_wl.viewporter)
-        g_wl.popup_viewport = wp_viewporter_get_viewport(g_wl.viewporter, g_wl.popup_surface);
-    wl_surface_commit(g_wl.popup_surface);
+    // CefLayer subsurfaces (and their popup children) are allocated
+    // on-demand by Browsers via g_platform.alloc_surface/restack.
 
     wl_display_roundtrip_queue(display, g_wl.queue);
 
@@ -1137,43 +1117,44 @@ static bool wl_init(mpv_handle* mpv) {
 }
 
 static float wl_get_scale() {
-    double scale = mpv::display_scale();
-    if (scale > 0) {
-        g_wl.cached_scale = static_cast<float>(scale);
-        return g_wl.cached_scale;
-    }
+    // g_wl.cached_scale is driven by jfn_wlproxy_set_scale_callback (registered
+    // in wl_init). Falls back to 1.0 before the compositor sends preferred_scale.
     return g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
 }
 
+static float wl_get_display_scale(int x, int y) {
+    double s = jfn_wayland_scale_probe(x, y);
+    return s > 0.0 ? static_cast<float>(s) : 1.0f;
+}
+
 static void wl_cleanup() {
+    stop_fade_thread();
+
+    // Null the close trampoline we installed into mpv's hook before
+    // destroying the g_wl state it reads. It keeps being invoked until mpv
+    // itself is torn down, which happens after this function. (The configure
+    // hook is no longer used — proxy-side interception replaced it.)
+    {
+        intptr_t cb_ptr = 0;
+        g_mpv.GetWaylandCloseCbPtr(cb_ptr);
+        if (cb_ptr) {
+            auto* fn = reinterpret_cast<void(**)(void*)>(cb_ptr);
+            *fn = nullptr;
+        }
+    }
+
     wl_cleanup_kde_palette();
-    idle_inhibit::cleanup();
+    jfn_idle_inhibit_cleanup();
     // Clipboard worker owns its own thread + wl_event_queue; must shut
     // down before input::wayland::cleanup destroys the seat it borrowed.
     clipboard_wayland::cleanup();
     // Input layer owns seat/pointer/keyboard/xkb/cursor-shape-device.
     input::wayland::cleanup();
-    // Popup
-    if (g_wl.popup_viewport) wp_viewport_destroy(g_wl.popup_viewport);
-    if (g_wl.popup_buffer) wl_buffer_destroy(g_wl.popup_buffer);
-    if (g_wl.popup_subsurface) wl_subsurface_destroy(g_wl.popup_subsurface);
-    if (g_wl.popup_surface) wl_surface_destroy(g_wl.popup_surface);
-    // About
-    if (g_wl.about_viewport) wp_viewport_destroy(g_wl.about_viewport);
-    if (g_wl.about_buffer) wl_buffer_destroy(g_wl.about_buffer);
-    if (g_wl.about_subsurface) wl_subsurface_destroy(g_wl.about_subsurface);
-    if (g_wl.about_surface) wl_surface_destroy(g_wl.about_surface);
-    // Overlay
-    if (g_wl.overlay_alpha) { wp_alpha_modifier_surface_v1_destroy(g_wl.overlay_alpha); g_wl.overlay_alpha = nullptr; }
-    if (g_wl.overlay_viewport) wp_viewport_destroy(g_wl.overlay_viewport);
-    if (g_wl.overlay_buffer) wl_buffer_destroy(g_wl.overlay_buffer);
-    if (g_wl.overlay_subsurface) wl_subsurface_destroy(g_wl.overlay_subsurface);
-    if (g_wl.overlay_surface) wl_surface_destroy(g_wl.overlay_surface);
-    // Main
-    if (g_wl.cef_viewport) wp_viewport_destroy(g_wl.cef_viewport);
-    if (g_wl.cef_buffer) wl_buffer_destroy(g_wl.cef_buffer);
-    if (g_wl.cef_subsurface) wl_subsurface_destroy(g_wl.cef_subsurface);
-    if (g_wl.cef_surface) wl_surface_destroy(g_wl.cef_surface);
+    // Per-layer surfaces (and their popup children) are owned by Browsers
+    // and freed via free_surface before cleanup; defensively drop any
+    // stragglers.
+    for (auto* s : g_wl.stack) wl_free_surface(s);
+    g_wl.stack.clear();
     // Globals (must be destroyed before queue — they were bound to it).
     // Cursor shape manager is owned by input::wayland — destroyed in its cleanup.
     if (g_wl.alpha_modifier) { wp_alpha_modifier_v1_destroy(g_wl.alpha_modifier); g_wl.alpha_modifier = nullptr; }
@@ -1185,78 +1166,90 @@ static void wl_cleanup() {
     if (g_wl.queue) wl_event_queue_destroy(g_wl.queue);
 }
 
-// Update main subsurface viewport. Caller must hold surface_mtx.
+// Push a fresh viewport onto cef-main in response to an mpv configure.
+// Caller must hold surface_mtx. mpv dims are NOT cached here — every
+// reader pulls from mpv::osd_* atomics on demand.
 static void update_surface_size_locked(int lw, int lh, int pw, int ph) {
+    if (g_wl.stack.empty()) return;
+    auto* s = g_wl.stack[0];
+    if (!s || !s->surface || !s->viewport) return;
     if (g_wl.transitioning) {
-        g_wl.pending_lw = lw;
-        g_wl.pending_lh = lh;
-        if (g_wl.cef_surface && g_wl.cef_viewport) {
-            wp_viewport_set_destination(g_wl.cef_viewport, lw, lh);
-            wl_surface_commit(g_wl.cef_surface);
-            wl_display_flush(g_wl.display);
-        }
-    } else if (g_wl.cef_surface) {
-        bool growing = pw > g_wl.mpv_pw || ph > g_wl.mpv_ph;
-        if (growing)
-            wl_surface_attach(g_wl.cef_surface, nullptr, 0, 0);
-        if (g_wl.cef_viewport) {
-            wp_viewport_set_source(g_wl.cef_viewport,
-                wl_fixed_from_int(0), wl_fixed_from_int(0),
-                wl_fixed_from_int(pw), wl_fixed_from_int(ph));
-            wp_viewport_set_destination(g_wl.cef_viewport, lw, lh);
-        }
-        wl_surface_commit(g_wl.cef_surface);
+        // During transition: push a dest update on the cef-main layer so
+        // its (null-attached) subsurface knows the target size.
+        // end_transition applies the final viewport src+dst.
+        wp_viewport_set_destination(s->viewport, lw, lh);
+        wl_surface_commit(s->surface);
+        wl_display_flush(g_wl.display);
+        return;
+    }
+    // Non-transition path: push viewport on cef-main, clamping src to
+    // the currently-attached buffer dims (not new mpv dims). Setting src
+    // beyond the buffer makes the compositor clamp-to-edge and repeat
+    // the last row/col until a fresh paint lands.
+    if (s->buffer_w > 0 && s->buffer_h > 0 && pw > 0 && ph > 0) {
+        int src_w = std::min(s->buffer_w, pw);
+        int src_h = std::min(s->buffer_h, ph);
+        int dst_w = (src_w * lw) / pw;
+        int dst_h = (src_h * lh) / ph;
+        wp_viewport_set_source(s->viewport,
+            wl_fixed_from_int(0), wl_fixed_from_int(0),
+            wl_fixed_from_int(src_w), wl_fixed_from_int(src_h));
+        wp_viewport_set_destination(s->viewport, dst_w, dst_h);
+        wl_surface_commit(s->surface);
         wl_display_flush(g_wl.display);
     }
-    g_wl.mpv_pw = pw;
-    g_wl.mpv_ph = ph;
 }
 
-static void wl_resize(int lw, int lh, int pw, int ph) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    update_surface_size_locked(lw, lh, pw, ph);
-}
-
+// Begin a resize transition. Caller must hold surface_mtx.
+//
+// Bounding-box release: every CEF subsurface is null-attached with
+// destination(-1,-1) and committed in desync mode so the change applies
+// immediately, removing the subsurface from KWin's toplevel bounding box
+// before mpv's xdg-toplevel reconfigure reaches the compositor. Subsurfaces
+// stay in desync — the next CEF paint per layer admits live via
+// attach_and_commit_locked with src/dst clamped against the latest
+// mpv_pw/lh (the hard no-exceed invariant). Layers that haven't repainted
+// yet stay unmapped (mpv shows through the gap) until their next paint
+// lands; the gap is acceptable, stretch/oversize is not.
+//
+// Re-entry safe: a second begin_transition during the same FS toggle just
+// re-null-attaches; no cached state to invalidate.
 static void wl_begin_transition_locked() {
     g_wl.transitioning = true;
-    g_wl.transition_pw = g_wl.mpv_pw;
-    g_wl.transition_ph = g_wl.mpv_ph;
-    g_wl.pending_lw = 0;
-    g_wl.pending_lh = 0;
-    if (g_wl.cef_surface) {
-        wl_surface_attach(g_wl.cef_surface, nullptr, 0, 0);
-        if (g_wl.cef_viewport)
-            wp_viewport_set_destination(g_wl.cef_viewport, -1, -1);
-        wl_surface_commit(g_wl.cef_surface);
-        wl_display_flush(g_wl.display);
+    g_present = present_drop;
+    for (auto* s : g_wl.stack) {
+        if (!s || !s->surface || !s->subsurface) continue;
+        wl_surface_attach(s->surface, nullptr, 0, 0);
+        if (s->viewport)
+            wp_viewport_set_destination(s->viewport, -1, -1);
+        wl_surface_commit(s->surface);
+        s->null_attached = true;
     }
+    wl_display_flush(g_wl.display);
 }
 
 static void wl_end_transition_locked() {
     g_wl.transitioning = false;
-    g_wl.expected_w = 0;
-    g_wl.expected_h = 0;
-    if (g_wl.cef_viewport && g_wl.pending_lw > 0) {
-        wp_viewport_set_source(g_wl.cef_viewport,
+    g_present = present_attach;
+    if (g_wl.stack.empty()) return;
+    auto* s = g_wl.stack[0];
+    if (s && s->viewport && s->pw > 0 && s->lw > 0) {
+        wp_viewport_set_source(s->viewport,
             wl_fixed_from_int(0), wl_fixed_from_int(0),
-            wl_fixed_from_int(g_wl.mpv_pw), wl_fixed_from_int(g_wl.mpv_ph));
-        wp_viewport_set_destination(g_wl.cef_viewport, g_wl.pending_lw, g_wl.pending_lh);
-        g_wl.pending_lw = 0;
-        g_wl.pending_lh = 0;
+            wl_fixed_from_int(s->pw), wl_fixed_from_int(s->ph));
+        wp_viewport_set_destination(s->viewport, s->lw, s->lh);
     }
 }
 
 static void wl_set_fullscreen(bool fullscreen) {
-    if (!g_mpv.IsValid()) return;
-    // Only transition if state actually changes. Read the cached value
-    // populated from mpv's fullscreen property observation — avoids a
-    // sync mpv_get_property from callers on the event thread.
-    if (mpv::fullscreen() == fullscreen) {
-        // Compositor may have rejected our fullscreen change.
-        // If we're mid-transition and the state matches the pre-lock
-        // value (was_fullscreen), the compositor forced us back — cancel.
+    // Use g_wl.was_fullscreen (synced from xdg_toplevel.configure via
+    // on_mpv_configure) as the current state — no libmpv property involved.
+    if (g_wl.was_fullscreen == fullscreen) {
+        // Compositor may have rejected our fullscreen change. If we're
+        // mid-transition and the state matches the pre-toggle value
+        // (was_fullscreen), the compositor forced us back — cancel.
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-        if (g_wl.transitioning && fullscreen == g_wl.was_fullscreen)
+        if (g_wl.transitioning)
             wl_end_transition_locked();
         return;
     }
@@ -1264,7 +1257,7 @@ static void wl_set_fullscreen(bool fullscreen) {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
         wl_begin_transition_locked();
     }
-    g_mpv.SetFullscreen(fullscreen);
+    jfn_wlproxy_set_fullscreen(fullscreen ? 1 : 0);
 }
 
 static void wl_toggle_fullscreen() {
@@ -1272,9 +1265,7 @@ static void wl_toggle_fullscreen() {
         std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
         wl_begin_transition_locked();
     }
-    if (g_mpv.IsValid()) {
-        g_mpv.ToggleFullscreen();
-    }
+    jfn_wlproxy_set_fullscreen(g_wl.was_fullscreen ? 0 : 1);
 }
 
 static void wl_begin_transition() {
@@ -1286,27 +1277,17 @@ static bool wl_in_transition() {
     return g_wl.transitioning;
 }
 
-static void wl_set_expected_size_locked(int w, int h) {
-    if (g_wl.transitioning && w == g_wl.transition_pw && h == g_wl.transition_ph)
-        return;
-    g_wl.expected_w = w;
-    g_wl.expected_h = h;
-}
-
-static void wl_set_expected_size(int w, int h) {
-    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-    wl_set_expected_size_locked(w, h);
-}
-
 static void wl_end_transition() {
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
     wl_end_transition_locked();
 }
 
+static void wl_set_expected_size(int, int) {}
+
 static void wl_pump() {}
 
 static void wl_set_idle_inhibit(IdleInhibitLevel level) {
-    idle_inhibit::set(level);
+    jfn_idle_inhibit_set(static_cast<uint32_t>(level));
 }
 
 // =====================================================================
@@ -1566,25 +1547,18 @@ Platform make_wayland_platform() {
         .init = wl_init,
         .cleanup = wl_cleanup,
         .post_window_cleanup = wl_post_window_cleanup,
-        .present = wl_present,
-        .present_software = wl_present_software,
-        .resize = wl_resize,
-        .overlay_present = wl_overlay_present,
-        .overlay_present_software = wl_overlay_present_software,
-        .overlay_resize = wl_overlay_resize,
-        .set_overlay_visible = wl_set_overlay_visible,
-        .about_present = wl_about_present,
-        .about_present_software = wl_about_present_software,
-        .about_resize = wl_about_resize,
-        .set_about_visible = wl_set_about_visible,
+        .alloc_surface = wl_alloc_surface,
+        .free_surface = wl_free_surface,
+        .surface_present = wl_surface_present,
+        .surface_present_software = wl_surface_present_software,
+        .surface_resize = wl_surface_resize,
+        .surface_set_visible = wl_surface_set_visible,
+        .restack = wl_restack,
+        .fade_surface = wl_fade_surface,
         .popup_show = wl_popup_show,
         .popup_hide = wl_popup_hide,
         .popup_present = wl_popup_present,
         .popup_present_software = wl_popup_present_software,
-        .try_native_popup_menu = [](int, int, int, int,
-                                    const std::vector<std::string>&, int,
-                                    std::function<void(int)>) { return false; },
-        .fade_overlay = wl_fade_overlay,
         .set_fullscreen = wl_set_fullscreen,
         .toggle_fullscreen = wl_toggle_fullscreen,
         .begin_transition = wl_begin_transition,
@@ -1592,6 +1566,7 @@ Platform make_wayland_platform() {
         .in_transition = wl_in_transition,
         .set_expected_size = wl_set_expected_size,
         .get_scale = wl_get_scale,
+        .get_display_scale = wl_get_display_scale,
         .query_window_position = [](int*, int*) -> bool { return false; },
         .clamp_window_geometry = nullptr,
         .pump = wl_pump,
@@ -1599,6 +1574,6 @@ Platform make_wayland_platform() {
         .set_idle_inhibit = wl_set_idle_inhibit,
         .set_theme_color = wl_set_theme_color,
         .clipboard_read_text_async = clipboard_wayland::read_text_async,
-        .open_external_url = open_url_linux::open,
+        .open_external_url = [](const std::string& url) { jfn_open_url(url.c_str()); },
     };
 }

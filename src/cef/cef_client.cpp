@@ -1,8 +1,13 @@
 #include "cef_client.h"
 #include "logging.h"
-#include "../cjson/cJSON.h"
+#include "../browser/browsers.h"
+#include "../mpv/event.h"
 #include "../platform/platform.h"
+#include "include/cef_parser.h"
 #include "include/cef_task.h"
+#include "include/cef_values.h"
+#include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 
@@ -42,21 +47,21 @@ static std::string stripAccelerator(const std::string& label) {
     return out;
 }
 
-static cJSON* serializeMenuModel(CefRefPtr<CefMenuModel> model) {
-    cJSON* arr = cJSON_CreateArray();
+static CefRefPtr<CefListValue> serializeMenuModel(CefRefPtr<CefMenuModel> model) {
+    CefRefPtr<CefListValue> arr = CefListValue::Create();
     for (size_t i = 0; i < model->GetCount(); i++) {
-        cJSON* item = cJSON_CreateObject();
+        CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
         auto type = model->GetTypeAt(i);
         if (type == MENUITEMTYPE_SEPARATOR) {
-            cJSON_AddBoolToObject(item, "sep", 1);
+            item->SetBool("sep", true);
         } else {
             int id = model->GetCommandIdAt(i);
             std::string label = stripAccelerator(model->GetLabelAt(i).ToString());
-            cJSON_AddNumberToObject(item, "id", id);
-            cJSON_AddStringToObject(item, "label", label.c_str());
-            cJSON_AddBoolToObject(item, "enabled", model->IsEnabledAt(i));
+            item->SetInt("id", id);
+            item->SetString("label", label);
+            item->SetBool("enabled", model->IsEnabledAt(i));
         }
-        cJSON_AddItemToArray(arr, item);
+        arr->SetDictionary(arr->GetSize(), item);
     }
     return arr;
 }
@@ -75,13 +80,18 @@ static bool is_paste_shortcut(const CefKeyEvent& e) {
 }
 
 static std::string js_string_literal(const std::string& text) {
-    cJSON* j = cJSON_CreateString(text.c_str());
-    if (!j) return "\"\"";
-    char* s = cJSON_PrintUnformatted(j);
-    std::string result = s ? s : "\"\"";
-    if (s) cJSON_free(s);
-    cJSON_Delete(j);
-    return result;
+    CefRefPtr<CefValue> v = CefValue::Create();
+    v->SetString(text);
+    // CefWriteJSON requires a dictionary/list root; wrap the string in a
+    // 1-element list and strip the brackets to recover a bare JSON string.
+    CefRefPtr<CefListValue> wrapper = CefListValue::Create();
+    wrapper->SetValue(0, v);
+    CefRefPtr<CefValue> root = CefValue::Create();
+    root->SetList(wrapper);
+    std::string s = CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString();
+    if (s.size() >= 2 && s.front() == '[' && s.back() == ']')
+        return s.substr(1, s.size() - 2);
+    return "\"\"";
 }
 
 static void paste_via_platform_clipboard(CefRefPtr<CefBrowser> browser) {
@@ -114,6 +124,11 @@ static bool try_intercept_paste(CefRefPtr<CefBrowser> browser,
 // CefLayer
 // =====================================================================
 
+CefLayer::CefLayer(Browsers& browsers, PlatformSurface* surface)
+    : browsers_(browsers), surface_(surface) {}
+
+CefLayer::~CefLayer() = default;
+
 void CefLayer::GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) {
     rect.Set(0, 0, width_, height_);
 }
@@ -129,17 +144,177 @@ bool CefLayer::GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) {
 }
 
 void CefLayer::resize(int w, int h, int physical_w, int physical_h) {
-    LOG_TRACE(LOG_CEF, "CefLayer::resize logical={}x{} physical={}x{} browser={}",
-             w, h, physical_w, physical_h, static_cast<void*>(browser_.get()));
+    LOG_TRACE(LOG_CEF, "CefLayer::resize name={} logical={}x{} physical={}x{}",
+             name_.c_str(), w, h, physical_w, physical_h);
     width_ = w;
     height_ = h;
     physical_w_ = physical_w;
     physical_h_ = physical_h;
-    if (browser_) {
+    resize_gen_.fetch_add(1, std::memory_order_acq_rel);
+    // Wayland viewport must update on every configure to avoid stale
+    // src/dst — runs immediately.
+    if (surface_ && g_platform.surface_resize)
+        g_platform.surface_resize(surface_, w, h, physical_w, physical_h);
+    // Defer kick until the browser exists; OnAfterCreated will fire it.
+    if (!browser_) return;
+    // Debounce the CEF host notify (re-layout) to one display-refresh
+    // period. Drag fires many configures per frame; coalescing them
+    // saves N-1 wasted re-layouts.
+    using namespace std::chrono;
+    int64_t now = duration_cast<nanoseconds>(
+        steady_clock::now().time_since_epoch()).count();
+    double hz = mpv::display_hz();
+    int64_t period_ns = (hz > 0) ? static_cast<int64_t>(1e9 / hz) : 16'666'667LL;
+    int64_t last = last_was_resized_ns_.load(std::memory_order_acquire);
+    if (now - last >= period_ns) {
+        last_was_resized_ns_.store(now, std::memory_order_release);
         browser_->GetHost()->NotifyScreenInfoChanged();
         browser_->GetHost()->WasResized();
         browser_->GetHost()->Invalidate(PET_VIEW);
+        kickInvalidateLoop();
+        return;
     }
+    // Within the debounce window. Schedule a single deferred apply if
+    // one isn't already pending; latest width_/height_ are what get
+    // picked up.
+    bool expected = false;
+    if (resize_scheduled_.compare_exchange_strong(expected, true)) {
+        CefRefPtr<CefLayer> self = this;
+        int delay_ms = static_cast<int>((period_ns - (now - last)) / 1'000'000) + 1;
+        if (delay_ms < 1) delay_ms = 1;
+        CefPostDelayedTask(TID_UI,
+            CefRefPtr<CefTask>(new FnTask([self]() { self->applyPendingResize(); })),
+            delay_ms);
+    }
+    kickInvalidateLoop();
+}
+
+void CefLayer::applyPendingResize() {
+    resize_scheduled_.store(false, std::memory_order_release);
+    if (!browser_) return;
+    LOG_TRACE(LOG_CEF, "CefLayer::applyPendingResize name={} logical={}x{} physical={}x{}",
+              name_.c_str(), width_, height_, physical_w_, physical_h_);
+    using namespace std::chrono;
+    int64_t now = duration_cast<nanoseconds>(
+        steady_clock::now().time_since_epoch()).count();
+    last_was_resized_ns_.store(now, std::memory_order_release);
+    // WasResized changes the target the renderer is converging toward;
+    // any prior stable-size streak (possibly accumulated against the old
+    // logical dims while this apply was pending) must be invalidated.
+    resize_gen_.fetch_add(1, std::memory_order_acq_rel);
+    browser_->GetHost()->NotifyScreenInfoChanged();
+    browser_->GetHost()->WasResized();
+    browser_->GetHost()->Invalidate(PET_VIEW);
+    kickInvalidateLoop();
+}
+
+void CefLayer::setFrameRate(int hz) {
+    if (hz <= 0 || !browser_) return;
+    browser_->GetHost()->SetWindowlessFrameRate(hz);
+    current_frame_rate_ = hz;
+}
+
+void CefLayer::kickInvalidateLoop() {
+    invalidate_stop_.store(false, std::memory_order_release);
+    bool expected = false;
+    if (!invalidate_running_.compare_exchange_strong(expected, true)) {
+        LOG_TRACE(LOG_CEF, "CefLayer::kickInvalidateLoop name={} already running",
+                  name_.c_str());
+        return;
+    }
+    invalidate_tick_count_ = 0;
+    LOG_TRACE(LOG_CEF, "CefLayer::kickInvalidateLoop name={} start", name_.c_str());
+    CefRefPtr<CefLayer> self = this;
+    CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
+        // Boost CEF compositor rate while the loop is live — JS rAF ties
+        // to compositor rate, so this accelerates frame production for
+        // faster convergence to the post-resize size.
+        if (self->browser_ && self->frame_rate_ > 0 && self->saved_frame_rate_ == 0) {
+            self->saved_frame_rate_ = self->frame_rate_;
+            self->setFrameRate(self->frame_rate_ * kBoostMultiplier);
+        }
+        self->invalidateTick();
+    })));
+}
+
+void CefLayer::invalidateTick() {
+    if (++invalidate_tick_count_ > 1000)
+        invalidate_stop_.store(true, std::memory_order_release);
+    if (invalidate_stop_.load(std::memory_order_acquire)) {
+        if (browser_ && saved_frame_rate_ > 0) {
+            setFrameRate(saved_frame_rate_);
+            saved_frame_rate_ = 0;
+        }
+        invalidate_running_.store(false, std::memory_order_release);
+        LOG_DEBUG(LOG_CEF, "CefLayer::invalidateTick stopped name={}", name_.c_str());
+        return;
+    }
+    LOG_TRACE(LOG_CEF, "CefLayer::invalidateTick name={} fps={}",
+              name_.c_str(), frame_rate_);
+    if (browser_) {
+        browser_->GetHost()->Invalidate(PET_VIEW);
+#ifdef __APPLE__
+        // external_begin_frame_enabled is true on macOS — Invalidate alone
+        // doesn't drive the renderer, only SendExternalBeginFrame does.
+        // CADisplayLink fans BeginFrames out at display rate, but during
+        // resize/recovery we need the boosted cadence too.
+        browser_->GetHost()->SendExternalBeginFrame();
+#endif
+    }
+    CefRefPtr<CefLayer> self = this;
+    // Tick at 4x display refresh so the compositor gets nudged more
+    // often than the boosted output rate (2x) — keeps frame production
+    // ahead of the present cadence during a resize. If fps isn't known
+    // yet, clear running so a later kick can restart cleanly.
+    if (frame_rate_ <= 0) {
+        invalidate_running_.store(false, std::memory_order_release);
+        LOG_DEBUG(LOG_CEF, "CefLayer::invalidateTick bailed (fps=0) name={}",
+                  name_.c_str());
+        return;
+    }
+    int tick_hz = frame_rate_ * 4;
+    int delay_ms = static_cast<int>(1000.0 / tick_hz + 0.5);
+    if (delay_ms < 1) delay_ms = 1;
+    CefPostDelayedTask(TID_UI,
+        CefRefPtr<CefTask>(new FnTask([self]() { self->invalidateTick(); })),
+        delay_ms);
+}
+
+void CefLayer::setVisible(bool visible) {
+    if (surface_ && g_platform.surface_set_visible)
+        g_platform.surface_set_visible(surface_, visible);
+}
+
+void CefLayer::fade(float fade_sec,
+                    std::function<void()> on_fade_start,
+                    std::function<void()> on_complete) {
+    if (surface_ && g_platform.fade_surface) {
+        g_platform.fade_surface(surface_, fade_sec,
+                                std::move(on_fade_start),
+                                std::move(on_complete));
+        return;
+    }
+    // Backend without fade support — fire callbacks; on_complete typically
+    // closes the browser, which destroys the surface via Browsers::remove.
+    if (on_fade_start) on_fade_start();
+    if (on_complete) on_complete();
+}
+
+void CefLayer::setRefreshRate(double hz) {
+    if (hz <= 0) return;
+    int target = static_cast<int>(std::ceil(hz));
+    CefRefPtr<CefLayer> self = this;
+    CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self, target]() {
+        self->frame_rate_ = target;
+        // If a nudge-loop boost is active, just update what we'll restore
+        // to and let the boost rate (480) keep running. Otherwise apply
+        // the new rate immediately.
+        if (self->saved_frame_rate_ > 0) {
+            self->saved_frame_rate_ = target;
+        } else {
+            self->setFrameRate(target);
+        }
+    })));
 }
 
 void CefLayer::reset_popup_state() {
@@ -153,7 +328,7 @@ void CefLayer::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
     popup_visible_ = show;
     reset_popup_state();
     if (!show) {
-        g_platform.popup_hide();
+        if (surface_) g_platform.popup_hide(surface_);
         return;
     }
     if (CefRefPtr<CefFrame> frame = focused_or_main(browser)) {
@@ -172,24 +347,32 @@ void CefLayer::try_show_popup() {
     if (!popup_visible_ || !popup_size_received_ || !popup_options_received_)
         return;
 
-    if (!popup_options_.empty() && g_platform.try_native_popup_menu) {
-        CefRefPtr<CefLayer> self = this;
-        auto on_selected = [self](int index) {
-            CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self, index]() {
-                self->dispatch_popup_selection(index);
-            })));
-        };
-        if (g_platform.try_native_popup_menu(
-                popup_rect_.x, popup_rect_.y,
-                popup_rect_.width, popup_rect_.height,
-                popup_options_, popup_selected_idx_,
-                std::move(on_selected))) {
-            return;
-        }
-    }
+    // on_selected fires only on native-menu backends (macOS). Compositor
+    // backends ignore it; CEF dispatches selection itself on click.
+    CefRefPtr<CefLayer> self = this;
+    auto on_selected = [self](int index) {
+        CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self, index]() {
+            self->dispatch_popup_selection(index);
+        })));
+    };
 
-    g_platform.popup_show(popup_rect_.x, popup_rect_.y,
-                          popup_rect_.width, popup_rect_.height);
+    Platform::PopupRequest req;
+    req.x = popup_rect_.x;
+    req.y = popup_rect_.y;
+    req.lw = popup_rect_.width;
+    req.lh = popup_rect_.height;
+    req.options = popup_options_;
+    req.initial_highlight = popup_selected_idx_;
+    req.on_selected = std::move(on_selected);
+    if (surface_) g_platform.popup_show(surface_, req);
+}
+
+void CefLayer::onDeactivated() {
+    if (popup_visible_) {
+        popup_visible_ = false;
+        reset_popup_state();
+        if (surface_) g_platform.popup_hide(surface_);
+    }
 }
 
 void CefLayer::dispatch_popup_selection(int index) {
@@ -207,40 +390,102 @@ void CefLayer::dispatch_popup_selection(int index) {
     browser_->GetHost()->SendMouseWheelEvent(me, /*deltaX=*/0, /*deltaY=*/1);
 }
 
+// Drop the first kSkipPaintsAfterResize CEF paints after each resize.
+// They're frequently partial/placeholder frames produced while the
+// renderer is still re-laying out at the new dims. Returns true when
+// this paint should be passed on to the platform present path.
+bool CefLayer::shouldPresentPaint() {
+    uint64_t gen = resize_gen_.load(std::memory_order_acquire);
+    if (gen != last_paint_gen_) {
+        last_paint_gen_ = gen;
+        // Rate-clamp the skip-counter reset. Continuous drag bumps gen
+        // many times per second; resetting on every bump would keep
+        // wiping the counter before any paint clears the skip threshold,
+        // so paints never reach the present path. Apply at most one
+        // reset per display-refresh period.
+        using namespace std::chrono;
+        int64_t now_ns = duration_cast<nanoseconds>(
+            steady_clock::now().time_since_epoch()).count();
+        double hz = mpv::display_hz();
+        int64_t period_ns = (hz > 0) ? static_cast<int64_t>(1e9 / hz) : 16'666'667LL;
+        if (now_ns - last_skip_reset_ns_ >= period_ns) {
+            last_skip_reset_ns_ = now_ns;
+            // Recompute the FPS-derived thresholds. If frame_rate_ isn't
+            // known yet, leave both at 0: all paints present, pump-stop
+            // never fires (loop won't be running anyway).
+            skip_paints_after_resize_ = 1;
+            pump_paint_count_ = (frame_rate_ > 0) ? skip_paints_after_resize_ + frame_rate_ : 0;
+            paints_since_resize_ = 0;
+            LOG_TRACE(LOG_CEF, "CefLayer::shouldPresentPaint name={} gen advanced to {} fps={} skip={} pump={} (reset)",
+                      name_.c_str(), gen, frame_rate_,
+                      skip_paints_after_resize_, pump_paint_count_);
+        } else {
+            LOG_TRACE(LOG_CEF, "CefLayer::shouldPresentPaint name={} gen advanced to {} (clamp held)",
+                      name_.c_str(), gen);
+        }
+    }
+    ++paints_since_resize_;
+    bool present = paints_since_resize_ > skip_paints_after_resize_;
+    LOG_TRACE(LOG_CEF, "CefLayer::shouldPresentPaint name={} count={} present={}",
+              name_.c_str(), paints_since_resize_, present ? 1 : 0);
+    if (paints_since_resize_ == pump_paint_count_) {
+        // Pumped enough frames. Signal stop to host Invalidate loop and
+        // renderer's rAF loop. Counter remains past pump_paint_count_ so
+        // subsequent paints don't re-fire.
+        LOG_DEBUG(LOG_CEF, "CefLayer::shouldPresentPaint pump stop name={}",
+                  name_.c_str());
+        invalidate_stop_.store(true, std::memory_order_release);
+        execJs("window.__cefStopRaf && window.__cefStopRaf();");
+    }
+    return present;
+}
+
 void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                        const void* buffer, int w, int h) {
     if (type == PET_POPUP) {
-        g_platform.popup_present_software(buffer, w, h,
-                                          popup_rect_.width, popup_rect_.height);
+        if (surface_)
+            g_platform.popup_present_software(surface_, buffer, w, h,
+                                              popup_rect_.width, popup_rect_.height);
         return;
     }
     if (type != PET_VIEW) return;
-    target_.present_software(dirty, buffer, w, h);
+    if (!shouldPresentPaint()) return;
+    if (surface_ && g_platform.surface_present_software)
+        g_platform.surface_present_software(surface_, dirty, buffer, w, h);
 }
 
 void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
                                   const RectList&, const CefAcceleratedPaintInfo& info) {
     if (type == PET_POPUP) {
-        g_platform.popup_present(info, popup_rect_.width, popup_rect_.height);
+        if (surface_)
+            g_platform.popup_present(surface_, info, popup_rect_.width, popup_rect_.height);
         return;
     }
     if (type != PET_VIEW) return;
-    target_.present(info);
+    if (!shouldPresentPaint()) return;
+    if (surface_ && g_platform.surface_present)
+        g_platform.surface_present(surface_, info);
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-    LOG_DEBUG(LOG_CEF, "CefLayer::OnAfterCreated browser={} id={}",
-             static_cast<void*>(browser.get()), browser ? browser->GetIdentifier() : -1);
+    LOG_DEBUG(LOG_CEF, "CefLayer::OnAfterCreated name={}", name_.c_str());
     browser_ = browser;
     closed_ = false;
     loaded_ = false;
+    // Track the rate CEF was created with so the invalidate loop has
+    // a valid cadence before any explicit setFrameRate call lands.
+    if (frame_rate_ > 0) current_frame_rate_ = frame_rate_;
     if (g_shutting_down.load(std::memory_order_relaxed)) {
         browser->GetHost()->CloseBrowser(true);
         return;
     }
+    // WasResized fires here, so bump gen so shouldPresentPaint
+    // recomputes skip/pump from frame_rate_ on the first paint.
+    resize_gen_.fetch_add(1, std::memory_order_acq_rel);
     browser->GetHost()->NotifyScreenInfoChanged();
     browser->GetHost()->WasResized();
     browser->GetHost()->Invalidate(PET_VIEW);
+    kickInvalidateLoop();
 
     // Reset state machine: if reset() was called before the initial
     // OnAfterCreated, close the freshly created browser so the one-shot
@@ -286,6 +531,9 @@ void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     browser_ = nullptr;
     closed_ = true;
     loaded_ = true;
+    // Signal the nudge loop to exit so the posted-task ref keeping
+    // this CefLayer alive can drop and the object can destruct.
+    invalidate_stop_.store(true, std::memory_order_release);
     close_cv_.notify_all();
     load_cv_.notify_all();
     // Move out before invoking. The callback can safely install a new one
@@ -296,12 +544,39 @@ void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     if (cb) cb();
 }
 
-void CefLayer::create(const CefWindowInfo& wi, const CefBrowserSettings& bs, const std::string& url,
-                      CefRefPtr<CefDictionaryValue> extra_info) {
-    window_info_ = wi;
-    browser_settings_ = bs;
-    extra_info_ = extra_info;
-    CefBrowserHost::CreateBrowser(wi, this, url, bs, extra_info, nullptr);
+void CefLayer::create(const std::string& url) {
+    CefWindowInfo wi;
+    wi.SetAsWindowless(0);
+    wi.shared_texture_enabled = browsers_.use_shared_textures();
+#ifdef __APPLE__
+    // Drive BeginFrames from CVDisplayLink to eliminate phase lag against
+    // CEF's internal 60Hz timer.
+    wi.external_begin_frame_enabled = true;
+#else
+    wi.external_begin_frame_enabled = false;
+#endif
+    CefBrowserSettings bs;
+    bs.background_color = 0;
+    bs.windowless_frame_rate = frame_rate_ > 0 ? frame_rate_ : browsers_.frame_rate();
+
+    // Auto-inject context-menu shim when the layer has a builder configured.
+    // Every wrapper that wires setContextMenuBuilder also needs the JS-side
+    // menuItemSelected/menuDismissed IPCs and the context-menu.js script;
+    // central them here so wrappers don't repeat the listing.
+    CefRefPtr<CefDictionaryValue> info = extra_info_;
+    if (context_menu_builder_ && info) {
+        info = info->Copy(false);
+        auto fns = info->HasKey("functions") ? info->GetList("functions") : CefListValue::Create();
+        fns = fns->Copy();
+        fns->SetString(fns->GetSize(), "menuItemSelected");
+        fns->SetString(fns->GetSize(), "menuDismissed");
+        info->SetList("functions", fns);
+        auto scripts = info->HasKey("scripts") ? info->GetList("scripts") : CefListValue::Create();
+        scripts = scripts->Copy();
+        scripts->SetString(scripts->GetSize(), "context-menu.js");
+        info->SetList("scripts", scripts);
+    }
+    CefBrowserHost::CreateBrowser(wi, this, url, bs, info, nullptr);
 }
 
 void CefLayer::reset() {
@@ -319,8 +594,11 @@ void CefLayer::reset() {
         // so we don't need to (and must not) clear it ourselves.
         CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
             // Go through create() so requested_url_ is cleared alongside the
-            // actual CreateBrowser call.
-            self->create(self->window_info_, self->browser_settings_, "", self->extra_info_);
+            // actual CreateBrowser call. Skip during shutdown: CefShutdown()
+            // drains pending tasks, and creating a browser here would race
+            // with the shutdown teardown and cause a hang.
+            if (!g_shutting_down.load(std::memory_order_relaxed))
+                self->create("");
         })));
     });
 
@@ -349,8 +627,8 @@ void CefLayer::waitForClose() {
 }
 
 void CefLayer::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int code) {
-    LOG_INFO(LOG_CEF, "CefLayer::OnLoadEnd main={} code={} url={}",
-             frame->IsMain() ? 1 : 0, code,
+    LOG_INFO(LOG_CEF, "CefLayer::OnLoadEnd name={} main={} code={} url={}",
+             name_.c_str(), frame->IsMain() ? 1 : 0, code,
              frame->GetURL().ToString().c_str());
     if (frame->IsMain()) {
         loaded_ = true;
@@ -365,8 +643,8 @@ void CefLayer::waitForLoad() {
 
 void CefLayer::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                            ErrorCode errorCode, const CefString& errorText, const CefString& failedUrl) {
-    LOG_ERROR(LOG_CEF, "OnLoadError: {} error={} {}",
-              failedUrl.ToString(), static_cast<int>(errorCode), errorText.ToString());
+    LOG_ERROR(LOG_CEF, "OnLoadError name={} url={} error={} {}",
+              name_.c_str(), failedUrl.ToString(), static_cast<int>(errorCode), errorText.ToString());
 }
 
 void CefLayer::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {
@@ -421,7 +699,7 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
         return true;
     }
 
-    // Context menu commands are browser-level, handled here.
+// Context menu commands are browser-level, handled here.
     if (name == "menuItemSelected") {
         int cmd = args->GetInt(0);
         if (pending_menu_callback_) {
@@ -494,15 +772,15 @@ bool CefLayer::RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>
     if (pending_menu_callback_) pending_menu_callback_->Cancel();
     pending_menu_callback_ = callback;
 
-    cJSON* call_args = cJSON_CreateArray();
-    cJSON_AddItemToArray(call_args, serializeMenuModel(model));
-    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetXCoord()));
-    cJSON_AddItemToArray(call_args, cJSON_CreateNumber(params->GetYCoord()));
-    char* json = cJSON_PrintUnformatted(call_args);
+    CefRefPtr<CefListValue> call_args = CefListValue::Create();
+    call_args->SetList(0, serializeMenuModel(model));
+    call_args->SetInt(1, params->GetXCoord());
+    call_args->SetInt(2, params->GetYCoord());
+    CefRefPtr<CefValue> root = CefValue::Create();
+    root->SetList(call_args);
+    std::string json = CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString();
     browser->GetMainFrame()->ExecuteJavaScript(
-        "window._showContextMenu.apply(null," + std::string(json) + ")",
+        "window._showContextMenu.apply(null," + json + ")",
         "", 0);
-    cJSON_free(json);
-    cJSON_Delete(call_args);
     return true;
 }
