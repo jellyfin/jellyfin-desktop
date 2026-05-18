@@ -27,9 +27,7 @@ run *args: build
 # Run the mpv CLI
 [linux]
 run-mpv *args: build
-    #!/bin/sh
-    set -eu
-    build/mpv-build/mpv "$@"
+    build/mpv-build/mpv {{args}}
 
 mod appimage 'appimage/appimage.just'
 mod flatpak 'flatpak/flatpak.just'

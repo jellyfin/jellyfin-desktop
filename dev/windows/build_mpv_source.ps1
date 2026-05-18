@@ -112,7 +112,8 @@ pacman -S --needed --noconfirm \
     $PkgPrefix-vulkan-headers \
     $PkgPrefix-vulkan-loader \
     $PkgPrefix-shaderc \
-    $PkgPrefix-spirv-cross
+    $PkgPrefix-spirv-cross \
+    $PkgPrefix-llvm
 "@ -Description "Installing MSYS2 dependencies"
 
 # Clean previous build if forcing
