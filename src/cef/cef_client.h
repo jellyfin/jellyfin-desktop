@@ -8,14 +8,29 @@
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_keyboard_handler.h"
-#include <condition_variable>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <vector>
 
 class Browsers;
 struct PlatformSurface;
+
+// Opaque handle to the Rust-side state in jfn-cef (src/jfn_cef/src/client.rs).
+// Owns name/closed/loaded/condvars. Subsequent porting slices migrate more
+// state and behavior into the Rust handle; for now C++ holds the CEF
+// interface impls and delegates state queries.
+struct JfnCefLayer;
+extern "C" {
+JfnCefLayer* jfn_cef_layer_new();
+void         jfn_cef_layer_free(JfnCefLayer*);
+void         jfn_cef_layer_set_name(const JfnCefLayer*, const char* utf8);
+bool         jfn_cef_layer_is_closed(const JfnCefLayer*);
+bool         jfn_cef_layer_is_loaded(const JfnCefLayer*);
+void         jfn_cef_layer_set_closed(const JfnCefLayer*, bool);
+void         jfn_cef_layer_set_loaded(const JfnCefLayer*, bool);
+void         jfn_cef_layer_wait_for_close(const JfnCefLayer*);
+void         jfn_cef_layer_wait_for_load(const JfnCefLayer*);
+}
 
 // Callback invoked for IPC messages from the renderer process.
 // Returns true if the message was handled.
@@ -46,7 +61,10 @@ public:
     CefLayer(Browsers& browsers, PlatformSurface* surface);
     ~CefLayer() override;
 
-    void setName(std::string name) { name_ = std::move(name); }
+    void setName(std::string name) {
+        name_ = std::move(name);
+        jfn_cef_layer_set_name(rs_, name_.c_str());
+    }
     const std::string& name() const { return name_; }
 
     void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
@@ -110,11 +128,11 @@ public:
     // even when JS rAF wouldn't fire (e.g. when the page is static and
     // the renderer skipped a compositor frame).
     void kickInvalidateLoop();
-    bool isClosed() const { return closed_; }
-    bool isLoaded() const { return loaded_; }
+    bool isClosed() const { return jfn_cef_layer_is_closed(rs_); }
+    bool isLoaded() const { return jfn_cef_layer_is_loaded(rs_); }
     CefRefPtr<CefBrowser> browser() { return browser_; }
-    void waitForClose();
-    void waitForLoad();
+    void waitForClose() { jfn_cef_layer_wait_for_close(rs_); }
+    void waitForLoad() { jfn_cef_layer_wait_for_load(rs_); }
     void execJs(const std::string& js);
     void setRefreshRate(double hz);
     void setVisible(bool visible);
@@ -167,12 +185,7 @@ private:
     void try_show_popup();
     void dispatch_popup_selection(int index);
     CefRefPtr<CefBrowser> browser_;
-    std::atomic<bool> closed_{false};
-    std::atomic<bool> loaded_{false};
-    std::mutex close_mtx_;
-    std::condition_variable close_cv_;
-    std::mutex load_mtx_;
-    std::condition_variable load_cv_;
+    JfnCefLayer* rs_ = nullptr;
     CefRefPtr<CefRunContextMenuCallback> pending_menu_callback_;
     MessageHandler message_handler_;
     CreatedCallback on_after_created_;

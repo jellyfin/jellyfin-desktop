@@ -11,6 +11,7 @@
 
 mod app;
 mod bridge;
+mod client;
 mod embedded_js;
 pub mod ffi;
 #[cfg(target_os = "macos")]

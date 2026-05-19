@@ -125,9 +125,11 @@ static bool try_intercept_paste(CefRefPtr<CefBrowser> browser,
 // =====================================================================
 
 CefLayer::CefLayer(Browsers& browsers, PlatformSurface* surface)
-    : browsers_(browsers), surface_(surface) {}
+    : browsers_(browsers), surface_(surface), rs_(jfn_cef_layer_new()) {}
 
-CefLayer::~CefLayer() = default;
+CefLayer::~CefLayer() {
+    jfn_cef_layer_free(rs_);
+}
 
 void CefLayer::GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) {
     rect.Set(0, 0, width_, height_);
@@ -376,7 +378,7 @@ void CefLayer::onDeactivated() {
 }
 
 void CefLayer::dispatch_popup_selection(int index) {
-    if (closed_ || !browser_) return;
+    if (isClosed() || !browser_) return;
     if (CefRefPtr<CefFrame> frame = focused_or_main(browser_)) {
         auto msg = CefProcessMessage::Create("applyPopupSelection");
         msg->GetArgumentList()->SetInt(0, index);
@@ -470,8 +472,8 @@ void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     LOG_DEBUG(LOG_CEF, "CefLayer::OnAfterCreated name={}", name_.c_str());
     browser_ = browser;
-    closed_ = false;
-    loaded_ = false;
+    jfn_cef_layer_set_closed(rs_, false);
+    jfn_cef_layer_set_loaded(rs_, false);
     // Track the rate CEF was created with so the invalidate loop has
     // a valid cadence before any explicit setFrameRate call lands.
     if (frame_rate_ > 0) current_frame_rate_ = frame_rate_;
@@ -529,13 +531,11 @@ bool CefLayer::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int,
 
 void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     browser_ = nullptr;
-    closed_ = true;
-    loaded_ = true;
     // Signal the nudge loop to exit so the posted-task ref keeping
     // this CefLayer alive can drop and the object can destruct.
     invalidate_stop_.store(true, std::memory_order_release);
-    close_cv_.notify_all();
-    load_cv_.notify_all();
+    jfn_cef_layer_set_closed(rs_, true);
+    jfn_cef_layer_set_loaded(rs_, true);
     // Move out before invoking. The callback can safely install a new one
     // (via setBeforeCloseCallback) without destroying its own closure —
     // invoking `on_before_close_()` inline would if the callback then
@@ -621,24 +621,12 @@ void CefLayer::loadUrl(const std::string& url) {
     browser_->GetMainFrame()->LoadURL(url);
 }
 
-void CefLayer::waitForClose() {
-    std::unique_lock<std::mutex> lock(close_mtx_);
-    close_cv_.wait(lock, [this] { return closed_.load(); });
-}
-
 void CefLayer::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int code) {
     LOG_INFO(LOG_CEF, "CefLayer::OnLoadEnd name={} main={} code={} url={}",
              name_.c_str(), frame->IsMain() ? 1 : 0, code,
              frame->GetURL().ToString().c_str());
-    if (frame->IsMain()) {
-        loaded_ = true;
-        load_cv_.notify_all();
-    }
-}
-
-void CefLayer::waitForLoad() {
-    std::unique_lock<std::mutex> lock(load_mtx_);
-    load_cv_.wait(lock, [this] { return loaded_.load(); });
+    if (frame->IsMain())
+        jfn_cef_layer_set_loaded(rs_, true);
 }
 
 void CefLayer::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
