@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 
+use crate::bridge;
 use crate::platform_ops;
 
 unsafe extern "C" {
@@ -55,6 +56,9 @@ pub struct JfnCefBrowserOps {
     pub close_browser: Option<unsafe extern "C" fn(*mut c_void)>,
     /// browser_->GetMainFrame()->LoadURL(url).
     pub load_url: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+    /// frame->ExecuteJavaScript on the focused (or main) frame. Used for the
+    /// paste intercept's document.execCommand('insertText', ...) call.
+    pub exec_js_focused: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
 }
 
 // SAFETY: the C++ side guarantees the ctx pointer remains valid until
@@ -300,6 +304,13 @@ impl Inner {
         self.with_ops(|o| {
             if let Some(f) = o.load_url {
                 unsafe { f(o.ctx, url.as_ptr() as *const c_char, url.len()) }
+            }
+        });
+    }
+    fn exec_js_focused(&self, js: &str) {
+        self.with_ops(|o| {
+            if let Some(f) = o.exec_js_focused {
+                unsafe { f(o.ctx, js.as_ptr() as *const c_char, js.len()) }
             }
         });
     }
@@ -683,6 +694,86 @@ impl Inner {
         }
     }
 
+    fn on_fullscreen_mode_change(&self, fullscreen: bool) {
+        if let Some(ops) = platform_ops::ops() {
+            if let Some(f) = ops.set_fullscreen {
+                unsafe { f(fullscreen) };
+            }
+        }
+    }
+
+    fn on_cursor_change(&self, cursor_type: c_int) {
+        if let Some(ops) = platform_ops::ops() {
+            if let Some(f) = ops.set_cursor {
+                unsafe { f(cursor_type) };
+            }
+        }
+    }
+
+    fn on_console_message(&self, level: c_int, msg: &str, src: &str, line: c_int) {
+        // CEF severities: VERBOSE/DEBUG share LOGSEVERITY_VERBOSE; DEFAULT=0
+        // treated as INFO. Numeric values mirror cef_log_severity_t.
+        const LOGSEVERITY_VERBOSE: c_int = 1; // and DEBUG
+        const LOGSEVERITY_INFO: c_int = 2;
+        const LOGSEVERITY_WARNING: c_int = 3;
+        const LOGSEVERITY_ERROR: c_int = 4;
+        const LOGSEVERITY_DEFAULT: c_int = 0;
+        let formatted = format!("{} ({}:{})", msg, src, line);
+        let lvl = if level >= LOGSEVERITY_ERROR {
+            bridge::LEVEL_ERROR
+        } else if level == LOGSEVERITY_WARNING {
+            bridge::LEVEL_WARN
+        } else if level == LOGSEVERITY_INFO || level == LOGSEVERITY_DEFAULT {
+            bridge::LEVEL_INFO
+        } else {
+            let _ = LOGSEVERITY_VERBOSE;
+            bridge::LEVEL_DEBUG
+        };
+        bridge::log(bridge::LOG_JS, lvl, &formatted);
+    }
+
+    fn on_load_end(&self, is_main: bool, code: c_int, url: &str) {
+        let formatted = format!(
+            "CefLayer::OnLoadEnd name={} main={} code={} url={}",
+            self.name_str(),
+            if is_main { 1 } else { 0 },
+            code,
+            url,
+        );
+        bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, &formatted);
+        if is_main {
+            let _g = self.load_mtx.lock().unwrap();
+            self.loaded.store(true, Ordering::Release);
+            self.load_cv.notify_all();
+        }
+    }
+
+    fn on_load_error(&self, code: c_int, text: &str, url: &str) {
+        let formatted = format!(
+            "OnLoadError name={} url={} error={} {}",
+            self.name_str(),
+            url,
+            code,
+            text,
+        );
+        bridge::log(bridge::LOG_CEF, bridge::LEVEL_ERROR, &formatted);
+    }
+
+    /// OnPreKeyEvent paste intercept. C++ side has already matched the
+    /// platform paste shortcut. Returns true if a platform clipboard read
+    /// was triggered (CEF should swallow the key); false otherwise.
+    fn try_paste(self: &Arc<Self>) -> bool {
+        let Some(ops) = platform_ops::ops() else {
+            return false;
+        };
+        let Some(read) = ops.clipboard_read_text_async else {
+            return false;
+        };
+        let ctx = Arc::into_raw(Arc::clone(self)) as *mut c_void;
+        unsafe { read(Some(paste_clipboard_cb), ctx, Some(paste_clipboard_dtor)) };
+        true
+    }
+
     fn on_before_popup(&self, url: &str) -> bool {
         // Leading '-' guard blocks argv-style option smuggling into xdg-open.
         if url.is_empty() || url.starts_with('-') {
@@ -868,6 +959,49 @@ wrap_task! {
             }
             self.inner.create("");
         }
+    }
+}
+
+wrap_task! {
+    struct PasteJsTask {
+        inner: Arc<Inner>,
+        text: String,
+    }
+    impl Task {
+        fn execute(&self) {
+            let escaped = serde_json::to_string(&self.text).unwrap_or_else(|_| "\"\"".to_string());
+            let js = format!("document.execCommand('insertText',false,{});", escaped);
+            self.inner.exec_js_focused(&js);
+        }
+    }
+}
+
+// Clipboard read callback — fires on any thread. Posts to TID_UI before
+// touching CEF.
+unsafe extern "C" fn paste_clipboard_cb(ctx: *mut c_void, utf8: *const c_char, len: usize) {
+    let raw = ctx as *const Inner;
+    if raw.is_null() {
+        return;
+    }
+    let inner = unsafe { Arc::from_raw(raw) };
+    let cloned = Arc::clone(&inner);
+    std::mem::forget(inner); // dtor will Arc::from_raw to release this ref.
+    if len == 0 || utf8.is_null() {
+        return;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(utf8 as *const u8, len) };
+    let text = String::from_utf8_lossy(slice).into_owned();
+    if text.is_empty() {
+        return;
+    }
+    let mut task = PasteJsTask::new(cloned, text);
+    let _ = post_task(ThreadId::UI, Some(&mut task));
+}
+
+unsafe extern "C" fn paste_clipboard_dtor(ctx: *mut c_void) {
+    let raw = ctx as *const Inner;
+    if !raw.is_null() {
+        drop(unsafe { Arc::from_raw(raw) });
     }
 }
 
@@ -1100,6 +1234,68 @@ pub unsafe extern "C" fn jfn_cef_layer_take_pending_url(h: *const JfnCefLayer) -
             .map(|c| c.into_raw())
             .unwrap_or(std::ptr::null_mut()),
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_fullscreen_mode_change(
+    h: *const JfnCefLayer,
+    fullscreen: bool,
+) {
+    unsafe { arc(h) }.on_fullscreen_mode_change(fullscreen);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_cursor_change(
+    h: *const JfnCefLayer,
+    cursor_type: c_int,
+) {
+    unsafe { arc(h) }.on_cursor_change(cursor_type);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_console_message(
+    h: *const JfnCefLayer,
+    level: c_int,
+    msg_utf8: *const c_char,
+    msg_len: usize,
+    src_utf8: *const c_char,
+    src_len: usize,
+    line: c_int,
+) {
+    let msg = read_utf8(msg_utf8, msg_len);
+    let src = read_utf8(src_utf8, src_len);
+    unsafe { arc(h) }.on_console_message(level, &msg, &src, line);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_load_end(
+    h: *const JfnCefLayer,
+    is_main: bool,
+    code: c_int,
+    url_utf8: *const c_char,
+    url_len: usize,
+) {
+    let url = read_utf8(url_utf8, url_len);
+    unsafe { arc(h) }.on_load_end(is_main, code, &url);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_load_error(
+    h: *const JfnCefLayer,
+    code: c_int,
+    text_utf8: *const c_char,
+    text_len: usize,
+    url_utf8: *const c_char,
+    url_len: usize,
+) {
+    let text = read_utf8(text_utf8, text_len);
+    let url = read_utf8(url_utf8, url_len);
+    unsafe { arc(h) }.on_load_error(code, &text, &url);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_try_paste(h: *const JfnCefLayer) -> bool {
+    unsafe { arc(h) }.try_paste()
 }
 
 #[unsafe(no_mangle)]

@@ -36,12 +36,14 @@ unsafe extern "C" {
 
 // Category constants — must match the LogCategory enum in src/logging.h.
 pub const LOG_CEF: u8 = 2;
+pub const LOG_JS: u8 = 5;
 pub const LOG_RESOURCE: u8 = 6;
 
 // Level constants — must match LogLevel in src/logging.h.
 pub const LEVEL_DEBUG: u8 = 1;
 pub const LEVEL_INFO: u8 = 2;
 pub const LEVEL_WARN: u8 = 3;
+pub const LEVEL_ERROR: u8 = 4;
 
 fn take_c_string(s: *mut c_char, free: unsafe extern "C" fn(*mut c_char)) -> String {
     if s.is_null() {

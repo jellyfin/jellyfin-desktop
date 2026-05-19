@@ -44,6 +44,9 @@ struct JfnCefBrowserOps {
     void (*create_browser)(void* ctx, const char* url_utf8, size_t len);
     void (*close_browser)(void* ctx);
     void (*load_url)(void* ctx, const char* url_utf8, size_t len);
+    // frame->ExecuteJavaScript on the focused (or main) frame — used by the
+    // paste intercept's document.execCommand('insertText', ...) call.
+    void (*exec_js_focused)(void* ctx, const char* js_utf8, size_t len);
 };
 
 extern "C" {
@@ -103,6 +106,17 @@ void         jfn_cef_layer_invoke_created_callback(const JfnCefLayer*, void* bro
 void         jfn_cef_layer_take_and_invoke_before_close(const JfnCefLayer*);
 void         jfn_cef_layer_invoke_context_menu_builder(const JfnCefLayer*, void* menu_model);
 bool         jfn_cef_layer_invoke_context_menu_dispatcher(const JfnCefLayer*, int command_id);
+void         jfn_cef_layer_on_fullscreen_mode_change(const JfnCefLayer*, bool fullscreen);
+void         jfn_cef_layer_on_cursor_change(const JfnCefLayer*, int cef_cursor_type);
+void         jfn_cef_layer_on_console_message(const JfnCefLayer*, int level,
+                                              const char* msg, size_t msg_len,
+                                              const char* src, size_t src_len, int line);
+void         jfn_cef_layer_on_load_end(const JfnCefLayer*, bool is_main, int code,
+                                       const char* url, size_t url_len);
+void         jfn_cef_layer_on_load_error(const JfnCefLayer*, int code,
+                                         const char* text, size_t text_len,
+                                         const char* url, size_t url_len);
+bool         jfn_cef_layer_try_paste(const JfnCefLayer*);
 }
 
 // Callback invoked for IPC messages from the renderer process.

@@ -98,14 +98,6 @@ static void do_paste(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame) {
         frame->Paste();
 }
 
-static bool try_intercept_paste(CefRefPtr<CefBrowser> browser,
-                                const CefKeyEvent& e) {
-    if (!g_platform.clipboard_read_text_async) return false;
-    if (!is_paste_shortcut(e)) return false;
-    paste_via_platform_clipboard(browser);
-    return true;
-}
-
 // =====================================================================
 // CefLayer
 // =====================================================================
@@ -189,6 +181,14 @@ void ops_load_url(void* c, const char* url_utf8, size_t len) {
     if (auto f = b->GetMainFrame())
         f->LoadURL(CefString(std::string(url_utf8, len)));
 }
+void ops_exec_js_focused(void* c, const char* js_utf8, size_t len) {
+    auto* self = static_cast<CefLayer*>(c);
+    auto b = self->browser();
+    if (!b) return;
+    auto f = focused_or_main(b);
+    if (!f) return;
+    f->ExecuteJavaScript(CefString(std::string(js_utf8, len)), f->GetURL(), 0);
+}
 
 }  // namespace
 
@@ -207,6 +207,7 @@ CefLayer::CefLayer(Browsers& browsers, PlatformSurface* surface)
     ops.create_browser = ops_create_browser;
     ops.close_browser = ops_close_browser;
     ops.load_url = ops_load_url;
+    ops.exec_js_focused = ops_exec_js_focused;
     jfn_cef_layer_set_browser_ops(rs_, &ops);
     jfn_cef_layer_set_surface(rs_, surface);
 }
@@ -493,26 +494,26 @@ void CefLayer::doCreateBrowser(const std::string& url) {
 }
 
 void CefLayer::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int code) {
-    LOG_INFO(LOG_CEF, "CefLayer::OnLoadEnd name={} main={} code={} url={}",
-             name_.c_str(), frame->IsMain() ? 1 : 0, code,
-             frame->GetURL().ToString().c_str());
-    if (frame->IsMain())
-        jfn_cef_layer_set_loaded(rs_, true);
+    std::string url = frame->GetURL().ToString();
+    jfn_cef_layer_on_load_end(rs_, frame->IsMain(), code, url.data(), url.size());
 }
 
 void CefLayer::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                            ErrorCode errorCode, const CefString& errorText, const CefString& failedUrl) {
-    LOG_ERROR(LOG_CEF, "OnLoadError name={} url={} error={} {}",
-              name_.c_str(), failedUrl.ToString(), static_cast<int>(errorCode), errorText.ToString());
+    std::string text = errorText.ToString();
+    std::string url = failedUrl.ToString();
+    jfn_cef_layer_on_load_error(rs_, static_cast<int>(errorCode),
+                                text.data(), text.size(),
+                                url.data(), url.size());
 }
 
 void CefLayer::OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) {
-    g_platform.set_fullscreen(fullscreen);
+    jfn_cef_layer_on_fullscreen_mode_change(rs_, fullscreen);
 }
 
 bool CefLayer::OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle,
                               cef_cursor_type_t type, const CefCursorInfo&) {
-    g_platform.set_cursor(type);
+    jfn_cef_layer_on_cursor_change(rs_, static_cast<int>(type));
     return true;
 }
 
@@ -521,15 +522,9 @@ bool CefLayer::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level,
                                 int line) {
     std::string msg = message.ToString();
     std::string src = source.ToString();
-    // CEF: VERBOSE/DEBUG share a value. DEFAULT (0) → treat as INFO.
-    if (level >= LOGSEVERITY_ERROR)
-        LOG_ERROR(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
-    else if (level == LOGSEVERITY_WARNING)
-        LOG_WARN(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
-    else if (level == LOGSEVERITY_INFO || level == LOGSEVERITY_DEFAULT)
-        LOG_INFO(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
-    else  // VERBOSE/DEBUG
-        LOG_DEBUG(LOG_JS, "{} ({}:{})", msg.c_str(), src.c_str(), line);
+    jfn_cef_layer_on_console_message(rs_, static_cast<int>(level),
+                                     msg.data(), msg.size(),
+                                     src.data(), src.size(), line);
     return true;
 }
 
@@ -603,9 +598,10 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
         name.data(), name.size(), args.get(), browser.get());
 }
 
-bool CefLayer::OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& e,
+bool CefLayer::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& e,
                              CefEventHandle, bool*) {
-    return try_intercept_paste(browser, e);
+    if (!is_paste_shortcut(e)) return false;
+    return jfn_cef_layer_try_paste(rs_);
 }
 
 void CefLayer::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
