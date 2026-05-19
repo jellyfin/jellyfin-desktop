@@ -16,10 +16,25 @@ class Browsers;
 struct PlatformSurface;
 
 // Opaque handle to the Rust-side state in jfn-cef (src/jfn_cef/src/client.rs).
-// Owns name/closed/loaded/condvars. Subsequent porting slices migrate more
-// state and behavior into the Rust handle; for now C++ holds the CEF
-// interface impls and delegates state queries.
+// Owns name/closed/loaded/condvars, the resize-debounce + invalidate-loop
+// state machine, and a per-layer surface pointer. Subsequent porting slices
+// migrate more behavior in; for now C++ holds the CEF handler impls and the
+// CefRefPtr<CefBrowser>.
 struct JfnCefLayer;
+
+// Per-layer CEF browser op vtable. C++ supplies fn-pointer thunks during
+// CefLayer ctor; the Rust side invokes them when scheduling work on TID_UI.
+// ctx is the CefLayer*; thunks must null-check the browser ref themselves.
+struct JfnCefBrowserOps {
+    void* ctx;
+    void (*notify_screen_info_changed)(void* ctx);
+    void (*was_resized)(void* ctx);
+    void (*invalidate)(void* ctx);
+    void (*send_external_begin_frame)(void* ctx);
+    void (*set_windowless_frame_rate)(void* ctx, int hz);
+    void (*exec_js)(void* ctx, const char* js_utf8, size_t len);
+};
+
 extern "C" {
 JfnCefLayer* jfn_cef_layer_new();
 void         jfn_cef_layer_free(JfnCefLayer*);
@@ -30,6 +45,19 @@ void         jfn_cef_layer_set_closed(const JfnCefLayer*, bool);
 void         jfn_cef_layer_set_loaded(const JfnCefLayer*, bool);
 void         jfn_cef_layer_wait_for_close(const JfnCefLayer*);
 void         jfn_cef_layer_wait_for_load(const JfnCefLayer*);
+
+void         jfn_cef_layer_set_browser_ops(const JfnCefLayer*, const JfnCefBrowserOps*);
+void         jfn_cef_layer_clear_browser_ops(const JfnCefLayer*);
+void         jfn_cef_layer_set_surface(const JfnCefLayer*, void* surface);
+void         jfn_cef_layer_resize(const JfnCefLayer*, int w, int h, int pw, int ph);
+void         jfn_cef_layer_set_refresh_rate(const JfnCefLayer*, double hz);
+void         jfn_cef_layer_kick_invalidate_loop(const JfnCefLayer*);
+bool         jfn_cef_layer_should_present_paint(const JfnCefLayer*);
+void         jfn_cef_layer_get_view_rect(const JfnCefLayer*, int* w, int* h);
+void         jfn_cef_layer_get_screen_info(const JfnCefLayer*, float* scale, int* w, int* h);
+void         jfn_cef_layer_stop_invalidate(const JfnCefLayer*);
+int          jfn_cef_layer_frame_rate(const JfnCefLayer*);
+void         jfn_cef_layer_bump_resize_gen(const JfnCefLayer*);
 }
 
 // Callback invoked for IPC messages from the renderer process.
@@ -168,9 +196,6 @@ private:
     Browsers& browsers_;
     PlatformSurface* surface_ = nullptr;
     std::string name_;
-    int width_ = 0, height_ = 0;
-    int physical_w_ = 0, physical_h_ = 0;
-    int frame_rate_ = 0;
     // Popup state pairs 1:1 with its surface — each CefLayer owns its
     // popup on the platform side (PlatformSurface gains popup fields per
     // backend).
@@ -195,47 +220,5 @@ private:
     CefRefPtr<CefDictionaryValue> extra_info_;
     State state_ = State::Normal;
     std::string pending_url_;
-    std::atomic<bool> invalidate_running_{false};
-    std::atomic<bool> invalidate_stop_{false};
-    int invalidate_tick_count_ = 0;
-    int saved_frame_rate_ = 0;  // TID_UI-only: nonzero while boosted
-    void invalidateTick();
-
-    // Debounced WasResized: many WM configures per drag would each fire
-    // a CEF re-layout. Wayland viewport (surface_resize) still applies
-    // immediately; only the CEF host notify is coalesced to one per
-    // display-refresh period.
-    std::atomic<bool> resize_scheduled_{false};
-    std::atomic<int64_t> last_was_resized_ns_{0};
-    void applyPendingResize();
-
-    // Per-FPS resize-recovery thresholds, computed at kick time from
-    // frame_rate_:
-    //   skip = ceil(fps / 20)         — drop the first N paints (partial /
-    //                                   placeholder while renderer relays out)
-    //   pump = skip + fps             — total paints before stopping the loop
-    //                                   (~1s of additional paints after skip)
-    int skip_paints_after_resize_ = 0;
-    int pump_paint_count_ = 0;
-    // Boost the CEF compositor rate by this factor while the nudge loop
-    // is live so post-resize convergence outpaces steady-state cadence.
-    static constexpr int kBoostMultiplier = 2;
-    // Last rate applied via setFrameRate; drives the invalidate tick
-    // cadence so the host nudge matches what the compositor will produce.
-    int current_frame_rate_ = 0;
-    void setFrameRate(int hz);
-    // Bumped on every resize(); noteStableSize requires the generation
-    // observed when its run started to still match — otherwise a resize
-    // landed mid-run and the stable-size signal is stale.
-    std::atomic<uint64_t> resize_gen_{0};
-    // Tracks the resize gen at the last paint dispatch; reset
-    // paints_since_resize_ when it advances.
-    uint64_t last_paint_gen_ = 0;
-    int paints_since_resize_ = 0;
-    // Wall-clock of the last paints_since_resize_ reset. Used to rate-
-    // clamp resets during continuous drags so the skip counter doesn't
-    // keep wiping before any paint clears the skip threshold.
-    int64_t last_skip_reset_ns_ = 0;
-    bool shouldPresentPaint();
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

@@ -3,7 +3,7 @@
 //! and hands it in once via [`jfn_cef_set_platform_ops`]. Subsequent slices
 //! (resize, render handlers, fade, popup) dispatch through this table.
 //!
-//! Slice 2 only wires the registration. No caller invokes the helpers yet.
+//! Slice 2 wired the registration; slice 3+ dispatch through [`ops`].
 
 #![allow(dead_code)]
 
