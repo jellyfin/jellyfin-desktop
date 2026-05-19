@@ -14,6 +14,7 @@ mod bridge;
 mod client;
 mod embedded_js;
 pub mod ffi;
+mod platform_ops;
 #[cfg(target_os = "macos")]
 mod pump;
 mod resource;
