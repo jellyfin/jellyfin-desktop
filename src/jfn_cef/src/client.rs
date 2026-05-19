@@ -774,6 +774,45 @@ impl Inner {
         true
     }
 
+    fn fade(
+        &self,
+        sec: f32,
+        start_fn: Option<unsafe extern "C" fn(*mut c_void)>,
+        start_ctx: *mut c_void,
+        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        done_fn: Option<unsafe extern "C" fn(*mut c_void)>,
+        done_ctx: *mut c_void,
+        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) {
+        let surface = self.surface_ptr();
+        let fade_op = platform_ops::ops().and_then(|o| o.fade_surface);
+        if !surface.is_null() {
+            if let Some(f) = fade_op {
+                unsafe {
+                    f(
+                        surface, sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx,
+                        done_dtor,
+                    )
+                };
+                return;
+            }
+        }
+        // Backend without fade support — fire callbacks; on_complete typically
+        // closes the browser, which destroys the surface via Browsers::remove.
+        if let Some(f) = start_fn {
+            unsafe { f(start_ctx) };
+        }
+        if let Some(d) = start_dtor {
+            unsafe { d(start_ctx) };
+        }
+        if let Some(f) = done_fn {
+            unsafe { f(done_ctx) };
+        }
+        if let Some(d) = done_dtor {
+            unsafe { d(done_ctx) };
+        }
+    }
+
     fn on_before_popup(&self, url: &str) -> bool {
         // Leading '-' guard blocks argv-style option smuggling into xdg-open.
         if url.is_empty() || url.starts_with('-') {
@@ -1296,6 +1335,22 @@ pub unsafe extern "C" fn jfn_cef_layer_on_load_error(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_cef_layer_try_paste(h: *const JfnCefLayer) -> bool {
     unsafe { arc(h) }.try_paste()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_fade(
+    h: *const JfnCefLayer,
+    sec: f32,
+    start_fn: Option<unsafe extern "C" fn(*mut c_void)>,
+    start_ctx: *mut c_void,
+    start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    done_fn: Option<unsafe extern "C" fn(*mut c_void)>,
+    done_ctx: *mut c_void,
+    done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    unsafe { arc(h) }.fade(
+        sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx, done_dtor,
+    );
 }
 
 #[unsafe(no_mangle)]

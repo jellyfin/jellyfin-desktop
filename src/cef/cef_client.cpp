@@ -250,19 +250,25 @@ void CefLayer::setVisible(bool visible) {
         g_platform.surface_set_visible(surface_, visible);
 }
 
+namespace {
+struct VoidFnHolder { std::function<void()> fn; };
+void void_fn_thunk(void* ctx) {
+    auto* h = static_cast<VoidFnHolder*>(ctx);
+    if (h->fn) h->fn();
+}
+void void_fn_dtor(void* ctx) {
+    delete static_cast<VoidFnHolder*>(ctx);
+}
+}
+
 void CefLayer::fade(float fade_sec,
                     std::function<void()> on_fade_start,
                     std::function<void()> on_complete) {
-    if (surface_ && g_platform.fade_surface) {
-        g_platform.fade_surface(surface_, fade_sec,
-                                std::move(on_fade_start),
-                                std::move(on_complete));
-        return;
-    }
-    // Backend without fade support — fire callbacks; on_complete typically
-    // closes the browser, which destroys the surface via Browsers::remove.
-    if (on_fade_start) on_fade_start();
-    if (on_complete) on_complete();
+    auto* start = new VoidFnHolder{std::move(on_fade_start)};
+    auto* done = new VoidFnHolder{std::move(on_complete)};
+    jfn_cef_layer_fade(rs_, fade_sec,
+                       &void_fn_thunk, start, &void_fn_dtor,
+                       &void_fn_thunk, done,  &void_fn_dtor);
 }
 
 void CefLayer::setRefreshRate(double hz) {

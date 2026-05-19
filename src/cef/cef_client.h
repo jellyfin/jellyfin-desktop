@@ -117,6 +117,9 @@ void         jfn_cef_layer_on_load_error(const JfnCefLayer*, int code,
                                          const char* text, size_t text_len,
                                          const char* url, size_t url_len);
 bool         jfn_cef_layer_try_paste(const JfnCefLayer*);
+void         jfn_cef_layer_fade(const JfnCefLayer*, float sec,
+                                void (*start_fn)(void*), void* start_ctx, JfnCbDtor start_dtor,
+                                void (*done_fn)(void*),  void* done_ctx,  JfnCbDtor done_dtor);
 }
 
 // Callback invoked for IPC messages from the renderer process.
