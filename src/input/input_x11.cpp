@@ -4,7 +4,6 @@
 #include "keysym_map.h"
 #include "dispatch.h"
 #include "../common.h"
-#include "../wake_event.h"
 #include "logging.h"
 
 #include <xcb/xcb.h>
@@ -25,8 +24,6 @@
 #include <unistd.h>
 #include <thread>
 #include <cstdint>
-
-extern WakeEvent g_shutdown_event;
 
 namespace input::x11 {
 namespace {
@@ -320,7 +317,7 @@ void input_thread_func() {
     int xcb_fd = xcb_get_file_descriptor(g.conn);
     struct pollfd fds[2] = {
         {xcb_fd, POLLIN, 0},
-        {g_shutdown_event.fd(), POLLIN, 0},
+        {jfn_wake_event_fd(g_shutdown_event), POLLIN, 0},
     };
 
     while (true) {

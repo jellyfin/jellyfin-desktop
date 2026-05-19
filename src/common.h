@@ -10,7 +10,7 @@ extern Color g_video_bg;
 #include "platform/platform.h"
 #include "mpv/handle.h"
 
-class WakeEvent;
+#include "playback/jfn_wake_event.h"
 
 extern MpvHandle g_mpv;
 extern Platform g_platform;
@@ -23,5 +23,5 @@ extern std::atomic<bool> g_playback_coord_running;
 
 void initiate_shutdown();
 extern std::atomic<bool> g_shutting_down;
-extern WakeEvent g_shutdown_event;
+extern JfnWakeEvent* g_shutdown_event;
 extern ThemeColor* g_theme_color;
