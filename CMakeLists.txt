@@ -267,6 +267,7 @@ set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output
         # Wayland
         src/platform/wayland.cpp
         src/input/input_wayland.cpp
+        src/clipboard/wayland_ffi.cpp
         # Generated Wayland protocols
         ${LINUX_DMABUF_CODE_C}
         ${LINUX_DMABUF_CLIENT_H}

@@ -178,3 +178,19 @@ constexpr JfnPlatformOps kOps = {
 extern "C" const JfnPlatformOps* jfn_platform_ops(void) {
     return &kOps;
 }
+
+// Field accessors for jfn_wayland::lifecycle. The wl_init port needs to
+// read cef_ozone_platform (for the dmabuf probe) and write
+// shared_texture_supported / clipboard_read_text_async during init.
+
+extern "C" const char* jfn_platform_cef_ozone_platform(void) {
+    return g_platform.cef_ozone_platform.c_str();
+}
+
+extern "C" void jfn_platform_set_shared_texture_unsupported(void) {
+    g_platform.shared_texture_supported = false;
+}
+
+extern "C" void jfn_platform_clear_clipboard_handler(void) {
+    g_platform.clipboard_read_text_async = nullptr;
+}

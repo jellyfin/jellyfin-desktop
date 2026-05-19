@@ -24,6 +24,15 @@ typedef struct {
 bool jfn_wl_core_init(void* display, void* parent_surface);
 void jfn_wl_core_set_was_fullscreen(bool fs);
 
+// Whole-Platform lifecycle for the Wayland backend. Replaces the
+// orchestration body that used to live in C++ wl_init/wl_cleanup —
+// reads mpv's wayland-display/-surface, primes input + clipboard +
+// KDE palette + dmabuf probe, installs the xdg_toplevel close-cb
+// trampoline. `_init` returns false on the same conditions the C++
+// version did (missing mpv handles, core init failure).
+bool jfn_wl_lifecycle_init(void);
+void jfn_wl_lifecycle_cleanup(void);
+
 // Surface lifecycle. Opaque handle returned by alloc_surface is a
 // boxed `PlatformSurface` on the Rust side.
 void* jfn_wl_alloc_surface(void);

@@ -1,24 +1,17 @@
 #include "common.h"
 #include "platform/platform.h"
 #include "jfn_wayland_scale_probe.h"
-#include "jfn_wl_proxy.h"
 #include "clipboard/wayland.h"
 #include "jfn_idle_inhibit_linux.h"
 #include "jfn_open_url_linux.h"
 #include "input/input_wayland.h"
-#include "mpv/jfn_mpv_api.h"
 #include "playback/jfn_ingest.h"
-#include "jfn_dmabuf_probe.h"
 #include "jfn_fade.h"
 #include "jfn_wl_core.h"
-
-#include <wayland-client.h>
-#include <EGL/egl.h>
+#include "jfn_wl_proxy.h"
 #include "jfn_kde_palette.h"
-#include <cstring>
-#include <cstdlib>
+
 #include <unistd.h>
-#include "logging.h"
 
 // =====================================================================
 // All Wayland state + surface ops + present/transition machinery now
@@ -151,92 +144,8 @@ void wl_set_theme_color(const Color& c) {
 
 // ---- Lifecycle -------------------------------------------------------
 
-bool wl_init(mpv_handle* /*mpv*/) {
-    intptr_t dp = 0, sp = 0;
-    {
-        int64_t v = 0;
-        if (jfn_mpv_get_property_int("wayland-display", &v) == 0) dp = static_cast<intptr_t>(v);
-        v = 0;
-        if (jfn_mpv_get_property_int("wayland-surface", &v) == 0) sp = static_cast<intptr_t>(v);
-    }
-    if (!dp || !sp) {
-        LOG_ERROR(LOG_PLATFORM, "Failed to get Wayland display/surface from mpv");
-        return false;
-    }
-    auto* display = reinterpret_cast<wl_display*>(dp);
-    auto* parent  = reinterpret_cast<wl_surface*>(sp);
-
-    // Seed Rust state with mpv's current fullscreen — first configure
-    // after this point won't start a spurious transition.
-    jfn_wl_core_set_was_fullscreen(jfn_playback_fullscreen());
-
-    // Prepare the input layer first so its xkb context is ready before
-    // any seat_caps wires up keyboard listeners that need xkb.
-    input::wayland::init(display);
-
-    if (!jfn_wl_core_init(display, parent)) {
-        LOG_ERROR(LOG_PLATFORM, "jfn_wl_core_init failed");
-        return false;
-    }
-
-    // Register close callback — intercepts xdg_toplevel close before mpv sees it.
-    {
-        intptr_t cb_ptr = 0;
-        int64_t v = 0;
-        if (jfn_mpv_get_property_int("wayland-close-cb-ptr", &v) == 0)
-            cb_ptr = static_cast<intptr_t>(v);
-        if (cb_ptr) {
-            auto* fn   = reinterpret_cast<void(**)(void*)>(cb_ptr);
-            auto* data = reinterpret_cast<void**>(cb_ptr + sizeof(void*));
-            *fn   = [](void*) { initiate_shutdown(); };
-            *data = nullptr;
-        }
-    }
-
-    // EGL init for CEF shared texture support + dmabuf probe.
-    EGLDisplay egl_dpy = eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(display));
-    if (egl_dpy != EGL_NO_DISPLAY) eglInitialize(egl_dpy, nullptr, nullptr);
-
-    if (!jfn_wl_dmabuf_probe(g_platform.cef_ozone_platform.c_str(), egl_dpy)) {
-        LOG_WARN(LOG_PLATFORM, "Shared textures not supported; using software CEF rendering");
-        g_platform.shared_texture_supported = false;
-    }
-
-    jfn_wl_kde_palette_attach(display, parent);
-
-    input::wayland::start_input_thread();
-
-    clipboard_wayland::init();
-    if (!clipboard_wayland::available())
-        g_platform.clipboard_read_text_async = nullptr;
-
-    return true;
-}
-
-void wl_cleanup() {
-    jfn_wl_fade_stop_all();
-
-    // Null the close trampoline before tearing down state it would read.
-    {
-        intptr_t cb_ptr = 0;
-        int64_t v = 0;
-        if (jfn_mpv_get_property_int("wayland-close-cb-ptr", &v) == 0)
-            cb_ptr = static_cast<intptr_t>(v);
-        if (cb_ptr) {
-            auto* fn = reinterpret_cast<void(**)(void*)>(cb_ptr);
-            *fn = nullptr;
-        }
-    }
-
-    // KDE palette: KWin atomically drops the palette object with the
-    // window. Releasing here would flash the system color back. The
-    // scheme file is unlinked separately via wl_post_window_cleanup
-    // after mpv tears down the surface.
-    jfn_idle_inhibit_cleanup();
-    clipboard_wayland::cleanup();
-    input::wayland::cleanup();
-    // Rust-side WlState lives until process exit (mirrors C++ globals).
-}
+bool wl_init(mpv_handle* /*mpv*/) { return jfn_wl_lifecycle_init(); }
+void wl_cleanup() { jfn_wl_lifecycle_cleanup(); }
 
 // ---- Fade trampoline (keeps std::function wrapping in C++) -----------
 

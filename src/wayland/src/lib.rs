@@ -5,6 +5,7 @@ pub mod dmabuf_probe;
 pub mod fade;
 pub mod input;
 pub mod kde_palette;
+pub mod lifecycle;
 pub mod proxy;
 pub mod scale_probe;
 pub mod wl_ffi;
