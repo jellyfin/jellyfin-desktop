@@ -527,8 +527,6 @@ if(WIN32)
         src/browser/app_menu.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
-        src/paths/paths.cpp
-        src/wake_event.cpp
     )
 else()
     # Linux + macOS: shared main with platform abstraction
@@ -545,8 +543,6 @@ else()
         src/browser/app_menu.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
-        src/paths/paths.cpp
-        src/wake_event.cpp
     )
 endif()
 
