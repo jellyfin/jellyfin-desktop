@@ -517,7 +517,6 @@ if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
         src/cli.cpp
-        src/shutdown.cpp
         src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp
@@ -533,7 +532,6 @@ else()
     set(COMMON_SOURCES
         src/main.cpp
         src/cli.cpp
-        src/shutdown.cpp
         src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp

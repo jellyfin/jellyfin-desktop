@@ -320,7 +320,7 @@ static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scal
 @implementation DisplayLinkTarget
 - (void)tick:(CADisplayLink*)link {
     (void)link;
-    if (g_shutting_down.load(std::memory_order_relaxed)) return;
+    if (jfn_shutting_down()) return;
     if (g_browsers) {
         g_browsers->forEachBrowser([](CefRefPtr<CefBrowser> b) {
             b->GetHost()->SendExternalBeginFrame();

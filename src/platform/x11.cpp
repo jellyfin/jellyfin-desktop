@@ -280,7 +280,7 @@ static bool x11_surface_present(PlatformSurface*, const CefAcceleratedPaintInfo&
 static bool x11_surface_present_software(PlatformSurface* s,
                                          const CefRenderHandler::RectList& dirty,
                                          const void* buffer, int w, int h) {
-    if (g_shutting_down.load(std::memory_order_relaxed)) return false;
+    if (jfn_shutting_down()) return false;
     if (!s) return false;
     std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
     if (s->window == XCB_NONE || !s->visible) return false;

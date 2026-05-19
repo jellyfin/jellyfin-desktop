@@ -317,7 +317,7 @@ void input_thread_func() {
     int xcb_fd = xcb_get_file_descriptor(g.conn);
     struct pollfd fds[2] = {
         {xcb_fd, POLLIN, 0},
-        {jfn_wake_event_fd(g_shutdown_event), POLLIN, 0},
+        {jfn_wake_event_fd(jfn_shutdown_event()), POLLIN, 0},
     };
 
     while (true) {

@@ -32,7 +32,6 @@
 
 #include "logging.h"
 #include "signal_guard.h"
-#include "shutdown.h"
 #include "playback/jfn_ingest.h"
 
 #ifdef __APPLE__
@@ -248,6 +247,10 @@ static int run_with_cef(int mw, int mh,
 
     Browsers browsers(lw, lh, mw, mh, jfn_playback_display_hz(), use_shared_textures);
     g_browsers = &browsers;
+    jfn_shutdown_set_handler(+[]() {
+        if (g_browsers) g_browsers->closeAll();
+        if (g_platform.wake_main_loop) g_platform.wake_main_loop();
+    });
 
     auto main_layer = browsers.create("web");
     auto web_browser_owner = std::make_unique<WebBrowser>(main_layer);
@@ -534,7 +537,7 @@ int main(int argc, char* argv[]) {
         return TRUE;
     }, TRUE);
 #else
-    SignalHandlerGuard signal_guard(signal_handler);
+    SignalHandlerGuard signal_guard(+[](int) { jfn_shutdown_initiate(); });
 #endif
 
 #ifndef __APPLE__
