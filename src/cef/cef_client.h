@@ -11,7 +11,6 @@
 #include "../platform/platform_ops.h"
 #include <functional>
 #include <string>
-#include <vector>
 
 class Browsers;
 struct PlatformSurface;
@@ -47,6 +46,9 @@ struct JfnCefBrowserOps {
     // frame->ExecuteJavaScript on the focused (or main) frame — used by the
     // paste intercept's document.execCommand('insertText', ...) call.
     void (*exec_js_focused)(void* ctx, const char* js_utf8, size_t len);
+    // focused_or_main_frame->Paste(). Fallback when platform clipboard is
+    // unavailable (context-menu MENU_ID_PASTE branch).
+    void (*frame_paste)(void* ctx);
 };
 
 extern "C" {
@@ -120,6 +122,8 @@ bool         jfn_cef_layer_try_paste(const JfnCefLayer*);
 void         jfn_cef_layer_fade(const JfnCefLayer*, float sec,
                                 void (*start_fn)(void*), void* start_ctx, JfnCbDtor start_dtor,
                                 void (*done_fn)(void*),  void* done_ctx,  JfnCbDtor done_dtor);
+void         jfn_cef_layer_set_visible(const JfnCefLayer*, bool visible);
+void         jfn_cef_layer_menu_paste(const JfnCefLayer*);
 }
 
 // Callback invoked for IPC messages from the renderer process.
@@ -141,8 +145,10 @@ using ContextMenuDispatcher = std::function<bool(int command_id)>;
 
 // Generic CEF browser client — pure rendering, lifecycle, context menu,
 // keyboard. Business logic is injected via setMessageHandler / setCreatedCallback.
-// CefLayer holds a generic PlatformSurface*; presents/resizes/visibility
-// route through g_platform.surface_*.
+// All behavior bodies have been ported to Rust (src/jfn_cef/src/client.rs);
+// this class is now a thin shim: handler virtuals forward via FFI into
+// JfnCefLayer, and the public API (resize / loadUrl / fade / etc.) delegates
+// in the same way.
 class CefLayer : public CefClient, public CefRenderHandler,
                  public CefLifeSpanHandler, public CefLoadHandler,
                  public CefContextMenuHandler, public CefDisplayHandler,

@@ -4,7 +4,6 @@
 #include "../platform/platform.h"
 #include "include/cef_parser.h"
 #include "include/cef_values.h"
-#include <cstdio>
 #include <functional>
 
 namespace {
@@ -63,39 +62,6 @@ static bool is_paste_shortcut(const CefKeyEvent& e) {
     if ((e.modifiers & kActionModifier) == 0) return false;
     if (e.modifiers & EVENTFLAG_ALT_DOWN) return false;
     return e.windows_key_code == 'V';
-}
-
-static std::string js_string_literal(const std::string& text) {
-    CefRefPtr<CefValue> v = CefValue::Create();
-    v->SetString(text);
-    // CefWriteJSON requires a dictionary/list root; wrap the string in a
-    // 1-element list and strip the brackets to recover a bare JSON string.
-    CefRefPtr<CefListValue> wrapper = CefListValue::Create();
-    wrapper->SetValue(0, v);
-    CefRefPtr<CefValue> root = CefValue::Create();
-    root->SetList(wrapper);
-    std::string s = CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString();
-    if (s.size() >= 2 && s.front() == '[' && s.back() == ']')
-        return s.substr(1, s.size() - 2);
-    return "\"\"";
-}
-
-static void paste_via_platform_clipboard(CefRefPtr<CefBrowser> browser) {
-    auto frame = focused_or_main(browser);
-    if (!frame) return;
-    g_platform.clipboard_read_text_async([frame](std::string text) {
-        if (text.empty()) return;
-        std::string js = "document.execCommand('insertText',false," +
-                         js_string_literal(text) + ");";
-        frame->ExecuteJavaScript(js, frame->GetURL(), 0);
-    });
-}
-
-static void do_paste(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame) {
-    if (g_platform.clipboard_read_text_async)
-        paste_via_platform_clipboard(browser);
-    else
-        frame->Paste();
 }
 
 // =====================================================================
@@ -189,6 +155,12 @@ void ops_exec_js_focused(void* c, const char* js_utf8, size_t len) {
     if (!f) return;
     f->ExecuteJavaScript(CefString(std::string(js_utf8, len)), f->GetURL(), 0);
 }
+void ops_frame_paste(void* c) {
+    auto* self = static_cast<CefLayer*>(c);
+    auto b = self->browser();
+    if (!b) return;
+    if (auto f = focused_or_main(b)) f->Paste();
+}
 
 }  // namespace
 
@@ -208,6 +180,7 @@ CefLayer::CefLayer(Browsers& browsers, PlatformSurface* surface)
     ops.close_browser = ops_close_browser;
     ops.load_url = ops_load_url;
     ops.exec_js_focused = ops_exec_js_focused;
+    ops.frame_paste = ops_frame_paste;
     jfn_cef_layer_set_browser_ops(rs_, &ops);
     jfn_cef_layer_set_surface(rs_, surface);
 }
@@ -246,8 +219,7 @@ void CefLayer::kickInvalidateLoop() {
 }
 
 void CefLayer::setVisible(bool visible) {
-    if (surface_ && g_platform.surface_set_visible)
-        g_platform.surface_set_visible(surface_, visible);
+    jfn_cef_layer_set_visible(rs_, visible);
 }
 
 namespace {
@@ -583,7 +555,7 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
             case MENU_ID_REDO: frame->Redo(); break;
             case MENU_ID_CUT: frame->Cut(); break;
             case MENU_ID_COPY: frame->Copy(); break;
-            case MENU_ID_PASTE: do_paste(browser_, frame); break;
+            case MENU_ID_PASTE: jfn_cef_layer_menu_paste(rs_); break;
             case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
             default:
                 jfn_cef_layer_invoke_context_menu_dispatcher(rs_, cmd);

@@ -59,6 +59,9 @@ pub struct JfnCefBrowserOps {
     /// frame->ExecuteJavaScript on the focused (or main) frame. Used for the
     /// paste intercept's document.execCommand('insertText', ...) call.
     pub exec_js_focused: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+    /// focused_or_main_frame->Paste() — fallback when platform clipboard is
+    /// unavailable. Used by the context-menu MENU_ID_PASTE branch.
+    pub frame_paste: Option<unsafe extern "C" fn(*mut c_void)>,
 }
 
 // SAFETY: the C++ side guarantees the ctx pointer remains valid until
@@ -762,6 +765,29 @@ impl Inner {
     /// OnPreKeyEvent paste intercept. C++ side has already matched the
     /// platform paste shortcut. Returns true if a platform clipboard read
     /// was triggered (CEF should swallow the key); false otherwise.
+    fn set_visible(&self, visible: bool) {
+        let surface = self.surface_ptr();
+        if surface.is_null() {
+            return;
+        }
+        if let Some(ops) = platform_ops::ops() {
+            if let Some(f) = ops.surface_set_visible {
+                unsafe { f(surface, visible) };
+            }
+        }
+    }
+
+    fn menu_paste(self: &Arc<Self>) {
+        if self.try_paste() {
+            return;
+        }
+        self.with_ops(|o| {
+            if let Some(f) = o.frame_paste {
+                unsafe { f(o.ctx) }
+            }
+        });
+    }
+
     fn try_paste(self: &Arc<Self>) -> bool {
         let Some(ops) = platform_ops::ops() else {
             return false;
@@ -1335,6 +1361,16 @@ pub unsafe extern "C" fn jfn_cef_layer_on_load_error(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_cef_layer_try_paste(h: *const JfnCefLayer) -> bool {
     unsafe { arc(h) }.try_paste()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, visible: bool) {
+    unsafe { arc(h) }.set_visible(visible);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_menu_paste(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.menu_paste();
 }
 
 #[unsafe(no_mangle)]
