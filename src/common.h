@@ -18,7 +18,7 @@ class ThemeColor;
 // Set true between PlaybackCoordinatorScope construction and destruction;
 // producers gate their `playback::post_*` calls on this to avoid posting
 // during shutdown.
-extern std::atomic<bool> g_playback_coord_running;
+inline std::atomic<bool> g_playback_coord_running{false};
 
 // Thin forwarders to the Rust-side shutdown signal (src/playback/src/shutdown.rs).
 inline void initiate_shutdown() { jfn_shutdown_initiate(); }
