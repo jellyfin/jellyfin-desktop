@@ -45,7 +45,7 @@
 #include <signal.h>
 #include "platform/macos_platform.h"
 #else
-#include "single_instance.h"
+#include "single_instance/jfn_single_instance.h"
 #endif
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -521,16 +521,21 @@ int main(int argc, char* argv[]) {
 #endif
 
 #ifndef __APPLE__
-    if (trySignalExisting()) {
+    if (jfn_single_instance_try_signal_existing()) {
         LOG_INFO(LOG_MAIN, "Signaled existing instance, exiting");
         return 0;
     }
-    startListener([](const std::string&) {
-        // TODO: raise window via xdg-activation
-    });
-    // Joins the listener thread on any exit path (a joinable std::thread
-    // calls std::terminate from its destructor).
-    struct ListenerGuard { ~ListenerGuard() { stopListener(); } } listener_guard;
+    if (!jfn_single_instance_start_listener(
+            +[](const char* /*token*/, void* /*userdata*/) {
+                // TODO: raise window via xdg-activation
+            },
+            nullptr)) {
+        LOG_WARN(LOG_MAIN, "Single-instance listener failed to start");
+    }
+    // Joins the listener thread on any exit path.
+    struct ListenerGuard {
+        ~ListenerGuard() { jfn_single_instance_stop_listener(); }
+    } listener_guard;
 #endif
 
     std::string mpv_home = paths::getMpvHome();

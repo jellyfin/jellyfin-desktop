@@ -541,7 +541,6 @@ if(WIN32)
         src/main.cpp
         src/cli.cpp
         src/shutdown.cpp
-        src/single_instance.cpp
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
@@ -575,7 +574,6 @@ else()
         src/browser/app_menu.cpp
         src/input/dispatch.cpp
         src/input/hotkeys.cpp
-        src/single_instance.cpp
         src/paths/paths.cpp
         src/wake_event.cpp
     )
