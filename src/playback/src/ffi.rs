@@ -236,7 +236,7 @@ fn cstr_nul_to_string(p: *const c_char) -> String {
 
 static COORD: OnceLock<Mutex<Option<PlaybackCoordinator>>> = OnceLock::new();
 
-fn coord_slot() -> &'static Mutex<Option<PlaybackCoordinator>> {
+pub(crate) fn coord_slot() -> &'static Mutex<Option<PlaybackCoordinator>> {
     COORD.get_or_init(|| Mutex::new(None))
 }
 

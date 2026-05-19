@@ -9,6 +9,7 @@ mod browser_sink;
 mod coordinator;
 mod exec_js;
 mod ffi;
+mod hotkey;
 mod ingest;
 mod idle_inhibit_sink;
 mod ingest_driver;
@@ -23,6 +24,7 @@ mod wake_event;
 
 pub use coordinator::PlaybackCoordinator;
 pub use ffi::*;
+pub use hotkey::*;
 pub use shutdown::*;
 pub use state_machine::PlaybackStateMachine;
 pub use types::*;

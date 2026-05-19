@@ -524,7 +524,6 @@ if(WIN32)
         src/browser/about_browser.cpp
         src/browser/app_menu.cpp
         src/input/dispatch.cpp
-        src/input/hotkeys.cpp
     )
 else()
     # Linux + macOS: shared main with platform abstraction
@@ -539,7 +538,6 @@ else()
         src/browser/about_browser.cpp
         src/browser/app_menu.cpp
         src/input/dispatch.cpp
-        src/input/hotkeys.cpp
     )
 endif()
 

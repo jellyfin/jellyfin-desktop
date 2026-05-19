@@ -1,10 +1,12 @@
 #include "dispatch.h"
 
 #include "input.h"
-#include "hotkeys.h"
+#include "jfn_hotkey.h"
 #include "logging.h"
+#include "../common.h"
 #include "../browser/browsers.h"
 #include "../cef/cef_client.h"
+#include "../platform/platform.h"
 
 #include "include/internal/cef_types.h"
 
@@ -37,7 +39,13 @@ LastMousePos last_mouse_pos() {
 }
 
 void dispatch_key(const KeyEvent& e) {
-    if (e.action == KeyAction::Down && hotkey_try_consume(e)) return;
+    if (e.action == KeyAction::Down) {
+        switch (jfn_hotkey_classify_keydown(e.windows_key_code, e.modifiers)) {
+        case 1: initiate_shutdown(); return;
+        case 2: g_platform.toggle_fullscreen(); return;
+        default: break;
+        }
+    }
     auto l = active_layer();
     if (!l) return;
     int type_ = (e.action == KeyAction::Down) ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
