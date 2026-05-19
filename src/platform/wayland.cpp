@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #ifdef HAVE_KDE_DECORATION_PALETTE
 #include "server-decoration-palette-client.h"
+#include "jfn_kde_palette.h"
 #endif
 #include <cstdio>
 #include <cstring>
@@ -103,8 +104,6 @@ struct WlState {
 #ifdef HAVE_KDE_DECORATION_PALETTE
     org_kde_kwin_server_decoration_palette_manager* palette_manager = nullptr;
     org_kde_kwin_server_decoration_palette* palette = nullptr;
-    std::string colors_dir;
-    std::string colors_path;
 #endif
 };
 
@@ -1307,188 +1306,10 @@ static void wl_set_idle_inhibit(IdleInhibitLevel level) {
 // KDE titlebar color
 // =====================================================================
 
+// The color-scheme template, the file-write logic, and the on-disk lifecycle
+// live in Rust (src/wayland/src/kde_palette.rs). This file only owns the
+// Wayland protocol bindings; the scheme path is owned by Rust.
 #ifdef HAVE_KDE_DECORATION_PALETTE
-
-// Base color scheme template (derived from BreezeDark).
-// Placeholders substituted at runtime: %HEADER_BG%, %INACTIVE_BG%, %ACTIVE_FG%, %INACTIVE_FG%.
-static constexpr const char* kColorSchemeTemplate = R"([ColorEffects:Disabled]
-Color=56,56,56
-ColorAmount=0
-ColorEffect=0
-ContrastAmount=0.65
-ContrastEffect=1
-IntensityAmount=0.1
-IntensityEffect=2
-
-[ColorEffects:Inactive]
-ChangeSelectionColor=true
-Color=112,111,110
-ColorAmount=0.025
-ColorEffect=2
-ContrastAmount=0.1
-ContrastEffect=2
-Enable=false
-IntensityAmount=0
-IntensityEffect=0
-
-[Colors:Button]
-BackgroundAlternate=30,87,116
-BackgroundNormal=41,44,48
-DecorationFocus=61,174,233
-DecorationHover=61,174,233
-ForegroundActive=61,174,233
-ForegroundInactive=161,169,177
-ForegroundLink=29,153,243
-ForegroundNegative=218,68,83
-ForegroundNeutral=246,116,0
-ForegroundNormal=252,252,252
-ForegroundPositive=39,174,96
-ForegroundVisited=155,89,182
-
-[Colors:Complementary]
-BackgroundAlternate=30,87,116
-BackgroundNormal=32,35,38
-DecorationFocus=61,174,233
-DecorationHover=61,174,233
-ForegroundActive=61,174,233
-ForegroundInactive=161,169,177
-ForegroundLink=29,153,243
-ForegroundNegative=218,68,83
-ForegroundNeutral=246,116,0
-ForegroundNormal=252,252,252
-ForegroundPositive=39,174,96
-ForegroundVisited=155,89,182
-
-[Colors:Header]
-BackgroundAlternate=%HEADER_BG%
-BackgroundNormal=%HEADER_BG%
-DecorationFocus=61,174,233
-DecorationHover=61,174,233
-ForegroundActive=61,174,233
-ForegroundInactive=161,169,177
-ForegroundLink=29,153,243
-ForegroundNegative=218,68,83
-ForegroundNeutral=246,116,0
-ForegroundNormal=%ACTIVE_FG%
-ForegroundPositive=39,174,96
-ForegroundVisited=155,89,182
-
-[Colors:Header][Inactive]
-BackgroundAlternate=%INACTIVE_BG%
-BackgroundNormal=%INACTIVE_BG%
-DecorationFocus=61,174,233
-DecorationHover=61,174,233
-ForegroundActive=61,174,233
-ForegroundInactive=161,169,177
-ForegroundLink=29,153,243
-ForegroundNegative=218,68,83
-ForegroundNeutral=246,116,0
-ForegroundNormal=%INACTIVE_FG%
-ForegroundPositive=39,174,96
-ForegroundVisited=155,89,182
-
-[Colors:Selection]
-BackgroundAlternate=30,87,116
-BackgroundNormal=61,174,233
-DecorationFocus=61,174,233
-DecorationHover=61,174,233
-ForegroundActive=252,252,252
-ForegroundInactive=161,169,177
-ForegroundLink=253,188,75
-ForegroundNegative=176,55,69
-ForegroundNeutral=198,92,0
-ForegroundNormal=252,252,252
-ForegroundPositive=23,104,57
-ForegroundVisited=155,89,182
-
-[Colors:Tooltip]
-BackgroundAlternate=32,35,38
-BackgroundNormal=41,44,48
-DecorationFocus=61,174,233
-DecorationHover=61,174,233
-ForegroundActive=61,174,233
-ForegroundInactive=161,169,177
-ForegroundLink=29,153,243
-ForegroundNegative=218,68,83
-ForegroundNeutral=246,116,0
-ForegroundNormal=252,252,252
-ForegroundPositive=39,174,96
-ForegroundVisited=155,89,182
-
-[Colors:View]
-BackgroundAlternate=29,31,34
-BackgroundNormal=20,22,24
-DecorationFocus=61,174,233
-DecorationHover=61,174,233
-ForegroundActive=61,174,233
-ForegroundInactive=161,169,177
-ForegroundLink=29,153,243
-ForegroundNegative=218,68,83
-ForegroundNeutral=246,116,0
-ForegroundNormal=252,252,252
-ForegroundPositive=39,174,96
-ForegroundVisited=155,89,182
-
-[Colors:Window]
-BackgroundAlternate=41,44,48
-BackgroundNormal=32,35,38
-DecorationFocus=61,174,233
-DecorationHover=61,174,233
-ForegroundActive=61,174,233
-ForegroundInactive=161,169,177
-ForegroundLink=29,153,243
-ForegroundNegative=218,68,83
-ForegroundNeutral=246,116,0
-ForegroundNormal=252,252,252
-ForegroundPositive=39,174,96
-ForegroundVisited=155,89,182
-
-[KDE]
-contrast=4
-
-[WM]
-activeBackground=%HEADER_BG%
-activeBlend=252,252,252
-activeForeground=%ACTIVE_FG%
-inactiveBackground=%INACTIVE_BG%
-inactiveBlend=161,169,177
-inactiveForeground=%INACTIVE_FG%
-
-[General]
-ColorScheme=JellyfinDesktop
-Name=Jellyfin Desktop
-)";
-
-static void replaceAll(std::string& s, const char* token, const char* value) {
-    size_t tlen = strlen(token), vlen = strlen(value), pos = 0;
-    while ((pos = s.find(token, pos)) != std::string::npos) {
-        s.replace(pos, tlen, value);
-        pos += vlen;
-    }
-}
-
-static bool writeColorScheme(const Color& c, const std::string& path) {
-    char bg[32];
-    snprintf(bg, sizeof(bg), "%d,%d,%d", c.r, c.g, c.b);
-
-    // BT.709 luminance — choose readable foreground
-    double lum = 0.2126 * (c.r / 255.0) + 0.7152 * (c.g / 255.0) + 0.0722 * (c.b / 255.0);
-    const char* active_fg   = lum < 0.5 ? "252,252,252" : "35,38,41";
-    const char* inactive_fg = lum < 0.5 ? "126,126,126" : "35,38,41";
-
-    std::string content(kColorSchemeTemplate);
-    replaceAll(content, "%HEADER_BG%", bg);
-    replaceAll(content, "%INACTIVE_BG%", bg);
-    replaceAll(content, "%ACTIVE_FG%", active_fg);
-    replaceAll(content, "%INACTIVE_FG%", inactive_fg);
-
-    FILE* f = fopen(path.c_str(), "w");
-    if (!f) return false;
-    bool ok = fwrite(content.data(), 1, content.size(), f) == content.size();
-    fclose(f);
-    if (!ok) remove(path.c_str());
-    return ok;
-}
 
 static void wl_init_kde_palette() {
     if (!g_wl.palette_manager || !g_wl.parent) return;
@@ -1497,14 +1318,11 @@ static void wl_init_kde_palette() {
         g_wl.palette_manager, g_wl.parent);
     if (!g_wl.palette) return;
 
-    const char* runtime = getenv("XDG_RUNTIME_DIR");
-    if (!runtime || !runtime[0]) {
+    if (!jfn_wl_kde_palette_init()) {
         org_kde_kwin_server_decoration_palette_release(g_wl.palette);
         g_wl.palette = nullptr;
         return;
     }
-    g_wl.colors_dir = std::string(runtime) + "/jellyfin-desktop";
-    mkdir(g_wl.colors_dir.c_str(), 0700);
     LOG_INFO(LOG_PLATFORM, "KDE decoration palette ready");
 }
 
@@ -1520,28 +1338,17 @@ static void wl_cleanup_kde_palette() {
 }
 
 static void wl_post_window_cleanup() {
-    if (!g_wl.colors_path.empty()) {
-        remove(g_wl.colors_path.c_str());
-        g_wl.colors_path.clear();
-    }
+    jfn_wl_kde_palette_post_window_cleanup();
 }
 
 static void wl_set_theme_color(const Color& c) {
     LOG_DEBUG(LOG_PLATFORM, "set_theme_color({}) palette={}", c.hex, (void*)g_wl.palette);
     if (!g_wl.palette) return;
 
-    char filename[64];
-    snprintf(filename, sizeof(filename), "JellyfinDesktop-%s.colors", c.hex + 1);  // skip leading '#'
-    std::string new_path = g_wl.colors_dir + "/" + filename;
-    if (new_path == g_wl.colors_path) return;
+    const char* path = jfn_wl_kde_palette_write(c.r, c.g, c.b, c.hex);
+    if (!path) return;  // unchanged, uninitialised, or write failed
 
-    if (!writeColorScheme(c, new_path)) return;
-
-    if (!g_wl.colors_path.empty())
-        remove(g_wl.colors_path.c_str());
-    g_wl.colors_path = new_path;
-
-    org_kde_kwin_server_decoration_palette_set_palette(g_wl.palette, g_wl.colors_path.c_str());
+    org_kde_kwin_server_decoration_palette_set_palette(g_wl.palette, path);
     wl_display_flush(g_wl.display);
     LOG_INFO(LOG_PLATFORM, "set_theme_color({}) applied", c.hex);
 }

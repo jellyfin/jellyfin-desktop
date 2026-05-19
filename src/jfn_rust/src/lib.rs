@@ -34,6 +34,9 @@ pub use jfn_wayland::clipboard::*;
 pub use jfn_wayland::input::*;
 
 #[cfg(target_os = "linux")]
+pub use jfn_wayland::kde_palette::*;
+
+#[cfg(target_os = "linux")]
 pub use jfn_wayland::scale_probe::*;
 
 #[cfg(target_os = "linux")]
