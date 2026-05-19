@@ -290,7 +290,6 @@ if(ENABLE_KDE_PALETTE)
         src/playback/sinks/queued_sink.cpp
         # Wayland
         src/platform/wayland.cpp
-        src/clipboard/wayland.cpp
         src/input/input_wayland.cpp
         # Generated Wayland protocols
         ${LINUX_DMABUF_CODE_C}
