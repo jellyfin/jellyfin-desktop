@@ -1,8 +1,8 @@
 #include "common.h"
 #include "cef/cef_client.h"
 #include "platform/platform.h"
-#include "platform/wayland.h"
 #include "jfn_wayland_scale_probe.h"
+#include "jfn_wl_proxy.h"
 #include "clipboard/wayland.h"
 #include "jfn_idle_inhibit_linux.h"
 #include "jfn_open_url_linux.h"
@@ -88,7 +88,8 @@ struct WlState {
     wp_viewporter* viewporter = nullptr;
     wp_alpha_modifier_v1* alpha_modifier = nullptr;
 
-    float cached_scale = 0.0f;  // 0 = unknown; wl_get_scale falls back to 1.0
+    // cached_scale lives in jfn-wayland::proxy (Rust). C++ reads it via
+    // jfn_wl_get_cached_scale() / jfn_wl_scale_known().
     bool was_fullscreen = false;
     // Resize transition state. transitioning gates non-paint paths
     // (resize, configure, fullscreen reject). Paint path uses a function-
@@ -653,7 +654,7 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
     int ph = height;
     std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
 
-    float scale = g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
+    float scale = jfn_wl_get_cached_scale();
     int lw = static_cast<int>(pw / scale);
     int lh = static_cast<int>(ph / scale);
 
@@ -715,21 +716,14 @@ static void on_proxy_configure(int physical_w, int physical_h, int fullscreen) {
         jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
     }
 }
-static void on_proxy_scale(int scale_120) {
-    if (scale_120 > 0)
-        g_wl.cached_scale = scale_120 / 120.0f;
-}
 }
 
 namespace platform::wayland {
-bool scale_known() { return g_wl.cached_scale > 0.f; }
+// Thin shim: hand the Rust side our C++ configure callback. The scale
+// callback + cached_scale storage + scale_known() now live in Rust
+// (jfn-wayland::proxy).
 void register_proxy_callbacks() {
-    // Both callbacks register BEFORE mpv_create so the first compositor
-    // configure + preferred_scale events are caught. Otherwise registering
-    // them in wl_init misses the initial values — main.cpp computes initial
-    // logical dims using g_wl.cached_scale (still 1.0) and CEF overshoots.
-    jfn_wlproxy_set_configure_callback(on_proxy_configure);
-    jfn_wlproxy_set_scale_callback(on_proxy_scale);
+    jfn_wl_register_proxy_callbacks(on_proxy_configure);
 }
 }
 
@@ -832,9 +826,7 @@ static bool wl_init(mpv_handle* mpv) {
 }
 
 static float wl_get_scale() {
-    // g_wl.cached_scale is driven by jfn_wlproxy_set_scale_callback (registered
-    // in wl_init). Falls back to 1.0 before the compositor sends preferred_scale.
-    return g_wl.cached_scale > 0 ? g_wl.cached_scale : 1.0f;
+    return jfn_wl_get_cached_scale();
 }
 
 static float wl_get_display_scale(int x, int y) {

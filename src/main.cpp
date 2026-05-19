@@ -45,6 +45,7 @@
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include "wlproxy/wlproxy.h"
 #include "platform/wayland.h"
+#include "jfn_wl_proxy.h"
 #endif
 
 #include "include/cef_version.h"
@@ -749,7 +750,7 @@ int main(int argc, char* argv[]) {
             mh = jfn_playback_osd_ph();
         }
 #if !defined(_WIN32) && !defined(__APPLE__)
-        bool scale_ready = !wait_for_scale || platform::wayland::scale_known();
+        bool scale_ready = !wait_for_scale || jfn_wl_scale_known();
 #else
         bool scale_ready = true;
 #endif

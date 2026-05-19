@@ -43,6 +43,9 @@ pub use jfn_wayland::input::*;
 pub use jfn_wayland::kde_palette::*;
 
 #[cfg(target_os = "linux")]
+pub use jfn_wayland::proxy::*;
+
+#[cfg(target_os = "linux")]
 pub use jfn_wayland::scale_probe::*;
 
 #[cfg(target_os = "linux")]
