@@ -5,7 +5,9 @@
 //! out to registered sinks via the FFI vtable. Sink delivery is
 //! non-blocking: sinks own their own consumer threads.
 
+mod browser_sink;
 mod coordinator;
+mod exec_js;
 mod ffi;
 mod ingest;
 mod idle_inhibit_sink;

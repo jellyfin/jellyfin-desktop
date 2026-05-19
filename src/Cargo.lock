@@ -1061,6 +1061,7 @@ version = "0.1.0"
 dependencies = [
  "jfn-mpv",
  "libc",
+ "serde_json",
  "windows-sys 0.61.2",
  "zbus",
 ]

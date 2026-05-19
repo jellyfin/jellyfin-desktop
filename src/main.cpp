@@ -24,12 +24,10 @@
 #include "theme_color.h"
 
 #include "playback/coordinator.h"
-#include "playback/sinks.h"
 #if defined(__APPLE__)
 #include "playback/sinks/macos/macos_sink.h"
 #elif defined(_WIN32)
 #include "playback/sinks/windows/windows_sink.h"
-#else
 #endif
 
 #include "logging.h"
@@ -290,8 +288,21 @@ static int run_with_cef(int mw, int mh,
     jfn_playback_set_theme_video_mode_handler([](bool active) {
         if (g_theme_color) g_theme_color->setVideoMode(active);
     });
-    auto browser_sink = std::make_shared<BrowserPlaybackSink>();
-    playback::register_event_sink(browser_sink);
+    // Rust-side builtin browser sink forwards UI events through exec_js
+    // and the side-channel handlers below.
+    jfn_playback_set_web_exec_js_handler([](const char* js) {
+        if (g_web_browser && js) g_web_browser->execJs(js);
+    });
+    jfn_playback_set_browsers_size_handler([](int32_t lw, int32_t lh, int32_t pw, int32_t ph) {
+        if (g_browsers) g_browsers->setSize(lw, lh, pw, ph);
+    });
+    jfn_playback_set_browsers_refresh_rate_handler([](double hz) {
+        LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", hz);
+        if (g_browsers) g_browsers->setRefreshRate(hz);
+    });
+    jfn_playback_set_was_maximized_handler([](bool v) {
+        g_was_maximized_before_fullscreen = v;
+    });
 #if defined(__APPLE__)
     auto media_sink = std::make_shared<MacosSink>();
     playback::register_event_sink(media_sink);
@@ -306,9 +317,6 @@ static int run_with_cef(int mw, int mh,
     // MPRIS sink lives Rust-side (jfn_playback::mpris_sink). The
     // coordinator's builtin event fanout (register_builtin_sinks) forwards
     // every event into the sink thread, which speaks D-Bus.
-    jfn_playback_set_web_exec_js_handler([](const char* js) {
-        if (g_web_browser && js) g_web_browser->execJs(js);
-    });
     jfn_mpris_sink_start("");
 #endif
     // MpvActionSink lives Rust-side (jfn_playback::ffi::register_builtin_sinks).

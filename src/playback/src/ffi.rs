@@ -281,6 +281,14 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
         crate::idle_inhibit_sink::deliver(ev);
     }));
 
+    // browser_sink: forwards UI-affecting events into the embedded web
+    // view via the exec_js callback and a few platform-side setters
+    // (browsers.setSize, browsers.setRefreshRate, g_was_maximized_*).
+    // Handlers are no-ops until C++ installs them.
+    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
+        crate::browser_sink::deliver(ev);
+    }));
+
     // theme_color_sink: clears ThemeColor video mode on terminal events.
     // No-op until the C++ side installs the setter via
     // jfn_playback_set_theme_video_mode_handler.

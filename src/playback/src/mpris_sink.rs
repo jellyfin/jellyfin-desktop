@@ -10,7 +10,7 @@
 //! Replaces `src/playback/sinks/mpris/{mpris_sink,mpris_projection}.cpp`.
 
 use std::collections::HashMap;
-use std::ffi::{CString, c_char};
+use std::ffi::c_char;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -203,33 +203,7 @@ impl State {
     }
 }
 
-// ============================================================================
-// Reverse-FFI: exec_js callback installed by C++ for Next/Previous/Seek/
-// SetPosition. NULL = no-op (sink works without the JS bridge).
-// ============================================================================
-
-type ExecJsCb = extern "C" fn(*const c_char);
-
-fn exec_js_slot() -> &'static Mutex<Option<ExecJsCb>> {
-    static SLOT: OnceLock<Mutex<Option<ExecJsCb>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
-}
-
-fn call_exec_js(js: &str) {
-    let Some(cb) = *exec_js_slot().lock().unwrap() else {
-        return;
-    };
-    if let Ok(c) = CString::new(js) {
-        cb(c.as_ptr());
-    }
-}
-
-/// Install the exec_js callback the MPRIS sink invokes for Next /
-/// Previous / Seek / SetPosition. `cb == None` clears.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_web_exec_js_handler(cb: Option<ExecJsCb>) {
-    *exec_js_slot().lock().unwrap() = cb;
-}
+use crate::exec_js::call as call_exec_js;
 
 // ============================================================================
 // D-Bus interface impls

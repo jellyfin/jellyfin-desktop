@@ -168,6 +168,18 @@ void jfn_playback_set_idle_inhibit_handler(JfnPlaybackIdleInhibitCb cb);
 typedef void (*JfnPlaybackThemeVideoModeCb)(bool active);
 void jfn_playback_set_theme_video_mode_handler(JfnPlaybackThemeVideoModeCb cb);
 
+// Browser-sink platform handlers. The Rust-side builtin browser sink
+// forwards UI events to exec_js; these install the side-channel actions
+// it also performs.
+typedef void (*JfnPlaybackBrowsersSizeCb)(int32_t lw, int32_t lh, int32_t pw, int32_t ph);
+void jfn_playback_set_browsers_size_handler(JfnPlaybackBrowsersSizeCb cb);
+
+typedef void (*JfnPlaybackBrowsersRefreshRateCb)(double hz);
+void jfn_playback_set_browsers_refresh_rate_handler(JfnPlaybackBrowsersRefreshRateCb cb);
+
+typedef void (*JfnPlaybackWasMaximizedCb)(bool value);
+void jfn_playback_set_was_maximized_handler(JfnPlaybackWasMaximizedCb cb);
+
 #ifdef __cplusplus
 }
 #endif

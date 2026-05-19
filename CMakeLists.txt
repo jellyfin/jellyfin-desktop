@@ -124,7 +124,6 @@ if(APPLE)
         src/input/input_macos.mm
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
-        src/playback/sinks/browser_sink.cpp
         src/playback/sinks/macos/macos_sink.mm
     )
 
@@ -152,7 +151,6 @@ elseif(WIN32)
         src/input/input_windows.cpp
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
-        src/playback/sinks/browser_sink.cpp
         src/playback/sinks/windows/windows_sink.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
     )
@@ -290,7 +288,6 @@ if(ENABLE_KDE_PALETTE)
         # Shared Linux
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
-        src/playback/sinks/browser_sink.cpp
         # Wayland
         src/platform/wayland.cpp
         src/clipboard/wayland.cpp
