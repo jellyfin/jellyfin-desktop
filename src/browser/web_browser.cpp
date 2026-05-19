@@ -5,7 +5,7 @@
 #include "../common.h"
 #include "../settings.h"
 #include "logging.h"
-#include "../mpv/event.h"
+#include "../playback/jfn_ingest.h"
 #include "../playback/coordinator.h"
 #include "../playback/event.h"
 #include "../theme_color.h"
@@ -198,7 +198,7 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "playerOsdActive") {
         bool active = args->GetBool(0);
         if (active) {
-            was_fullscreen_before_osd_ = mpv::fullscreen();
+            was_fullscreen_before_osd_ = jfn_playback_fullscreen();
         } else {
             if (!was_fullscreen_before_osd_)
                 g_platform.set_fullscreen(false);

@@ -231,6 +231,83 @@ pub extern "C" fn jfn_playback_set_display_hz(hz: f64) {
 }
 
 // ---------------------------------------------------------------------
+// Property observation + sync seed (replaces legacy
+// observe_properties() / mpv::seed_display_hz_sync() in src/mpv/event.cpp)
+// ---------------------------------------------------------------------
+
+/// Display-backend discriminant mirroring C++ `enum class DisplayBackend`.
+///   0 = Wayland, 1 = X11, 2 = Other (macOS/Windows)
+pub const BACKEND_WAYLAND: u8 = 0;
+
+/// Register the property observations whose IDs are dispatched by the
+/// ingest layer. Backend selection skips `osd-dimensions` on Wayland —
+/// the proxy's `xdg_toplevel.configure` intercept feeds those dims via
+/// [`jfn_playback_post_osd_pixels`] instead, and observing it here would
+/// double-post identical values.
+///
+/// Requires `jfn_mpv_handle_init` to have succeeded; returns false if
+/// the handle is missing.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
+    use crate::ingest::observe_id::*;
+    use jfn_mpv::sys::mpv_format;
+
+    let Some(raw) = jfn_mpv::boot::current_raw_handle() else {
+        return false;
+    };
+
+    // Order matches the legacy C++ observe_properties(): display-hidpi-scale
+    // is registered before osd-dimensions so mpv's FIFO initial-value
+    // delivery seeds the scale before osd-dimensions consumes it.
+    let pairs: &[(u64, &std::ffi::CStr, mpv_format)] = &[
+        (DISPLAY_SCALE, c"display-hidpi-scale", mpv_format::MPV_FORMAT_DOUBLE),
+        (OSD_DIMS, c"osd-dimensions", mpv_format::MPV_FORMAT_NODE),
+        (FULLSCREEN, c"fullscreen", mpv_format::MPV_FORMAT_FLAG),
+        (PAUSE, c"pause", mpv_format::MPV_FORMAT_FLAG),
+        (TIME_POS, c"time-pos", mpv_format::MPV_FORMAT_DOUBLE),
+        (DURATION, c"duration", mpv_format::MPV_FORMAT_DOUBLE),
+        (SPEED, c"speed", mpv_format::MPV_FORMAT_DOUBLE),
+        (SEEKING, c"seeking", mpv_format::MPV_FORMAT_FLAG),
+        (DISPLAY_FPS, c"display-fps", mpv_format::MPV_FORMAT_DOUBLE),
+        (CACHE_STATE, c"demuxer-cache-state", mpv_format::MPV_FORMAT_NODE),
+        (WINDOW_MAX, c"window-maximized", mpv_format::MPV_FORMAT_FLAG),
+        (PAUSED_FOR_CACHE, c"paused-for-cache", mpv_format::MPV_FORMAT_FLAG),
+        (CORE_IDLE, c"core-idle", mpv_format::MPV_FORMAT_FLAG),
+        (VIDEO_FRAME_INFO, c"video-frame-info", mpv_format::MPV_FORMAT_NODE),
+    ];
+
+    for &(id, name, fmt) in pairs {
+        if backend == BACKEND_WAYLAND && id == OSD_DIMS {
+            continue;
+        }
+        unsafe { jfn_mpv::sys::mpv_observe_property(raw, id, name.as_ptr(), fmt) };
+    }
+    true
+}
+
+/// Sync mpv read for `display-fps`; seeds the `display_hz` cache from a
+/// non-event context. Must not be called from inside an mpv event
+/// callback — sync property reads from the event thread deadlock.
+///
+/// No-op if the handle isn't initialized or the property is unavailable.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_playback_seed_display_hz_sync() {
+    let Some(raw) = jfn_mpv::boot::current_raw_handle() else { return };
+    let mut fps: f64 = 0.0;
+    let rc = unsafe {
+        jfn_mpv::sys::mpv_get_property(
+            raw,
+            c"display-fps".as_ptr(),
+            jfn_mpv::sys::mpv_format::MPV_FORMAT_DOUBLE,
+            &mut fps as *mut _ as *mut std::ffi::c_void,
+        )
+    };
+    if rc >= 0 && fps > 0.0 {
+        state().set_display_hz(fps);
+    }
+}
+
+// ---------------------------------------------------------------------
 // Rust-owned mpv event thread
 // ---------------------------------------------------------------------
 

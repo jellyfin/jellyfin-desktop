@@ -11,8 +11,8 @@ bool scale_known();
 // Called from main.cpp before mpv_initialize so the very first compositor
 // configure is captured. The callback drives the runtime resize path
 // (on_mpv_configure) and publishes OSD_DIMS-equivalent state to the
-// playback coordinator via mpv::set_osd_dims — replacing mpv's
-// osd-dimensions observation on the Wayland backend.
+// playback coordinator via jfn_playback_post_osd_pixels — replacing
+// mpv's osd-dimensions observation on the Wayland backend.
 //
 // Safe to call before wl_init has run — the callback's downstream helpers
 // guard against empty g_wl state and a null playback coordinator.

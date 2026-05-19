@@ -16,7 +16,6 @@
 #include "browser/browsers.h"
 #include "browser/web_browser.h"
 #include "browser/overlay_browser.h"
-#include "mpv/event.h"
 #include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
 #include "paths/paths.h"
@@ -190,9 +189,9 @@ static int run_with_cef(int mw, int mh,
                      MPV_FORMAT_DOUBLE, &display_hidpi_scale);
     int fs_flag = 0;
     mpv_get_property(g_mpv.Get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
-    mpv::seed_display_hz_sync(g_mpv);
+    jfn_playback_seed_display_hz_sync();
     LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={} display-hz={}",
-             display_hidpi_scale, fs_flag, mpv::display_hz());
+             display_hidpi_scale, fs_flag, jfn_playback_display_hz());
 
     // Scale-correct the window size when live display scale differs from
     // saved. Skip while the compositor has the surface locked
@@ -207,7 +206,7 @@ static int run_with_cef(int mw, int mh,
     // correction.
     {
         const auto& saved = Settings::instance().windowGeometry();
-        bool locked = fs_flag || mpv::window_maximized();
+        bool locked = fs_flag || jfn_playback_window_maximized();
         // Only correct when we have a real saved scale that differs from
         // live. Fresh-config (saved.scale == 0) was already computed at the
         // live scale by the pre-init probe; re-issuing SetGeometry here
@@ -231,7 +230,7 @@ static int run_with_cef(int mw, int mh,
             mw = new_pw;
             mh = new_ph;
         }
-        mpv::set_window_pixels(mw, mh);
+        jfn_playback_set_window_pixels(mw, mh);
     }
 
     float scale = display_hidpi_scale > 0.0
@@ -250,7 +249,7 @@ static int run_with_cef(int mw, int mh,
     });
     g_theme_color = &theme_color_obj;
 
-    Browsers browsers(lw, lh, mw, mh, mpv::display_hz(), use_shared_textures);
+    Browsers browsers(lw, lh, mw, mh, jfn_playback_display_hz(), use_shared_textures);
     g_browsers = &browsers;
 
     auto main_layer = browsers.create("web");
@@ -356,8 +355,8 @@ static int run_with_cef(int mw, int mh,
 
     // Save window geometry while mpv is still alive.
     {
-        bool fs  = mpv::fullscreen();
-        bool max = mpv::window_maximized();
+        bool fs  = jfn_playback_fullscreen();
+        bool max = jfn_playback_window_maximized();
 
         if (fs) {
             // Don't overwrite the saved windowed size with fullscreen dims;
@@ -377,11 +376,11 @@ static int run_with_cef(int mw, int mh,
             // restore losslessly on the same display, or rescale on a
             // display with different DPI. Prefer window_pw/ph (set at boot)
             // over osd_pw/ph which may lag a resize we just issued.
-            int pw = mpv::window_pw();
-            int ph = mpv::window_ph();
+            int pw = jfn_playback_window_pw();
+            int ph = jfn_playback_window_ph();
             if (pw <= 0 || ph <= 0) {
-                pw = mpv::osd_pw();
-                ph = mpv::osd_ph();
+                pw = jfn_playback_osd_pw();
+                ph = jfn_playback_osd_ph();
             }
             if (pw > 0 && ph > 0) {
                 Settings::WindowGeometry geom;
@@ -659,9 +658,8 @@ int main(int argc, char* argv[]) {
     if (!raw) { LOG_ERROR(LOG_MAIN, "mpv handle init failed"); return 1; }
     g_mpv.Set(raw);
 
-    // Register property observations after init — observe_properties
-    // is post-init-safe and reaches mpv through the wrapped pointer.
-    observe_properties(g_mpv, g_platform.display);
+    // Register property observations after init via the Rust ingest layer.
+    jfn_playback_observe_mpv_properties(static_cast<uint8_t>(g_platform.display));
 
     // Capture user's mpv.conf bg, then force startup color. Safe here:
     // force-window=yes (not "immediate") defers VO creation, so the user's
@@ -692,10 +690,10 @@ int main(int argc, char* argv[]) {
     // that follows.
     //
     // On Wayland we don't observe osd-dimensions: the proxy's
-    // wl_on_proxy_configure drives mpv::set_osd_dims directly, so the same
-    // osd_pw/osd_ph atomics fill from a non-mpv-event source. The poll
-    // below reads the atomics every iteration to pick up the value
-    // regardless of whether a mpv property-change event arrived.
+    // on_proxy_configure calls jfn_playback_post_osd_pixels directly,
+    // filling the same osd_pw/osd_ph atomics from a non-mpv-event source.
+    // The poll below reads the atomics every iteration to pick up the
+    // value regardless of whether a mpv property-change event arrived.
     bool need_max = Settings::instance().windowGeometry().maximized;
     // On Wayland the initial logical-pixel computation in run_with_cef
     // needs cached_scale populated by the proxy's preferred_scale callback.
@@ -718,13 +716,13 @@ int main(int argc, char* argv[]) {
 #endif
             jfn_playback_ingest_mpv_event(
                 ev, scale, has_macos_logical, mac_lw, mac_lh);
-            if (ev->reply_userdata == MPV_OBSERVE_WINDOW_MAX &&
-                mpv::window_maximized())
+            if (ev->reply_userdata == JFN_OBSERVE_WINDOW_MAX &&
+                jfn_playback_window_maximized())
                 need_max = false;
         }
-        if (mpv::osd_pw() > 0 && mpv::osd_ph() > 0) {
-            mw = mpv::osd_pw();
-            mh = mpv::osd_ph();
+        if (jfn_playback_osd_pw() > 0 && jfn_playback_osd_ph() > 0) {
+            mw = jfn_playback_osd_pw();
+            mh = jfn_playback_osd_ph();
         }
 #if !defined(_WIN32) && !defined(__APPLE__)
         bool scale_ready = !wait_for_scale || platform::wayland::scale_known();
@@ -749,8 +747,9 @@ int main(int argc, char* argv[]) {
         if (consume(ev)) break;
     }
 #else
-    // Short timeout so the loop polls mpv::osd_pw/ph on Wayland too — the
-    // proxy can update those atomics without producing any mpv event.
+    // Short timeout so the loop polls jfn_playback_osd_pw/ph on Wayland
+    // too — the proxy can update those atomics without producing any mpv
+    // event.
     const double wait_timeout = g_platform.display == DisplayBackend::Wayland
         ? 0.1 : 1.0;
     while (true) {

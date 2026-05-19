@@ -7,7 +7,7 @@
 #include "jfn_idle_inhibit_linux.h"
 #include "jfn_open_url_linux.h"
 #include "input/input_wayland.h"
-#include "mpv/event.h"
+#include "playback/jfn_ingest.h"
 #include "wlproxy/wlproxy.h"
 
 #include <wayland-client.h>
@@ -419,7 +419,7 @@ static void wl_fade_surface(PlatformSurface* s, float fade_sec,
     stop_fade_thread();
     g_fade_stop.store(false, std::memory_order_release);
 
-    double fps = mpv::display_hz();
+    double fps = jfn_playback_display_hz();
     if (fps <= 0) {
         if (on_fade_start) on_fade_start();
         if (on_complete) on_complete();
@@ -717,17 +717,21 @@ static void on_mpv_configure(void*, int width, int height, bool fs) {
 // =====================================================================
 
 // Fires from the wl-proxy per-client thread for every xdg_toplevel.configure
-// from the compositor. Authoritative size source on Wayland: updates the
-// mpv::osd_pw/osd_ph atomics + posts to the playback coordinator, replacing
-// the osd-dimensions observation that the rest of the codebase used to
-// consume.
+// from the compositor. Authoritative size source on Wayland: posts to the
+// playback ingest layer (which updates osd_pw/osd_ph atomics + drives the
+// coordinator), replacing the osd-dimensions observation the rest of the
+// codebase used to consume.
 //
 // Safe before wl_init runs — on_mpv_configure early-outs on empty
-// g_wl.stack, and mpv::set_osd_dims null-checks g_playback_coord.
+// g_wl.stack, and the ingest layer null-checks the coordinator.
 extern "C" {
 static void on_proxy_configure(int physical_w, int physical_h, int fullscreen) {
     on_mpv_configure(nullptr, physical_w, physical_h, fullscreen != 0);
-    mpv::set_osd_dims(physical_w, physical_h);
+    if (physical_w > 0 && physical_h > 0) {
+        float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+        if (scale <= 0.f) scale = 1.0f;
+        jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
+    }
 }
 static void on_proxy_scale(int scale_120) {
     if (scale_120 > 0)
@@ -1034,7 +1038,7 @@ static bool wl_init(mpv_handle* mpv) {
     // after callback registration doesn't start a spurious transition.
     // The main-thread VO-wait loop has already digested mpv's initial
     // fullscreen property-change event, so s_fullscreen is up to date.
-    g_wl.was_fullscreen = mpv::fullscreen();
+    g_wl.was_fullscreen = jfn_playback_fullscreen();
 
     // Proxy configure + scale callbacks are wired by
     // platform::wayland::register_proxy_callbacks before mpv_create.
@@ -1168,7 +1172,7 @@ static void wl_cleanup() {
 
 // Push a fresh viewport onto cef-main in response to an mpv configure.
 // Caller must hold surface_mtx. mpv dims are NOT cached here — every
-// reader pulls from mpv::osd_* atomics on demand.
+// reader pulls from jfn_playback_osd_* atomics on demand.
 static void update_surface_size_locked(int lw, int lh, int pw, int ph) {
     if (g_wl.stack.empty()) return;
     auto* s = g_wl.stack[0];

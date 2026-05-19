@@ -11,6 +11,11 @@ extern "C" {
 //   bit 0 — MPV_EVENT_SHUTDOWN reached; caller should break its loop.
 #define JFN_INGEST_FLAG_SHUTDOWN 0x1u
 
+// mpv_observe_property reply_userdata values. Must agree with
+// `observe_id` in src/playback/src/ingest.rs. Only the IDs actually
+// inspected by C++ callers need to be exposed here.
+#define JFN_OBSERVE_WINDOW_MAX 11u
+
 // Install the browser-side setScale thunk used to resolve
 // DISPLAY_SCALE property changes. Replaces any prior callback.
 void jfn_playback_set_display_scale_handler(void (*cb)(double));
@@ -71,6 +76,19 @@ double jfn_playback_display_scale(void);
 double jfn_playback_display_hz(void);
 void   jfn_playback_set_display_hz(double hz);
 void   jfn_playback_set_window_pixels(int pw, int ph);
+
+// Register the property observations whose IDs are dispatched by the
+// Rust ingest layer. Backend matches the C++ DisplayBackend discriminants
+// (0 = Wayland, 1 = X11, 2 = Other). Wayland skips `osd-dimensions`
+// (the xdg_toplevel.configure intercept feeds those via
+// jfn_playback_post_osd_pixels). Returns false if the mpv handle is not
+// initialized.
+bool   jfn_playback_observe_mpv_properties(uint8_t backend);
+
+// Sync mpv read for `display-fps` — seeds the display_hz cache. Must
+// not be called from inside an mpv event callback (sync property reads
+// from the event thread deadlock).
+void   jfn_playback_seed_display_hz_sync(void);
 
 #ifdef __cplusplus
 }

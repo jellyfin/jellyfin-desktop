@@ -541,7 +541,6 @@ if(WIN32)
         src/main.cpp
         src/cli.cpp
         src/shutdown.cpp
-        src/mpv/event.cpp
         src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp
@@ -560,7 +559,6 @@ else()
         src/main.cpp
         src/cli.cpp
         src/shutdown.cpp
-        src/mpv/event.cpp
         src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp

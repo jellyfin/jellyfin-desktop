@@ -3,7 +3,7 @@
 #include "jfn_idle_inhibit_linux.h"
 #include "jfn_open_url_linux.h"
 #include "input/input_x11.h"
-#include "mpv/event.h"
+#include "playback/jfn_ingest.h"
 
 #include <xcb/xcb.h>
 #include <xcb/shm.h>
@@ -409,7 +409,7 @@ static void x11_fade_surface(PlatformSurface* /*s*/, float /*fade_sec*/,
 
 static void x11_set_fullscreen(bool fullscreen) {
     if (!g_mpv.IsValid()) return;
-    if (mpv::fullscreen() == fullscreen) return;
+    if (jfn_playback_fullscreen() == fullscreen) return;
     g_mpv.SetFullscreen(fullscreen);
 }
 
@@ -431,7 +431,7 @@ static void x11_set_expected_size(int, int) {}
 // =====================================================================
 
 static float x11_get_scale() {
-    double scale = mpv::display_scale();
+    double scale = jfn_playback_display_scale();
     if (scale > 0) {
         g_x11.cached_scale = static_cast<float>(scale);
         return g_x11.cached_scale;
