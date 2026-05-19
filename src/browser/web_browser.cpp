@@ -5,6 +5,7 @@
 #include "../common.h"
 #include "../settings.h"
 #include "logging.h"
+#include "../mpv/jfn_mpv_api.h"
 #include "../playback/jfn_ingest.h"
 #include "../playback/coordinator.h"
 #include "../playback/event.h"
@@ -111,7 +112,7 @@ WebBrowser::~WebBrowser() {
 bool WebBrowser::handleMessage(const std::string& name,
                                CefRefPtr<CefListValue> args,
                                CefRefPtr<CefBrowser> browser) {
-    if (!g_mpv.IsValid()) return false;
+    if (!jfn_mpv_handle_get()) return false;
 
     if (name == "playerLoad") {
         std::string url = args->GetString(0).ToString();
@@ -152,49 +153,49 @@ bool WebBrowser::handleMessage(const std::string& name,
             if (g_playback_coord_running.load(std::memory_order_acquire))
                 playback::post_metadata(meta);
         }
-        MpvHandle::LoadOptions opts;
-        opts.startSecs = startMs / 1000.0;
-        opts.videoTrack = videoIdx;
-        opts.audioTrack = audioIdx;
-        opts.subTrack = subIdx;
-        opts.externalAudioUrl = externalAudioUrl;
-        opts.externalSubUrl = externalSubUrl;
-        opts.isInfiniteStream = isInfiniteStream;
-        g_mpv.LoadFile(url, opts);
+        JfnMpvLoadOptions opts{};
+        opts.start_secs = startMs / 1000.0;
+        opts.video_track = videoIdx;
+        opts.audio_track = audioIdx;
+        opts.sub_track = subIdx;
+        opts.external_audio_url = externalAudioUrl.c_str();
+        opts.external_sub_url = externalSubUrl.c_str();
+        opts.is_infinite_stream = isInfiniteStream;
+        jfn_mpv_load_file(url.c_str(), &opts);
     } else if (name == "playerStop") {
-        g_mpv.Stop();
+        jfn_mpv_stop();
     } else if (name == "playerPause") {
-        g_mpv.Pause();
+        jfn_mpv_pause();
     } else if (name == "playerPlay") {
-        g_mpv.Play();
+        jfn_mpv_play();
     } else if (name == "playerSeek") {
         double pos = getIntArg(args, 0) / 1000.0;
-        g_mpv.SeekAbsolute(pos);
+        jfn_mpv_seek_absolute(pos);
     } else if (name == "playerSetVolume") {
-        g_mpv.SetVolume(getIntArg(args, 0));
+        jfn_mpv_set_volume(getIntArg(args, 0));
     } else if (name == "playerSetMuted") {
-        g_mpv.SetMuted(args->GetBool(0));
+        jfn_mpv_set_muted(args->GetBool(0));
     } else if (name == "playerSetSpeed") {
-        g_mpv.SetSpeed(getIntArg(args, 0) / 1000.0);
+        jfn_mpv_set_speed(getIntArg(args, 0) / 1000.0);
     } else if (name == "playerSetSubtitle") {
         LOG_INFO(LOG_CEF, "playerSetSubtitle: {}", getIntArg(args, 0));
-        g_mpv.SetSubtitleTrack(getIntArg(args, 0));
+        jfn_mpv_set_subtitle_track(getIntArg(args, 0));
     } else if (name == "playerAddSubtitle") {
         std::string url = args->GetString(0).ToString();
         LOG_INFO(LOG_CEF, "playerAddSubtitle: {}", url.c_str());
-        g_mpv.SubAdd(url);
+        jfn_mpv_sub_add(url.c_str());
     } else if (name == "playerSetAudio") {
-        g_mpv.SetAudioTrack(getIntArg(args, 0));
+        jfn_mpv_set_audio_track(getIntArg(args, 0));
     } else if (name == "playerAddAudio") {
         std::string url = args->GetString(0).ToString();
         LOG_INFO(LOG_CEF, "playerAddAudio: {}", url.c_str());
-        g_mpv.AudioAdd(url);
+        jfn_mpv_audio_add(url.c_str());
     } else if (name == "playerSetAudioDelay") {
-        g_mpv.SetAudioDelay(args->GetDouble(0));
+        jfn_mpv_set_audio_delay(args->GetDouble(0));
     } else if (name == "playerSetSubtitleDelay") {
-        g_mpv.SetSubtitleDelay(args->GetDouble(0));
+        jfn_mpv_set_subtitle_delay(args->GetDouble(0));
     } else if (name == "playerSetAspectMode") {
-        g_mpv.SetAspectMode(args->GetString(0).ToString());
+        jfn_mpv_set_aspect_mode(args->GetString(0).ToString().c_str());
     } else if (name == "playerOsdActive") {
         bool active = args->GetBool(0);
         if (active) {

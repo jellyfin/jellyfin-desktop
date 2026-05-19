@@ -16,6 +16,7 @@
 #include "browser/browsers.h"
 #include "browser/web_browser.h"
 #include "browser/overlay_browser.h"
+#include "mpv/jfn_mpv_api.h"
 #include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
 #include "paths/paths.h"
@@ -71,7 +72,6 @@
 // Globals
 // =====================================================================
 
-MpvHandle g_mpv;
 Color g_video_bg;
 
 ThemeColor* g_theme_color = nullptr;
@@ -139,7 +139,7 @@ static int run_with_cef(int mw, int mh,
         ozone_platform = g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11";
 #endif
     g_platform.cef_ozone_platform = ozone_platform;
-    PlatformScope platform_scope(g_platform, g_mpv.Get());
+    PlatformScope platform_scope(g_platform, jfn_mpv_handle_get());
     if (!platform_scope.ok()) {
         LOG_ERROR(LOG_MAIN, "Platform init failed");
         return 1;
@@ -156,7 +156,7 @@ static int run_with_cef(int mw, int mh,
     // Must run after the VO-init wait loop — sync mpv API calls would
     // deadlock against core_thread's DispatchQueue.main.sync on macOS.
     {
-        JfnMpvCapabilities* caps = jfn_mpv_capabilities_query(g_mpv.Get());
+        JfnMpvCapabilities* caps = jfn_mpv_capabilities_query(jfn_mpv_handle_get());
         std::string profile = jellyfin_device_profile::Build(
             caps, "Jellyfin Desktop", APP_VERSION_FULL,
             Settings::instance().forceTranscoding());
@@ -185,10 +185,10 @@ static int run_with_cef(int mw, int mh,
     LOG_INFO(LOG_MAIN, "[FLOW] CefInitialize returned ok");
 
     double display_hidpi_scale = 0.0;
-    mpv_get_property(g_mpv.Get(), "display-hidpi-scale",
+    mpv_get_property(jfn_mpv_handle_get(), "display-hidpi-scale",
                      MPV_FORMAT_DOUBLE, &display_hidpi_scale);
     int fs_flag = 0;
-    mpv_get_property(g_mpv.Get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
+    mpv_get_property(jfn_mpv_handle_get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
     jfn_playback_seed_display_hz_sync();
     LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={} display-hz={}",
              display_hidpi_scale, fs_flag, jfn_playback_display_hz());
@@ -226,7 +226,7 @@ static int run_with_cef(int mw, int mh,
             LOG_INFO(LOG_MAIN,
                      "[FLOW] scale {:.3f} -> {:.3f}, resize to {}",
                      saved.scale, display_hidpi_scale, geom_str.c_str());
-            g_mpv.SetGeometry(geom_str);
+            jfn_mpv_set_geometry(geom_str.c_str());
             mw = new_pw;
             mh = new_ph;
         }
@@ -245,7 +245,7 @@ static int run_with_cef(int mw, int mh,
     bool titlebar_themed = Settings::instance().titlebarThemeColor();
     ThemeColor theme_color_obj([titlebar_themed](const Color& c) {
         if (titlebar_themed) g_platform.set_theme_color(c);
-        g_mpv.SetBackgroundColor(c);
+        jfn_mpv_set_background_color_hex(c.hex);
     });
     g_theme_color = &theme_color_obj;
 
@@ -294,7 +294,7 @@ static int run_with_cef(int mw, int mh,
     auto media_sink = std::make_shared<MacosSink>();
 #elif defined(_WIN32)
     int64_t wid = 0;
-    g_mpv.GetPropertyInt("window-id", wid);
+    jfn_mpv_get_property_int("window-id", &wid);
     auto media_sink = std::make_shared<WindowsSink>(reinterpret_cast<HWND>(static_cast<intptr_t>(wid)));
 #else
     auto media_sink = std::make_shared<MprisSink>();
@@ -656,7 +656,6 @@ int main(int argc, char* argv[]) {
 
     mpv_handle* raw = jfn_mpv_handle_init(&boot);
     if (!raw) { LOG_ERROR(LOG_MAIN, "mpv handle init failed"); return 1; }
-    g_mpv.Set(raw);
 
     // Register property observations after init via the Rust ingest layer.
     jfn_playback_observe_mpv_properties(static_cast<uint8_t>(g_platform.display));
@@ -664,18 +663,21 @@ int main(int argc, char* argv[]) {
     // Capture user's mpv.conf bg, then force startup color. Safe here:
     // force-window=yes (not "immediate") defers VO creation, so the user's
     // color never flashes before we override.
-    g_video_bg = g_mpv.GetBackgroundColor();
+    g_video_bg = Color{jfn_mpv_get_background_color()};
     LOG_INFO(LOG_MAIN, "video bg captured: {}", g_video_bg.hex);
-    g_mpv.SetBackgroundColor(kBgColor);
+    jfn_mpv_set_background_color_hex(kBgColor.hex);
 
-    for (const char* prop : {"mpv-version", "ffmpeg-version"})
-        LOG_INFO(LOG_MAIN, "{} {}", prop, g_mpv.GetPropertyString(prop));
+    for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
+        char* v = jfn_mpv_get_property_string(prop);
+        LOG_INFO(LOG_MAIN, "{} {}", prop, v ? v : "");
+        jfn_mpv_free_string(v);
+    }
 
     // input-default-bindings=no removes all builtin bindings including
     // CLOSE_WIN → quit.  Re-bind it so the WM close button works.
     {
         const char* cmd[] = {"keybind", "CLOSE_WIN", "quit", nullptr};
-        mpv_command(g_mpv.Get(), cmd);
+        mpv_command(jfn_mpv_handle_get(), cmd);
     }
 
     // Wait for the VO window. Reads osd-dimensions from the event payload
@@ -735,7 +737,7 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
     while (true) {
         g_platform.pump();
-        mpv_event* ev = g_mpv.WaitEvent(0);
+        mpv_event* ev = jfn_mpv_wait_event(0);
         if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
@@ -753,7 +755,7 @@ int main(int argc, char* argv[]) {
     const double wait_timeout = g_platform.display == DisplayBackend::Wayland
         ? 0.1 : 1.0;
     while (true) {
-        mpv_event* ev = g_mpv.WaitEvent(wait_timeout);
+        mpv_event* ev = jfn_mpv_wait_event(wait_timeout);
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
             continue;
@@ -778,7 +780,7 @@ int main(int argc, char* argv[]) {
         // mpv's PreciseTimer.terminate() sends pthread_kill(SIGALRM), so
         // restore a no-op handler before tearing down the timer.
         signal(SIGALRM, [](int){});
-        g_mpv.TerminateDestroy();
+        jfn_mpv_handle_terminate();
         mpv_done.store(true, std::memory_order_release);
         CFRunLoopWakeUp(CFRunLoopGetMain());
     });
@@ -787,7 +789,7 @@ int main(int argc, char* argv[]) {
                            std::numeric_limits<CFTimeInterval>::max(), true);
     mpv_teardown.join();
 #else
-    g_mpv.TerminateDestroy();
+    jfn_mpv_handle_terminate();
 #endif
 
 #if !defined(_WIN32) && !defined(__APPLE__)

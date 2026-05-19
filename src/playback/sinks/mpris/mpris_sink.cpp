@@ -1,6 +1,7 @@
 #include "mpris_sink.h"
 
 #include "../../../common.h"
+#include "../../../mpv/jfn_mpv_api.h"
 #include "../../../browser/browsers.h"
 #include "../../../browser/web_browser.h"
 #include "../../../logging.h"
@@ -116,7 +117,7 @@ static int prop_set_rate(sd_bus*, const char*, const char*, const char*,
     if (rate < 0.25) rate = 0.25;
     if (rate > 2.0) rate = 2.0;
 
-    g_mpv.SetSpeed(rate);
+    jfn_mpv_set_speed(rate);
     return 0;
 }
 
@@ -239,25 +240,25 @@ static int prop_get_metadata(sd_bus*, const char*, const char*, const char*,
 }
 
 // Player interface methods (inbound transport from MPRIS clients).
-// Callbacks are wired directly into g_mpv / g_web_browser; no transport
-// callback indirection.
+// Callbacks are wired directly into jfn_mpv_* / g_web_browser; no
+// transport callback indirection.
 static int method_play(sd_bus_message* m, void*, sd_bus_error*) {
-    g_mpv.Play();
+    jfn_mpv_play();
     return sd_bus_reply_method_return(m, "");
 }
 
 static int method_pause(sd_bus_message* m, void*, sd_bus_error*) {
-    g_mpv.Pause();
+    jfn_mpv_pause();
     return sd_bus_reply_method_return(m, "");
 }
 
 static int method_play_pause(sd_bus_message* m, void*, sd_bus_error*) {
-    g_mpv.TogglePause();
+    jfn_mpv_toggle_pause();
     return sd_bus_reply_method_return(m, "");
 }
 
 static int method_stop(sd_bus_message* m, void*, sd_bus_error*) {
-    g_mpv.Stop();
+    jfn_mpv_stop();
     return sd_bus_reply_method_return(m, "");
 }
 

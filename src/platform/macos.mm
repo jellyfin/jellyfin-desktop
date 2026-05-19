@@ -16,6 +16,7 @@
 #include "cef/cef_client.h"
 #include "input/input_macos.h"
 #include "logging.h"
+#include "mpv/jfn_mpv_api.h"
 
 #include "include/cef_application_mac.h"
 
@@ -402,7 +403,7 @@ static bool macos_init(mpv_handle* mpv) {
     // The first reconfig already applied --geometry (including position via
     // --force-window-position). Clear it so subsequent reconfigs (video
     // start/stop) don't reposition+resize the window.
-    g_mpv.SetForceWindowPosition(false);
+    jfn_mpv_set_force_window_position(false);
 
     // Dock icon
     NSString* iconPath = [[[NSBundle mainBundle] resourcePath]
@@ -629,13 +630,13 @@ static void macos_fade_surface(PlatformSurface* s, float fade_sec,
 }
 
 static void macos_set_fullscreen(bool fullscreen) {
-    if (!g_mpv.IsValid()) return;
-    g_mpv.SetFullscreen(fullscreen);
+    if (!jfn_mpv_handle_get()) return;
+    jfn_mpv_set_fullscreen(fullscreen);
 }
 
 static void macos_toggle_fullscreen() {
-    if (!g_mpv.IsValid()) return;
-    g_mpv.ToggleFullscreen();
+    if (!jfn_mpv_handle_get()) return;
+    jfn_mpv_toggle_fullscreen();
 }
 
 static void macos_begin_transition() {

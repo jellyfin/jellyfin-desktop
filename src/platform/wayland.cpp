@@ -7,6 +7,7 @@
 #include "jfn_idle_inhibit_linux.h"
 #include "jfn_open_url_linux.h"
 #include "input/input_wayland.h"
+#include "mpv/jfn_mpv_api.h"
 #include "playback/jfn_ingest.h"
 #include "wlproxy/wlproxy.h"
 
@@ -1044,8 +1045,12 @@ static bool wl_init(mpv_handle* mpv) {
     // platform::wayland::register_proxy_callbacks before mpv_create.
 
     intptr_t dp = 0, sp = 0;
-    g_mpv.GetWaylandDisplay(dp);
-    g_mpv.GetWaylandSurface(sp);
+    {
+        int64_t v = 0;
+        if (jfn_mpv_get_property_int("wayland-display", &v) == 0) dp = static_cast<intptr_t>(v);
+        v = 0;
+        if (jfn_mpv_get_property_int("wayland-surface", &v) == 0) sp = static_cast<intptr_t>(v);
+    }
     if (!dp || !sp) {
         LOG_ERROR(LOG_PLATFORM, "Failed to get Wayland display/surface from mpv");
         return false;
@@ -1083,7 +1088,9 @@ static bool wl_init(mpv_handle* mpv) {
     // Register close callback -- intercepts xdg_toplevel close before mpv sees it
     {
         intptr_t cb_ptr = 0;
-        g_mpv.GetWaylandCloseCbPtr(cb_ptr);
+        int64_t v = 0;
+        if (jfn_mpv_get_property_int("wayland-close-cb-ptr", &v) == 0)
+            cb_ptr = static_cast<intptr_t>(v);
         if (cb_ptr) {
             auto* fn = reinterpret_cast<void(**)(void*)>(cb_ptr);
             auto* data = reinterpret_cast<void**>(cb_ptr + sizeof(void*));
@@ -1140,7 +1147,9 @@ static void wl_cleanup() {
     // hook is no longer used — proxy-side interception replaced it.)
     {
         intptr_t cb_ptr = 0;
-        g_mpv.GetWaylandCloseCbPtr(cb_ptr);
+        int64_t v = 0;
+        if (jfn_mpv_get_property_int("wayland-close-cb-ptr", &v) == 0)
+            cb_ptr = static_cast<intptr_t>(v);
         if (cb_ptr) {
             auto* fn = reinterpret_cast<void(**)(void*)>(cb_ptr);
             *fn = nullptr;

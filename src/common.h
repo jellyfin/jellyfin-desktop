@@ -8,11 +8,9 @@
 extern Color g_video_bg;
 
 #include "platform/platform.h"
-#include "mpv/handle.h"
 
 #include "playback/jfn_wake_event.h"
 
-extern MpvHandle g_mpv;
 extern Platform g_platform;
 
 class ThemeColor;
