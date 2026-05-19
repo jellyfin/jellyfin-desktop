@@ -11,6 +11,7 @@
 #include "playback/jfn_ingest.h"
 #include "wlproxy/wlproxy.h"
 #include "jfn_dmabuf_probe.h"
+#include "jfn_fade.h"
 
 #include <wayland-client.h>
 #include "linux-dmabuf-v1-client.h"
@@ -26,9 +27,7 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <algorithm>
-#include <chrono>
 #include <mutex>
-#include <thread>
 #include <vector>
 #include <sys/mman.h>
 #include "logging.h"
@@ -105,18 +104,10 @@ struct WlState {
 
 static WlState g_wl;
 
-// Fade thread state. Joinable so wl_cleanup can stop it before destroying
-// the surfaces and alpha modifier it touches — Alt+F4 mid-fade otherwise
-// races destruction against the next iteration's set_multiplier/commit.
-static std::thread g_fade_thread;
-static std::atomic<bool> g_fade_stop{false};
-
-static void stop_fade_thread() {
-    if (g_fade_thread.joinable()) {
-        g_fade_stop.store(true, std::memory_order_release);
-        g_fade_thread.join();
-    }
-}
+// Fade thread + stop flag live in Rust (jfn_fade.h). wl_cleanup must call
+// jfn_wl_fade_stop_all() before destroying the alpha modifier proxy or the
+// surfaces — Alt+F4 mid-fade otherwise races destruction against the next
+// iteration's set_multiplier/commit.
 
 static void update_surface_size_locked(int lw, int lh, int pw, int ph);
 static void wl_begin_transition_locked();
@@ -401,55 +392,50 @@ static void wl_surface_set_visible(PlatformSurface* s, bool visible) {
     }
 }
 
+// Per-frame apply, called from the Rust fade thread (jfn_fade.h). Holds
+// surface_mtx for the protocol calls so it can't race wl_free_surface or
+// wp_alpha_modifier teardown. Returns false to abort the loop when the
+// surface state required for the fade has dropped out from under us.
+static bool fade_apply_frame(void* surface, uint32_t alpha) {
+    auto* s = static_cast<PlatformSurface*>(surface);
+    std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
+    if (!s->visible || !s->surface || !s->alpha) return false;
+    wp_alpha_modifier_surface_v1_set_multiplier(s->alpha, alpha);
+    wl_surface_commit(s->surface);
+    wl_display_flush(g_wl.display);
+    return true;
+}
+
+// Box a std::function so it can ride through the C-ABI fade FFI as a
+// (fn, ctx, dtor) triple — the Rust side fires it once (or drops it on
+// early-skip / abort) and calls the dtor unconditionally.
+static void invoke_fn(void* ctx) {
+    auto* f = static_cast<std::function<void()>*>(ctx);
+    if (*f) (*f)();
+}
+static void delete_fn(void* ctx) {
+    delete static_cast<std::function<void()>*>(ctx);
+}
+
 // Animate alpha from opaque to transparent over fade_sec, then hide.
-// Runs on a detached thread — finite UI animation.
+// The thread + stop flag live in jfn_fade; this wrapper only translates the
+// std::function callbacks into the FFI triples and routes the per-frame
+// protocol calls through fade_apply_frame.
 static void wl_fade_surface(PlatformSurface* s, float fade_sec,
                             std::function<void()> on_fade_start,
                             std::function<void()> on_complete) {
-    if (!s || !s->alpha || !s->surface) {
-        if (on_fade_start) on_fade_start();
-        if (on_complete) on_complete();
-        return;
-    }
-
-    stop_fade_thread();
-    g_fade_stop.store(false, std::memory_order_release);
-
     double fps = jfn_playback_display_hz();
-    if (fps <= 0) {
+    if (!s || !s->alpha || !s->surface || fps <= 0) {
         if (on_fade_start) on_fade_start();
         if (on_complete) on_complete();
         return;
     }
 
-    g_fade_thread = std::thread([s, fade_sec, fps,
-                 on_fade_start = std::move(on_fade_start),
-                 on_complete = std::move(on_complete)]() {
-        if (on_fade_start) on_fade_start();
-
-        int total_frames = static_cast<int>(fade_sec * fps);
-        if (total_frames < 1) total_frames = 1;
-        auto frame_duration = std::chrono::microseconds(static_cast<int64_t>(1e6 / fps));
-
-        bool aborted = false;
-        for (int i = 1; i <= total_frames; i++) {
-            if (g_fade_stop.load(std::memory_order_acquire)) { aborted = true; break; }
-            float t = static_cast<float>(i) / total_frames;
-            uint32_t alpha = static_cast<uint32_t>((1.0f - t) * UINT32_MAX);
-            {
-                std::lock_guard<std::mutex> lock(g_wl.surface_mtx);
-                if (!s->visible || !s->surface || !s->alpha) break;
-                wp_alpha_modifier_surface_v1_set_multiplier(s->alpha, alpha);
-                wl_surface_commit(s->surface);
-                wl_display_flush(g_wl.display);
-            }
-            std::this_thread::sleep_for(frame_duration);
-        }
-
-        if (aborted) return;
-
-        if (on_complete) on_complete();
-    });
+    auto* start_ctx = new std::function<void()>(std::move(on_fade_start));
+    auto* done_ctx  = new std::function<void()>(std::move(on_complete));
+    jfn_wl_fade_start(s, fade_sec, fps, fade_apply_frame,
+                      invoke_fn, start_ctx, delete_fn,
+                      invoke_fn, done_ctx,  delete_fn);
 }
 
 // =====================================================================
@@ -857,7 +843,7 @@ static float wl_get_display_scale(int x, int y) {
 }
 
 static void wl_cleanup() {
-    stop_fade_thread();
+    jfn_wl_fade_stop_all();
 
     // Null the close trampoline we installed into mpv's hook before
     // destroying the g_wl state it reads. It keeps being invoked until mpv

@@ -2,6 +2,7 @@
 
 pub mod clipboard;
 pub mod dmabuf_probe;
+pub mod fade;
 pub mod input;
 pub mod kde_palette;
 pub mod scale_probe;

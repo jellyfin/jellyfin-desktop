@@ -34,6 +34,9 @@ pub use jfn_wayland::clipboard::*;
 pub use jfn_wayland::dmabuf_probe::*;
 
 #[cfg(target_os = "linux")]
+pub use jfn_wayland::fade::*;
+
+#[cfg(target_os = "linux")]
 pub use jfn_wayland::input::*;
 
 #[cfg(target_os = "linux")]
