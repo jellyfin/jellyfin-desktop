@@ -7,4 +7,3 @@
 #include "sinks/browser_sink.h"
 #include "sinks/idle_inhibit_sink.h"
 #include "sinks/theme_color_sink.h"
-#include "sinks/mpv_action_sink.h"

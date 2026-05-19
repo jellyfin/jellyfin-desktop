@@ -252,9 +252,27 @@ pub extern "C" fn jfn_playback_init() {
     let mut guard = coord_slot().lock().unwrap();
     if guard.is_none() {
         let mut c = PlaybackCoordinator::new();
+        register_builtin_sinks(&c);
         c.start();
         *guard = Some(c);
     }
+}
+
+/// Wire in the Rust-side sinks that used to live in C++ under
+/// `src/playback/sinks/`. Each runs inline on the coordinator worker
+/// after the FFI sinks and must not block.
+fn register_builtin_sinks(c: &PlaybackCoordinator) {
+    // mpv_action_sink: routes ApplyPendingTrackSelectionAndPlay actions
+    // into the mpv FFI. Preserves the prior ordering relative to the
+    // FILE_LOADED drain — coordinator emits events first, actions after,
+    // all on the worker thread.
+    c.add_builtin_action_sink(Box::new(|a: &PlaybackAction| {
+        match a.kind {
+            PlaybackActionKind::ApplyPendingTrackSelectionAndPlay => {
+                jfn_mpv::api::jfn_mpv_apply_pending_track_selection_and_play();
+            }
+        }
+    }));
 }
 
 #[unsafe(no_mangle)]

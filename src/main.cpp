@@ -286,7 +286,6 @@ static int run_with_cef(int mw, int mh,
     auto browser_sink = std::make_shared<BrowserPlaybackSink>();
     auto idle_inhibit_sink = std::make_shared<IdleInhibitSink>();
     auto theme_color_sink = std::make_shared<ThemeColorSink>();
-    auto mpv_action_sink = std::make_shared<MpvActionSink>();
     playback::register_event_sink(browser_sink);
     playback::register_event_sink(idle_inhibit_sink);
     playback::register_event_sink(theme_color_sink);
@@ -301,7 +300,7 @@ static int run_with_cef(int mw, int mh,
 #endif
     playback::register_event_sink(media_sink);
     media_sink->start();
-    playback::register_action_sink(mpv_action_sink);
+    // MpvActionSink lives Rust-side (jfn_playback::ffi::register_builtin_sinks).
     jfn_playback_set_display_scale_handler([](double s) {
         if (g_browsers && s > 0) g_browsers->setScale(s);
     });
