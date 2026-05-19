@@ -12,8 +12,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
-use std::thread;
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
 
 const DEVICE_NAME_MAX: usize = 64;
 const HWDEC_DEFAULT: &str = "no";
@@ -282,6 +282,54 @@ fn state() -> &'static Mutex<State> {
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
+// Single persistent background save worker. jfn_settings_save_async() coalesces
+// into Pending::data (only the newest snapshot survives); the worker wakes on
+// the condvar, writes the latest snapshot, then sleeps. Shutdown drains any
+// queued write and joins the thread so nothing is lost at exit.
+struct Pending {
+    data: Option<SettingsData>,
+    path: PathBuf,
+    stop: bool,
+    started: bool,
+}
+
+struct SaveWorker {
+    pending: Mutex<Pending>,
+    cv: Condvar,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+static SAVE_WORKER: OnceLock<SaveWorker> = OnceLock::new();
+
+fn save_worker() -> &'static SaveWorker {
+    SAVE_WORKER.get_or_init(|| SaveWorker {
+        pending: Mutex::new(Pending {
+            data: None,
+            path: PathBuf::new(),
+            stop: false,
+            started: false,
+        }),
+        cv: Condvar::new(),
+        handle: Mutex::new(None),
+    })
+}
+
+fn save_worker_loop(w: &'static SaveWorker) {
+    loop {
+        let (data, path) = {
+            let mut p = w.pending.lock().unwrap();
+            while p.data.is_none() && !p.stop {
+                p = w.cv.wait(p).unwrap();
+            }
+            match p.data.take() {
+                Some(d) => (d, p.path.clone()),
+                None => return, // stop with nothing pending — drained
+            }
+        };
+        save_data(&path, &data);
+    }
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let tmp = dir.join(format!(
@@ -366,17 +414,57 @@ pub extern "C" fn jfn_settings_save() -> bool {
     save_data(&path, &snap)
 }
 
-/// Snapshot current state and save on a detached thread. Concurrent saves are
-/// serialized by an internal mutex.
+/// Snapshot current state and hand it to the background save worker. Repeated
+/// calls coalesce: only the most recent snapshot is written. The worker is
+/// started lazily on the first call. After
+/// [`jfn_settings_shutdown_save_worker`] this becomes a no-op.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_settings_save_async() {
     let (path, snap) = {
         let st = state().lock().unwrap();
         (st.path.clone(), st.data.clone())
     };
-    thread::spawn(move || {
-        save_data(&path, &snap);
-    });
+    let w = save_worker();
+    let need_spawn = {
+        let mut p = w.pending.lock().unwrap();
+        if p.stop {
+            return;
+        }
+        p.data = Some(snap);
+        p.path = path;
+        if p.started {
+            false
+        } else {
+            p.started = true;
+            true
+        }
+    };
+    w.cv.notify_one();
+    if need_spawn {
+        *w.handle.lock().unwrap() =
+            Some(thread::spawn(|| save_worker_loop(save_worker())));
+    }
+}
+
+/// Stop the background save worker after draining any pending write. Safe to
+/// call if the worker was never started; safe to call multiple times.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_settings_shutdown_save_worker() {
+    let Some(w) = SAVE_WORKER.get() else {
+        return;
+    };
+    {
+        let mut p = w.pending.lock().unwrap();
+        if p.stop {
+            return;
+        }
+        p.stop = true;
+    }
+    w.cv.notify_one();
+    let handle = w.handle.lock().unwrap().take();
+    if let Some(h) = handle {
+        let _ = h.join();
+    }
 }
 
 /// Free a string previously returned by this module.

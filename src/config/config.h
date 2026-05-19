@@ -26,7 +26,12 @@ void jfn_settings_init(const char* path);
 
 bool jfn_settings_load(void);
 bool jfn_settings_save(void);
+// Fire-and-forget save: hands a snapshot to a single persistent background
+// worker. Repeated calls coalesce — only the latest snapshot is written.
 void jfn_settings_save_async(void);
+// Drain any pending async write and join the worker thread. Subsequent
+// jfn_settings_save_async() calls become no-ops. Idempotent.
+void jfn_settings_shutdown_save_worker(void);
 
 // String getters: returned pointer is heap-allocated; caller frees with
 // jfn_settings_free_string. Returns a non-null pointer (possibly empty
