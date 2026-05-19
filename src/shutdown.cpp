@@ -5,7 +5,6 @@
 
 std::atomic<bool> g_shutting_down{false};
 JfnWakeEvent* g_shutdown_event = jfn_wake_event_new();
-bool g_was_maximized_before_fullscreen = false;
 
 void initiate_shutdown() {
     bool expected = false;

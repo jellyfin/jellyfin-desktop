@@ -177,8 +177,9 @@ void jfn_playback_set_browsers_size_handler(JfnPlaybackBrowsersSizeCb cb);
 typedef void (*JfnPlaybackBrowsersRefreshRateCb)(double hz);
 void jfn_playback_set_browsers_refresh_rate_handler(JfnPlaybackBrowsersRefreshRateCb cb);
 
-typedef void (*JfnPlaybackWasMaximizedCb)(bool value);
-void jfn_playback_set_was_maximized_handler(JfnPlaybackWasMaximizedCb cb);
+// Reads the maximized-before-fullscreen flag mirrored by the Rust-side
+// browser sink. Used by the geometry-save tail at shutdown.
+bool jfn_playback_was_maximized_before_fullscreen(void);
 
 #ifdef __cplusplus
 }

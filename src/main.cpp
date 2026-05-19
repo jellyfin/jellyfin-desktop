@@ -300,9 +300,6 @@ static int run_with_cef(int mw, int mh,
         LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", hz);
         if (g_browsers) g_browsers->setRefreshRate(hz);
     });
-    jfn_playback_set_was_maximized_handler([](bool v) {
-        g_was_maximized_before_fullscreen = v;
-    });
 #if defined(__APPLE__)
     auto media_sink = std::make_shared<MacosSink>();
     playback::register_event_sink(media_sink);
@@ -384,7 +381,7 @@ static int run_with_cef(int mw, int mh,
             // Don't overwrite the saved windowed size with fullscreen dims;
             // only update the maximized flag for the eventual restore.
             auto geom = Settings::instance().windowGeometry();
-            geom.maximized = g_was_maximized_before_fullscreen;
+            geom.maximized = jfn_playback_was_maximized_before_fullscreen();
             Settings::instance().setWindowGeometry(geom);
         } else if (max) {
             // Don't overwrite the saved windowed size with monitor dims;

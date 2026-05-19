@@ -4,6 +4,7 @@
 //!
 //! Replaces `src/playback/sinks/browser_sink.cpp`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::json;
@@ -13,12 +14,10 @@ use crate::types::{PlaybackEvent, PlaybackEventKind};
 
 type SetSizeCb = extern "C" fn(i32, i32, i32, i32);
 type SetHzCb = extern "C" fn(f64);
-type SetMaxCb = extern "C" fn(bool);
 
 struct Handlers {
     set_size: Option<SetSizeCb>,
     set_hz: Option<SetHzCb>,
-    set_max: Option<SetMaxCb>,
 }
 
 fn slot() -> &'static Mutex<Handlers> {
@@ -27,7 +26,6 @@ fn slot() -> &'static Mutex<Handlers> {
         Mutex::new(Handlers {
             set_size: None,
             set_hz: None,
-            set_max: None,
         })
     })
 }
@@ -44,10 +42,14 @@ pub extern "C" fn jfn_playback_set_browsers_refresh_rate_handler(cb: Option<SetH
     slot().lock().unwrap().set_hz = cb;
 }
 
-/// Install / clear the was-maximized-before-fullscreen writer.
+// Mirrors maximized-before-fullscreen state so the geometry-save tail in
+// main can read it after coordinator shutdown without keeping coord alive.
+static WAS_MAXIMIZED: AtomicBool = AtomicBool::new(false);
+
+/// Geometry-save tail reads this at shutdown.
 #[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_was_maximized_handler(cb: Option<SetMaxCb>) {
-    slot().lock().unwrap().set_max = cb;
+pub extern "C" fn jfn_playback_was_maximized_before_fullscreen() -> bool {
+    WAS_MAXIMIZED.load(Ordering::Relaxed)
 }
 
 pub(crate) fn deliver(ev: &PlaybackEvent) {
@@ -91,11 +93,9 @@ pub(crate) fn deliver(ev: &PlaybackEvent) {
             call_exec_js(&format!("window._nativeSetRate({})", snap.rate));
         }
         PlaybackEventKind::FullscreenChanged => {
-            // Mirror was-maximized so the geometry-save tail in main.cpp can
+            // Mirror was-maximized so the geometry-save tail in main can
             // read it after coord shutdown without keeping coord alive.
-            if let Some(cb) = slot().lock().unwrap().set_max {
-                cb(snap.maximized_before_fullscreen);
-            }
+            WAS_MAXIMIZED.store(snap.maximized_before_fullscreen, Ordering::Relaxed);
             call_exec_js(&format!(
                 "window._nativeFullscreenChanged({})",
                 if snap.fullscreen { "true" } else { "false" }
