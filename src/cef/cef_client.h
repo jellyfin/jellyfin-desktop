@@ -88,6 +88,21 @@ void         jfn_cef_layer_on_before_close_hook(const JfnCefLayer*);
 char*        jfn_cef_layer_take_pending_url(const JfnCefLayer*);
 bool         jfn_cef_layer_on_before_popup(const JfnCefLayer*, const char* url_utf8, size_t len);
 void         jfn_cef_layer_free_string(char*);
+
+typedef void (*JfnCbDtor)(void*);
+void         jfn_cef_layer_set_message_handler(const JfnCefLayer*, void* fn, void* ctx, JfnCbDtor);
+void         jfn_cef_layer_set_created_callback(const JfnCefLayer*, void* fn, void* ctx, JfnCbDtor);
+void         jfn_cef_layer_set_before_close_callback(const JfnCefLayer*, void* fn, void* ctx, JfnCbDtor);
+void         jfn_cef_layer_set_context_menu_builder(const JfnCefLayer*, void* fn, void* ctx, JfnCbDtor);
+void         jfn_cef_layer_set_context_menu_dispatcher(const JfnCefLayer*, void* fn, void* ctx, JfnCbDtor);
+bool         jfn_cef_layer_has_context_menu_builder(const JfnCefLayer*);
+bool         jfn_cef_layer_invoke_message_handler(const JfnCefLayer*,
+                                                  const char* name_utf8, size_t name_len,
+                                                  void* args, void* browser);
+void         jfn_cef_layer_invoke_created_callback(const JfnCefLayer*, void* browser);
+void         jfn_cef_layer_take_and_invoke_before_close(const JfnCefLayer*);
+void         jfn_cef_layer_invoke_context_menu_builder(const JfnCefLayer*, void* menu_model);
+bool         jfn_cef_layer_invoke_context_menu_dispatcher(const JfnCefLayer*, int command_id);
 }
 
 // Callback invoked for IPC messages from the renderer process.
@@ -125,11 +140,11 @@ public:
     }
     const std::string& name() const { return name_; }
 
-    void setMessageHandler(MessageHandler handler) { message_handler_ = std::move(handler); }
-    void setCreatedCallback(CreatedCallback cb) { on_after_created_ = std::move(cb); }
-    void setBeforeCloseCallback(BeforeCloseCallback cb) { on_before_close_ = std::move(cb); }
-    void setContextMenuBuilder(ContextMenuBuilder cb) { context_menu_builder_ = std::move(cb); }
-    void setContextMenuDispatcher(ContextMenuDispatcher cb) { context_menu_dispatcher_ = std::move(cb); }
+    void setMessageHandler(MessageHandler handler);
+    void setCreatedCallback(CreatedCallback cb);
+    void setBeforeCloseCallback(BeforeCloseCallback cb);
+    void setContextMenuBuilder(ContextMenuBuilder cb);
+    void setContextMenuDispatcher(ContextMenuDispatcher cb);
 
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -232,11 +247,6 @@ private:
     CefRefPtr<CefBrowser> browser_;
     JfnCefLayer* rs_ = nullptr;
     CefRefPtr<CefRunContextMenuCallback> pending_menu_callback_;
-    MessageHandler message_handler_;
-    CreatedCallback on_after_created_;
-    BeforeCloseCallback on_before_close_;
-    ContextMenuBuilder context_menu_builder_;
-    ContextMenuDispatcher context_menu_dispatcher_;
     CefRefPtr<CefDictionaryValue> extra_info_;
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

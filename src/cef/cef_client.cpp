@@ -322,7 +322,7 @@ void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
         return;
     }
 
-    if (on_after_created_) on_after_created_(browser);
+    jfn_cef_layer_invoke_created_callback(rs_, browser.get());
 
     // Flush any URL buffered while the browser wasn't ready.
     if (char* url = jfn_cef_layer_take_pending_url(rs_)) {
@@ -352,10 +352,96 @@ void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     jfn_cef_layer_set_loaded(rs_, true);
     // Rust schedules the ResetCreateTask if this close was a reset cycle.
     jfn_cef_layer_on_before_close_hook(rs_);
-    // Move out before invoking. Invoking `on_before_close_()` inline would
-    // destroy the callback mid-call if it cleared the slot itself.
-    auto cb = std::move(on_before_close_);
-    if (cb) cb();
+    // Take-and-invoke semantics live in Rust so the callback can install a
+    // new slot without destroying its own closure mid-call.
+    jfn_cef_layer_take_and_invoke_before_close(rs_);
+}
+
+// =====================================================================
+// Callback-slot setter helpers (slice 6). Each public setter wraps the
+// caller's std::function in a heap-allocated holder, builds a C ABI thunk
+// for invocation, and hands a (fn_ptr, ctx, dtor) triple to the Rust-side
+// slot in JfnCefLayer.
+// =====================================================================
+
+namespace {
+
+struct MessageHandlerHolder { MessageHandler fn; };
+bool message_handler_thunk(void* ctx, const char* name_utf8, size_t len,
+                           void* args, void* browser) {
+    auto* h = static_cast<MessageHandlerHolder*>(ctx);
+    CefRefPtr<CefListValue> args_ref(static_cast<CefListValue*>(args));
+    CefRefPtr<CefBrowser> browser_ref(static_cast<CefBrowser*>(browser));
+    return h->fn(std::string(name_utf8, len), args_ref, browser_ref);
+}
+void message_handler_dtor(void* ctx) {
+    delete static_cast<MessageHandlerHolder*>(ctx);
+}
+
+struct CreatedCallbackHolder { CreatedCallback fn; };
+void created_callback_thunk(void* ctx, void* browser) {
+    auto* h = static_cast<CreatedCallbackHolder*>(ctx);
+    CefRefPtr<CefBrowser> browser_ref(static_cast<CefBrowser*>(browser));
+    h->fn(browser_ref);
+}
+void created_callback_dtor(void* ctx) {
+    delete static_cast<CreatedCallbackHolder*>(ctx);
+}
+
+struct BeforeCloseHolder { BeforeCloseCallback fn; };
+void before_close_thunk(void* ctx) {
+    auto* h = static_cast<BeforeCloseHolder*>(ctx);
+    h->fn();
+}
+void before_close_dtor(void* ctx) {
+    delete static_cast<BeforeCloseHolder*>(ctx);
+}
+
+struct CtxMenuBuilderHolder { ContextMenuBuilder fn; };
+void ctx_menu_builder_thunk(void* ctx, void* menu_model) {
+    auto* h = static_cast<CtxMenuBuilderHolder*>(ctx);
+    CefRefPtr<CefMenuModel> model_ref(static_cast<CefMenuModel*>(menu_model));
+    h->fn(model_ref);
+}
+void ctx_menu_builder_dtor(void* ctx) {
+    delete static_cast<CtxMenuBuilderHolder*>(ctx);
+}
+
+struct CtxMenuDispatcherHolder { ContextMenuDispatcher fn; };
+bool ctx_menu_dispatcher_thunk(void* ctx, int command_id) {
+    auto* h = static_cast<CtxMenuDispatcherHolder*>(ctx);
+    return h->fn(command_id);
+}
+void ctx_menu_dispatcher_dtor(void* ctx) {
+    delete static_cast<CtxMenuDispatcherHolder*>(ctx);
+}
+
+}  // namespace
+
+void CefLayer::setMessageHandler(MessageHandler handler) {
+    auto* h = new MessageHandlerHolder{std::move(handler)};
+    jfn_cef_layer_set_message_handler(rs_, (void*)&message_handler_thunk,
+                                      h, &message_handler_dtor);
+}
+void CefLayer::setCreatedCallback(CreatedCallback cb) {
+    auto* h = new CreatedCallbackHolder{std::move(cb)};
+    jfn_cef_layer_set_created_callback(rs_, (void*)&created_callback_thunk,
+                                       h, &created_callback_dtor);
+}
+void CefLayer::setBeforeCloseCallback(BeforeCloseCallback cb) {
+    auto* h = new BeforeCloseHolder{std::move(cb)};
+    jfn_cef_layer_set_before_close_callback(rs_, (void*)&before_close_thunk,
+                                            h, &before_close_dtor);
+}
+void CefLayer::setContextMenuBuilder(ContextMenuBuilder cb) {
+    auto* h = new CtxMenuBuilderHolder{std::move(cb)};
+    jfn_cef_layer_set_context_menu_builder(rs_, (void*)&ctx_menu_builder_thunk,
+                                           h, &ctx_menu_builder_dtor);
+}
+void CefLayer::setContextMenuDispatcher(ContextMenuDispatcher cb) {
+    auto* h = new CtxMenuDispatcherHolder{std::move(cb)};
+    jfn_cef_layer_set_context_menu_dispatcher(rs_, (void*)&ctx_menu_dispatcher_thunk,
+                                              h, &ctx_menu_dispatcher_dtor);
 }
 
 void CefLayer::create(const std::string& url) {
@@ -391,7 +477,7 @@ void CefLayer::doCreateBrowser(const std::string& url) {
     // menuItemSelected/menuDismissed IPCs and the context-menu.js script;
     // central them here so wrappers don't repeat the listing.
     CefRefPtr<CefDictionaryValue> info = extra_info_;
-    if (context_menu_builder_ && info) {
+    if (jfn_cef_layer_has_context_menu_builder(rs_) && info) {
         info = info->Copy(false);
         auto fns = info->HasKey("functions") ? info->GetList("functions") : CefListValue::Create();
         fns = fns->Copy();
@@ -499,7 +585,7 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
             case MENU_ID_PASTE: do_paste(browser_, frame); break;
             case MENU_ID_SELECT_ALL: frame->SelectAll(); break;
             default:
-                if (context_menu_dispatcher_) context_menu_dispatcher_(cmd);
+                jfn_cef_layer_invoke_context_menu_dispatcher(rs_, cmd);
                 break;
             }
         }
@@ -512,10 +598,9 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
         return true;
     }
 
-    // Everything else delegates to the business logic handler.
-    if (message_handler_)
-        return message_handler_(name, args, browser);
-    return false;
+    // Everything else delegates to the app-installed business logic handler.
+    return jfn_cef_layer_invoke_message_handler(rs_,
+        name.data(), name.size(), args.get(), browser.get());
 }
 
 bool CefLayer::OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& e,
@@ -533,9 +618,9 @@ void CefLayer::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
     while (model->GetCount() > 0 &&
            model->GetTypeAt(model->GetCount() - 1) == MENUITEMTYPE_SEPARATOR)
         model->RemoveAt(model->GetCount() - 1);
-    if (context_menu_builder_) {
+    if (jfn_cef_layer_has_context_menu_builder(rs_)) {
         model->AddSeparator();
-        context_menu_builder_(model);
+        jfn_cef_layer_invoke_context_menu_builder(rs_, model.get());
     }
 }
 

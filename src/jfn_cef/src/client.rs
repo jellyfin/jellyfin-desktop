@@ -124,6 +124,35 @@ struct Inner {
     pending_url: Mutex<String>,
     has_browser: AtomicBool,
     pending_internal_reset: AtomicBool,
+
+    // app-level callback slots (slice 6). C++ wraps std::function into
+    // (fn_ptr, ctx, dtor) triples; Rust owns them and invokes via FFI.
+    message_handler: Mutex<Option<CallbackSlot>>,
+    created_callback: Mutex<Option<CallbackSlot>>,
+    before_close_callback: Mutex<Option<CallbackSlot>>,
+    context_menu_builder: Mutex<Option<CallbackSlot>>,
+    context_menu_dispatcher: Mutex<Option<CallbackSlot>>,
+}
+
+struct CallbackSlot {
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+}
+
+// SAFETY: ctx points at a C++-allocated holder; ownership is transferred to
+// the slot. dtor cleans up the holder on slot drop.
+unsafe impl Send for CallbackSlot {}
+unsafe impl Sync for CallbackSlot {}
+
+impl Drop for CallbackSlot {
+    fn drop(&mut self) {
+        if let Some(d) = self.dtor {
+            if !self.ctx.is_null() {
+                unsafe { d(self.ctx) };
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -182,6 +211,11 @@ impl Inner {
             pending_url: Mutex::new(String::new()),
             has_browser: AtomicBool::new(false),
             pending_internal_reset: AtomicBool::new(false),
+            message_handler: Mutex::new(None),
+            created_callback: Mutex::new(None),
+            before_close_callback: Mutex::new(None),
+            context_menu_builder: Mutex::new(None),
+            context_menu_dispatcher: Mutex::new(None),
         })
     }
 
@@ -1076,6 +1110,153 @@ pub unsafe extern "C" fn jfn_cef_layer_on_before_popup(
 ) -> bool {
     let url = read_utf8(url_utf8, len);
     unsafe { arc(h) }.on_before_popup(&url)
+}
+
+fn store_slot(
+    slot: &Mutex<Option<CallbackSlot>>,
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    let new = if fn_ptr.is_null() {
+        None
+    } else {
+        Some(CallbackSlot { fn_ptr, ctx, dtor })
+    };
+    *slot.lock().unwrap() = new;
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_set_message_handler(
+    h: *const JfnCefLayer,
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    store_slot(&unsafe { arc(h) }.message_handler, fn_ptr, ctx, dtor);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_set_created_callback(
+    h: *const JfnCefLayer,
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    store_slot(&unsafe { arc(h) }.created_callback, fn_ptr, ctx, dtor);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_set_before_close_callback(
+    h: *const JfnCefLayer,
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    store_slot(&unsafe { arc(h) }.before_close_callback, fn_ptr, ctx, dtor);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_builder(
+    h: *const JfnCefLayer,
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    store_slot(&unsafe { arc(h) }.context_menu_builder, fn_ptr, ctx, dtor);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_dispatcher(
+    h: *const JfnCefLayer,
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    store_slot(&unsafe { arc(h) }.context_menu_dispatcher, fn_ptr, ctx, dtor);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_has_context_menu_builder(h: *const JfnCefLayer) -> bool {
+    unsafe { arc(h) }.context_menu_builder.lock().unwrap().is_some()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_invoke_message_handler(
+    h: *const JfnCefLayer,
+    name_utf8: *const c_char,
+    name_len: usize,
+    args: *mut c_void,
+    browser: *mut c_void,
+) -> bool {
+    let inner = unsafe { arc(h) };
+    let g = inner.message_handler.lock().unwrap();
+    let Some(slot) = g.as_ref() else { return false };
+    type F = unsafe extern "C" fn(
+        *mut c_void,
+        *const c_char,
+        usize,
+        *mut c_void,
+        *mut c_void,
+    ) -> bool;
+    let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
+    unsafe { f(slot.ctx, name_utf8, name_len, args, browser) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_invoke_created_callback(
+    h: *const JfnCefLayer,
+    browser: *mut c_void,
+) {
+    let inner = unsafe { arc(h) };
+    let g = inner.created_callback.lock().unwrap();
+    let Some(slot) = g.as_ref() else { return };
+    type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
+    let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
+    unsafe { f(slot.ctx, browser) };
+}
+
+/// Atomically take the before-close slot and invoke it. Matches the original
+/// "move out before invoking" semantics in OnBeforeClose so the callback can
+/// safely install a new one without destroying its own closure mid-call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_take_and_invoke_before_close(h: *const JfnCefLayer) {
+    let slot = unsafe { arc(h) }
+        .before_close_callback
+        .lock()
+        .unwrap()
+        .take();
+    let Some(s) = slot else { return };
+    type F = unsafe extern "C" fn(*mut c_void);
+    let f: F = unsafe { std::mem::transmute(s.fn_ptr) };
+    unsafe { f(s.ctx) };
+    // s drops here — dtor cleans up the C++ holder.
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_invoke_context_menu_builder(
+    h: *const JfnCefLayer,
+    menu_model: *mut c_void,
+) {
+    let inner = unsafe { arc(h) };
+    let g = inner.context_menu_builder.lock().unwrap();
+    let Some(slot) = g.as_ref() else { return };
+    type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
+    let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
+    unsafe { f(slot.ctx, menu_model) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_invoke_context_menu_dispatcher(
+    h: *const JfnCefLayer,
+    command_id: c_int,
+) -> bool {
+    let inner = unsafe { arc(h) };
+    let g = inner.context_menu_dispatcher.lock().unwrap();
+    let Some(slot) = g.as_ref() else { return false };
+    type F = unsafe extern "C" fn(*mut c_void, c_int) -> bool;
+    let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
+    unsafe { f(slot.ctx, command_id) }
 }
 
 fn read_utf8(p: *const c_char, len: usize) -> String {
