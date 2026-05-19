@@ -39,6 +39,11 @@ struct JfnCefBrowserOps {
     // "applyPopupSelection" IPC + mouse-wheel dismiss at (-1,-1). Used by
     // native-menu popup backends (macOS) when the user picks an option.
     void (*dispatch_popup_selection)(void* ctx, int index);
+    // CefBrowserHost::CreateBrowser with the layer as client. extra_info,
+    // CefWindowInfo + CefBrowserSettings prepared in the thunk.
+    void (*create_browser)(void* ctx, const char* url_utf8, size_t len);
+    void (*close_browser)(void* ctx);
+    void (*load_url)(void* ctx, const char* url_utf8, size_t len);
 };
 
 extern "C" {
@@ -75,6 +80,14 @@ void         jfn_cef_layer_on_paint(const JfnCefLayer*, bool is_popup,
                                     const void* buffer, int w, int h);
 void         jfn_cef_layer_on_accelerated_paint(const JfnCefLayer*, bool is_popup,
                                                 const void* accel_paint_info);
+void         jfn_cef_layer_create(const JfnCefLayer*, const char* url_utf8, size_t len);
+void         jfn_cef_layer_reset(const JfnCefLayer*);
+void         jfn_cef_layer_load_url(const JfnCefLayer*, const char* url_utf8, size_t len);
+int          jfn_cef_layer_on_after_created(const JfnCefLayer*);
+void         jfn_cef_layer_on_before_close_hook(const JfnCefLayer*);
+char*        jfn_cef_layer_take_pending_url(const JfnCefLayer*);
+bool         jfn_cef_layer_on_before_popup(const JfnCefLayer*, const char* url_utf8, size_t len);
+void         jfn_cef_layer_free_string(char*);
 }
 
 // Callback invoked for IPC messages from the renderer process.
@@ -207,9 +220,12 @@ public:
     // shouldn't outlive active status — currently the popup.
     void onDeactivated();
 
-private:
-    enum class State { Normal, PendingReset, Recreating };
+    // Browser-op create thunk — dispatches CefBrowserHost::CreateBrowser
+    // with WindowInfo/Settings/extra_info synthesized from extra_info_ +
+    // context_menu_builder_. Invoked from Rust via JfnCefBrowserOps.
+    void doCreateBrowser(const std::string& url);
 
+private:
     Browsers& browsers_;
     PlatformSurface* surface_ = nullptr;
     std::string name_;
@@ -222,7 +238,5 @@ private:
     ContextMenuBuilder context_menu_builder_;
     ContextMenuDispatcher context_menu_dispatcher_;
     CefRefPtr<CefDictionaryValue> extra_info_;
-    State state_ = State::Normal;
-    std::string pending_url_;
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

@@ -3,22 +3,11 @@
 #include "../browser/browsers.h"
 #include "../platform/platform.h"
 #include "include/cef_parser.h"
-#include "include/cef_task.h"
 #include "include/cef_values.h"
 #include <cstdio>
 #include <functional>
 
 namespace {
-// Small CefTask adapter for the two remaining C++-scheduled tasks (popup
-// dispatch + reset deferred-create). Slices 4/5 migrate both to Rust.
-class FnTask : public CefTask {
-public:
-    explicit FnTask(std::function<void()> fn) : fn_(std::move(fn)) {}
-    void Execute() override { if (fn_) fn_(); }
-private:
-    std::function<void()> fn_;
-    IMPLEMENT_REFCOUNTING(FnTask);
-};
 
 CefRefPtr<CefFrame> focused_or_main(CefRefPtr<CefBrowser> browser) {
     if (!browser) return nullptr;
@@ -185,6 +174,21 @@ void ops_dispatch_popup_selection(void* c, int index) {
     me.y = -1;
     b->GetHost()->SendMouseWheelEvent(me, /*deltaX=*/0, /*deltaY=*/1);
 }
+void ops_create_browser(void* c, const char* url_utf8, size_t len) {
+    auto* self = static_cast<CefLayer*>(c);
+    self->doCreateBrowser(std::string(url_utf8, len));
+}
+void ops_close_browser(void* c) {
+    auto* self = static_cast<CefLayer*>(c);
+    if (auto b = self->browser()) b->GetHost()->CloseBrowser(true);
+}
+void ops_load_url(void* c, const char* url_utf8, size_t len) {
+    auto* self = static_cast<CefLayer*>(c);
+    auto b = self->browser();
+    if (!b) return;
+    if (auto f = b->GetMainFrame())
+        f->LoadURL(CefString(std::string(url_utf8, len)));
+}
 
 }  // namespace
 
@@ -200,6 +204,9 @@ CefLayer::CefLayer(Browsers& browsers, PlatformSurface* surface)
     ops.exec_js = ops_exec_js;
     ops.send_process_message_named = ops_send_process_message_named;
     ops.dispatch_popup_selection = ops_dispatch_popup_selection;
+    ops.create_browser = ops_create_browser;
+    ops.close_browser = ops_close_browser;
+    ops.load_url = ops_load_url;
     jfn_cef_layer_set_browser_ops(rs_, &ops);
     jfn_cef_layer_set_surface(rs_, surface);
 }
@@ -308,25 +315,19 @@ void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     jfn_cef_layer_kick_invalidate_loop(rs_);
 
     // Reset state machine: if reset() was called before the initial
-    // OnAfterCreated, close the freshly created browser so the one-shot
-    // before-close callback can spin up the blank replacement.
-    if (state_ == State::PendingReset) {
-        state_ = State::Recreating;
+    // OnAfterCreated, action==1 says close the freshly created browser so
+    // the deferred replacement spawns via ResetCreateTask.
+    if (jfn_cef_layer_on_after_created(rs_) == 1) {
         browser->GetHost()->CloseBrowser(true);
         return;
-    }
-    // If we're coming out of a reset cycle, return to Normal; the blank
-    // browser is up and any URL buffered during the reset is applied below.
-    if (state_ == State::Recreating) {
-        state_ = State::Normal;
     }
 
     if (on_after_created_) on_after_created_(browser);
 
     // Flush any URL buffered while the browser wasn't ready.
-    if (!pending_url_.empty()) {
-        browser->GetMainFrame()->LoadURL(pending_url_);
-        pending_url_.clear();
+    if (char* url = jfn_cef_layer_take_pending_url(rs_)) {
+        browser->GetMainFrame()->LoadURL(CefString(url));
+        jfn_cef_layer_free_string(url);
     }
 }
 
@@ -336,15 +337,10 @@ bool CefLayer::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int,
                              CefWindowInfo&, CefRefPtr<CefClient>&,
                              CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&,
                              bool*) {
-    // OSR has no host for default popups; route them to the OS.
     std::string url = target_url.ToString();
-    // Leading '-' guard blocks argv-style option smuggling into xdg-open.
-    if (url.empty() || url[0] == '-') {
+    if (url.empty() || url[0] == '-')
         LOG_WARN(LOG_CEF, "OnBeforePopup: refusing URL: '{}'", url);
-        return true;
-    }
-    g_platform.open_external_url(url);
-    return true;
+    return jfn_cef_layer_on_before_popup(rs_, url.data(), url.size());
 }
 
 void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
@@ -354,15 +350,27 @@ void CefLayer::OnBeforeClose(CefRefPtr<CefBrowser>) {
     jfn_cef_layer_stop_invalidate(rs_);
     jfn_cef_layer_set_closed(rs_, true);
     jfn_cef_layer_set_loaded(rs_, true);
-    // Move out before invoking. The callback can safely install a new one
-    // (via setBeforeCloseCallback) without destroying its own closure —
-    // invoking `on_before_close_()` inline would if the callback then
-    // nulled the slot.
+    // Rust schedules the ResetCreateTask if this close was a reset cycle.
+    jfn_cef_layer_on_before_close_hook(rs_);
+    // Move out before invoking. Invoking `on_before_close_()` inline would
+    // destroy the callback mid-call if it cleared the slot itself.
     auto cb = std::move(on_before_close_);
     if (cb) cb();
 }
 
 void CefLayer::create(const std::string& url) {
+    jfn_cef_layer_create(rs_, url.data(), url.size());
+}
+
+void CefLayer::reset() {
+    jfn_cef_layer_reset(rs_);
+}
+
+void CefLayer::loadUrl(const std::string& url) {
+    jfn_cef_layer_load_url(rs_, url.data(), url.size());
+}
+
+void CefLayer::doCreateBrowser(const std::string& url) {
     CefWindowInfo wi;
     wi.SetAsWindowless(0);
     wi.shared_texture_enabled = browsers_.use_shared_textures();
@@ -396,48 +404,6 @@ void CefLayer::create(const std::string& url) {
         info->SetList("scripts", scripts);
     }
     CefBrowserHost::CreateBrowser(wi, this, url, bs, info, nullptr);
-}
-
-void CefLayer::reset() {
-    // Double-call guard: already tearing down or awaiting the replacement.
-    if (state_ != State::Normal) return;
-
-    // One-shot: when the current browser finishes closing, spin up a fresh
-    // one with no URL. A blank browser has no origin state from the old one.
-    // OnBeforeClose fires synchronously from within CEF's destroy chain, so
-    // we MUST defer the CreateBrowser — calling it inline reenters CEF while
-    // WebContents is mid-destroy and crashes inside libcef.
-    CefRefPtr<CefLayer> self(this);
-    setBeforeCloseCallback([self]() {
-        // OnBeforeClose already moved this callback out of on_before_close_,
-        // so we don't need to (and must not) clear it ourselves.
-        CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self]() {
-            // Go through create() so requested_url_ is cleared alongside the
-            // actual CreateBrowser call. Skip during shutdown: CefShutdown()
-            // drains pending tasks, and creating a browser here would race
-            // with the shutdown teardown and cause a hang.
-            if (!g_shutting_down.load(std::memory_order_relaxed))
-                self->create("");
-        })));
-    });
-
-    if (browser_) {
-        state_ = State::Recreating;
-        browser_->GetHost()->CloseBrowser(true);
-    } else {
-        // Initial create still in flight. Defer the close to OnAfterCreated.
-        state_ = State::PendingReset;
-    }
-}
-
-void CefLayer::loadUrl(const std::string& url) {
-    // If a reset is in flight or the initial create hasn't completed, buffer
-    // the URL and let OnAfterCreated apply it when the browser is ready.
-    if (state_ != State::Normal || !browser_) {
-        pending_url_ = url;
-        return;
-    }
-    browser_->GetMainFrame()->LoadURL(url);
 }
 
 void CefLayer::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int code) {

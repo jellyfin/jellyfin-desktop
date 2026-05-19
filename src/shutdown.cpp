@@ -21,3 +21,9 @@ void initiate_shutdown() {
 void signal_handler(int) {
     initiate_shutdown();
 }
+
+// Exposed to the Rust-side CefLayer port (src/jfn_cef/src/client.rs). Used
+// to gate posted-task work that must not race with CefShutdown teardown.
+extern "C" bool jfn_shutting_down() {
+    return g_shutting_down.load(std::memory_order_relaxed);
+}

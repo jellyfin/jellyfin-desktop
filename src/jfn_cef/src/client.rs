@@ -25,7 +25,12 @@ use crate::platform_ops;
 
 unsafe extern "C" {
     fn jfn_playback_display_hz() -> f64;
+    fn jfn_shutting_down() -> bool;
 }
+
+const STATE_NORMAL: i32 = 0;
+const STATE_PENDING_RESET: i32 = 1;
+const STATE_RECREATING: i32 = 2;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -43,6 +48,13 @@ pub struct JfnCefBrowserOps {
     /// Sends "applyPopupSelection" IPC with int arg + a mouse-wheel dismiss
     /// event at (-1, -1) (only public path to CancelWidget on a CEF OSR popup).
     pub dispatch_popup_selection: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
+    /// CefBrowserHost::CreateBrowser with the layer as the client; extra_info
+    /// + WindowInfo + BrowserSettings prepared in the C++ thunk.
+    pub create_browser: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+    /// browser_->GetHost()->CloseBrowser(true).
+    pub close_browser: Option<unsafe extern "C" fn(*mut c_void)>,
+    /// browser_->GetMainFrame()->LoadURL(url).
+    pub load_url: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
 }
 
 // SAFETY: the C++ side guarantees the ctx pointer remains valid until
@@ -106,6 +118,12 @@ struct Inner {
     // arrives via OnPopupSize, options via the "popupOptions" renderer IPC;
     // try_show_popup fires when popup_visible + size_received + options_received.
     popup: Mutex<PopupState>,
+
+    // lifecycle / reset state machine (slice 5)
+    state: AtomicI32,
+    pending_url: Mutex<String>,
+    has_browser: AtomicBool,
+    pending_internal_reset: AtomicBool,
 }
 
 #[derive(Default)]
@@ -160,6 +178,10 @@ impl Inner {
                 selected_idx: -1,
                 ..PopupState::default()
             }),
+            state: AtomicI32::new(STATE_NORMAL),
+            pending_url: Mutex::new(String::new()),
+            has_browser: AtomicBool::new(false),
+            pending_internal_reset: AtomicBool::new(false),
         })
     }
 
@@ -223,6 +245,27 @@ impl Inner {
         self.with_ops(|o| {
             if let Some(f) = o.send_process_message_named {
                 unsafe { f(o.ctx, name.as_ptr() as *const c_char, name.len()) }
+            }
+        });
+    }
+    fn cef_create_browser(&self, url: &str) {
+        self.with_ops(|o| {
+            if let Some(f) = o.create_browser {
+                unsafe { f(o.ctx, url.as_ptr() as *const c_char, url.len()) }
+            }
+        });
+    }
+    fn cef_close_browser(&self) {
+        self.with_ops(|o| {
+            if let Some(f) = o.close_browser {
+                unsafe { f(o.ctx) }
+            }
+        });
+    }
+    fn cef_load_url(&self, url: &str) {
+        self.with_ops(|o| {
+            if let Some(f) = o.load_url {
+                unsafe { f(o.ctx, url.as_ptr() as *const c_char, url.len()) }
             }
         });
     }
@@ -530,6 +573,95 @@ impl Inner {
         (p.w, p.h)
     }
 
+    // ---- lifecycle / reset (slice 5) -------------------------------------
+
+    /// Called from C++ OnAfterCreated after browser_ has been assigned and
+    /// the CEF-side WasResized + Invalidate kick has fired. Returns 1 when
+    /// the C++ side should close the freshly created browser (PendingReset
+    /// path); 0 otherwise. C++ then invokes its on_after_created_ user
+    /// callback (slice 6 ports it) and asks for any buffered URL via
+    /// jfn_cef_layer_take_pending_url.
+    fn on_after_created(&self) -> i32 {
+        self.has_browser.store(true, Ordering::Release);
+        match self.state.load(Ordering::Acquire) {
+            STATE_PENDING_RESET => {
+                self.state.store(STATE_RECREATING, Ordering::Release);
+                1
+            }
+            STATE_RECREATING => {
+                self.state.store(STATE_NORMAL, Ordering::Release);
+                0
+            }
+            _ => 0,
+        }
+    }
+
+    fn on_before_close(self: &Arc<Self>) {
+        self.has_browser.store(false, Ordering::Release);
+        if self.pending_internal_reset.swap(false, Ordering::AcqRel) {
+            let inner = Arc::clone(self);
+            let mut task = ResetCreateTask::new(inner);
+            let _ = post_task(ThreadId::UI, Some(&mut task));
+        }
+    }
+
+    fn create(&self, url: &str) {
+        self.cef_create_browser(url);
+    }
+
+    fn reset(&self) {
+        if self.state.load(Ordering::Acquire) != STATE_NORMAL {
+            return;
+        }
+        // One-shot: when OnBeforeClose fires, ResetCreateTask spins up a
+        // fresh blank browser. OnBeforeClose runs synchronously from within
+        // CEF's destroy chain, so the create must be deferred — calling it
+        // inline reenters CEF while WebContents is mid-destroy and crashes
+        // inside libcef.
+        self.pending_internal_reset.store(true, Ordering::Release);
+        if self.has_browser.load(Ordering::Acquire) {
+            self.state.store(STATE_RECREATING, Ordering::Release);
+            self.cef_close_browser();
+        } else {
+            // Initial create still in flight. Defer the close to OnAfterCreated.
+            self.state.store(STATE_PENDING_RESET, Ordering::Release);
+        }
+    }
+
+    fn load_url(&self, url: &str) {
+        // If a reset is in flight or the initial create hasn't completed,
+        // buffer the URL; OnAfterCreated drains it via take_pending_url.
+        if self.state.load(Ordering::Acquire) != STATE_NORMAL
+            || !self.has_browser.load(Ordering::Acquire)
+        {
+            *self.pending_url.lock().unwrap() = url.to_string();
+            return;
+        }
+        self.cef_load_url(url);
+    }
+
+    fn take_pending_url(&self) -> Option<String> {
+        let mut g = self.pending_url.lock().unwrap();
+        if g.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut *g))
+        }
+    }
+
+    fn on_before_popup(&self, url: &str) -> bool {
+        // Leading '-' guard blocks argv-style option smuggling into xdg-open.
+        if url.is_empty() || url.starts_with('-') {
+            return true;
+        }
+        if let Some(ops) = platform_ops::ops() {
+            if let Some(f) = ops.open_external_url {
+                unsafe { f(url.as_ptr() as *const c_char, url.len()) };
+            }
+        }
+        true
+    }
+
     // ---- paint dispatch --------------------------------------------------
 
     fn on_paint(
@@ -685,6 +817,22 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             self.inner.dispatch_popup_selection(self.index);
+        }
+    }
+}
+
+wrap_task! {
+    struct ResetCreateTask {
+        inner: Arc<Inner>,
+    }
+    impl Task {
+        fn execute(&self) {
+            // CefShutdown drains pending tasks; creating a browser here would
+            // race with the shutdown teardown and cause a hang.
+            if unsafe { jfn_shutting_down() } {
+                return;
+            }
+            self.inner.create("");
         }
     }
 }
@@ -871,6 +1019,71 @@ pub unsafe extern "C" fn jfn_cef_layer_get_screen_info(
         *out_w = w;
         *out_h = l.height.load(Ordering::Acquire);
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_create(
+    h: *const JfnCefLayer,
+    url_utf8: *const c_char,
+    len: usize,
+) {
+    let url = read_utf8(url_utf8, len);
+    unsafe { arc(h) }.create(&url);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_reset(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.reset();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_load_url(
+    h: *const JfnCefLayer,
+    url_utf8: *const c_char,
+    len: usize,
+) {
+    let url = read_utf8(url_utf8, len);
+    unsafe { arc(h) }.load_url(&url);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_after_created(h: *const JfnCefLayer) -> c_int {
+    unsafe { arc(h) }.on_after_created()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_before_close_hook(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.on_before_close();
+}
+
+/// Returns a heap-allocated C string of the buffered URL (or NULL if none).
+/// Caller frees with jfn_cef_layer_free_string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_take_pending_url(h: *const JfnCefLayer) -> *mut c_char {
+    match unsafe { arc(h) }.take_pending_url() {
+        None => std::ptr::null_mut(),
+        Some(s) => std::ffi::CString::new(s)
+            .map(|c| c.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_before_popup(
+    h: *const JfnCefLayer,
+    url_utf8: *const c_char,
+    len: usize,
+) -> bool {
+    let url = read_utf8(url_utf8, len);
+    unsafe { arc(h) }.on_before_popup(&url)
+}
+
+fn read_utf8(p: *const c_char, len: usize) -> String {
+    if p.is_null() || len == 0 {
+        return String::new();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(p as *const u8, len) };
+    String::from_utf8_lossy(slice).into_owned()
 }
 
 #[unsafe(no_mangle)]
