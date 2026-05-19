@@ -165,6 +165,13 @@ wrap_browser_process_handler! {
                 cb();
             }
         }
+
+        fn on_schedule_message_pump_work(&self, delay_ms: i64) {
+            #[cfg(target_os = "macos")]
+            crate::pump::on_schedule(delay_ms);
+            #[cfg(not(target_os = "macos"))]
+            let _ = delay_ms;
+        }
     }
 }
 

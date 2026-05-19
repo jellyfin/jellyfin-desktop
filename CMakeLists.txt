@@ -569,7 +569,6 @@ else()
         src/mpv/color.cpp
         src/cef/cef_app.cpp
         src/cef/cef_client.cpp
-        src/cef/macos_pump.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
