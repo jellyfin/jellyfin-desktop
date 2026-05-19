@@ -129,22 +129,6 @@ OverlayBrowser::~OverlayBrowser() {
     release_layer(layer_.get());
 }
 
-CefRefPtr<CefDictionaryValue> OverlayBrowser::injectionProfile() {
-    static const char* const kFunctions[] = {
-        "getSavedServerUrl",
-        "saveServerUrl", "navigateMain", "dismissOverlay",
-        "checkServerConnectivity", "cancelServerConnectivity",
-        "overlayFadeComplete",
-    };
-    CefRefPtr<CefListValue> fns = CefListValue::Create();
-    for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
-        fns->SetString(i, kFunctions[i]);
-    CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
-    d->SetList("functions", fns);
-    d->SetList("scripts", CefListValue::Create());
-    return d;
-}
-
 OverlayBrowser::OverlayBrowser(CefRefPtr<CefLayer> layer, WebBrowser& main_browser)
     : layer_(std::move(layer))
     , main_browser_(main_browser)
@@ -155,9 +139,10 @@ OverlayBrowser::OverlayBrowser(CefRefPtr<CefLayer> layer, WebBrowser& main_brows
                                      CefRefPtr<CefBrowser> browser) {
         return handleMessage(name, args, browser);
     });
-    layer_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
+    CefRefPtr<CefLayer> layer_ref = layer_;
+    layer_->setCreatedCallback([layer_ref]() {
         // Overlay wins input whenever it's created.
-        if (g_browsers) g_browsers->setActive(browser);
+        if (g_browsers) g_browsers->setActive(layer_ref);
     });
     layer_->setContextMenuBuilder(&app_menu::build);
     layer_->setContextMenuDispatcher(&app_menu::dispatch);
@@ -186,8 +171,7 @@ bool OverlayBrowser::handleMessage(const std::string& name,
     } else if (name == "dismissOverlay") {
         // Commit: hand input to main, start the fade, close when done.
         LOG_INFO(LOG_CEF, "Overlay: dismissOverlay");
-        if (auto b = main_browser_.browser(); b && g_browsers)
-            g_browsers->setActive(b);
+        if (g_browsers) g_browsers->setActive(main_browser_.layer());
         CefRefPtr<CefBrowser> overlay_browser = browser;
         layer_->fade(OVERLAY_FADE_DURATION_SEC,
             []() {

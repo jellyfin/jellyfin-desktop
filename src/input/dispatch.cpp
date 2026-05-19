@@ -4,8 +4,9 @@
 #include "hotkeys.h"
 #include "logging.h"
 #include "../browser/browsers.h"
+#include "../cef/cef_client.h"
 
-#include "include/cef_browser.h"
+#include "include/internal/cef_types.h"
 
 #include <mutex>
 
@@ -15,11 +16,11 @@ namespace {
 std::mutex g_last_pos_mtx;
 LastMousePos g_last_pos;  // guarded by g_last_pos_mtx
 
-CefRefPtr<CefBrowser> active() {
+CefRefPtr<CefLayer> active_layer() {
     return g_browsers ? g_browsers->active() : nullptr;
 }
 
-cef_mouse_button_type_t to_cef_button(MouseButton b) {
+int to_cef_button(MouseButton b) {
     switch (b) {
     case MouseButton::Left:   return MBT_LEFT;
     case MouseButton::Right:  return MBT_RIGHT;
@@ -37,44 +38,29 @@ LastMousePos last_mouse_pos() {
 
 void dispatch_key(const KeyEvent& e) {
     if (e.action == KeyAction::Down && hotkey_try_consume(e)) return;
-
-    auto b = active();
-    if (!b) return;
-
-    CefKeyEvent ce{};
-    ce.windows_key_code     = e.windows_key_code;
-    ce.native_key_code      = e.native_key_code;
-    ce.modifiers            = e.modifiers;
-    ce.is_system_key        = e.is_system_key;
-    ce.character            = e.character;
-    ce.unmodified_character = e.unmodified_character;
-    ce.type = (e.action == KeyAction::Down) ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
-    b->GetHost()->SendKeyEvent(ce);
+    auto l = active_layer();
+    if (!l) return;
+    int type_ = (e.action == KeyAction::Down) ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
+    l->sendKeyEvent(type_, e.modifiers, e.windows_key_code, e.native_key_code,
+                    e.is_system_key, static_cast<uint16_t>(e.character),
+                    static_cast<uint16_t>(e.unmodified_character));
 }
 
 void dispatch_char(uint32_t codepoint, uint32_t modifiers,
                    int native_key_code, bool is_system_key) {
     if (codepoint == 0 || codepoint >= 0x10FFFF) return;
-
-    auto b = active();
-    if (!b) return;
-
-    CefKeyEvent ce{};
-    ce.type             = KEYEVENT_CHAR;
-    ce.character        = codepoint;
-    ce.windows_key_code = static_cast<int>(codepoint);
-    ce.modifiers        = modifiers;
-    ce.native_key_code  = native_key_code;
-    ce.is_system_key    = is_system_key;
-    b->GetHost()->SendKeyEvent(ce);
+    auto l = active_layer();
+    if (!l) return;
+    l->sendKeyEvent(KEYEVENT_CHAR, modifiers, static_cast<int>(codepoint),
+                    native_key_code, is_system_key,
+                    static_cast<uint16_t>(codepoint),
+                    static_cast<uint16_t>(codepoint));
 }
 
 void dispatch_mouse_button(const MouseButtonEvent& e) {
-    auto b = active();
-    if (!b) return;
-    CefMouseEvent me{};
-    me.x = e.x; me.y = e.y; me.modifiers = e.modifiers;
-    b->GetHost()->SendMouseClickEvent(me, to_cef_button(e.button), !e.pressed, e.click_count);
+    auto l = active_layer();
+    if (!l) return;
+    l->sendMouseClick(e.x, e.y, e.modifiers, to_cef_button(e.button), !e.pressed, e.click_count);
 }
 
 void dispatch_mouse_move(const MouseMoveEvent& e) {
@@ -89,36 +75,32 @@ void dispatch_mouse_move(const MouseMoveEvent& e) {
             g_last_pos.modifiers = e.modifiers;
         }
     }
-    auto b = active();
-    if (!b) return;
-    CefMouseEvent me{};
-    me.x = e.x; me.y = e.y; me.modifiers = e.modifiers;
-    b->GetHost()->SendMouseMoveEvent(me, e.leave);
+    auto l = active_layer();
+    if (!l) return;
+    l->sendMouseMove(e.x, e.y, e.modifiers, e.leave);
 }
 
 void dispatch_history_nav(bool forward) {
-    auto b = active();
-    if (!b) return;
+    auto l = active_layer();
+    if (!l) return;
     if (forward) {
-        if (b->CanGoForward()) b->GoForward();
+        if (l->canGoForward()) l->goForward();
     } else {
-        if (b->CanGoBack()) b->GoBack();
+        if (l->canGoBack()) l->goBack();
     }
 }
 
 void dispatch_scroll(const ScrollEvent& e) {
-    auto b = active();
-    if (!b) return;
-    CefMouseEvent me{};
-    me.x = e.x; me.y = e.y;
-    me.modifiers = e.modifiers;
-    if (e.precise) me.modifiers |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
-    b->GetHost()->SendMouseWheelEvent(me, e.dx, e.dy);
+    auto l = active_layer();
+    if (!l) return;
+    uint32_t mods = e.modifiers;
+    if (e.precise) mods |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
+    l->sendMouseWheel(e.x, e.y, mods, e.dx, e.dy);
 }
 
 void dispatch_keyboard_focus(bool gained) {
-    auto b = active();
-    if (b) b->GetHost()->SetFocus(gained);
+    auto l = active_layer();
+    if (l) l->setFocus(gained);
 }
 
 }  // namespace input

@@ -1,55 +1,20 @@
 #pragma once
 
+#include "include/cef_base.h"
 #include "include/cef_browser.h"
-#include "include/cef_client.h"
-#include "include/cef_render_handler.h"
-#include "include/cef_life_span_handler.h"
-#include "include/cef_load_handler.h"
-#include "include/cef_context_menu_handler.h"
-#include "include/cef_display_handler.h"
-#include "include/cef_keyboard_handler.h"
-#include "../platform/platform_ops.h"
+#include "include/cef_menu_model.h"
+#include "include/cef_values.h"
+#include <cstdint>
 #include <functional>
 #include <string>
 
 class Browsers;
 struct PlatformSurface;
 
-// Opaque handle to the Rust-side state in jfn-cef (src/jfn_cef/src/client.rs).
-// Owns name/closed/loaded/condvars, the resize-debounce + invalidate-loop
-// state machine, and a per-layer surface pointer. Subsequent porting slices
-// migrate more behavior in; for now C++ holds the CEF handler impls and the
-// CefRefPtr<CefBrowser>.
+// Opaque handle to the Rust-side layer state (jfn-cef::client). Owns all
+// state, the CEF Client + 6 handler impls (wrap_* macros), and the stored
+// CefBrowser captured at LifeSpanHandler::on_after_created.
 struct JfnCefLayer;
-
-// Per-layer CEF browser op vtable. C++ supplies fn-pointer thunks during
-// CefLayer ctor; the Rust side invokes them when scheduling work on TID_UI.
-// ctx is the CefLayer*; thunks must null-check the browser ref themselves.
-struct JfnCefBrowserOps {
-    void* ctx;
-    void (*notify_screen_info_changed)(void* ctx);
-    void (*was_resized)(void* ctx);
-    void (*invalidate)(void* ctx);
-    void (*send_external_begin_frame)(void* ctx);
-    void (*set_windowless_frame_rate)(void* ctx, int hz);
-    void (*exec_js)(void* ctx, const char* js_utf8, size_t len);
-    // Send a CefProcessMessage with the given name (no args) to PID_RENDERER.
-    void (*send_process_message_named)(void* ctx, const char* name_utf8, size_t len);
-    // "applyPopupSelection" IPC + mouse-wheel dismiss at (-1,-1). Used by
-    // native-menu popup backends (macOS) when the user picks an option.
-    void (*dispatch_popup_selection)(void* ctx, int index);
-    // CefBrowserHost::CreateBrowser with the layer as client. extra_info,
-    // CefWindowInfo + CefBrowserSettings prepared in the thunk.
-    void (*create_browser)(void* ctx, const char* url_utf8, size_t len);
-    void (*close_browser)(void* ctx);
-    void (*load_url)(void* ctx, const char* url_utf8, size_t len);
-    // frame->ExecuteJavaScript on the focused (or main) frame — used by the
-    // paste intercept's document.execCommand('insertText', ...) call.
-    void (*exec_js_focused)(void* ctx, const char* js_utf8, size_t len);
-    // focused_or_main_frame->Paste(). Fallback when platform clipboard is
-    // unavailable (context-menu MENU_ID_PASTE branch).
-    void (*frame_paste)(void* ctx);
-};
 
 extern "C" {
 JfnCefLayer* jfn_cef_layer_new();
@@ -57,41 +22,19 @@ void         jfn_cef_layer_free(JfnCefLayer*);
 void         jfn_cef_layer_set_name(const JfnCefLayer*, const char* utf8);
 bool         jfn_cef_layer_is_closed(const JfnCefLayer*);
 bool         jfn_cef_layer_is_loaded(const JfnCefLayer*);
-void         jfn_cef_layer_set_closed(const JfnCefLayer*, bool);
-void         jfn_cef_layer_set_loaded(const JfnCefLayer*, bool);
 void         jfn_cef_layer_wait_for_close(const JfnCefLayer*);
 void         jfn_cef_layer_wait_for_load(const JfnCefLayer*);
 
-void         jfn_cef_layer_set_browser_ops(const JfnCefLayer*, const JfnCefBrowserOps*);
-void         jfn_cef_layer_clear_browser_ops(const JfnCefLayer*);
 void         jfn_cef_layer_set_surface(const JfnCefLayer*, void* surface);
 void         jfn_cef_layer_resize(const JfnCefLayer*, int w, int h, int pw, int ph);
 void         jfn_cef_layer_set_refresh_rate(const JfnCefLayer*, double hz);
 void         jfn_cef_layer_kick_invalidate_loop(const JfnCefLayer*);
-bool         jfn_cef_layer_should_present_paint(const JfnCefLayer*);
-void         jfn_cef_layer_get_view_rect(const JfnCefLayer*, int* w, int* h);
-void         jfn_cef_layer_get_screen_info(const JfnCefLayer*, float* scale, int* w, int* h);
-void         jfn_cef_layer_stop_invalidate(const JfnCefLayer*);
 int          jfn_cef_layer_frame_rate(const JfnCefLayer*);
-void         jfn_cef_layer_bump_resize_gen(const JfnCefLayer*);
-void         jfn_cef_layer_on_popup_show(const JfnCefLayer*, bool show);
-void         jfn_cef_layer_on_popup_size(const JfnCefLayer*, int x, int y, int w, int h);
-void         jfn_cef_layer_set_popup_options(const JfnCefLayer*,
-                                             const char* const* options, size_t len,
-                                             int selected_idx);
 void         jfn_cef_layer_on_deactivated(const JfnCefLayer*);
-void         jfn_cef_layer_on_paint(const JfnCefLayer*, bool is_popup,
-                                    const JfnRect* dirty, size_t n,
-                                    const void* buffer, int w, int h);
-void         jfn_cef_layer_on_accelerated_paint(const JfnCefLayer*, bool is_popup,
-                                                const void* accel_paint_info);
 void         jfn_cef_layer_create(const JfnCefLayer*, const char* url_utf8, size_t len);
 void         jfn_cef_layer_reset(const JfnCefLayer*);
 void         jfn_cef_layer_load_url(const JfnCefLayer*, const char* url_utf8, size_t len);
-int          jfn_cef_layer_on_after_created(const JfnCefLayer*);
-void         jfn_cef_layer_on_before_close_hook(const JfnCefLayer*);
-char*        jfn_cef_layer_take_pending_url(const JfnCefLayer*);
-bool         jfn_cef_layer_on_before_popup(const JfnCefLayer*, const char* url_utf8, size_t len);
+void         jfn_cef_layer_exec_js(const JfnCefLayer*, const char* js_utf8, size_t len);
 void         jfn_cef_layer_free_string(char*);
 
 typedef void (*JfnCbDtor)(void*);
@@ -101,29 +44,43 @@ void         jfn_cef_layer_set_before_close_callback(const JfnCefLayer*, void* f
 void         jfn_cef_layer_set_context_menu_builder(const JfnCefLayer*, void* fn, void* ctx, JfnCbDtor);
 void         jfn_cef_layer_set_context_menu_dispatcher(const JfnCefLayer*, void* fn, void* ctx, JfnCbDtor);
 bool         jfn_cef_layer_has_context_menu_builder(const JfnCefLayer*);
-bool         jfn_cef_layer_invoke_message_handler(const JfnCefLayer*,
-                                                  const char* name_utf8, size_t name_len,
-                                                  void* args, void* browser);
-void         jfn_cef_layer_invoke_created_callback(const JfnCefLayer*, void* browser);
-void         jfn_cef_layer_take_and_invoke_before_close(const JfnCefLayer*);
-void         jfn_cef_layer_invoke_context_menu_builder(const JfnCefLayer*, void* menu_model);
-bool         jfn_cef_layer_invoke_context_menu_dispatcher(const JfnCefLayer*, int command_id);
-void         jfn_cef_layer_on_fullscreen_mode_change(const JfnCefLayer*, bool fullscreen);
-void         jfn_cef_layer_on_cursor_change(const JfnCefLayer*, int cef_cursor_type);
-void         jfn_cef_layer_on_console_message(const JfnCefLayer*, int level,
-                                              const char* msg, size_t msg_len,
-                                              const char* src, size_t src_len, int line);
-void         jfn_cef_layer_on_load_end(const JfnCefLayer*, bool is_main, int code,
-                                       const char* url, size_t url_len);
-void         jfn_cef_layer_on_load_error(const JfnCefLayer*, int code,
-                                         const char* text, size_t text_len,
-                                         const char* url, size_t url_len);
-bool         jfn_cef_layer_try_paste(const JfnCefLayer*);
+
+void         jfn_cef_layer_set_visible(const JfnCefLayer*, bool visible);
 void         jfn_cef_layer_fade(const JfnCefLayer*, float sec,
                                 void (*start_fn)(void*), void* start_ctx, JfnCbDtor start_dtor,
                                 void (*done_fn)(void*),  void* done_ctx,  JfnCbDtor done_dtor);
-void         jfn_cef_layer_set_visible(const JfnCefLayer*, bool visible);
-void         jfn_cef_layer_menu_paste(const JfnCefLayer*);
+
+// Per-layer injection-profile kind. Built into a DictionaryValue on the Rust
+// side at browser-create time.
+void         jfn_cef_layer_set_injection_profile_kind(const JfnCefLayer*,
+                                                      const char* kind_utf8, size_t len);
+
+// Browser identity + lifecycle for shutdown / active-target compare.
+int          jfn_cef_layer_browser_id(const JfnCefLayer*);
+void         jfn_cef_layer_close_browser_force(const JfnCefLayer*);
+
+// Browser navigation / focus / input dispatch — all routed through the
+// per-layer Rust state.
+bool         jfn_cef_layer_can_go_back(const JfnCefLayer*);
+bool         jfn_cef_layer_can_go_forward(const JfnCefLayer*);
+void         jfn_cef_layer_go_back(const JfnCefLayer*);
+void         jfn_cef_layer_go_forward(const JfnCefLayer*);
+void         jfn_cef_layer_set_focus(const JfnCefLayer*, bool focus);
+void         jfn_cef_layer_send_key_event(const JfnCefLayer*, int type_, uint32_t modifiers,
+                                          int windows_key_code, int native_key_code,
+                                          bool is_system_key, uint16_t character,
+                                          uint16_t unmodified_character);
+void         jfn_cef_layer_send_mouse_click(const JfnCefLayer*, int x, int y, uint32_t modifiers,
+                                            int button, bool mouse_up, int click_count);
+void         jfn_cef_layer_send_mouse_move(const JfnCefLayer*, int x, int y, uint32_t modifiers,
+                                           bool leave);
+void         jfn_cef_layer_send_mouse_wheel(const JfnCefLayer*, int x, int y, uint32_t modifiers,
+                                            int dx, int dy);
+
+// Process-wide defaults consumed at browser-create time.
+void         jfn_cef_set_default_frame_rate(int hz);
+void         jfn_cef_set_use_shared_textures(bool enable);
+void         jfn_cef_set_device_profile_json(const char* json_utf8, size_t len);
 }
 
 // Callback invoked for IPC messages from the renderer process.
@@ -132,30 +89,20 @@ using MessageHandler = std::function<bool(const std::string& name,
                                          CefRefPtr<CefListValue> args,
                                          CefRefPtr<CefBrowser> browser)>;
 
-// Callback invoked after the browser is created (OnAfterCreated).
-using CreatedCallback = std::function<void(CefRefPtr<CefBrowser>)>;
-
-// Callback invoked just before the browser is destroyed (OnBeforeClose).
+// Created/before-close callbacks: the layer owns its browser; consumers
+// reference the layer (not the underlying CefBrowser) for input-target etc.
+using CreatedCallback = std::function<void()>;
 using BeforeCloseCallback = std::function<void()>;
-
-// Callbacks for app-level context menu items. CefLayer is policy-free: it
-// asks the app to append items and to dispatch unknown command IDs.
 using ContextMenuBuilder = std::function<void(CefRefPtr<CefMenuModel>)>;
 using ContextMenuDispatcher = std::function<bool(int command_id)>;
 
-// Generic CEF browser client — pure rendering, lifecycle, context menu,
-// keyboard. Business logic is injected via setMessageHandler / setCreatedCallback.
-// All behavior bodies have been ported to Rust (src/jfn_cef/src/client.rs);
-// this class is now a thin shim: handler virtuals forward via FFI into
-// JfnCefLayer, and the public API (resize / loadUrl / fade / etc.) delegates
-// in the same way.
-class CefLayer : public CefClient, public CefRenderHandler,
-                 public CefLifeSpanHandler, public CefLoadHandler,
-                 public CefContextMenuHandler, public CefDisplayHandler,
-                 public CefKeyboardHandler {
+// Thin C++ shim around the Rust-side CefLayer. C++ never sees the underlying
+// CefBrowser* — all browser-level operations (input, focus, close, identity)
+// route through layer FFI.
+class CefLayer : public CefBaseRefCounted {
 public:
     CefLayer(Browsers& browsers, PlatformSurface* surface);
-    ~CefLayer() override;
+    ~CefLayer();
 
     void setName(std::string name) {
         name_ = std::move(name);
@@ -169,64 +116,13 @@ public:
     void setContextMenuBuilder(ContextMenuBuilder cb);
     void setContextMenuDispatcher(ContextMenuDispatcher cb);
 
-    CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
-    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
-    CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
-    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
-    CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
-    CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
-
-    bool OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent&,
-                       CefEventHandle, bool* is_keyboard_shortcut) override;
-
-    void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override;
-    bool GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) override;
-    void OnPopupShow(CefRefPtr<CefBrowser>, bool show) override;
-    void OnPopupSize(CefRefPtr<CefBrowser>, const CefRect& rect) override;
-    void OnPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList&,
-                 const void*, int w, int h) override;
-    void OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
-                            const RectList&, const CefAcceleratedPaintInfo& info) override;
-    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
-    void OnBeforeClose(CefRefPtr<CefBrowser>) override;
-    bool OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int popup_id,
-                       const CefString& target_url, const CefString& target_frame_name,
-                       WindowOpenDisposition target_disposition, bool user_gesture,
-                       const CefPopupFeatures&, CefWindowInfo&,
-                       CefRefPtr<CefClient>&, CefBrowserSettings&,
-                       CefRefPtr<CefDictionaryValue>&, bool* no_javascript_access) override;
-    void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override;
-    void OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
-                     ErrorCode, const CefString& errorText, const CefString& failedUrl) override;
-
-    // CefDisplayHandler
-    void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override;
-    bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle,
-                        cef_cursor_type_t type, const CefCursorInfo&) override;
-    bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level,
-                          const CefString& message, const CefString& source,
-                          int line) override;
-
-    bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
-                                  CefProcessId, CefRefPtr<CefProcessMessage> message) override;
-
-    void OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
-                             CefRefPtr<CefContextMenuParams>,
-                             CefRefPtr<CefMenuModel> model) override;
-    bool RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
-                        CefRefPtr<CefContextMenuParams>, CefRefPtr<CefMenuModel>,
-                        CefRefPtr<CefRunContextMenuCallback>) override;
-
     void resize(int w, int h, int physical_w, int physical_h);
-    // Mirror of the renderer-side rAF deadline loop (cef_app.cpp). Each
-    // resize bumps a 5s sliding deadline; while live, periodic
-    // Invalidate(PET_VIEW) on TID_UI keeps the host nudging the renderer
-    // even when JS rAF wouldn't fire (e.g. when the page is static and
-    // the renderer skipped a compositor frame).
     void kickInvalidateLoop();
     bool isClosed() const { return jfn_cef_layer_is_closed(rs_); }
     bool isLoaded() const { return jfn_cef_layer_is_loaded(rs_); }
-    CefRefPtr<CefBrowser> browser() { return browser_; }
+    int  browserId() const { return jfn_cef_layer_browser_id(rs_); }
+    bool hasBrowser() const { return browserId() != 0; }
+    void closeBrowserForce() { jfn_cef_layer_close_browser_force(rs_); }
     void waitForClose() { jfn_cef_layer_wait_for_close(rs_); }
     void waitForLoad() { jfn_cef_layer_wait_for_load(rs_); }
     void execJs(const std::string& js);
@@ -238,38 +134,46 @@ public:
 
     PlatformSurface* surface() const { return surface_; }
 
-    // Native-shim injection profile travels to the renderer's
-    // OnBrowserCreated; carries jmpNative function list + script list.
-    // Set once by the owning subclass; reused across reset() cycles.
-    void setInjectionProfile(CefRefPtr<CefDictionaryValue> p) { extra_info_ = std::move(p); }
+    // Native-shim injection-profile kind ("web" / "overlay" / "about"). The
+    // Rust side materializes the DictionaryValue lazily at browser-create.
+    void setInjectionProfileKind(const char* kind) {
+        std::string s = kind ? kind : "";
+        jfn_cef_layer_set_injection_profile_kind(rs_, s.data(), s.size());
+    }
 
-    // Create the underlying CEF browser. Builds CefWindowInfo and
-    // CefBrowserSettings from the Browsers display state.
     void create(const std::string& url);
-
-    // Tear down the current browser and recreate with no URL (blank).
     void reset();
-
-    // Navigate the current browser to `url`.
     void loadUrl(const std::string& url);
-
-    // Called by Browsers when this layer stops being the input target,
-    // or just before its surface is freed. Tears down anything that
-    // shouldn't outlive active status — currently the popup.
     void onDeactivated();
 
-    // Browser-op create thunk — dispatches CefBrowserHost::CreateBrowser
-    // with WindowInfo/Settings/extra_info synthesized from extra_info_ +
-    // context_menu_builder_. Invoked from Rust via JfnCefBrowserOps.
-    void doCreateBrowser(const std::string& url);
+    // Navigation + focus + input dispatch.
+    bool canGoBack() const { return jfn_cef_layer_can_go_back(rs_); }
+    bool canGoForward() const { return jfn_cef_layer_can_go_forward(rs_); }
+    void goBack() { jfn_cef_layer_go_back(rs_); }
+    void goForward() { jfn_cef_layer_go_forward(rs_); }
+    void setFocus(bool f) { jfn_cef_layer_set_focus(rs_, f); }
+    void sendKeyEvent(int type_, uint32_t modifiers, int windows_key_code,
+                      int native_key_code, bool is_system_key,
+                      uint16_t character, uint16_t unmodified_character) {
+        jfn_cef_layer_send_key_event(rs_, type_, modifiers, windows_key_code,
+                                     native_key_code, is_system_key,
+                                     character, unmodified_character);
+    }
+    void sendMouseClick(int x, int y, uint32_t modifiers, int button,
+                        bool mouse_up, int click_count) {
+        jfn_cef_layer_send_mouse_click(rs_, x, y, modifiers, button, mouse_up, click_count);
+    }
+    void sendMouseMove(int x, int y, uint32_t modifiers, bool leave) {
+        jfn_cef_layer_send_mouse_move(rs_, x, y, modifiers, leave);
+    }
+    void sendMouseWheel(int x, int y, uint32_t modifiers, int dx, int dy) {
+        jfn_cef_layer_send_mouse_wheel(rs_, x, y, modifiers, dx, dy);
+    }
 
 private:
     Browsers& browsers_;
     PlatformSurface* surface_ = nullptr;
     std::string name_;
-    CefRefPtr<CefBrowser> browser_;
     JfnCefLayer* rs_ = nullptr;
-    CefRefPtr<CefRunContextMenuCallback> pending_menu_callback_;
-    CefRefPtr<CefDictionaryValue> extra_info_;
     IMPLEMENT_REFCOUNTING(CefLayer);
 };

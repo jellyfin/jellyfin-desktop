@@ -638,6 +638,10 @@ target_link_libraries(jellyfin-desktop PRIVATE jfn_rust)
 # at runtime when C++ and Rust hand objects across the CEF API boundary.
 target_compile_definitions(jellyfin-desktop PRIVATE
     CEF_API_VERSION=14700
+    # Required to include libcef_dll/ctocpp/*.h headers (CToCpp translators
+    # convert raw C cef_*_t pointers from Rust FFI into proper CefRefPtr<>
+    # C++ wrappers). Without this define the headers #error out.
+    WRAPPING_CEF_SHARED
 )
 
 # When using external/system CEF, tell the app where to find resources

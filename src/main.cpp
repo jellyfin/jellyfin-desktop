@@ -165,6 +165,7 @@ static int run_with_cef(int mw, int mh,
             Settings::instance().forceTranscoding());
         LOG_INFO(LOG_MAIN, "Device profile: {}", profile);
         jellyfin_device_profile::SetCachedJson(profile);
+        jfn_cef_set_device_profile_json(profile.data(), profile.size());
     }
 
     bool use_shared_textures = g_platform.shared_texture_supported && !args.disable_gpu_compositing;
@@ -253,7 +254,7 @@ static int run_with_cef(int mw, int mh,
     Browsers browsers(lw, lh, mw, mh, mpv::display_hz(), use_shared_textures);
     g_browsers = &browsers;
 
-    auto main_layer = browsers.create(WebBrowser::injectionProfile());
+    auto main_layer = browsers.create("web");
     auto web_browser_owner = std::make_unique<WebBrowser>(main_layer);
     g_web_browser = web_browser_owner.get();
 
@@ -271,7 +272,7 @@ static int run_with_cef(int mw, int mh,
 
     std::unique_ptr<OverlayBrowser> overlay_browser_owner;
     {
-        auto overlay_layer = browsers.create(OverlayBrowser::injectionProfile());
+        auto overlay_layer = browsers.create("overlay");
         overlay_layer->setVisible(true);
         overlay_browser_owner = std::make_unique<OverlayBrowser>(
             overlay_layer, *g_web_browser);

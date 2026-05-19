@@ -11,7 +11,6 @@ public:
     explicit WebBrowser(CefRefPtr<CefLayer> layer);
     ~WebBrowser();
 
-    CefRefPtr<CefBrowser> browser() { return layer_->browser(); }
     CefRefPtr<CefLayer> layer() { return layer_; }
     void loadUrl(const std::string& url) { layer_->loadUrl(url); }
     void reset() { layer_->reset(); }
@@ -19,9 +18,6 @@ public:
     void waitForClose() { layer_->waitForClose(); }
     bool isClosed() const { return layer_->isClosed(); }
     void execJs(const std::string& js) { layer_->execJs(js); }
-
-    // Native-shim injection profile for this browser.
-    static CefRefPtr<CefDictionaryValue> injectionProfile();
 
 private:
     bool handleMessage(const std::string& name,

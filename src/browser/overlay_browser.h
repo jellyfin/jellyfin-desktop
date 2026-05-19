@@ -14,12 +14,9 @@ public:
     OverlayBrowser(CefRefPtr<CefLayer> layer, WebBrowser& main_browser);
     ~OverlayBrowser();
 
-    CefRefPtr<CefBrowser> browser() { return layer_->browser(); }
     CefRefPtr<CefLayer> layer() { return layer_; }
     void waitForClose() { layer_->waitForClose(); }
     bool isClosed() const { return layer_->isClosed(); }
-
-    static CefRefPtr<CefDictionaryValue> injectionProfile();
 
 private:
     bool handleMessage(const std::string& name,

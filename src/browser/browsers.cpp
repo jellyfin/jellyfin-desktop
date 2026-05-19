@@ -12,11 +12,12 @@ Browsers::Browsers(int lw, int lh, int pw, int ph,
                    double frame_rate, bool use_shared_textures)
     : lw_(lw), lh_(lh), pw_(pw), ph_(ph),
       frame_rate_(frame_rate > 0 ? static_cast<int>(frame_rate + 0.5) : 0),
-      use_shared_textures_(use_shared_textures) {}
+      use_shared_textures_(use_shared_textures) {
+    jfn_cef_set_default_frame_rate(frame_rate_);
+    jfn_cef_set_use_shared_textures(use_shared_textures_);
+}
 
 Browsers::~Browsers() {
-    // Defensive: free any stragglers (owners should normally have released
-    // their refs by this point).
     for (auto& layer : layers_) {
         if (auto* s = layer->surface()) {
             if (g_platform.free_surface) g_platform.free_surface(s);
@@ -25,14 +26,14 @@ Browsers::~Browsers() {
     layers_.clear();
 }
 
-CefRefPtr<CefLayer> Browsers::create(CefRefPtr<CefDictionaryValue> injection) {
+CefRefPtr<CefLayer> Browsers::create(const char* injection_kind) {
     PlatformSurface* surface = g_platform.alloc_surface
         ? g_platform.alloc_surface() : nullptr;
     CefRefPtr<CefLayer> layer = new CefLayer(*this, surface);
     layer->resize(lw_, lh_, pw_, ph_);
     layer->setRefreshRate(frame_rate_);
-    if (injection)
-        layer->setInjectionProfile(std::move(injection));
+    if (injection_kind && *injection_kind)
+        layer->setInjectionProfileKind(injection_kind);
     layers_.push_back(layer);
     restack_locked();
     return layer;
@@ -40,13 +41,10 @@ CefRefPtr<CefLayer> Browsers::create(CefRefPtr<CefDictionaryValue> injection) {
 
 void Browsers::remove(CefLayer* layer) {
     if (!layer) return;
-    // Tear down anything inactive-only (popup) before the surface goes.
     layer->onDeactivated();
-    // Clear active if it pointed at this layer's browser.
     {
-        auto b = layer->browser();
         std::lock_guard<std::mutex> lk(active_mtx_);
-        if (b && active_.get() == b.get()) active_ = nullptr;
+        if (active_ && active_.get() == layer) active_ = nullptr;
     }
     auto it = std::find_if(layers_.begin(), layers_.end(),
                            [layer](const CefRefPtr<CefLayer>& l) {
@@ -108,11 +106,12 @@ void Browsers::setScale(double scale) {
 void Browsers::setRefreshRate(double hz) {
     if (hz <= 0) return;
     frame_rate_ = static_cast<int>(hz + 0.5);
+    jfn_cef_set_default_frame_rate(frame_rate_);
     for (auto& layer : layers_)
         layer->setRefreshRate(hz);
 }
 
-CefRefPtr<CefBrowser> Browsers::active() const {
+CefRefPtr<CefLayer> Browsers::active() const {
     std::lock_guard<std::mutex> lk(active_mtx_);
     return active_;
 }
@@ -124,63 +123,37 @@ bool Browsers::allClosed() const {
 }
 
 void Browsers::closeAll() {
-    for (auto& l : layers_) {
-        if (auto b = l->browser()) b->GetHost()->CloseBrowser(true);
-    }
+    for (auto& l : layers_) l->closeBrowserForce();
 }
 
 void Browsers::waitAllClosed() {
-    // layers_ is mutated only on the CEF UI thread; close happens via CEF
-    // and pulses each layer's condvar. Walk a snapshot so erase-during-
-    // close can't trip the iterator.
     std::vector<CefRefPtr<CefLayer>> snapshot = layers_;
     for (auto& l : snapshot) l->waitForClose();
 }
 
-void Browsers::forEachBrowser(const std::function<void(CefRefPtr<CefBrowser>)>& fn) {
-    for (auto& l : layers_) {
-        if (auto b = l->browser()) fn(b);
-    }
-}
-
-void Browsers::setActive(CefRefPtr<CefBrowser> browser) {
-    CefRefPtr<CefBrowser> prev;
+void Browsers::setActive(CefRefPtr<CefLayer> layer) {
+    CefRefPtr<CefLayer> prev;
     {
         std::lock_guard<std::mutex> lk(active_mtx_);
-        if (active_.get() == browser.get()) return;
+        if (active_.get() == layer.get()) return;
         prev = active_;
-        active_ = browser;
+        active_ = layer;
     }
-    auto name_for = [this](CefRefPtr<CefBrowser> b) -> std::string {
-        if (!b) return {};
-        for (auto& l : layers_)
-            if (auto lb = l->browser(); lb && lb.get() == b.get())
-                return l->name();
-        return {};
-    };
     LOG_DEBUG(LOG_PLATFORM, "[BROWSERS] setActive prev={} new={}",
-              name_for(prev).c_str(), name_for(browser).c_str());
+              prev ? prev->name().c_str() : "",
+              layer ? layer->name().c_str() : "");
     if (prev) {
-        prev->GetHost()->SetFocus(false);
-        // Notify the prior active layer it's no longer the input target so
-        // it can tear down popup state etc.
-        for (auto& l : layers_) {
-            if (auto lb = l->browser(); lb && lb.get() == prev.get()) {
-                l->onDeactivated();
-                break;
-            }
-        }
+        prev->setFocus(false);
+        prev->onDeactivated();
     }
-    if (browser) browser->GetHost()->SetFocus(true);
+    if (layer) layer->setFocus(true);
 
     // Leave-then-move forces the renderer to re-emit OnCursorChange.
-    if (browser) {
+    if (layer) {
         auto pos = input::last_mouse_pos();
         if (pos.valid) {
-            CefMouseEvent me{};
-            me.x = pos.x; me.y = pos.y; me.modifiers = pos.modifiers;
-            browser->GetHost()->SendMouseMoveEvent(me, true);
-            browser->GetHost()->SendMouseMoveEvent(me, false);
+            layer->sendMouseMove(pos.x, pos.y, pos.modifiers, true);
+            layer->sendMouseMove(pos.x, pos.y, pos.modifiers, false);
         }
     }
 }

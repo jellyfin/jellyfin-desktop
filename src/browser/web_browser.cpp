@@ -15,7 +15,6 @@
 #include "include/cef_parser.h"
 #include "include/cef_values.h"
 #include "../paths/paths.h"
-#include "../jellyfin/device_profile.h"
 
 // =====================================================================
 // Helpers
@@ -85,44 +84,6 @@ static int getIntArg(CefRefPtr<CefListValue> args, size_t idx) {
 // WebBrowser
 // =====================================================================
 
-CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
-    static const char* const kFunctions[] = {
-        "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
-        "playerSetVolume", "playerSetMuted", "playerSetSpeed",
-        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio", "playerAddAudio",
-        "playerSetAudioDelay", "playerSetSubtitleDelay", "playerSetAspectMode", "playerOsdActive",
-        "openConfigDir", "saveServerUrl",
-        "notifyMetadata", "notifyPosition", "notifySeek",
-        "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
-        "notifyRateChange",
-        "appExit", "setSettingValue", "themeColor",
-        "setOsdVisible", "setCursorVisible", "toggleFullscreen",
-    };
-    static const char* const kScripts[] = {
-        "native-shim.js",
-        "mpv-player-base.js",
-        "mpv-video-player.js",
-        "mpv-audio-player.js",
-        "input-plugin.js",
-        "client-settings.js",
-    };
-
-    CefRefPtr<CefListValue> fns = CefListValue::Create();
-    for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
-        fns->SetString(i, kFunctions[i]);
-    CefRefPtr<CefListValue> scripts = CefListValue::Create();
-    for (size_t i = 0; i < sizeof(kScripts) / sizeof(*kScripts); i++)
-        scripts->SetString(i, kScripts[i]);
-
-    CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
-    d->SetList("functions", fns);
-    d->SetList("scripts", scripts);
-    std::string profile_json = jellyfin_device_profile::CachedJson();
-    if (!profile_json.empty())
-        d->SetString("device_profile_json", profile_json);
-    return d;
-}
-
 WebBrowser::WebBrowser(CefRefPtr<CefLayer> layer)
     : layer_(std::move(layer))
 {
@@ -132,11 +93,12 @@ WebBrowser::WebBrowser(CefRefPtr<CefLayer> layer)
                                      CefRefPtr<CefBrowser> browser) {
         return handleMessage(name, args, browser);
     });
-    layer_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
+    CefRefPtr<CefLayer> layer_ref = layer_;
+    layer_->setCreatedCallback([layer_ref]() {
         // Main browser takes input only if no other layer has already
         // claimed it (e.g. the server-selection overlay).
         if (g_browsers && !g_browsers->active())
-            g_browsers->setActive(browser);
+            g_browsers->setActive(layer_ref);
     });
     layer_->setContextMenuBuilder(&app_menu::build);
     layer_->setContextMenuDispatcher(&app_menu::dispatch);
