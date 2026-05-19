@@ -2,7 +2,7 @@
 
 #include "jfn_jellyfin.h"
 
-#include "../mpv/capabilities.h"
+#include "../mpv/jfn_mpv_boot.h"
 
 #include <cstdint>
 #include <string>
@@ -20,28 +20,25 @@ namespace jellyfin_device_profile {
 //
 // `force_transcode` makes the server transcode even when direct play would
 // work (no video/audio DirectPlayProfiles emitted).
-inline std::string Build(const mpv_capabilities::Capabilities& caps,
+inline std::string Build(const JfnMpvCapabilities* caps,
                          std::string_view device_name,
                          std::string_view app_version,
                          bool force_transcode) {
-    using mpv_capabilities::MediaKind;
-
+    size_t n_dec = jfn_mpv_capabilities_decoder_count(caps);
     std::vector<JfnCodec> codec_arr;
-    codec_arr.reserve(caps.decoders.size());
-    for (const auto& c : caps.decoders) {
-        uint8_t kind = 0;
-        switch (c.kind) {
-        case MediaKind::Video:    kind = 0; break;
-        case MediaKind::Audio:    kind = 1; break;
-        case MediaKind::Subtitle: kind = 2; break;
-        }
-        codec_arr.push_back({c.name.c_str(), kind});
+    codec_arr.reserve(n_dec);
+    for (size_t i = 0; i < n_dec; i++) {
+        codec_arr.push_back({
+            jfn_mpv_capabilities_decoder_name(caps, i),
+            jfn_mpv_capabilities_decoder_kind(caps, i),
+        });
     }
 
+    size_t n_dem = jfn_mpv_capabilities_demuxer_count(caps);
     std::vector<const char*> demuxer_ptrs;
-    demuxer_ptrs.reserve(caps.demuxers.size());
-    for (const auto& d : caps.demuxers) {
-        demuxer_ptrs.push_back(d.c_str());
+    demuxer_ptrs.reserve(n_dem);
+    for (size_t i = 0; i < n_dem; i++) {
+        demuxer_ptrs.push_back(jfn_mpv_capabilities_demuxer_name(caps, i));
     }
 
     const std::string name(device_name);

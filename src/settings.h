@@ -1,7 +1,7 @@
 #pragma once
 
 #include "config/config.h"
-#include "mpv/options.h"
+#include "mpv/jfn_mpv_boot.h"
 #include "paths/paths.h"
 
 #include <cstring>
@@ -146,10 +146,10 @@ public:
     }
 
     std::string cliSettingsJson() const {
-        auto opts = hwdecOptions();
+        size_t n = jfn_mpv_hwdec_options_count();
         std::vector<const char*> ptrs;
-        ptrs.reserve(opts.size());
-        for (const auto& o : opts) ptrs.push_back(o.c_str());
+        ptrs.reserve(n);
+        for (size_t i = 0; i < n; i++) ptrs.push_back(jfn_mpv_hwdec_options_get(i));
         char* p = jfn_settings_cli_json(
             platformDeviceName().c_str(),
             ptrs.empty() ? nullptr : ptrs.data(),

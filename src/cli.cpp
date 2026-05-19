@@ -2,7 +2,7 @@
 
 #include "version.h"
 #include "logging.h"
-#include "mpv/options.h"
+#include "mpv/jfn_mpv_boot.h"
 #include "cli/cli.h"
 
 #include <include/cef_version.h>
@@ -31,7 +31,7 @@ void print_help() {
            "  --platform <wayland|x11>  Force display backend (Linux only)\n"
 #endif
            ,
-           kDefaultLogFilter, kHwdecDefault);
+           kDefaultLogFilter, jfn_mpv_hwdec_default());
 }
 
 void print_version() {

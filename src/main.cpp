@@ -17,8 +17,6 @@
 #include "browser/web_browser.h"
 #include "browser/overlay_browser.h"
 #include "mpv/event.h"
-#include "mpv/options.h"
-#include "mpv/capabilities.h"
 #include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
 #include "paths/paths.h"
@@ -159,10 +157,11 @@ static int run_with_cef(int mw, int mh,
     // Must run after the VO-init wait loop — sync mpv API calls would
     // deadlock against core_thread's DispatchQueue.main.sync on macOS.
     {
-        auto caps = mpv_capabilities::Query(g_mpv.Get());
+        JfnMpvCapabilities* caps = jfn_mpv_capabilities_query(g_mpv.Get());
         std::string profile = jellyfin_device_profile::Build(
             caps, "Jellyfin Desktop", APP_VERSION_FULL,
             Settings::instance().forceTranscoding());
+        jfn_mpv_capabilities_free(caps);
         LOG_INFO(LOG_MAIN, "Device profile: {}", profile);
         jellyfin_device_profile::SetCachedJson(profile);
         jfn_cef_set_device_profile_json(profile.data(), profile.size());
@@ -443,7 +442,7 @@ int main(int argc, char* argv[]) {
     Settings::instance().load();
     const auto& saved = Settings::instance();
     cli::Args args;
-    args.hwdec = !saved.hwdec().empty() ? saved.hwdec() : std::string(kHwdecDefault);
+    args.hwdec = !saved.hwdec().empty() ? saved.hwdec() : std::string(jfn_mpv_hwdec_default());
     args.audio_passthrough = saved.audioPassthrough();
     args.audio_exclusive = saved.audioExclusive();
     args.audio_channels = saved.audioChannels();
@@ -464,7 +463,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    if (!isValidHwdec(args.hwdec)) args.hwdec = kHwdecDefault;
+    if (!jfn_mpv_is_valid_hwdec(args.hwdec.c_str())) args.hwdec = jfn_mpv_hwdec_default();
 
     // --log-file overrides default; empty argument disables file logging entirely.
     // Default to a platform log file on macOS/Windows (GUI apps have no

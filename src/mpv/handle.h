@@ -7,7 +7,8 @@
 #include <cstring>
 
 #include "logging.h"
-#include "color.h"
+#include "../color.h"
+#include "../color/color.h"
 #include "jfn_mpv_boot.h"
 
 /**
@@ -223,7 +224,7 @@ public:
     void SetWindowMinimized(bool v)      { SetPropertyFlagAsync("window-minimized", v); }
     void SetWindowMaximized(bool v)      { SetPropertyFlagAsync("window-maximized", v); }
     void SetBackgroundColor(const Color& c) { SetPropertyStringAsync("background-color", c.hex); }
-    Color GetBackgroundColor() { return mpv::parseColor(GetPropertyString("background-color")); }
+    Color GetBackgroundColor() { return Color{jfn_mpv_parse_color(GetPropertyString("background-color").c_str())}; }
     void SetForceWindowPosition(bool v)  { SetPropertyFlagAsync("force-window-position", v); }
     void SetGeometry(const std::string& geom) { SetPropertyStringAsync("geometry", geom); }
 
