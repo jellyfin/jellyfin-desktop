@@ -9,7 +9,9 @@ name = "jfn_wayland"
 crate-type = ["rlib"]
 
 [dependencies]
+khronos-egl = { version = "6", features = ["dynamic"] }
 libc = "0.2"
+libloading = "0.8"
 log = "0.4"
 memmap2 = "0.9"
 smithay-client-toolkit = { version = "0.20", default-features = false }

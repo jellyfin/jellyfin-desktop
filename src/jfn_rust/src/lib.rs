@@ -31,6 +31,9 @@ pub use jfn_open_url_linux::*;
 pub use jfn_wayland::clipboard::*;
 
 #[cfg(target_os = "linux")]
+pub use jfn_wayland::dmabuf_probe::*;
+
+#[cfg(target_os = "linux")]
 pub use jfn_wayland::input::*;
 
 #[cfg(target_os = "linux")]

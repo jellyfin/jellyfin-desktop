@@ -10,6 +10,7 @@
 #include "mpv/jfn_mpv_api.h"
 #include "playback/jfn_ingest.h"
 #include "wlproxy/wlproxy.h"
+#include "jfn_dmabuf_probe.h"
 
 #include <wayland-client.h>
 #include "linux-dmabuf-v1-client.h"
@@ -17,14 +18,10 @@
 #include "alpha-modifier-v1-client.h"
 #include <drm/drm_fourcc.h>
 #include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include <dlfcn.h>
-#include <fcntl.h>
 #ifdef HAVE_KDE_DECORATION_PALETTE
 #include "server-decoration-palette-client.h"
 #include "jfn_kde_palette.h"
 #endif
-#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <unistd.h>
@@ -34,7 +31,6 @@
 #include <thread>
 #include <vector>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include "logging.h"
 
 
@@ -755,283 +751,6 @@ void register_proxy_callbacks() {
 // Platform interface
 // =====================================================================
 
-// =====================================================================
-// Dmabuf probe -- test GBM → EGL image → GL texture binding on the
-// same display type CEF will use (x11 or wayland, per --ozone-platform)
-// =====================================================================
-
-// GBM function typedefs for dlsym
-struct gbm_device;
-struct gbm_bo;
-using PFN_gbm_create_device = gbm_device* (*)(int fd);
-using PFN_gbm_device_destroy = void (*)(gbm_device*);
-using PFN_gbm_bo_create = gbm_bo* (*)(gbm_device*, uint32_t, uint32_t, uint32_t, uint32_t);
-using PFN_gbm_bo_destroy = void (*)(gbm_bo*);
-using PFN_gbm_bo_get_fd = int (*)(gbm_bo*);
-using PFN_gbm_bo_get_stride = uint32_t (*)(gbm_bo*);
-
-// X11 typedefs for dlsym (avoid linking libX11)
-using PFN_XOpenDisplay = void* (*)(const char*);
-using PFN_XCloseDisplay = int (*)(void*);
-
-// GL constants (avoid GL headers)
-#define JFD_GL_TEXTURE_2D 0x0DE1
-#define JFD_GL_NO_ERROR   0
-
-// GL function pointer types (resolved via eglGetProcAddress)
-using PFN_glGenTextures = void (*)(int, unsigned*);
-using PFN_glBindTexture = void (*)(unsigned, unsigned);
-using PFN_glDeleteTextures = void (*)(int, const unsigned*);
-using PFN_glGetError = unsigned (*)(void);
-using PFN_glEGLImageTargetTexture2DOES = void (*)(unsigned, void*);
-
-#ifndef EGL_PLATFORM_X11_KHR
-#define EGL_PLATFORM_X11_KHR 0x31D5
-#endif
-
-static bool probe_shared_texture_support(const std::string& ozone_platform,
-                                         EGLDisplay wayland_egl_dpy) {
-    // --- Acquire EGL display matching CEF's ozone platform ---
-    EGLDisplay egl_dpy = EGL_NO_DISPLAY;
-    bool owns_egl_dpy = false;  // true = we must eglTerminate
-    void* x11_dpy = nullptr;
-    void* x11_lib = nullptr;
-    PFN_XCloseDisplay fn_x11_close = nullptr;
-
-    if (ozone_platform == "wayland") {
-        egl_dpy = wayland_egl_dpy;
-        LOG_INFO(LOG_PLATFORM, "dmabuf probe: testing on Wayland EGL display");
-    } else {
-        // Default: x11 — open XWayland connection
-        x11_lib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
-        if (!x11_lib) {
-            LOG_WARN(LOG_PLATFORM, "dmabuf probe: libX11 not available");
-            return false;
-        }
-        auto fn_open = reinterpret_cast<PFN_XOpenDisplay>(dlsym(x11_lib, "XOpenDisplay"));
-        fn_x11_close = reinterpret_cast<PFN_XCloseDisplay>(dlsym(x11_lib, "XCloseDisplay"));
-        if (!fn_open || !fn_x11_close) { dlclose(x11_lib); return false; }
-
-        x11_dpy = fn_open(nullptr);
-        if (!x11_dpy) {
-            LOG_WARN(LOG_PLATFORM, "dmabuf probe: XOpenDisplay failed (no XWayland?)");
-            dlclose(x11_lib);
-            return false;
-        }
-
-        auto fn_get_platform = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
-            eglGetProcAddress("eglGetPlatformDisplayEXT"));
-        if (fn_get_platform)
-            egl_dpy = fn_get_platform(EGL_PLATFORM_X11_KHR, x11_dpy, nullptr);
-        if (egl_dpy == EGL_NO_DISPLAY)
-            egl_dpy = eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(x11_dpy));
-        if (egl_dpy == EGL_NO_DISPLAY) {
-            LOG_WARN(LOG_PLATFORM, "dmabuf probe: no EGL display for X11");
-            fn_x11_close(x11_dpy); dlclose(x11_lib);
-            return false;
-        }
-        if (!eglInitialize(egl_dpy, nullptr, nullptr)) {
-            LOG_WARN(LOG_PLATFORM, "dmabuf probe: EGL init on X11 failed");
-            fn_x11_close(x11_dpy); dlclose(x11_lib);
-            return false;
-        }
-        owns_egl_dpy = true;
-        LOG_INFO(LOG_PLATFORM, "dmabuf probe: testing on X11 EGL display");
-    }
-
-    if (egl_dpy == EGL_NO_DISPLAY) return false;
-
-    // Cleanup helper — tears down everything we opened
-    auto cleanup = [&]() {
-        if (owns_egl_dpy) eglTerminate(egl_dpy);
-        if (x11_dpy && fn_x11_close) fn_x11_close(x11_dpy);
-        if (x11_lib) dlclose(x11_lib);
-    };
-
-    // --- Create temporary GLES context for GL texture test ---
-    eglBindAPI(EGL_OPENGL_ES_API);
-    EGLint cfg_attrs[] = {
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-        EGL_NONE
-    };
-    EGLConfig config;
-    EGLint num_configs;
-    if (!eglChooseConfig(egl_dpy, cfg_attrs, &config, 1, &num_configs) || num_configs == 0) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: no suitable EGL config");
-        cleanup();
-        return false;
-    }
-    EGLint ctx_attrs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
-    EGLContext ctx = eglCreateContext(egl_dpy, config, EGL_NO_CONTEXT, ctx_attrs);
-    if (ctx == EGL_NO_CONTEXT) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: can't create GLES context");
-        cleanup();
-        return false;
-    }
-    EGLint pb_attrs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
-    EGLSurface pbuf = eglCreatePbufferSurface(egl_dpy, config, pb_attrs);
-    bool have_surface = (pbuf != EGL_NO_SURFACE);
-    if (!eglMakeCurrent(egl_dpy,
-                        have_surface ? pbuf : EGL_NO_SURFACE,
-                        have_surface ? pbuf : EGL_NO_SURFACE,
-                        ctx)) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: eglMakeCurrent failed");
-        if (have_surface) eglDestroySurface(egl_dpy, pbuf);
-        eglDestroyContext(egl_dpy, ctx);
-        cleanup();
-        return false;
-    }
-
-    // Cleanup helper for GL context
-    auto cleanup_gl = [&]() {
-        eglMakeCurrent(egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (have_surface) eglDestroySurface(egl_dpy, pbuf);
-        eglDestroyContext(egl_dpy, ctx);
-    };
-
-    // --- Resolve GL + EGL image functions ---
-    auto fn_gen_tex = reinterpret_cast<PFN_glGenTextures>(eglGetProcAddress("glGenTextures"));
-    auto fn_bind_tex = reinterpret_cast<PFN_glBindTexture>(eglGetProcAddress("glBindTexture"));
-    auto fn_del_tex = reinterpret_cast<PFN_glDeleteTextures>(eglGetProcAddress("glDeleteTextures"));
-    auto fn_get_err = reinterpret_cast<PFN_glGetError>(eglGetProcAddress("glGetError"));
-    auto fn_img_target = reinterpret_cast<PFN_glEGLImageTargetTexture2DOES>(
-        eglGetProcAddress("glEGLImageTargetTexture2DOES"));
-    auto fn_create_image = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(
-        eglGetProcAddress("eglCreateImageKHR"));
-    auto fn_destroy_image = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(
-        eglGetProcAddress("eglDestroyImageKHR"));
-
-    if (!fn_gen_tex || !fn_bind_tex || !fn_del_tex || !fn_get_err ||
-        !fn_img_target || !fn_create_image || !fn_destroy_image) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: missing GL/EGL image functions");
-        cleanup_gl(); cleanup();
-        return false;
-    }
-
-    // --- Load GBM ---
-    void* gbm_lib = dlopen("libgbm.so.1", RTLD_LAZY | RTLD_LOCAL);
-    if (!gbm_lib) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: libgbm not available, assuming supported");
-        cleanup_gl(); cleanup();
-        return true;
-    }
-    auto fn_create_device = reinterpret_cast<PFN_gbm_create_device>(dlsym(gbm_lib, "gbm_create_device"));
-    auto fn_device_destroy = reinterpret_cast<PFN_gbm_device_destroy>(dlsym(gbm_lib, "gbm_device_destroy"));
-    auto fn_bo_create = reinterpret_cast<PFN_gbm_bo_create>(dlsym(gbm_lib, "gbm_bo_create"));
-    auto fn_bo_destroy = reinterpret_cast<PFN_gbm_bo_destroy>(dlsym(gbm_lib, "gbm_bo_destroy"));
-    auto fn_bo_get_fd = reinterpret_cast<PFN_gbm_bo_get_fd>(dlsym(gbm_lib, "gbm_bo_get_fd"));
-    auto fn_bo_get_stride = reinterpret_cast<PFN_gbm_bo_get_stride>(dlsym(gbm_lib, "gbm_bo_get_stride"));
-    if (!fn_create_device || !fn_device_destroy || !fn_bo_create ||
-        !fn_bo_destroy || !fn_bo_get_fd || !fn_bo_get_stride) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: libgbm missing symbols, assuming supported");
-        dlclose(gbm_lib); cleanup_gl(); cleanup();
-        return true;
-    }
-
-    // --- Find DRM render node ---
-    int drm_fd = -1;
-    auto fn_query_display = reinterpret_cast<PFNEGLQUERYDISPLAYATTRIBEXTPROC>(
-        eglGetProcAddress("eglQueryDisplayAttribEXT"));
-    auto fn_query_device_str = reinterpret_cast<PFNEGLQUERYDEVICESTRINGEXTPROC>(
-        eglGetProcAddress("eglQueryDeviceStringEXT"));
-    if (fn_query_display && fn_query_device_str) {
-        EGLAttrib device_attrib = 0;
-        if (fn_query_display(egl_dpy, EGL_DEVICE_EXT, &device_attrib) && device_attrib) {
-            auto egl_device = reinterpret_cast<EGLDeviceEXT>(device_attrib);
-            const char* node = fn_query_device_str(egl_device, EGL_DRM_RENDER_NODE_FILE_EXT);
-            if (node) {
-                drm_fd = open(node, O_RDWR | O_CLOEXEC);
-                if (drm_fd >= 0)
-                    LOG_INFO(LOG_PLATFORM, "dmabuf probe using render node: {}", node);
-            }
-        }
-    }
-    if (drm_fd < 0) {
-        for (int i = 128; i < 136; i++) {
-            char path[32];
-            snprintf(path, sizeof(path), "/dev/dri/renderD%d", i);
-            drm_fd = open(path, O_RDWR | O_CLOEXEC);
-            if (drm_fd >= 0) break;
-        }
-    }
-    if (drm_fd < 0) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: no DRM render node, assuming supported");
-        dlclose(gbm_lib); cleanup_gl(); cleanup();
-        return true;
-    }
-
-    // --- GBM alloc + dmabuf export ---
-    bool result = false;
-    gbm_device* device = fn_create_device(drm_fd);
-    if (!device) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: gbm_create_device failed");
-        close(drm_fd); dlclose(gbm_lib); cleanup_gl(); cleanup();
-        return false;
-    }
-
-    gbm_bo* bo = fn_bo_create(device, 64, 64, DRM_FORMAT_ARGB8888, 0x0002 /*GBM_BO_USE_RENDERING*/);
-    if (!bo) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: gbm_bo_create ARGB8888 failed");
-        fn_device_destroy(device); close(drm_fd); dlclose(gbm_lib); cleanup_gl(); cleanup();
-        return false;
-    }
-
-    int dmabuf_fd = fn_bo_get_fd(bo);
-    uint32_t stride = fn_bo_get_stride(bo);
-    if (dmabuf_fd < 0) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: gbm_bo_get_fd failed");
-        fn_bo_destroy(bo); fn_device_destroy(device);
-        close(drm_fd); dlclose(gbm_lib); cleanup_gl(); cleanup();
-        return false;
-    }
-
-    // --- EGL image import + GL texture binding ---
-    EGLint img_attrs[] = {
-        EGL_WIDTH, 64,
-        EGL_HEIGHT, 64,
-        EGL_LINUX_DRM_FOURCC_EXT, static_cast<EGLint>(DRM_FORMAT_ARGB8888),
-        EGL_DMA_BUF_PLANE0_FD_EXT, dmabuf_fd,
-        EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
-        EGL_DMA_BUF_PLANE0_PITCH_EXT, static_cast<EGLint>(stride),
-        EGL_NONE
-    };
-    EGLImageKHR image = fn_create_image(egl_dpy, EGL_NO_CONTEXT,
-                                        EGL_LINUX_DMA_BUF_EXT, nullptr, img_attrs);
-    if (!image) {
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: eglCreateImageKHR failed (0x{:x})", eglGetError());
-    } else {
-        // Full GL texture binding test — this is the step that fails on
-        // affected systems and matches Chromium's Skia Ganesh code path.
-        unsigned tex = 0;
-        fn_gen_tex(1, &tex);
-        fn_bind_tex(JFD_GL_TEXTURE_2D, tex);
-        fn_img_target(JFD_GL_TEXTURE_2D, image);
-        unsigned err = fn_get_err();
-        if (err == JFD_GL_NO_ERROR) {
-            result = true;
-        } else {
-            LOG_WARN(LOG_PLATFORM, "dmabuf probe: glEGLImageTargetTexture2DOES failed (0x{:x})", err);
-        }
-        fn_del_tex(1, &tex);
-        fn_destroy_image(egl_dpy, image);
-    }
-    close(dmabuf_fd);
-
-    fn_bo_destroy(bo);
-    fn_device_destroy(device);
-    close(drm_fd);
-    dlclose(gbm_lib);
-    cleanup_gl();
-    cleanup();
-
-    if (result)
-        LOG_INFO(LOG_PLATFORM, "dmabuf probe: GBM -> EGL -> GL import OK");
-    else
-        LOG_WARN(LOG_PLATFORM, "dmabuf probe: ARGB8888 dmabuf import failed");
-
-    return result;
-}
 
 static bool wl_init(mpv_handle* mpv) {
     // Seed was_fullscreen from mpv's current state so the first configure
@@ -1102,7 +821,7 @@ static bool wl_init(mpv_handle* mpv) {
     EGLDisplay egl_dpy = eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(g_wl.display));
     if (egl_dpy != EGL_NO_DISPLAY) eglInitialize(egl_dpy, nullptr, nullptr);
 
-    if (!probe_shared_texture_support(g_platform.cef_ozone_platform, egl_dpy)) {
+    if (!jfn_wl_dmabuf_probe(g_platform.cef_ozone_platform.c_str(), egl_dpy)) {
         LOG_WARN(LOG_PLATFORM, "Shared textures not supported; using software CEF rendering");
         g_platform.shared_texture_supported = false;
     }

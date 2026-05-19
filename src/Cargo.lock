@@ -1106,7 +1106,9 @@ dependencies = [
 name = "jfn-wayland"
 version = "0.1.0"
 dependencies = [
+ "khronos-egl",
  "libc",
+ "libloading 0.8.9",
  "log",
  "memmap2",
  "smithay-client-toolkit",
@@ -1135,6 +1137,16 @@ dependencies = [
  "futures-util",
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "khronos-egl"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
+dependencies = [
+ "libc",
+ "libloading 0.8.9",
 ]
 
 [[package]]
