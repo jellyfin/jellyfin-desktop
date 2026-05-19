@@ -56,6 +56,9 @@ public:
     bool load() { return jfn_settings_load(); }
     bool save() { return jfn_settings_save(); }
     void saveAsync() { jfn_settings_save_async(); }
+    // Stop the save worker (if started) and flush any pending write.
+    // Safe to call multiple times; safe to call if worker never started.
+    void shutdownSaveWorker() { jfn_settings_shutdown_save_worker(); }
 
     std::string serverUrl() const { return takeString(jfn_settings_get_server_url()); }
     void setServerUrl(const std::string& v) { jfn_settings_set_server_url(v.c_str()); }

@@ -428,6 +428,9 @@ static int run_with_cef(int mw, int mh,
         }
         Settings::instance().save();
     }
+    // Drain any async writes issued from browser callbacks above, then join
+    // the worker so nothing is lost when CEF/platform teardown runs next.
+    Settings::instance().shutdownSaveWorker();
 
     // Business owners released first — their dtors call g_browsers->remove,
     // freeing the platform surfaces and clearing the active pointer. About
