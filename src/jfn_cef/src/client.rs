@@ -37,6 +37,12 @@ pub struct JfnCefBrowserOps {
     pub send_external_begin_frame: Option<unsafe extern "C" fn(*mut c_void)>,
     pub set_windowless_frame_rate: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
     pub exec_js: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+    /// Send a CefProcessMessage with the given name to PID_RENDERER (no args).
+    pub send_process_message_named:
+        Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+    /// Sends "applyPopupSelection" IPC with int arg + a mouse-wheel dismiss
+    /// event at (-1, -1) (only public path to CancelWidget on a CEF OSR popup).
+    pub dispatch_popup_selection: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
 }
 
 // SAFETY: the C++ side guarantees the ctx pointer remains valid until
@@ -94,6 +100,25 @@ struct Inner {
     skip_paints_after_resize: AtomicI32,
     pump_paint_count: AtomicI32,
     last_skip_reset_ns: AtomicI64,
+
+    // popup state (slice 4). Owned 1:1 with the platform surface; each
+    // CefLayer owns its popup on the platform side. Two-phase reveal: rect
+    // arrives via OnPopupSize, options via the "popupOptions" renderer IPC;
+    // try_show_popup fires when popup_visible + size_received + options_received.
+    popup: Mutex<PopupState>,
+}
+
+#[derive(Default)]
+struct PopupState {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    visible: bool,
+    options: Vec<String>,
+    selected_idx: i32,
+    size_received: bool,
+    options_received: bool,
 }
 
 // SAFETY: surface is a C++ pointer treated as opaque; only handed back to
@@ -131,6 +156,10 @@ impl Inner {
             skip_paints_after_resize: AtomicI32::new(0),
             pump_paint_count: AtomicI32::new(0),
             last_skip_reset_ns: AtomicI64::new(0),
+            popup: Mutex::new(PopupState {
+                selected_idx: -1,
+                ..PopupState::default()
+            }),
         })
     }
 
@@ -187,6 +216,23 @@ impl Inner {
         self.with_ops(|o| {
             if let Some(f) = o.exec_js {
                 unsafe { f(o.ctx, js.as_ptr() as *const c_char, js.len()) }
+            }
+        });
+    }
+    fn send_process_message_named(&self, name: &str) {
+        self.with_ops(|o| {
+            if let Some(f) = o.send_process_message_named {
+                unsafe { f(o.ctx, name.as_ptr() as *const c_char, name.len()) }
+            }
+        });
+    }
+    fn dispatch_popup_selection(&self, idx: i32) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        self.with_ops(|o| {
+            if let Some(f) = o.dispatch_popup_selection {
+                unsafe { f(o.ctx, idx) }
             }
         });
     }
@@ -357,6 +403,185 @@ impl Inner {
         }
     }
 
+    // ---- popup -----------------------------------------------------------
+
+    fn reset_popup_state(p: &mut PopupState) {
+        p.size_received = false;
+        p.options_received = false;
+        p.options.clear();
+        p.selected_idx = -1;
+    }
+
+    fn on_popup_show(&self, show: bool) {
+        {
+            let mut p = self.popup.lock().unwrap();
+            p.visible = show;
+            Self::reset_popup_state(&mut p);
+        }
+        if !show {
+            let surface = self.surface_ptr();
+            if !surface.is_null() {
+                if let Some(ops) = platform_ops::ops() {
+                    if let Some(f) = ops.popup_hide {
+                        unsafe { f(surface) };
+                    }
+                }
+            }
+            return;
+        }
+        // Ask the renderer to walk the focused <select> and ship the option
+        // list back via the "popupOptions" IPC. Reply lands in OnProcessMessage
+        // (C++ side, slice 6) which calls jfn_cef_layer_set_popup_options.
+        self.send_process_message_named("getPopupOptions");
+    }
+
+    fn on_popup_size(self: &Arc<Self>, x: i32, y: i32, w: i32, h: i32) {
+        {
+            let mut p = self.popup.lock().unwrap();
+            p.x = x;
+            p.y = y;
+            p.w = w;
+            p.h = h;
+            p.size_received = true;
+        }
+        self.try_show_popup();
+    }
+
+    fn set_popup_options(self: &Arc<Self>, opts: Vec<String>, selected: i32) {
+        {
+            let mut p = self.popup.lock().unwrap();
+            p.options = opts;
+            p.selected_idx = selected;
+            p.options_received = true;
+        }
+        self.try_show_popup();
+    }
+
+    fn try_show_popup(self: &Arc<Self>) {
+        let (x, y, w, h, opts_cstr, selected) = {
+            let p = self.popup.lock().unwrap();
+            if !p.visible || !p.size_received || !p.options_received {
+                return;
+            }
+            let opts: Vec<std::ffi::CString> = p
+                .options
+                .iter()
+                .map(|s| std::ffi::CString::new(s.as_str()).unwrap_or_default())
+                .collect();
+            (p.x, p.y, p.w, p.h, opts, p.selected_idx)
+        };
+
+        let surface = self.surface_ptr();
+        if surface.is_null() {
+            return;
+        }
+        let Some(ops) = platform_ops::ops() else { return };
+        let Some(popup_show_fn) = ops.popup_show else { return };
+
+        let opts_ptrs: Vec<*const c_char> = opts_cstr.iter().map(|c| c.as_ptr()).collect();
+        let req = platform_ops::JfnPopupRequest {
+            x,
+            y,
+            lw: w,
+            lh: h,
+            options: if opts_ptrs.is_empty() {
+                std::ptr::null()
+            } else {
+                opts_ptrs.as_ptr()
+            },
+            options_len: opts_ptrs.len(),
+            initial_highlight: selected,
+            // on_selected fires only on native-menu backends (macOS).
+            // Compositor backends (Wayland/X11/Windows) ignore it — CEF
+            // dispatches selection itself on click.
+            on_selected: Some(popup_on_selected_cb),
+            on_selected_ctx: Arc::into_raw(Arc::clone(self)) as *mut c_void,
+            on_selected_dtor: Some(popup_on_selected_dtor),
+        };
+        unsafe { popup_show_fn(surface, &req) };
+    }
+
+    fn on_deactivated(&self) {
+        let was_visible = {
+            let mut p = self.popup.lock().unwrap();
+            let was = p.visible;
+            if was {
+                p.visible = false;
+                Self::reset_popup_state(&mut p);
+            }
+            was
+        };
+        if !was_visible {
+            return;
+        }
+        let surface = self.surface_ptr();
+        if surface.is_null() {
+            return;
+        }
+        if let Some(ops) = platform_ops::ops() {
+            if let Some(f) = ops.popup_hide {
+                unsafe { f(surface) };
+            }
+        }
+    }
+
+    fn popup_rect(&self) -> (i32, i32) {
+        let p = self.popup.lock().unwrap();
+        (p.w, p.h)
+    }
+
+    // ---- paint dispatch --------------------------------------------------
+
+    fn on_paint(
+        &self,
+        is_popup: bool,
+        dirty: *const platform_ops::JfnRect,
+        n: usize,
+        buffer: *const c_void,
+        w: i32,
+        h: i32,
+    ) {
+        let surface = self.surface_ptr();
+        if surface.is_null() {
+            return;
+        }
+        let Some(ops) = platform_ops::ops() else { return };
+        if is_popup {
+            let (pw, ph) = self.popup_rect();
+            if let Some(f) = ops.popup_present_software {
+                unsafe { f(surface, buffer, w, h, pw, ph) };
+            }
+            return;
+        }
+        if !self.should_present_paint() {
+            return;
+        }
+        if let Some(f) = ops.surface_present_software {
+            unsafe { f(surface, dirty, n, buffer, w, h) };
+        }
+    }
+
+    fn on_accelerated_paint(&self, is_popup: bool, info: *const c_void) {
+        let surface = self.surface_ptr();
+        if surface.is_null() || info.is_null() {
+            return;
+        }
+        let Some(ops) = platform_ops::ops() else { return };
+        if is_popup {
+            let (pw, ph) = self.popup_rect();
+            if let Some(f) = ops.popup_present {
+                unsafe { f(surface, info, pw, ph) };
+            }
+            return;
+        }
+        if !self.should_present_paint() {
+            return;
+        }
+        if let Some(f) = ops.surface_present {
+            unsafe { f(surface, info) };
+        }
+    }
+
     fn should_present_paint(&self) -> bool {
         let cur_gen = self.resize_gen.load(Ordering::Acquire);
         let last_gen = self.last_paint_gen.load(Ordering::Acquire);
@@ -449,6 +674,40 @@ wrap_task! {
         fn execute(&self) {
             self.inner.apply_set_refresh(self.target);
         }
+    }
+}
+
+wrap_task! {
+    struct DispatchPopupTask {
+        inner: Arc<Inner>,
+        index: i32,
+    }
+    impl Task {
+        fn execute(&self) {
+            self.inner.dispatch_popup_selection(self.index);
+        }
+    }
+}
+
+// Invoked by g_platform.popup_show (native-menu backends only — macOS) when
+// the user picks an option. May fire on any thread; posts to TID_UI before
+// touching CEF. Does NOT consume the Arc — dtor handles that.
+unsafe extern "C" fn popup_on_selected_cb(ctx: *mut c_void, idx: c_int) {
+    let raw = ctx as *const Inner;
+    if raw.is_null() {
+        return;
+    }
+    let inner = unsafe { Arc::from_raw(raw) };
+    let cloned = Arc::clone(&inner);
+    std::mem::forget(inner); // restore — dtor will Arc::from_raw
+    let mut task = DispatchPopupTask::new(cloned, idx);
+    let _ = post_task(ThreadId::UI, Some(&mut task));
+}
+
+unsafe extern "C" fn popup_on_selected_dtor(ctx: *mut c_void) {
+    let raw = ctx as *const Inner;
+    if !raw.is_null() {
+        drop(unsafe { Arc::from_raw(raw) });
     }
 }
 
@@ -612,6 +871,73 @@ pub unsafe extern "C" fn jfn_cef_layer_get_screen_info(
         *out_w = w;
         *out_h = l.height.load(Ordering::Acquire);
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_popup_show(h: *const JfnCefLayer, show: bool) {
+    unsafe { arc(h) }.on_popup_show(show);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_popup_size(
+    h: *const JfnCefLayer,
+    x: c_int,
+    y: c_int,
+    w: c_int,
+    height: c_int,
+) {
+    unsafe { arc(h) }.on_popup_size(x, y, w, height);
+}
+
+/// Deposit popup options received over the "popupOptions" renderer IPC.
+/// `options` is an array of NUL-terminated UTF-8 strings (length `len`).
+/// Triggers try_show_popup once size + options have both arrived.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_set_popup_options(
+    h: *const JfnCefLayer,
+    options: *const *const c_char,
+    len: usize,
+    selected_idx: c_int,
+) {
+    let inner = unsafe { arc(h) };
+    let mut opts = Vec::with_capacity(len);
+    for i in 0..len {
+        let p = unsafe { *options.add(i) };
+        let s = if p.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+        };
+        opts.push(s);
+    }
+    inner.set_popup_options(opts, selected_idx);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_deactivated(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.on_deactivated();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_paint(
+    h: *const JfnCefLayer,
+    is_popup: bool,
+    dirty: *const platform_ops::JfnRect,
+    n: usize,
+    buffer: *const c_void,
+    w: c_int,
+    height: c_int,
+) {
+    unsafe { arc(h) }.on_paint(is_popup, dirty, n, buffer, w, height);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_on_accelerated_paint(
+    h: *const JfnCefLayer,
+    is_popup: bool,
+    info: *const c_void,
+) {
+    unsafe { arc(h) }.on_accelerated_paint(is_popup, info);
 }
 
 #[unsafe(no_mangle)]

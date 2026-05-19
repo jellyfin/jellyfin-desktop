@@ -8,6 +8,7 @@
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_keyboard_handler.h"
+#include "../platform/platform_ops.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -33,6 +34,11 @@ struct JfnCefBrowserOps {
     void (*send_external_begin_frame)(void* ctx);
     void (*set_windowless_frame_rate)(void* ctx, int hz);
     void (*exec_js)(void* ctx, const char* js_utf8, size_t len);
+    // Send a CefProcessMessage with the given name (no args) to PID_RENDERER.
+    void (*send_process_message_named)(void* ctx, const char* name_utf8, size_t len);
+    // "applyPopupSelection" IPC + mouse-wheel dismiss at (-1,-1). Used by
+    // native-menu popup backends (macOS) when the user picks an option.
+    void (*dispatch_popup_selection)(void* ctx, int index);
 };
 
 extern "C" {
@@ -58,6 +64,17 @@ void         jfn_cef_layer_get_screen_info(const JfnCefLayer*, float* scale, int
 void         jfn_cef_layer_stop_invalidate(const JfnCefLayer*);
 int          jfn_cef_layer_frame_rate(const JfnCefLayer*);
 void         jfn_cef_layer_bump_resize_gen(const JfnCefLayer*);
+void         jfn_cef_layer_on_popup_show(const JfnCefLayer*, bool show);
+void         jfn_cef_layer_on_popup_size(const JfnCefLayer*, int x, int y, int w, int h);
+void         jfn_cef_layer_set_popup_options(const JfnCefLayer*,
+                                             const char* const* options, size_t len,
+                                             int selected_idx);
+void         jfn_cef_layer_on_deactivated(const JfnCefLayer*);
+void         jfn_cef_layer_on_paint(const JfnCefLayer*, bool is_popup,
+                                    const JfnRect* dirty, size_t n,
+                                    const void* buffer, int w, int h);
+void         jfn_cef_layer_on_accelerated_paint(const JfnCefLayer*, bool is_popup,
+                                                const void* accel_paint_info);
 }
 
 // Callback invoked for IPC messages from the renderer process.
@@ -196,19 +213,6 @@ private:
     Browsers& browsers_;
     PlatformSurface* surface_ = nullptr;
     std::string name_;
-    // Popup state pairs 1:1 with its surface — each CefLayer owns its
-    // popup on the platform side (PlatformSurface gains popup fields per
-    // backend).
-    CefRect popup_rect_;
-    bool popup_visible_ = false;
-    std::vector<std::string> popup_options_;
-    int popup_selected_idx_ = -1;
-    bool popup_size_received_ = false;
-    bool popup_options_received_ = false;
-
-    void reset_popup_state();
-    void try_show_popup();
-    void dispatch_popup_selection(int index);
     CefRefPtr<CefBrowser> browser_;
     JfnCefLayer* rs_ = nullptr;
     CefRefPtr<CefRunContextMenuCallback> pending_menu_callback_;

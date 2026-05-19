@@ -159,6 +159,32 @@ void ops_exec_js(void* c, const char* js_utf8, size_t len) {
     if (auto f = b->GetMainFrame())
         f->ExecuteJavaScript(CefString(std::string(js_utf8, len)), "", 0);
 }
+void ops_send_process_message_named(void* c, const char* name_utf8, size_t len) {
+    auto* self = static_cast<CefLayer*>(c);
+    auto b = self->browser();
+    if (!b) return;
+    auto frame = focused_or_main(b);
+    if (!frame) return;
+    auto msg = CefProcessMessage::Create(CefString(std::string(name_utf8, len)));
+    frame->SendProcessMessage(PID_RENDERER, msg);
+}
+void ops_dispatch_popup_selection(void* c, int index) {
+    auto* self = static_cast<CefLayer*>(c);
+    if (self->isClosed()) return;
+    auto b = self->browser();
+    if (!b) return;
+    if (auto frame = focused_or_main(b)) {
+        auto msg = CefProcessMessage::Create("applyPopupSelection");
+        msg->GetArgumentList()->SetInt(0, index);
+        frame->SendProcessMessage(PID_RENDERER, msg);
+    }
+    // Only public path to CancelWidget on a CEF OSR popup is a mouse-wheel
+    // event outside popup_position_ — render_widget_host_view_osr.cc:1337-1343.
+    CefMouseEvent me{};
+    me.x = -1;
+    me.y = -1;
+    b->GetHost()->SendMouseWheelEvent(me, /*deltaX=*/0, /*deltaY=*/1);
+}
 
 }  // namespace
 
@@ -172,6 +198,8 @@ CefLayer::CefLayer(Browsers& browsers, PlatformSurface* surface)
     ops.send_external_begin_frame = ops_send_external_begin_frame;
     ops.set_windowless_frame_rate = ops_set_windowless_frame_rate;
     ops.exec_js = ops_exec_js;
+    ops.send_process_message_named = ops_send_process_message_named;
+    ops.dispatch_popup_selection = ops_dispatch_popup_selection;
     jfn_cef_layer_set_browser_ops(rs_, &ops);
     jfn_cef_layer_set_surface(rs_, surface);
 }
@@ -233,104 +261,33 @@ void CefLayer::setRefreshRate(double hz) {
     jfn_cef_layer_set_refresh_rate(rs_, hz);
 }
 
-void CefLayer::reset_popup_state() {
-    popup_size_received_ = false;
-    popup_options_received_ = false;
-    popup_options_.clear();
-    popup_selected_idx_ = -1;
-}
-
-void CefLayer::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
-    popup_visible_ = show;
-    reset_popup_state();
-    if (!show) {
-        if (surface_) g_platform.popup_hide(surface_);
-        return;
-    }
-    if (CefRefPtr<CefFrame> frame = focused_or_main(browser)) {
-        auto msg = CefProcessMessage::Create("getPopupOptions");
-        frame->SendProcessMessage(PID_RENDERER, msg);
-    }
+void CefLayer::OnPopupShow(CefRefPtr<CefBrowser>, bool show) {
+    jfn_cef_layer_on_popup_show(rs_, show);
 }
 
 void CefLayer::OnPopupSize(CefRefPtr<CefBrowser>, const CefRect& rect) {
-    popup_rect_ = rect;
-    popup_size_received_ = true;
-    try_show_popup();
-}
-
-void CefLayer::try_show_popup() {
-    if (!popup_visible_ || !popup_size_received_ || !popup_options_received_)
-        return;
-
-    // on_selected fires only on native-menu backends (macOS). Compositor
-    // backends ignore it; CEF dispatches selection itself on click.
-    CefRefPtr<CefLayer> self = this;
-    auto on_selected = [self](int index) {
-        CefPostTask(TID_UI, CefRefPtr<CefTask>(new FnTask([self, index]() {
-            self->dispatch_popup_selection(index);
-        })));
-    };
-
-    Platform::PopupRequest req;
-    req.x = popup_rect_.x;
-    req.y = popup_rect_.y;
-    req.lw = popup_rect_.width;
-    req.lh = popup_rect_.height;
-    req.options = popup_options_;
-    req.initial_highlight = popup_selected_idx_;
-    req.on_selected = std::move(on_selected);
-    if (surface_) g_platform.popup_show(surface_, req);
+    jfn_cef_layer_on_popup_size(rs_, rect.x, rect.y, rect.width, rect.height);
 }
 
 void CefLayer::onDeactivated() {
-    if (popup_visible_) {
-        popup_visible_ = false;
-        reset_popup_state();
-        if (surface_) g_platform.popup_hide(surface_);
-    }
-}
-
-void CefLayer::dispatch_popup_selection(int index) {
-    if (isClosed() || !browser_) return;
-    if (CefRefPtr<CefFrame> frame = focused_or_main(browser_)) {
-        auto msg = CefProcessMessage::Create("applyPopupSelection");
-        msg->GetArgumentList()->SetInt(0, index);
-        frame->SendProcessMessage(PID_RENDERER, msg);
-    }
-    // Only public path to CancelWidget on a CEF OSR popup is a mouse-wheel
-    // event outside popup_position_ — render_widget_host_view_osr.cc:1337-1343.
-    CefMouseEvent me{};
-    me.x = -1;
-    me.y = -1;
-    browser_->GetHost()->SendMouseWheelEvent(me, /*deltaX=*/0, /*deltaY=*/1);
+    jfn_cef_layer_on_deactivated(rs_);
 }
 
 void CefLayer::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList& dirty,
                        const void* buffer, int w, int h) {
-    if (type == PET_POPUP) {
-        if (surface_)
-            g_platform.popup_present_software(surface_, buffer, w, h,
-                                              popup_rect_.width, popup_rect_.height);
-        return;
-    }
-    if (type != PET_VIEW) return;
-    if (!jfn_cef_layer_should_present_paint(rs_)) return;
-    if (surface_ && g_platform.surface_present_software)
-        g_platform.surface_present_software(surface_, dirty, buffer, w, h);
+    if (type != PET_POPUP && type != PET_VIEW) return;
+    std::vector<JfnRect> rects;
+    rects.reserve(dirty.size());
+    for (const auto& r : dirty)
+        rects.push_back({r.x, r.y, r.width, r.height});
+    jfn_cef_layer_on_paint(rs_, type == PET_POPUP,
+                           rects.data(), rects.size(), buffer, w, h);
 }
 
 void CefLayer::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type,
                                   const RectList&, const CefAcceleratedPaintInfo& info) {
-    if (type == PET_POPUP) {
-        if (surface_)
-            g_platform.popup_present(surface_, info, popup_rect_.width, popup_rect_.height);
-        return;
-    }
-    if (type != PET_VIEW) return;
-    if (!jfn_cef_layer_should_present_paint(rs_)) return;
-    if (surface_ && g_platform.surface_present)
-        g_platform.surface_present(surface_, info);
+    if (type != PET_POPUP && type != PET_VIEW) return;
+    jfn_cef_layer_on_accelerated_paint(rs_, type == PET_POPUP, &info);
 }
 
 void CefLayer::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
@@ -536,16 +493,21 @@ bool CefLayer::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr
 
     if (name == "popupOptions") {
         CefRefPtr<CefListValue> list = args->GetList(0);
-        popup_options_.clear();
+        std::vector<std::string> opts;
+        std::vector<const char*> opt_ptrs;
         if (list) {
             size_t n = list->GetSize();
-            popup_options_.reserve(n);
+            opts.reserve(n);
+            opt_ptrs.reserve(n);
             for (size_t i = 0; i < n; i++)
-                popup_options_.push_back(list->GetString(i).ToString());
+                opts.push_back(list->GetString(i).ToString());
+            for (const auto& s : opts)
+                opt_ptrs.push_back(s.c_str());
         }
-        popup_selected_idx_ = args->GetInt(1);
-        popup_options_received_ = true;
-        try_show_popup();
+        jfn_cef_layer_set_popup_options(rs_,
+            opt_ptrs.empty() ? nullptr : opt_ptrs.data(),
+            opt_ptrs.size(),
+            args->GetInt(1));
         return true;
     }
 
