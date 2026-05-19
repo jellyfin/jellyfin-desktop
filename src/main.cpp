@@ -287,10 +287,11 @@ static int run_with_cef(int mw, int mh,
     jfn_playback_set_idle_inhibit_handler([](uint32_t level) {
         g_platform.set_idle_inhibit(static_cast<IdleInhibitLevel>(level));
     });
+    jfn_playback_set_theme_video_mode_handler([](bool active) {
+        if (g_theme_color) g_theme_color->setVideoMode(active);
+    });
     auto browser_sink = std::make_shared<BrowserPlaybackSink>();
-    auto theme_color_sink = std::make_shared<ThemeColorSink>();
     playback::register_event_sink(browser_sink);
-    playback::register_event_sink(theme_color_sink);
 #if defined(__APPLE__)
     auto media_sink = std::make_shared<MacosSink>();
     playback::register_event_sink(media_sink);

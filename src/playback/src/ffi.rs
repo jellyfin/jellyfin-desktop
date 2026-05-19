@@ -281,6 +281,13 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
         crate::idle_inhibit_sink::deliver(ev);
     }));
 
+    // theme_color_sink: clears ThemeColor video mode on terminal events.
+    // No-op until the C++ side installs the setter via
+    // jfn_playback_set_theme_video_mode_handler.
+    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
+        crate::theme_color_sink::deliver(ev);
+    }));
+
     // mpris_sink (Linux only): hands every PlaybackEvent off to the
     // sink thread. The thread is spawned out-of-band via
     // jfn_mpris_sink_start; this closure is a no-op until then.

@@ -163,6 +163,11 @@ void jfn_playback_set_web_exec_js_handler(JfnPlaybackExecJsCb cb);
 typedef void (*JfnPlaybackIdleInhibitCb)(uint32_t level);
 void jfn_playback_set_idle_inhibit_handler(JfnPlaybackIdleInhibitCb cb);
 
+// Install / clear the ThemeColor::setVideoMode setter the builtin
+// theme_color sink calls on Finished / Canceled / Error. NULL clears.
+typedef void (*JfnPlaybackThemeVideoModeCb)(bool active);
+void jfn_playback_set_theme_video_mode_handler(JfnPlaybackThemeVideoModeCb cb);
+
 #ifdef __cplusplus
 }
 #endif

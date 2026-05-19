@@ -5,4 +5,3 @@
 // per-platform via #ifdef.
 #include "sinks/queued_sink.h"
 #include "sinks/browser_sink.h"
-#include "sinks/theme_color_sink.h"
