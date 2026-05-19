@@ -10,6 +10,8 @@ mod ffi;
 mod ingest;
 mod ingest_driver;
 mod mpris;
+#[cfg(target_os = "linux")]
+mod mpris_sink;
 mod state_machine;
 mod types;
 mod wake_event;

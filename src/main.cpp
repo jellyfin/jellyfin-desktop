@@ -30,7 +30,6 @@
 #elif defined(_WIN32)
 #include "playback/sinks/windows/windows_sink.h"
 #else
-#include "playback/sinks/mpris/mpris_sink.h"
 #endif
 
 #include "logging.h"
@@ -291,15 +290,23 @@ static int run_with_cef(int mw, int mh,
     playback::register_event_sink(theme_color_sink);
 #if defined(__APPLE__)
     auto media_sink = std::make_shared<MacosSink>();
+    playback::register_event_sink(media_sink);
+    media_sink->start();
 #elif defined(_WIN32)
     int64_t wid = 0;
     jfn_mpv_get_property_int("window-id", &wid);
     auto media_sink = std::make_shared<WindowsSink>(reinterpret_cast<HWND>(static_cast<intptr_t>(wid)));
-#else
-    auto media_sink = std::make_shared<MprisSink>();
-#endif
     playback::register_event_sink(media_sink);
     media_sink->start();
+#else
+    // MPRIS sink lives Rust-side (jfn_playback::mpris_sink). The
+    // coordinator's builtin event fanout (register_builtin_sinks) forwards
+    // every event into the sink thread, which speaks D-Bus.
+    jfn_playback_set_web_exec_js_handler([](const char* js) {
+        if (g_web_browser && js) g_web_browser->execJs(js);
+    });
+    jfn_mpris_sink_start("");
+#endif
     // MpvActionSink lives Rust-side (jfn_playback::ffi::register_builtin_sinks).
     jfn_playback_set_display_scale_handler([](double s) {
         if (g_browsers && s > 0) g_browsers->setScale(s);
@@ -345,7 +352,11 @@ static int run_with_cef(int mw, int mh,
 #endif
 
     g_theme_color = nullptr;
+#if defined(__APPLE__) || defined(_WIN32)
     media_sink->stop();
+#else
+    jfn_mpris_sink_stop();
+#endif
 
     jfn_playback_stop_mpv_event_thread();
 

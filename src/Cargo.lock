@@ -1062,6 +1062,7 @@ dependencies = [
  "jfn-mpv",
  "libc",
  "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]

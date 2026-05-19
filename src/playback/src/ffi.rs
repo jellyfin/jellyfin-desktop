@@ -273,6 +273,14 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
             }
         }
     }));
+
+    // mpris_sink (Linux only): hands every PlaybackEvent off to the
+    // sink thread. The thread is spawned out-of-band via
+    // jfn_mpris_sink_start; this closure is a no-op until then.
+    #[cfg(target_os = "linux")]
+    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
+        crate::mpris_sink::deliver(ev.clone());
+    }));
 }
 
 #[unsafe(no_mangle)]

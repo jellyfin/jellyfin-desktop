@@ -173,13 +173,6 @@ else()
     find_package(PkgConfig REQUIRED)
 
     # Shared Linux deps
-	pkg_check_modules(SYSTEMD libsystemd QUIET)
-    if (NOT SYSTEMD_FOUND)
-    	pkg_check_modules(SYSTEMD libelogind REQUIRED)
-    else()
-    	pkg_check_modules(SYSTEMD REQUIRED libsystemd)
-    endif()
-
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     find_package(OpenGL REQUIRED COMPONENTS EGL)
 
@@ -304,8 +297,6 @@ if(ENABLE_KDE_PALETTE)
         src/playback/sinks/browser_sink.cpp
         src/playback/sinks/idle_inhibit_sink.cpp
         src/playback/sinks/theme_color_sink.cpp
-        src/playback/sinks/mpris/mpris_sink.cpp
-        src/playback/sinks/mpris/mpris_projection.cpp
         # Wayland
         src/platform/wayland.cpp
         src/clipboard/wayland.cpp
@@ -336,7 +327,6 @@ if(ENABLE_KDE_PALETTE)
     endif()
     set(PLATFORM_LIBRARIES
         ${WAYLAND_LIBRARIES}
-        ${SYSTEMD_LIBRARIES}
         ${XKBCOMMON_LIBRARIES}
         OpenGL::EGL
         ${CMAKE_DL_LIBS}
@@ -354,7 +344,6 @@ if(ENABLE_KDE_PALETTE)
     set(PLATFORM_INCLUDE_DIRS
         ${WAYLAND_INCLUDE_DIRS}
         ${LIBDRM_INCLUDE_DIRS}
-        ${SYSTEMD_INCLUDE_DIRS}
         ${XKBCOMMON_INCLUDE_DIRS}
         ${WAYLAND_GENERATED_DIR}
     )

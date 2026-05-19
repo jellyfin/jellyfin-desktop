@@ -140,6 +140,23 @@ void jfn_mpris_project(
     double pending_rate,
     JfnMprisDerivedC* out);
 
+// =====================================================================
+// MPRIS sink (Linux). The sink thread serves
+// org.mpris.MediaPlayer2.JellyfinDesktop[<suffix>] over the session bus
+// and consumes PlaybackEvents from the coordinator's builtin fanout.
+// start() spawns the thread; stop() joins it. Both are no-ops if
+// already in the requested state.
+//
+// `service_suffix` may be NULL or empty for no suffix.
+// =====================================================================
+void jfn_mpris_sink_start(const char* service_suffix);
+void jfn_mpris_sink_stop(void);
+
+// Install / clear the exec_js callback invoked for Next, Previous,
+// Seek, and SetPosition. NULL clears.
+typedef void (*JfnPlaybackExecJsCb)(const char* js_utf8);
+void jfn_playback_set_web_exec_js_handler(JfnPlaybackExecJsCb cb);
+
 #ifdef __cplusplus
 }
 #endif
