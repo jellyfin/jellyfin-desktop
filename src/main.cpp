@@ -282,11 +282,14 @@ static int run_with_cef(int mw, int mh,
     // observe playback state. Sinks register before start() so the worker
     // never delivers to a half-built fanout.
     PlaybackCoordinatorScope coord_scope;
+    // Builtin idle_inhibit sink (Rust-side) calls into the platform vtable
+    // through this handler. Install before any event posts.
+    jfn_playback_set_idle_inhibit_handler([](uint32_t level) {
+        g_platform.set_idle_inhibit(static_cast<IdleInhibitLevel>(level));
+    });
     auto browser_sink = std::make_shared<BrowserPlaybackSink>();
-    auto idle_inhibit_sink = std::make_shared<IdleInhibitSink>();
     auto theme_color_sink = std::make_shared<ThemeColorSink>();
     playback::register_event_sink(browser_sink);
-    playback::register_event_sink(idle_inhibit_sink);
     playback::register_event_sink(theme_color_sink);
 #if defined(__APPLE__)
     auto media_sink = std::make_shared<MacosSink>();

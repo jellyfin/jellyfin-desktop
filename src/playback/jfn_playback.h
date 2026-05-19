@@ -157,6 +157,12 @@ void jfn_mpris_sink_stop(void);
 typedef void (*JfnPlaybackExecJsCb)(const char* js_utf8);
 void jfn_playback_set_web_exec_js_handler(JfnPlaybackExecJsCb cb);
 
+// Install / clear the idle-inhibit setter the builtin idle_inhibit
+// sink calls on phase / media_type transitions. `level` matches
+// C++ `IdleInhibitLevel` (None=0, System=1, Display=2). NULL clears.
+typedef void (*JfnPlaybackIdleInhibitCb)(uint32_t level);
+void jfn_playback_set_idle_inhibit_handler(JfnPlaybackIdleInhibitCb cb);
+
 #ifdef __cplusplus
 }
 #endif

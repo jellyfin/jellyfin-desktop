@@ -8,6 +8,7 @@
 mod coordinator;
 mod ffi;
 mod ingest;
+mod idle_inhibit_sink;
 mod ingest_driver;
 mod mpris;
 #[cfg(target_os = "linux")]

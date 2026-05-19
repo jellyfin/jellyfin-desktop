@@ -274,6 +274,13 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
         }
     }));
 
+    // idle_inhibit_sink: drives the platform idle-inhibit level from
+    // phase + media_type. No-op until the C++ side installs the setter
+    // via jfn_playback_set_idle_inhibit_handler.
+    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
+        crate::idle_inhibit_sink::deliver(ev);
+    }));
+
     // mpris_sink (Linux only): hands every PlaybackEvent off to the
     // sink thread. The thread is spawned out-of-band via
     // jfn_mpris_sink_start; this closure is a no-op until then.

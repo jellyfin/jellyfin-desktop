@@ -125,7 +125,6 @@ if(APPLE)
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
         src/playback/sinks/browser_sink.cpp
-        src/playback/sinks/idle_inhibit_sink.cpp
         src/playback/sinks/theme_color_sink.cpp
         src/playback/sinks/macos/macos_sink.mm
     )
@@ -155,7 +154,6 @@ elseif(WIN32)
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
         src/playback/sinks/browser_sink.cpp
-        src/playback/sinks/idle_inhibit_sink.cpp
         src/playback/sinks/theme_color_sink.cpp
         src/playback/sinks/windows/windows_sink.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
@@ -295,7 +293,6 @@ if(ENABLE_KDE_PALETTE)
         src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
         src/playback/sinks/browser_sink.cpp
-        src/playback/sinks/idle_inhibit_sink.cpp
         src/playback/sinks/theme_color_sink.cpp
         # Wayland
         src/platform/wayland.cpp
