@@ -170,12 +170,12 @@ static int run_with_cef(int mw, int mh,
 
     bool use_shared_textures = g_platform.shared_texture_supported && !args.disable_gpu_compositing;
 
-    CefRuntime::SetLogSeverity(toCefSeverity(effectiveLogLevel(LOG_CEF)));
-    CefRuntime::SetRemoteDebuggingPort(args.remote_debugging_port);
-    CefRuntime::SetDisableGpuCompositing(!use_shared_textures);
+    jfn_cef_set_log_severity(static_cast<int>(toCefSeverity(effectiveLogLevel(LOG_CEF))));
+    jfn_cef_set_remote_debugging_port(args.remote_debugging_port);
+    jfn_cef_set_disable_gpu_compositing(!use_shared_textures);
 #ifdef __linux__
     if (!ozone_platform.empty())
-        CefRuntime::SetOzonePlatform(ozone_platform);
+        jfn_cef_set_ozone_platform(ozone_platform.c_str());
 #endif
 
     LOG_INFO(LOG_MAIN, "[FLOW] calling CefInitialize...");
@@ -438,7 +438,7 @@ int main(int argc, char* argv[]) {
     g_platform = make_platform(DisplayBackend::macOS);
 #endif
 
-    if (int rc = CefRuntime::Start(argc, argv); rc >= 0) return rc;
+    if (int rc = jfn_cef_start(argc, argv); rc >= 0) return rc;
 
     Settings::instance().load();
     const auto& saved = Settings::instance();

@@ -545,7 +545,6 @@ if(WIN32)
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
-        src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp
@@ -567,7 +566,6 @@ else()
         src/mpv/event.cpp
         src/mpv/capabilities.cpp
         src/mpv/color.cpp
-        src/cef/cef_app.cpp
         src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp
@@ -605,7 +603,6 @@ set(FMT_TEST OFF CACHE BOOL "" FORCE)
 set(FMT_DOC OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fmt EXCLUDE_FROM_ALL)
 
-# Ensure JS shims are embedded before compiling cef_app.cpp
 add_dependencies(jellyfin-desktop generate_version)
 
 target_include_directories(jellyfin-desktop PRIVATE
