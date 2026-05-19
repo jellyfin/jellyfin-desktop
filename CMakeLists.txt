@@ -208,16 +208,10 @@ set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output
     set(XDG_OUTPUT_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-client.h")
     set(XDG_OUTPUT_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-code.c")
 
-    # KDE server decoration palette (per-window titlebar colors on KWin)
-    option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support" ON)
-    if(ENABLE_KDE_PALETTE)
-        find_file(DECO_PALETTE_PROTOCOL server-decoration-palette.xml
-            PATHS /usr/share/plasma-wayland-protocols
-                  /app/share/plasma-wayland-protocols
-            REQUIRED)
-        set(DECO_PALETTE_CLIENT_H "${WAYLAND_GENERATED_DIR}/server-decoration-palette-client.h")
-        set(DECO_PALETTE_CODE_C "${WAYLAND_GENERATED_DIR}/server-decoration-palette-code.c")
-    endif()
+    # KDE server-decoration-palette protocol lives entirely in the
+    # jfn-wayland Rust crate (src/wayland/protocols/ + wayland-scanner
+    # proc-macro in src/wayland/src/kde_palette.rs). No C++ generation
+    # needed here.
 
     add_custom_command(
         OUTPUT ${LINUX_DMABUF_CLIENT_H}
@@ -267,21 +261,6 @@ set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output
         DEPENDS ${XDG_OUTPUT_PROTOCOL}
         COMMENT "Generating xdg-output-unstable-v1 code"
     )
-if(ENABLE_KDE_PALETTE)
-        add_custom_command(
-            OUTPUT ${DECO_PALETTE_CLIENT_H}
-            COMMAND ${WAYLAND_SCANNER} client-header ${DECO_PALETTE_PROTOCOL} ${DECO_PALETTE_CLIENT_H}
-            DEPENDS ${DECO_PALETTE_PROTOCOL}
-            COMMENT "Generating server-decoration-palette client header"
-        )
-        add_custom_command(
-            OUTPUT ${DECO_PALETTE_CODE_C}
-            COMMAND ${WAYLAND_SCANNER} private-code ${DECO_PALETTE_PROTOCOL} ${DECO_PALETTE_CODE_C}
-            DEPENDS ${DECO_PALETTE_PROTOCOL}
-            COMMENT "Generating server-decoration-palette code"
-        )
-    endif()
-
     set(PLATFORM_SOURCES
         # Shared Linux
         src/playback/sinks/queued_sink.cpp
@@ -298,13 +277,6 @@ if(ENABLE_KDE_PALETTE)
         ${XDG_OUTPUT_CODE_C}
         ${XDG_OUTPUT_CLIENT_H}
     )
-    if(ENABLE_KDE_PALETTE)
-        list(APPEND PLATFORM_SOURCES
-            ${DECO_PALETTE_CODE_C}
-            ${DECO_PALETTE_CLIENT_H}
-        )
-        add_compile_definitions(HAVE_KDE_DECORATION_PALETTE)
-    endif()
     if(ENABLE_X11)
         list(APPEND PLATFORM_SOURCES
             src/platform/x11.cpp

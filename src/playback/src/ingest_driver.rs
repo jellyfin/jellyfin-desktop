@@ -153,7 +153,7 @@ pub unsafe extern "C" fn jfn_playback_ingest_mpv_event(
 
 /// Push synthetic OSD-dim pixels through the same digest path the
 /// `osd-dimensions` property observation drives. Used by the Wayland
-/// xdg_toplevel.configure intercept (`platform::wayland::on_proxy_configure`)
+/// xdg_toplevel.configure intercept (`jfn_wayland::proxy::on_configure`)
 /// in place of mpv's own osd-dimensions delivery.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_playback_post_osd_pixels(

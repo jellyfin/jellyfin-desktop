@@ -44,7 +44,7 @@
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include "wlproxy/wlproxy.h"
-#include "platform/wayland.h"
+#include "jfn_wl_proxy.h"
 #include "jfn_wl_proxy.h"
 #endif
 
@@ -583,7 +583,7 @@ int main(int argc, char* argv[]) {
                 // first compositor configure (which arrives shortly after
                 // mpv_initialize) is captured. wl_init runs later and the
                 // same callback then drives the surface-side resize path.
-                platform::wayland::register_proxy_callbacks();
+                jfn_wl_register_proxy_callbacks();
             } else {
                 LOG_ERROR(LOG_MAIN, "wlproxy display name empty; aborting proxy");
                 jfn_wlproxy_stop(wlproxy);
@@ -715,8 +715,9 @@ int main(int argc, char* argv[]) {
     // that follows.
     //
     // On Wayland we don't observe osd-dimensions: the proxy's
-    // on_proxy_configure calls jfn_playback_post_osd_pixels directly,
-    // filling the same osd_pw/osd_ph atomics from a non-mpv-event source.
+    // xdg_toplevel.configure intercept (jfn-wayland::proxy::on_configure)
+    // calls jfn_playback_post_osd_pixels directly, filling the same
+    // osd_pw/osd_ph atomics from a non-mpv-event source.
     // The poll below reads the atomics every iteration to pick up the
     // value regardless of whether a mpv property-change event arrived.
     bool need_max = Settings::instance().windowGeometry().maximized;

@@ -1,9 +1,10 @@
 //! Cached preferred-scale value + proxy-callback wiring.
 //!
 //! Owns the `cached_scale` that used to live in WlState on the C++ side and
-//! the scale-callback registered against jfn-wlproxy. The configure callback
-//! stays in C++ (the runtime resize path it drives still lives in
-//! wayland.cpp) — Rust just forwards its pointer through to wlproxy.
+//! the scale-callback registered against jfn-wlproxy. Also owns the
+//! xdg_toplevel.configure intercept that forwards into the runtime resize
+//! path (`wl_ops::on_configure`) and pushes synthetic OSD-dim pixels into
+//! the playback coordinator.
 //!
 //! Storage: `AtomicU32` holding the f32 bits, so reads from C++ getter
 //! callbacks (any thread) don't need a mutex. Zero bits sentinel for
@@ -12,15 +13,25 @@
 use std::ffi::c_int;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::wl_ops;
+
 type JfnConfigureCb = extern "C" fn(c_int, c_int, c_int);
 type JfnScaleCb = extern "C" fn(c_int);
 
-// Declared in jfn-wlproxy (src/wlproxy/wlproxy.h); brought in here as
-// extern decls to avoid a workspace cycle (the jfn-wlproxy crate doesn't
-// expose its private callback type aliases).
+// Declared in jfn-wlproxy (src/wlproxy/wlproxy.h) and jfn-playback
+// (src/playback/jfn_ingest.h); brought in here as extern decls to avoid
+// a workspace cycle.
 unsafe extern "C" {
     fn jfn_wlproxy_set_configure_callback(cb: JfnConfigureCb);
     fn jfn_wlproxy_set_scale_callback(cb: JfnScaleCb);
+    fn jfn_playback_post_osd_pixels(
+        pw: c_int,
+        ph: c_int,
+        scale: f32,
+        has_macos_logical: bool,
+        mac_lw: c_int,
+        mac_lh: c_int,
+    );
 }
 
 static CACHED_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
@@ -50,10 +61,33 @@ pub extern "C" fn jfn_wl_get_cached_scale() -> f32 {
     if s > 0.0 { s } else { 1.0 }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_wl_register_proxy_callbacks(configure_cb: JfnConfigureCb) {
+// xdg_toplevel.configure intercept — fires on the wl-proxy per-client thread
+// for every configure from the compositor. Authoritative size source on
+// Wayland. Forwards into `wl_ops::on_configure` (which is a no-op until
+// `jfn_wl_core_init` has run; see jfn_wl_on_configure) and posts synthetic
+// OSD-dim pixels through the playback coordinator.
+extern "C" fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_int) {
+    if physical_w <= 0 || physical_h <= 0 {
+        return;
+    }
+    let scale = if crate::wl_state::try_state().is_some() {
+        let s = load_scale();
+        if s > 0.0 { s } else { 1.0 }
+    } else {
+        1.0
+    };
+    if crate::wl_state::try_state().is_some() {
+        wl_ops::on_configure(physical_w, physical_h, fullscreen != 0, scale);
+    }
     unsafe {
-        jfn_wlproxy_set_configure_callback(configure_cb);
+        jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_wl_register_proxy_callbacks() {
+    unsafe {
+        jfn_wlproxy_set_configure_callback(on_configure);
         jfn_wlproxy_set_scale_callback(on_scale);
     }
 }

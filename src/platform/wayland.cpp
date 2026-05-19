@@ -14,9 +14,7 @@
 
 #include <wayland-client.h>
 #include <EGL/egl.h>
-#ifdef HAVE_KDE_DECORATION_PALETTE
 #include "jfn_kde_palette.h"
-#endif
 #include <cstring>
 #include <cstdlib>
 #include <unistd.h>
@@ -141,90 +139,14 @@ float wl_get_display_scale(int x, int y) {
     return s > 0.0 ? static_cast<float>(s) : 1.0f;
 }
 
-// ---- KDE titlebar color shim (Wayland protocol piece kept here because
-// org_kde_kwin_server_decoration_palette has no Rust binding) -----------
+// ---- KDE titlebar color shims --------------------------------------
 
-#ifdef HAVE_KDE_DECORATION_PALETTE
-#include "server-decoration-palette-client.h"
-
-static org_kde_kwin_server_decoration_palette_manager* g_palette_manager = nullptr;
-static org_kde_kwin_server_decoration_palette*         g_palette         = nullptr;
-static wl_display*                                     g_palette_display = nullptr;
-static wl_surface*                                     g_palette_parent  = nullptr;
-
-// Registry listener used only by the KDE palette path. The Rust
-// wl_state registry binds standard globals; we keep this tiny extra
-// registry pass for the palette manager only.
-static void palette_reg_global(void* /*data*/, wl_registry* reg,
-                               uint32_t name, const char* iface, uint32_t /*ver*/) {
-    if (strcmp(iface, org_kde_kwin_server_decoration_palette_manager_interface.name) == 0) {
-        g_palette_manager = static_cast<org_kde_kwin_server_decoration_palette_manager*>(
-            wl_registry_bind(reg, name,
-                             &org_kde_kwin_server_decoration_palette_manager_interface, 1));
-    }
-}
-static void palette_reg_remove(void*, wl_registry*, uint32_t) {}
-static const wl_registry_listener s_palette_reg = {
-    .global = palette_reg_global, .global_remove = palette_reg_remove
-};
-
-static void wl_init_kde_palette() {
-    if (!g_palette_display || !g_palette_parent) return;
-    wl_event_queue* q = wl_display_create_queue(g_palette_display);
-    auto* reg = wl_display_get_registry(g_palette_display);
-    wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(reg), q);
-    wl_registry_add_listener(reg, &s_palette_reg, nullptr);
-    wl_display_roundtrip_queue(g_palette_display, q);
-    wl_registry_destroy(reg);
-    wl_event_queue_destroy(q);
-
-    if (!g_palette_manager) return;
-    g_palette = org_kde_kwin_server_decoration_palette_manager_create(
-        g_palette_manager, g_palette_parent);
-    if (!g_palette) return;
-    if (!jfn_wl_kde_palette_init()) {
-        org_kde_kwin_server_decoration_palette_release(g_palette);
-        g_palette = nullptr;
-        return;
-    }
-    LOG_INFO(LOG_PLATFORM, "KDE decoration palette ready");
-}
-
-static void wl_cleanup_kde_palette() {
-    // Don't release the palette object — KWin atomically drops it with
-    // the window. Releasing now would flash the system color back.
-    g_palette = nullptr;
-    g_palette_manager = nullptr;
-}
-
-static void wl_post_window_cleanup() {
+void wl_post_window_cleanup() {
     jfn_wl_kde_palette_post_window_cleanup();
 }
 
-static void wl_set_theme_color(const Color& c) {
-    if (!g_palette) return;
-    const char* path = jfn_wl_kde_palette_write(c.r, c.g, c.b, c.hex);
-    if (!path) return;
-    org_kde_kwin_server_decoration_palette_set_palette(g_palette, path);
-    wl_display_flush(g_palette_display);
-}
-#else
-static void wl_init_kde_palette() {}
-static void wl_cleanup_kde_palette() {}
-static void wl_post_window_cleanup() {}
-static void wl_set_theme_color(const Color&) {}
-#endif
-
-// ---- on_proxy_configure ----------------------------------------------
-
-// Fires from the wl-proxy per-client thread for every xdg_toplevel.configure
-// from the compositor. Authoritative size source on Wayland.
-extern "C" void on_proxy_configure(int physical_w, int physical_h, int fullscreen) {
-    if (physical_w <= 0 || physical_h <= 0) return;
-    jfn_wl_on_configure(physical_w, physical_h, fullscreen);
-    float scale = jfn_wl_get_cached_scale();
-    if (scale <= 0.f) scale = 1.0f;
-    jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
+void wl_set_theme_color(const Color& c) {
+    jfn_wl_kde_palette_set_color(c.r, c.g, c.b, c.hex);
 }
 
 // ---- Lifecycle -------------------------------------------------------
@@ -257,11 +179,6 @@ bool wl_init(mpv_handle* /*mpv*/) {
         return false;
     }
 
-#ifdef HAVE_KDE_DECORATION_PALETTE
-    g_palette_display = display;
-    g_palette_parent  = parent;
-#endif
-
     // Register close callback — intercepts xdg_toplevel close before mpv sees it.
     {
         intptr_t cb_ptr = 0;
@@ -285,7 +202,7 @@ bool wl_init(mpv_handle* /*mpv*/) {
         g_platform.shared_texture_supported = false;
     }
 
-    wl_init_kde_palette();
+    jfn_wl_kde_palette_attach(display, parent);
 
     input::wayland::start_input_thread();
 
@@ -311,7 +228,10 @@ void wl_cleanup() {
         }
     }
 
-    wl_cleanup_kde_palette();
+    // KDE palette: KWin atomically drops the palette object with the
+    // window. Releasing here would flash the system color back. The
+    // scheme file is unlinked separately via wl_post_window_cleanup
+    // after mpv tears down the surface.
     jfn_idle_inhibit_cleanup();
     clipboard_wayland::cleanup();
     input::wayland::cleanup();
@@ -345,17 +265,6 @@ void wl_fade_surface(PlatformSurface* s, float fade_sec,
 }
 
 } // namespace
-
-// =====================================================================
-// Public registration shim (called from main.cpp before mpv_create so
-// the very first compositor configure/preferred_scale events are captured).
-// =====================================================================
-
-namespace platform::wayland {
-void register_proxy_callbacks() {
-    jfn_wl_register_proxy_callbacks(on_proxy_configure);
-}
-}
 
 // =====================================================================
 // Platform vtable
