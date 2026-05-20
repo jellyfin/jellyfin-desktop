@@ -11,6 +11,7 @@
 #include "windows_sink.h"
 
 #include "../../../common.h"
+#include "../../../mpv/jfn_mpv_api.h"
 #include "../../../browser/browsers.h"
 #include "../../../browser/web_browser.h"
 #include "../../../logging.h"
@@ -138,11 +139,11 @@ void WindowsSink::onButtonPressed(int button) {
     using B = SystemMediaTransportControlsButton;
     switch (static_cast<B>(button)) {
         case B::Play:
-            g_mpv.Play(); break;
+            jfn_mpv_play(); break;
         case B::Pause:
-            g_mpv.Pause(); break;
+            jfn_mpv_pause(); break;
         case B::Stop:
-            g_mpv.Stop(); break;
+            jfn_mpv_stop(); break;
         case B::Next:
             if (g_web_browser)
                 g_web_browser->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");

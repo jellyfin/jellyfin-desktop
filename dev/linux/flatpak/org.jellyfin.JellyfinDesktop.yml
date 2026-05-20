@@ -44,6 +44,7 @@ modules:
       - cp -r Release/* /app/cef/lib/
       - cp -r Resources/* /app/cef/lib/
       - cp -r include /app/cef/
+      - cp -r libcef_dll /app/cef/
       - cp libcef_dll_wrapper/libcef_dll_wrapper.a /app/cef/lib/
     sources:
       - type: dir

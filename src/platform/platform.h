@@ -10,6 +10,7 @@
 enum class IdleInhibitLevel { None, System, Display };
 
 #include "display_backend.h"
+#include "platform_ops.h"
 #include "../color.h"
 
 #include <cstddef>
@@ -211,5 +212,9 @@ inline Platform make_platform(DisplayBackend backend) {
     }
 #endif
     p.early_init();
+    // Hand the Rust-side CefLayer port (src/jfn_cef/src/client.rs) a vtable
+    // of thunks that wrap g_platform. Safe to register before g_platform is
+    // assigned: each thunk reads g_platform at call time, not at registration.
+    jfn_cef_set_platform_ops(jfn_platform_ops());
     return p;
 }

@@ -1,9 +1,10 @@
 #include "common.h"
 #include "cef/cef_client.h"
+#include "mpv/jfn_mpv_api.h"
 #include "jfn_idle_inhibit_linux.h"
 #include "jfn_open_url_linux.h"
 #include "input/input_x11.h"
-#include "mpv/event.h"
+#include "playback/jfn_ingest.h"
 
 #include <xcb/xcb.h>
 #include <xcb/shm.h>
@@ -279,7 +280,7 @@ static bool x11_surface_present(PlatformSurface*, const CefAcceleratedPaintInfo&
 static bool x11_surface_present_software(PlatformSurface* s,
                                          const CefRenderHandler::RectList& dirty,
                                          const void* buffer, int w, int h) {
-    if (g_shutting_down.load(std::memory_order_relaxed)) return false;
+    if (jfn_shutting_down()) return false;
     if (!s) return false;
     std::lock_guard<std::mutex> lock(g_x11.surface_mtx);
     if (s->window == XCB_NONE || !s->visible) return false;
@@ -408,13 +409,13 @@ static void x11_fade_surface(PlatformSurface* /*s*/, float /*fade_sec*/,
 // =====================================================================
 
 static void x11_set_fullscreen(bool fullscreen) {
-    if (!g_mpv.IsValid()) return;
-    if (mpv::fullscreen() == fullscreen) return;
-    g_mpv.SetFullscreen(fullscreen);
+    if (!jfn_mpv_handle_get()) return;
+    if (jfn_playback_fullscreen() == fullscreen) return;
+    jfn_mpv_set_fullscreen(fullscreen);
 }
 
 static void x11_toggle_fullscreen() {
-    if (g_mpv.IsValid()) g_mpv.ToggleFullscreen();
+    if (jfn_mpv_handle_get()) jfn_mpv_toggle_fullscreen();
 }
 
 // =====================================================================
@@ -431,7 +432,7 @@ static void x11_set_expected_size(int, int) {}
 // =====================================================================
 
 static float x11_get_scale() {
-    double scale = mpv::display_scale();
+    double scale = jfn_playback_display_scale();
     if (scale > 0) {
         g_x11.cached_scale = static_cast<float>(scale);
         return g_x11.cached_scale;
@@ -455,7 +456,7 @@ static void hide_all_live_locked() {
 static bool x11_init(mpv_handle*) {
     // Get mpv's window ID
     int64_t wid = 0;
-    g_mpv.GetWindowId(wid);
+    jfn_mpv_get_property_int("window-id", &wid);
     if (wid <= 0) {
         LOG_ERROR(LOG_PLATFORM, "Failed to get window-id from mpv");
         return false;

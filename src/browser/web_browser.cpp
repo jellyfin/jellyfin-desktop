@@ -5,16 +5,17 @@
 #include "../common.h"
 #include "../settings.h"
 #include "logging.h"
-#include "../mpv/event.h"
+#include "../mpv/jfn_mpv_api.h"
+#include "../playback/jfn_ingest.h"
 #include "../playback/coordinator.h"
 #include "../playback/event.h"
 #include "../theme_color.h"
-#include "../cef/color.h"
+#include "../color.h"
+#include "../color/color.h"
 #include "../input/dispatch.h"
 #include "include/cef_parser.h"
 #include "include/cef_values.h"
 #include "../paths/paths.h"
-#include "../jellyfin/device_profile.h"
 
 // =====================================================================
 // Helpers
@@ -84,44 +85,6 @@ static int getIntArg(CefRefPtr<CefListValue> args, size_t idx) {
 // WebBrowser
 // =====================================================================
 
-CefRefPtr<CefDictionaryValue> WebBrowser::injectionProfile() {
-    static const char* const kFunctions[] = {
-        "playerLoad", "playerStop", "playerPause", "playerPlay", "playerSeek",
-        "playerSetVolume", "playerSetMuted", "playerSetSpeed",
-        "playerSetSubtitle", "playerAddSubtitle", "playerSetAudio", "playerAddAudio",
-        "playerSetAudioDelay", "playerSetSubtitleDelay", "playerSetAspectMode", "playerOsdActive",
-        "openConfigDir", "saveServerUrl",
-        "notifyMetadata", "notifyPosition", "notifySeek",
-        "notifyPlaybackState", "notifyArtwork", "notifyQueueChange",
-        "notifyRateChange",
-        "appExit", "setSettingValue", "themeColor",
-        "setOsdVisible", "setCursorVisible", "toggleFullscreen",
-    };
-    static const char* const kScripts[] = {
-        "native-shim.js",
-        "mpv-player-base.js",
-        "mpv-video-player.js",
-        "mpv-audio-player.js",
-        "input-plugin.js",
-        "client-settings.js",
-    };
-
-    CefRefPtr<CefListValue> fns = CefListValue::Create();
-    for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
-        fns->SetString(i, kFunctions[i]);
-    CefRefPtr<CefListValue> scripts = CefListValue::Create();
-    for (size_t i = 0; i < sizeof(kScripts) / sizeof(*kScripts); i++)
-        scripts->SetString(i, kScripts[i]);
-
-    CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
-    d->SetList("functions", fns);
-    d->SetList("scripts", scripts);
-    std::string profile_json = jellyfin_device_profile::CachedJson();
-    if (!profile_json.empty())
-        d->SetString("device_profile_json", profile_json);
-    return d;
-}
-
 WebBrowser::WebBrowser(CefRefPtr<CefLayer> layer)
     : layer_(std::move(layer))
 {
@@ -131,11 +94,12 @@ WebBrowser::WebBrowser(CefRefPtr<CefLayer> layer)
                                      CefRefPtr<CefBrowser> browser) {
         return handleMessage(name, args, browser);
     });
-    layer_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
+    CefRefPtr<CefLayer> layer_ref = layer_;
+    layer_->setCreatedCallback([layer_ref]() {
         // Main browser takes input only if no other layer has already
         // claimed it (e.g. the server-selection overlay).
         if (g_browsers && !g_browsers->active())
-            g_browsers->setActive(browser);
+            g_browsers->setActive(layer_ref);
     });
     layer_->setContextMenuBuilder(&app_menu::build);
     layer_->setContextMenuDispatcher(&app_menu::dispatch);
@@ -148,7 +112,7 @@ WebBrowser::~WebBrowser() {
 bool WebBrowser::handleMessage(const std::string& name,
                                CefRefPtr<CefListValue> args,
                                CefRefPtr<CefBrowser> browser) {
-    if (!g_mpv.IsValid()) return false;
+    if (!jfn_mpv_handle_get()) return false;
 
     if (name == "playerLoad") {
         std::string url = args->GetString(0).ToString();
@@ -189,53 +153,53 @@ bool WebBrowser::handleMessage(const std::string& name,
             if (g_playback_coord_running.load(std::memory_order_acquire))
                 playback::post_metadata(meta);
         }
-        MpvHandle::LoadOptions opts;
-        opts.startSecs = startMs / 1000.0;
-        opts.videoTrack = videoIdx;
-        opts.audioTrack = audioIdx;
-        opts.subTrack = subIdx;
-        opts.externalAudioUrl = externalAudioUrl;
-        opts.externalSubUrl = externalSubUrl;
-        opts.isInfiniteStream = isInfiniteStream;
-        g_mpv.LoadFile(url, opts);
+        JfnMpvLoadOptions opts{};
+        opts.start_secs = startMs / 1000.0;
+        opts.video_track = videoIdx;
+        opts.audio_track = audioIdx;
+        opts.sub_track = subIdx;
+        opts.external_audio_url = externalAudioUrl.c_str();
+        opts.external_sub_url = externalSubUrl.c_str();
+        opts.is_infinite_stream = isInfiniteStream;
+        jfn_mpv_load_file(url.c_str(), &opts);
     } else if (name == "playerStop") {
-        g_mpv.Stop();
+        jfn_mpv_stop();
     } else if (name == "playerPause") {
-        g_mpv.Pause();
+        jfn_mpv_pause();
     } else if (name == "playerPlay") {
-        g_mpv.Play();
+        jfn_mpv_play();
     } else if (name == "playerSeek") {
         double pos = getIntArg(args, 0) / 1000.0;
-        g_mpv.SeekAbsolute(pos);
+        jfn_mpv_seek_absolute(pos);
     } else if (name == "playerSetVolume") {
-        g_mpv.SetVolume(getIntArg(args, 0));
+        jfn_mpv_set_volume(getIntArg(args, 0));
     } else if (name == "playerSetMuted") {
-        g_mpv.SetMuted(args->GetBool(0));
+        jfn_mpv_set_muted(args->GetBool(0));
     } else if (name == "playerSetSpeed") {
-        g_mpv.SetSpeed(getIntArg(args, 0) / 1000.0);
+        jfn_mpv_set_speed(getIntArg(args, 0) / 1000.0);
     } else if (name == "playerSetSubtitle") {
         LOG_INFO(LOG_CEF, "playerSetSubtitle: {}", getIntArg(args, 0));
-        g_mpv.SetSubtitleTrack(getIntArg(args, 0));
+        jfn_mpv_set_subtitle_track(getIntArg(args, 0));
     } else if (name == "playerAddSubtitle") {
         std::string url = args->GetString(0).ToString();
         LOG_INFO(LOG_CEF, "playerAddSubtitle: {}", url.c_str());
-        g_mpv.SubAdd(url);
+        jfn_mpv_sub_add(url.c_str());
     } else if (name == "playerSetAudio") {
-        g_mpv.SetAudioTrack(getIntArg(args, 0));
+        jfn_mpv_set_audio_track(getIntArg(args, 0));
     } else if (name == "playerAddAudio") {
         std::string url = args->GetString(0).ToString();
         LOG_INFO(LOG_CEF, "playerAddAudio: {}", url.c_str());
-        g_mpv.AudioAdd(url);
+        jfn_mpv_audio_add(url.c_str());
     } else if (name == "playerSetAudioDelay") {
-        g_mpv.SetAudioDelay(args->GetDouble(0));
+        jfn_mpv_set_audio_delay(args->GetDouble(0));
     } else if (name == "playerSetSubtitleDelay") {
-        g_mpv.SetSubtitleDelay(args->GetDouble(0));
+        jfn_mpv_set_subtitle_delay(args->GetDouble(0));
     } else if (name == "playerSetAspectMode") {
-        g_mpv.SetAspectMode(args->GetString(0).ToString());
+        jfn_mpv_set_aspect_mode(args->GetString(0).ToString().c_str());
     } else if (name == "playerOsdActive") {
         bool active = args->GetBool(0);
         if (active) {
-            was_fullscreen_before_osd_ = mpv::fullscreen();
+            was_fullscreen_before_osd_ = jfn_playback_fullscreen();
         } else {
             if (!was_fullscreen_before_osd_)
                 g_platform.set_fullscreen(false);
@@ -254,7 +218,7 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "themeColor") {
         std::string color = args->GetString(0).ToString();
         LOG_DEBUG(LOG_CEF, "themeColor IPC: {}", color.c_str());
-        if (g_theme_color) g_theme_color->onThemeColor(cef::parseColor(color));
+        if (g_theme_color) g_theme_color->onThemeColor(Color{jfn_cef_parse_color(color.c_str())});
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);

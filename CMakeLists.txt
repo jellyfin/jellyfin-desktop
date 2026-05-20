@@ -122,12 +122,7 @@ if(APPLE)
     set(PLATFORM_SOURCES
         src/platform/macos.mm
         src/input/input_macos.mm
-        src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
-        src/playback/sinks/browser_sink.cpp
-        src/playback/sinks/idle_inhibit_sink.cpp
-        src/playback/sinks/theme_color_sink.cpp
-        src/playback/sinks/mpv_action_sink.cpp
         src/playback/sinks/macos/macos_sink.mm
     )
 
@@ -153,12 +148,7 @@ elseif(WIN32)
     set(PLATFORM_SOURCES
         src/platform/windows.cpp
         src/input/input_windows.cpp
-        src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
-        src/playback/sinks/browser_sink.cpp
-        src/playback/sinks/idle_inhibit_sink.cpp
-        src/playback/sinks/theme_color_sink.cpp
-        src/playback/sinks/mpv_action_sink.cpp
         src/playback/sinks/windows/windows_sink.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
     )
@@ -175,13 +165,6 @@ else()
     find_package(PkgConfig REQUIRED)
 
     # Shared Linux deps
-	pkg_check_modules(SYSTEMD libsystemd QUIET)
-    if (NOT SYSTEMD_FOUND)
-    	pkg_check_modules(SYSTEMD libelogind REQUIRED)
-    else()
-    	pkg_check_modules(SYSTEMD REQUIRED libsystemd)
-    endif()
-
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     find_package(OpenGL REQUIRED COMPONENTS EGL)
 
@@ -225,16 +208,10 @@ set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output
     set(XDG_OUTPUT_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-client.h")
     set(XDG_OUTPUT_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-code.c")
 
-    # KDE server decoration palette (per-window titlebar colors on KWin)
-    option(ENABLE_KDE_PALETTE "KDE/KWin per-window titlebar color support" ON)
-    if(ENABLE_KDE_PALETTE)
-        find_file(DECO_PALETTE_PROTOCOL server-decoration-palette.xml
-            PATHS /usr/share/plasma-wayland-protocols
-                  /app/share/plasma-wayland-protocols
-            REQUIRED)
-        set(DECO_PALETTE_CLIENT_H "${WAYLAND_GENERATED_DIR}/server-decoration-palette-client.h")
-        set(DECO_PALETTE_CODE_C "${WAYLAND_GENERATED_DIR}/server-decoration-palette-code.c")
-    endif()
+    # KDE server-decoration-palette protocol lives entirely in the
+    # jfn-wayland Rust crate (src/wayland/protocols/ + wayland-scanner
+    # proc-macro in src/wayland/src/kde_palette.rs). No C++ generation
+    # needed here.
 
     add_custom_command(
         OUTPUT ${LINUX_DMABUF_CLIENT_H}
@@ -284,35 +261,13 @@ set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output
         DEPENDS ${XDG_OUTPUT_PROTOCOL}
         COMMENT "Generating xdg-output-unstable-v1 code"
     )
-if(ENABLE_KDE_PALETTE)
-        add_custom_command(
-            OUTPUT ${DECO_PALETTE_CLIENT_H}
-            COMMAND ${WAYLAND_SCANNER} client-header ${DECO_PALETTE_PROTOCOL} ${DECO_PALETTE_CLIENT_H}
-            DEPENDS ${DECO_PALETTE_PROTOCOL}
-            COMMENT "Generating server-decoration-palette client header"
-        )
-        add_custom_command(
-            OUTPUT ${DECO_PALETTE_CODE_C}
-            COMMAND ${WAYLAND_SCANNER} private-code ${DECO_PALETTE_PROTOCOL} ${DECO_PALETTE_CODE_C}
-            DEPENDS ${DECO_PALETTE_PROTOCOL}
-            COMMENT "Generating server-decoration-palette code"
-        )
-    endif()
-
     set(PLATFORM_SOURCES
         # Shared Linux
-        src/playback/coordinator.cpp
         src/playback/sinks/queued_sink.cpp
-        src/playback/sinks/browser_sink.cpp
-        src/playback/sinks/idle_inhibit_sink.cpp
-        src/playback/sinks/theme_color_sink.cpp
-        src/playback/sinks/mpv_action_sink.cpp
-        src/playback/sinks/mpris/mpris_sink.cpp
-        src/playback/sinks/mpris/mpris_projection.cpp
         # Wayland
         src/platform/wayland.cpp
-        src/clipboard/wayland.cpp
         src/input/input_wayland.cpp
+        src/clipboard/wayland_ffi.cpp
         # Generated Wayland protocols
         ${LINUX_DMABUF_CODE_C}
         ${LINUX_DMABUF_CLIENT_H}
@@ -323,13 +278,6 @@ if(ENABLE_KDE_PALETTE)
         ${XDG_OUTPUT_CODE_C}
         ${XDG_OUTPUT_CLIENT_H}
     )
-    if(ENABLE_KDE_PALETTE)
-        list(APPEND PLATFORM_SOURCES
-            ${DECO_PALETTE_CODE_C}
-            ${DECO_PALETTE_CLIENT_H}
-        )
-        add_compile_definitions(HAVE_KDE_DECORATION_PALETTE)
-    endif()
     if(ENABLE_X11)
         list(APPEND PLATFORM_SOURCES
             src/platform/x11.cpp
@@ -339,7 +287,6 @@ if(ENABLE_KDE_PALETTE)
     endif()
     set(PLATFORM_LIBRARIES
         ${WAYLAND_LIBRARIES}
-        ${SYSTEMD_LIBRARIES}
         ${XKBCOMMON_LIBRARIES}
         OpenGL::EGL
         ${CMAKE_DL_LIBS}
@@ -357,7 +304,6 @@ if(ENABLE_KDE_PALETTE)
     set(PLATFORM_INCLUDE_DIRS
         ${WAYLAND_INCLUDE_DIRS}
         ${LIBDRM_INCLUDE_DIRS}
-        ${SYSTEMD_INCLUDE_DIRS}
         ${XKBCOMMON_INCLUDE_DIRS}
         ${WAYLAND_GENERATED_DIR}
     )
@@ -535,93 +481,29 @@ else()
     endif()
 endif()
 
-# Embed JS shims into generated header
-set(JS_SHIMS
-    ${CMAKE_SOURCE_DIR}/src/web/native-shim.js
-    ${CMAKE_SOURCE_DIR}/src/web/mpv-player-base.js
-    ${CMAKE_SOURCE_DIR}/src/web/mpv-video-player.js
-    ${CMAKE_SOURCE_DIR}/src/web/mpv-audio-player.js
-    ${CMAKE_SOURCE_DIR}/src/web/input-plugin.js
-    ${CMAKE_SOURCE_DIR}/src/web/client-settings.js
-    ${CMAKE_SOURCE_DIR}/src/web/context-menu.js
-)
-set(EMBEDDED_JS_HEADER ${CMAKE_BINARY_DIR}/generated/embedded_js.h)
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated)
-
-add_custom_command(
-    OUTPUT ${EMBEDDED_JS_HEADER}
-    COMMAND ${CMAKE_COMMAND}
-        -DJS_FILES="${JS_SHIMS}"
-        -DOUTPUT_FILE=${EMBEDDED_JS_HEADER}
-        -P ${CMAKE_SOURCE_DIR}/cmake/embed_resources.cmake
-    DEPENDS ${JS_SHIMS}
-    COMMENT "Embedding JS shims"
-)
-add_custom_target(embedded_js DEPENDS ${EMBEDDED_JS_HEADER})
-
-# Embed ALL web resources into generated header
-set(EMBEDDED_RESOURCES_HEADER ${CMAKE_BINARY_DIR}/generated/embedded_resources.h)
-file(GLOB_RECURSE WEB_RESOURCE_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/web/*")
-
-add_custom_command(
-    OUTPUT ${EMBEDDED_RESOURCES_HEADER}
-    COMMAND ${CMAKE_COMMAND}
-        -DRESOURCE_DIR="${CMAKE_SOURCE_DIR}/src/web"
-        -DOUTPUT_FILE=${EMBEDDED_RESOURCES_HEADER}
-        -DBASE_URL="resources"
-        -P ${CMAKE_SOURCE_DIR}/cmake/embed_all_resources.cmake
-    DEPENDS ${WEB_RESOURCE_FILES}
-    COMMENT "Embedding web resources"
-)
-add_custom_target(embedded_resources DEPENDS ${EMBEDDED_RESOURCES_HEADER})
-
 # Common sources
 if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
-        src/cli.cpp
-        src/shutdown.cpp
-        src/single_instance.cpp
-        src/mpv/event.cpp
-        src/mpv/capabilities.cpp
-        src/mpv/color.cpp
-        src/cef/cef_app.cpp
-        src/cef/color.cpp
         src/cef/cef_client.cpp
-        src/cef/resource_handler.cpp
+        src/platform/platform_ops.cpp
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
         src/browser/about_browser.cpp
-        src/browser/app_menu.cpp
         src/input/dispatch.cpp
-        src/input/hotkeys.cpp
-        src/paths/paths.cpp
-        src/wake_event.cpp
     )
 else()
     # Linux + macOS: shared main with platform abstraction
     set(COMMON_SOURCES
         src/main.cpp
-        src/cli.cpp
-        src/shutdown.cpp
-        src/mpv/event.cpp
-        src/mpv/capabilities.cpp
-        src/mpv/color.cpp
-        src/cef/cef_app.cpp
-        src/cef/color.cpp
         src/cef/cef_client.cpp
-        src/cef/resource_handler.cpp
+        src/platform/platform_ops.cpp
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
         src/browser/about_browser.cpp
-        src/browser/app_menu.cpp
         src/input/dispatch.cpp
-        src/input/hotkeys.cpp
-        src/single_instance.cpp
-        src/paths/paths.cpp
-        src/wake_event.cpp
     )
 endif()
 
@@ -647,8 +529,7 @@ set(FMT_TEST OFF CACHE BOOL "" FORCE)
 set(FMT_DOC OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fmt EXCLUDE_FROM_ALL)
 
-# Ensure JS shims are embedded before compiling cef_app.cpp
-add_dependencies(jellyfin-desktop embedded_js embedded_resources generate_version)
+add_dependencies(jellyfin-desktop generate_version)
 
 target_include_directories(jellyfin-desktop PRIVATE
     ${CEF_INCLUDE_DIRS}
@@ -671,6 +552,19 @@ else()
     target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
 endif()
 target_link_libraries(jellyfin-desktop PRIVATE jfn_rust)
+
+# Lock C++ CEF API version to match the cef-rs binding ABI used by jfn-cef
+# (cef-rs 148.1.0+147.0.14 → CEF_API_VERSION_LAST = 14700). Without this,
+# C++ defaults to CEF_API_VERSION_EXPERIMENTAL (999999) which has different
+# struct sizes — wrap fails with "Cannot wrap struct with invalid base.size"
+# at runtime when C++ and Rust hand objects across the CEF API boundary.
+target_compile_definitions(jellyfin-desktop PRIVATE
+    CEF_API_VERSION=14700
+    # Required to include libcef_dll/ctocpp/*.h headers (CToCpp translators
+    # convert raw C cef_*_t pointers from Rust FFI into proper CefRefPtr<>
+    # C++ wrappers). Without this define the headers #error out.
+    WRAPPING_CEF_SHARED
+)
 
 # When using external/system CEF, tell the app where to find resources
 if(EXTERNAL_CEF_DIR OR USE_SYSTEM_CEF)

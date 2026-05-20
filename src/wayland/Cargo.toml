@@ -9,11 +9,14 @@ name = "jfn_wayland"
 crate-type = ["rlib"]
 
 [dependencies]
+khronos-egl = { version = "6", features = ["dynamic"] }
 libc = "0.2"
+libloading = "0.8"
 log = "0.4"
 memmap2 = "0.9"
 smithay-client-toolkit = { version = "0.20", default-features = false }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-scanner = "0.31"
 xkbcommon = "0.9"

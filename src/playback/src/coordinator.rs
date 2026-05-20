@@ -52,6 +52,11 @@ pub(crate) enum Input {
     Seeked(i64),
 }
 
+/// Rust-side sink closure types. Run inline on the coordinator worker
+/// thread immediately after the FFI sinks. Must not block.
+pub(crate) type BuiltinEventSink = Box<dyn Fn(&PlaybackEvent) + Send + Sync>;
+pub(crate) type BuiltinActionSink = Box<dyn Fn(&PlaybackAction) + Send + Sync>;
+
 struct Shared {
     queue: Mutex<VecDeque<Input>>,
     wake: WakeEvent,
@@ -59,6 +64,8 @@ struct Shared {
     snapshot: Mutex<PlaybackSnapshot>,
     event_sinks: Mutex<Vec<EventSinkEntry>>,
     action_sinks: Mutex<Vec<ActionSinkEntry>>,
+    builtin_event_sinks: Mutex<Vec<BuiltinEventSink>>,
+    builtin_action_sinks: Mutex<Vec<BuiltinActionSink>>,
 }
 
 pub struct PlaybackCoordinator {
@@ -76,6 +83,8 @@ impl PlaybackCoordinator {
                 snapshot: Mutex::new(PlaybackSnapshot::fresh()),
                 event_sinks: Mutex::new(Vec::new()),
                 action_sinks: Mutex::new(Vec::new()),
+                builtin_event_sinks: Mutex::new(Vec::new()),
+                builtin_action_sinks: Mutex::new(Vec::new()),
             }),
             join: None,
         }
@@ -117,6 +126,14 @@ impl PlaybackCoordinator {
 
     pub(crate) fn add_action_sink(&self, sink: ActionSinkEntry) {
         self.shared.action_sinks.lock().unwrap().push(sink);
+    }
+
+    pub fn add_builtin_event_sink(&self, sink: BuiltinEventSink) {
+        self.shared.builtin_event_sinks.lock().unwrap().push(sink);
+    }
+
+    pub fn add_builtin_action_sink(&self, sink: BuiltinActionSink) {
+        self.shared.builtin_action_sinks.lock().unwrap().push(sink);
     }
 }
 
@@ -168,6 +185,18 @@ fn worker(shared: Arc<Shared>) {
         for sink in action_sinks.iter() {
             for a in &actions {
                 sink.dispatch(a);
+            }
+        }
+        let builtin_event_sinks = shared.builtin_event_sinks.lock().unwrap();
+        for sink in builtin_event_sinks.iter() {
+            for e in &events {
+                sink(e);
+            }
+        }
+        let builtin_action_sinks = shared.builtin_action_sinks.lock().unwrap();
+        for sink in builtin_action_sinks.iter() {
+            for a in &actions {
+                sink(a);
             }
         }
     }

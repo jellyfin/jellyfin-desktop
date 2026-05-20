@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 struct mpv_handle;
@@ -40,6 +41,27 @@ void jfn_mpv_handle_terminate(void);
 
 // Borrow the live raw mpv_handle*. NULL before init and after terminate.
 struct mpv_handle* jfn_mpv_handle_get(void);
+
+// Hardware-decode mode helpers — replace the legacy hwdecOptions /
+// isValidHwdec / kHwdecDefault inline helpers from mpv/options.h.
+// Returned strings have static lifetime.
+const char* jfn_mpv_hwdec_default(void);
+size_t      jfn_mpv_hwdec_options_count(void);
+const char* jfn_mpv_hwdec_options_get(size_t i);
+bool        jfn_mpv_is_valid_hwdec(const char* s);
+
+// Decoder + demuxer enumeration — replaces the legacy
+// mpv_capabilities::Query from src/mpv/capabilities.cpp.
+typedef struct JfnMpvCapabilities JfnMpvCapabilities;
+
+JfnMpvCapabilities* jfn_mpv_capabilities_query(struct mpv_handle* h);
+void                jfn_mpv_capabilities_free(JfnMpvCapabilities* p);
+size_t              jfn_mpv_capabilities_decoder_count(const JfnMpvCapabilities* p);
+const char*         jfn_mpv_capabilities_decoder_name(const JfnMpvCapabilities* p, size_t i);
+// Decoder kind: 0 = Video, 1 = Audio, 2 = Subtitle. 0xFF on out-of-range.
+uint8_t             jfn_mpv_capabilities_decoder_kind(const JfnMpvCapabilities* p, size_t i);
+size_t              jfn_mpv_capabilities_demuxer_count(const JfnMpvCapabilities* p);
+const char*         jfn_mpv_capabilities_demuxer_name(const JfnMpvCapabilities* p, size_t i);
 
 #ifdef __cplusplus
 }

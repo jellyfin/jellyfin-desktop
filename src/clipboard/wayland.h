@@ -11,35 +11,53 @@
 // Writes still go through CEF's frame->Copy() which works correctly on
 // every platform we care about, so this is read-only.
 //
-// Entirely event-driven: the worker thread poll()s the display fd, its
-// own wake event, and any active pipe fds from outstanding receives.
-// No timeouts, no polling loops.
+// Thin C++ wrapper over the Rust jfn-clipboard-wayland crate, preserving
+// the std::function-based API used elsewhere in the project.
 
 #include <functional>
 #include <string>
+#include <utility>
+
+#include "jfn_clipboard_wayland.h"
 
 namespace clipboard_wayland {
 
-// Initialize the clipboard worker: opens its own wl_display connection,
-// binds ext-data-control-v1, starts a dedicated worker thread. No-op on
-// compositors that don't advertise the protocol — callers should check
-// available() afterwards and fall back to CEF's native clipboard path.
-void init();
+namespace detail {
+inline JfnClipboardWayland*& instance() {
+    static JfnClipboardWayland* g = nullptr;
+    return g;
+}
 
-// True if init() succeeded and the clipboard worker is running. Platform
-// code should null out g_platform.clipboard_read_text_async when this is
-// false so the context menu can route through CEF's native frame->Paste()
-// instead (which works on compositors with good XWayland clipboard
-// bridging, notably Mutter/GNOME).
-bool available();
+extern "C" inline void on_read(void* ctx, const char* text, size_t len) {
+    auto* boxed = static_cast<std::function<void(std::string)>*>(ctx);
+    if (*boxed) (*boxed)(std::string(text ? text : "", len));
+    delete boxed;
+}
+}  // namespace detail
 
-// Start an async read of the current CLIPBOARD selection as UTF-8 text.
-// The callback fires on the clipboard worker thread when the source has
-// finished writing, or with an empty string if nothing text-shaped is on
-// the clipboard. Safe to call from any thread.
-void read_text_async(std::function<void(std::string)> on_done);
+inline void init() {
+    auto& g = detail::instance();
+    if (g) return;
+    g = jfn_clipboard_wayland_init();
+}
 
-// Join the worker thread and destroy clipboard Wayland objects.
-void cleanup();
+inline bool available() { return detail::instance() != nullptr; }
+
+inline void read_text_async(std::function<void(std::string)> on_done) {
+    auto* g = detail::instance();
+    if (!g) {
+        if (on_done) on_done(std::string{});
+        return;
+    }
+    auto* boxed = new std::function<void(std::string)>(std::move(on_done));
+    jfn_clipboard_wayland_read_text_async(g, detail::on_read, boxed);
+}
+
+inline void cleanup() {
+    auto& g = detail::instance();
+    if (!g) return;
+    jfn_clipboard_wayland_cleanup(g);
+    g = nullptr;
+}
 
 }  // namespace clipboard_wayland

@@ -2,6 +2,7 @@
 
 #include "event.h"
 #include "jfn_playback.h"
+#include "../common.h"
 
 #include <cstring>
 #include <memory>
@@ -78,8 +79,18 @@ inline PlaybackEvent from_c(const JfnPlaybackEventC& ev) {
 
 }  // namespace playback_ffi
 
-extern "C" bool jfn_event_sink_thunk(void* ctx, const JfnPlaybackEventC* ev);
-extern "C" bool jfn_action_sink_thunk(void* ctx, const JfnPlaybackActionC* act);
+extern "C" inline bool jfn_event_sink_thunk(void* ctx, const JfnPlaybackEventC* ev) {
+    auto* sink = static_cast<PlaybackEventSink*>(ctx);
+    PlaybackEvent e = playback_ffi::from_c(*ev);
+    return sink->tryPost(e);
+}
+
+extern "C" inline bool jfn_action_sink_thunk(void* ctx, const JfnPlaybackActionC* act) {
+    auto* sink = static_cast<PlaybackActionSink*>(ctx);
+    PlaybackAction a;
+    a.kind = static_cast<PlaybackAction::Kind>(act->kind);
+    return sink->tryPost(a);
+}
 
 namespace playback {
 
@@ -172,6 +183,12 @@ inline void post_seeked(int64_t us) { jfn_playback_post_seeked(us); }
 // the first post.
 class PlaybackCoordinatorScope {
 public:
-    PlaybackCoordinatorScope();
-    ~PlaybackCoordinatorScope();
+    PlaybackCoordinatorScope() {
+        playback::init();
+        g_playback_coord_running.store(true, std::memory_order_release);
+    }
+    ~PlaybackCoordinatorScope() {
+        g_playback_coord_running.store(false, std::memory_order_release);
+        playback::shutdown();
+    }
 };

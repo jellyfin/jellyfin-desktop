@@ -125,11 +125,29 @@ elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
         endif()
     endforeach()
 
+    # Validate cached wrapper was built with api_version=14700.
+    # A wrapper from an older build (pre api_version pinning) defaults to
+    # CEF_API_VERSION_EXPERIMENTAL (999999) and has different struct sizes
+    # than cef-rs (14700) — runtime wrap fails with "invalid base.size".
+    if(CEF_WRAPPER_PATH AND EXISTS "${CEF_ROOT}/build/CMakeCache.txt")
+        file(READ "${CEF_ROOT}/build/CMakeCache.txt" _CEF_CMAKE_CACHE)
+        if(NOT _CEF_CMAKE_CACHE MATCHES "api_version:[A-Z]+=14700")
+            message(STATUS "Cached libcef_dll_wrapper has wrong api_version, rebuilding")
+            file(REMOVE "${CEF_WRAPPER_PATH}")
+            file(REMOVE "${CEF_ROOT}/build/CMakeCache.txt")
+            set(CEF_WRAPPER_PATH "")
+        endif()
+    endif()
+
     # Build wrapper if not found
     if(NOT CEF_WRAPPER_PATH)
         message(STATUS "libcef_dll_wrapper not found, building...")
-        # Pass generator and architecture settings to match the main build
-        set(_CEF_CMAKE_ARGS -B build -DCMAKE_BUILD_TYPE=Release)
+        # Pass generator and architecture settings to match the main build.
+        # api_version=14700 locks the wrapper ABI to match cef-rs 148.1.0+147.0.14
+        # (CEF_API_VERSION_LAST = 14700). Without it the wrapper defaults to
+        # CEF_API_VERSION_EXPERIMENTAL (999999) and Rust-created structs fail
+        # the wrap-time base.size check.
+        set(_CEF_CMAKE_ARGS -B build -DCMAKE_BUILD_TYPE=Release -Dapi_version=14700)
         if(CMAKE_GENERATOR)
             list(APPEND _CEF_CMAKE_ARGS -G "${CMAKE_GENERATOR}")
         endif()

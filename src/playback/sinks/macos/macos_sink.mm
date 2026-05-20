@@ -1,6 +1,7 @@
 #include "macos_sink.h"
 
 #include "../../../common.h"
+#include "../../../mpv/jfn_mpv_api.h"
 #include "../../../browser/browsers.h"
 #include "../../../browser/web_browser.h"
 #include "../../../logging.h"
@@ -57,13 +58,13 @@ enum {
     MPRemoteCommandCenter* center = [MPRemoteCommandCenter sharedCommandCenter];
 
     if (command == center.playCommand) {
-        g_mpv.Play();
+        jfn_mpv_play();
     } else if (command == center.pauseCommand) {
-        g_mpv.Pause();
+        jfn_mpv_pause();
     } else if (command == center.togglePlayPauseCommand) {
-        g_mpv.TogglePause();
+        jfn_mpv_toggle_pause();
     } else if (command == center.stopCommand) {
-        g_mpv.Stop();
+        jfn_mpv_stop();
     } else if (command == center.nextTrackCommand) {
         if (g_web_browser)
             g_web_browser->execJs("if(window._nativeHostInput) window._nativeHostInput(['next']);");

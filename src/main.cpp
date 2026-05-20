@@ -16,9 +16,7 @@
 #include "browser/browsers.h"
 #include "browser/web_browser.h"
 #include "browser/overlay_browser.h"
-#include "mpv/event.h"
-#include "mpv/options.h"
-#include "mpv/capabilities.h"
+#include "mpv/jfn_mpv_api.h"
 #include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
 #include "paths/paths.h"
@@ -26,18 +24,14 @@
 #include "theme_color.h"
 
 #include "playback/coordinator.h"
-#include "playback/sinks.h"
 #if defined(__APPLE__)
 #include "playback/sinks/macos/macos_sink.h"
 #elif defined(_WIN32)
 #include "playback/sinks/windows/windows_sink.h"
-#else
-#include "playback/sinks/mpris/mpris_sink.h"
 #endif
 
 #include "logging.h"
 #include "signal_guard.h"
-#include "shutdown.h"
 #include "playback/jfn_ingest.h"
 
 #ifdef __APPLE__
@@ -45,12 +39,13 @@
 #include <signal.h>
 #include "platform/macos_platform.h"
 #else
-#include "single_instance.h"
+#include "single_instance/jfn_single_instance.h"
 #endif
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include "wlproxy/wlproxy.h"
-#include "platform/wayland.h"
+#include "jfn_wl_proxy.h"
+#include "jfn_wl_proxy.h"
 #endif
 
 #include "include/cef_version.h"
@@ -74,7 +69,6 @@
 // Globals
 // =====================================================================
 
-MpvHandle g_mpv;
 Color g_video_bg;
 
 ThemeColor* g_theme_color = nullptr;
@@ -142,7 +136,7 @@ static int run_with_cef(int mw, int mh,
         ozone_platform = g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11";
 #endif
     g_platform.cef_ozone_platform = ozone_platform;
-    PlatformScope platform_scope(g_platform, g_mpv.Get());
+    PlatformScope platform_scope(g_platform, jfn_mpv_handle_get());
     if (!platform_scope.ok()) {
         LOG_ERROR(LOG_MAIN, "Platform init failed");
         return 1;
@@ -159,22 +153,24 @@ static int run_with_cef(int mw, int mh,
     // Must run after the VO-init wait loop — sync mpv API calls would
     // deadlock against core_thread's DispatchQueue.main.sync on macOS.
     {
-        auto caps = mpv_capabilities::Query(g_mpv.Get());
+        JfnMpvCapabilities* caps = jfn_mpv_capabilities_query(jfn_mpv_handle_get());
         std::string profile = jellyfin_device_profile::Build(
             caps, "Jellyfin Desktop", APP_VERSION_FULL,
             Settings::instance().forceTranscoding());
+        jfn_mpv_capabilities_free(caps);
         LOG_INFO(LOG_MAIN, "Device profile: {}", profile);
         jellyfin_device_profile::SetCachedJson(profile);
+        jfn_cef_set_device_profile_json(profile.data(), profile.size());
     }
 
     bool use_shared_textures = g_platform.shared_texture_supported && !args.disable_gpu_compositing;
 
-    CefRuntime::SetLogSeverity(toCefSeverity(effectiveLogLevel(LOG_CEF)));
-    CefRuntime::SetRemoteDebuggingPort(args.remote_debugging_port);
-    CefRuntime::SetDisableGpuCompositing(!use_shared_textures);
+    jfn_cef_set_log_severity(static_cast<int>(toCefSeverity(effectiveLogLevel(LOG_CEF))));
+    jfn_cef_set_remote_debugging_port(args.remote_debugging_port);
+    jfn_cef_set_disable_gpu_compositing(!use_shared_textures);
 #ifdef __linux__
     if (!ozone_platform.empty())
-        CefRuntime::SetOzonePlatform(ozone_platform);
+        jfn_cef_set_ozone_platform(ozone_platform.c_str());
 #endif
 
     LOG_INFO(LOG_MAIN, "[FLOW] calling CefInitialize...");
@@ -186,13 +182,13 @@ static int run_with_cef(int mw, int mh,
     LOG_INFO(LOG_MAIN, "[FLOW] CefInitialize returned ok");
 
     double display_hidpi_scale = 0.0;
-    mpv_get_property(g_mpv.Get(), "display-hidpi-scale",
+    mpv_get_property(jfn_mpv_handle_get(), "display-hidpi-scale",
                      MPV_FORMAT_DOUBLE, &display_hidpi_scale);
     int fs_flag = 0;
-    mpv_get_property(g_mpv.Get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
-    mpv::seed_display_hz_sync(g_mpv);
+    mpv_get_property(jfn_mpv_handle_get(), "fullscreen", MPV_FORMAT_FLAG, &fs_flag);
+    jfn_playback_seed_display_hz_sync();
     LOG_INFO(LOG_MAIN, "[FLOW] display-hidpi-scale={} fullscreen={} display-hz={}",
-             display_hidpi_scale, fs_flag, mpv::display_hz());
+             display_hidpi_scale, fs_flag, jfn_playback_display_hz());
 
     // Scale-correct the window size when live display scale differs from
     // saved. Skip while the compositor has the surface locked
@@ -207,7 +203,7 @@ static int run_with_cef(int mw, int mh,
     // correction.
     {
         const auto& saved = Settings::instance().windowGeometry();
-        bool locked = fs_flag || mpv::window_maximized();
+        bool locked = fs_flag || jfn_playback_window_maximized();
         // Only correct when we have a real saved scale that differs from
         // live. Fresh-config (saved.scale == 0) was already computed at the
         // live scale by the pre-init probe; re-issuing SetGeometry here
@@ -227,11 +223,11 @@ static int run_with_cef(int mw, int mh,
             LOG_INFO(LOG_MAIN,
                      "[FLOW] scale {:.3f} -> {:.3f}, resize to {}",
                      saved.scale, display_hidpi_scale, geom_str.c_str());
-            g_mpv.SetGeometry(geom_str);
+            jfn_mpv_set_geometry(geom_str.c_str());
             mw = new_pw;
             mh = new_ph;
         }
-        mpv::set_window_pixels(mw, mh);
+        jfn_playback_set_window_pixels(mw, mh);
     }
 
     float scale = display_hidpi_scale > 0.0
@@ -246,14 +242,18 @@ static int run_with_cef(int mw, int mh,
     bool titlebar_themed = Settings::instance().titlebarThemeColor();
     ThemeColor theme_color_obj([titlebar_themed](const Color& c) {
         if (titlebar_themed) g_platform.set_theme_color(c);
-        g_mpv.SetBackgroundColor(c);
+        jfn_mpv_set_background_color_hex(c.hex);
     });
     g_theme_color = &theme_color_obj;
 
-    Browsers browsers(lw, lh, mw, mh, mpv::display_hz(), use_shared_textures);
+    Browsers browsers(lw, lh, mw, mh, jfn_playback_display_hz(), use_shared_textures);
     g_browsers = &browsers;
+    jfn_shutdown_set_handler(+[]() {
+        if (g_browsers) g_browsers->closeAll();
+        if (g_platform.wake_main_loop) g_platform.wake_main_loop();
+    });
 
-    auto main_layer = browsers.create(WebBrowser::injectionProfile());
+    auto main_layer = browsers.create("web");
     auto web_browser_owner = std::make_unique<WebBrowser>(main_layer);
     g_web_browser = web_browser_owner.get();
 
@@ -271,7 +271,7 @@ static int run_with_cef(int mw, int mh,
 
     std::unique_ptr<OverlayBrowser> overlay_browser_owner;
     {
-        auto overlay_layer = browsers.create(OverlayBrowser::injectionProfile());
+        auto overlay_layer = browsers.create("overlay");
         overlay_layer->setVisible(true);
         overlay_browser_owner = std::make_unique<OverlayBrowser>(
             overlay_layer, *g_web_browser);
@@ -284,25 +284,43 @@ static int run_with_cef(int mw, int mh,
     // observe playback state. Sinks register before start() so the worker
     // never delivers to a half-built fanout.
     PlaybackCoordinatorScope coord_scope;
-    auto browser_sink = std::make_shared<BrowserPlaybackSink>();
-    auto idle_inhibit_sink = std::make_shared<IdleInhibitSink>();
-    auto theme_color_sink = std::make_shared<ThemeColorSink>();
-    auto mpv_action_sink = std::make_shared<MpvActionSink>();
-    playback::register_event_sink(browser_sink);
-    playback::register_event_sink(idle_inhibit_sink);
-    playback::register_event_sink(theme_color_sink);
+    // Builtin idle_inhibit sink (Rust-side) calls into the platform vtable
+    // through this handler. Install before any event posts.
+    jfn_playback_set_idle_inhibit_handler([](uint32_t level) {
+        g_platform.set_idle_inhibit(static_cast<IdleInhibitLevel>(level));
+    });
+    jfn_playback_set_theme_video_mode_handler([](bool active) {
+        if (g_theme_color) g_theme_color->setVideoMode(active);
+    });
+    // Rust-side builtin browser sink forwards UI events through exec_js
+    // and the side-channel handlers below.
+    jfn_playback_set_web_exec_js_handler([](const char* js) {
+        if (g_web_browser && js) g_web_browser->execJs(js);
+    });
+    jfn_playback_set_browsers_size_handler([](int32_t lw, int32_t lh, int32_t pw, int32_t ph) {
+        if (g_browsers) g_browsers->setSize(lw, lh, pw, ph);
+    });
+    jfn_playback_set_browsers_refresh_rate_handler([](double hz) {
+        LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", hz);
+        if (g_browsers) g_browsers->setRefreshRate(hz);
+    });
 #if defined(__APPLE__)
     auto media_sink = std::make_shared<MacosSink>();
-#elif defined(_WIN32)
-    int64_t wid = 0;
-    g_mpv.GetPropertyInt("window-id", wid);
-    auto media_sink = std::make_shared<WindowsSink>(reinterpret_cast<HWND>(static_cast<intptr_t>(wid)));
-#else
-    auto media_sink = std::make_shared<MprisSink>();
-#endif
     playback::register_event_sink(media_sink);
     media_sink->start();
-    playback::register_action_sink(mpv_action_sink);
+#elif defined(_WIN32)
+    int64_t wid = 0;
+    jfn_mpv_get_property_int("window-id", &wid);
+    auto media_sink = std::make_shared<WindowsSink>(reinterpret_cast<HWND>(static_cast<intptr_t>(wid)));
+    playback::register_event_sink(media_sink);
+    media_sink->start();
+#else
+    // MPRIS sink lives Rust-side (jfn_playback::mpris_sink). The
+    // coordinator's builtin event fanout (register_builtin_sinks) forwards
+    // every event into the sink thread, which speaks D-Bus.
+    jfn_mpris_sink_start("");
+#endif
+    // MpvActionSink lives Rust-side (jfn_playback::ffi::register_builtin_sinks).
     jfn_playback_set_display_scale_handler([](double s) {
         if (g_browsers && s > 0) g_browsers->setScale(s);
     });
@@ -347,7 +365,11 @@ static int run_with_cef(int mw, int mh,
 #endif
 
     g_theme_color = nullptr;
+#if defined(__APPLE__) || defined(_WIN32)
     media_sink->stop();
+#else
+    jfn_mpris_sink_stop();
+#endif
 
     jfn_playback_stop_mpv_event_thread();
 
@@ -356,14 +378,14 @@ static int run_with_cef(int mw, int mh,
 
     // Save window geometry while mpv is still alive.
     {
-        bool fs  = mpv::fullscreen();
-        bool max = mpv::window_maximized();
+        bool fs  = jfn_playback_fullscreen();
+        bool max = jfn_playback_window_maximized();
 
         if (fs) {
             // Don't overwrite the saved windowed size with fullscreen dims;
             // only update the maximized flag for the eventual restore.
             auto geom = Settings::instance().windowGeometry();
-            geom.maximized = g_was_maximized_before_fullscreen;
+            geom.maximized = jfn_playback_was_maximized_before_fullscreen();
             Settings::instance().setWindowGeometry(geom);
         } else if (max) {
             // Don't overwrite the saved windowed size with monitor dims;
@@ -377,11 +399,11 @@ static int run_with_cef(int mw, int mh,
             // restore losslessly on the same display, or rescale on a
             // display with different DPI. Prefer window_pw/ph (set at boot)
             // over osd_pw/ph which may lag a resize we just issued.
-            int pw = mpv::window_pw();
-            int ph = mpv::window_ph();
+            int pw = jfn_playback_window_pw();
+            int ph = jfn_playback_window_ph();
             if (pw <= 0 || ph <= 0) {
-                pw = mpv::osd_pw();
-                ph = mpv::osd_ph();
+                pw = jfn_playback_osd_pw();
+                ph = jfn_playback_osd_ph();
             }
             if (pw > 0 && ph > 0) {
                 Settings::WindowGeometry geom;
@@ -437,12 +459,12 @@ int main(int argc, char* argv[]) {
     g_platform = make_platform(DisplayBackend::macOS);
 #endif
 
-    if (int rc = CefRuntime::Start(argc, argv); rc >= 0) return rc;
+    if (int rc = jfn_cef_start(argc, argv); rc >= 0) return rc;
 
     Settings::instance().load();
     const auto& saved = Settings::instance();
     cli::Args args;
-    args.hwdec = !saved.hwdec().empty() ? saved.hwdec() : std::string(kHwdecDefault);
+    args.hwdec = !saved.hwdec().empty() ? saved.hwdec() : std::string(jfn_mpv_hwdec_default());
     args.audio_passthrough = saved.audioPassthrough();
     args.audio_exclusive = saved.audioExclusive();
     args.audio_channels = saved.audioChannels();
@@ -463,7 +485,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    if (!isValidHwdec(args.hwdec)) args.hwdec = kHwdecDefault;
+    if (!jfn_mpv_is_valid_hwdec(args.hwdec.c_str())) args.hwdec = jfn_mpv_hwdec_default();
 
     // --log-file overrides default; empty argument disables file logging entirely.
     // Default to a platform log file on macOS/Windows (GUI apps have no
@@ -516,20 +538,25 @@ int main(int argc, char* argv[]) {
         return TRUE;
     }, TRUE);
 #else
-    SignalHandlerGuard signal_guard(signal_handler);
+    SignalHandlerGuard signal_guard(+[](int) { jfn_shutdown_initiate(); });
 #endif
 
 #ifndef __APPLE__
-    if (trySignalExisting()) {
+    if (jfn_single_instance_try_signal_existing()) {
         LOG_INFO(LOG_MAIN, "Signaled existing instance, exiting");
         return 0;
     }
-    startListener([](const std::string&) {
-        // TODO: raise window via xdg-activation
-    });
-    // Joins the listener thread on any exit path (a joinable std::thread
-    // calls std::terminate from its destructor).
-    struct ListenerGuard { ~ListenerGuard() { stopListener(); } } listener_guard;
+    if (!jfn_single_instance_start_listener(
+            +[](const char* /*token*/, void* /*userdata*/) {
+                // TODO: raise window via xdg-activation
+            },
+            nullptr)) {
+        LOG_WARN(LOG_MAIN, "Single-instance listener failed to start");
+    }
+    // Joins the listener thread on any exit path.
+    struct ListenerGuard {
+        ~ListenerGuard() { jfn_single_instance_stop_listener(); }
+    } listener_guard;
 #endif
 
     std::string mpv_home = paths::getMpvHome();
@@ -556,7 +583,7 @@ int main(int argc, char* argv[]) {
                 // first compositor configure (which arrives shortly after
                 // mpv_initialize) is captured. wl_init runs later and the
                 // same callback then drives the surface-side resize path.
-                platform::wayland::register_proxy_callbacks();
+                jfn_wl_register_proxy_callbacks();
             } else {
                 LOG_ERROR(LOG_MAIN, "wlproxy display name empty; aborting proxy");
                 jfn_wlproxy_stop(wlproxy);
@@ -652,27 +679,28 @@ int main(int argc, char* argv[]) {
 
     mpv_handle* raw = jfn_mpv_handle_init(&boot);
     if (!raw) { LOG_ERROR(LOG_MAIN, "mpv handle init failed"); return 1; }
-    g_mpv.Set(raw);
 
-    // Register property observations after init — observe_properties
-    // is post-init-safe and reaches mpv through the wrapped pointer.
-    observe_properties(g_mpv, g_platform.display);
+    // Register property observations after init via the Rust ingest layer.
+    jfn_playback_observe_mpv_properties(static_cast<uint8_t>(g_platform.display));
 
     // Capture user's mpv.conf bg, then force startup color. Safe here:
     // force-window=yes (not "immediate") defers VO creation, so the user's
     // color never flashes before we override.
-    g_video_bg = g_mpv.GetBackgroundColor();
+    g_video_bg = Color{jfn_mpv_get_background_color()};
     LOG_INFO(LOG_MAIN, "video bg captured: {}", g_video_bg.hex);
-    g_mpv.SetBackgroundColor(kBgColor);
+    jfn_mpv_set_background_color_hex(kBgColor.hex);
 
-    for (const char* prop : {"mpv-version", "ffmpeg-version"})
-        LOG_INFO(LOG_MAIN, "{} {}", prop, g_mpv.GetPropertyString(prop));
+    for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
+        char* v = jfn_mpv_get_property_string(prop);
+        LOG_INFO(LOG_MAIN, "{} {}", prop, v ? v : "");
+        jfn_mpv_free_string(v);
+    }
 
     // input-default-bindings=no removes all builtin bindings including
     // CLOSE_WIN → quit.  Re-bind it so the WM close button works.
     {
         const char* cmd[] = {"keybind", "CLOSE_WIN", "quit", nullptr};
-        mpv_command(g_mpv.Get(), cmd);
+        mpv_command(jfn_mpv_handle_get(), cmd);
     }
 
     // Wait for the VO window. Reads osd-dimensions from the event payload
@@ -687,10 +715,11 @@ int main(int argc, char* argv[]) {
     // that follows.
     //
     // On Wayland we don't observe osd-dimensions: the proxy's
-    // wl_on_proxy_configure drives mpv::set_osd_dims directly, so the same
-    // osd_pw/osd_ph atomics fill from a non-mpv-event source. The poll
-    // below reads the atomics every iteration to pick up the value
-    // regardless of whether a mpv property-change event arrived.
+    // xdg_toplevel.configure intercept (jfn-wayland::proxy::on_configure)
+    // calls jfn_playback_post_osd_pixels directly, filling the same
+    // osd_pw/osd_ph atomics from a non-mpv-event source.
+    // The poll below reads the atomics every iteration to pick up the
+    // value regardless of whether a mpv property-change event arrived.
     bool need_max = Settings::instance().windowGeometry().maximized;
     // On Wayland the initial logical-pixel computation in run_with_cef
     // needs cached_scale populated by the proxy's preferred_scale callback.
@@ -713,16 +742,16 @@ int main(int argc, char* argv[]) {
 #endif
             jfn_playback_ingest_mpv_event(
                 ev, scale, has_macos_logical, mac_lw, mac_lh);
-            if (ev->reply_userdata == MPV_OBSERVE_WINDOW_MAX &&
-                mpv::window_maximized())
+            if (ev->reply_userdata == JFN_OBSERVE_WINDOW_MAX &&
+                jfn_playback_window_maximized())
                 need_max = false;
         }
-        if (mpv::osd_pw() > 0 && mpv::osd_ph() > 0) {
-            mw = mpv::osd_pw();
-            mh = mpv::osd_ph();
+        if (jfn_playback_osd_pw() > 0 && jfn_playback_osd_ph() > 0) {
+            mw = jfn_playback_osd_pw();
+            mh = jfn_playback_osd_ph();
         }
 #if !defined(_WIN32) && !defined(__APPLE__)
-        bool scale_ready = !wait_for_scale || platform::wayland::scale_known();
+        bool scale_ready = !wait_for_scale || jfn_wl_scale_known();
 #else
         bool scale_ready = true;
 #endif
@@ -732,7 +761,7 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
     while (true) {
         g_platform.pump();
-        mpv_event* ev = g_mpv.WaitEvent(0);
+        mpv_event* ev = jfn_mpv_wait_event(0);
         if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
@@ -744,12 +773,13 @@ int main(int argc, char* argv[]) {
         if (consume(ev)) break;
     }
 #else
-    // Short timeout so the loop polls mpv::osd_pw/ph on Wayland too — the
-    // proxy can update those atomics without producing any mpv event.
+    // Short timeout so the loop polls jfn_playback_osd_pw/ph on Wayland
+    // too — the proxy can update those atomics without producing any mpv
+    // event.
     const double wait_timeout = g_platform.display == DisplayBackend::Wayland
         ? 0.1 : 1.0;
     while (true) {
-        mpv_event* ev = g_mpv.WaitEvent(wait_timeout);
+        mpv_event* ev = jfn_mpv_wait_event(wait_timeout);
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
             continue;
@@ -774,7 +804,7 @@ int main(int argc, char* argv[]) {
         // mpv's PreciseTimer.terminate() sends pthread_kill(SIGALRM), so
         // restore a no-op handler before tearing down the timer.
         signal(SIGALRM, [](int){});
-        g_mpv.TerminateDestroy();
+        jfn_mpv_handle_terminate();
         mpv_done.store(true, std::memory_order_release);
         CFRunLoopWakeUp(CFRunLoopGetMain());
     });
@@ -783,7 +813,7 @@ int main(int argc, char* argv[]) {
                            std::numeric_limits<CFTimeInterval>::max(), true);
     mpv_teardown.join();
 #else
-    g_mpv.TerminateDestroy();
+    jfn_mpv_handle_terminate();
 #endif
 
 #if !defined(_WIN32) && !defined(__APPLE__)

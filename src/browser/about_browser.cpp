@@ -27,21 +27,8 @@ private:
 
 bool AboutBrowser::is_open() { return s_self != nullptr; }
 
-CefRefPtr<CefDictionaryValue> AboutBrowser::injectionProfile() {
-    static const char* const kFunctions[] = {
-        "aboutOpenPath", "aboutDismiss",
-    };
-    CefRefPtr<CefListValue> fns = CefListValue::Create();
-    for (size_t i = 0; i < sizeof(kFunctions) / sizeof(*kFunctions); i++)
-        fns->SetString(i, kFunctions[i]);
-    CefRefPtr<CefDictionaryValue> d = CefDictionaryValue::Create();
-    d->SetList("functions", fns);
-    d->SetList("scripts", CefListValue::Create());
-    return d;
-}
-
 AboutBrowser::AboutBrowser()
-    : layer_(g_browsers->create(injectionProfile()))
+    : layer_(g_browsers->create("about"))
 {
     layer_->setName("about");
     prev_active_ = g_browsers->active();
@@ -51,8 +38,9 @@ AboutBrowser::AboutBrowser()
                                      CefRefPtr<CefBrowser> browser) {
         return handleMessage(name, args, browser);
     });
-    layer_->setCreatedCallback([](CefRefPtr<CefBrowser> browser) {
-        if (g_browsers) g_browsers->setActive(browser);
+    CefRefPtr<CefLayer> layer_ref = layer_;
+    layer_->setCreatedCallback([layer_ref]() {
+        if (g_browsers) g_browsers->setActive(layer_ref);
     });
     layer_->setContextMenuBuilder(&app_menu::build);
     layer_->setContextMenuDispatcher(&app_menu::dispatch);

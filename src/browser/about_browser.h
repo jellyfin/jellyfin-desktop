@@ -12,8 +12,6 @@ public:
 
     ~AboutBrowser();
 
-    static CefRefPtr<CefDictionaryValue> injectionProfile();
-
 private:
     AboutBrowser();
 
@@ -22,5 +20,5 @@ private:
                        CefRefPtr<CefBrowser> browser);
 
     CefRefPtr<CefLayer> layer_;
-    CefRefPtr<CefBrowser> prev_active_;
+    CefRefPtr<CefLayer> prev_active_;
 };

@@ -103,3 +103,15 @@ void set_cursor(cef_cursor_type_t type) {
 }
 
 }  // namespace input::wayland
+
+// extern "C" lifecycle bridges so jfn_wayland's lifecycle module can drive
+// the C++ namespace wrappers above (which own the static g_ctx).
+extern "C" void jfn_input_wayland_lifecycle_init(void* display) {
+    input::wayland::init(static_cast<wl_display*>(display));
+}
+extern "C" void jfn_input_wayland_lifecycle_start() {
+    input::wayland::start_input_thread();
+}
+extern "C" void jfn_input_wayland_lifecycle_cleanup() {
+    input::wayland::cleanup();
+}

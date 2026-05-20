@@ -6,6 +6,7 @@ members = [
     "config",
     "idle_inhibit_linux",
     "jellyfin",
+    "jfn_cef",
     "jfn_rust",
     "logging",
     "mpv",

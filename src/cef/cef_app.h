@@ -1,12 +1,8 @@
 #pragma once
 
-#include "include/internal/cef_types.h"
-
-#include <string>
-
-// CEF process bootstrap. Encapsulates the multi-process dance so main.cpp
-// doesn't need to know about library loaders, MainArgs, subprocess dispatch,
-// argv sanitization, or the App object.
+// CEF process bootstrap. The implementation lives in the jfn-cef Rust crate;
+// this header just declares the C ABI it exports so main.cpp / platform code
+// can call it directly.
 //
 // CEF re-execs this binary to spawn GPU/renderer/utility children. Chromium
 // delivers --type=... and related switches to those children via argv, so
@@ -14,39 +10,41 @@
 // NOT forward the user's shell argv into CEF — any Chromium switch we want
 // there goes through OnBeforeCommandLineProcessing. Parent/child is
 // discriminated via an inherited env var.
-namespace CefRuntime {
+
+extern "C" {
 
 // Call once at the top of main(), after platform early_init. If this process
 // is a CEF-spawned subprocess, it runs to completion; the return value is
 // the exit code the caller must `return` from main. If this is the initial
 // (browser) process, returns -1 and startup should continue.
-int Start(int argc, char* argv[]);
+int  jfn_cef_start(int argc, char* argv[]);
 
 // Configuration for the not-yet-started browser process. Call between
-// Start() and Initialize(). Values are applied when CEF asks us for them.
-void SetLogSeverity(cef_log_severity_t severity);
-void SetRemoteDebuggingPort(int port);            // 0 = disabled
-void SetDisableGpuCompositing(bool disable);
+// jfn_cef_start() and jfn_cef_initialize(). Values are applied when CEF
+// asks us for them.
+void jfn_cef_set_log_severity(int severity);
+void jfn_cef_set_remote_debugging_port(int port);
+void jfn_cef_set_disable_gpu_compositing(bool disable);
 #ifdef __linux__
-void SetOzonePlatform(const std::string& platform);
+void jfn_cef_set_ozone_platform(const char* platform_utf8);
 #endif
 
 // Builds CefSettings (paths, locale, message pump, sandbox, cache dir, etc.),
 // performs any platform pre-init (e.g. macOS message pump source/timer), and
 // calls CefInitialize for the browser process. Returns true on success.
-bool Initialize();
+bool jfn_cef_initialize();
 
 // Tears down CEF for the browser process. Call once during shutdown after
 // all browsers have closed.
-void Shutdown();
+void jfn_cef_shutdown();
 
-}  // namespace CefRuntime
+}  // extern "C"
 
 // CEF runtime lifetime.
 class CefRuntimeScope {
 public:
-    CefRuntimeScope() : ok_(CefRuntime::Initialize()) {}
-    ~CefRuntimeScope() { if (ok_) CefRuntime::Shutdown(); }
+    CefRuntimeScope() : ok_(jfn_cef_initialize()) {}
+    ~CefRuntimeScope() { if (ok_) jfn_cef_shutdown(); }
     bool ok() const { return ok_; }
 
     CefRuntimeScope(const CefRuntimeScope&) = delete;

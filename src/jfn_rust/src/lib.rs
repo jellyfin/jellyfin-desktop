@@ -6,6 +6,7 @@
 // into this crate, which keeps every `#[unsafe(no_mangle)] pub extern "C"` C
 // entry point visible in the resulting `libjfn_rust` archive.
 
+pub use jfn_cef::*;
 pub use jfn_cli::*;
 pub use jfn_color::*;
 pub use jfn_config::*;
@@ -30,7 +31,19 @@ pub use jfn_open_url_linux::*;
 pub use jfn_wayland::clipboard::*;
 
 #[cfg(target_os = "linux")]
+pub use jfn_wayland::dmabuf_probe::*;
+
+#[cfg(target_os = "linux")]
+pub use jfn_wayland::fade::*;
+
+#[cfg(target_os = "linux")]
 pub use jfn_wayland::input::*;
+
+#[cfg(target_os = "linux")]
+pub use jfn_wayland::kde_palette::*;
+
+#[cfg(target_os = "linux")]
+pub use jfn_wayland::proxy::*;
 
 #[cfg(target_os = "linux")]
 pub use jfn_wayland::scale_probe::*;

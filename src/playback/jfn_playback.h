@@ -140,6 +140,47 @@ void jfn_mpris_project(
     double pending_rate,
     JfnMprisDerivedC* out);
 
+// =====================================================================
+// MPRIS sink (Linux). The sink thread serves
+// org.mpris.MediaPlayer2.JellyfinDesktop[<suffix>] over the session bus
+// and consumes PlaybackEvents from the coordinator's builtin fanout.
+// start() spawns the thread; stop() joins it. Both are no-ops if
+// already in the requested state.
+//
+// `service_suffix` may be NULL or empty for no suffix.
+// =====================================================================
+void jfn_mpris_sink_start(const char* service_suffix);
+void jfn_mpris_sink_stop(void);
+
+// Install / clear the exec_js callback invoked for Next, Previous,
+// Seek, and SetPosition. NULL clears.
+typedef void (*JfnPlaybackExecJsCb)(const char* js_utf8);
+void jfn_playback_set_web_exec_js_handler(JfnPlaybackExecJsCb cb);
+
+// Install / clear the idle-inhibit setter the builtin idle_inhibit
+// sink calls on phase / media_type transitions. `level` matches
+// C++ `IdleInhibitLevel` (None=0, System=1, Display=2). NULL clears.
+typedef void (*JfnPlaybackIdleInhibitCb)(uint32_t level);
+void jfn_playback_set_idle_inhibit_handler(JfnPlaybackIdleInhibitCb cb);
+
+// Install / clear the ThemeColor::setVideoMode setter the builtin
+// theme_color sink calls on Finished / Canceled / Error. NULL clears.
+typedef void (*JfnPlaybackThemeVideoModeCb)(bool active);
+void jfn_playback_set_theme_video_mode_handler(JfnPlaybackThemeVideoModeCb cb);
+
+// Browser-sink platform handlers. The Rust-side builtin browser sink
+// forwards UI events to exec_js; these install the side-channel actions
+// it also performs.
+typedef void (*JfnPlaybackBrowsersSizeCb)(int32_t lw, int32_t lh, int32_t pw, int32_t ph);
+void jfn_playback_set_browsers_size_handler(JfnPlaybackBrowsersSizeCb cb);
+
+typedef void (*JfnPlaybackBrowsersRefreshRateCb)(double hz);
+void jfn_playback_set_browsers_refresh_rate_handler(JfnPlaybackBrowsersRefreshRateCb cb);
+
+// Reads the maximized-before-fullscreen flag mirrored by the Rust-side
+// browser sink. Used by the geometry-save tail at shutdown.
+bool jfn_playback_was_maximized_before_fullscreen(void);
+
 #ifdef __cplusplus
 }
 #endif

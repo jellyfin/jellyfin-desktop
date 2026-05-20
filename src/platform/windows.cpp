@@ -7,7 +7,8 @@
 #include "common.h"
 #include "input/input_windows.h"
 #include "logging.h"
-#include "mpv/event.h"
+#include "mpv/jfn_mpv_api.h"
+#include "playback/jfn_ingest.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -340,7 +341,7 @@ static void win_fade_surface(PlatformSurface* s, float fade_sec,
         return;
     }
 
-    double fps = mpv::display_hz();
+    double fps = jfn_playback_display_hz();
     if (fps <= 0) {
         if (on_fade_start) on_fade_start();
         if (on_complete) on_complete();
@@ -572,8 +573,8 @@ static void win_set_expected_size(int w, int h) {
 // =====================================================================
 
 static void win_set_fullscreen(bool fullscreen) {
-    if (!g_mpv.IsValid()) return;
-    if (mpv::fullscreen() == fullscreen) {
+    if (!jfn_mpv_handle_get()) return;
+    if (jfn_playback_fullscreen() == fullscreen) {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
         if (g_win.transitioning && fullscreen == g_win.was_fullscreen)
             win_end_transition_locked();
@@ -599,17 +600,17 @@ static void win_set_fullscreen(bool fullscreen) {
     }
 
     if (fullscreen)
-        g_mpv.SetWindowMinimized(false);
+        jfn_mpv_set_window_minimized(false);
 
-    g_mpv.SetFullscreen(fullscreen);
+    jfn_mpv_set_fullscreen(fullscreen);
 
     if (!fullscreen && should_restore_maximized)
-        g_mpv.SetWindowMaximized(true);
+        jfn_mpv_set_window_maximized(true);
 }
 
 static void win_toggle_fullscreen() {
-    if (!g_mpv.IsValid()) return;
-    bool target_fullscreen = !mpv::fullscreen();
+    if (!jfn_mpv_handle_get()) return;
+    bool target_fullscreen = !jfn_playback_fullscreen();
 
     if (target_fullscreen) {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
@@ -631,12 +632,12 @@ static void win_toggle_fullscreen() {
     }
 
     if (target_fullscreen)
-        g_mpv.SetWindowMinimized(false);
+        jfn_mpv_set_window_minimized(false);
 
-    g_mpv.ToggleFullscreen();
+    jfn_mpv_toggle_fullscreen();
 
     if (!target_fullscreen && should_restore_maximized)
-        g_mpv.SetWindowMaximized(true);
+        jfn_mpv_set_window_maximized(true);
 }
 
 // =====================================================================
@@ -644,7 +645,7 @@ static void win_toggle_fullscreen() {
 // =====================================================================
 
 static float win_get_scale() {
-    double scale = mpv::display_scale();
+    double scale = jfn_playback_display_scale();
     if (scale > 0) {
         g_win.cached_scale = static_cast<float>(scale);
         return g_win.cached_scale;
@@ -762,7 +763,7 @@ static void win_early_init() {
 static bool win_init(mpv_handle* mpv) {
     // Get HWND from mpv
     int64_t wid = 0;
-    if (g_mpv.GetWindowId(wid) < 0 || !wid) {
+    if (jfn_mpv_get_property_int("window-id", &wid) < 0 || !wid) {
         LOG_ERROR(LOG_PLATFORM, "Failed to get window-id from mpv");
         return false;
     }

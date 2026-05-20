@@ -236,7 +236,7 @@ fn cstr_nul_to_string(p: *const c_char) -> String {
 
 static COORD: OnceLock<Mutex<Option<PlaybackCoordinator>>> = OnceLock::new();
 
-fn coord_slot() -> &'static Mutex<Option<PlaybackCoordinator>> {
+pub(crate) fn coord_slot() -> &'static Mutex<Option<PlaybackCoordinator>> {
     COORD.get_or_init(|| Mutex::new(None))
 }
 
@@ -252,9 +252,57 @@ pub extern "C" fn jfn_playback_init() {
     let mut guard = coord_slot().lock().unwrap();
     if guard.is_none() {
         let mut c = PlaybackCoordinator::new();
+        register_builtin_sinks(&c);
         c.start();
         *guard = Some(c);
     }
+}
+
+/// Wire in the Rust-side sinks that used to live in C++ under
+/// `src/playback/sinks/`. Each runs inline on the coordinator worker
+/// after the FFI sinks and must not block.
+fn register_builtin_sinks(c: &PlaybackCoordinator) {
+    // mpv_action_sink: routes ApplyPendingTrackSelectionAndPlay actions
+    // into the mpv FFI. Preserves the prior ordering relative to the
+    // FILE_LOADED drain — coordinator emits events first, actions after,
+    // all on the worker thread.
+    c.add_builtin_action_sink(Box::new(|a: &PlaybackAction| {
+        match a.kind {
+            PlaybackActionKind::ApplyPendingTrackSelectionAndPlay => {
+                jfn_mpv::api::jfn_mpv_apply_pending_track_selection_and_play();
+            }
+        }
+    }));
+
+    // idle_inhibit_sink: drives the platform idle-inhibit level from
+    // phase + media_type. No-op until the C++ side installs the setter
+    // via jfn_playback_set_idle_inhibit_handler.
+    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
+        crate::idle_inhibit_sink::deliver(ev);
+    }));
+
+    // browser_sink: forwards UI-affecting events into the embedded web
+    // view via the exec_js callback and a few platform-side setters
+    // (browsers.setSize, browsers.setRefreshRate, g_was_maximized_*).
+    // Handlers are no-ops until C++ installs them.
+    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
+        crate::browser_sink::deliver(ev);
+    }));
+
+    // theme_color_sink: clears ThemeColor video mode on terminal events.
+    // No-op until the C++ side installs the setter via
+    // jfn_playback_set_theme_video_mode_handler.
+    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
+        crate::theme_color_sink::deliver(ev);
+    }));
+
+    // mpris_sink (Linux only): hands every PlaybackEvent off to the
+    // sink thread. The thread is spawned out-of-band via
+    // jfn_mpris_sink_start; this closure is a no-op until then.
+    #[cfg(target_os = "linux")]
+    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
+        crate::mpris_sink::deliver(ev.clone());
+    }));
 }
 
 #[unsafe(no_mangle)]
