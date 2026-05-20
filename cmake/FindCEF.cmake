@@ -125,13 +125,14 @@ elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
         endif()
     endforeach()
 
-    # Validate cached wrapper was built with api_version=14700.
-    # A wrapper from an older build (pre api_version pinning) defaults to
-    # CEF_API_VERSION_EXPERIMENTAL (999999) and has different struct sizes
-    # than cef-rs (14700) — runtime wrap fails with "invalid base.size".
+    # Validate cached wrapper was built with the api_version cef-rs expects.
+    # A wrapper built without the pin defaults to CEF_API_VERSION_EXPERIMENTAL
+    # (999999) and has different struct sizes than cef-rs — runtime wrap fails
+    # with "invalid base.size". JFN_CEF_API_VERSION is set by
+    # DetectCefApiVersion.cmake from cef-dll-sys's CEF_API_VERSION_LAST.
     if(CEF_WRAPPER_PATH AND EXISTS "${CEF_ROOT}/build/CMakeCache.txt")
         file(READ "${CEF_ROOT}/build/CMakeCache.txt" _CEF_CMAKE_CACHE)
-        if(NOT _CEF_CMAKE_CACHE MATCHES "api_version:[A-Z]+=14700")
+        if(NOT _CEF_CMAKE_CACHE MATCHES "api_version:[A-Z]+=${JFN_CEF_API_VERSION}")
             message(STATUS "Cached libcef_dll_wrapper has wrong api_version, rebuilding")
             file(REMOVE "${CEF_WRAPPER_PATH}")
             file(REMOVE "${CEF_ROOT}/build/CMakeCache.txt")
@@ -143,11 +144,8 @@ elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
     if(NOT CEF_WRAPPER_PATH)
         message(STATUS "libcef_dll_wrapper not found, building...")
         # Pass generator and architecture settings to match the main build.
-        # api_version=14700 locks the wrapper ABI to match cef-rs 148.1.0+147.0.14
-        # (CEF_API_VERSION_LAST = 14700). Without it the wrapper defaults to
-        # CEF_API_VERSION_EXPERIMENTAL (999999) and Rust-created structs fail
-        # the wrap-time base.size check.
-        set(_CEF_CMAKE_ARGS -B build -DCMAKE_BUILD_TYPE=Release -Dapi_version=14700)
+        # api_version pins the wrapper ABI to match cef-rs's binding ABI.
+        set(_CEF_CMAKE_ARGS -B build -DCMAKE_BUILD_TYPE=Release -Dapi_version=${JFN_CEF_API_VERSION})
         if(CMAKE_GENERATOR)
             list(APPEND _CEF_CMAKE_ARGS -G "${CMAKE_GENERATOR}")
         endif()
@@ -225,7 +223,7 @@ elseif(USE_SYSTEM_CEF)
     set(CEF_IS_SYSTEM TRUE)
     message(STATUS "Found system CEF: ${CEF_VERSION}")
 
-    set(CEF_INCLUDE_DIRS "/usr/include/cef" "/usr/include/cef/include")
+    set(CEF_INCLUDE_DIRS "/usr/include/cef" "/usr/include/cef/include" "/usr/src/cef")
     set(CEF_RESOURCE_DIR "/usr/lib/cef")
     set(CEF_RELEASE_DIR "/usr/lib/cef")
 
@@ -256,6 +254,21 @@ elseif(USE_SYSTEM_CEF)
         endif()
     endforeach()
 
+    # Validate cached wrapper was built with the api_version cef-rs expects.
+    # See DetectCefApiVersion.cmake for the failure mode if this drifts. The
+    # cache file records api_version under CEF_API_VERSION_CHECK below, since
+    # CEF's wrapper CMakeLists doesn't declare its own api_version cache var
+    # in system-package builds (no cef_variables.cmake is shipped).
+    if(CEF_WRAPPER_PATH AND EXISTS "${_WRAPPER_SRC_DIR}/build/CMakeCache.txt")
+        file(READ "${_WRAPPER_SRC_DIR}/build/CMakeCache.txt" _CEF_CMAKE_CACHE)
+        if(NOT _CEF_CMAKE_CACHE MATCHES "CEF_API_VERSION_CHECK:[A-Z]+=${JFN_CEF_API_VERSION}")
+            message(STATUS "Cached libcef_dll_wrapper has wrong api_version, rebuilding")
+            file(REMOVE "${CEF_WRAPPER_PATH}")
+            file(REMOVE "${_WRAPPER_SRC_DIR}/build/CMakeCache.txt")
+            set(CEF_WRAPPER_PATH "")
+        endif()
+    endif()
+
     if(NOT CEF_WRAPPER_PATH)
         message(STATUS "Building libcef_dll_wrapper from system sources...")
         file(MAKE_DIRECTORY "${_WRAPPER_SRC_DIR}")
@@ -277,6 +290,14 @@ project(cef_wrapper)
 macro(SET_LIBRARY_TARGET_PROPERTIES target)
     target_include_directories(\${target} PRIVATE \"${_WRAPPER_SRC_DIR}\")
 endmacro()
+# Pin wrapper ABI to match cef-rs's binding ABI. CEF binary distributions
+# handle this via cmake/cef_variables.cmake (which turns -Dapi_version=N into
+# -DCEF_API_VERSION=N), but the system 'cef' package ships only libcef_dll/,
+# so set the compile definition directly. CEF_API_VERSION_CHECK is also
+# stored as a cache var so the cache-staleness check in FindCEF.cmake can
+# detect a mismatch on later configures.
+set(CEF_API_VERSION_CHECK \"\${CEF_API_VERSION_CHECK}\" CACHE STRING \"Pinned CEF API version\")
+add_compile_definitions(CEF_API_VERSION=\${CEF_API_VERSION_CHECK})
 add_subdirectory(libcef_dll)
 ")
         execute_process(
@@ -284,6 +305,7 @@ add_subdirectory(libcef_dll)
                 "-DCMAKE_C_FLAGS=-fPIC -ffile-prefix-map=${_WRAPPER_SRC_DIR}=cef_wrapper"
                 "-DCMAKE_CXX_FLAGS=-fPIC -ffile-prefix-map=${_WRAPPER_SRC_DIR}=cef_wrapper"
                 -DCMAKE_CXX_STANDARD=20
+                -DCEF_API_VERSION_CHECK=${JFN_CEF_API_VERSION}
             WORKING_DIRECTORY "${_WRAPPER_SRC_DIR}"
             RESULT_VARIABLE _WRAPPER_CONFIG_RESULT
         )
