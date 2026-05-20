@@ -86,6 +86,7 @@ endif()
 # CEF configuration
 set(CEF_ROOT "${CMAKE_SOURCE_DIR}/third_party/cef" CACHE PATH "CEF binary distribution root")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(DetectCefApiVersion)
 find_package(CEF REQUIRED)
 
 # Verify CEF version matches CEF_VERSION file
@@ -553,13 +554,11 @@ else()
 endif()
 target_link_libraries(jellyfin-desktop PRIVATE jfn_rust)
 
-# Lock C++ CEF API version to match the cef-rs binding ABI used by jfn-cef
-# (cef-rs 148.1.0+147.0.14 → CEF_API_VERSION_LAST = 14700). Without this,
-# C++ defaults to CEF_API_VERSION_EXPERIMENTAL (999999) which has different
-# struct sizes — wrap fails with "Cannot wrap struct with invalid base.size"
-# at runtime when C++ and Rust hand objects across the CEF API boundary.
+# Lock C++ CEF API version to match the cef-rs binding ABI used by jfn-cef.
+# JFN_CEF_API_VERSION is derived from cef-dll-sys's CEF_API_VERSION_LAST by
+# DetectCefApiVersion.cmake; see that file for the failure mode if it drifts.
 target_compile_definitions(jellyfin-desktop PRIVATE
-    CEF_API_VERSION=14700
+    CEF_API_VERSION=${JFN_CEF_API_VERSION}
     # Required to include libcef_dll/ctocpp/*.h headers (CToCpp translators
     # convert raw C cef_*_t pointers from Rust FFI into proper CefRefPtr<>
     # C++ wrappers). Without this define the headers #error out.
