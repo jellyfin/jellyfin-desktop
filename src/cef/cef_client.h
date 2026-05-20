@@ -35,6 +35,15 @@ void         jfn_cef_layer_create(const JfnCefLayer*, const char* url_utf8, size
 void         jfn_cef_layer_reset(const JfnCefLayer*);
 void         jfn_cef_layer_load_url(const JfnCefLayer*, const char* url_utf8, size_t len);
 void         jfn_cef_layer_exec_js(const JfnCefLayer*, const char* js_utf8, size_t len);
+#if defined(__APPLE__)
+void         jfn_cef_layer_send_external_begin_frame(const JfnCefLayer*);
+#endif
+void         jfn_cef_layer_undo(const JfnCefLayer*);
+void         jfn_cef_layer_redo(const JfnCefLayer*);
+void         jfn_cef_layer_cut(const JfnCefLayer*);
+void         jfn_cef_layer_copy(const JfnCefLayer*);
+void         jfn_cef_layer_paste(const JfnCefLayer*);
+void         jfn_cef_layer_select_all(const JfnCefLayer*);
 void         jfn_cef_layer_free_string(char*);
 
 typedef void (*JfnCbDtor)(void*);
@@ -169,6 +178,15 @@ public:
     void sendMouseWheel(int x, int y, uint32_t modifiers, int dx, int dy) {
         jfn_cef_layer_send_mouse_wheel(rs_, x, y, modifiers, dx, dy);
     }
+#if defined(__APPLE__)
+    void sendExternalBeginFrame() { jfn_cef_layer_send_external_begin_frame(rs_); }
+#endif
+    void undo()      { jfn_cef_layer_undo(rs_); }
+    void redo()      { jfn_cef_layer_redo(rs_); }
+    void cut()       { jfn_cef_layer_cut(rs_); }
+    void copy()      { jfn_cef_layer_copy(rs_); }
+    void paste()     { jfn_cef_layer_paste(rs_); }
+    void selectAll() { jfn_cef_layer_select_all(rs_); }
 
 private:
     Browsers& browsers_;

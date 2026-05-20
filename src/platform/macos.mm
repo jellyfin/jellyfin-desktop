@@ -322,9 +322,9 @@ static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scal
     (void)link;
     if (jfn_shutting_down()) return;
     if (g_browsers) {
-        g_browsers->forEachBrowser([](CefRefPtr<CefBrowser> b) {
-            b->GetHost()->SendExternalBeginFrame();
-        });
+        for (auto& layer : g_browsers->layers()) {
+            layer->sendExternalBeginFrame();
+        }
     }
 }
 @end

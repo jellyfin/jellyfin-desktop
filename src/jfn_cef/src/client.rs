@@ -358,6 +358,31 @@ impl Inner {
             f.paste();
         }
     }
+    fn frame_undo(&self) {
+        if let Some(f) = self.focused_or_main() {
+            f.undo();
+        }
+    }
+    fn frame_redo(&self) {
+        if let Some(f) = self.focused_or_main() {
+            f.redo();
+        }
+    }
+    fn frame_cut(&self) {
+        if let Some(f) = self.focused_or_main() {
+            f.cut();
+        }
+    }
+    fn frame_copy(&self) {
+        if let Some(f) = self.focused_or_main() {
+            f.copy();
+        }
+    }
+    fn frame_select_all(&self) {
+        if let Some(f) = self.focused_or_main() {
+            f.select_all();
+        }
+    }
 
     fn browser_alive(&self) -> bool {
         self.browser.lock().unwrap().is_some() && !self.closed.load(Ordering::Acquire)
@@ -1672,6 +1697,37 @@ pub unsafe extern "C" fn jfn_cef_layer_exec_js(
 ) {
     let js = read_utf8(js_utf8, len);
     unsafe { arc(h) }.exec_js(&js);
+}
+
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.send_external_begin_frame();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_undo(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.frame_undo();
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_redo(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.frame_redo();
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_cut(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.frame_cut();
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_copy(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.frame_copy();
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_paste(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.frame_paste();
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_select_all(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.frame_select_all();
 }
 
 #[unsafe(no_mangle)]

@@ -567,44 +567,38 @@ static void flush_scroll_accumulator() {
 
 - (IBAction)undo:(id)sender {
     (void)sender;
-    auto browser = (g_browsers ? g_browsers->active() : nullptr);
-    if (!browser) return;
-    if (auto frame = browser->GetFocusedFrame()) frame->Undo();
+    auto layer = (g_browsers ? g_browsers->active() : nullptr);
+    if (layer) layer->undo();
 }
 
 - (IBAction)redo:(id)sender {
     (void)sender;
-    auto browser = (g_browsers ? g_browsers->active() : nullptr);
-    if (!browser) return;
-    if (auto frame = browser->GetFocusedFrame()) frame->Redo();
+    auto layer = (g_browsers ? g_browsers->active() : nullptr);
+    if (layer) layer->redo();
 }
 
 - (IBAction)cut:(id)sender {
     (void)sender;
-    auto browser = (g_browsers ? g_browsers->active() : nullptr);
-    if (!browser) return;
-    if (auto frame = browser->GetFocusedFrame()) frame->Cut();
+    auto layer = (g_browsers ? g_browsers->active() : nullptr);
+    if (layer) layer->cut();
 }
 
 - (IBAction)copy:(id)sender {
     (void)sender;
-    auto browser = (g_browsers ? g_browsers->active() : nullptr);
-    if (!browser) return;
-    if (auto frame = browser->GetFocusedFrame()) frame->Copy();
+    auto layer = (g_browsers ? g_browsers->active() : nullptr);
+    if (layer) layer->copy();
 }
 
 - (IBAction)paste:(id)sender {
     (void)sender;
-    auto browser = (g_browsers ? g_browsers->active() : nullptr);
-    if (!browser) return;
-    if (auto frame = browser->GetFocusedFrame()) frame->Paste();
+    auto layer = (g_browsers ? g_browsers->active() : nullptr);
+    if (layer) layer->paste();
 }
 
 - (IBAction)selectAll:(id)sender {
     (void)sender;
-    auto browser = (g_browsers ? g_browsers->active() : nullptr);
-    if (!browser) return;
-    if (auto frame = browser->GetFocusedFrame()) frame->SelectAll();
+    auto layer = (g_browsers ? g_browsers->active() : nullptr);
+    if (layer) layer->selectAll();
 }
 
 @end
