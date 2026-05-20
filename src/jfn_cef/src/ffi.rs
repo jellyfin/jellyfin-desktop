@@ -2,6 +2,7 @@
 //! the C++ shim can be a thin call-through during the transition.
 
 use cef::*;
+#[cfg(target_os = "linux")]
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 

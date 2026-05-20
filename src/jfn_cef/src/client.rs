@@ -277,7 +277,8 @@ impl Inner {
         // process-wide flag set by Browsers ctor; external_begin_frame is on
         // macOS only (CVDisplayLink drives BeginFrames there).
         let shared = USE_SHARED_TEXTURES.load(Ordering::Acquire);
-        let mut wi = WindowInfo::default().set_as_windowless(0);
+        let parent: sys::cef_window_handle_t = unsafe { std::mem::zeroed() };
+        let mut wi = WindowInfo::default().set_as_windowless(parent);
         wi.shared_texture_enabled = if shared { 1 } else { 0 };
         #[cfg(target_os = "macos")]
         {
