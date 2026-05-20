@@ -166,7 +166,7 @@ fn fill_paths(settings: &mut Settings) {
     let mut size = buf.len() as u32;
     unsafe {
         // _NSGetExecutablePath signature: (char* buf, uint32_t* bufsize) -> i32
-        extern "C" {
+        unsafe extern "C" {
             fn _NSGetExecutablePath(buf: *mut c_char, size: *mut u32) -> i32;
         }
         _NSGetExecutablePath(buf.as_mut_ptr() as *mut _, &mut size);
