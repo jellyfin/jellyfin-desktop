@@ -14,6 +14,20 @@ use crate::app::userfree_to_string;
 use crate::client::Inner;
 use crate::platform_ops;
 
+#[cfg(target_os = "linux")]
+type CursorHandle = std::os::raw::c_ulong;
+#[cfg(target_os = "macos")]
+type CursorHandle = *mut u8;
+#[cfg(target_os = "windows")]
+type CursorHandle = sys::HCURSOR;
+
+#[cfg(target_os = "linux")]
+type OsKeyEvent<'a> = Option<&'a mut sys::XEvent>;
+#[cfg(target_os = "macos")]
+type OsKeyEvent<'a> = *mut u8;
+#[cfg(target_os = "windows")]
+type OsKeyEvent<'a> = Option<&'a mut sys::MSG>;
+
 const STRIP_ACCEL_KEEP: u8 = b'&';
 
 fn strip_accelerator(s: &str) -> String {
@@ -432,7 +446,7 @@ wrap_display_handler! {
         fn on_cursor_change(
             &self,
             _browser: Option<&mut Browser>,
-            _cursor: sys::cef_cursor_handle_t,
+            _cursor: CursorHandle,
             type_: CursorType,
             _custom_cursor_info: Option<&CursorInfo>,
         ) -> c_int {
@@ -469,7 +483,7 @@ wrap_keyboard_handler! {
             &self,
             _browser: Option<&mut Browser>,
             event: Option<&KeyEvent>,
-            _os_event: Option<&mut sys::XEvent>,
+            _os_event: OsKeyEvent<'_>,
             _is_keyboard_shortcut: Option<&mut c_int>,
         ) -> c_int {
             let Some(e) = event else { return 0 };
