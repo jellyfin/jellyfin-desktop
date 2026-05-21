@@ -278,10 +278,8 @@ set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output
         ${XDG_OUTPUT_CLIENT_H}
     )
     if(ENABLE_X11)
-        list(APPEND PLATFORM_SOURCES
-            src/platform/x11.cpp
-            src/input/input_x11.cpp
-        )
+        # X11 platform + input live in Rust (src/x11/src/). The static
+        # archive is contributed via jfn-rust below; no C++ sources.
         add_compile_definitions(HAVE_X11)
     endif()
     set(PLATFORM_LIBRARIES
