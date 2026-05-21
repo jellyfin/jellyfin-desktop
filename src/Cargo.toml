@@ -17,6 +17,7 @@ members = [
     "single_instance",
     "wayland",
     "wlproxy",
+    "x11",
 ]
 
 [profile.release]

@@ -28,3 +28,4 @@ jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
 jfn-open-url-linux = { path = "../open_url_linux" }
 jfn-wayland = { path = "../wayland" }
 jfn-wlproxy = { path = "../wlproxy" }
+jfn-x11 = { path = "../x11" }

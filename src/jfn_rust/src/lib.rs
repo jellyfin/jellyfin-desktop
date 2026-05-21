@@ -50,3 +50,13 @@ pub use jfn_wayland::scale_probe::*;
 
 #[cfg(target_os = "linux")]
 pub use jfn_wlproxy::*;
+
+#[cfg(target_os = "linux")]
+pub use jfn_x11::make_platform::make_x11_platform;
+
+#[cfg(target_os = "linux")]
+pub use jfn_x11::surface::{
+    jfn_x11_alloc_surface, jfn_x11_fade_surface, jfn_x11_free_surface, jfn_x11_restack,
+    jfn_x11_surface_present, jfn_x11_surface_present_software, jfn_x11_surface_resize,
+    jfn_x11_surface_set_visible,
+};

@@ -212,7 +212,10 @@ Platform make_macos_platform();
 // static_asserts in platform_ops.cpp.
 extern "C" Platform make_wayland_platform();
 #ifdef HAVE_X11
-Platform make_x11_platform();
+// Authored in Rust (src/x11/src/make_platform.rs). Returns the X11
+// vtable by value across the C ABI; layout pinned by static_asserts
+// in platform_ops.cpp.
+extern "C" Platform make_x11_platform();
 #endif
 #endif
 
