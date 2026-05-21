@@ -2,7 +2,6 @@
 
 #include "input.h"
 #include "jfn_hotkey.h"
-#include "keysym_map.h"
 #include "logging.h"
 #include "../common.h"
 #include "../browser/browsers.h"
@@ -11,7 +10,10 @@
 
 #include "include/internal/cef_types.h"
 
+#if defined(__linux__)
+#include "keysym_map.h"
 #include <xkbcommon/xkbcommon.h>
+#endif
 
 #include <mutex>
 
@@ -159,6 +161,7 @@ extern "C" void jfn_input_dispatch_keyboard_focus(int gained) {
     input::dispatch_keyboard_focus(gained != 0);
 }
 
+#if defined(__linux__)
 extern "C" void jfn_input_dispatch_key_raw(uint32_t keysym, uint32_t native_code,
                                            uint32_t mods, int pressed) {
     if (keysym == XKB_KEY_XF86Back || keysym == XKB_KEY_XF86Forward) {
@@ -174,6 +177,7 @@ extern "C" void jfn_input_dispatch_key_raw(uint32_t keysym, uint32_t native_code
     e.is_system_key    = false;
     input::dispatch_key(e);
 }
+#endif
 
 extern "C" void jfn_input_dispatch_char(uint32_t codepoint, uint32_t mods,
                                         uint32_t native_code) {
