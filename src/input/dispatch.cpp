@@ -173,7 +173,12 @@ extern "C" void jfn_input_dispatch_key_raw(uint32_t keysym, uint32_t native_code
     e.windows_key_code = input::keysym_to_vkey(keysym);
     e.action           = pressed ? input::KeyAction::Down : input::KeyAction::Up;
     e.modifiers        = mods;
-    e.native_key_code  = static_cast<int>(native_code);
+    // CEF on Linux expects an X11 keycode (evdev keycode + 8) for native_key_code.
+    // Both Wayland and X11 input paths deliver the raw evdev keycode here, so
+    // add the offset to produce the X11 keycode that Chromium uses when mapping
+    // native_key_code → KeyboardEvent.code (e.g. evdev 108 + 8 = X11 116 = "ArrowDown",
+    // not X11 108 = "AltRight").
+    e.native_key_code  = static_cast<int>(native_code) + 8;
     e.is_system_key    = false;
     input::dispatch_key(e);
 }
