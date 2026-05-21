@@ -46,6 +46,7 @@ const WEB_FUNCTIONS: &[&str] = &[
     "setOsdVisible",
     "setCursorVisible",
     "toggleFullscreen",
+    "copyText",
 ];
 
 const WEB_SCRIPTS: &[&str] = &[

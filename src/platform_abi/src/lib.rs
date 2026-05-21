@@ -208,6 +208,9 @@ pub trait Platform: Send + Sync {
         // No backend support — invoke with empty text synchronously.
         on_done("");
     }
+
+    fn clipboard_write_text(&self, _text: &str) {}
+
     /// Disable subsequent clipboard reads (set by Wayland when no data
     /// device manager is available).
     fn clear_clipboard_handler(&self) {}

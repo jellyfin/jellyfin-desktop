@@ -301,6 +301,10 @@ impl Platform for WaylandPlatform {
         crate::clipboard::clipboard_read_text_async(on_done);
     }
 
+    fn clipboard_write_text(&self, text: &str) {
+        crate::clipboard::clipboard_write_text(text);
+    }
+
     fn open_external_url(&self, url: &str) {
         jfn_open_url_linux::open(url);
     }
