@@ -10,7 +10,7 @@ use crate::shm::shm_free;
 use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
 
 unsafe extern "C" {
-    fn jfn_mpv_get_property_int(name: *const c_char, out: *mut i64) -> bool;
+    fn jfn_mpv_get_property_int(name: *const c_char, out: *mut i64) -> i32;
     fn jfn_idle_inhibit_cleanup();
 }
 
@@ -114,9 +114,9 @@ pub fn hide_all_live_locked(conn: &xcb::Connection, m: &Mutable) {
 pub fn init() -> bool {
     let mut wid: i64 = 0;
     let name = c"window-id";
-    let ok = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
-    if !ok || wid <= 0 {
-        log::error!("[x11] failed to get window-id from mpv");
+    let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
+    if rc < 0 || wid <= 0 {
+        eprintln!("[x11] failed to get window-id from mpv");
         return false;
     }
     let parent = x::Window::new(wid as u32);
@@ -124,7 +124,7 @@ pub fn init() -> bool {
     let (conn, screen_num) = match xcb::Connection::connect(None) {
         Ok(v) => v,
         Err(e) => {
-            log::error!("[x11] failed to connect: {:?}", e);
+            eprintln!("[x11] failed to connect: {:?}", e);
             return false;
         }
     };
@@ -133,7 +133,7 @@ pub fn init() -> bool {
     let screen = match setup.roots().nth(screen_num as usize) {
         Some(s) => s,
         None => {
-            log::error!("[x11] no screen at index {}", screen_num);
+            eprintln!("[x11] no screen at index {}", screen_num);
             return false;
         }
     };
@@ -143,7 +143,7 @@ pub fn init() -> bool {
     let argb_visual = match find_argb_visual(screen, &mut argb_depth) {
         Some(v) => v,
         None => {
-            log::error!("[x11] no 32-bit ARGB visual found");
+            eprintln!("[x11] no 32-bit ARGB visual found");
             return false;
         }
     };
@@ -171,7 +171,7 @@ pub fn init() -> bool {
     // Verify the MIT-SHM extension is present.
     let shm_cookie = conn.send_request(&xcb::shm::QueryVersion {});
     if conn.wait_for_reply(shm_cookie).is_err() {
-        log::error!("[x11] MIT-SHM extension not available");
+        eprintln!("[x11] MIT-SHM extension not available");
         return false;
     }
 
@@ -200,7 +200,7 @@ pub fn init() -> bool {
 
     let conn = Arc::new(conn);
     if CONN.set(conn.clone()).is_err() {
-        log::error!("[x11] connection already initialized");
+        eprintln!("[x11] connection already initialized");
         return false;
     }
 
@@ -208,7 +208,7 @@ pub fn init() -> bool {
     // `sync_overlay_positions_locked`; shutdown callback hides surfaces.
     crate::input_lifecycle::start(conn.clone(), parent);
 
-    log::info!("[x11] platform initialized (parent=0x{:x})", parent.resource_id());
+    eprintln!("[x11] platform initialized (parent=0x{:x})", parent.resource_id());
     true
 }
 

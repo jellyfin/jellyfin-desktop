@@ -48,7 +48,7 @@ const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
 const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
 
 // CEF cursor type values that need special handling (from cef_types.h).
-const CT_NONE: u32 = 39;
+const CT_NONE: u32 = 37;
 
 const XKB_KEY_XF86BACK: u32 = 0x1008ff26;
 const XKB_KEY_XF86FORWARD: u32 = 0x1008ff27;
@@ -168,43 +168,41 @@ fn build_cursor_screen(screen: &x::Screen, allowed_depths_len: u8) -> cursor_ffi
 }
 
 fn cef_cursor_to_name(t: u32) -> &'static str {
-    // Mapping mirrors `cef_cursor_to_name` in the former input_x11.cpp.
     // Values follow cef_cursor_type_t in cef_types.h.
     match t {
-        2 => "crosshair",        // CT_CROSS
-        3 => "pointer",          // CT_HAND
-        4 => "text",             // CT_IBEAM
-        5 => "wait",             // CT_WAIT
-        6 => "help",             // CT_HELP
-        7 => "e-resize",         // CT_EASTRESIZE
-        8 => "n-resize",         // CT_NORTHRESIZE
-        9 => "ne-resize",        // CT_NORTHEASTRESIZE
-        10 => "nw-resize",       // CT_NORTHWESTRESIZE
-        11 => "s-resize",        // CT_SOUTHRESIZE
-        12 => "se-resize",       // CT_SOUTHEASTRESIZE
-        13 => "sw-resize",       // CT_SOUTHWESTRESIZE
-        14 => "w-resize",        // CT_WESTRESIZE
-        15 => "ns-resize",       // CT_NORTHSOUTHRESIZE
-        16 => "ew-resize",       // CT_EASTWESTRESIZE
-        17 => "nesw-resize",     // CT_NORTHEASTSOUTHWESTRESIZE
-        18 => "nwse-resize",     // CT_NORTHWESTSOUTHEASTRESIZE
-        19 => "col-resize",      // CT_COLUMNRESIZE
-        20 => "row-resize",      // CT_ROWRESIZE
-        21 => "all-scroll",      // CT_MIDDLEPANNING
-        22 => "move",            // CT_MOVE
-        23 => "vertical-text",   // CT_VERTICALTEXT
-        24 => "cell",            // CT_CELL
-        25 => "context-menu",    // CT_CONTEXTMENU
-        26 => "alias",           // CT_ALIAS
-        27 => "progress",        // CT_PROGRESS
-        28 => "no-drop",         // CT_NODROP
-        30 => "not-allowed",     // CT_NOTALLOWED
-        31 => "zoom-in",         // CT_ZOOMIN
-        32 => "zoom-out",        // CT_ZOOMOUT
-        33 => "grab",            // CT_GRAB
-        34 => "grabbing",        // CT_GRABBING
-        // CT_MIDDLE_PANNING_VERTICAL=42, CT_MIDDLE_PANNING_HORIZONTAL=43
-        42 | 43 => "all-scroll",
+        1 => "crosshair",        // CT_CROSS
+        2 => "pointer",          // CT_HAND
+        3 => "text",             // CT_IBEAM
+        4 => "wait",             // CT_WAIT
+        5 => "help",             // CT_HELP
+        6 => "e-resize",         // CT_EASTRESIZE
+        7 => "n-resize",         // CT_NORTHRESIZE
+        8 => "ne-resize",        // CT_NORTHEASTRESIZE
+        9 => "nw-resize",        // CT_NORTHWESTRESIZE
+        10 => "s-resize",        // CT_SOUTHRESIZE
+        11 => "se-resize",       // CT_SOUTHEASTRESIZE
+        12 => "sw-resize",       // CT_SOUTHWESTRESIZE
+        13 => "w-resize",        // CT_WESTRESIZE
+        14 => "ns-resize",       // CT_NORTHSOUTHRESIZE
+        15 => "ew-resize",       // CT_EASTWESTRESIZE
+        16 => "nesw-resize",     // CT_NORTHEASTSOUTHWESTRESIZE
+        17 => "nwse-resize",     // CT_NORTHWESTSOUTHEASTRESIZE
+        18 => "col-resize",      // CT_COLUMNRESIZE
+        19 => "row-resize",      // CT_ROWRESIZE
+        20 => "all-scroll",      // CT_MIDDLEPANNING
+        29 => "move",            // CT_MOVE
+        30 => "vertical-text",   // CT_VERTICALTEXT
+        31 => "cell",            // CT_CELL
+        32 => "context-menu",    // CT_CONTEXTMENU
+        33 => "alias",           // CT_ALIAS
+        34 => "progress",        // CT_PROGRESS
+        35 => "no-drop",         // CT_NODROP
+        38 => "not-allowed",     // CT_NOTALLOWED
+        39 => "zoom-in",         // CT_ZOOMIN
+        40 => "zoom-out",        // CT_ZOOMOUT
+        41 => "grab",            // CT_GRAB
+        42 => "grabbing",        // CT_GRABBING
+        43 | 44 => "all-scroll", // CT_MIDDLE_PANNING_VERTICAL/HORIZONTAL
         _ => "default",
     }
 }
@@ -386,14 +384,15 @@ fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed
         st.mouse_button_modifiers &= !flag;
     }
 
-    let cef_button = match button {
-        1 => 0u32, // MBT_LEFT
-        2 => 2,    // MBT_MIDDLE
-        3 => 1,    // MBT_RIGHT
+    // dispatch.cpp expects linux/input-event-codes.h button codes.
+    let code: u32 = match button {
+        1 => 0x110, // BTN_LEFT
+        2 => 0x112, // BTN_MIDDLE
+        3 => 0x111, // BTN_RIGHT
         _ => return,
     };
     unsafe {
-        jfn_input_dispatch_mouse_button(cef_button, pressed as c_int, x, y, cef_modifiers(st));
+        jfn_input_dispatch_mouse_button(code, pressed as c_int, x, y, cef_modifiers(st));
     }
 }
 
@@ -527,12 +526,14 @@ fn input_thread_body(mut st: State) {
             };
             if rc == 0 {
                 st.cursor_ctx = ctx_ptr;
+            } else {
+                eprintln!("[x11] xcb_cursor_context_new failed rc={}", rc);
             }
         }
     }
 
     if !setup_xkb(&st.conn.clone(), &mut st) {
-        log::warn!("[x11] xkb setup failed; key input disabled");
+        eprintln!("[x11] xkb setup failed; key input disabled");
     }
 
     // Subscribe to input + structure events on the window.
@@ -679,7 +680,7 @@ pub fn start(conn: Arc<xcb::Connection>, screen_num: i32, parent: x::Window) -> 
         ptr_x: 0,
         ptr_y: 0,
         mouse_button_modifiers: 0,
-        cursor_type: 2, // CT_POINTER
+        cursor_type: 0, // CT_POINTER
         current_cursor: 0,
         cursor_ctx: std::ptr::null_mut(),
         mailbox: mailbox.clone(),

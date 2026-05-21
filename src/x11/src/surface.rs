@@ -388,11 +388,14 @@ pub unsafe extern "C" fn jfn_x11_restack(
     let _ = conn.flush();
 }
 
-/// X11 has no compositor alpha-modulation path. Fade is a hard cut:
-/// fire start, then complete immediately.
+/// X11 has no compositor alpha-modulation path. Wayland keeps the surface
+/// mapped and gradually drives its alpha to 0; on X11 there is no
+/// per-window opacity that survives across compositors, so we hard-unmap
+/// the X window as the visual side of the fade and fire the callback
+/// contract synchronously.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_x11_fade_surface(
-    _s: *mut PlatformSurface,
+    s: *mut PlatformSurface,
     _fade_sec: f32,
     on_start: Option<unsafe extern "C" fn(*mut c_void)>,
     start_ctx: *mut c_void,
@@ -401,6 +404,12 @@ pub unsafe extern "C" fn jfn_x11_fade_surface(
     done_ctx: *mut c_void,
     done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
+    // Visually hide the overlay window immediately. The CefLayer continues
+    // to exist (the JS animation/teardown still runs); the X window just
+    // stops being rendered by the compositor.
+    if !s.is_null() {
+        unsafe { jfn_x11_surface_set_visible(s, false) };
+    }
     if let Some(f) = on_start {
         unsafe { f(start_ctx) };
     }
