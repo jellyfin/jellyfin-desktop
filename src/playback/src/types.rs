@@ -144,9 +144,12 @@ impl PlaybackEvent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlaybackActionKind {
     ApplyPendingTrackSelectionAndPlay = 0,
+    SeekAbsolute = 1,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlaybackAction {
     pub kind: PlaybackActionKind,
+    /// Used only by [`PlaybackActionKind::SeekAbsolute`].
+    pub position_us: i64,
 }

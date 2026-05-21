@@ -74,7 +74,8 @@ typedef struct {
 } JfnPlaybackEventC;
 
 typedef struct {
-    uint8_t kind;  // 0 = ApplyPendingTrackSelectionAndPlay
+    uint8_t kind;        // 0 = ApplyPendingTrackSelectionAndPlay, 1 = SeekAbsolute
+    int64_t position_us; // used by SeekAbsolute
 } JfnPlaybackActionC;
 
 // =====================================================================
@@ -83,6 +84,10 @@ typedef struct {
 
 void jfn_playback_init(void);
 void jfn_playback_shutdown(void);
+
+// One-shot init for the on-disk playback-position cache. Idempotent: only the
+// first call sets the path; subsequent calls are ignored.
+void jfn_playback_position_init(const char* path);
 
 // Sink registration. `ctx` is opaque to Rust and passed back to try_post
 // on each delivery. Must be called between init() and the first post.

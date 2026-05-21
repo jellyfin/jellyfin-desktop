@@ -89,6 +89,7 @@ extern "C" inline bool jfn_action_sink_thunk(void* ctx, const JfnPlaybackActionC
     auto* sink = static_cast<PlaybackActionSink*>(ctx);
     PlaybackAction a;
     a.kind = static_cast<PlaybackAction::Kind>(act->kind);
+    a.position_us = act->position_us;
     return sink->tryPost(a);
 }
 

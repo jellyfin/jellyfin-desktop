@@ -82,6 +82,7 @@ pub struct JfnPlaybackEventC {
 #[repr(C)]
 pub struct JfnPlaybackActionC {
     pub kind: u8,
+    pub position_us: i64,
 }
 
 // =====================================================================
@@ -115,7 +116,10 @@ unsafe impl Sync for ActionSinkEntry {}
 
 impl ActionSinkEntry {
     pub fn dispatch(&self, a: &PlaybackAction) {
-        let c = JfnPlaybackActionC { kind: a.kind as u8 };
+        let c = JfnPlaybackActionC {
+            kind: a.kind as u8,
+            position_us: a.position_us,
+        };
         (self.try_post)(self.ctx, &c);
     }
 }
@@ -270,6 +274,10 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
         match a.kind {
             PlaybackActionKind::ApplyPendingTrackSelectionAndPlay => {
                 jfn_mpv::api::jfn_mpv_apply_pending_track_selection_and_play();
+            }
+            PlaybackActionKind::SeekAbsolute => {
+                let secs = a.position_us as f64 / 1_000_000.0;
+                jfn_mpv::api::jfn_mpv_seek_absolute(secs);
             }
         }
     }));

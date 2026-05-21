@@ -56,6 +56,7 @@ impl PlaybackStateMachine {
         self.frame_available = false;
         self.pending_actions.push(PlaybackAction {
             kind: PlaybackActionKind::ApplyPendingTrackSelectionAndPlay,
+            position_us: 0,
         });
         vec![PlaybackEvent::new(PlaybackEventKind::TrackLoaded)]
     }

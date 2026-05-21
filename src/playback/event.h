@@ -112,8 +112,10 @@ struct PlaybackEvent {
 struct PlaybackAction {
     enum class Kind : uint8_t {
         ApplyPendingTrackSelectionAndPlay = 0,
+        SeekAbsolute = 1,
     };
     Kind kind = Kind::ApplyPendingTrackSelectionAndPlay;
+    int64_t position_us = 0; // used by SeekAbsolute
 };
 
 class PlaybackEventSink {

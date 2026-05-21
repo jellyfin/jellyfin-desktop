@@ -7,12 +7,24 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crate::wake_event::WakeEvent;
 
 use crate::ffi::{ActionSinkEntry, EventSinkEntry};
+use crate::position_cache;
 use crate::state_machine::PlaybackStateMachine;
 use crate::types::*;
+
+const POSITION_SAVE_INTERVAL: Duration = Duration::from_millis(1000);
+const MIN_SEEK_POSITION_US: i64 = 5_000_000;
+
+#[derive(Default)]
+struct PositionCacheState {
+    current_item_id: String,
+    pending_seek_us: Option<i64>,
+    last_save_at: Option<Instant>,
+}
 
 #[derive(Debug)]
 pub(crate) enum Input {
@@ -145,6 +157,7 @@ impl Drop for PlaybackCoordinator {
 
 fn worker(shared: Arc<Shared>) {
     let mut sm = PlaybackStateMachine::new();
+    let mut pcs = PositionCacheState::default();
     while shared.running.load(Ordering::Relaxed) {
         let work: VecDeque<Input> = {
             let mut q = shared.queue.lock().unwrap();
@@ -160,7 +173,7 @@ fn worker(shared: Arc<Shared>) {
         let mut events: Vec<PlaybackEvent> = Vec::new();
         let mut actions: Vec<PlaybackAction> = Vec::new();
         for input in work {
-            apply(&mut sm, input, &mut events);
+            apply_with_cache(&mut sm, &mut pcs, input, &mut events, &mut actions);
             actions.extend(sm.consume_actions());
         }
 
@@ -219,6 +232,60 @@ fn wait_for_wake(w: &WakeEvent) {
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
     unsafe {
         WaitForSingleObject(w.handle(), u32::MAX);
+    }
+}
+
+fn apply_with_cache(
+    sm: &mut PlaybackStateMachine,
+    pcs: &mut PositionCacheState,
+    input: Input,
+    events: &mut Vec<PlaybackEvent>,
+    actions: &mut Vec<PlaybackAction>,
+) {
+    if let Input::LoadStarting(id) = &input {
+        if !id.is_empty() {
+            pcs.current_item_id = id.clone();
+            pcs.pending_seek_us = position_cache::load(id);
+            pcs.last_save_at = None;
+        }
+    }
+    let pos_for_save = match &input {
+        Input::Position(p) => Some(*p),
+        _ => None,
+    };
+    let eof_clean = matches!(&input, Input::EndFile { reason: EndReason::Eof, .. });
+    let file_loaded = matches!(&input, Input::FileLoaded);
+
+    apply(sm, input, events);
+
+    if file_loaded {
+        if let Some(pos) = pcs.pending_seek_us.take() {
+            if pos >= MIN_SEEK_POSITION_US {
+                actions.push(PlaybackAction {
+                    kind: PlaybackActionKind::SeekAbsolute,
+                    position_us: pos,
+                });
+            }
+        }
+    }
+    if let Some(p) = pos_for_save {
+        if !pcs.current_item_id.is_empty() && p > 0 {
+            let now = Instant::now();
+            let should_save = pcs
+                .last_save_at
+                .map(|t| now.duration_since(t) >= POSITION_SAVE_INTERVAL)
+                .unwrap_or(true);
+            if should_save {
+                position_cache::save(&pcs.current_item_id, p);
+                pcs.last_save_at = Some(now);
+            }
+        }
+    }
+    if eof_clean && !pcs.current_item_id.is_empty() {
+        position_cache::clear(&pcs.current_item_id);
+        pcs.current_item_id.clear();
+        pcs.pending_seek_us = None;
+        pcs.last_save_at = None;
     }
 }
 

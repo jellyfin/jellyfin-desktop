@@ -16,6 +16,7 @@ mod ingest_driver;
 mod mpris;
 #[cfg(target_os = "linux")]
 mod mpris_sink;
+mod position_cache;
 mod shutdown;
 mod state_machine;
 mod theme_color_sink;

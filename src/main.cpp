@@ -285,6 +285,8 @@ static int run_with_cef(int mw, int mh,
     // Coordinator + sinks must exist before any thread can post inputs or
     // observe playback state. Sinks register before start() so the worker
     // never delivers to a half-built fanout.
+    jfn_playback_position_init(
+        (paths::getConfigDir() + "/playback-position.json").c_str());
     PlaybackCoordinatorScope coord_scope;
     // Builtin idle_inhibit sink (Rust-side) calls into the platform vtable
     // through this handler. Install before any event posts.
