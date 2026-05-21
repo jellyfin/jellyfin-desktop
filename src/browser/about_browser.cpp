@@ -87,8 +87,10 @@ bool AboutBrowser::handleMessage(const std::string& name,
             LOG_WARN(LOG_CEF, "aboutOpenPath: empty path, ignoring");
             return true;
         }
-        if (g_platform.open_external_url)
-            g_platform.open_external_url("file://" + path);
+        if (g_platform.open_external_url) {
+            std::string url = "file://" + path;
+            g_platform.open_external_url(url.c_str(), url.size());
+        }
         return true;
     }
     return false;

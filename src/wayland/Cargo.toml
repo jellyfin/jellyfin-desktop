@@ -9,6 +9,7 @@ name = "jfn_wayland"
 crate-type = ["rlib"]
 
 [dependencies]
+cef-dll-sys = { version = "=148.1.0" }
 khronos-egl = { version = "6", features = ["dynamic"] }
 libc = "0.2"
 libloading = "0.8"

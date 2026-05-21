@@ -1,66 +1,70 @@
 #include "platform_ops.h"
 #include "platform.h"
 
-#include <memory>
-#include <string>
+#include <cstddef>
 
 extern Platform g_platform;
 
+// The Wayland backend authors `make_wayland_platform()` in Rust
+// (src/wayland/src/make_platform.rs) and returns the Platform vtable by
+// value. The Rust side hand-mirrors this struct with `#[repr(C)]`; any
+// drift in field order, types, or alignment would silently misdispatch
+// vtable calls. Pin the layout here so any future edit to `struct
+// Platform` triggers a compile error if the Rust mirror would no longer
+// agree.
+static_assert(sizeof(Platform) == 320,
+              "Platform size changed — update Rust mirror in "
+              "src/wayland/src/make_platform.rs");
+static_assert(offsetof(Platform, display) == 0);
+static_assert(offsetof(Platform, early_init) == 8);
+static_assert(offsetof(Platform, init) == 16);
+static_assert(offsetof(Platform, cleanup) == 24);
+static_assert(offsetof(Platform, post_window_cleanup) == 32);
+static_assert(offsetof(Platform, alloc_surface) == 40);
+static_assert(offsetof(Platform, free_surface) == 48);
+static_assert(offsetof(Platform, surface_present) == 56);
+static_assert(offsetof(Platform, surface_present_software) == 64);
+static_assert(offsetof(Platform, surface_resize) == 72);
+static_assert(offsetof(Platform, surface_set_visible) == 80);
+static_assert(offsetof(Platform, restack) == 88);
+static_assert(offsetof(Platform, fade_surface) == 96);
+static_assert(offsetof(Platform, popup_show) == 104);
+static_assert(offsetof(Platform, popup_hide) == 112);
+static_assert(offsetof(Platform, popup_present) == 120);
+static_assert(offsetof(Platform, popup_present_software) == 128);
+static_assert(offsetof(Platform, set_fullscreen) == 136);
+static_assert(offsetof(Platform, toggle_fullscreen) == 144);
+static_assert(offsetof(Platform, begin_transition) == 152);
+static_assert(offsetof(Platform, end_transition) == 160);
+static_assert(offsetof(Platform, in_transition) == 168);
+static_assert(offsetof(Platform, set_expected_size) == 176);
+static_assert(offsetof(Platform, get_scale) == 184);
+static_assert(offsetof(Platform, get_display_scale) == 192);
+static_assert(offsetof(Platform, query_window_position) == 200);
+static_assert(offsetof(Platform, clamp_window_geometry) == 208);
+static_assert(offsetof(Platform, pump) == 216);
+static_assert(offsetof(Platform, run_main_loop) == 224);
+static_assert(offsetof(Platform, wake_main_loop) == 232);
+static_assert(offsetof(Platform, set_cursor) == 240);
+static_assert(offsetof(Platform, set_idle_inhibit) == 248);
+static_assert(offsetof(Platform, set_theme_color) == 256);
+static_assert(offsetof(Platform, shared_texture_supported) == 264);
+static_assert(offsetof(Platform, cef_ozone_platform) == 265);
+static_assert(offsetof(Platform, clipboard_read_text_async) == 304);
+static_assert(offsetof(Platform, open_external_url) == 312);
+
 namespace {
-
-// Holds a (fn, ctx, dtor) Rust closure for the lifetime of the std::function
-// it was wrapped in. dtor() runs from ~RustVoid when the last std::function
-// copy is destroyed, letting the Rust side free its boxed state.
-struct RustVoid {
-    void (*fn)(void*) = nullptr;
-    void* ctx = nullptr;
-    void (*dtor)(void*) = nullptr;
-
-    RustVoid(void (*f)(void*), void* c, void (*d)(void*)) : fn(f), ctx(c), dtor(d) {}
-    RustVoid(const RustVoid&) = delete;
-    RustVoid& operator=(const RustVoid&) = delete;
-    ~RustVoid() { if (dtor) dtor(ctx); }
-};
-
-struct RustInt {
-    void (*fn)(void*, int) = nullptr;
-    void* ctx = nullptr;
-    void (*dtor)(void*) = nullptr;
-
-    RustInt(void (*f)(void*, int), void* c, void (*d)(void*)) : fn(f), ctx(c), dtor(d) {}
-    RustInt(const RustInt&) = delete;
-    RustInt& operator=(const RustInt&) = delete;
-    ~RustInt() { if (dtor) dtor(ctx); }
-};
-
-struct RustString {
-    void (*fn)(void*, const char*, size_t) = nullptr;
-    void* ctx = nullptr;
-    void (*dtor)(void*) = nullptr;
-
-    RustString(void (*f)(void*, const char*, size_t), void* c, void (*d)(void*))
-        : fn(f), ctx(c), dtor(d) {}
-    RustString(const RustString&) = delete;
-    RustString& operator=(const RustString&) = delete;
-    ~RustString() { if (dtor) dtor(ctx); }
-};
 
 bool surface_present(void* s, const void* info) {
     if (!s || !info || !g_platform.surface_present) return false;
-    return g_platform.surface_present(
-        static_cast<PlatformSurface*>(s),
-        *static_cast<const CefAcceleratedPaintInfo*>(info));
+    return g_platform.surface_present(static_cast<PlatformSurface*>(s), info);
 }
 
 bool surface_present_software(void* s, const JfnRect* dirty, size_t n,
                               const void* buffer, int w, int h) {
     if (!s || !g_platform.surface_present_software) return false;
-    CefRenderHandler::RectList rects;
-    rects.reserve(n);
-    for (size_t i = 0; i < n; i++)
-        rects.emplace_back(dirty[i].x, dirty[i].y, dirty[i].w, dirty[i].h);
     return g_platform.surface_present_software(
-        static_cast<PlatformSurface*>(s), rects, buffer, w, h);
+        static_cast<PlatformSurface*>(s), dirty, n, buffer, w, h);
 }
 
 void surface_resize(void* s, int lw, int lh, int pw, int ph) {
@@ -76,40 +80,25 @@ void surface_set_visible(void* s, bool v) {
 void fade_surface(void* s, float sec,
                   void (*on_start)(void*), void* sctx, void (*sdtor)(void*),
                   void (*on_done)(void*), void* dctx, void (*ddtor)(void*)) {
-    auto start = std::make_shared<RustVoid>(on_start, sctx, sdtor);
-    auto done = std::make_shared<RustVoid>(on_done, dctx, ddtor);
     if (!s || !g_platform.fade_surface) {
-        if (start->fn) start->fn(start->ctx);
-        if (done->fn) done->fn(done->ctx);
+        if (on_start) on_start(sctx);
+        if (sdtor) sdtor(sctx);
+        if (on_done) on_done(dctx);
+        if (ddtor) ddtor(dctx);
         return;
     }
-    g_platform.fade_surface(
-        static_cast<PlatformSurface*>(s), sec,
-        [start]() { if (start->fn) start->fn(start->ctx); },
-        [done]() { if (done->fn) done->fn(done->ctx); });
+    g_platform.fade_surface(static_cast<PlatformSurface*>(s), sec,
+                            on_start, sctx, sdtor,
+                            on_done, dctx, ddtor);
 }
 
 void popup_show(void* s, const JfnPopupRequest* req) {
-    if (!s || !g_platform.popup_show || !req) return;
-    Platform::PopupRequest out;
-    out.x = req->x;
-    out.y = req->y;
-    out.lw = req->lw;
-    out.lh = req->lh;
-    out.initial_highlight = req->initial_highlight;
-    out.options.reserve(req->options_len);
-    for (size_t i = 0; i < req->options_len; i++) {
-        const char* opt = req->options ? req->options[i] : nullptr;
-        out.options.emplace_back(opt ? opt : "");
+    if (!req) return;
+    if (!s || !g_platform.popup_show) {
+        if (req->on_selected_dtor) req->on_selected_dtor(req->on_selected_ctx);
+        return;
     }
-    if (req->on_selected) {
-        auto holder = std::make_shared<RustInt>(
-            req->on_selected, req->on_selected_ctx, req->on_selected_dtor);
-        out.on_selected = [holder](int idx) {
-            if (holder->fn) holder->fn(holder->ctx, idx);
-        };
-    }
-    g_platform.popup_show(static_cast<PlatformSurface*>(s), out);
+    g_platform.popup_show(static_cast<PlatformSurface*>(s), req);
 }
 
 void popup_hide(void* s) {
@@ -119,9 +108,7 @@ void popup_hide(void* s) {
 
 void popup_present(void* s, const void* info, int lw, int lh) {
     if (!s || !info || !g_platform.popup_present) return;
-    g_platform.popup_present(static_cast<PlatformSurface*>(s),
-                             *static_cast<const CefAcceleratedPaintInfo*>(info),
-                             lw, lh);
+    g_platform.popup_present(static_cast<PlatformSurface*>(s), info, lw, lh);
 }
 
 void popup_present_software(void* s, const void* buffer, int pw, int ph,
@@ -142,19 +129,17 @@ void set_cursor(int type) {
 
 void clipboard_read_text_async(
     void (*cb)(void*, const char*, size_t), void* ctx, void (*dtor)(void*)) {
-    auto holder = std::make_shared<RustString>(cb, ctx, dtor);
     if (!g_platform.clipboard_read_text_async) {
-        if (holder->fn) holder->fn(holder->ctx, "", 0);
+        if (cb) cb(ctx, "", 0);
+        if (dtor) dtor(ctx);
         return;
     }
-    g_platform.clipboard_read_text_async([holder](std::string text) {
-        if (holder->fn) holder->fn(holder->ctx, text.data(), text.size());
-    });
+    g_platform.clipboard_read_text_async(cb, ctx, dtor);
 }
 
 void open_external_url(const char* utf8, size_t len) {
     if (!g_platform.open_external_url || !utf8) return;
-    g_platform.open_external_url(std::string(utf8, len));
+    g_platform.open_external_url(utf8, len);
 }
 
 constexpr JfnPlatformOps kOps = {
@@ -184,7 +169,7 @@ extern "C" const JfnPlatformOps* jfn_platform_ops(void) {
 // shared_texture_supported / clipboard_read_text_async during init.
 
 extern "C" const char* jfn_platform_cef_ozone_platform(void) {
-    return g_platform.cef_ozone_platform.c_str();
+    return g_platform.cef_ozone_platform;
 }
 
 extern "C" void jfn_platform_set_shared_texture_unsupported(void) {

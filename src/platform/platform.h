@@ -2,6 +2,7 @@
 
 #include "include/cef_render_handler.h"
 #include "include/internal/cef_types.h"
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -20,7 +21,7 @@ enum class IdleInhibitLevel { None, System, Display };
 struct PlatformSurface;
 
 struct Platform {
-    DisplayBackend display{};
+    DisplayBackend display;
 
     void (*early_init)();
     bool (*init)(mpv_handle* mpv);
@@ -40,9 +41,13 @@ struct Platform {
     // the surface. A false return means the platform dropped this paint
     // (e.g. Wayland tolerance gate during a resize transition); callers
     // that track "renderer stabilised" state must not count dropped paints.
-    bool (*surface_present)(PlatformSurface*, const CefAcceleratedPaintInfo& info);
+    //
+    // accel_paint_info is a `const CefAcceleratedPaintInfo*` opaque to
+    // this header; backends that consume it cast internally. Keeping the
+    // vtable free of CEF C++ types lets the struct cross as repr(C).
+    bool (*surface_present)(PlatformSurface*, const void* accel_paint_info);
     bool (*surface_present_software)(PlatformSurface*,
-                                     const CefRenderHandler::RectList& dirty,
+                                     const JfnRect* dirty, size_t dirty_len,
                                      const void* buffer, int w, int h);
     void (*surface_resize)(PlatformSurface*, int lw, int lh, int pw, int ph);
 
@@ -55,9 +60,15 @@ struct Platform {
     // Window-resize signal — outbound from the platform. Fires when the
     // Optional per-surface fade — finite UI animation; backends limited
     // to a single fadeable surface return /no-op for the others.
+    // Each (fn, ctx, dtor) triple: fn(ctx) is invoked once at the
+    // corresponding moment; dtor(ctx) runs once when the backend drops
+    // its last reference (allowing the caller to free boxed state).
+    // Either fn or dtor may be null.
     void (*fade_surface)(PlatformSurface*, float fade_sec,
-                         std::function<void()> on_fade_start,
-                         std::function<void()> on_complete);
+                         void (*on_fade_start)(void*), void* start_ctx,
+                         void (*start_dtor)(void*),
+                         void (*on_complete)(void*), void* done_ctx,
+                         void (*done_dtor)(void*));
 
     // Popup (CEF OSR popup elements, e.g. <select> dropdowns).
     //
@@ -69,17 +80,12 @@ struct Platform {
     // use options + initial_highlight + on_selected and ignore the
     // present frames.
     //
-    // on_selected may fire on any thread.
-    struct PopupRequest {
-        int x, y;
-        int lw, lh;
-        std::vector<std::string> options;
-        int initial_highlight;  // -1 if none
-        std::function<void(int)> on_selected;  // -1 = dismissed
-    };
-    void (*popup_show)(PlatformSurface*, const PopupRequest& req);
+    // on_selected may fire on any thread. Request layout matches
+    // JfnPopupRequest in platform_ops.h so the platform_ops thunk can
+    // forward the pointer with no rebuild.
+    void (*popup_show)(PlatformSurface*, const JfnPopupRequest* req);
     void (*popup_hide)(PlatformSurface*);
-    void (*popup_present)(PlatformSurface*, const CefAcceleratedPaintInfo& info, int lw, int lh);
+    void (*popup_present)(PlatformSurface*, const void* accel_paint_info, int lw, int lh);
     void (*popup_present_software)(PlatformSurface*, const void* buffer, int pw, int ph, int lw, int lh);
 
     // Fullscreen
@@ -130,18 +136,22 @@ struct Platform {
     // Chrome color: drives every native surface that should track the
     // current theme color so resize gaps and titlebar match. On Wayland/KDE
     // this writes a kwin palette file; on macOS it sets NSWindow + the
-    // mpv CAMetalLayer fills; X11/Windows are no-ops.
-    void (*set_theme_color)(const Color&);
+    // mpv CAMetalLayer fills; X11/Windows are no-ops. Backends recompute
+    // r/g/b/hex from the packed rgb word internally; the vtable stays free
+    // of C++ types so it can cross as repr(C).
+    void (*set_theme_color)(uint32_t rgb);
 
     // Whether the GPU can produce shared textures (dmabufs). Set during init.
     // When false, CEF should use software rendering (OnPaint) instead of
     // OnAcceleratedPaint, and present_software / overlay_present_software
-    // must be non-null.
-    bool shared_texture_supported = true;
+    // must be non-null. Each factory sets this explicitly (typically true).
+    bool shared_texture_supported;
 
     // CEF ozone platform. Resolved once in main() from display backend / --ozone-platform.
-    // The dmabuf probe tests GL on this display.
-    std::string cef_ozone_platform;
+    // The dmabuf probe tests GL on this display. NUL-terminated, fixed-size
+    // so the Platform struct stays POD/repr(C)-friendly. Factories
+    // zero-initialize; main() overwrites.
+    char cef_ozone_platform[32];
 
     // Read the system clipboard as UTF-8 text. Used by the context menu's
     // Paste action — CEF's frame->Paste() can't see external Wayland
@@ -154,10 +164,19 @@ struct Platform {
     // fd from wl_data_offer_receive becomes a regular poll source. On
     // macOS/Windows the OS API is synchronous and the callback runs inline
     // on the calling thread. Callbacks may run on any thread.
-    void (*clipboard_read_text_async)(std::function<void(std::string)> on_done);
+    // utf8 pointer is valid only for the duration of the callback; it
+    // may be empty (len == 0) if the clipboard has no compatible text.
+    // dtor(ctx) runs once after the callback fires (or immediately if
+    // no callback path was taken). Either fn or dtor may be null.
+    void (*clipboard_read_text_async)(void (*on_done)(void* ctx,
+                                                       const char* utf8,
+                                                       size_t len),
+                                       void* ctx,
+                                       void (*dtor)(void* ctx));
 
-    // Caller guarantees non-empty URL not starting with '-'.
-    void (*open_external_url)(const std::string& url);
+    // Caller guarantees non-empty UTF-8 URL not starting with '-'. `utf8`
+    // is NUL-terminated for `len` bytes.
+    void (*open_external_url)(const char* utf8, size_t len);
 };
 
 // Platform lifetime. Must destruct after CefRuntimeScope, before mpv teardown.
@@ -188,7 +207,10 @@ Platform make_windows_platform();
 #elif defined(__APPLE__)
 Platform make_macos_platform();
 #elif defined(__linux__)
-Platform make_wayland_platform();
+// Authored in Rust (src/wayland/src/make_platform.rs). Returns the
+// Wayland vtable by value across the C ABI; layout pinned by
+// static_asserts in platform_ops.cpp.
+extern "C" Platform make_wayland_platform();
 #ifdef HAVE_X11
 Platform make_x11_platform();
 #endif

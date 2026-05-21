@@ -236,8 +236,10 @@ static void present_to_surface_locked(PlatformSurface* s, ID3D11Texture2D* src,
     g_win.dcomp_device->Commit();
 }
 
-static bool win_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
-    if (!s) return false;
+static bool win_surface_present(PlatformSurface* s, const void* raw_info) {
+    if (!s || !raw_info) return false;
+    const CefAcceleratedPaintInfo& info =
+        *static_cast<const CefAcceleratedPaintInfo*>(raw_info);
     HANDLE handle = info.shared_texture_handle;
     if (!handle) return false;
 
@@ -288,7 +290,7 @@ static bool win_surface_present(PlatformSurface* s, const CefAcceleratedPaintInf
 // Kept as a no-op to match prior overlay/about behavior; the main path
 // historically also no-op'd here.
 static bool win_surface_present_software(PlatformSurface*,
-                                         const CefRenderHandler::RectList&,
+                                         const JfnRect*, size_t,
                                          const void*, int, int) {
     return false;
 }
@@ -332,27 +334,42 @@ static void win_surface_set_visible(PlatformSurface* s, bool visible) {
 // Animate the surface's effect-group opacity from 1.0 -> 0.0 over fade_sec,
 // then hide. Runs on a detached thread — finite UI animation, no polling
 // (frame-paced sleep matches the display refresh).
+namespace {
+struct WinRustCb {
+    void (*fn)(void*) = nullptr;
+    void* ctx = nullptr;
+    void (*dtor)(void*) = nullptr;
+    WinRustCb(void (*f)(void*), void* c, void (*d)(void*)) : fn(f), ctx(c), dtor(d) {}
+    WinRustCb(const WinRustCb&) = delete;
+    WinRustCb& operator=(const WinRustCb&) = delete;
+    ~WinRustCb() { if (dtor) dtor(ctx); }
+    void fire() { if (fn) fn(ctx); }
+};
+}
+
 static void win_fade_surface(PlatformSurface* s, float fade_sec,
-                             std::function<void()> on_fade_start,
-                             std::function<void()> on_complete) {
+                             void (*on_fade_start)(void*), void* start_ctx,
+                             void (*start_dtor)(void*),
+                             void (*on_complete)(void*), void* done_ctx,
+                             void (*done_dtor)(void*)) {
+    auto start_cb = std::make_shared<WinRustCb>(on_fade_start, start_ctx, start_dtor);
+    auto done_cb = std::make_shared<WinRustCb>(on_complete, done_ctx, done_dtor);
     if (!s || !s->visual || !s->effect) {
-        if (on_fade_start) on_fade_start();
-        if (on_complete) on_complete();
+        start_cb->fire();
+        done_cb->fire();
         return;
     }
 
     double fps = jfn_playback_display_hz();
     if (fps <= 0) {
-        if (on_fade_start) on_fade_start();
-        if (on_complete) on_complete();
+        start_cb->fire();
+        done_cb->fire();
         return;
     }
 
     s->fading.store(true);
-    std::thread([s, fade_sec, fps,
-                 on_fade_start = std::move(on_fade_start),
-                 on_complete = std::move(on_complete)]() {
-        if (on_fade_start) on_fade_start();
+    std::thread([s, fade_sec, fps, start_cb, done_cb]() {
+        start_cb->fire();
 
         int total_frames = static_cast<int>(fade_sec * fps);
         if (total_frames < 1) total_frames = 1;
@@ -371,7 +388,7 @@ static void win_fade_surface(PlatformSurface* s, float fade_sec,
         }
 
         s->fading.store(false);
-        if (on_complete) on_complete();
+        done_cb->fire();
     }).detach();
 }
 
@@ -849,7 +866,7 @@ static void win_pump() {
     // Input is handled by the dedicated input thread's message loop
 }
 
-static void win_set_theme_color(const Color&) {
+static void win_set_theme_color(uint32_t) {
     // No-op on Windows (DWM handles titlebar appearance)
 }
 
@@ -858,8 +875,10 @@ static void win_set_theme_color(const Color&) {
 // own frame->Copy() path which works correctly on Windows.
 // =====================================================================
 
-static void win_clipboard_read_text_async(std::function<void(std::string)> on_done) {
-    if (!on_done) return;
+static void win_clipboard_read_text_async(
+    void (*on_done)(void*, const char*, size_t),
+    void* ctx,
+    void (*dtor)(void*)) {
     // Win32 clipboard is synchronous; fire the callback inline.
     std::string result;
     if (OpenClipboard(nullptr)) {
@@ -877,18 +896,20 @@ static void win_clipboard_read_text_async(std::function<void(std::string)> on_do
         }
         CloseClipboard();
     }
-    on_done(std::move(result));
+    if (on_done) on_done(ctx, result.data(), result.size());
+    if (dtor) dtor(ctx);
 }
 
-static void win_open_external_url(const std::string& url) {
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, url.data(), (int)url.size(), nullptr, 0);
+static void win_open_external_url(const char* utf8, size_t len) {
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, nullptr, 0);
     if (wlen <= 0) return;
     std::wstring wurl(wlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, url.data(), (int)url.size(), wurl.data(), wlen);
+    MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, wurl.data(), wlen);
     HINSTANCE r = ShellExecuteW(nullptr, L"open", wurl.c_str(),
                                 nullptr, nullptr, SW_SHOWNORMAL);
     if ((INT_PTR)r <= 32)
-        LOG_ERROR(LOG_PLATFORM, "ShellExecuteW failed ({}): {}", (INT_PTR)r, url);
+        LOG_ERROR(LOG_PLATFORM, "ShellExecuteW failed ({}): {}",
+                  (INT_PTR)r, std::string_view(utf8, len));
 }
 
 // Query window position relative to the monitor's working area (excludes
@@ -926,14 +947,18 @@ static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     if (*y < 0) *y = 0;
 }
 
-static void win_popup_show(PlatformSurface* s, const Platform::PopupRequest& req) {
-    if (!s) return;
-    std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    s->popup_visible = true;
-    if (!s->popup_visual) return;
-    float scale = win_get_scale();
-    s->popup_visual->SetOffsetX(static_cast<float>(req.x) * scale);
-    s->popup_visual->SetOffsetY(static_cast<float>(req.y) * scale);
+static void win_popup_show(PlatformSurface* s, const JfnPopupRequest* req) {
+    if (!s || !req) return;
+    {
+        std::lock_guard<std::mutex> lock(g_win.surface_mtx);
+        s->popup_visible = true;
+        if (s->popup_visual) {
+            float scale = win_get_scale();
+            s->popup_visual->SetOffsetX(static_cast<float>(req->x) * scale);
+            s->popup_visual->SetOffsetY(static_cast<float>(req->y) * scale);
+        }
+    }
+    if (req->on_selected_dtor) req->on_selected_dtor(req->on_selected_ctx);
 }
 
 static void win_popup_hide(PlatformSurface* s) {
@@ -952,9 +977,11 @@ static void win_popup_hide(PlatformSurface* s) {
     g_win.dcomp_device->Commit();
 }
 
-static void win_popup_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info,
+static void win_popup_present(PlatformSurface* s, const void* raw_info,
                               int /*lw*/, int /*lh*/) {
-    if (!s) return;
+    if (!s || !raw_info) return;
+    const CefAcceleratedPaintInfo& info =
+        *static_cast<const CefAcceleratedPaintInfo*>(raw_info);
     HANDLE handle = info.shared_texture_handle;
     if (!handle) return;
 
@@ -1061,6 +1088,8 @@ Platform make_windows_platform() {
         .set_cursor = input::windows::set_cursor,
         .set_idle_inhibit = win_set_idle_inhibit,
         .set_theme_color = win_set_theme_color,
+        .shared_texture_supported = true,
+        .cef_ozone_platform = {},
         .clipboard_read_text_async = win_clipboard_read_text_async,
         .open_external_url = win_open_external_url,
     };

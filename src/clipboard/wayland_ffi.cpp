@@ -15,3 +15,10 @@ extern "C" bool jfn_clipboard_wayland_lifecycle_available() {
 extern "C" void jfn_clipboard_wayland_lifecycle_cleanup() {
     clipboard_wayland::cleanup();
 }
+
+extern "C" void jfn_clipboard_wayland_lifecycle_read_text_async(
+    void (*cb)(void*, const char*, size_t),
+    void* ctx,
+    void (*dtor)(void*)) {
+    clipboard_wayland::read_text_async(cb, ctx, dtor);
+}
