@@ -2,6 +2,7 @@
 
 #include "input.h"
 #include "jfn_hotkey.h"
+#include "keysym_map.h"
 #include "logging.h"
 #include "../common.h"
 #include "../browser/browsers.h"
@@ -9,6 +10,8 @@
 #include "../platform/platform.h"
 
 #include "include/internal/cef_types.h"
+
+#include <xkbcommon/xkbcommon.h>
 
 #include <mutex>
 
@@ -112,3 +115,67 @@ void dispatch_keyboard_focus(bool gained) {
 }
 
 }  // namespace input
+
+// extern "C" dispatch shims callable from Rust. Reconstruct the C++ event
+// structs from primitive args and forward to the dispatch_* functions above.
+// Used by src/wayland/src/input_lifecycle.rs to wire the Rust input thread's
+// callbacks directly into C++ dispatch without an intermediate .cpp glue file.
+extern "C" void jfn_input_dispatch_mouse_move(int32_t x, int32_t y, uint32_t mods, int leave) {
+    input::dispatch_mouse_move({
+        .x = x, .y = y, .modifiers = mods, .leave = leave != 0,
+    });
+}
+
+extern "C" void jfn_input_dispatch_mouse_button(uint32_t button_code, int pressed,
+                                                int32_t x, int32_t y, uint32_t mods) {
+    input::MouseButton btn;
+    switch (button_code) {
+    case 0x110: btn = input::MouseButton::Left;   break;
+    case 0x111: btn = input::MouseButton::Right;  break;
+    case 0x112: btn = input::MouseButton::Middle; break;
+    default: return;
+    }
+    input::dispatch_mouse_button({
+        .button = btn,
+        .pressed = pressed != 0,
+        .x = x, .y = y,
+        .click_count = 1,
+        .modifiers = mods,
+    });
+}
+
+extern "C" void jfn_input_dispatch_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy,
+                                          uint32_t mods) {
+    input::dispatch_scroll({
+        .x = x, .y = y, .dx = dx, .dy = dy, .modifiers = mods,
+    });
+}
+
+extern "C" void jfn_input_dispatch_history_nav(int forward) {
+    input::dispatch_history_nav(forward != 0);
+}
+
+extern "C" void jfn_input_dispatch_keyboard_focus(int gained) {
+    input::dispatch_keyboard_focus(gained != 0);
+}
+
+extern "C" void jfn_input_dispatch_key_raw(uint32_t keysym, uint32_t native_code,
+                                           uint32_t mods, int pressed) {
+    if (keysym == XKB_KEY_XF86Back || keysym == XKB_KEY_XF86Forward) {
+        if (pressed) input::dispatch_history_nav(keysym == XKB_KEY_XF86Forward);
+        return;
+    }
+    input::KeyEvent e{};
+    e.code             = input::keysym_to_keycode(keysym);
+    e.windows_key_code = input::keysym_to_vkey(keysym);
+    e.action           = pressed ? input::KeyAction::Down : input::KeyAction::Up;
+    e.modifiers        = mods;
+    e.native_key_code  = static_cast<int>(native_code);
+    e.is_system_key    = false;
+    input::dispatch_key(e);
+}
+
+extern "C" void jfn_input_dispatch_char(uint32_t codepoint, uint32_t mods,
+                                        uint32_t native_code) {
+    input::dispatch_char(codepoint, mods, static_cast<int>(native_code), false);
+}

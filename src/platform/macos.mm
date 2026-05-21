@@ -356,7 +356,8 @@ static void stop_display_link() {
 // Platform interface implementation
 // =====================================================================
 
-static void macos_set_theme_color(const Color& c) {
+static void macos_set_theme_color(uint32_t rgb) {
+    Color c{rgb};
     // Updates AppKit fills behind mpv's CAMetalLayer / NSWindow root so the
     // resize-gap stale-texture window (which CLAUDE.md explicitly accepts
     // over stretching) matches mpv's own background — no flash visible.
@@ -421,7 +422,7 @@ static bool macos_init(mpv_handle* mpv) {
 
     // Cover the AppKit fills before CEF delivers its first frame; ThemeColor
     // takes over from overlay-dismissal onward.
-    macos_set_theme_color(kBgColor);
+    macos_set_theme_color(kBgColor.rgb);
 
     // Metal setup
     g_mtl_device = MTLCreateSystemDefaultDevice();
@@ -530,22 +531,45 @@ static bool is_cef_main(PlatformSurface* s) {
 }
 @end
 
-static void macos_popup_show(PlatformSurface*, const Platform::PopupRequest& req) {
+// Owns a JfnPopupRequest on_selected (fn, ctx, dtor) triple. dtor fires
+// once when the last shared_ptr ref is dropped.
+struct PopupCb {
+    void (*fn)(void*, int) = nullptr;
+    void* ctx = nullptr;
+    void (*dtor)(void*) = nullptr;
+    PopupCb(void (*f)(void*, int), void* c, void (*d)(void*)) : fn(f), ctx(c), dtor(d) {}
+    PopupCb(const PopupCb&) = delete;
+    PopupCb& operator=(const PopupCb&) = delete;
+    ~PopupCb() { if (dtor) dtor(ctx); }
+    void fire(int idx) { if (fn) fn(ctx, idx); }
+};
+
+static void macos_popup_show(PlatformSurface*, const JfnPopupRequest* req) {
     // NSMenu is a window-level OS overlay — not tied to a CefLayer
     // surface, so the surface arg is ignored.
-    if (!g_window || !g_input_view || req.options.empty()) return;
+    auto cb = std::make_shared<PopupCb>(
+        req ? req->on_selected : nullptr,
+        req ? req->on_selected_ctx : nullptr,
+        req ? req->on_selected_dtor : nullptr);
+    if (!g_window || !g_input_view || !req || req->options_len == 0) return;
 
-    auto opts = req.options;
-    int cur = req.initial_highlight;
-    int px = req.x, py = req.y, plw = req.lw;
-    auto cb = std::make_shared<std::function<void(int)>>(req.on_selected);
+    // Copy option strings into std::vector so they outlive the
+    // dispatch_async block (the caller's req buffer is gone by then).
+    std::vector<std::string> opts;
+    opts.reserve(req->options_len);
+    for (size_t i = 0; i < req->options_len; i++) {
+        const char* o = req->options ? req->options[i] : nullptr;
+        opts.emplace_back(o ? o : "");
+    }
+    int cur = req->initial_highlight;
+    int px = req->x, py = req->y, plw = req->lw;
 
     dispatch_async(dispatch_get_main_queue(), ^{
         NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
         [menu setAutoenablesItems:NO];
 
         JellyfinPopupMenuTarget* target = [[JellyfinPopupMenuTarget alloc] init];
-        target->on_selected = [cb](int idx) { if (*cb) (*cb)(idx); };
+        target->on_selected = [cb](int idx) { cb->fire(idx); };
         target->fired = NO;
 
         for (size_t i = 0; i < opts.size(); i++) {
@@ -591,22 +615,36 @@ static void macos_surface_set_visible(PlatformSurface* s, bool visible) {
 // before kicking the animation, fire on_complete from CATransaction's
 // completion block. After the animation we hide the view and reset opacity
 // so a subsequent setVisible(true) shows it fully opaque again.
+// Holds a (fn, ctx, dtor) triple; ~RustCb fires dtor once when the
+// last shared_ptr ref is dropped.
+struct RustCb {
+    void (*fn)(void*) = nullptr;
+    void* ctx = nullptr;
+    void (*dtor)(void*) = nullptr;
+    RustCb(void (*f)(void*), void* c, void (*d)(void*)) : fn(f), ctx(c), dtor(d) {}
+    RustCb(const RustCb&) = delete;
+    RustCb& operator=(const RustCb&) = delete;
+    ~RustCb() { if (dtor) dtor(ctx); }
+    void fire() { if (fn) fn(ctx); }
+};
+
 static void macos_fade_surface(PlatformSurface* s, float fade_sec,
-                               std::function<void()> on_fade_start,
-                               std::function<void()> on_complete) {
+                               void (*on_fade_start)(void*), void* start_ctx,
+                               void (*start_dtor)(void*),
+                               void (*on_complete)(void*), void* done_ctx,
+                               void (*done_dtor)(void*)) {
+    auto start_cb = std::make_shared<RustCb>(on_fade_start, start_ctx, start_dtor);
+    auto done_cb = std::make_shared<RustCb>(on_complete, done_ctx, done_dtor);
     if (!s || !s->view || !s->view.layer) {
-        if (on_fade_start) on_fade_start();
-        if (on_complete) on_complete();
+        start_cb->fire();
+        done_cb->fire();
         return;
     }
-    // Copy into block-friendly shared_ptrs so the callbacks survive into the block chain.
-    auto start_cb = std::make_shared<std::function<void()>>(std::move(on_fade_start));
-    auto done_cb = std::make_shared<std::function<void()>>(std::move(on_complete));
     PlatformSurface* surface_ptr = s;
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (*start_cb) (*start_cb)();
+        start_cb->fire();
         if (!surface_ptr->view || !surface_ptr->view.layer) {
-            if (*done_cb) (*done_cb)();
+            done_cb->fire();
             return;
         }
         CABasicAnimation* fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
@@ -622,7 +660,7 @@ static void macos_fade_surface(PlatformSurface* s, float fade_sec,
                 [surface_ptr->view.layer removeAllAnimations];
                 surface_ptr->view.layer.opacity = 1.0;
             }
-            if (*done_cb) (*done_cb)();
+            done_cb->fire();
         }];
         [surface_ptr->view.layer addAnimation:fade forKey:@"fadeOut"];
         [CATransaction commit];
@@ -951,24 +989,28 @@ static void macos_set_idle_inhibit(IdleInhibitLevel level) {
 // frame->Copy() path which works correctly on macOS.
 // =====================================================================
 
-static void macos_clipboard_read_text_async(std::function<void(std::string)> on_done) {
-    if (!on_done) return;
+static void macos_clipboard_read_text_async(
+    void (*on_done)(void*, const char*, size_t),
+    void* ctx,
+    void (*dtor)(void*)) {
     // NSPasteboard reads are synchronous on macOS; fire the callback inline.
     NSPasteboard* pb = [NSPasteboard generalPasteboard];
     NSString* ns = [pb stringForType:NSPasteboardTypeString];
     const char* utf8 = ns ? [ns UTF8String] : nullptr;
-    on_done(utf8 ? std::string(utf8) : std::string());
+    size_t len = utf8 ? strlen(utf8) : 0;
+    if (on_done) on_done(ctx, utf8 ? utf8 : "", len);
+    if (dtor) dtor(ctx);
 }
 
-static void macos_open_external_url(const std::string& url) {
-    NSString* str = [NSString stringWithUTF8String:url.c_str()];
+static void macos_open_external_url(const char* utf8, size_t /*len*/) {
+    NSString* str = [NSString stringWithUTF8String:utf8];
     NSURL* nsurl = str ? [NSURL URLWithString:str] : nil;
     if (!nsurl) {
-        LOG_ERROR(LOG_PLATFORM, "open_external_url: invalid URL: {}", url);
+        LOG_ERROR(LOG_PLATFORM, "open_external_url: invalid URL: {}", utf8);
         return;
     }
     if (![[NSWorkspace sharedWorkspace] openURL:nsurl])
-        LOG_ERROR(LOG_PLATFORM, "NSWorkspace openURL failed: {}", url);
+        LOG_ERROR(LOG_PLATFORM, "NSWorkspace openURL failed: {}", utf8);
 }
 
 // =====================================================================
@@ -1015,8 +1057,10 @@ static void macos_free_surface(PlatformSurface* s) {
     delete s;
 }
 
-static bool macos_surface_present(PlatformSurface* s, const CefAcceleratedPaintInfo& info) {
-    if (!s) return false;
+static bool macos_surface_present(PlatformSurface* s, const void* raw_info) {
+    if (!s || !raw_info) return false;
+    const CefAcceleratedPaintInfo& info =
+        *static_cast<const CefAcceleratedPaintInfo*>(raw_info);
     // Fullscreen-transition gating runs only on the cef-main surface
     // (bottom of stack), matching the pre-refactor macos_present path.
     if (is_cef_main(s)) {
@@ -1037,7 +1081,7 @@ static bool macos_surface_present(PlatformSurface* s, const CefAcceleratedPaintI
 }
 
 static bool macos_surface_present_software(PlatformSurface*,
-                                           const CefRenderHandler::RectList&,
+                                           const JfnRect*, size_t,
                                            const void*, int, int) {
     // CEF on macOS runs hardware-accelerated (shared_texture_supported=true);
     // the software path is not exercised. Kept for API completeness.
@@ -1111,7 +1155,7 @@ Platform make_macos_platform() {
         // its own pixels and lifecycle.
         .popup_show = macos_popup_show,
         .popup_hide = [](PlatformSurface*) {},
-        .popup_present = [](PlatformSurface*, const CefAcceleratedPaintInfo&, int, int) {},
+        .popup_present = [](PlatformSurface*, const void*, int, int) {},
         .popup_present_software = [](PlatformSurface*, const void*, int, int, int, int) {},
         .set_fullscreen = macos_set_fullscreen,
         .toggle_fullscreen = macos_toggle_fullscreen,
@@ -1129,6 +1173,8 @@ Platform make_macos_platform() {
         .set_cursor = input::macos::set_cursor,
         .set_idle_inhibit = macos_set_idle_inhibit,
         .set_theme_color = macos_set_theme_color,
+        .shared_texture_supported = true,
+        .cef_ozone_platform = {},
         .clipboard_read_text_async = macos_clipboard_read_text_async,
         .open_external_url = macos_open_external_url,
     };

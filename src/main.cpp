@@ -135,7 +135,9 @@ static int run_with_cef(int mw, int mh,
     if (ozone_platform.empty())
         ozone_platform = g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11";
 #endif
-    g_platform.cef_ozone_platform = ozone_platform;
+    std::snprintf(g_platform.cef_ozone_platform,
+                  sizeof(g_platform.cef_ozone_platform),
+                  "%s", ozone_platform.c_str());
     PlatformScope platform_scope(g_platform, jfn_mpv_handle_get());
     if (!platform_scope.ok()) {
         LOG_ERROR(LOG_MAIN, "Platform init failed");
@@ -148,7 +150,7 @@ static int run_with_cef(int mw, int mh,
     // Apply titlebar color before CefInitialize so the window doesn't sit
     // with the system default palette for the whole CEF init duration.
     if (Settings::instance().titlebarThemeColor())
-        g_platform.set_theme_color(kBgColor);
+        g_platform.set_theme_color(kBgColor.rgb);
 
     // Must run after the VO-init wait loop — sync mpv API calls would
     // deadlock against core_thread's DispatchQueue.main.sync on macOS.
@@ -241,7 +243,7 @@ static int run_with_cef(int mw, int mh,
     // needs a color already captured.
     bool titlebar_themed = Settings::instance().titlebarThemeColor();
     ThemeColor theme_color_obj([titlebar_themed](const Color& c) {
-        if (titlebar_themed) g_platform.set_theme_color(c);
+        if (titlebar_themed) g_platform.set_theme_color(c.rgb);
         jfn_mpv_set_background_color_hex(c.hex);
     });
     g_theme_color = &theme_color_obj;

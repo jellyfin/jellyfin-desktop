@@ -11,12 +11,9 @@
 // Writes still go through CEF's frame->Copy() which works correctly on
 // every platform we care about, so this is read-only.
 //
-// Thin C++ wrapper over the Rust jfn-clipboard-wayland crate, preserving
-// the std::function-based API used elsewhere in the project.
+// Thin C++ wrapper over the Rust jfn-clipboard-wayland crate.
 
-#include <functional>
-#include <string>
-#include <utility>
+#include <stddef.h>
 
 #include "jfn_clipboard_wayland.h"
 
@@ -28,10 +25,20 @@ inline JfnClipboardWayland*& instance() {
     return g;
 }
 
+// Heap-alloced shim that lets us attach a dtor to the otherwise-bare
+// (cb, ctx) pair accepted by the Rust crate. on_read() fires cb, then
+// dtor, then frees the shim.
+struct ReadShim {
+    void (*cb)(void*, const char*, size_t);
+    void* ctx;
+    void (*dtor)(void*);
+};
+
 extern "C" inline void on_read(void* ctx, const char* text, size_t len) {
-    auto* boxed = static_cast<std::function<void(std::string)>*>(ctx);
-    if (*boxed) (*boxed)(std::string(text ? text : "", len));
-    delete boxed;
+    auto* shim = static_cast<ReadShim*>(ctx);
+    if (shim->cb) shim->cb(shim->ctx, text, len);
+    if (shim->dtor) shim->dtor(shim->ctx);
+    delete shim;
 }
 }  // namespace detail
 
@@ -43,14 +50,17 @@ inline void init() {
 
 inline bool available() { return detail::instance() != nullptr; }
 
-inline void read_text_async(std::function<void(std::string)> on_done) {
+inline void read_text_async(void (*cb)(void*, const char*, size_t),
+                            void* ctx,
+                            void (*dtor)(void*)) {
     auto* g = detail::instance();
     if (!g) {
-        if (on_done) on_done(std::string{});
+        if (cb) cb(ctx, "", 0);
+        if (dtor) dtor(ctx);
         return;
     }
-    auto* boxed = new std::function<void(std::string)>(std::move(on_done));
-    jfn_clipboard_wayland_read_text_async(g, detail::on_read, boxed);
+    auto* shim = new detail::ReadShim{cb, ctx, dtor};
+    jfn_clipboard_wayland_read_text_async(g, detail::on_read, shim);
 }
 
 inline void cleanup() {

@@ -275,10 +275,10 @@ static void x11_free_surface(PlatformSurface* s) {
 }
 
 // X11 backend is software-only — no accelerated/shared-texture path.
-static bool x11_surface_present(PlatformSurface*, const CefAcceleratedPaintInfo&) { return false; }
+static bool x11_surface_present(PlatformSurface*, const void*) { return false; }
 
 static bool x11_surface_present_software(PlatformSurface* s,
-                                         const CefRenderHandler::RectList& dirty,
+                                         const JfnRect* dirty, size_t dirty_len,
                                          const void* buffer, int w, int h) {
     if (jfn_shutting_down()) return false;
     if (!s) return false;
@@ -291,8 +291,9 @@ static bool x11_surface_present_software(PlatformSurface* s,
     int stride = w * 4;
     const auto* src = static_cast<const uint8_t*>(buffer);
 
-    for (const auto& rect : dirty) {
-        int rx = rect.x, ry = rect.y, rw = rect.width, rh = rect.height;
+    for (size_t i = 0; i < dirty_len; i++) {
+        const JfnRect& rect = dirty[i];
+        int rx = rect.x, ry = rect.y, rw = rect.w, rh = rect.h;
         // Clamp to buffer
         if (rx < 0) { rw += rx; rx = 0; }
         if (ry < 0) { rh += ry; ry = 0; }
@@ -398,10 +399,14 @@ static void x11_restack(PlatformSurface* const* ordered, size_t n) {
 // on the legacy overlay window and is unreliable across compositors).
 // Implement as a hard cut, matching the original overlay-fade fallback.
 static void x11_fade_surface(PlatformSurface* /*s*/, float /*fade_sec*/,
-                             std::function<void()> on_fade_start,
-                             std::function<void()> on_complete) {
-    if (on_fade_start) on_fade_start();
-    if (on_complete) on_complete();
+                             void (*on_fade_start)(void*), void* start_ctx,
+                             void (*start_dtor)(void*),
+                             void (*on_complete)(void*), void* done_ctx,
+                             void (*done_dtor)(void*)) {
+    if (on_fade_start) on_fade_start(start_ctx);
+    if (start_dtor) start_dtor(start_ctx);
+    if (on_complete) on_complete(done_ctx);
+    if (done_dtor) done_dtor(done_ctx);
 }
 
 // =====================================================================
@@ -617,9 +622,12 @@ Platform make_x11_platform() {
         .restack = x11_restack,
         .fade_surface = x11_fade_surface,
         // X11 popup not implemented (pre-existing gap).
-        .popup_show = [](PlatformSurface*, const Platform::PopupRequest&) {},
+        .popup_show = [](PlatformSurface*, const JfnPopupRequest* req) {
+            if (req && req->on_selected_dtor)
+                req->on_selected_dtor(req->on_selected_ctx);
+        },
         .popup_hide = [](PlatformSurface*) {},
-        .popup_present = [](PlatformSurface*, const CefAcceleratedPaintInfo&, int, int) {},
+        .popup_present = [](PlatformSurface*, const void*, int, int) {},
         .popup_present_software = [](PlatformSurface*, const void*, int, int, int, int) {},
         .set_fullscreen = x11_set_fullscreen,
         .toggle_fullscreen = x11_toggle_fullscreen,
@@ -646,9 +654,10 @@ Platform make_x11_platform() {
         .wake_main_loop = nullptr,
         .set_cursor = input::x11::set_cursor,
         .set_idle_inhibit = [](IdleInhibitLevel level) { jfn_idle_inhibit_set(static_cast<uint32_t>(level)); },
-        .set_theme_color = [](const Color&) {},
+        .set_theme_color = [](uint32_t) {},
         .shared_texture_supported = false,
+        .cef_ozone_platform = {},
         .clipboard_read_text_async = nullptr,
-        .open_external_url = [](const std::string& url) { jfn_open_url(url.c_str()); },
+        .open_external_url = [](const char* utf8, size_t /*len*/) { jfn_open_url(utf8); },
     };
 }

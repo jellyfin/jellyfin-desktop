@@ -265,9 +265,7 @@ set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output
     set(PLATFORM_SOURCES
         # Shared Linux
         src/playback/sinks/queued_sink.cpp
-        # Wayland
-        src/platform/wayland.cpp
-        src/input/input_wayland.cpp
+        # Wayland (factory + input lifecycle live in Rust: src/wayland/src/)
         src/clipboard/wayland_ffi.cpp
         # Generated Wayland protocols
         ${LINUX_DMABUF_CODE_C}

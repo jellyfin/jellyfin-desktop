@@ -24,10 +24,7 @@ unsafe extern "C" {
     // Shutdown trampoline target for the wayland-close-cb-ptr property.
     fn jfn_shutdown_initiate();
 
-    // Lifecycle bridges over the C++ input / clipboard namespaces.
-    fn jfn_input_wayland_lifecycle_init(display: *mut c_void);
-    fn jfn_input_wayland_lifecycle_start();
-    fn jfn_input_wayland_lifecycle_cleanup();
+    // Lifecycle bridge over the C++ clipboard namespace.
     fn jfn_clipboard_wayland_lifecycle_init();
     fn jfn_clipboard_wayland_lifecycle_available() -> bool;
     fn jfn_clipboard_wayland_lifecycle_cleanup();
@@ -97,7 +94,7 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
 
     // Prepare the input layer first so its xkb context is ready before
     // any seat_caps wires up keyboard listeners that need xkb.
-    unsafe { jfn_input_wayland_lifecycle_init(display) };
+    crate::input_lifecycle::lifecycle_init(display);
 
     if !unsafe { crate::wl_ffi::jfn_wl_core_init(display, parent) } {
         log::error!("jfn_wl_core_init failed");
@@ -133,7 +130,7 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
 
     unsafe { crate::kde_palette::jfn_wl_kde_palette_attach(display, parent) };
 
-    unsafe { jfn_input_wayland_lifecycle_start() };
+    crate::input_lifecycle::lifecycle_start();
 
     unsafe { jfn_clipboard_wayland_lifecycle_init() };
     if !unsafe { jfn_clipboard_wayland_lifecycle_available() } {
@@ -158,7 +155,7 @@ pub extern "C" fn jfn_wl_lifecycle_cleanup() {
     // surface.
     unsafe { jfn_idle_inhibit_cleanup() };
     unsafe { jfn_clipboard_wayland_lifecycle_cleanup() };
-    unsafe { jfn_input_wayland_lifecycle_cleanup() };
+    crate::input_lifecycle::lifecycle_cleanup();
     // Rust-side WlState lives until process exit (mirrors C++ globals).
 }
 
