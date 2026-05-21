@@ -371,6 +371,19 @@ elseif(APPLE)
 else()
     set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
         pthread dl m rt util)
+    # jfn-wayland + jfn-x11 link xkbcommon / xcb / xcb-cursor via `#[link]`
+    # in the corresponding -sys crates. GNU ld is single-pass left-to-right,
+    # so PLATFORM_LIBRARIES (which lists these too) ends up before jfn_rust.a
+    # and won't resolve the static archive's later-discovered references.
+    # Attach the libs to the jfn_rust target so they always trail the archive.
+    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ${XKBCOMMON_LIBRARIES})
+    if(ENABLE_X11)
+        set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+            ${XCB_LIBRARIES}
+            ${XCB_CURSOR_LIBRARIES}
+            ${XKBCOMMON_X11_LIBRARIES})
+    endif()
 endif()
 
 # libavcodec — used to enumerate the decoders mpv will route through ffmpeg.
