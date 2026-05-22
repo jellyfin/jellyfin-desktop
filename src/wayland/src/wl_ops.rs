@@ -429,6 +429,8 @@ pub(crate) fn popup_present(
     }
     let w = frame.coded_w;
     let h = frame.coded_h;
+    let vw = if frame.visible_w > 0 { frame.visible_w } else { w };
+    let vh = if frame.visible_h > 0 { frame.visible_h } else { h };
     let buf = {
         let fd = unsafe { BorrowedFd::borrow_raw(frame.fd) };
         create_dmabuf_buffer(&st, fd, frame.stride, frame.modifier, w, h)
@@ -440,12 +442,12 @@ pub(crate) fn popup_present(
         old.destroy();
     }
     if let Some(vp) = s.popup_viewport.as_ref() {
-        vp.set_source(0.0, 0.0, w as f64, h as f64);
+        vp.set_source(0.0, 0.0, vw as f64, vh as f64);
         vp.set_destination(lw, lh);
     }
     let popup = s.popup_surface.as_ref().unwrap();
     popup.attach(Some(&buf), 0, 0);
-    popup.damage_buffer(0, 0, w, h);
+    popup.damage_buffer(0, 0, vw, vh);
     // Commit parent first so subsurface state lands in the same frame.
     if let Some(parent) = s.surface.as_ref() {
         parent.commit();
