@@ -8,7 +8,7 @@
 //! dependency on them (the X11 case only fires when CEF runs under
 //! `--ozone-platform=x11` over XWayland).
 
-use khronos_egl as egl;
+use crate::egl_dyn as egl;
 use libloading::Library;
 use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use std::os::fd::RawFd;
@@ -49,11 +49,21 @@ type FnGlDeleteTextures = unsafe extern "C" fn(c_int, *const c_uint);
 type FnGlGetError = unsafe extern "C" fn() -> c_uint;
 type FnGlEglImageTargetTexture2DOes = unsafe extern "C" fn(c_uint, *mut c_void);
 
-type FnEglGetPlatformDisplayExt = unsafe extern "C" fn(egl::Enum, *mut c_void, *const egl::Int) -> egl::EGLDisplay;
-type FnEglCreateImageKhr = unsafe extern "C" fn(egl::EGLDisplay, egl::EGLContext, egl::Enum, *mut c_void, *const egl::Int) -> *mut c_void;
-type FnEglDestroyImageKhr = unsafe extern "C" fn(egl::EGLDisplay, *mut c_void) -> egl::Boolean;
-type FnEglQueryDisplayAttribExt = unsafe extern "C" fn(egl::EGLDisplay, egl::Int, *mut isize) -> egl::Boolean;
-type FnEglQueryDeviceStringExt = unsafe extern "C" fn(*mut c_void, egl::Int) -> *const c_char;
+type FnEglGetPlatformDisplayExt =
+    unsafe extern "C" fn(egl::Enum, *mut c_void, *const egl::Int) -> egl::EGLDisplay;
+type FnEglCreateImageKhr = unsafe extern "C" fn(
+    egl::EGLDisplay,
+    egl::EGLContext,
+    egl::Enum,
+    *mut c_void,
+    *const egl::Int,
+) -> *mut c_void;
+type FnEglDestroyImageKhr =
+    unsafe extern "C" fn(egl::EGLDisplay, *mut c_void) -> egl::Boolean;
+type FnEglQueryDisplayAttribExt =
+    unsafe extern "C" fn(egl::EGLDisplay, egl::Int, *mut isize) -> egl::Boolean;
+type FnEglQueryDeviceStringExt =
+    unsafe extern "C" fn(*mut c_void, egl::Int) -> *const c_char;
 
 /// Returns true if a GBM-allocated ARGB8888 dmabuf can be imported as an EGL
 /// image and bound to a GL texture on the EGL display CEF will use. The
@@ -91,54 +101,69 @@ pub unsafe extern "C" fn jfn_wl_dmabuf_probe(
 fn probe(ozone: &str, wayland_egl_dpy: *mut c_void) -> Result<bool, String> {
     let egl_lib = unsafe { Library::new("libEGL.so.1") }
         .map_err(|e| format!("libEGL not available: {}", e))?;
-    let egl = unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required_from(egl_lib) }
+    let egl = egl::Egl::load_from(egl_lib)
         .map_err(|e| format!("EGL load failed: {}", e))?;
 
     let (display, owns_display, _x11_state) = acquire_display(&egl, ozone, wayland_egl_dpy)?;
 
     let result = (|| -> Result<bool, String> {
-        egl.bind_api(egl::OPENGL_ES_API)
-            .map_err(|e| format!("eglBindAPI failed: {}", e))?;
+        if unsafe { (egl.bind_api)(egl::OPENGL_ES_API) } != egl::TRUE {
+            return Err("eglBindAPI failed".into());
+        }
 
-        let cfg_attrs = [
+        let cfg_attrs: [egl::Int; 5] = [
             egl::RENDERABLE_TYPE, egl::OPENGL_ES2_BIT,
             egl::SURFACE_TYPE, egl::PBUFFER_BIT,
             egl::NONE,
         ];
-        let config = egl
-            .choose_first_config(display, &cfg_attrs)
-            .map_err(|e| format!("eglChooseConfig failed: {}", e))?
-            .ok_or_else(|| "no suitable EGL config".to_string())?;
+        let mut config: egl::EGLConfig = ptr::null_mut();
+        let mut num_config: egl::Int = 0;
+        if unsafe {
+            (egl.choose_config)(display, cfg_attrs.as_ptr(), &mut config, 1, &mut num_config)
+        } != egl::TRUE
+        {
+            return Err("eglChooseConfig failed".into());
+        }
+        if num_config == 0 || config.is_null() {
+            return Err("no suitable EGL config".to_string());
+        }
 
-        let ctx_attrs = [egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE];
-        let ctx = egl
-            .create_context(display, config, None, &ctx_attrs)
-            .map_err(|e| format!("can't create GLES context: {}", e))?;
+        let ctx_attrs: [egl::Int; 3] = [egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE];
+        let ctx = unsafe {
+            (egl.create_context)(display, config, ptr::null_mut(), ctx_attrs.as_ptr())
+        };
+        if ctx.is_null() {
+            return Err("can't create GLES context".into());
+        }
 
-        let pb_attrs = [egl::WIDTH, 1, egl::HEIGHT, 1, egl::NONE];
-        let pbuf = egl.create_pbuffer_surface(display, config, &pb_attrs).ok();
+        let pb_attrs: [egl::Int; 5] = [egl::WIDTH, 1, egl::HEIGHT, 1, egl::NONE];
+        let pbuf =
+            unsafe { (egl.create_pbuffer_surface)(display, config, pb_attrs.as_ptr()) };
+        // pbuf may legitimately be null; make_current will then fail.
 
-        if egl.make_current(display, pbuf, pbuf, Some(ctx)).is_err() {
-            if let Some(s) = pbuf {
-                let _ = egl.destroy_surface(display, s);
+        if unsafe { (egl.make_current)(display, pbuf, pbuf, ctx) } != egl::TRUE {
+            if !pbuf.is_null() {
+                unsafe { (egl.destroy_surface)(display, pbuf) };
             }
-            let _ = egl.destroy_context(display, ctx);
+            unsafe { (egl.destroy_context)(display, ctx) };
             return Err("eglMakeCurrent failed".into());
         }
 
         let gl_result = run_gl_test(&egl, display);
 
-        let _ = egl.make_current(display, None, None, None);
-        if let Some(s) = pbuf {
-            let _ = egl.destroy_surface(display, s);
+        unsafe {
+            (egl.make_current)(display, ptr::null_mut(), ptr::null_mut(), ptr::null_mut())
+        };
+        if !pbuf.is_null() {
+            unsafe { (egl.destroy_surface)(display, pbuf) };
         }
-        let _ = egl.destroy_context(display, ctx);
+        unsafe { (egl.destroy_context)(display, ctx) };
 
         gl_result
     })();
 
     if owns_display {
-        let _ = egl.terminate(display);
+        unsafe { (egl.terminate)(display) };
     }
 
     match &result {
@@ -164,14 +189,13 @@ impl Drop for X11Owned {
 }
 
 fn acquire_display(
-    egl: &egl::DynamicInstance<egl::EGL1_4>,
+    egl: &egl::Egl,
     ozone: &str,
     wayland_egl_dpy: *mut c_void,
-) -> Result<(egl::Display, bool, Option<X11Owned>), String> {
+) -> Result<(egl::EGLDisplay, bool, Option<X11Owned>), String> {
     if ozone == "wayland" {
         log::info!("dmabuf probe: testing on Wayland EGL display");
-        let dpy = unsafe { egl::Display::from_ptr(wayland_egl_dpy) };
-        return Ok((dpy, false, None));
+        return Ok((wayland_egl_dpy as egl::EGLDisplay, false, None));
     }
 
     let lib = unsafe { Library::new("libX11.so.6") }
@@ -180,34 +204,34 @@ fn acquire_display(
         .map_err(|e| format!("XOpenDisplay missing: {}", e))?;
     let close: libloading::Symbol<FnXCloseDisplay> = unsafe { lib.get(b"XCloseDisplay\0") }
         .map_err(|e| format!("XCloseDisplay missing: {}", e))?;
-    let close_fn: FnXCloseDisplay = unsafe { std::mem::transmute(*close) };
+    let close_fn: FnXCloseDisplay = *close;
     let dpy = unsafe { open(ptr::null()) };
     if dpy.is_null() {
         return Err("XOpenDisplay failed (no XWayland?)".into());
     }
     let owned = X11Owned { _lib: lib, dpy, close: close_fn };
 
-    let fn_get_platform_ptr = egl.get_proc_address("eglGetPlatformDisplayEXT");
-    let display = if let Some(fp) = fn_get_platform_ptr {
+    let display: egl::EGLDisplay = if let Some(fp) = egl.get_proc("eglGetPlatformDisplayEXT") {
         let f: FnEglGetPlatformDisplayExt = unsafe { std::mem::transmute(fp) };
-        let raw = unsafe { f(EGL_PLATFORM_X11_KHR, dpy as *mut c_void, ptr::null()) };
-        unsafe { egl::Display::from_ptr(raw) }
+        unsafe { f(EGL_PLATFORM_X11_KHR, dpy as *mut c_void, ptr::null()) }
     } else {
-        match unsafe { egl.get_display(dpy as *mut c_void) } {
-            Some(d) => d,
-            None => return Err("no EGL display for X11".into()),
-        }
+        unsafe { (egl.get_display)(dpy as *mut c_void) }
     };
+    if display.is_null() {
+        return Err("no EGL display for X11".into());
+    }
 
-    let (major, minor) = egl
-        .initialize(display)
-        .map_err(|e| format!("EGL init on X11 failed: {}", e))?;
+    let mut major: egl::Int = 0;
+    let mut minor: egl::Int = 0;
+    if unsafe { (egl.initialize)(display, &mut major, &mut minor) } != egl::TRUE {
+        return Err("EGL init on X11 failed".into());
+    }
     log::info!("dmabuf probe: testing on X11 EGL display ({}.{})", major, minor);
 
     Ok((display, true, Some(owned)))
 }
 
-fn run_gl_test(egl: &egl::DynamicInstance<egl::EGL1_4>, display: egl::Display) -> Result<bool, String> {
+fn run_gl_test(egl: &egl::Egl, display: egl::EGLDisplay) -> Result<bool, String> {
     let gen_tex = get_gl::<FnGlGenTextures>(egl, "glGenTextures")?;
     let bind_tex = get_gl::<FnGlBindTexture>(egl, "glBindTexture")?;
     let del_tex = get_gl::<FnGlDeleteTextures>(egl, "glDeleteTextures")?;
@@ -269,7 +293,7 @@ fn run_gl_test(egl: &egl::DynamicInstance<egl::EGL1_4>, display: egl::Display) -
         ];
         let image = unsafe {
             create_image(
-                display.as_ptr(),
+                display,
                 ptr::null_mut(),
                 EGL_LINUX_DMA_BUF_EXT,
                 ptr::null_mut(),
@@ -277,7 +301,10 @@ fn run_gl_test(egl: &egl::DynamicInstance<egl::EGL1_4>, display: egl::Display) -
             )
         };
         if image.is_null() {
-            log::warn!("dmabuf probe: eglCreateImageKHR failed ({:?})", egl.get_error());
+            log::warn!(
+                "dmabuf probe: eglCreateImageKHR failed (0x{:x})",
+                unsafe { (egl.get_error)() }
+            );
             Ok(false)
         } else {
             let mut tex: c_uint = 0;
@@ -294,7 +321,7 @@ fn run_gl_test(egl: &egl::DynamicInstance<egl::EGL1_4>, display: egl::Display) -
                     );
                 }
                 del_tex(1, &tex);
-                destroy_image(display.as_ptr(), image);
+                destroy_image(display, image);
                 Ok(ok)
             }
         }
@@ -335,14 +362,16 @@ impl GbmFns {
     }
 }
 
-fn find_drm_node(egl: &egl::DynamicInstance<egl::EGL1_4>, display: egl::Display) -> Option<RawFd> {
-    let query_display_ptr = egl.get_proc_address("eglQueryDisplayAttribEXT")?;
-    let query_device_str_ptr = egl.get_proc_address("eglQueryDeviceStringEXT")?;
-    let query_display: FnEglQueryDisplayAttribExt = unsafe { std::mem::transmute(query_display_ptr) };
-    let query_device_str: FnEglQueryDeviceStringExt = unsafe { std::mem::transmute(query_device_str_ptr) };
+fn find_drm_node(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<RawFd> {
+    let query_display_ptr = egl.get_proc("eglQueryDisplayAttribEXT")?;
+    let query_device_str_ptr = egl.get_proc("eglQueryDeviceStringEXT")?;
+    let query_display: FnEglQueryDisplayAttribExt =
+        unsafe { std::mem::transmute(query_display_ptr) };
+    let query_device_str: FnEglQueryDeviceStringExt =
+        unsafe { std::mem::transmute(query_device_str_ptr) };
 
     let mut device_attrib: isize = 0;
-    let ok = unsafe { query_display(display.as_ptr(), EGL_DEVICE_EXT, &mut device_attrib) };
+    let ok = unsafe { query_display(display, EGL_DEVICE_EXT, &mut device_attrib) };
     if ok == 0 || device_attrib == 0 {
         return None;
     }
@@ -374,8 +403,8 @@ fn open_legacy_node() -> Option<RawFd> {
     None
 }
 
-fn get_gl<T>(egl: &egl::DynamicInstance<egl::EGL1_4>, name: &str) -> Result<T, String> {
-    egl.get_proc_address(name)
+fn get_gl<T>(egl: &egl::Egl, name: &str) -> Result<T, String> {
+    egl.get_proc(name)
         .map(|p| unsafe { std::mem::transmute_copy::<extern "system" fn(), T>(&p) })
         .ok_or_else(|| format!("missing {}", name))
 }

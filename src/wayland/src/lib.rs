@@ -2,6 +2,7 @@
 
 pub mod clipboard;
 pub mod dmabuf_probe;
+pub mod egl_dyn;
 pub mod fade;
 pub mod input;
 pub mod input_lifecycle;
