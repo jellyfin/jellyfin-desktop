@@ -43,27 +43,27 @@ struct Cli {
     help: bool,
     #[arg(short = 'v', long, action = ArgAction::SetTrue)]
     version: bool,
-    #[arg(long)]
+    #[arg(long, overrides_with = "log_level")]
     log_level: Option<String>,
-    #[arg(long)]
+    #[arg(long, overrides_with = "log_file")]
     log_file: Option<String>,
-    #[arg(long)]
+    #[arg(long, overrides_with = "hwdec")]
     hwdec: Option<String>,
-    #[arg(long)]
+    #[arg(long, overrides_with = "audio_passthrough")]
     audio_passthrough: Option<String>,
     // Count so we can tell "absent" (0) from "present" (>=1) without losing
     // the bool semantics.
     #[arg(long, action = ArgAction::Count)]
     audio_exclusive: u8,
-    #[arg(long)]
+    #[arg(long, overrides_with = "audio_channels")]
     audio_channels: Option<String>,
-    #[arg(long)]
+    #[arg(long, overrides_with = "remote_debug_port")]
     remote_debug_port: Option<i32>,
     #[arg(long, action = ArgAction::Count)]
     disable_gpu_compositing: u8,
-    #[arg(long)]
+    #[arg(long, overrides_with = "ozone_platform")]
     ozone_platform: Option<String>,
-    #[arg(long)]
+    #[arg(long, overrides_with = "platform")]
     platform: Option<String>,
 }
 
@@ -358,6 +358,14 @@ mod tests {
         let cs = |p| unsafe { CStr::from_ptr(p) }.to_str().unwrap();
         assert_eq!(cs(r.log_file), "path");
         assert_eq!(cs(r.log_level), "trace");
+    }
+
+    #[test]
+    fn duplicate_flag_last_wins() {
+        let r = parse(&["app", "--log-level=info", "--log-level", "debug"]);
+        assert!(matches!(r.kind, JfnCliResultKind::Continue));
+        let s = unsafe { CStr::from_ptr(r.log_level) }.to_str().unwrap();
+        assert_eq!(s, "debug");
     }
 
     #[test]
