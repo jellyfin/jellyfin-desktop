@@ -4,17 +4,36 @@
 use cef::*;
 #[cfg(target_os = "linux")]
 use std::ffi::CStr;
+#[cfg(not(target_os = "windows"))]
+use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
+#[cfg(not(target_os = "windows"))]
+use std::sync::OnceLock;
 
 use crate::app::{JfnApp, JfnAppBuilder};
 use crate::bridge;
 use crate::state;
 
-// CEF's `Args::new()` reads argv from the OS directly (via /proc/self/cmdline
-// on Linux, GetCommandLineW on Windows, _NSGetArgv on macOS) — argc/argv from
-// the C caller are unused. CEF refcounts the App; constructing a fresh one
-// in each FFI call is safe because the underlying object outlives the local
-// once CEF has captured its reference.
+// jfn constructs Chromium's `MainArgs` itself. Two entry points:
+//
+// * Browser process (`jfn_cef_initialize`): `MainArgs` is `[argv[0]]` —
+//   see `browser_main_args`. Chromium's `base::CommandLine` parses only
+//   the program name; no jfn CLI flag is ever in there.
+// * Subprocess (`jfn_cef_start`): Chromium spawned this binary with an
+//   argv it authored itself (`--type=renderer …` etc.). That argv is
+//   forwarded to `execute_process` so CEF can dispatch on `--type=`.
+//
+// Every Chromium switch jfn wants set is pushed by an explicit setter
+// (`jfn_cef_set_ozone_platform`, `jfn_cef_set_disable_gpu_compositing`,
+// …) onto `state::pending_switches`, then drained into the browser's
+// `CefCommandLine` by `on_before_command_line_processing`. The setter
+// is the only mapping between jfn's CLI namespace and Chromium's switch
+// namespace. Name collisions are coincidence — the setter writes the
+// Chromium switch name in code, not by passthrough.
+//
+// CEF refcounts the App; constructing a fresh one in each FFI call is
+// safe because the underlying object outlives the local once CEF has
+// captured its reference.
 
 /// Subprocess dispatch + browser-process App construction.
 /// Returns -1 in the browser process (continue startup); returns the
@@ -132,14 +151,51 @@ pub extern "C" fn jfn_cef_initialize() -> bool {
     // afterward so Chromium's installs are confined to the init window.
     let _sig_guard = SignalGuard::new();
 
-    let args = args::Args::new();
     let mut app = JfnAppBuilder::new(JfnApp::new());
+    #[cfg(not(target_os = "windows"))]
+    let main_args = browser_main_args();
+    #[cfg(target_os = "windows")]
+    let main_args = args::Args::new().as_main_args().clone();
     initialize(
-        Some(args.as_main_args()),
+        Some(&main_args),
         Some(&settings),
         Some(&mut app),
         std::ptr::null_mut(),
     ) == 1
+}
+
+// Construct Chromium's browser-process `MainArgs` as `[argv[0]]`. The
+// CString + pointer Vec are leaked into process-lifetime statics because
+// CEF retains the raw pointers past the `initialize()` call (and across
+// the lifetime of the run loop on some code paths).
+#[cfg(not(target_os = "windows"))]
+fn browser_main_args() -> MainArgs {
+    struct CleanArgv {
+        argc: c_int,
+        argv: *mut *mut c_char,
+    }
+    // The pointers are valid for the process lifetime (leaked) and we
+    // only hand them to CEF, which treats them as immutable input.
+    unsafe impl Send for CleanArgv {}
+    unsafe impl Sync for CleanArgv {}
+
+    static CLEAN: OnceLock<CleanArgv> = OnceLock::new();
+    let c = CLEAN.get_or_init(|| {
+        let program = std::env::args()
+            .next()
+            .unwrap_or_else(|| "jellyfin-desktop".to_string());
+        let cstr = CString::new(program).unwrap_or_default();
+        let cstr_ptr = cstr.as_ptr() as *mut c_char;
+        // Keep the backing buffer alive for the process lifetime.
+        Box::leak(Box::new(cstr));
+        let argv_vec: Vec<*mut c_char> = vec![cstr_ptr];
+        let leaked: &'static mut Vec<*mut c_char> = Box::leak(Box::new(argv_vec));
+        CleanArgv {
+            argc: leaked.len() as c_int,
+            argv: leaked.as_mut_ptr(),
+        }
+    });
+    MainArgs { argc: c.argc, argv: c.argv }
 }
 
 #[unsafe(no_mangle)]
