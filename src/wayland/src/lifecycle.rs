@@ -12,7 +12,7 @@
 
 use std::ffi::{CStr, c_char, c_void};
 
-use khronos_egl as egl;
+use crate::egl_dyn as egl;
 
 // =====================================================================
 // FFI declarations consumed during init/cleanup.
@@ -109,17 +109,19 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
     }
 
     // EGL init for CEF shared texture support + dmabuf probe.
-    let egl_dpy = unsafe {
-        let api = egl::DynamicInstance::<egl::EGL1_0>::load_required()
-            .ok()
-            .map(|i| (i.get_display(display as egl::NativeDisplayType), i));
-        match api {
-            Some((Some(d), inst)) => {
-                let _ = inst.initialize(d);
-                d.as_ptr()
+    let egl_dpy: *mut c_void = match egl::Egl::load_default() {
+        Ok(api) => unsafe {
+            let d = (api.get_display)(display as egl::NativeDisplayType);
+            if d.is_null() {
+                std::ptr::null_mut()
+            } else {
+                let mut major: egl::Int = 0;
+                let mut minor: egl::Int = 0;
+                (api.initialize)(d, &mut major, &mut minor);
+                d
             }
-            _ => std::ptr::null_mut(),
-        }
+        },
+        Err(_) => std::ptr::null_mut(),
     };
 
     let ozone = unsafe { jfn_platform_cef_ozone_platform() };
