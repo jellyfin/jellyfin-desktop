@@ -6,7 +6,11 @@ publish = false
 
 [lib]
 name = "jfn_rust"
-crate-type = ["staticlib"]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "jellyfin-desktop"
+path = "src/main.rs"
 
 [features]
 default = ["kde-palette"]
@@ -37,6 +41,9 @@ jfn-macos-sink = { path = "../macos_sink" }
 [target.'cfg(target_os = "windows")'.dependencies]
 jfn-windows = { path = "../windows" }
 jfn-windows-sink = { path = "../windows_sink" }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
