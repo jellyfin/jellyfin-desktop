@@ -28,17 +28,33 @@ pub enum DisplayBackend {
 
 // Linux: the `Platform` vtable lives in jfn-wayland / jfn-x11; both crates
 // export `make_*_platform` with C linkage returning the same C-layout
-// struct. We type the FFI through jfn-wayland's mirror — jfn-x11's mirror
-// has the same layout so blind transmute would also work, but going via a
-// single type keeps things readable. `jfn_g_platform_ptr` is a thin C++
-// accessor for the legacy `g_platform` global (platform/platform_ops.cpp);
-// it stays in place until slice 4 collapses the vtable into a trait.
+// struct. The Rust port reads the vtable through narrow C accessors in
+// `src/platform/platform_ops.cpp` (added during the port) so we don't have
+// to mirror the entire vtable shape in this crate.
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn make_wayland_platform() -> jfn_wayland::make_platform::Platform;
     fn make_x11_platform() -> jfn_wayland::make_platform::Platform;
     fn jfn_g_platform_ptr() -> *mut jfn_wayland::make_platform::Platform;
     fn jfn_platform_ops() -> *const jfn_cef::platform_ops::JfnPlatformOps;
+}
+
+// Narrow accessors over `g_platform` (defined in platform_ops.cpp). Used
+// during the main.cpp -> Rust port so this crate doesn't need a full
+// Platform mirror.
+unsafe extern "C" {
+    fn jfn_g_platform_display() -> c_int;
+    fn jfn_g_platform_get_scale() -> f32;
+    fn jfn_g_platform_get_display_scale(x: c_int, y: c_int) -> f32;
+    fn jfn_g_platform_clamp_window_geometry(
+        w: *mut c_int,
+        h: *mut c_int,
+        x: *mut c_int,
+        y: *mut c_int,
+    );
+    fn jfn_g_platform_pump();
+    fn jfn_g_platform_query_window_position(x: *mut c_int, y: *mut c_int) -> bool;
+    fn jfn_g_platform_post_window_cleanup();
 }
 
 const LOG_MAIN: u8 = 0;
@@ -411,6 +427,134 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
         }
     }
 
+    // 14. Compute boot geometry from saved window geometry. mpv's
+    //     --geometry takes physical pixels (see m_geometry_apply in
+    //     third_party/mpv/options/m_option.c). The post-CEF resize block
+    //     in run_with_cef corrects scale drift once display-hidpi-scale
+    //     is known.
+    let (boot_geometry, boot_force_position, boot_window_max) = compute_boot_geometry();
+
+    // 15. Pick libmpv log subscription level matching what jfn-logging
+    //     would actually surface for LOG_MPV. mpv's "v" maps to Debug;
+    //     "debug" maps to Trace. Cap at "debug".
+    let mpv_log_level = mpv_log_level_from_filter();
+
+    // 16. Initialise the mpv handle via the Rust boot path.
+    let backend_byte: u8 = unsafe { jfn_g_platform_display() as u8 };
+    let geometry_c = cs(&boot_geometry);
+    let hwdec_c = cs(&hwdec);
+    let user_agent_c = cs(&format!("JellyfinDesktop/{}", APP_VERSION_FULL));
+    let passthrough_c = cs(&audio_passthrough);
+    let channels_c = cs(&audio_channels);
+    let mpv_log_level_c = cs(mpv_log_level);
+    let boot = jfn_mpv::boot::JfnMpvBoot {
+        display_backend: backend_byte,
+        hwdec: hwdec_c.as_ptr(),
+        user_agent: user_agent_c.as_ptr(),
+        audio_passthrough: if audio_passthrough.is_empty() { ptr::null() } else { passthrough_c.as_ptr() },
+        audio_exclusive,
+        audio_channels: if audio_channels.is_empty() { ptr::null() } else { channels_c.as_ptr() },
+        geometry: geometry_c.as_ptr(),
+        force_window_position: boot_force_position,
+        window_maximized_at_boot: boot_window_max,
+        mpv_log_level: mpv_log_level_c.as_ptr(),
+    };
+    let raw = unsafe { jfn_mpv::boot::jfn_mpv_handle_init(&boot as *const _) };
+    if raw.is_null() {
+        tracing::error!(target: "Main", "mpv handle init failed");
+        return 1;
+    }
+
+    // 17. Register Rust ingest-layer property observations.
+    if !jfn_playback::ingest_driver::jfn_playback_observe_mpv_properties(backend_byte) {
+        tracing::error!(target: "Main", "observe_mpv_properties failed");
+        return 1;
+    }
+
+    // 18. Capture user's mpv.conf bg, force startup color.
+    //     force-window=yes (not "immediate") defers VO creation so the
+    //     user's color never flashes before the override.
+    let user_bg = jfn_mpv::api::jfn_mpv_get_background_color();
+    publish_video_bg(user_bg);
+    {
+        let hex = format!("#{:06x}", user_bg);
+        tracing::info!(target: "Main", "video bg captured: {hex}");
+    }
+    let startup_bg = cs("#101010");
+    unsafe { jfn_mpv::api::jfn_mpv_set_background_color_hex(startup_bg.as_ptr()) };
+
+    // 19. Log mpv-version + ffmpeg-version.
+    for prop in ["mpv-version", "ffmpeg-version"] {
+        let pc = cs(prop);
+        let v = unsafe { jfn_mpv::api::jfn_mpv_get_property_string(pc.as_ptr()) };
+        let s = if v.is_null() {
+            String::new()
+        } else {
+            let s = unsafe { CStr::from_ptr(v) }.to_string_lossy().into_owned();
+            unsafe { jfn_mpv::api::jfn_mpv_free_string(v) };
+            s
+        };
+        tracing::info!(target: "Main", "{prop} {s}");
+    }
+
+    // 20. Re-bind CLOSE_WIN -> quit. input-default-bindings=no removes
+    //     all builtin bindings including this one; the WM close button
+    //     needs it back.
+    {
+        let kb = cs("keybind");
+        let name = cs("CLOSE_WIN");
+        let action = cs("quit");
+        let argv = [kb.as_ptr(), name.as_ptr(), action.as_ptr(), ptr::null()];
+        unsafe { jfn_mpv::sys::mpv_command(raw, argv.as_ptr() as *mut *const c_char) };
+    }
+
+    // 21. Wait for the VO window. Drains mpv events into the ingest
+    //     layer; stops once OSD pixels are non-zero, the maximize gate
+    //     (if requested) flipped, and the Wayland scale is known.
+    let want_max = {
+        let mut g = jfn_config::JfnWindowGeometry::default();
+        unsafe { jfn_config::jfn_settings_get_window_geometry(&mut g) };
+        g.maximized
+    };
+    let wait_for_scale = cfg!(target_os = "linux")
+        && unsafe { jfn_g_platform_display() } == DisplayBackend::Wayland as i32;
+    let wait_timeout = if wait_for_scale { 0.1 } else { 1.0 };
+    tracing::info!(target: "Main", "Waiting for mpv window...");
+
+    let mut mw: i32 = 0;
+    let mut mh: i32 = 0;
+    let mut need_max = want_max;
+    loop {
+        #[cfg(target_os = "macos")]
+        {
+            unsafe { jfn_g_platform_pump() };
+            let ev = jfn_mpv::api::jfn_mpv_wait_event(0.0);
+            if ev.is_null() { continue; }
+            let event_id = unsafe { (*ev).event_id }.0;
+            if event_id == 0 { unsafe { libc::usleep(10000) }; continue; }
+            if event_id == 2 {
+                log_mpv_event(ev);
+                continue;
+            }
+            if event_id == 1 || event_id == 7 { return 0; }
+            if consume_vo_event(ev, &mut mw, &mut mh, &mut need_max, wait_for_scale) {
+                break;
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let ev = jfn_mpv::api::jfn_mpv_wait_event(wait_timeout);
+            if ev.is_null() { continue; }
+            let event_id = unsafe { (*ev).event_id }.0;
+            if event_id == 2 { log_mpv_event(ev); continue; }
+            if event_id == 1 || event_id == 7 { return 0; }
+            if consume_vo_event(ev, &mut mw, &mut mh, &mut need_max, wait_for_scale) {
+                break;
+            }
+        }
+    }
+    store_vo_size(mw, mh);
+
     storage.flat.hwdec = storage._hwdec.as_ptr();
     storage.flat.audio_passthrough = storage._audio_passthrough.as_ptr();
     storage.flat.audio_channels = storage._audio_channels.as_ptr();
@@ -551,6 +695,180 @@ unsafe fn start_wlproxy() {
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_app_boot_done() -> bool {
     BOOT_ARGS_STORAGE.get().is_some()
+}
+
+// =====================================================================
+// mpv boot helpers + VO wait loop
+// =====================================================================
+
+const DEFAULT_LOGICAL_WIDTH: i32 = 1600;
+const DEFAULT_LOGICAL_HEIGHT: i32 = 900;
+
+fn compute_boot_geometry() -> (String, bool, bool) {
+    let mut g = jfn_config::JfnWindowGeometry::default();
+    unsafe { jfn_config::jfn_settings_get_window_geometry(&mut g) };
+    let mut x = g.x;
+    let mut y = g.y;
+    let scale = unsafe { jfn_g_platform_get_display_scale(x, y) };
+    let scale_f = if scale > 0.0 { scale } else { 1.0 };
+    let (mut w, mut h) = if g.logical_width > 0 && g.logical_height > 0 {
+        (
+            (g.logical_width as f32 * scale_f).round() as i32,
+            (g.logical_height as f32 * scale_f).round() as i32,
+        )
+    } else if g.width > 0 && g.height > 0 {
+        (g.width, g.height)
+    } else {
+        (
+            (DEFAULT_LOGICAL_WIDTH as f32 * scale_f).round() as i32,
+            (DEFAULT_LOGICAL_HEIGHT as f32 * scale_f).round() as i32,
+        )
+    };
+    tracing::debug!(target: "Main", "initial scale: {scale_f} -> {w}x{h}");
+    unsafe { jfn_g_platform_clamp_window_geometry(&mut w, &mut h, &mut x, &mut y) };
+    let mut s = format!("{w}x{h}");
+    let force_position = x >= 0 && y >= 0;
+    if force_position {
+        s.push_str(&format!("+{x}+{y}"));
+    }
+    (s, force_position, g.maximized)
+}
+
+const LOG_MPV: u8 = 1;
+const LEVEL_TRACE: u8 = 0;
+const LEVEL_DEBUG: u8 = 1;
+const LEVEL_INFO: u8 = 2;
+const LEVEL_WARN: u8 = 3;
+const LEVEL_ERROR: u8 = 4;
+
+fn mpv_log_level_from_filter() -> &'static str {
+    let e = jfn_logging::jfn_log_enabled;
+    if e(LOG_MPV, LEVEL_TRACE) {
+        "debug"
+    } else if e(LOG_MPV, LEVEL_DEBUG) {
+        "v"
+    } else if e(LOG_MPV, LEVEL_INFO) {
+        "info"
+    } else if e(LOG_MPV, LEVEL_WARN) {
+        "warn"
+    } else if e(LOG_MPV, LEVEL_ERROR) {
+        "error"
+    } else {
+        "no"
+    }
+}
+
+fn publish_video_bg(rgb: u32) {
+    // Mirror the C++ `g_video_bg = Color{rgb}` write. Color is POD on the
+    // C++ side; store via the accessor so platform_ops.cpp keeps owning
+    // the global.
+    unsafe extern "C" {
+        fn jfn_g_video_bg_set(rgb: u32);
+    }
+    unsafe { jfn_g_video_bg_set(rgb) };
+}
+
+fn log_mpv_event(ev: *mut jfn_mpv::sys::mpv_event) {
+    let msg = unsafe { (*ev).data as *mut jfn_mpv::sys::mpv_event_log_message };
+    if msg.is_null() {
+        return;
+    }
+    let prefix = unsafe { CStr::from_ptr((*msg).prefix) }.to_string_lossy();
+    let text = unsafe { CStr::from_ptr((*msg).text) }.to_string_lossy();
+    let level = unsafe { (*msg).log_level }.0 as i32;
+    // Mirror C++ log_mpv_message: LEVEL_FATAL=10, ERROR=20, WARN=30,
+    // INFO=40, V=50, DEBUG=60, TRACE=70.
+    match level {
+        10 | 20 => tracing::error!(target: "mpv", "{prefix}: {text}"),
+        30 => tracing::warn!(target: "mpv", "{prefix}: {text}"),
+        40 => tracing::info!(target: "mpv", "{prefix}: {text}"),
+        50 => tracing::debug!(target: "mpv", "{prefix}: {text}"),
+        60 => tracing::trace!(target: "mpv", "{prefix}: {text}"),
+        _ => tracing::warn!(target: "mpv", "[unhandled mpv level {level}] {prefix}: {text}"),
+    }
+}
+
+const JFN_OBSERVE_WINDOW_MAX: u64 = 11;
+
+fn consume_vo_event(
+    ev: *mut jfn_mpv::sys::mpv_event,
+    mw: &mut i32,
+    mh: &mut i32,
+    need_max: &mut bool,
+    wait_for_scale: bool,
+) -> bool {
+    let event_id = unsafe { (*ev).event_id }.0;
+    if event_id == 22 {
+        // MPV_EVENT_PROPERTY_CHANGE
+        let scale_raw = unsafe { jfn_g_platform_get_scale() };
+        let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
+        let has_macos_logical;
+        let mut mac_lw: c_int = 0;
+        let mut mac_lh: c_int = 0;
+        #[cfg(target_os = "macos")]
+        unsafe {
+            unsafe extern "C" {
+                fn jfn_macos_query_logical_content_size(lw: *mut c_int, lh: *mut c_int) -> bool;
+            }
+            has_macos_logical = jfn_macos_query_logical_content_size(&mut mac_lw, &mut mac_lh);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            has_macos_logical = false;
+            let _ = (&mut mac_lw, &mut mac_lh);
+        }
+        unsafe {
+            jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event(
+                ev as *const _,
+                scale,
+                has_macos_logical,
+                mac_lw,
+                mac_lh,
+            );
+        }
+        let reply = unsafe { (*ev).reply_userdata };
+        if reply == JFN_OBSERVE_WINDOW_MAX && jfn_playback::ingest_driver::jfn_playback_window_maximized() {
+            *need_max = false;
+        }
+    }
+    let pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
+    let ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
+    if pw > 0 && ph > 0 {
+        *mw = pw;
+        *mh = ph;
+    }
+    #[cfg(target_os = "linux")]
+    let scale_ready = !wait_for_scale || unsafe {
+        unsafe extern "C" {
+            fn jfn_wl_scale_known() -> bool;
+        }
+        jfn_wl_scale_known()
+    };
+    #[cfg(not(target_os = "linux"))]
+    let scale_ready = {
+        let _ = wait_for_scale;
+        true
+    };
+    *mw > 0 && !*need_max && scale_ready
+}
+
+static VO_SIZE: OnceLock<(i32, i32)> = OnceLock::new();
+
+fn store_vo_size(w: i32, h: i32) {
+    let _ = VO_SIZE.set((w, h));
+}
+
+/// C accessor for the post-wait VO surface size.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_app_vo_size(w: *mut c_int, h: *mut c_int) {
+    if let Some((ww, hh)) = VO_SIZE.get() {
+        if !w.is_null() {
+            unsafe { *w = *ww };
+        }
+        if !h.is_null() {
+            unsafe { *h = *hh };
+        }
+    }
 }
 
 /// Tear down boot-owned resources at process exit (wlproxy, single-instance
