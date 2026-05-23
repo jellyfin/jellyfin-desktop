@@ -15,6 +15,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
+mod compositor;
+pub use compositor::{
+    jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
+    jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
+    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition,
+    win_fade_surface, win_free_surface, win_popup_hide, win_popup_present,
+    win_popup_present_software, win_popup_show, win_restack, win_set_expected_size,
+    win_surface_present, win_surface_present_software, win_surface_resize,
+    win_surface_set_visible,
+};
+
 #[unsafe(no_mangle)]
 pub extern "C" fn win_pump() {
     // Input handled by dedicated input-thread message loop.
@@ -87,24 +98,17 @@ pub extern "C" fn win_set_idle_inhibit(level: c_int) {
 
 // =====================================================================
 // Fullscreen-transition gating flag. Read by win_surface_present each
-// frame (under surface_mtx in C++); set/cleared by C++
-// win_begin_transition_locked / win_end_transition_locked via the
-// jfn_win_transition_set accessor below. SeqCst matches the prior
-// plain-bool semantics with no surrounding ordering requirements.
+// frame (under STATE lock in compositor.rs); set/cleared by the Rust
+// begin_transition_locked / end_transition_locked helpers. SeqCst
+// matches the prior plain-bool semantics with no surrounding ordering
+// requirements.
 // =====================================================================
 
-static G_TRANSITIONING: AtomicBool = AtomicBool::new(false);
-
-unsafe extern "C" {
-    /// Implemented in src/platform/windows.cpp: acquires surface_mtx and
-    /// runs win_begin_transition_locked (which sets the flag via
-    /// jfn_win_transition_set and tears down the main swap chain).
-    fn win_begin_transition_impl();
-}
+pub(crate) static G_TRANSITIONING: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn win_begin_transition() {
-    unsafe { win_begin_transition_impl() };
+    jfn_win_begin_transition_locked();
 }
 
 #[unsafe(no_mangle)]
@@ -112,56 +116,12 @@ pub extern "C" fn win_in_transition() -> bool {
     G_TRANSITIONING.load(Ordering::SeqCst)
 }
 
-/// Called by C++ win_begin_transition_locked / win_end_transition_locked
-/// to update the flag.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_win_transition_set(v: bool) {
-    G_TRANSITIONING.store(v, Ordering::SeqCst);
-}
-
 unsafe extern "C" {
     fn win_early_init();
     fn win_init(mpv: *mut c_void) -> bool;
     fn win_cleanup();
-    fn win_alloc_surface() -> *mut c_void;
-    fn win_free_surface(s: *mut c_void);
-    fn win_surface_present(s: *mut c_void, info: *const c_void) -> bool;
-    fn win_surface_present_software(
-        s: *mut c_void,
-        dirty: *const JfnRect,
-        dirty_len: usize,
-        buffer: *const c_void,
-        w: c_int,
-        h: c_int,
-    ) -> bool;
-    fn win_surface_resize(s: *mut c_void, lw: c_int, lh: c_int, pw: c_int, ph: c_int);
-    fn win_surface_set_visible(s: *mut c_void, visible: bool);
-    fn win_restack(ordered: *const *mut c_void, n: usize);
-    fn win_fade_surface(
-        s: *mut c_void,
-        fade_sec: f32,
-        on_fade_start: Option<unsafe extern "C" fn(*mut c_void)>,
-        start_ctx: *mut c_void,
-        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        on_complete: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_ctx: *mut c_void,
-        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    );
-    fn win_popup_show(s: *mut c_void, req: *const JfnPopupRequest);
-    fn win_popup_hide(s: *mut c_void);
-    fn win_popup_present(s: *mut c_void, info: *const c_void, lw: c_int, lh: c_int);
-    fn win_popup_present_software(
-        s: *mut c_void,
-        buffer: *const c_void,
-        pw: c_int,
-        ph: c_int,
-        lw: c_int,
-        lh: c_int,
-    );
     fn win_set_fullscreen(fullscreen: bool);
     fn win_toggle_fullscreen();
-    fn win_end_transition();
-    fn win_set_expected_size(w: c_int, h: c_int);
     fn win_get_scale() -> f32;
     fn win_get_display_scale(x: c_int, y: c_int) -> f32;
     fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> bool;

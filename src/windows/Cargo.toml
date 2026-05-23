@@ -10,3 +10,15 @@ crate-type = ["rlib"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
 jfn-platform-abi = { path = "../platform_abi" }
+cef-dll-sys = { version = "=148.1.0" }
+tracing = "0.1"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectComposition",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Dwm",
+] }
+windows-core = "0.62"

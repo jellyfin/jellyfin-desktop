@@ -1197,7 +1197,11 @@ dependencies = [
 name = "jfn-windows"
 version = "0.1.0"
 dependencies = [
+ "cef-dll-sys",
  "jfn-platform-abi",
+ "tracing",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]
