@@ -145,7 +145,6 @@ elseif(WIN32)
     )
     set(PLATFORM_SOURCES
         src/platform/windows.cpp
-        src/input/input_windows.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
     )
     # macos_sink + windows_sink are Rust-side (src/macos_sink/,

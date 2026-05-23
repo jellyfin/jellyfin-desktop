@@ -50,11 +50,13 @@ unsafe extern "C" {
     fn jfn_playback_fullscreen() -> bool;
     fn jfn_playback_display_scale() -> f64;
 
-    // Input thread (src/input/input_windows.cpp C-linkage thunks).
-    fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut c_void);
-    fn jfn_input_windows_stop_input_thread();
-    fn jfn_input_windows_resize_to_parent(pw: c_int, ph: c_int);
 }
+
+// Input thread lives in `crate::input`.
+use crate::input::{
+    jfn_input_windows_resize_to_parent, jfn_input_windows_run_input_thread,
+    jfn_input_windows_stop_input_thread,
+};
 
 // =====================================================================
 // File-static state — equivalent of the C++ `static WinState g_win`.

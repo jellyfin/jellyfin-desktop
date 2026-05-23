@@ -16,7 +16,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
 mod compositor;
+mod input;
 mod platform;
+pub use input::{
+    jfn_input_windows_resize_to_parent, jfn_input_windows_run_input_thread,
+    jfn_input_windows_set_cursor, jfn_input_windows_stop_input_thread,
+};
 pub use compositor::{
     jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
     jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
@@ -116,10 +121,6 @@ pub extern "C" fn win_begin_transition() {
 #[unsafe(no_mangle)]
 pub extern "C" fn win_in_transition() -> bool {
     G_TRANSITIONING.load(Ordering::SeqCst)
-}
-
-unsafe extern "C" {
-    fn jfn_input_windows_set_cursor(t: c_int);
 }
 
 // =====================================================================
