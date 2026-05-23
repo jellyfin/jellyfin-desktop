@@ -1,18 +1,15 @@
 # Build
 build/
 dist/
+src/target/
 
 # Python
 __pycache__/
 *.pyc
 
-# Third-party dependencies (except submodules)
+# Third-party (only mpv submodule is tracked)
 third_party/*
 !third_party/mpv
-!third_party/letsmove
-!third_party/GL
-!third_party/KHR
-!third_party/fmt
 
 # Project-scoped MCP
 .mcp.json
@@ -21,5 +18,4 @@ third_party/*
 .vscode/
 .idea/
 *.swp
-compile_commands.json
 .cache/
