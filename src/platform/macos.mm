@@ -918,34 +918,8 @@ extern "C" void macos_early_init() {
 
 // macos_set_idle_inhibit now lives in src/macos/src/lib.rs.
 
-// =====================================================================
-// Clipboard (NSPasteboard) — read only; writes go through CEF's own
-// frame->Copy() path which works correctly on macOS.
-// =====================================================================
-
-extern "C" void macos_clipboard_read_text_async(
-    void (*on_done)(void*, const char*, size_t),
-    void* ctx,
-    void (*dtor)(void*)) {
-    // NSPasteboard reads are synchronous on macOS; fire the callback inline.
-    NSPasteboard* pb = [NSPasteboard generalPasteboard];
-    NSString* ns = [pb stringForType:NSPasteboardTypeString];
-    const char* utf8 = ns ? [ns UTF8String] : nullptr;
-    size_t len = utf8 ? strlen(utf8) : 0;
-    if (on_done) on_done(ctx, utf8 ? utf8 : "", len);
-    if (dtor) dtor(ctx);
-}
-
-extern "C" void macos_open_external_url(const char* utf8, size_t /*len*/) {
-    NSString* str = [NSString stringWithUTF8String:utf8];
-    NSURL* nsurl = str ? [NSURL URLWithString:str] : nil;
-    if (!nsurl) {
-        LOG_ERROR(LOG_PLATFORM, "open_external_url: invalid URL: {}", utf8);
-        return;
-    }
-    if (![[NSWorkspace sharedWorkspace] openURL:nsurl])
-        LOG_ERROR(LOG_PLATFORM, "NSWorkspace openURL failed: {}", utf8);
-}
+// macos_clipboard_read_text_async + macos_open_external_url now live in
+// src/macos/src/lib.rs.
 
 // =====================================================================
 // Generic per-surface lifecycle / present / resize / restack

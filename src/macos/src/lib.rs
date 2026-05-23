@@ -377,13 +377,106 @@ unsafe extern "C" {
     fn macos_pump();
     fn macos_run_main_loop();
     fn macos_wake_main_loop();
-    fn macos_clipboard_read_text_async(
-        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-        ctx: *mut c_void,
-        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    );
-    fn macos_open_external_url(utf8: *const c_char, len: usize);
     fn jfn_input_macos_set_cursor(t: c_int);
+}
+
+// =====================================================================
+// Clipboard (NSPasteboard) — read only; writes go through CEF's own
+// frame->Copy() path which works correctly on macOS. NSPasteboard reads
+// are synchronous so the callback fires inline on the calling thread.
+// =====================================================================
+
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_clipboard_read_text_async(
+    on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    // NSPasteboardTypeString is the canonical string UTI ("public.utf8-plain-text").
+    let utf8_bytes = unsafe {
+        let pb: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSPasteboard), generalPasteboard];
+        if pb.is_null() {
+            None
+        } else {
+            // Pass the type as an NSString literal.
+            let type_cstr = c"public.utf8-plain-text";
+            let ns_type: *mut objc2::runtime::AnyObject = objc2::msg_send![
+                objc2::class!(NSString),
+                stringWithUTF8String: type_cstr.as_ptr()
+            ];
+            let ns: *mut objc2::runtime::AnyObject =
+                objc2::msg_send![pb, stringForType: ns_type];
+            if ns.is_null() {
+                None
+            } else {
+                let utf8: *const c_char = objc2::msg_send![ns, UTF8String];
+                if utf8.is_null() {
+                    None
+                } else {
+                    let len = std::ffi::CStr::from_ptr(utf8).to_bytes().len();
+                    // Copy out before NSString is potentially released by the autorelease pool.
+                    let mut v = Vec::with_capacity(len);
+                    v.extend_from_slice(std::slice::from_raw_parts(utf8 as *const u8, len));
+                    Some(v)
+                }
+            }
+        }
+    };
+
+    if let Some(cb) = on_done {
+        let (ptr, len) = match &utf8_bytes {
+            Some(v) => (v.as_ptr() as *const c_char, v.len()),
+            None => (c"".as_ptr(), 0),
+        };
+        unsafe { cb(ctx, ptr, len) };
+    }
+    if let Some(d) = dtor {
+        unsafe { d(ctx) };
+    }
+}
+
+/// Open an external URL via NSWorkspace. utf8/len is borrowed for the
+/// duration of the call.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_open_external_url(utf8: *const c_char, len: usize) {
+    if utf8.is_null() || len == 0 {
+        return;
+    }
+    unsafe {
+        // Build an NSString from the borrowed UTF-8 bytes (NSString copies).
+        let bytes = std::slice::from_raw_parts(utf8 as *const u8, len);
+        let ns_str: *mut objc2::runtime::AnyObject = objc2::msg_send![
+            objc2::class!(NSString),
+            alloc
+        ];
+        let ns_str: *mut objc2::runtime::AnyObject = objc2::msg_send![
+            ns_str,
+            initWithBytes: bytes.as_ptr() as *const c_void,
+            length: len,
+            encoding: 4u64 // NSUTF8StringEncoding
+        ];
+        if ns_str.is_null() {
+            return;
+        }
+        let nsurl: *mut objc2::runtime::AnyObject = objc2::msg_send![
+            objc2::class!(NSURL),
+            URLWithString: ns_str
+        ];
+        // Balance the alloc/init retain.
+        let _: () = objc2::msg_send![ns_str, release];
+        if nsurl.is_null() {
+            return;
+        }
+        let ws: *mut objc2::runtime::AnyObject = objc2::msg_send![
+            objc2::class!(NSWorkspace),
+            sharedWorkspace
+        ];
+        if ws.is_null() {
+            return;
+        }
+        let _: bool = objc2::msg_send![ws, openURL: nsurl];
+    }
 }
 
 // =====================================================================

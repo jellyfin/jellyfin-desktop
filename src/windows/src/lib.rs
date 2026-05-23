@@ -171,13 +171,140 @@ unsafe extern "C" {
         x: *mut c_int,
         y: *mut c_int,
     );
-    fn win_clipboard_read_text_async(
-        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-        ctx: *mut c_void,
-        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    );
-    fn win_open_external_url(utf8: *const c_char, len: usize);
     fn jfn_input_windows_set_cursor(t: c_int);
+}
+
+// =====================================================================
+// Clipboard (Win32 CF_UNICODETEXT) — read only; writes go through CEF's
+// own frame->Copy() path which works correctly on Windows. Win32
+// clipboard is synchronous; callback fires inline on the calling thread.
+// =====================================================================
+
+const CF_UNICODETEXT: u32 = 13;
+const CP_UTF8: u32 = 65001;
+const SW_SHOWNORMAL: c_int = 1;
+
+unsafe extern "C" {
+    fn OpenClipboard(hwnd: *mut c_void) -> i32;
+    fn CloseClipboard() -> i32;
+    fn GetClipboardData(format: u32) -> *mut c_void;
+    fn GlobalLock(h: *mut c_void) -> *mut c_void;
+    fn GlobalUnlock(h: *mut c_void) -> i32;
+    fn WideCharToMultiByte(
+        code_page: u32,
+        flags: u32,
+        wide: *const u16,
+        wide_len: c_int,
+        out: *mut u8,
+        out_len: c_int,
+        default_char: *const u8,
+        used_default: *mut i32,
+    ) -> c_int;
+    fn MultiByteToWideChar(
+        code_page: u32,
+        flags: u32,
+        input: *const u8,
+        input_len: c_int,
+        out: *mut u16,
+        out_len: c_int,
+    ) -> c_int;
+    fn ShellExecuteW(
+        hwnd: *mut c_void,
+        verb: *const u16,
+        file: *const u16,
+        params: *const u16,
+        dir: *const u16,
+        show_cmd: c_int,
+    ) -> *mut c_void;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn win_clipboard_read_text_async(
+    on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    let mut result: Vec<u8> = Vec::new();
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) != 0 {
+            let h = GetClipboardData(CF_UNICODETEXT);
+            if !h.is_null() {
+                let wbuf = GlobalLock(h) as *const u16;
+                if !wbuf.is_null() {
+                    let bytes = WideCharToMultiByte(
+                        CP_UTF8,
+                        0,
+                        wbuf,
+                        -1,
+                        std::ptr::null_mut(),
+                        0,
+                        std::ptr::null(),
+                        std::ptr::null_mut(),
+                    );
+                    if bytes > 1 {
+                        // bytes includes the terminating NUL.
+                        result.resize((bytes - 1) as usize, 0);
+                        WideCharToMultiByte(
+                            CP_UTF8,
+                            0,
+                            wbuf,
+                            -1,
+                            result.as_mut_ptr(),
+                            bytes,
+                            std::ptr::null(),
+                            std::ptr::null_mut(),
+                        );
+                    }
+                    GlobalUnlock(h);
+                }
+            }
+            CloseClipboard();
+        }
+    }
+    if let Some(cb) = on_done {
+        unsafe { cb(ctx, result.as_ptr() as *const c_char, result.len()) };
+    }
+    if let Some(d) = dtor {
+        unsafe { d(ctx) };
+    }
+}
+
+/// Open an external URL via `ShellExecuteW(open)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn win_open_external_url(utf8: *const c_char, len: usize) {
+    if utf8.is_null() || len == 0 {
+        return;
+    }
+    let wlen = unsafe {
+        MultiByteToWideChar(CP_UTF8, 0, utf8 as *const u8, len as c_int, std::ptr::null_mut(), 0)
+    };
+    if wlen <= 0 {
+        return;
+    }
+    let mut wurl: Vec<u16> = vec![0u16; wlen as usize + 1];
+    unsafe {
+        MultiByteToWideChar(
+            CP_UTF8,
+            0,
+            utf8 as *const u8,
+            len as c_int,
+            wurl.as_mut_ptr(),
+            wlen,
+        );
+    }
+    // NUL-terminate (vec initialised to 0, but be explicit).
+    wurl[wlen as usize] = 0;
+    let verb: [u16; 5] = [b'o' as u16, b'p' as u16, b'e' as u16, b'n' as u16, 0];
+    unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            wurl.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        );
+    }
 }
 
 /// Returns the Windows `Platform` vtable by value across the C ABI.

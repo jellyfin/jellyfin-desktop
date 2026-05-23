@@ -867,47 +867,8 @@ extern "C" void win_cleanup() {
 // win_pump, win_set_theme_color, and win_set_idle_inhibit now live in
 // src/windows/src/lib.rs.
 
-// =====================================================================
-// Clipboard (Win32 CF_UNICODETEXT) — read only; writes go through CEF's
-// own frame->Copy() path which works correctly on Windows.
-// =====================================================================
-
-extern "C" void win_clipboard_read_text_async(
-    void (*on_done)(void*, const char*, size_t),
-    void* ctx,
-    void (*dtor)(void*)) {
-    // Win32 clipboard is synchronous; fire the callback inline.
-    std::string result;
-    if (OpenClipboard(nullptr)) {
-        HANDLE h = GetClipboardData(CF_UNICODETEXT);
-        if (h) {
-            auto* wbuf = static_cast<const wchar_t*>(GlobalLock(h));
-            if (wbuf) {
-                int bytes = WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, nullptr, 0, nullptr, nullptr);
-                if (bytes > 1) {  // includes terminator
-                    result.resize(bytes - 1);
-                    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, result.data(), bytes, nullptr, nullptr);
-                }
-                GlobalUnlock(h);
-            }
-        }
-        CloseClipboard();
-    }
-    if (on_done) on_done(ctx, result.data(), result.size());
-    if (dtor) dtor(ctx);
-}
-
-extern "C" void win_open_external_url(const char* utf8, size_t len) {
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, nullptr, 0);
-    if (wlen <= 0) return;
-    std::wstring wurl(wlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, wurl.data(), wlen);
-    HINSTANCE r = ShellExecuteW(nullptr, L"open", wurl.c_str(),
-                                nullptr, nullptr, SW_SHOWNORMAL);
-    if ((INT_PTR)r <= 32)
-        LOG_ERROR(LOG_PLATFORM, "ShellExecuteW failed ({}): {}",
-                  (INT_PTR)r, std::string_view(utf8, len));
-}
+// win_clipboard_read_text_async + win_open_external_url now live in
+// src/windows/src/lib.rs.
 
 // Query window position relative to the monitor's working area (excludes
 // taskbar), in physical pixels. Matches mpv's --geometry +X+Y coordinate
