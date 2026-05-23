@@ -242,19 +242,12 @@ pub extern "C" fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> b
 // ordering requirements.
 // =====================================================================
 
-static G_IN_TRANSITION: AtomicBool = AtomicBool::new(false);
-
-unsafe extern "C" {
-    /// Implemented in src/platform/macos.mm: drops cached input-surface
-    /// textures across the surface stack so the next paint re-wraps at
-    /// the new size.
-    fn macos_drop_input_textures();
-}
+pub(crate) static G_IN_TRANSITION: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn macos_begin_transition() {
     G_IN_TRANSITION.store(true, Ordering::SeqCst);
-    unsafe { macos_drop_input_textures() };
+    compositor::drop_input_textures();
 }
 
 #[unsafe(no_mangle)]
@@ -354,27 +347,15 @@ unsafe extern "C" {
     fn macos_early_init();
     fn macos_init(mpv: *mut c_void) -> bool;
     fn macos_cleanup();
-    fn macos_alloc_surface() -> *mut c_void;
-    fn macos_free_surface(s: *mut c_void);
-    fn macos_surface_present(s: *mut c_void, info: *const c_void) -> bool;
-    fn macos_surface_resize(s: *mut c_void, lw: c_int, lh: c_int, pw: c_int, ph: c_int);
-    fn macos_surface_set_visible(s: *mut c_void, visible: bool);
-    fn macos_restack(ordered: *const *mut c_void, n: usize);
-    fn macos_fade_surface(
-        s: *mut c_void,
-        fade_sec: f32,
-        on_fade_start: Option<unsafe extern "C" fn(*mut c_void)>,
-        start_ctx: *mut c_void,
-        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        on_complete: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_ctx: *mut c_void,
-        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    );
     fn macos_popup_show(s: *mut c_void, req: *const JfnPopupRequest);
     fn macos_set_fullscreen(fullscreen: bool);
     fn macos_toggle_fullscreen();
-    fn macos_set_expected_size(w: c_int, h: c_int);
     fn jfn_input_macos_set_cursor(t: c_int);
+
+    /// Narrow accessor for the input NSView installed by macos_init.
+    /// Rust's macos_restack re-anchors it on top of the CefLayer
+    /// subviews after every reorder. Returns nullptr before macos_init.
+    fn jfn_macos_get_input_view() -> *mut objc2::runtime::AnyObject;
 }
 
 // =====================================================================
@@ -386,7 +367,6 @@ unsafe extern "C" {
 // the link table picks up this Rust definition.
 // =====================================================================
 
-type CFStringRef = *const c_void;
 type CFRunLoopRef = *const c_void;
 
 unsafe extern "C" {
@@ -597,6 +577,26 @@ pub extern "C" fn macos_open_external_url(utf8: *const c_char, len: usize) {
         let _: bool = objc2::msg_send![ws, openURL: nsurl];
     }
 }
+
+// =====================================================================
+// CAMetalLayer-based per-surface compositor. Owns:
+//   - the per-surface state (NSView + CAMetalLayer + cached input texture)
+//   - the surface stack (bottom-to-top, set by macos_restack)
+//   - the Metal device / queue / pipeline (lazy-init on first alloc)
+//   - the expected-size transition gate (macos_set_expected_size /
+//     transition clear-on-match in macos_surface_present)
+// CEF delivers a BGRA8 IOSurface in STRAIGHT alpha via OnAcceleratedPaint;
+// we sample it into a CAMetalLayer drawable with `color.rgb *= color.a`
+// in the fragment shader to convert to CoreAnimation's premultiplied
+// convention. CAMetalLayer.colorspace is set from the IOSurface's
+// kIOSurfaceColorSpace tag (falls back to sRGB).
+// =====================================================================
+mod compositor;
+use compositor::{
+    macos_alloc_surface, macos_fade_surface, macos_free_surface, macos_restack,
+    macos_set_expected_size, macos_surface_present, macos_surface_resize,
+    macos_surface_set_visible,
+};
 
 // =====================================================================
 // Popup no-op trampolines for compositor backends that delegate popups
