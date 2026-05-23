@@ -505,7 +505,6 @@ if(WIN32)
         src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp
-        src/browser/web_browser.cpp
         src/input/dispatch.cpp
     )
 else()
@@ -515,7 +514,6 @@ else()
         src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
         src/browser/browsers.cpp
-        src/browser/web_browser.cpp
         src/input/dispatch.cpp
     )
 endif()

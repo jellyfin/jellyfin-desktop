@@ -14,9 +14,9 @@
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
 #include "browser/browsers.h"
-#include "browser/web_browser.h"
-
 extern "C" void jfn_overlay_init(JfnCefLayer* main_layer);
+extern "C" void jfn_web_init(JfnCefLayer* layer);
+extern "C" void jfn_web_exec_js(const char* js_utf8);
 #include "mpv/jfn_mpv_api.h"
 #include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
@@ -73,7 +73,6 @@ extern "C" void jfn_overlay_init(JfnCefLayer* main_layer);
 Color g_video_bg;
 
 Platform g_platform{};
-WebBrowser* g_web_browser = nullptr;
 // g_browsers is defined in src/browser/browsers.cpp.
 
 // Boot-time mpv log forwarder. Used only by the pre-CEF event loop;
@@ -254,8 +253,7 @@ static int run_with_cef(int mw, int mh,
     });
 
     auto main_layer = browsers.create("web");
-    auto web_browser_owner = std::make_unique<WebBrowser>(main_layer);
-    g_web_browser = web_browser_owner.get();
+    jfn_web_init(main_layer->rs());
 
     std::string server_url = Settings::instance().serverUrl();
     std::string main_url;
@@ -288,7 +286,7 @@ static int run_with_cef(int mw, int mh,
     // Rust-side builtin browser sink forwards UI events through exec_js
     // and the side-channel handlers below.
     jfn_playback_set_web_exec_js_handler([](const char* js) {
-        if (g_web_browser && js) g_web_browser->execJs(js);
+        if (js) jfn_web_exec_js(js);
     });
     jfn_playback_set_browsers_size_handler([](int32_t lw, int32_t lh, int32_t pw, int32_t ph) {
         if (g_browsers) g_browsers->setSize(lw, lh, pw, ph);
@@ -334,7 +332,7 @@ static int run_with_cef(int mw, int mh,
     }
 
 #ifndef __APPLE__
-    g_web_browser->waitForLoad();
+    main_layer->waitForLoad();
 #endif
     LOG_INFO(LOG_MAIN, "Main browser loaded");
 
@@ -430,10 +428,8 @@ static int run_with_cef(int mw, int mh,
     // is a self-managed singleton: its BeforeCloseCallback already deleted
     // it during the close drain above. Any straggler surface gets freed by
     // Browsers' dtor when `browsers` goes out of scope.
-    g_web_browser = nullptr;
-    web_browser_owner.reset();
-    // Overlay is a Rust-side singleton; its BeforeClose callback already
-    // tore down INSTANCE during the close drain above.
+    // Web and overlay are Rust-side singletons; their BeforeClose callbacks
+    // already tore down INSTANCE during the close drain above.
     g_browsers = nullptr;
     // `browsers` itself goes out of scope here; any straggler surfaces
     // get freed by its dtor.
