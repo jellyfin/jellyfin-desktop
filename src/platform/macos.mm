@@ -52,7 +52,7 @@ std::string macosComputerName() {
 // Forward declarations
 // =====================================================================
 
-static void macos_pump();
+extern "C" void macos_pump();
 
 // =====================================================================
 // JellyfinApplication — NSApplication subclass required by CEF
@@ -356,7 +356,7 @@ static void stop_display_link() {
 // Platform interface implementation
 // =====================================================================
 
-static void macos_set_theme_color(uint32_t rgb) {
+extern "C" void macos_set_theme_color(uint32_t rgb) {
     Color c{rgb};
     // Updates AppKit fills behind mpv's CAMetalLayer / NSWindow root so the
     // resize-gap stale-texture window (which CLAUDE.md explicitly accepts
@@ -373,7 +373,7 @@ static void macos_set_theme_color(uint32_t rgb) {
     else dispatch_async(dispatch_get_main_queue(), apply);
 }
 
-static bool macos_init(mpv_handle* mpv) {
+extern "C" bool macos_init(mpv_handle* mpv) {
     LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: waiting for mpv window");
     for (int i = 0; i < 500 && !g_window; i++) {
         macos_pump();
@@ -544,7 +544,7 @@ struct PopupCb {
     void fire(int idx) { if (fn) fn(ctx, idx); }
 };
 
-static void macos_popup_show(PlatformSurface*, const JfnPopupRequest* req) {
+extern "C" void macos_popup_show(PlatformSurface*, const JfnPopupRequest* req) {
     // NSMenu is a window-level OS overlay — not tied to a CefLayer
     // surface, so the surface arg is ignored.
     auto cb = std::make_shared<PopupCb>(
@@ -601,7 +601,7 @@ static void macos_popup_show(PlatformSurface*, const JfnPopupRequest* req) {
 
 // Per-surface visibility. Focus management is owned by Browsers::setActive,
 // not by the platform — matches the Wayland and Windows backends.
-static void macos_surface_set_visible(PlatformSurface* s, bool visible) {
+extern "C" void macos_surface_set_visible(PlatformSurface* s, bool visible) {
     if (!s) return;
     auto apply = ^{
         if (s->view) [s->view setHidden:!visible];
@@ -628,7 +628,7 @@ struct RustCb {
     void fire() { if (fn) fn(ctx); }
 };
 
-static void macos_fade_surface(PlatformSurface* s, float fade_sec,
+extern "C" void macos_fade_surface(PlatformSurface* s, float fade_sec,
                                void (*on_fade_start)(void*), void* start_ctx,
                                void (*start_dtor)(void*),
                                void (*on_complete)(void*), void* done_ctx,
@@ -667,17 +667,17 @@ static void macos_fade_surface(PlatformSurface* s, float fade_sec,
     });
 }
 
-static void macos_set_fullscreen(bool fullscreen) {
+extern "C" void macos_set_fullscreen(bool fullscreen) {
     if (!jfn_mpv_handle_get()) return;
     jfn_mpv_set_fullscreen(fullscreen);
 }
 
-static void macos_toggle_fullscreen() {
+extern "C" void macos_toggle_fullscreen() {
     if (!jfn_mpv_handle_get()) return;
     jfn_mpv_toggle_fullscreen();
 }
 
-static void macos_begin_transition() {
+extern "C" void macos_begin_transition() {
     g_transitioning = true;
     // Drop cached input-surface wrappers across the whole stack so the
     // next paint re-wraps at the new size. drawableSize is updated in
@@ -688,16 +688,16 @@ static void macos_begin_transition() {
     }
 }
 
-static void macos_end_transition() {}
+extern "C" void macos_end_transition() {}
 
-static bool macos_in_transition() { return g_transitioning; }
+extern "C" bool macos_in_transition() { return g_transitioning; }
 
-static void macos_set_expected_size(int w, int h) {
+extern "C" void macos_set_expected_size(int w, int h) {
     g_expected_w = w;
     g_expected_h = h;
 }
 
-static float macos_get_scale() {
+extern "C" float macos_get_scale() {
     if (g_window) return static_cast<float>([g_window backingScaleFactor]);
     // Pre-window: fall back to the main screen's scale so callers (e.g.
     // default-geometry sizing at startup) get an accurate value.
@@ -708,7 +708,7 @@ static float macos_get_scale() {
 
 // Saved (x, y) in backing pixels can't be unambiguously mapped to an
 // NSScreen without identity persistence — use mainScreen.
-static float macos_get_display_scale(int /*x*/, int /*y*/) {
+extern "C" float macos_get_display_scale(int /*x*/, int /*y*/) {
     NSScreen* screen = [NSScreen mainScreen];
     return screen ? static_cast<float>([screen backingScaleFactor]) : 1.0f;
 }
@@ -723,7 +723,7 @@ bool query_logical_content_size(int* w, int* h) {
 }
 }
 
-static bool macos_query_window_position(int* x, int* y) {
+extern "C" bool macos_query_window_position(int* x, int* y) {
     if (!g_window || ![g_window screen]) return false;
     // mpv's --geometry +X+Y is in backing pixels, relative to the screen's
     // visible frame (excluding menu bar / dock), with Y measured from the
@@ -741,7 +741,7 @@ static bool macos_query_window_position(int* x, int* y) {
     return true;
 }
 
-static void macos_clamp_window_geometry(int* w, int* h, int* x, int* y) {
+extern "C" void macos_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     NSScreen* screen = [NSScreen mainScreen];
     if (!screen) return;
     NSRect visible = [screen visibleFrame];
@@ -763,7 +763,7 @@ static void macos_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     if (*y < 0) *y = 0;
 }
 
-static void macos_pump() {
+extern "C" void macos_pump() {
     @autoreleasepool {
         // distantPast = return immediately if no event. `nil` means distantFuture
         // (block forever), which would freeze the caller. Used during the
@@ -788,7 +788,7 @@ static void macos_pump() {
 // cef_app.cpp:InitWakePipe) and GCD main-queue blocks (mpv VO
 // DispatchQueue.main.sync) all fire from inside this call without polling.
 // Mirrors cefclient's MainMessageLoopExternalPumpMac::Run.
-static void macos_run_main_loop() {
+extern "C" void macos_run_main_loop() {
     LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_run_main_loop: entering [NSApp run]");
     [NSApp run];
     LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_run_main_loop: [NSApp run] returned");
@@ -799,7 +799,7 @@ static void macos_run_main_loop() {
 // the block then calls -stop: which marks the loop for exit on its next
 // iteration. A sentinel applicationDefined NSEvent guarantees there *is* a
 // next iteration even if no other events arrive. Documented thread-safe.
-static void macos_wake_main_loop() {
+extern "C" void macos_wake_main_loop() {
     LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_wake_main_loop: requesting stop");
     dispatch_async(dispatch_get_main_queue(), ^{
         @autoreleasepool {
@@ -819,7 +819,7 @@ static void macos_wake_main_loop() {
     });
 }
 
-static void macos_cleanup() {
+extern "C" void macos_cleanup() {
     // Stop the display link first so no more BeginFrames race the teardown.
     stop_display_link();
 
@@ -856,7 +856,7 @@ static void macos_cleanup() {
 
 static JellyfinAppMenuTarget* g_app_menu_target = nil;
 
-static void macos_early_init() {
+extern "C" void macos_early_init() {
     [JellyfinApplication sharedApplication];
 
     // Subprocesses (GPU, renderer) only need CefAppProtocol — hide from dock
@@ -957,7 +957,7 @@ static void macos_early_init() {
 
 static IOPMAssertionID g_idle_assertion = kIOPMNullAssertionID;
 
-static void macos_set_idle_inhibit(IdleInhibitLevel level) {
+extern "C" void macos_set_idle_inhibit(IdleInhibitLevel level) {
     // Release existing assertion if one is active
     if (g_idle_assertion != kIOPMNullAssertionID) {
         IOPMAssertionRelease(g_idle_assertion);
@@ -989,7 +989,7 @@ static void macos_set_idle_inhibit(IdleInhibitLevel level) {
 // frame->Copy() path which works correctly on macOS.
 // =====================================================================
 
-static void macos_clipboard_read_text_async(
+extern "C" void macos_clipboard_read_text_async(
     void (*on_done)(void*, const char*, size_t),
     void* ctx,
     void (*dtor)(void*)) {
@@ -1002,7 +1002,7 @@ static void macos_clipboard_read_text_async(
     if (dtor) dtor(ctx);
 }
 
-static void macos_open_external_url(const char* utf8, size_t /*len*/) {
+extern "C" void macos_open_external_url(const char* utf8, size_t /*len*/) {
     NSString* str = [NSString stringWithUTF8String:utf8];
     NSURL* nsurl = str ? [NSURL URLWithString:str] : nil;
     if (!nsurl) {
@@ -1025,7 +1025,7 @@ static void run_on_main_sync(Block block) {
     dispatch_sync(dispatch_get_main_queue(), block);
 }
 
-static PlatformSurface* macos_alloc_surface() {
+extern "C" PlatformSurface* macos_alloc_surface() {
     auto* s = new PlatformSurface;
     run_on_main_sync(^{
         if (!g_window) return;
@@ -1040,7 +1040,7 @@ static PlatformSurface* macos_alloc_surface() {
     return s;
 }
 
-static void macos_free_surface(PlatformSurface* s) {
+extern "C" void macos_free_surface(PlatformSurface* s) {
     if (!s) return;
     run_on_main_sync(^{
         // Defensive remove from the cached stack — Browsers will normally
@@ -1057,7 +1057,7 @@ static void macos_free_surface(PlatformSurface* s) {
     delete s;
 }
 
-static bool macos_surface_present(PlatformSurface* s, const void* raw_info) {
+extern "C" bool macos_surface_present(PlatformSurface* s, const void* raw_info) {
     if (!s || !raw_info) return false;
     const CefAcceleratedPaintInfo& info =
         *static_cast<const CefAcceleratedPaintInfo*>(raw_info);
@@ -1080,7 +1080,7 @@ static bool macos_surface_present(PlatformSurface* s, const void* raw_info) {
     return true;
 }
 
-static bool macos_surface_present_software(PlatformSurface*,
+extern "C" bool macos_surface_present_software(PlatformSurface*,
                                            const JfnRect*, size_t,
                                            const void*, int, int) {
     // CEF on macOS runs hardware-accelerated (shared_texture_supported=true);
@@ -1088,7 +1088,7 @@ static bool macos_surface_present_software(PlatformSurface*,
     return false;
 }
 
-static void macos_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {
+extern "C" void macos_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {
     if (!s) return;
     // The NSView is autoresized to fit the contentView, and present_iosurface
     // updates the CAMetalLayer.drawableSize when CEF delivers a frame at the
@@ -1111,7 +1111,7 @@ static void macos_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int
     else dispatch_async(dispatch_get_main_queue(), apply);
 }
 
-static void macos_restack(PlatformSurface* const* ordered, size_t n) {
+extern "C" void macos_restack(PlatformSurface* const* ordered, size_t n) {
     auto apply = ^{
         g_surface_stack.assign(ordered, ordered + n);
         if (!g_window) return;
@@ -1134,48 +1134,7 @@ static void macos_restack(PlatformSurface* const* ordered, size_t n) {
     else dispatch_sync(dispatch_get_main_queue(), apply);
 }
 
-Platform make_macos_platform() {
-    return Platform{
-        .display = DisplayBackend::macOS,
-        .early_init = macos_early_init,
-        .init = macos_init,
-        .cleanup = macos_cleanup,
-        .post_window_cleanup = nullptr,
-        .alloc_surface = macos_alloc_surface,
-        .free_surface = macos_free_surface,
-        .surface_present = macos_surface_present,
-        .surface_present_software = macos_surface_present_software,
-        .surface_resize = macos_surface_resize,
-        .surface_set_visible = macos_surface_set_visible,
-        .restack = macos_restack,
-        .fade_surface = macos_fade_surface,
-        // macos_popup_show substitutes a native NSMenu for CEF's popup
-        // widget (which renders highlights as opaque black on macOS).
-        // popup_present[_software] / popup_hide are no-ops — NSMenu owns
-        // its own pixels and lifecycle.
-        .popup_show = macos_popup_show,
-        .popup_hide = [](PlatformSurface*) {},
-        .popup_present = [](PlatformSurface*, const void*, int, int) {},
-        .popup_present_software = [](PlatformSurface*, const void*, int, int, int, int) {},
-        .set_fullscreen = macos_set_fullscreen,
-        .toggle_fullscreen = macos_toggle_fullscreen,
-        .begin_transition = macos_begin_transition,
-        .end_transition = macos_end_transition,
-        .in_transition = macos_in_transition,
-        .set_expected_size = macos_set_expected_size,
-        .get_scale = macos_get_scale,
-        .get_display_scale = macos_get_display_scale,
-        .query_window_position = macos_query_window_position,
-        .clamp_window_geometry = macos_clamp_window_geometry,
-        .pump = macos_pump,
-        .run_main_loop = macos_run_main_loop,
-        .wake_main_loop = macos_wake_main_loop,
-        .set_cursor = input::macos::set_cursor,
-        .set_idle_inhibit = macos_set_idle_inhibit,
-        .set_theme_color = macos_set_theme_color,
-        .shared_texture_supported = true,
-        .cef_ozone_platform = {},
-        .clipboard_read_text_async = macos_clipboard_read_text_async,
-        .open_external_url = macos_open_external_url,
-    };
-}
+// Platform vtable composition moved to the Rust jfn-macos crate
+// (src/macos/src/lib.rs). The individual macos_* statics above are
+// exposed via extern "C" linkage so the Rust crate can populate the
+// vtable from them by symbol name.

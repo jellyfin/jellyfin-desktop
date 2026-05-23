@@ -99,10 +99,10 @@ struct WinState {
 
 static WinState g_win;
 
-static void win_begin_transition_locked();
-static void win_end_transition_locked();
+extern "C" void win_begin_transition_locked();
+extern "C" void win_end_transition_locked();
 
-static bool win_is_fullscreen_style(LONG_PTR style) {
+extern "C" bool win_is_fullscreen_style(LONG_PTR style) {
     return (style & WS_CAPTION) == 0 && (style & WS_THICKFRAME) == 0;
 }
 
@@ -236,7 +236,7 @@ static void present_to_surface_locked(PlatformSurface* s, ID3D11Texture2D* src,
     g_win.dcomp_device->Commit();
 }
 
-static bool win_surface_present(PlatformSurface* s, const void* raw_info) {
+extern "C" bool win_surface_present(PlatformSurface* s, const void* raw_info) {
     if (!s || !raw_info) return false;
     const CefAcceleratedPaintInfo& info =
         *static_cast<const CefAcceleratedPaintInfo*>(raw_info);
@@ -289,13 +289,13 @@ static bool win_surface_present(PlatformSurface* s, const void* raw_info) {
 // Software fallback: Windows is shared-textures-only in practice.
 // Kept as a no-op to match prior overlay/about behavior; the main path
 // historically also no-op'd here.
-static bool win_surface_present_software(PlatformSurface*,
+extern "C" bool win_surface_present_software(PlatformSurface*,
                                          const JfnRect*, size_t,
                                          const void*, int, int) {
     return false;
 }
 
-static void win_surface_resize(PlatformSurface* s, int /*lw*/, int /*lh*/, int pw, int ph) {
+extern "C" void win_surface_resize(PlatformSurface* s, int /*lw*/, int /*lh*/, int pw, int ph) {
     if (!s || pw <= 0 || ph <= 0) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
     // CEF presents at its own buffer size and ensure_swap_chain rebinds at
@@ -307,7 +307,7 @@ static void win_surface_resize(PlatformSurface* s, int /*lw*/, int /*lh*/, int p
     g_win.dcomp_device->Commit();
 }
 
-static void win_surface_set_visible(PlatformSurface* s, bool visible) {
+extern "C" void win_surface_set_visible(PlatformSurface* s, bool visible) {
     if (!s) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
     if (s->visible == visible) return;
@@ -347,7 +347,7 @@ struct WinRustCb {
 };
 }
 
-static void win_fade_surface(PlatformSurface* s, float fade_sec,
+extern "C" void win_fade_surface(PlatformSurface* s, float fade_sec,
                              void (*on_fade_start)(void*), void* start_ctx,
                              void (*start_dtor)(void*),
                              void (*on_complete)(void*), void* done_ctx,
@@ -396,7 +396,7 @@ static void win_fade_surface(PlatformSurface* s, float fade_sec,
 // Surface lifecycle + stacking
 // =====================================================================
 
-static PlatformSurface* win_alloc_surface() {
+extern "C" PlatformSurface* win_alloc_surface() {
     auto* s = new PlatformSurface;
 
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
@@ -442,7 +442,7 @@ static PlatformSurface* win_alloc_surface() {
     return s;
 }
 
-static void win_free_surface(PlatformSurface* s) {
+extern "C" void win_free_surface(PlatformSurface* s) {
     if (!s) return;
     // Wait for any in-flight fade thread to finish touching this surface.
     // It runs frame-paced and is bounded; no polling needed beyond a yield.
@@ -481,7 +481,7 @@ static void win_free_surface(PlatformSurface* s) {
 // Rebuild the child-list under dcomp_root in `ordered` order
 // (bottom -> top). Each surface's popup visual is nested under its
 // main visual so it stays above its surface automatically.
-static void win_restack(PlatformSurface* const* ordered, size_t n) {
+extern "C" void win_restack(PlatformSurface* const* ordered, size_t n) {
     if (!g_win.dcomp_root) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
 
@@ -533,7 +533,7 @@ static void update_surface_size_locked(int lw, int lh, int pw, int ph) {
     g_win.mpv_ph = ph;
 }
 
-static void win_begin_transition_locked() {
+extern "C" void win_begin_transition_locked() {
     g_win.transitioning = true;
     g_win.transition_pw = g_win.mpv_pw;
     g_win.transition_ph = g_win.mpv_ph;
@@ -555,7 +555,7 @@ static void win_begin_transition_locked() {
     }
 }
 
-static void win_end_transition_locked() {
+extern "C" void win_end_transition_locked() {
     g_win.transitioning = false;
     g_win.expected_w = 0;
     g_win.expected_h = 0;
@@ -563,21 +563,21 @@ static void win_end_transition_locked() {
     g_win.pending_lh = 0;
 }
 
-static void win_begin_transition() {
+extern "C" void win_begin_transition() {
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
     win_begin_transition_locked();
 }
 
-static void win_end_transition() {
+extern "C" void win_end_transition() {
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
     win_end_transition_locked();
 }
 
-static bool win_in_transition() {
+extern "C" bool win_in_transition() {
     return g_win.transitioning;
 }
 
-static void win_set_expected_size(int w, int h) {
+extern "C" void win_set_expected_size(int w, int h) {
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
     if (g_win.transitioning && w == g_win.transition_pw && h == g_win.transition_ph)
         return;
@@ -589,7 +589,7 @@ static void win_set_expected_size(int w, int h) {
 // Fullscreen
 // =====================================================================
 
-static void win_set_fullscreen(bool fullscreen) {
+extern "C" void win_set_fullscreen(bool fullscreen) {
     if (!jfn_mpv_handle_get()) return;
     if (jfn_playback_fullscreen() == fullscreen) {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
@@ -625,7 +625,7 @@ static void win_set_fullscreen(bool fullscreen) {
         jfn_mpv_set_window_maximized(true);
 }
 
-static void win_toggle_fullscreen() {
+extern "C" void win_toggle_fullscreen() {
     if (!jfn_mpv_handle_get()) return;
     bool target_fullscreen = !jfn_playback_fullscreen();
 
@@ -661,7 +661,7 @@ static void win_toggle_fullscreen() {
 // Scale + content size
 // =====================================================================
 
-static float win_get_scale() {
+extern "C" float win_get_scale() {
     double scale = jfn_playback_display_scale();
     if (scale > 0) {
         g_win.cached_scale = static_cast<float>(scale);
@@ -676,7 +676,7 @@ static float win_get_scale() {
 
 // Per-monitor DPI (GetDpiForMonitor) lives in Shcore.dll which isn't
 // currently linked; fall back to system DPI and ignore (x, y).
-static float win_get_display_scale(int /*x*/, int /*y*/) {
+extern "C" float win_get_display_scale(int /*x*/, int /*y*/) {
     UINT dpi = GetDpiForSystem();
     return dpi > 0 ? static_cast<float>(dpi) / 96.0f : 1.0f;
 }
@@ -698,7 +698,7 @@ private:
 };
 }
 
-static void win_set_idle_inhibit(IdleInhibitLevel level) {
+extern "C" void win_set_idle_inhibit(IdleInhibitLevel level) {
     CefPostTask(TID_UI, new FnTask([level]() {
         UINT flags = ES_CONTINUOUS;
         switch (level) {
@@ -773,11 +773,11 @@ static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
 // Platform interface
 // =====================================================================
 
-static void win_early_init() {
+extern "C" void win_early_init() {
     // Nothing needed on Windows before mpv starts
 }
 
-static bool win_init(mpv_handle* mpv) {
+extern "C" bool win_init(mpv_handle* mpv) {
     // Get HWND from mpv
     int64_t wid = 0;
     if (jfn_mpv_get_property_int("window-id", &wid) < 0 || !wid) {
@@ -820,7 +820,7 @@ static bool win_init(mpv_handle* mpv) {
     return true;
 }
 
-static void win_cleanup() {
+extern "C" void win_cleanup() {
     // Signal input thread to quit
     input::windows::stop_input_thread();
     if (g_win.input_thread.joinable())
@@ -862,11 +862,11 @@ static void win_cleanup() {
     g_win.mpv_hwnd = nullptr;
 }
 
-static void win_pump() {
+extern "C" void win_pump() {
     // Input is handled by the dedicated input thread's message loop
 }
 
-static void win_set_theme_color(uint32_t) {
+extern "C" void win_set_theme_color(uint32_t) {
     // No-op on Windows (DWM handles titlebar appearance)
 }
 
@@ -875,7 +875,7 @@ static void win_set_theme_color(uint32_t) {
 // own frame->Copy() path which works correctly on Windows.
 // =====================================================================
 
-static void win_clipboard_read_text_async(
+extern "C" void win_clipboard_read_text_async(
     void (*on_done)(void*, const char*, size_t),
     void* ctx,
     void (*dtor)(void*)) {
@@ -900,7 +900,7 @@ static void win_clipboard_read_text_async(
     if (dtor) dtor(ctx);
 }
 
-static void win_open_external_url(const char* utf8, size_t len) {
+extern "C" void win_open_external_url(const char* utf8, size_t len) {
     int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, nullptr, 0);
     if (wlen <= 0) return;
     std::wstring wurl(wlen, L'\0');
@@ -915,7 +915,7 @@ static void win_open_external_url(const char* utf8, size_t len) {
 // Query window position relative to the monitor's working area (excludes
 // taskbar), in physical pixels. Matches mpv's --geometry +X+Y coordinate
 // system on Windows (vo_calc_window_geometry uses the working area).
-static bool win_query_window_position(int* x, int* y) {
+extern "C" bool win_query_window_position(int* x, int* y) {
     if (!g_win.mpv_hwnd) return false;
     RECT wr;
     if (!GetWindowRect(g_win.mpv_hwnd, &wr)) return false;
@@ -932,7 +932,7 @@ static bool win_query_window_position(int* x, int* y) {
 // window never opens larger than the screen or off-screen, and center any
 // unset axis (mpv's own centering misbehaves when we override --geometry's
 // wh but leave xy unset).
-static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
+extern "C" void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     RECT work;
     if (!SystemParametersInfo(SPI_GETWORKAREA, 0, &work, 0)) return;
     int vw = work.right - work.left;
@@ -947,7 +947,7 @@ static void win_clamp_window_geometry(int* w, int* h, int* x, int* y) {
     if (*y < 0) *y = 0;
 }
 
-static void win_popup_show(PlatformSurface* s, const JfnPopupRequest* req) {
+extern "C" void win_popup_show(PlatformSurface* s, const JfnPopupRequest* req) {
     if (!s || !req) return;
     {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
@@ -961,7 +961,7 @@ static void win_popup_show(PlatformSurface* s, const JfnPopupRequest* req) {
     if (req->on_selected_dtor) req->on_selected_dtor(req->on_selected_ctx);
 }
 
-static void win_popup_hide(PlatformSurface* s) {
+extern "C" void win_popup_hide(PlatformSurface* s) {
     if (!s) return;
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
     s->popup_visible = false;
@@ -977,7 +977,7 @@ static void win_popup_hide(PlatformSurface* s) {
     g_win.dcomp_device->Commit();
 }
 
-static void win_popup_present(PlatformSurface* s, const void* raw_info,
+extern "C" void win_popup_present(PlatformSurface* s, const void* raw_info,
                               int /*lw*/, int /*lh*/) {
     if (!s || !raw_info) return;
     const CefAcceleratedPaintInfo& info =
@@ -1012,7 +1012,7 @@ static void win_popup_present(PlatformSurface* s, const void* raw_info,
     g_win.dcomp_device->Commit();
 }
 
-static void win_popup_present_software(PlatformSurface* s, const void* buffer,
+extern "C" void win_popup_present_software(PlatformSurface* s, const void* buffer,
                                        int pw, int ph,
                                        int /*lw*/, int /*lh*/) {
     if (!s || !buffer || pw <= 0 || ph <= 0) return;
@@ -1055,44 +1055,9 @@ static void win_popup_present_software(PlatformSurface* s, const void* buffer,
 // make_windows_platform
 // =====================================================================
 
-Platform make_windows_platform() {
-    return Platform{
-        .display = DisplayBackend::Windows,
-        .early_init = win_early_init,
-        .init = win_init,
-        .cleanup = win_cleanup,
-        .post_window_cleanup = nullptr,
-        .alloc_surface = win_alloc_surface,
-        .free_surface = win_free_surface,
-        .surface_present = win_surface_present,
-        .surface_present_software = win_surface_present_software,
-        .surface_resize = win_surface_resize,
-        .surface_set_visible = win_surface_set_visible,
-        .restack = win_restack,
-        .fade_surface = win_fade_surface,
-        .popup_show             = win_popup_show,
-        .popup_hide             = win_popup_hide,
-        .popup_present          = win_popup_present,
-        .popup_present_software = win_popup_present_software,
-        .set_fullscreen = win_set_fullscreen,
-        .toggle_fullscreen = win_toggle_fullscreen,
-        .begin_transition = win_begin_transition,
-        .end_transition = win_end_transition,
-        .in_transition = win_in_transition,
-        .set_expected_size = win_set_expected_size,
-        .get_scale = win_get_scale,
-        .get_display_scale = win_get_display_scale,
-        .query_window_position = win_query_window_position,
-        .clamp_window_geometry = win_clamp_window_geometry,
-        .pump = win_pump,
-        .set_cursor = input::windows::set_cursor,
-        .set_idle_inhibit = win_set_idle_inhibit,
-        .set_theme_color = win_set_theme_color,
-        .shared_texture_supported = true,
-        .cef_ozone_platform = {},
-        .clipboard_read_text_async = win_clipboard_read_text_async,
-        .open_external_url = win_open_external_url,
-    };
-}
+// Platform vtable composition moved to the Rust jfn-windows crate
+// (src/windows/src/lib.rs). The individual win_* statics above are
+// exposed via extern "C" linkage so the Rust crate can populate the
+// vtable from them by symbol name.
 
 #endif // _WIN32

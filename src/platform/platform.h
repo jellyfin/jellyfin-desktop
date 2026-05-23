@@ -201,23 +201,18 @@ struct IdleInhibitGuard {
     ~IdleInhibitGuard() { g_platform.set_idle_inhibit(IdleInhibitLevel::None); }
 };
 
-// Internal platform factories — called by make_platform()
-#ifdef _WIN32
-Platform make_windows_platform();
-#elif defined(__APPLE__)
-Platform make_macos_platform();
-#elif defined(__linux__)
-// Authored in Rust (src/wayland/src/make_platform.rs). Returns the
-// Wayland vtable by value across the C ABI; layout pinned by
-// static_asserts in platform_ops.cpp.
+// Internal platform factories — called by make_platform(). All four
+// are authored in Rust now and exported with C linkage:
+//   src/wayland/src/make_platform.rs
+//   src/x11/src/make_platform.rs
+//   src/macos/src/lib.rs
+//   src/windows/src/lib.rs
 extern "C" Platform make_wayland_platform();
 #ifdef HAVE_X11
-// Authored in Rust (src/x11/src/make_platform.rs). Returns the X11
-// vtable by value across the C ABI; layout pinned by static_asserts
-// in platform_ops.cpp.
 extern "C" Platform make_x11_platform();
 #endif
-#endif
+extern "C" Platform make_macos_platform();
+extern "C" Platform make_windows_platform();
 
 inline Platform make_platform(DisplayBackend backend) {
     Platform p;
