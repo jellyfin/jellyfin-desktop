@@ -460,6 +460,7 @@ struct JfnBootArgs {
 };
 extern "C" int jfn_app_main(int argc, const char* const* argv);
 extern "C" const JfnBootArgs* jfn_app_boot_args(void);
+extern "C" void jfn_app_teardown(void);
 
 int main(int argc, char* argv[]) {
     // Linux platform selection is deferred until after CLI parsing; on
@@ -486,95 +487,8 @@ int main(int argc, char* argv[]) {
     args.disable_gpu_compositing = ba && ba->disable_gpu_compositing;
     args.remote_debugging_port = ba ? ba->remote_debugging_port : 0;
 
-#if !defined(_WIN32) && !defined(__APPLE__)
-    {
-        DisplayBackend backend;
-        if (args.platform_override == "wayland")
-            backend = DisplayBackend::Wayland;
-        else if (args.platform_override == "x11")
-            backend = DisplayBackend::X11;
-        else if (!args.platform_override.empty()) {
-            fprintf(stderr, "Unknown platform: %s (expected wayland or x11)\n",
-                    args.platform_override.c_str());
-            return 1;
-        } else {
-            backend = (getenv("WAYLAND_DISPLAY") || !getenv("DISPLAY"))
-                    ? DisplayBackend::Wayland : DisplayBackend::X11;
-        }
-#ifndef HAVE_X11
-        if (backend == DisplayBackend::X11) {
-            fprintf(stderr, "X11 detected but X11 support not compiled in\n");
-            return 1;
-        }
-#endif
-        g_platform = make_platform(backend);
-    }
-    LOG_INFO(LOG_MAIN, "Display backend: {}",
-             g_platform.display == DisplayBackend::Wayland ? "wayland" : "x11");
-#endif
-
-#ifdef _WIN32
-    SetConsoleCtrlHandler([](DWORD) -> BOOL {
-        initiate_shutdown();
-        return TRUE;
-    }, TRUE);
-#else
-    SignalHandlerGuard signal_guard(+[](int) { jfn_shutdown_initiate(); });
-#endif
-
-#ifndef __APPLE__
-    if (jfn_single_instance_try_signal_existing()) {
-        LOG_INFO(LOG_MAIN, "Signaled existing instance, exiting");
-        return 0;
-    }
-    if (!jfn_single_instance_start_listener(
-            +[](const char* /*token*/, void* /*userdata*/) {
-                // TODO: raise window via xdg-activation
-            },
-            nullptr)) {
-        LOG_WARN(LOG_MAIN, "Single-instance listener failed to start");
-    }
-    // Joins the listener thread on any exit path.
-    struct ListenerGuard {
-        ~ListenerGuard() { jfn_single_instance_stop_listener(); }
-    } listener_guard;
-#endif
-
-    std::string mpv_home = paths::getMpvHome();
-#ifdef _WIN32
-    SetEnvironmentVariableA("MPV_HOME", mpv_home.c_str());
-#else
-    setenv("MPV_HOME", mpv_home.c_str(), 1);
-#endif
-
-#if !defined(_WIN32) && !defined(__APPLE__)
-    // Wire mpv through wl-proxy: mpv connects to our listener instead of
-    // the compositor; the proxy intercepts xdg_toplevel.configure +
-    // fractional_scale + drives set_fullscreen/maximized from C++.
-    // Wayland backend only; X11 path unaffected.
-    JfnWlproxy* wlproxy = nullptr;
-    if (g_platform.display == DisplayBackend::Wayland) {
-        wlproxy = jfn_wlproxy_start();
-        if (wlproxy) {
-            const char* disp = jfn_wlproxy_display_name(wlproxy);
-            if (disp && *disp) {
-                LOG_INFO(LOG_MAIN, "wlproxy listening on {}", disp);
-                setenv("WAYLAND_DISPLAY", disp, 1);
-                // Register the configure intercept BEFORE mpv_create so the
-                // first compositor configure (which arrives shortly after
-                // mpv_initialize) is captured. wl_init runs later and the
-                // same callback then drives the surface-side resize path.
-                jfn_wl_register_proxy_callbacks();
-            } else {
-                LOG_ERROR(LOG_MAIN, "wlproxy display name empty; aborting proxy");
-                jfn_wlproxy_stop(wlproxy);
-                wlproxy = nullptr;
-            }
-        } else {
-            LOG_ERROR(LOG_MAIN, "wlproxy start failed; continuing without proxy");
-        }
-    }
-#endif
+    // Platform selection, signal handler, single-instance check, MPV_HOME,
+    // and wlproxy startup are all owned by jfn_app_main now.
 
     // Restore saved window geometry. mpv's --geometry is always physical
     // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
@@ -797,9 +711,7 @@ int main(int argc, char* argv[]) {
     jfn_mpv_handle_terminate();
 #endif
 
-#if !defined(_WIN32) && !defined(__APPLE__)
-    if (wlproxy) jfn_wlproxy_stop(wlproxy);
-#endif
+    jfn_app_teardown();
 
     if (g_platform.post_window_cleanup)
         g_platform.post_window_cleanup();
