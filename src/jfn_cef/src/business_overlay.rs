@@ -1,0 +1,529 @@
+//! OverlayBrowser business logic. Ports `src/browser/overlay_browser.{cpp,h}`.
+//!
+//! The server-selection overlay loads `app://resources/overlay.html` over the
+//! main browser, drives a two-phase HEAD→GET probe of user-entered server
+//! URLs, and either hands input back to the main browser (dismiss) or kicks
+//! the main browser into a fresh load (navigate). One process-wide instance
+//! held in [`INSTANCE`]; lifetime mirrors the main browser.
+
+use cef::rc::ConvertReturnValue;
+use cef::*;
+use std::ffi::{c_char, CStr, CString};
+use std::os::raw::c_void;
+use std::sync::Mutex;
+
+use crate::bridge;
+use crate::client::JfnCefLayer;
+
+const OVERLAY_FADE_DURATION_SEC: f32 = 0.25;
+
+unsafe extern "C" {
+    fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer;
+    fn jfn_browsers_set_active(layer: *mut JfnCefLayer);
+
+    fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_char);
+    fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, v: bool);
+    fn jfn_cef_layer_create(h: *const JfnCefLayer, url: *const c_char, len: usize);
+    fn jfn_cef_layer_load_url(h: *const JfnCefLayer, url: *const c_char, len: usize);
+    fn jfn_cef_layer_reset(h: *const JfnCefLayer);
+    fn jfn_cef_layer_fade(
+        h: *const JfnCefLayer,
+        sec: f32,
+        start_fn: Option<unsafe extern "C" fn(*mut c_void)>,
+        start_ctx: *mut c_void,
+        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        done_fn: Option<unsafe extern "C" fn(*mut c_void)>,
+        done_ctx: *mut c_void,
+        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    );
+
+    fn jfn_settings_get_server_url() -> *mut c_char;
+    fn jfn_settings_set_server_url(v: *const c_char);
+    fn jfn_settings_save_async();
+    fn jfn_settings_free_string(s: *mut c_char);
+
+    fn jfn_settings_set_hwdec(v: *const c_char);
+    fn jfn_settings_set_audio_passthrough(v: *const c_char);
+    fn jfn_settings_set_audio_exclusive(v: bool);
+    fn jfn_settings_set_audio_channels(v: *const c_char);
+    fn jfn_settings_set_titlebar_theme_color(v: bool);
+    fn jfn_settings_set_log_level(v: *const c_char);
+    fn jfn_settings_set_device_name(v: *const c_char, platform_default: *const c_char);
+
+    fn jfn_theme_color_on_overlay_dismissed();
+
+    fn jfn_jellyfin_normalize_input(input: *const c_char) -> *mut c_char;
+    fn jfn_jellyfin_extract_base_url(url: *const c_char) -> *mut c_char;
+    fn jfn_jellyfin_is_valid_public_info(body: *const c_char, len: usize) -> bool;
+    fn jfn_paths_free(p: *mut c_char);
+}
+
+struct OverlayState {
+    layer: *mut JfnCefLayer,
+    main_layer: *mut JfnCefLayer,
+    active_probe: Option<Urlrequest>,
+}
+
+unsafe impl Send for OverlayState {}
+
+static INSTANCE: Mutex<Option<OverlayState>> = Mutex::new(None);
+
+#[derive(Clone, Copy)]
+struct LayerPtr(*mut JfnCefLayer);
+unsafe impl Send for LayerPtr {}
+unsafe impl Sync for LayerPtr {}
+
+/// Create the overlay layer over `main_layer`, install handlers, load the
+/// overlay URL. Called by main.cpp after the main browser is created.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
+    let kind = CString::new("overlay").unwrap();
+    let layer = unsafe { jfn_browsers_create(kind.as_ptr()) };
+    if layer.is_null() {
+        return;
+    }
+
+    let name = CString::new("overlay").unwrap();
+    unsafe { jfn_cef_layer_set_name(layer, name.as_ptr()) };
+
+    install_handlers(layer, main_layer);
+
+    unsafe {
+        jfn_cef_layer_set_visible(layer, true);
+        let url = "app://resources/overlay.html";
+        jfn_cef_layer_create(layer, url.as_ptr() as *const _, url.len());
+    }
+
+    *INSTANCE.lock().unwrap() = Some(OverlayState {
+        layer,
+        main_layer,
+        active_probe: None,
+    });
+}
+
+fn install_handlers(layer: *mut JfnCefLayer, _main_layer: *mut JfnCefLayer) {
+    let l = unsafe { &*layer };
+
+    // Created → overlay wins input.
+    let lp_created = LayerPtr(layer);
+    l.set_created_callback_rust(Some(Box::new(move |_b: *mut c_void| {
+        let lp = &lp_created;
+        unsafe { jfn_browsers_set_active(lp.0) };
+    })));
+
+    // Message dispatch.
+    l.set_message_handler_rust(Some(Box::new(
+        move |name: &str, args_raw: *mut c_void, browser_raw: *mut c_void| -> bool {
+            handle_message(name, args_raw, browser_raw)
+        },
+    )));
+
+    // Context menu.
+    l.set_context_menu_builder_rust(Some(crate::app_menu::build_closure()));
+    l.set_context_menu_dispatcher_rust(Some(crate::app_menu::dispatch_closure()));
+}
+
+fn take_cstring_into_rust(p: *mut c_char) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    let s = unsafe { CStr::from_ptr(p) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { jfn_settings_free_string(p) };
+    s
+}
+
+fn take_jellyfin_string(p: *mut c_char) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    let s = unsafe { CStr::from_ptr(p) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { jfn_paths_free(p) };
+    s
+}
+
+fn list_string(args: &ListValue, idx: usize) -> String {
+    let userfree = args.string(idx);
+    let cs: CefString = (&userfree).into();
+    cs.to_string()
+}
+
+fn list_bool(args: &ListValue, idx: usize) -> bool {
+    args.bool(idx) != 0
+}
+
+fn apply_setting_value(_section: &str, key: &str, value: &str) {
+    let cval = CString::new(value).unwrap_or_default();
+    unsafe {
+        match key {
+            "hwdec" => jfn_settings_set_hwdec(cval.as_ptr()),
+            "audioPassthrough" => jfn_settings_set_audio_passthrough(cval.as_ptr()),
+            "audioExclusive" => jfn_settings_set_audio_exclusive(value == "true"),
+            "audioChannels" => jfn_settings_set_audio_channels(cval.as_ptr()),
+            "titlebarThemeColor" => jfn_settings_set_titlebar_theme_color(value == "true"),
+            "logLevel" => jfn_settings_set_log_level(cval.as_ptr()),
+            "deviceName" => {
+                // Pass empty platform_default — Rust setter will clear when
+                // raw equals the empty string. The desktop main.cpp passed
+                // the live hostname here; overlay path doesn't have it
+                // handy and accepting empty matches the legacy behaviour
+                // for the overlay (set what the user typed, no auto-clear).
+                jfn_settings_set_device_name(cval.as_ptr(), c"".as_ptr());
+            }
+            _ => bridge::log(
+                bridge::LOG_CEF,
+                bridge::LEVEL_WARN,
+                &format!("Unknown setting key: {_section}.{key}"),
+            ),
+        }
+        jfn_settings_save_async();
+    }
+}
+
+fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
+    // Adopt the refs CEF added before invoke; release on function exit.
+    let args = (!args_raw.is_null()).then(|| -> ListValue {
+        unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() }
+    });
+    let browser = (!browser_raw.is_null()).then(|| -> Browser {
+        unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() }
+    });
+
+    match name {
+        "getSavedServerUrl" => {
+            let Some(b) = browser else { return true };
+            let Some(frame) = b.main_frame() else { return true };
+            let url = take_cstring_into_rust(unsafe { jfn_settings_get_server_url() });
+            send_process_message(&frame, "savedServerUrl", |args| {
+                args.set_string(0, Some(&CefString::from(url.as_str())));
+            });
+            true
+        }
+        "navigateMain" => {
+            let Some(args) = args else { return true };
+            let url = list_string(&args, 0);
+            bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, &format!("Overlay: navigateMain {url}"));
+            let curl = CString::new(url.clone()).unwrap_or_default();
+            unsafe {
+                jfn_settings_set_server_url(curl.as_ptr());
+                jfn_settings_save_async();
+            }
+            let main_layer = INSTANCE.lock().unwrap().as_ref().map(|s| s.main_layer);
+            if let Some(ml) = main_layer {
+                unsafe { jfn_cef_layer_load_url(ml, url.as_ptr() as *const _, url.len()) };
+            }
+            true
+        }
+        "dismissOverlay" => {
+            bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, "Overlay: dismissOverlay");
+            let (overlay, main_layer) = match INSTANCE.lock().unwrap().as_ref() {
+                Some(s) => (s.layer, s.main_layer),
+                None => return true,
+            };
+            unsafe { jfn_browsers_set_active(main_layer) };
+            let browser_for_close = browser.clone();
+            let start_box: Box<FadeFn> = Box::new(|| unsafe {
+                jfn_theme_color_on_overlay_dismissed();
+            });
+            let done_box: Box<FadeFn> = Box::new(move || {
+                if let Some(b) = browser_for_close.as_ref() {
+                    if let Some(host) = b.host() {
+                        host.close_browser(0);
+                    }
+                }
+            });
+            unsafe {
+                jfn_cef_layer_fade(
+                    overlay,
+                    OVERLAY_FADE_DURATION_SEC,
+                    Some(fade_thunk),
+                    Box::into_raw(Box::new(start_box)) as *mut c_void,
+                    Some(fade_dtor),
+                    Some(fade_thunk),
+                    Box::into_raw(Box::new(done_box)) as *mut c_void,
+                    Some(fade_dtor),
+                );
+            }
+            true
+        }
+        "saveServerUrl" => {
+            let Some(args) = args else { return true };
+            let url = list_string(&args, 0);
+            let curl = CString::new(url).unwrap_or_default();
+            unsafe {
+                jfn_settings_set_server_url(curl.as_ptr());
+                jfn_settings_save_async();
+            }
+            true
+        }
+        "setSettingValue" => {
+            let Some(args) = args else { return true };
+            let section = list_string(&args, 0);
+            let key = list_string(&args, 1);
+            let value = list_string(&args, 2);
+            apply_setting_value(&section, &key, &value);
+            true
+        }
+        "checkServerConnectivity" => {
+            let Some(args) = args else { return true };
+            let Some(b) = browser else { return true };
+            let url = list_string(&args, 0);
+            cancel_active_probe();
+            let normalized = {
+                let cinput = CString::new(url.clone()).unwrap_or_default();
+                let raw = unsafe { jfn_jellyfin_normalize_input(cinput.as_ptr()) };
+                take_jellyfin_string(raw)
+            };
+            start_probe(b, url, normalized);
+            true
+        }
+        "cancelServerConnectivity" => {
+            cancel_active_probe();
+            // Kill the pre-load.
+            let main_layer = INSTANCE.lock().unwrap().as_ref().map(|s| s.main_layer);
+            if let Some(ml) = main_layer {
+                unsafe { jfn_cef_layer_reset(ml) };
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn send_process_message<F: FnOnce(&ListValue)>(frame: &Frame, name: &str, fill: F) {
+    let Some(mut msg) = cef::process_message_create(Some(&CefString::from(name))) else {
+        return;
+    };
+    if let Some(args) = msg.argument_list() {
+        fill(&args);
+    }
+    frame.send_process_message(
+        ProcessId::from(sys::cef_process_id_t::PID_RENDERER),
+        Some(&mut msg),
+    );
+}
+
+fn cancel_active_probe() {
+    let probe = INSTANCE
+        .lock()
+        .unwrap()
+        .as_mut()
+        .and_then(|s| s.active_probe.take());
+    if let Some(p) = probe {
+        p.cancel();
+    }
+}
+
+fn start_probe(browser: Browser, user_url: String, normalized: String) {
+    let probe = ServerProbeClient::new(
+        normalized.clone(),
+        Box::new(move |success, base_url| {
+            let Some(frame) = browser.main_frame() else { return };
+            let reply_url = if success {
+                base_url.clone()
+            } else {
+                user_url.clone()
+            };
+            send_process_message(&frame, "serverConnectivityResult", |args| {
+                args.set_string(0, Some(&CefString::from(user_url.as_str())));
+                args.set_bool(1, if success { 1 } else { 0 });
+                args.set_string(2, Some(&CefString::from(reply_url.as_str())));
+            });
+            // Clear the slot under lock so cancel() after completion is a no-op.
+            if let Some(s) = INSTANCE.lock().unwrap().as_mut() {
+                s.active_probe = None;
+            }
+        }),
+    );
+    probe.start();
+}
+
+// ---- ServerProbeClient ----------------------------------------------------
+//
+// HEAD with redirect-follow to find the canonical base URL, then GET
+// {base}/System/Info/Public to confirm it's a Jellyfin server. Cancellable:
+// .cancel() aborts the active CefURLRequest; a late OnRequestComplete with
+// the slot cleared is harmless.
+
+use std::sync::Arc;
+
+type ProbeCallback = Box<dyn FnMut(bool, String) + Send + Sync>;
+
+struct ProbeInner {
+    callback: Mutex<Option<ProbeCallback>>,
+    state: Mutex<ProbeState>,
+}
+
+struct ProbeState {
+    url: String,
+    phase: Phase,
+    base: String,
+    body: Vec<u8>,
+    current_request: Option<Urlrequest>,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+enum Phase {
+    Head,
+    Get,
+}
+
+struct ServerProbeClient {
+    inner: Arc<ProbeInner>,
+}
+
+impl ServerProbeClient {
+    fn new(url: String, callback: ProbeCallback) -> Self {
+        Self {
+            inner: Arc::new(ProbeInner {
+                callback: Mutex::new(Some(callback)),
+                state: Mutex::new(ProbeState {
+                    url,
+                    phase: Phase::Head,
+                    base: String::new(),
+                    body: Vec::new(),
+                    current_request: None,
+                }),
+            }),
+        }
+    }
+
+    fn start(&self) {
+        let (url_clone, request) = {
+            let st = self.inner.state.lock().unwrap();
+            (st.url.clone(), make_request("HEAD", &st.url, self.client()))
+        };
+        if let Some(r) = request {
+            let mut st = self.inner.state.lock().unwrap();
+            // Store the cef::Urlrequest in the active slot too so cancel
+            // semantics line up with the C++ original.
+            if let Some(s) = INSTANCE.lock().unwrap().as_mut() {
+                s.active_probe = Some(r.clone());
+            }
+            st.current_request = Some(r);
+            let _ = url_clone;
+        }
+    }
+
+    fn client(&self) -> UrlrequestClient {
+        let inner = Arc::clone(&self.inner);
+        JfnServerProbeClient::new(inner)
+    }
+}
+
+impl ProbeInner {
+    fn on_complete(self: &Arc<Self>, request: &Urlrequest) {
+        // Capture phase + URL, then either start GET or finish.
+        let next_request = {
+            let mut st = self.state.lock().unwrap();
+            if st.phase == Phase::Head {
+                let mut resolved = st.url.clone();
+                if let Some(resp) = request.response() {
+                    let url_uf = resp.url();
+                    let cs: CefString = (&url_uf).into();
+                    let s = cs.to_string();
+                    if !s.is_empty() {
+                        resolved = s;
+                    }
+                }
+                let cresolved = CString::new(resolved).unwrap_or_default();
+                let base_raw = unsafe { jfn_jellyfin_extract_base_url(cresolved.as_ptr()) };
+                st.base = take_jellyfin_string(base_raw);
+                st.phase = Phase::Get;
+                let next_url = format!("{}/System/Info/Public", st.base);
+                let req = make_request("GET", &next_url, JfnServerProbeClient::new(Arc::clone(self)));
+                if let Some(r) = req.clone() {
+                    st.current_request = Some(r);
+                }
+                req
+            } else {
+                None
+            }
+        };
+        if next_request.is_some() {
+            return;
+        }
+
+        let (success, base) = {
+            let st = self.state.lock().unwrap();
+            let mut ok = false;
+            let status = request.request_status();
+            if status.as_ref() == &sys::cef_urlrequest_status_t::UR_SUCCESS {
+                if let Some(resp) = request.response() {
+                    if resp.status() == 200 {
+                        let body_ptr = st.body.as_ptr() as *const c_char;
+                        let valid =
+                            unsafe { jfn_jellyfin_is_valid_public_info(body_ptr, st.body.len()) };
+                        ok = valid;
+                    }
+                }
+            }
+            (ok, st.base.clone())
+        };
+        let cb = self.callback.lock().unwrap().take();
+        self.state.lock().unwrap().current_request = None;
+        if let Some(mut f) = cb {
+            f(success, base);
+        }
+    }
+}
+
+fn make_request(method: &str, url: &str, client: UrlrequestClient) -> Option<Urlrequest> {
+    let req: Request = request_create()?;
+    req.set_url(Some(&CefString::from(url)));
+    req.set_method(Some(&CefString::from(method)));
+    let mut req_arg = req;
+    let mut client_arg = client;
+    urlrequest_create(Some(&mut req_arg), Some(&mut client_arg), None)
+}
+
+cef::wrap_urlrequest_client! {
+    struct JfnServerProbeClient {
+        inner: Arc<ProbeInner>,
+    }
+
+    impl UrlrequestClient {
+        fn on_request_complete(&self, request: Option<&mut Urlrequest>) {
+            let Some(req) = request else { return };
+            self.inner.on_complete(req);
+        }
+        fn on_download_data(
+            &self,
+            _request: Option<&mut Urlrequest>,
+            data: *const u8,
+            data_length: usize,
+        ) {
+            let mut st = self.inner.state.lock().unwrap();
+            if st.phase == Phase::Get && !data.is_null() && data_length > 0 {
+                let slice = unsafe { std::slice::from_raw_parts(data, data_length) };
+                st.body.extend_from_slice(slice);
+            }
+        }
+    }
+}
+
+// ---- helpers for fade callbacks ------------------------------------------
+//
+// The platform fade FFI fires `fn(ctx)` then `dtor(ctx)`. We ship a
+// double-box: outer Box owns the heap holder, inner Box<dyn Fn> is what
+// the thunk reads. Thunk borrows; dtor drops.
+
+type FadeFn = dyn Fn() + Send + Sync;
+
+unsafe extern "C" fn fade_thunk(ctx: *mut c_void) {
+    if ctx.is_null() {
+        return;
+    }
+    let bx: &Box<FadeFn> = unsafe { &*(ctx as *const Box<FadeFn>) };
+    bx();
+}
+
+unsafe extern "C" fn fade_dtor(ctx: *mut c_void) {
+    if ctx.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(ctx as *mut Box<FadeFn>) });
+}

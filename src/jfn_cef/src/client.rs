@@ -39,6 +39,7 @@ const STATE_NORMAL: i32 = 0;
 const STATE_PENDING_RESET: i32 = 1;
 const STATE_RECREATING: i32 = 2;
 
+#[repr(C)]
 pub struct JfnCefLayer {
     pub(crate) inner: Arc<Inner>,
 }
