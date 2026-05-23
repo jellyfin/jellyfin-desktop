@@ -14,6 +14,7 @@ pub mod app_menu;
 mod bridge;
 pub mod business_about;
 pub mod business_overlay;
+pub mod business_web;
 pub mod client;
 mod client_impl;
 mod embedded_js;

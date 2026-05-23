@@ -5,8 +5,6 @@
 #include <mutex>
 #include <vector>
 
-class WebBrowser;
-
 // Single owner of all live CefLayer instances. Holds the shared display
 // state (size, frame rate, shared-texture flag), the active input target,
 // and the stack order. The platform sees only PlatformSurface* handles
@@ -72,13 +70,8 @@ private:
 
 extern Browsers* g_browsers;
 
-// WebBrowser is the only typed global — playback sinks reach for it to
-// dispatch JS into jellyfin-web. Overlay and About are addressed via
-// Browsers iteration (allClosed/closeAll).
-extern WebBrowser* g_web_browser;
-
-// Drops the wrapper's CEF-layer reference from Browsers if Browsers is
-// still alive. Used by every business-wrapper dtor.
+// Drops the layer from Browsers if Browsers is still alive. Used by
+// the C++ layers that don't yet route through jfn_browsers_remove.
 inline void release_layer(CefLayer* layer) {
     if (g_browsers && layer) g_browsers->remove(layer);
 }

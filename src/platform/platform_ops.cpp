@@ -185,3 +185,12 @@ extern "C" void jfn_platform_clear_clipboard_handler(void) {
 extern "C" void jfn_platform_toggle_fullscreen(void) {
     if (g_platform.toggle_fullscreen) g_platform.toggle_fullscreen();
 }
+
+extern "C" void jfn_platform_set_fullscreen(bool v) {
+    if (g_platform.set_fullscreen) g_platform.set_fullscreen(v);
+}
+
+extern "C" void jfn_platform_set_cursor(int type_) {
+    if (g_platform.set_cursor)
+        g_platform.set_cursor(static_cast<cef_cursor_type_t>(type_));
+}
