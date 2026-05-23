@@ -11,16 +11,10 @@ use crate::lifecycle::query_parent_geometry;
 use crate::shm::{shm_alloc, shm_free};
 use crate::x11_state::{MUT, Mutable, PlatformSurface, is_none_gc, is_none_window};
 
+pub use jfn_platform_abi::JfnRect;
+
 unsafe extern "C" {
     fn jfn_shutting_down() -> bool;
-}
-
-#[repr(C)]
-pub struct JfnRect {
-    pub x: c_int,
-    pub y: c_int,
-    pub w: c_int,
-    pub h: c_int,
 }
 
 /// Create an ARGB override-redirect overlay window at (x, y, w, h).

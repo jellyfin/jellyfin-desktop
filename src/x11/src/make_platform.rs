@@ -9,107 +9,12 @@
 use std::ffi::{c_char, c_int, c_void};
 
 use crate::surface::{
-    JfnRect, jfn_x11_alloc_surface, jfn_x11_fade_surface, jfn_x11_free_surface,
-    jfn_x11_restack, jfn_x11_surface_present, jfn_x11_surface_present_software,
-    jfn_x11_surface_resize, jfn_x11_surface_set_visible,
+    jfn_x11_alloc_surface, jfn_x11_fade_surface, jfn_x11_free_surface, jfn_x11_restack,
+    jfn_x11_surface_present, jfn_x11_surface_present_software, jfn_x11_surface_resize,
+    jfn_x11_surface_set_visible,
 };
 
-#[repr(i32)]
-#[derive(Copy, Clone)]
-pub enum DisplayBackend {
-    Wayland = 0,
-    X11 = 1,
-    Windows = 2,
-    MacOS = 3,
-}
-
-#[repr(C)]
-pub struct JfnPopupRequest {
-    pub x: c_int,
-    pub y: c_int,
-    pub lw: c_int,
-    pub lh: c_int,
-    pub options: *const *const c_char,
-    pub options_len: usize,
-    pub initial_highlight: c_int,
-    pub on_selected: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
-    pub on_selected_ctx: *mut c_void,
-    pub on_selected_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-}
-
-#[repr(C)]
-pub struct Platform {
-    pub display: DisplayBackend,
-    pub early_init: Option<unsafe extern "C" fn()>,
-    pub init: Option<unsafe extern "C" fn(*mut c_void) -> bool>,
-    pub cleanup: Option<unsafe extern "C" fn()>,
-    pub post_window_cleanup: Option<unsafe extern "C" fn()>,
-    pub alloc_surface: Option<unsafe extern "C" fn() -> *mut c_void>,
-    pub free_surface: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub surface_present:
-        Option<unsafe extern "C" fn(*mut c_void, *const c_void) -> bool>,
-    pub surface_present_software: Option<
-        unsafe extern "C" fn(
-            *mut c_void,
-            *const JfnRect,
-            usize,
-            *const c_void,
-            c_int,
-            c_int,
-        ) -> bool,
-    >,
-    pub surface_resize:
-        Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int, c_int)>,
-    pub surface_set_visible: Option<unsafe extern "C" fn(*mut c_void, bool)>,
-    pub restack: Option<unsafe extern "C" fn(*const *mut c_void, usize)>,
-    pub fade_surface: Option<
-        unsafe extern "C" fn(
-            *mut c_void,
-            f32,
-            Option<unsafe extern "C" fn(*mut c_void)>,
-            *mut c_void,
-            Option<unsafe extern "C" fn(*mut c_void)>,
-            Option<unsafe extern "C" fn(*mut c_void)>,
-            *mut c_void,
-            Option<unsafe extern "C" fn(*mut c_void)>,
-        ),
-    >,
-    pub popup_show: Option<unsafe extern "C" fn(*mut c_void, *const JfnPopupRequest)>,
-    pub popup_hide: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub popup_present:
-        Option<unsafe extern "C" fn(*mut c_void, *const c_void, c_int, c_int)>,
-    pub popup_present_software: Option<
-        unsafe extern "C" fn(*mut c_void, *const c_void, c_int, c_int, c_int, c_int),
-    >,
-    pub set_fullscreen: Option<unsafe extern "C" fn(bool)>,
-    pub toggle_fullscreen: Option<unsafe extern "C" fn()>,
-    pub begin_transition: Option<unsafe extern "C" fn()>,
-    pub end_transition: Option<unsafe extern "C" fn()>,
-    pub in_transition: Option<unsafe extern "C" fn() -> bool>,
-    pub set_expected_size: Option<unsafe extern "C" fn(c_int, c_int)>,
-    pub get_scale: Option<unsafe extern "C" fn() -> f32>,
-    pub get_display_scale: Option<unsafe extern "C" fn(c_int, c_int) -> f32>,
-    pub query_window_position:
-        Option<unsafe extern "C" fn(*mut c_int, *mut c_int) -> bool>,
-    pub clamp_window_geometry:
-        Option<unsafe extern "C" fn(*mut c_int, *mut c_int, *mut c_int, *mut c_int)>,
-    pub pump: Option<unsafe extern "C" fn()>,
-    pub run_main_loop: Option<unsafe extern "C" fn()>,
-    pub wake_main_loop: Option<unsafe extern "C" fn()>,
-    pub set_cursor: Option<unsafe extern "C" fn(c_int)>,
-    pub set_idle_inhibit: Option<unsafe extern "C" fn(c_int)>,
-    pub set_theme_color: Option<unsafe extern "C" fn(u32)>,
-    pub shared_texture_supported: bool,
-    pub cef_ozone_platform: [c_char; 32],
-    pub clipboard_read_text_async: Option<
-        unsafe extern "C" fn(
-            Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-            *mut c_void,
-            Option<unsafe extern "C" fn(*mut c_void)>,
-        ),
-    >,
-    pub open_external_url: Option<unsafe extern "C" fn(*const c_char, usize)>,
-}
+pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
 unsafe extern "C" {
     fn jfn_idle_inhibit_set(level: u32);

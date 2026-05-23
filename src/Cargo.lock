@@ -1107,6 +1107,10 @@ name = "jfn-paths"
 version = "0.1.0"
 
 [[package]]
+name = "jfn-platform-abi"
+version = "0.1.0"
+
+[[package]]
 name = "jfn-playback"
 version = "0.1.0"
 dependencies = [
@@ -1133,6 +1137,7 @@ dependencies = [
  "jfn-mpv",
  "jfn-open-url-linux",
  "jfn-paths",
+ "jfn-platform-abi",
  "jfn-playback",
  "jfn-signal-guard",
  "jfn-single-instance",
@@ -1163,6 +1168,7 @@ name = "jfn-wayland"
 version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
+ "jfn-platform-abi",
  "libc",
  "libloading 0.9.0",
  "log",
@@ -1200,6 +1206,7 @@ dependencies = [
 name = "jfn-x11"
 version = "0.1.0"
 dependencies = [
+ "jfn-platform-abi",
  "libc",
  "log",
  "xcb",

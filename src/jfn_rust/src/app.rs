@@ -12,30 +12,18 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
-
-// DisplayBackend discriminants must match `enum class DisplayBackend`
-// in `src/platform/display_backend.h`. Pinned by the static_asserts in
-// platform_ops.cpp.
-#[repr(i32)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[allow(dead_code)]
-pub enum DisplayBackend {
-    Wayland = 0,
-    X11 = 1,
-    Windows = 2,
-    MacOS = 3,
-}
+use jfn_platform_abi::{DisplayBackend, Platform};
 
 // Linux: the `Platform` vtable lives in jfn-wayland / jfn-x11; both crates
-// export `make_*_platform` with C linkage returning the same C-layout
-// struct. The Rust port reads the vtable through narrow C accessors in
-// `src/platform/platform_ops.cpp` (added during the port) so we don't have
-// to mirror the entire vtable shape in this crate.
+// export `make_*_platform` with C linkage returning a Platform from the
+// shared jfn-platform-abi crate. The narrow C accessors in
+// `src/platform/platform_ops.cpp` are still used during the port for fields
+// jfn_app_run_with_cef reads.
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
-    fn make_wayland_platform() -> jfn_wayland::make_platform::Platform;
-    fn make_x11_platform() -> jfn_wayland::make_platform::Platform;
-    fn jfn_g_platform_ptr() -> *mut jfn_wayland::make_platform::Platform;
+    fn make_wayland_platform() -> Platform;
+    fn make_x11_platform() -> Platform;
+    fn jfn_g_platform_ptr() -> *mut Platform;
     fn jfn_platform_ops() -> *const jfn_cef::platform_ops::JfnPlatformOps;
 }
 

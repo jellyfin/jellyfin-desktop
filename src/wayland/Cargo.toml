@@ -13,6 +13,7 @@ default = ["kde-palette"]
 kde-palette = []
 
 [dependencies]
+jfn-platform-abi = { path = "../platform_abi" }
 cef-dll-sys = { version = "=148.1.0" }
 libc = "0.2"
 libloading = "0.9"
