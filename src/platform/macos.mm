@@ -117,7 +117,7 @@ static id<MTLRenderPipelineState> g_mtl_pipeline = nil;
 // Per-surface state. One per CefLayer (allocated by macos_alloc_surface,
 // destroyed by macos_free_surface). The bottom-most surface in the
 // current stack is treated as the cef-main surface for fullscreen-
-// transition gating (see g_transitioning / macos_begin_transition).
+// transition gating (see macos_begin_transition in src/macos/src/lib.rs).
 struct PlatformSurface {
     NSView* __strong view = nil;
     CAMetalLayer* __strong layer = nil;
@@ -136,10 +136,14 @@ static std::vector<PlatformSurface*> g_surface_stack;
 // Input NSView (owned by input::macos)
 static NSView* g_input_view = nil;
 
-// Window + transition state
+// Window + transition state. The transition flag itself lives in the
+// Rust macos crate (src/macos/src/lib.rs) as an AtomicBool — set by
+// macos_begin_transition, read by macos_in_transition, cleared via
+// jfn_macos_transition_clear from macos_surface_present below.
 static NSWindow* g_window = nullptr;
 static int g_expected_w = 0, g_expected_h = 0;
-static bool g_transitioning = false;
+
+extern "C" void jfn_macos_transition_clear();
 
 // CADisplayLink drives CEF BeginFrame production synchronized with the
 // real display refresh. The callback fires on the main runloop each
@@ -677,11 +681,12 @@ extern "C" void macos_toggle_fullscreen() {
     jfn_mpv_toggle_fullscreen();
 }
 
-extern "C" void macos_begin_transition() {
-    g_transitioning = true;
-    // Drop cached input-surface wrappers across the whole stack so the
-    // next paint re-wraps at the new size. drawableSize is updated in
-    // present_iosurface.
+// macos_begin_transition / macos_in_transition now live in
+// src/macos/src/lib.rs. The Rust side calls this helper from
+// macos_begin_transition to drop cached input-surface wrappers across
+// the whole stack so the next paint re-wraps at the new size.
+// drawableSize is updated in present_iosurface.
+extern "C" void macos_drop_input_textures() {
     for (PlatformSurface* s : g_surface_stack) {
         s->input_texture = nil;
         s->cached_input = nullptr;
@@ -689,8 +694,6 @@ extern "C" void macos_begin_transition() {
 }
 
 // macos_end_transition now lives in src/macos/src/lib.rs.
-
-extern "C" bool macos_in_transition() { return g_transitioning; }
 
 extern "C" void macos_set_expected_size(int w, int h) {
     g_expected_w = w;
@@ -1039,14 +1042,14 @@ extern "C" bool macos_surface_present(PlatformSurface* s, const void* raw_info) 
     // Fullscreen-transition gating runs only on the cef-main surface
     // (bottom of stack), matching the pre-refactor macos_present path.
     if (is_cef_main(s)) {
-        if (g_transitioning) return false;
+        if (macos_in_transition()) return false;
         present_iosurface(*s, info);
         if (g_expected_w > 0) {
             IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
             if (surface && (int)IOSurfaceGetWidth(surface) == g_expected_w &&
                 (int)IOSurfaceGetHeight(surface) == g_expected_h) {
                 g_expected_w = 0; g_expected_h = 0;
-                g_transitioning = false;
+                jfn_macos_transition_clear();
             }
         }
         return true;

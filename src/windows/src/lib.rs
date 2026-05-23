@@ -11,6 +11,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_char, c_int, c_void};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
@@ -24,6 +25,40 @@ pub extern "C" fn win_set_theme_color(_rgb: u32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn win_pump() {
     // Input handled by dedicated input-thread message loop.
+}
+
+// =====================================================================
+// Fullscreen-transition gating flag. Read by win_surface_present each
+// frame (under surface_mtx in C++); set/cleared by C++
+// win_begin_transition_locked / win_end_transition_locked via the
+// jfn_win_transition_set accessor below. SeqCst matches the prior
+// plain-bool semantics with no surrounding ordering requirements.
+// =====================================================================
+
+static G_TRANSITIONING: AtomicBool = AtomicBool::new(false);
+
+unsafe extern "C" {
+    /// Implemented in src/platform/windows.cpp: acquires surface_mtx and
+    /// runs win_begin_transition_locked (which sets the flag via
+    /// jfn_win_transition_set and tears down the main swap chain).
+    fn win_begin_transition_impl();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn win_begin_transition() {
+    unsafe { win_begin_transition_impl() };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn win_in_transition() -> bool {
+    G_TRANSITIONING.load(Ordering::SeqCst)
+}
+
+/// Called by C++ win_begin_transition_locked / win_end_transition_locked
+/// to update the flag.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_win_transition_set(v: bool) {
+    G_TRANSITIONING.store(v, Ordering::SeqCst);
 }
 
 unsafe extern "C" {
@@ -67,9 +102,7 @@ unsafe extern "C" {
     );
     fn win_set_fullscreen(fullscreen: bool);
     fn win_toggle_fullscreen();
-    fn win_begin_transition();
     fn win_end_transition();
-    fn win_in_transition() -> bool;
     fn win_set_expected_size(w: c_int, h: c_int);
     fn win_get_scale() -> f32;
     fn win_get_display_scale(x: c_int, y: c_int) -> f32;

@@ -84,11 +84,13 @@ struct WinState {
     float cached_scale = 1.0f;
     int mpv_pw = 0, mpv_ph = 0;  // mpv's current physical size
 
-    // Fullscreen transition
+    // Fullscreen transition. The `transitioning` flag itself lives in the
+    // Rust windows crate (src/windows/src/lib.rs) as an AtomicBool —
+    // read via win_in_transition, set/cleared via jfn_win_transition_set
+    // from win_begin_transition_locked / win_end_transition_locked.
     int expected_w = 0, expected_h = 0;
     int transition_pw = 0, transition_ph = 0;
     int pending_lw = 0, pending_lh = 0;
-    bool transitioning = false;
     bool was_fullscreen = false;
     bool was_minimized = false;
     bool restore_maximized_on_unfullscreen = false;
@@ -101,6 +103,8 @@ static WinState g_win;
 
 extern "C" void win_begin_transition_locked();
 extern "C" void win_end_transition_locked();
+extern "C" void jfn_win_transition_set(bool v);
+extern "C" bool win_in_transition();
 
 extern "C" bool win_is_fullscreen_style(LONG_PTR style) {
     return (style & WS_CAPTION) == 0 && (style & WS_THICKFRAME) == 0;
@@ -262,7 +266,7 @@ extern "C" bool win_surface_present(PlatformSurface* s, const void* raw_info) {
     // mpv resizes the HWND on fullscreen toggle, so we drop CEF frames that
     // still match the pre-transition size until CEF catches up.
     bool is_main = (s == g_win.main_surface);
-    if (is_main && g_win.transitioning) {
+    if (is_main && win_in_transition()) {
         if (g_win.expected_w <= 0 || (w == g_win.transition_pw && h == g_win.transition_ph)) {
             src->Release();
             return false;
@@ -523,7 +527,7 @@ extern "C" void win_restack(PlatformSurface* const* ordered, size_t n) {
 // =====================================================================
 
 static void update_surface_size_locked(int lw, int lh, int pw, int ph) {
-    if (g_win.transitioning) {
+    if (win_in_transition()) {
         g_win.pending_lw = lw;
         g_win.pending_lh = lh;
     }
@@ -534,7 +538,7 @@ static void update_surface_size_locked(int lw, int lh, int pw, int ph) {
 }
 
 extern "C" void win_begin_transition_locked() {
-    g_win.transitioning = true;
+    jfn_win_transition_set(true);
     g_win.transition_pw = g_win.mpv_pw;
     g_win.transition_ph = g_win.mpv_ph;
     g_win.pending_lw = 0;
@@ -556,14 +560,18 @@ extern "C" void win_begin_transition_locked() {
 }
 
 extern "C" void win_end_transition_locked() {
-    g_win.transitioning = false;
+    jfn_win_transition_set(false);
     g_win.expected_w = 0;
     g_win.expected_h = 0;
     g_win.pending_lw = 0;
     g_win.pending_lh = 0;
 }
 
-extern "C" void win_begin_transition() {
+// win_begin_transition / win_in_transition now live in
+// src/windows/src/lib.rs. The Rust win_begin_transition calls this
+// helper to acquire surface_mtx and invoke win_begin_transition_locked
+// (which sets the flag via jfn_win_transition_set).
+extern "C" void win_begin_transition_impl() {
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
     win_begin_transition_locked();
 }
@@ -573,13 +581,9 @@ extern "C" void win_end_transition() {
     win_end_transition_locked();
 }
 
-extern "C" bool win_in_transition() {
-    return g_win.transitioning;
-}
-
 extern "C" void win_set_expected_size(int w, int h) {
     std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-    if (g_win.transitioning && w == g_win.transition_pw && h == g_win.transition_ph)
+    if (win_in_transition() && w == g_win.transition_pw && h == g_win.transition_ph)
         return;
     g_win.expected_w = w;
     g_win.expected_h = h;
@@ -593,7 +597,7 @@ extern "C" void win_set_fullscreen(bool fullscreen) {
     if (!jfn_mpv_handle_get()) return;
     if (jfn_playback_fullscreen() == fullscreen) {
         std::lock_guard<std::mutex> lock(g_win.surface_mtx);
-        if (g_win.transitioning && fullscreen == g_win.was_fullscreen)
+        if (win_in_transition() && fullscreen == g_win.was_fullscreen)
             win_end_transition_locked();
         return;
     }
@@ -748,15 +752,15 @@ static LRESULT CALLBACK mpv_wndproc_hook(int nCode, WPARAM wp, LPARAM lp) {
                     if (recovering_from_minimize) {
                         g_win.was_minimized = false;
                         g_win.was_fullscreen = fs;
-                        if (g_win.transitioning)
+                        if (win_in_transition())
                             win_end_transition_locked();
                     } else if (fs != g_win.was_fullscreen) {
-                        if (!g_win.transitioning)
+                        if (!win_in_transition())
                             win_begin_transition_locked();
                         else
                             win_end_transition_locked();
                         g_win.was_fullscreen = fs;
-                    } else if (g_win.transitioning) {
+                    } else if (win_in_transition()) {
                         win_end_transition_locked();
                     }
                     update_surface_size_locked(lw, lh, pw, ph);
