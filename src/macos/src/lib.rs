@@ -21,6 +21,29 @@ pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 // External C symbols (src/platform/macos.mm + src/input/input_macos.mm)
 // =====================================================================
 
+// Stateless no-ops ported to native Rust. The C++ statics were deleted
+// so the link table picks these up by symbol name.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_end_transition() {
+    // Transition-end is detected inline by macos_surface_present when
+    // an incoming frame matches g_expected_w/h; the explicit vtable
+    // entry is a no-op.
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_surface_present_software(
+    _s: *mut c_void,
+    _dirty: *const JfnRect,
+    _dirty_len: usize,
+    _buffer: *const c_void,
+    _w: c_int,
+    _h: c_int,
+) -> bool {
+    // CEF on macOS runs hardware-accelerated (shared_texture_supported=
+    // true); the software path is not exercised. Kept for API completeness.
+    false
+}
+
 unsafe extern "C" {
     fn macos_early_init();
     fn macos_init(mpv: *mut c_void) -> bool;
@@ -28,14 +51,6 @@ unsafe extern "C" {
     fn macos_alloc_surface() -> *mut c_void;
     fn macos_free_surface(s: *mut c_void);
     fn macos_surface_present(s: *mut c_void, info: *const c_void) -> bool;
-    fn macos_surface_present_software(
-        s: *mut c_void,
-        dirty: *const JfnRect,
-        dirty_len: usize,
-        buffer: *const c_void,
-        w: c_int,
-        h: c_int,
-    ) -> bool;
     fn macos_surface_resize(s: *mut c_void, lw: c_int, lh: c_int, pw: c_int, ph: c_int);
     fn macos_surface_set_visible(s: *mut c_void, visible: bool);
     fn macos_restack(ordered: *const *mut c_void, n: usize);
@@ -53,7 +68,6 @@ unsafe extern "C" {
     fn macos_set_fullscreen(fullscreen: bool);
     fn macos_toggle_fullscreen();
     fn macos_begin_transition();
-    fn macos_end_transition();
     fn macos_in_transition() -> bool;
     fn macos_set_expected_size(w: c_int, h: c_int);
     fn macos_get_scale() -> f32;
