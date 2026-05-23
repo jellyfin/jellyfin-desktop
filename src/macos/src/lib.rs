@@ -347,15 +347,40 @@ unsafe extern "C" {
     fn macos_early_init();
     fn macos_init(mpv: *mut c_void) -> bool;
     fn macos_cleanup();
-    fn macos_popup_show(s: *mut c_void, req: *const JfnPopupRequest);
-    fn macos_set_fullscreen(fullscreen: bool);
-    fn macos_toggle_fullscreen();
     fn jfn_input_macos_set_cursor(t: c_int);
 
     /// Narrow accessor for the input NSView installed by macos_init.
     /// Rust's macos_restack re-anchors it on top of the CefLayer
     /// subviews after every reorder. Returns nullptr before macos_init.
     fn jfn_macos_get_input_view() -> *mut objc2::runtime::AnyObject;
+}
+
+// =====================================================================
+// Fullscreen — thin pass-through to mpv. The actual style/state
+// transitions are driven through mpv's macOS VO. We keep the no-mpv
+// guard to match the original behavior.
+// =====================================================================
+
+unsafe extern "C" {
+    fn jfn_mpv_handle_get() -> *mut c_void;
+    fn jfn_mpv_set_fullscreen(v: bool);
+    fn jfn_mpv_toggle_fullscreen();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_set_fullscreen(fullscreen: bool) {
+    if unsafe { jfn_mpv_handle_get() }.is_null() {
+        return;
+    }
+    unsafe { jfn_mpv_set_fullscreen(fullscreen) };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_toggle_fullscreen() {
+    if unsafe { jfn_mpv_handle_get() }.is_null() {
+        return;
+    }
+    unsafe { jfn_mpv_toggle_fullscreen() };
 }
 
 // =====================================================================
@@ -592,11 +617,13 @@ pub extern "C" fn macos_open_external_url(utf8: *const c_char, len: usize) {
 // kIOSurfaceColorSpace tag (falls back to sRGB).
 // =====================================================================
 mod compositor;
+mod popup;
 use compositor::{
     macos_alloc_surface, macos_fade_surface, macos_free_surface, macos_restack,
     macos_set_expected_size, macos_surface_present, macos_surface_resize,
     macos_surface_set_visible,
 };
+use popup::macos_popup_show;
 
 // =====================================================================
 // Popup no-op trampolines for compositor backends that delegate popups

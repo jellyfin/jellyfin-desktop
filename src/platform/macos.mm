@@ -305,119 +305,13 @@ extern "C" bool macos_init(mpv_handle* mpv) {
     return true;
 }
 
-// =====================================================================
-// Native NSMenu popup (replaces CEF's HTML popup widget for <select>)
-// =====================================================================
-//
-// CEF's Alloy OSR popup widget renders hover/selection highlights as
-// opaque black on macOS (compositor-level issue we can't reach). Instead
-// we let CEF's popup widget run invisibly in the background and display
-// a native NSMenu in its place. On selection, we send the chosen index
-// back to the renderer process for application, then send Escape to
-// dismiss CEF's internal popup widget (which fires OnPopupShow(false)).
-
-@interface JellyfinPopupMenuTarget : NSObject {
-@public
-    std::function<void(int)> on_selected;
-    BOOL fired;
-}
-- (void)itemPicked:(NSMenuItem*)item;
-- (void)fireCancelIfNeeded;
-@end
-
-@implementation JellyfinPopupMenuTarget
-- (void)itemPicked:(NSMenuItem*)item {
-    if (fired) return;
-    fired = YES;
-    if (on_selected) on_selected((int)[item tag]);
-}
-- (void)fireCancelIfNeeded {
-    if (fired) return;
-    fired = YES;
-    if (on_selected) on_selected(-1);
-}
-@end
-
-// Owns a JfnPopupRequest on_selected (fn, ctx, dtor) triple. dtor fires
-// once when the last shared_ptr ref is dropped.
-struct PopupCb {
-    void (*fn)(void*, int) = nullptr;
-    void* ctx = nullptr;
-    void (*dtor)(void*) = nullptr;
-    PopupCb(void (*f)(void*, int), void* c, void (*d)(void*)) : fn(f), ctx(c), dtor(d) {}
-    PopupCb(const PopupCb&) = delete;
-    PopupCb& operator=(const PopupCb&) = delete;
-    ~PopupCb() { if (dtor) dtor(ctx); }
-    void fire(int idx) { if (fn) fn(ctx, idx); }
-};
-
-extern "C" void macos_popup_show(void*, const JfnPopupRequest* req) {
-    // NSMenu is a window-level OS overlay — not tied to a CefLayer
-    // surface, so the surface arg is ignored.
-    auto cb = std::make_shared<PopupCb>(
-        req ? req->on_selected : nullptr,
-        req ? req->on_selected_ctx : nullptr,
-        req ? req->on_selected_dtor : nullptr);
-    if (!g_window || !g_input_view || !req || req->options_len == 0) return;
-
-    // Copy option strings into std::vector so they outlive the
-    // dispatch_async block (the caller's req buffer is gone by then).
-    std::vector<std::string> opts;
-    opts.reserve(req->options_len);
-    for (size_t i = 0; i < req->options_len; i++) {
-        const char* o = req->options ? req->options[i] : nullptr;
-        opts.emplace_back(o ? o : "");
-    }
-    int cur = req->initial_highlight;
-    int px = req->x, py = req->y, plw = req->lw;
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
-        [menu setAutoenablesItems:NO];
-
-        JellyfinPopupMenuTarget* target = [[JellyfinPopupMenuTarget alloc] init];
-        target->on_selected = [cb](int idx) { cb->fire(idx); };
-        target->fired = NO;
-
-        for (size_t i = 0; i < opts.size(); i++) {
-            NSString* title = [NSString stringWithUTF8String:opts[i].c_str()];
-            NSMenuItem* item =
-                [[NSMenuItem alloc] initWithTitle:title
-                                           action:@selector(itemPicked:)
-                                    keyEquivalent:@""];
-            [item setTag:(NSInteger)i];
-            [item setTarget:target];
-            if ((int)i == cur) [item setState:NSControlStateValueOn];
-            [menu addItem:item];
-        }
-
-        // Anchor in g_input_view — it's isFlipped=YES so (x, y) map directly
-        // without a contentView-height subtraction.
-        NSPoint location = NSMakePoint((CGFloat)px, (CGFloat)py);
-        NSMenuItem* initial = (cur >= 0 && cur < (int)opts.size())
-            ? [menu itemAtIndex:cur] : nil;
-        [menu setMinimumWidth:(CGFloat)plw];
-
-        [menu popUpMenuPositioningItem:initial
-                            atLocation:location
-                                inView:g_input_view];
-        // popUpMenuPositioningItem is modal; if no item was picked, cancel.
-        [target fireCancelIfNeeded];
-    });
-}
+// macos_popup_show now lives in src/macos/src/popup.rs.
 
 // macos_surface_set_visible and macos_fade_surface now live in
 // src/macos/src/lib.rs.
 
-extern "C" void macos_set_fullscreen(bool fullscreen) {
-    if (!jfn_mpv_handle_get()) return;
-    jfn_mpv_set_fullscreen(fullscreen);
-}
-
-extern "C" void macos_toggle_fullscreen() {
-    if (!jfn_mpv_handle_get()) return;
-    jfn_mpv_toggle_fullscreen();
-}
+// macos_set_fullscreen + macos_toggle_fullscreen now live in
+// src/macos/src/lib.rs.
 
 // macos_begin_transition, macos_in_transition, macos_end_transition,
 // macos_drop_input_textures and macos_set_expected_size all now live in
