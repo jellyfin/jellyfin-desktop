@@ -347,13 +347,15 @@ unsafe extern "C" {
     fn macos_early_init();
     fn macos_init(mpv: *mut c_void) -> bool;
     fn macos_cleanup();
-    fn jfn_input_macos_set_cursor(t: c_int);
 
     /// Narrow accessor for the input NSView installed by macos_init.
     /// Rust's macos_restack re-anchors it on top of the CefLayer
     /// subviews after every reorder. Returns nullptr before macos_init.
     fn jfn_macos_get_input_view() -> *mut objc2::runtime::AnyObject;
 }
+
+// jfn_input_macos_set_cursor lives in src/macos/src/input.rs (Rust).
+use input::jfn_input_macos_set_cursor;
 
 // =====================================================================
 // Fullscreen — thin pass-through to mpv. The actual style/state
@@ -617,6 +619,7 @@ pub extern "C" fn macos_open_external_url(utf8: *const c_char, len: usize) {
 // kIOSurfaceColorSpace tag (falls back to sRGB).
 // =====================================================================
 mod compositor;
+mod input;
 mod popup;
 use compositor::{
     macos_alloc_surface, macos_fade_surface, macos_free_surface, macos_restack,

@@ -14,7 +14,6 @@
 #include "browser/about_browser.h"
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
-#include "input/input_macos.h"
 #include "logging.h"
 #include "mpv/jfn_mpv_api.h"
 
@@ -105,8 +104,13 @@ extern "C" void macos_pump();
 // PlatformSurface itself is opaque to this file.
 // =====================================================================
 
-// Input NSView (owned by input::macos)
+// Input NSView (owned by jfn-macos input.rs)
 static NSView* g_input_view = nil;
+
+// jfn_input_macos_create_view returns a +1-retained NSView from the
+// Rust input crate. With ARC enabled here we adopt it via
+// __bridge_transfer to balance the retain.
+extern "C" void* jfn_input_macos_create_view();
 
 // Window
 static NSWindow* g_window = nullptr;
@@ -263,7 +267,7 @@ extern "C" bool macos_init(mpv_handle* mpv) {
     // top after any reorder.
     CGRect frame = [contentView bounds];
 
-    g_input_view = input::macos::create_input_view();
+    g_input_view = (__bridge_transfer NSView*)jfn_input_macos_create_view();
     g_input_view.frame = contentView.bounds;
     g_input_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [contentView addSubview:g_input_view];
