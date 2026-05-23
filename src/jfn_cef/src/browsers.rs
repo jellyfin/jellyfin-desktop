@@ -273,6 +273,23 @@ pub extern "C" fn jfn_browsers_close_all() {
     }
 }
 
+/// Drive an external BeginFrame on every layer. Called from the macOS
+/// CADisplayLink tick at the display's real refresh rate so CEF produces
+/// frames only when its compositor has invalidation.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_browsers_send_external_begin_frame_all() {
+    let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|b| b.layers.clone())
+        .unwrap_or_default();
+    for l in snapshot {
+        unsafe { crate::client::jfn_cef_layer_send_external_begin_frame(l) };
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_browsers_wait_all_closed() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE

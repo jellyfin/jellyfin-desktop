@@ -37,17 +37,11 @@ pub extern "C" fn macos_end_transition() {
 // g_window for now); call paths and side-effects mirror the original.
 // =====================================================================
 
+// jfn_macos_get_window + jfn_macos_apply_theme_color_on_main are now
+// Rust-side (see src/macos/src/init.rs).
+use crate::init::{jfn_macos_apply_theme_color_on_main, jfn_macos_get_window};
+
 unsafe extern "C" {
-    /// C++ accessor exporting `g_window` (defined in src/platform/macos.mm).
-    /// Returns a `__bridge` (non-retaining) pointer; treat as borrowed for
-    /// the duration of the call. nullptr before macos_init or after cleanup.
-    fn jfn_macos_get_window() -> *mut objc2::runtime::AnyObject;
-
-    /// C++ helper that applies the rgb color to g_window + content layer.
-    /// Must be invoked on the main thread. macos_set_theme_color routes
-    /// to this either inline or via dispatch_async_f.
-    fn jfn_macos_apply_theme_color_on_main(rgb: u32);
-
     // GCD entry points used to bounce onto the main queue for the theme-
     // color apply path. libdispatch ships in libSystem so no extra link
     // step is needed. dispatch_get_main_queue() is a real exported
@@ -73,7 +67,7 @@ fn is_main_thread() -> bool {
 
 unsafe extern "C" fn theme_color_trampoline(ctx: *mut c_void) {
     let rgb = ctx as usize as u32;
-    unsafe { jfn_macos_apply_theme_color_on_main(rgb) };
+    jfn_macos_apply_theme_color_on_main(rgb);
 }
 
 /// Tint AppKit fills behind mpv's CAMetalLayer / NSWindow root so the
@@ -83,7 +77,7 @@ unsafe extern "C" fn theme_color_trampoline(ctx: *mut c_void) {
 #[unsafe(no_mangle)]
 pub extern "C" fn macos_set_theme_color(rgb: u32) {
     if is_main_thread() {
-        unsafe { jfn_macos_apply_theme_color_on_main(rgb) };
+        jfn_macos_apply_theme_color_on_main(rgb);
     } else {
         let ctx = rgb as usize as *mut c_void;
         unsafe { dispatch_async_f(dispatch_get_main_queue(), ctx, theme_color_trampoline) };
@@ -343,16 +337,11 @@ pub extern "C" fn macos_surface_present_software(
     false
 }
 
-unsafe extern "C" {
-    fn macos_early_init();
-    fn macos_init(mpv: *mut c_void) -> bool;
-    fn macos_cleanup();
-
-    /// Narrow accessor for the input NSView installed by macos_init.
-    /// Rust's macos_restack re-anchors it on top of the CefLayer
-    /// subviews after every reorder. Returns nullptr before macos_init.
-    fn jfn_macos_get_input_view() -> *mut objc2::runtime::AnyObject;
-}
+// macos_early_init / macos_init / macos_cleanup + jfn_macos_get_input_view
+// now live in src/macos/src/init.rs.
+use crate::init::{
+    jfn_macos_get_input_view, macos_cleanup, macos_early_init, macos_init,
+};
 
 // jfn_input_macos_set_cursor lives in src/macos/src/input.rs (Rust).
 use input::jfn_input_macos_set_cursor;
@@ -619,6 +608,7 @@ pub extern "C" fn macos_open_external_url(utf8: *const c_char, len: usize) {
 // kIOSurfaceColorSpace tag (falls back to sRGB).
 // =====================================================================
 mod compositor;
+mod init;
 mod input;
 mod popup;
 use compositor::{
@@ -642,15 +632,15 @@ impl Platform for MacosPlatform {
     }
 
     fn early_init(&self) {
-        unsafe { macos_early_init() };
+        macos_early_init();
     }
 
     fn init(&self, mpv: *mut c_void) -> bool {
-        unsafe { macos_init(mpv) }
+        macos_init(mpv)
     }
 
     fn cleanup(&self) {
-        unsafe { macos_cleanup() };
+        macos_cleanup();
     }
 
     fn alloc_surface(&self) -> SurfaceHandle {
