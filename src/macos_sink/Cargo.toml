@@ -1,0 +1,21 @@
+[package]
+name = "jfn-macos-sink"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jfn_macos_sink"
+crate-type = ["rlib"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+jfn-mpv = { path = "../mpv" }
+jfn-playback = { path = "../playback" }
+jfn-cef = { path = "../jfn_cef", default-features = false }
+tracing = "0.1"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-media-player = "0.3"
+libc = "0.2"

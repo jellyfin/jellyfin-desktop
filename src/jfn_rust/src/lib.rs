@@ -29,6 +29,9 @@ pub use jfn_single_instance::*;
 #[cfg(unix)]
 pub use jfn_signal_guard::*;
 
+#[cfg(target_os = "macos")]
+pub use jfn_macos_sink::*;
+
 #[cfg(target_os = "linux")]
 pub use jfn_idle_inhibit_linux::*;
 

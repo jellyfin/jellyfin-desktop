@@ -29,6 +29,9 @@ jfn-single-instance = { path = "../single_instance" }
 [target.'cfg(unix)'.dependencies]
 jfn-signal-guard = { path = "../signal_guard" }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+jfn-macos-sink = { path = "../macos_sink" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
 jfn-open-url-linux = { path = "../open_url_linux" }
