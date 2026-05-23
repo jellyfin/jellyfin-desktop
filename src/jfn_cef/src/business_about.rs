@@ -162,11 +162,9 @@ fn handle_message(
         if path.is_empty() {
             return true;
         }
-        if let Some(ops) = platform_ops::ops() {
-            if let Some(f) = ops.open_external_url {
-                let url = format!("file://{}", path);
-                unsafe { f(url.as_ptr() as *const _, url.len()) };
-            }
+        if let Some(p) = platform_ops::ops() {
+            let url = format!("file://{}", path);
+            p.open_external_url(url.as_ptr() as *const _, url.len());
         }
         return true;
     }

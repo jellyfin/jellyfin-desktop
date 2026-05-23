@@ -17,6 +17,7 @@ cef = { version = "=148.1.0", default-features = false }
 jfn-config = { path = "../config" }
 jfn-logging = { path = "../logging" }
 jfn-paths = { path = "../paths" }
+jfn-platform-abi = { path = "../platform_abi" }
 serde_json = "1"
 
 [target.'cfg(unix)'.dependencies]

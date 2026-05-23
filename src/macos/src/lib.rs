@@ -629,74 +629,177 @@ use compositor::{
 use popup::macos_popup_show;
 
 // =====================================================================
-// Popup no-op trampolines for compositor backends that delegate popups
-// to NSMenu (set in macos_popup_show). popup_present / popup_present_
-// software / popup_hide are unused on macOS.
+// Backend impl
 // =====================================================================
 
-unsafe extern "C" fn popup_hide_noop(_s: *mut c_void) {}
-unsafe extern "C" fn popup_present_noop(
-    _s: *mut c_void,
-    _info: *const c_void,
-    _lw: c_int,
-    _lh: c_int,
-) {
-}
-unsafe extern "C" fn popup_present_software_noop(
-    _s: *mut c_void,
-    _buffer: *const c_void,
-    _pw: c_int,
-    _ph: c_int,
-    _lw: c_int,
-    _lh: c_int,
-) {
-}
+use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle};
 
-// =====================================================================
-// Factory
-// =====================================================================
+pub struct MacosPlatform;
 
-/// Returns the macOS `Platform` vtable by value across the C ABI.
-/// Called from C++ `make_platform(DisplayBackend::macOS)` (platform.h).
-#[unsafe(no_mangle)]
-pub extern "C" fn make_macos_platform() -> Platform {
-    Platform {
-        display: DisplayBackend::MacOS,
-        early_init: Some(macos_early_init),
-        init: Some(macos_init),
-        cleanup: Some(macos_cleanup),
-        post_window_cleanup: None,
-        alloc_surface: Some(macos_alloc_surface),
-        free_surface: Some(macos_free_surface),
-        surface_present: Some(macos_surface_present),
-        surface_present_software: Some(macos_surface_present_software),
-        surface_resize: Some(macos_surface_resize),
-        surface_set_visible: Some(macos_surface_set_visible),
-        restack: Some(macos_restack),
-        fade_surface: Some(macos_fade_surface),
-        popup_show: Some(macos_popup_show),
-        popup_hide: Some(popup_hide_noop),
-        popup_present: Some(popup_present_noop),
-        popup_present_software: Some(popup_present_software_noop),
-        set_fullscreen: Some(macos_set_fullscreen),
-        toggle_fullscreen: Some(macos_toggle_fullscreen),
-        begin_transition: Some(macos_begin_transition),
-        end_transition: Some(macos_end_transition),
-        in_transition: Some(macos_in_transition),
-        set_expected_size: Some(macos_set_expected_size),
-        get_scale: Some(macos_get_scale),
-        get_display_scale: Some(macos_get_display_scale),
-        query_window_position: Some(macos_query_window_position),
-        clamp_window_geometry: Some(macos_clamp_window_geometry),
-        pump: Some(macos_pump),
-        run_main_loop: Some(macos_run_main_loop),
-        wake_main_loop: Some(macos_wake_main_loop),
-        set_cursor: Some(jfn_input_macos_set_cursor),
-        set_idle_inhibit: Some(macos_set_idle_inhibit),
-        set_theme_color: Some(macos_set_theme_color),
-        shared_texture_supported: true,
-        cef_ozone_platform: [0; 32],
-        clipboard_read_text_async: Some(macos_clipboard_read_text_async),
-        open_external_url: Some(macos_open_external_url),
+impl Platform for MacosPlatform {
+    fn display(&self) -> DisplayBackend {
+        DisplayBackend::MacOS
     }
+
+    fn early_init(&self) {
+        unsafe { macos_early_init() };
+    }
+
+    fn init(&self, mpv: *mut c_void) -> bool {
+        unsafe { macos_init(mpv) }
+    }
+
+    fn cleanup(&self) {
+        unsafe { macos_cleanup() };
+    }
+
+    fn alloc_surface(&self) -> SurfaceHandle {
+        macos_alloc_surface()
+    }
+
+    fn free_surface(&self, s: SurfaceHandle) {
+        macos_free_surface(s);
+    }
+
+    fn surface_present(&self, s: SurfaceHandle, info: *const c_void) -> bool {
+        macos_surface_present(s, info)
+    }
+
+    fn surface_present_software(
+        &self,
+        s: SurfaceHandle,
+        dirty: *const JfnRect,
+        dirty_len: usize,
+        buffer: *const c_void,
+        w: c_int,
+        h: c_int,
+    ) -> bool {
+        macos_surface_present_software(s, dirty, dirty_len, buffer, w, h)
+    }
+
+    fn surface_resize(
+        &self,
+        s: SurfaceHandle,
+        lw: c_int,
+        lh: c_int,
+        pw: c_int,
+        ph: c_int,
+    ) {
+        macos_surface_resize(s, lw, lh, pw, ph);
+    }
+
+    fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
+        macos_surface_set_visible(s, visible);
+    }
+
+    fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
+        macos_restack(ordered, n);
+    }
+
+    fn fade_surface(
+        &self,
+        s: SurfaceHandle,
+        sec: f32,
+        on_start: Option<unsafe extern "C" fn(*mut c_void)>,
+        start_ctx: *mut c_void,
+        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        on_done: Option<unsafe extern "C" fn(*mut c_void)>,
+        done_ctx: *mut c_void,
+        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) {
+        macos_fade_surface(
+            s, sec, on_start, start_ctx, start_dtor, on_done, done_ctx, done_dtor,
+        );
+    }
+
+    fn popup_show(&self, s: SurfaceHandle, req: *const JfnPopupRequest) {
+        macos_popup_show(s, req);
+    }
+
+    fn set_fullscreen(&self, v: bool) {
+        macos_set_fullscreen(v);
+    }
+
+    fn toggle_fullscreen(&self) {
+        macos_toggle_fullscreen();
+    }
+
+    fn begin_transition(&self) {
+        macos_begin_transition();
+    }
+
+    fn end_transition(&self) {
+        macos_end_transition();
+    }
+
+    fn in_transition(&self) -> bool {
+        macos_in_transition()
+    }
+
+    fn set_expected_size(&self, w: c_int, h: c_int) {
+        macos_set_expected_size(w, h);
+    }
+
+    fn get_scale(&self) -> f32 {
+        macos_get_scale()
+    }
+
+    fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
+        macos_get_display_scale(x, y)
+    }
+
+    fn query_window_position(&self, x: *mut c_int, y: *mut c_int) -> bool {
+        macos_query_window_position(x, y)
+    }
+
+    fn clamp_window_geometry(
+        &self,
+        w: *mut c_int,
+        h: *mut c_int,
+        x: *mut c_int,
+        y: *mut c_int,
+    ) {
+        macos_clamp_window_geometry(w, h, x, y);
+    }
+
+    fn pump(&self) {
+        macos_pump();
+    }
+
+    fn run_main_loop(&self) {
+        macos_run_main_loop();
+    }
+
+    fn wake_main_loop(&self) {
+        macos_wake_main_loop();
+    }
+
+    fn set_cursor(&self, t: c_int) {
+        jfn_input_macos_set_cursor(t);
+    }
+
+    fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
+        macos_set_idle_inhibit(level as c_int);
+    }
+
+    fn set_theme_color(&self, rgb: u32) {
+        macos_set_theme_color(rgb);
+    }
+
+    fn clipboard_read_text_async(
+        &self,
+        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+        ctx: *mut c_void,
+        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) {
+        macos_clipboard_read_text_async(on_done, ctx, dtor);
+    }
+
+    fn open_external_url(&self, utf8: *const c_char, len: usize) {
+        macos_open_external_url(utf8, len);
+    }
+}
+
+pub fn make_macos_platform() -> Box<dyn Platform> {
+    Box::new(MacosPlatform)
 }
