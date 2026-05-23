@@ -503,14 +503,12 @@ if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
         src/platform/platform_ops.cpp
-        src/input/dispatch.cpp
     )
 else()
     # Linux + macOS: shared main with platform abstraction
     set(COMMON_SOURCES
         src/main.cpp
         src/platform/platform_ops.cpp
-        src/input/dispatch.cpp
     )
 endif()
 

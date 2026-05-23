@@ -1026,6 +1026,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "jfn-input"
+version = "0.1.0"
+
+[[package]]
 name = "jfn-jellyfin"
 version = "0.1.0"
 dependencies = [
@@ -1087,6 +1091,7 @@ dependencies = [
  "jfn-color",
  "jfn-config",
  "jfn-idle-inhibit-linux",
+ "jfn-input",
  "jfn-jellyfin",
  "jfn-logging",
  "jfn-mpv",
