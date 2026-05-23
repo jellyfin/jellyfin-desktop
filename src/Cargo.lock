@@ -1069,6 +1069,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "jfn-macos"
+version = "0.1.0"
+dependencies = [
+ "jfn-platform-abi",
+]
+
+[[package]]
 name = "jfn-macos-sink"
 version = "0.1.0"
 dependencies = [
@@ -1133,6 +1140,7 @@ dependencies = [
  "jfn-input",
  "jfn-jellyfin",
  "jfn-logging",
+ "jfn-macos",
  "jfn-macos-sink",
  "jfn-mpv",
  "jfn-open-url-linux",
@@ -1142,6 +1150,7 @@ dependencies = [
  "jfn-signal-guard",
  "jfn-single-instance",
  "jfn-wayland",
+ "jfn-windows",
  "jfn-windows-sink",
  "jfn-wlproxy",
  "jfn-x11",
@@ -1179,6 +1188,13 @@ dependencies = [
  "wayland-protocols",
  "wayland-scanner",
  "xkbcommon",
+]
+
+[[package]]
+name = "jfn-windows"
+version = "0.1.0"
+dependencies = [
+ "jfn-platform-abi",
 ]
 
 [[package]]

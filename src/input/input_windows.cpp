@@ -387,3 +387,9 @@ void set_cursor(cef_cursor_type_t type) {
 }
 
 }  // namespace input::windows
+
+// C-linkage thunk used by the Rust jfn-windows crate to populate the
+// Platform vtable's set_cursor slot.
+extern "C" void jfn_input_windows_set_cursor(int t) {
+    input::windows::set_cursor(static_cast<cef_cursor_type_t>(t));
+}

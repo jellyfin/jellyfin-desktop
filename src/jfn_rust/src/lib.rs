@@ -30,8 +30,12 @@ pub use jfn_single_instance::*;
 pub use jfn_signal_guard::*;
 
 #[cfg(target_os = "macos")]
+pub use jfn_macos::*;
+#[cfg(target_os = "macos")]
 pub use jfn_macos_sink::*;
 
+#[cfg(target_os = "windows")]
+pub use jfn_windows::*;
 #[cfg(target_os = "windows")]
 pub use jfn_windows_sink::*;
 

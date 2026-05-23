@@ -617,3 +617,15 @@ void set_cursor(cef_cursor_type_t type) {
 }
 
 }  // namespace input::macos
+
+// C-linkage thunk used by the Rust jfn-macos crate to populate the
+// Platform vtable's set_cursor slot.
+extern "C" void jfn_input_macos_set_cursor(int t) {
+    input::macos::set_cursor(static_cast<cef_cursor_type_t>(t));
+}
+
+// C-linkage thunk used by jfn-macos::make_macos_platform.init to build
+// the input NSView before constructing the rest of the compositor.
+extern "C" void* jfn_input_macos_create_view() {
+    return (__bridge_retained void*)input::macos::create_input_view();
+}
