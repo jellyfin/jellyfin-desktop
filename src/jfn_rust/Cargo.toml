@@ -13,6 +13,7 @@ default = ["kde-palette"]
 kde-palette = ["jfn-cef/kde-palette", "jfn-wayland/kde-palette"]
 
 [dependencies]
+tracing = "0.1"
 jfn-cef = { path = "../jfn_cef", default-features = false }
 jfn-cli = { path = "../cli" }
 jfn-input = { path = "../input" }

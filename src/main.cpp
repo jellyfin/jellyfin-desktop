@@ -445,10 +445,21 @@ static int run_with_cef(int mw, int mh,
 // Main
 // =====================================================================
 
-// Owns the process entry point. Returns >= 0 in CEF subprocesses (GPU,
-// renderer) and propagates that exit code. Returns -1 in the browser
-// process; remaining main.cpp body continues until the rest is ported.
+// Owns subprocess dispatch + settings load + CLI parse + logging
+// initialisation. Returns >= 0 to terminate the process, -1 to continue.
+struct JfnBootArgs {
+    const char* hwdec;
+    const char* audio_passthrough;
+    const char* audio_channels;
+    const char* log_level;
+    const char* ozone_platform;
+    const char* platform_override;
+    bool audio_exclusive;
+    bool disable_gpu_compositing;
+    int  remote_debugging_port;
+};
 extern "C" int jfn_app_main(int argc, const char* const* argv);
+extern "C" const JfnBootArgs* jfn_app_boot_args(void);
 
 int main(int argc, char* argv[]) {
     // Linux platform selection is deferred until after CLI parsing; on
@@ -463,49 +474,17 @@ int main(int argc, char* argv[]) {
     if (int rc = jfn_app_main(argc, const_cast<const char* const*>(argv)); rc >= 0)
         return rc;
 
-    Settings::instance().load();
-    const auto& saved = Settings::instance();
+    const JfnBootArgs* ba = jfn_app_boot_args();
     cli::Args args;
-    args.hwdec = !saved.hwdec().empty() ? saved.hwdec() : std::string(jfn_mpv_hwdec_default());
-    args.audio_passthrough = saved.audioPassthrough();
-    args.audio_exclusive = saved.audioExclusive();
-    args.audio_channels = saved.audioChannels();
-    args.log_level = saved.logLevel();
-
-    cli::Result cli_result = cli::parse(argc, argv, args);
-    switch (cli_result.kind) {
-    case cli::Result::Kind::Help:
-        cli::print_help();
-        return 0;
-    case cli::Result::Kind::Version:
-        cli::print_version();
-        return 0;
-    case cli::Result::Kind::Error:
-        fprintf(stderr, "Error: unknown argument '%s'\n", cli_result.unknown_arg.c_str());
-        return 1;
-    case cli::Result::Kind::Continue:
-        break;
-    }
-
-    if (!jfn_mpv_is_valid_hwdec(args.hwdec.c_str())) args.hwdec = jfn_mpv_hwdec_default();
-
-    // --log-file overrides default; empty argument disables file logging entirely.
-    // Default to a platform log file on macOS/Windows (GUI apps have no
-    // user-visible stderr there). On Linux, stderr/journalctl is the norm,
-    // so file logging is opt-in via --log-file.
-    std::string log_path;
-    if (args.log_file) {
-        log_path = *args.log_file;
-    } else {
-#if !defined(__linux__)
-        log_path = paths::getLogPath();
-#endif
-    }
-    LoggingScope logging(log_path.c_str(), args.log_level.c_str());
-
-    LOG_INFO(LOG_MAIN, "jellyfin-desktop " APP_VERSION_FULL);
-    LOG_INFO(LOG_MAIN, "CEF {}", CEF_VERSION);
-    if (!log_path.empty()) LOG_INFO(LOG_MAIN, "Log file: {}", log_path.c_str());
+    args.hwdec = ba && ba->hwdec ? ba->hwdec : "";
+    args.audio_passthrough = ba && ba->audio_passthrough ? ba->audio_passthrough : "";
+    args.audio_exclusive = ba && ba->audio_exclusive;
+    args.audio_channels = ba && ba->audio_channels ? ba->audio_channels : "";
+    args.log_level = ba && ba->log_level ? ba->log_level : "";
+    args.ozone_platform = ba && ba->ozone_platform ? ba->ozone_platform : "";
+    args.platform_override = ba && ba->platform_override ? ba->platform_override : "";
+    args.disable_gpu_compositing = ba && ba->disable_gpu_compositing;
+    args.remote_debugging_port = ba ? ba->remote_debugging_port : 0;
 
 #if !defined(_WIN32) && !defined(__APPLE__)
     {

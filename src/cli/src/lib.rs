@@ -18,22 +18,22 @@ pub enum JfnCliResultKind {
 
 #[repr(C)]
 pub struct JfnCliResult {
-    kind: JfnCliResultKind,
-    unknown_arg: *mut c_char,
+    pub kind: JfnCliResultKind,
+    pub unknown_arg: *mut c_char,
 
-    hwdec: *mut c_char,
-    audio_passthrough: *mut c_char,
-    audio_channels: *mut c_char,
-    log_level: *mut c_char,
-    log_file: *mut c_char,
-    ozone_platform: *mut c_char,
-    platform_override: *mut c_char,
+    pub hwdec: *mut c_char,
+    pub audio_passthrough: *mut c_char,
+    pub audio_channels: *mut c_char,
+    pub log_level: *mut c_char,
+    pub log_file: *mut c_char,
+    pub ozone_platform: *mut c_char,
+    pub platform_override: *mut c_char,
 
-    log_file_set: bool,
-    audio_exclusive_set: bool,
-    disable_gpu_compositing_set: bool,
+    pub log_file_set: bool,
+    pub audio_exclusive_set: bool,
+    pub disable_gpu_compositing_set: bool,
 
-    remote_debugging_port: i32,
+    pub remote_debugging_port: i32,
 }
 
 #[derive(Parser, Debug)]
