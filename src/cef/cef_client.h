@@ -142,6 +142,10 @@ public:
               std::function<void()> on_complete);
 
     PlatformSurface* surface() const { return surface_; }
+    // Raw Rust-side handle; opaque to C++ callers. Exposed for Rust business
+    // wrappers that install their own handler closures via jfn_cef_layer_*
+    // FFI but still need Browsers (C++) to track lifetime.
+    JfnCefLayer* rs() const { return rs_; }
 
     // Native-shim injection-profile kind ("web" / "overlay" / "about"). The
     // Rust side materializes the DictionaryValue lazily at browser-create.

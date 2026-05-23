@@ -6,6 +6,53 @@
 
 #include <algorithm>
 
+namespace {
+// Map opaque JfnCefLayer* back to the CefRefPtr held in Browsers. Iteration
+// is fine — Browsers holds at most a handful of layers.
+CefLayer* find_by_rs(Browsers* b, JfnCefLayer* rs) {
+    if (!b || !rs) return nullptr;
+    for (auto& l : b->layers()) {
+        if (l->rs() == rs) return l.get();
+    }
+    return nullptr;
+}
+}  // namespace
+
+// =====================================================================
+// C ABI surface — invoked from Rust business wrappers (jfn-cef
+// business_about / business_overlay / business_web) so they can drive
+// the still-C++ Browsers registry using opaque JfnCefLayer* tokens.
+// =====================================================================
+
+extern "C" JfnCefLayer* jfn_browsers_create(const char* kind) {
+    if (!g_browsers) return nullptr;
+    auto layer = g_browsers->create(kind ? kind : "");
+    return layer ? layer->rs() : nullptr;
+}
+
+extern "C" void jfn_browsers_remove(JfnCefLayer* rs) {
+    if (auto* l = find_by_rs(g_browsers, rs)) {
+        g_browsers->remove(l);
+    }
+}
+
+extern "C" void jfn_browsers_set_active(JfnCefLayer* rs) {
+    if (!g_browsers) return;
+    if (!rs) {
+        g_browsers->setActive(nullptr);
+        return;
+    }
+    if (auto* l = find_by_rs(g_browsers, rs)) {
+        g_browsers->setActive(l);
+    }
+}
+
+extern "C" JfnCefLayer* jfn_browsers_active() {
+    if (!g_browsers) return nullptr;
+    auto a = g_browsers->active();
+    return a ? a->rs() : nullptr;
+}
+
 Browsers* g_browsers = nullptr;
 
 Browsers::Browsers(int lw, int lh, int pw, int ph,
