@@ -24,11 +24,6 @@ unsafe extern "C" {
     // Shutdown trampoline target for the wayland-close-cb-ptr property.
     fn jfn_shutdown_initiate();
 
-    // Lifecycle bridge over the C++ clipboard namespace.
-    fn jfn_clipboard_wayland_lifecycle_init();
-    fn jfn_clipboard_wayland_lifecycle_available() -> bool;
-    fn jfn_clipboard_wayland_lifecycle_cleanup();
-
     // Platform field accessors (defined in src/platform/platform_ops.cpp).
     fn jfn_platform_cef_ozone_platform() -> *const c_char;
     fn jfn_platform_set_shared_texture_unsupported();
@@ -135,8 +130,8 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
 
     crate::input_lifecycle::lifecycle_start();
 
-    unsafe { jfn_clipboard_wayland_lifecycle_init() };
-    if !unsafe { jfn_clipboard_wayland_lifecycle_available() } {
+    crate::clipboard::clipboard_init();
+    if !crate::clipboard::clipboard_available() {
         unsafe { jfn_platform_clear_clipboard_handler() };
     }
 
@@ -157,7 +152,7 @@ pub extern "C" fn jfn_wl_lifecycle_cleanup() {
     // jfn_wl_kde_palette_post_window_cleanup after mpv tears down the
     // surface.
     unsafe { jfn_idle_inhibit_cleanup() };
-    unsafe { jfn_clipboard_wayland_lifecycle_cleanup() };
+    crate::clipboard::clipboard_cleanup();
     crate::input_lifecycle::lifecycle_cleanup();
     // Rust-side WlState lives until process exit (mirrors C++ globals).
 }
