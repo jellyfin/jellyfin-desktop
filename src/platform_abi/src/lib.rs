@@ -124,20 +124,6 @@ pub trait Platform: Send + Sync {
     fn surface_resize(&self, _s: SurfaceHandle, _lw: c_int, _lh: c_int, _pw: c_int, _ph: c_int) {}
     fn surface_set_visible(&self, _s: SurfaceHandle, _visible: bool) {}
     fn restack(&self, _ordered: *const SurfaceHandle, _n: usize) {}
-    fn fade_surface(
-        &self,
-        _s: SurfaceHandle,
-        _sec: f32,
-        on_start: Option<Box<dyn FnOnce() + Send>>,
-        on_done: Option<Box<dyn FnOnce() + Send>>,
-    ) {
-        if let Some(f) = on_start {
-            f();
-        }
-        if let Some(f) = on_done {
-            f();
-        }
-    }
 
     // Popup
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {}

@@ -840,29 +840,6 @@ impl Inner {
         true
     }
 
-    fn fade(
-        &self,
-        sec: f32,
-        on_start: Option<Box<dyn FnOnce() + Send>>,
-        on_done: Option<Box<dyn FnOnce() + Send>>,
-    ) {
-        let surface = self.surface_ptr();
-        if !surface.is_null()
-            && let Some(p) = platform_ops::ops()
-        {
-            p.fade_surface(surface, sec, on_start, on_done);
-            return;
-        }
-        // No platform installed (early helper-process boot) — invoke
-        // synchronously so on_done can still close the browser.
-        if let Some(f) = on_start {
-            f();
-        }
-        if let Some(f) = on_done {
-            f();
-        }
-    }
-
     // ---- queries / helpers for cef-rs handlers ---------------------------
 
     pub(crate) fn view_size(&self) -> (i32, i32) {

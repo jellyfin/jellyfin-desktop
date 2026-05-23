@@ -10,7 +10,7 @@
 
 use parking_lot::Mutex;
 use std::ffi::{c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::Graphics::Direct3D::{
@@ -22,7 +22,7 @@ use windows::Win32::Graphics::Direct3D11::{
     ID3D11Device, ID3D11Device1, ID3D11DeviceContext, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice, IDCompositionDevice, IDCompositionEffectGroup, IDCompositionTarget,
+    DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget,
     IDCompositionVisual,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
@@ -45,12 +45,10 @@ use jfn_platform_abi::JfnRect;
 pub(crate) struct Surface {
     swap_chain: Option<IDXGISwapChain1>,
     visual: Option<IDCompositionVisual>,
-    effect: Option<IDCompositionEffectGroup>,
     sw: i32,
     sh: i32,
     visible: bool,
     in_tree: bool,
-    fading: AtomicBool,
 
     popup_visual: Option<IDCompositionVisual>,
     popup_swap_chain: Option<IDXGISwapChain1>,
@@ -64,12 +62,10 @@ impl Surface {
         Self {
             swap_chain: None,
             visual: None,
-            effect: None,
             sw: 0,
             sh: 0,
             visible: true,
             in_tree: false,
-            fading: AtomicBool::new(false),
             popup_visual: None,
             popup_swap_chain: None,
             popup_sw: 0,
@@ -244,7 +240,6 @@ fn detach_surface(s: &mut Surface, devices: Option<&CompositorDevices>) {
             let _ = v.SetContent(None::<&windows_core::IUnknown>);
         }
         s.visual = None;
-        s.effect = None;
         s.swap_chain = None;
     }
 }
@@ -372,14 +367,6 @@ pub fn win_alloc_surface() -> *mut c_void {
                     return std::ptr::null_mut();
                 }
             };
-            let effect = match devices.dcomp_device.CreateEffectGroup() {
-                Ok(e) => e,
-                Err(err) => {
-                    tracing::error!(target: "platform", "CreateEffectGroup failed: {err:?}");
-                    return std::ptr::null_mut();
-                }
-            };
-            let _ = visual.SetEffect(&effect);
 
             let popup = devices.dcomp_device.CreateVisual().ok();
             if let Some(pv) = popup.as_ref() {
@@ -397,7 +384,6 @@ pub fn win_alloc_surface() -> *mut c_void {
             }
 
             s.visual = Some(visual);
-            s.effect = Some(effect);
             s.popup_visual = popup;
 
             let _ = devices.dcomp_device.Commit();
@@ -417,14 +403,6 @@ pub fn win_free_surface(s: *mut c_void) {
         return;
     }
     let p = s as *mut Surface;
-
-    // Wait for any in-flight fade thread to finish touching this surface.
-    // Frame-paced; bounded. Yield only — no polling.
-    unsafe {
-        while (*p).fading.load(Ordering::SeqCst) {
-            std::thread::yield_now();
-        }
-    }
 
     let mut st = STATE.lock();
     if let Some(idx) = st.live.iter().position(|&q| q == p) {
@@ -686,89 +664,6 @@ pub fn win_surface_set_visible(s: *mut c_void, visible: bool) {
     unsafe {
         let _ = devices.dcomp_device.Commit();
     }
-}
-
-// =====================================================================
-// Fade. Frame-paced on a detached thread; bounded total work.
-// =====================================================================
-
-use jfn_playback::ingest_driver::jfn_playback_display_hz;
-
-fn fire(cb: Option<Box<dyn FnOnce() + Send>>) {
-    if let Some(f) = cb {
-        f();
-    }
-}
-
-pub fn win_fade_surface(
-    s: *mut c_void,
-    fade_sec: f32,
-    on_fade_start: Option<Box<dyn FnOnce() + Send>>,
-    on_complete: Option<Box<dyn FnOnce() + Send>>,
-) {
-    if s.is_null() {
-        fire(on_fade_start);
-        fire(on_complete);
-        return;
-    }
-    let p = s as *mut Surface;
-    unsafe {
-        if (*p).visual.is_none() || (*p).effect.is_none() {
-            fire(on_fade_start);
-            fire(on_complete);
-            return;
-        }
-    }
-    let fps = jfn_playback_display_hz();
-    if fps <= 0.0 {
-        fire(on_fade_start);
-        fire(on_complete);
-        return;
-    }
-
-    unsafe {
-        (*p).fading.store(true, Ordering::SeqCst);
-    }
-    let surface_addr = p as usize;
-    std::thread::spawn(move || {
-        fire(on_fade_start);
-
-        let mut total_frames = (fade_sec as f64 * fps) as i32;
-        if total_frames < 1 {
-            total_frames = 1;
-        }
-        let frame_duration = std::time::Duration::from_micros((1e6 / fps) as u64);
-
-        for i in 1..=total_frames {
-            let t = i as f32 / total_frames as f32;
-            let opacity = 1.0_f32 - t;
-            {
-                let st = STATE.lock();
-                let surf = unsafe { &*(surface_addr as *mut Surface) };
-                if !surf.visible || surf.visual.is_none() || surf.effect.is_none() {
-                    break;
-                }
-                if let Some(effect) = surf.effect.as_ref() {
-                    unsafe {
-                        let _ = effect.SetOpacity2(opacity);
-                    }
-                }
-                if let Some(d) = st.devices.as_ref() {
-                    unsafe {
-                        let _ = d.dcomp_device.Commit();
-                    }
-                }
-            }
-            std::thread::sleep(frame_duration);
-        }
-
-        unsafe {
-            (*(surface_addr as *mut Surface))
-                .fading
-                .store(false, Ordering::SeqCst);
-        }
-        fire(on_complete);
-    });
 }
 
 // =====================================================================

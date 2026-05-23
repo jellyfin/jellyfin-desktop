@@ -130,8 +130,6 @@ pub fn jfn_wl_lifecycle_init() -> bool {
 }
 
 pub fn jfn_wl_lifecycle_cleanup() {
-    crate::fade::jfn_wl_fade_stop_all();
-
     // Null the close trampoline before tearing down state it would read.
     if let Some(slot) = mpv_prop_intptr(c"wayland-close-cb-ptr") {
         unsafe { write_close_cb(slot, None) };

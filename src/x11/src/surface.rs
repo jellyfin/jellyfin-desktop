@@ -1,5 +1,5 @@
 //! Per-surface ops: alloc/free, software present, resize, visibility,
-//! restack, fade.
+//! restack.
 //!
 //! # Safety
 //!
@@ -381,29 +381,4 @@ pub unsafe fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
         prev = s.window;
     }
     let _ = conn.flush();
-}
-
-/// X11 has no compositor alpha-modulation path. Wayland keeps the surface
-/// mapped and gradually drives its alpha to 0; on X11 there is no
-/// per-window opacity that survives across compositors, so we hard-unmap
-/// the X window as the visual side of the fade and fire the callback
-/// contract synchronously.
-pub unsafe fn jfn_x11_fade_surface(
-    s: *mut PlatformSurface,
-    _fade_sec: f32,
-    on_start: Option<Box<dyn FnOnce() + Send>>,
-    on_done: Option<Box<dyn FnOnce() + Send>>,
-) {
-    // Visually hide the overlay window immediately. The CefLayer continues
-    // to exist (the JS animation/teardown still runs); the X window just
-    // stops being rendered by the compositor.
-    if !s.is_null() {
-        unsafe { jfn_x11_surface_set_visible(s, false) };
-    }
-    if let Some(f) = on_start {
-        f();
-    }
-    if let Some(f) = on_done {
-        f();
-    }
 }

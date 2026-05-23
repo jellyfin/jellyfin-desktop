@@ -14,7 +14,7 @@ mod platform;
 pub use compositor::{
     jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
     jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
-    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition, win_fade_surface,
+    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition,
     win_free_surface, win_popup_hide, win_popup_present, win_popup_present_software,
     win_popup_show, win_restack, win_set_expected_size, win_surface_present,
     win_surface_present_software, win_surface_resize, win_surface_set_visible,
@@ -367,16 +367,6 @@ impl Platform for WindowsPlatform {
 
     fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
         win_restack(ordered, n);
-    }
-
-    fn fade_surface(
-        &self,
-        s: SurfaceHandle,
-        sec: f32,
-        on_start: Option<Box<dyn FnOnce() + Send>>,
-        on_done: Option<Box<dyn FnOnce() + Send>>,
-    ) {
-        win_fade_surface(s, sec, on_start, on_done);
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {

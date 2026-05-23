@@ -60,10 +60,6 @@ pub(crate) fn alloc_surface() -> *mut PlatformSurface {
         .viewporter
         .as_ref()
         .map(|vp| vp.get_viewport(&surface, &st.qh, ()));
-    let alpha = st
-        .alpha_modifier
-        .as_ref()
-        .map(|am| am.get_surface(&surface, &st.qh, ()));
 
     surface.commit();
     st.flush();
@@ -71,7 +67,6 @@ pub(crate) fn alloc_surface() -> *mut PlatformSurface {
     s.surface = Some(surface);
     s.subsurface = Some(subsurface);
     s.viewport = viewport;
-    s.alpha = alpha;
 
     ptr
 }
@@ -89,9 +84,6 @@ pub(crate) fn free_surface(ptr: *mut PlatformSurface) {
         // caller (C++) guarantees no concurrent use of `ptr`.
         let s = unsafe { surface_mut(ptr) };
         popup_destroy_locked(s);
-        if let Some(a) = s.alpha.take() {
-            a.destroy();
-        }
         if let Some(v) = s.viewport.take() {
             v.destroy();
         }
@@ -206,9 +198,6 @@ pub(crate) fn surface_set_visible(
             s.null_attached = false;
         }
     } else {
-        if let Some(alpha) = s.alpha.as_ref() {
-            alpha.set_multiplier(u32::MAX);
-        }
         surface.attach(None, 0, 0);
         surface.commit();
         st.flush();
@@ -218,43 +207,6 @@ pub(crate) fn surface_set_visible(
         s.placeholder = false;
         s.null_attached = true;
     }
-}
-
-/// True when the surface has a `wp_alpha_modifier_surface_v1` proxy,
-/// i.e. the compositor advertised `wp_alpha_modifier_v1` at bind time.
-/// Used by the fade thunk to decide between animated fade and a hard
-/// unmap (compositors without the protocol, e.g. niri, have no way to
-/// drive per-surface opacity).
-pub(crate) fn surface_has_alpha(ptr: *mut PlatformSurface) -> bool {
-    if ptr.is_null() {
-        return false;
-    }
-    let _st = lock();
-    let s = unsafe { surface_mut(ptr) };
-    s.alpha.is_some()
-}
-
-// =====================================================================
-// Fade per-frame apply (called from Rust fade thread via FFI thunk)
-// =====================================================================
-
-/// Fade-frame helper: apply alpha multiplier under the WlState lock.
-/// Returns false to abort the loop if surface state is gone.
-pub(crate) fn fade_apply_frame(ptr: *mut PlatformSurface, alpha: u32) -> bool {
-    if ptr.is_null() {
-        return false;
-    }
-    let st = lock();
-    let s = unsafe { surface_mut(ptr) };
-    if !s.visible || s.surface.is_none() || s.alpha.is_none() {
-        return false;
-    }
-    let surface = s.surface.as_ref().unwrap();
-    let alpha_proxy = s.alpha.as_ref().unwrap();
-    alpha_proxy.set_multiplier(alpha);
-    surface.commit();
-    st.flush();
-    true
 }
 
 // =====================================================================
