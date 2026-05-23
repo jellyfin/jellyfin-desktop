@@ -68,6 +68,18 @@ pub extern "C" fn jfn_cef_set_disable_gpu_compositing(disable: bool) {
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_cef_set_ignore_certificate_errors(ignore: bool) {
+    if ignore {
+        state::with_config(|c| {
+            c.pending_switches.push(state::PendingSwitch {
+                name: "ignore-certificate-errors".to_string(),
+                value: None,
+            });
+        });
+    }
+}
+
 /// Linux only — Ozone platform selection. `platform_utf8` may be null or
 /// empty (no-op). When set to "wayland", also disables the fractional-scale
 /// protocol so OSR's GetScreenInfo device_scale_factor is honored.

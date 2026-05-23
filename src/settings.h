@@ -90,6 +90,9 @@ public:
     bool forceTranscoding() const { return jfn_settings_get_force_transcoding(); }
     void setForceTranscoding(bool v) { jfn_settings_set_force_transcoding(v); }
 
+    bool ignoreSslErrors() const { return jfn_settings_get_ignore_ssl_errors(); }
+    void setIgnoreSslErrors(bool v) { jfn_settings_set_ignore_ssl_errors(v); }
+
     std::string deviceName() const { return takeString(jfn_settings_get_device_name()); }
     void setDeviceName(const std::string& v) {
         jfn_settings_set_device_name(v.c_str(), platformDeviceName().c_str());

@@ -60,6 +60,7 @@ struct SettingsData {
     titlebar_theme_color: bool,
     transparent_titlebar: bool,
     force_transcoding: bool,
+    ignore_ssl_errors: bool,
 }
 
 impl Default for SettingsData {
@@ -77,6 +78,7 @@ impl Default for SettingsData {
             titlebar_theme_color: true,
             transparent_titlebar: true,
             force_transcoding: false,
+            ignore_ssl_errors: false,
         }
     }
 }
@@ -147,6 +149,9 @@ impl SettingsData {
         if let Some(b) = v.get("forceTranscoding").and_then(Value::as_bool) {
             self.force_transcoding = b;
         }
+        if let Some(b) = v.get("ignoreSslErrors").and_then(Value::as_bool) {
+            self.ignore_ssl_errors = b;
+        }
     }
 
     fn to_json(&self) -> Value {
@@ -206,6 +211,9 @@ impl SettingsData {
         }
         if self.force_transcoding {
             o.insert("forceTranscoding".into(), Value::Bool(true));
+        }
+        if self.ignore_ssl_errors {
+            o.insert("ignoreSslErrors".into(), Value::Bool(true));
         }
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
@@ -591,6 +599,8 @@ bool_getter!(jfn_settings_get_transparent_titlebar, transparent_titlebar);
 bool_setter!(jfn_settings_set_transparent_titlebar, transparent_titlebar);
 bool_getter!(jfn_settings_get_force_transcoding, force_transcoding);
 bool_setter!(jfn_settings_set_force_transcoding, force_transcoding);
+bool_getter!(jfn_settings_get_ignore_ssl_errors, ignore_ssl_errors);
+bool_setter!(jfn_settings_set_ignore_ssl_errors, ignore_ssl_errors);
 
 /// Copy the window geometry into `out`.
 ///

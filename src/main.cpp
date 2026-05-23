@@ -170,6 +170,7 @@ static int run_with_cef(int mw, int mh,
     jfn_cef_set_log_severity(static_cast<int>(toCefSeverity(effectiveLogLevel(LOG_CEF))));
     jfn_cef_set_remote_debugging_port(args.remote_debugging_port);
     jfn_cef_set_disable_gpu_compositing(!use_shared_textures);
+    jfn_cef_set_ignore_certificate_errors(Settings::instance().ignoreSslErrors());
 #ifdef __linux__
     if (!ozone_platform.empty())
         jfn_cef_set_ozone_platform(ozone_platform.c_str());
