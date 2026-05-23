@@ -862,13 +862,7 @@ extern "C" void win_cleanup() {
     g_win.mpv_hwnd = nullptr;
 }
 
-extern "C" void win_pump() {
-    // Input is handled by the dedicated input thread's message loop
-}
-
-extern "C" void win_set_theme_color(uint32_t) {
-    // No-op on Windows (DWM handles titlebar appearance)
-}
+// win_pump and win_set_theme_color now live in src/windows/src/lib.rs.
 
 // =====================================================================
 // Clipboard (Win32 CF_UNICODETEXT) — read only; writes go through CEF's

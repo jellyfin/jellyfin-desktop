@@ -688,7 +688,7 @@ extern "C" void macos_begin_transition() {
     }
 }
 
-extern "C" void macos_end_transition() {}
+// macos_end_transition now lives in src/macos/src/lib.rs.
 
 extern "C" bool macos_in_transition() { return g_transitioning; }
 
@@ -1080,13 +1080,7 @@ extern "C" bool macos_surface_present(PlatformSurface* s, const void* raw_info) 
     return true;
 }
 
-extern "C" bool macos_surface_present_software(PlatformSurface*,
-                                           const JfnRect*, size_t,
-                                           const void*, int, int) {
-    // CEF on macOS runs hardware-accelerated (shared_texture_supported=true);
-    // the software path is not exercised. Kept for API completeness.
-    return false;
-}
+// macos_surface_present_software now lives in src/macos/src/lib.rs.
 
 extern "C" void macos_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {
     if (!s) return;
