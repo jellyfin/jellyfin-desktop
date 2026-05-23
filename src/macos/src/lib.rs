@@ -30,6 +30,73 @@ pub extern "C" fn macos_end_transition() {
     // entry is a no-op.
 }
 
+/// Backing scale factor of the main screen. Args are unused — the C++
+/// original ignored them too because a saved (x, y) in backing pixels
+/// can't be unambiguously mapped to an `NSScreen` without identity
+/// persistence.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_get_display_scale(_x: c_int, _y: c_int) -> f32 {
+    unsafe {
+        let screen: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSScreen), mainScreen];
+        if screen.is_null() {
+            return 1.0;
+        }
+        let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
+        scale as f32
+    }
+}
+
+/// Clamp the saved (w, h, x, y) window geometry — in backing pixels,
+/// relative to the main screen's visible frame — so the window stays
+/// fully on-screen. Centers any unset axis (negative input).
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_clamp_window_geometry(
+    w: *mut c_int,
+    h: *mut c_int,
+    x: *mut c_int,
+    y: *mut c_int,
+) {
+    unsafe {
+        let screen: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSScreen), mainScreen];
+        if screen.is_null() {
+            return;
+        }
+        let visible: objc2_foundation::NSRect = objc2::msg_send![screen, visibleFrame];
+        let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
+        let vw = (visible.size.width * scale) as c_int;
+        let vh = (visible.size.height * scale) as c_int;
+        if *w > vw {
+            *w = vw;
+        }
+        if *h > vh {
+            *h = vh;
+        }
+        // mpv's own centering misbehaves when we override --geometry's wh
+        // but leave xy unset: it pre-centers against the video size and
+        // doesn't re-center after applying the requested wh.
+        if *x < 0 {
+            *x = (vw - *w) / 2;
+        }
+        if *y < 0 {
+            *y = (vh - *h) / 2;
+        }
+        if *x + *w > vw {
+            *x = vw - *w;
+        }
+        if *y + *h > vh {
+            *y = vh - *h;
+        }
+        if *x < 0 {
+            *x = 0;
+        }
+        if *y < 0 {
+            *y = 0;
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn macos_surface_present_software(
     _s: *mut c_void,
@@ -71,14 +138,7 @@ unsafe extern "C" {
     fn macos_in_transition() -> bool;
     fn macos_set_expected_size(w: c_int, h: c_int);
     fn macos_get_scale() -> f32;
-    fn macos_get_display_scale(x: c_int, y: c_int) -> f32;
     fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> bool;
-    fn macos_clamp_window_geometry(
-        w: *mut c_int,
-        h: *mut c_int,
-        x: *mut c_int,
-        y: *mut c_int,
-    );
     fn macos_pump();
     fn macos_run_main_loop();
     fn macos_wake_main_loop();

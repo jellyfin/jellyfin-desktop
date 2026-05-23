@@ -706,12 +706,7 @@ extern "C" float macos_get_scale() {
     return 1.0f;
 }
 
-// Saved (x, y) in backing pixels can't be unambiguously mapped to an
-// NSScreen without identity persistence — use mainScreen.
-extern "C" float macos_get_display_scale(int /*x*/, int /*y*/) {
-    NSScreen* screen = [NSScreen mainScreen];
-    return screen ? static_cast<float>([screen backingScaleFactor]) : 1.0f;
-}
+// macos_get_display_scale now lives in src/macos/src/lib.rs.
 
 namespace macos_platform {
 bool query_logical_content_size(int* w, int* h) {
@@ -741,27 +736,7 @@ extern "C" bool macos_query_window_position(int* x, int* y) {
     return true;
 }
 
-extern "C" void macos_clamp_window_geometry(int* w, int* h, int* x, int* y) {
-    NSScreen* screen = [NSScreen mainScreen];
-    if (!screen) return;
-    NSRect visible = [screen visibleFrame];
-    CGFloat scale = [screen backingScaleFactor];
-    int vw = static_cast<int>(visible.size.width * scale);
-    int vh = static_cast<int>(visible.size.height * scale);
-    // Shrink to fit
-    if (*w > vw) *w = vw;
-    if (*h > vh) *h = vh;
-    // Center any unset axis (mpv's own centering misbehaves when we override
-    // --geometry's wh but leave xy unset: it pre-centers against the video
-    // size and doesn't re-center after applying the requested wh).
-    if (*x < 0) *x = (vw - *w) / 2;
-    if (*y < 0) *y = (vh - *h) / 2;
-    // Clamp saved position so the window stays fully on-screen
-    if (*x + *w > vw) *x = vw - *w;
-    if (*y + *h > vh) *y = vh - *h;
-    if (*x < 0) *x = 0;
-    if (*y < 0) *y = 0;
-}
+// macos_clamp_window_geometry now lives in src/macos/src/lib.rs.
 
 extern "C" void macos_pump() {
     @autoreleasepool {
