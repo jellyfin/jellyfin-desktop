@@ -115,27 +115,40 @@ pub(crate) struct Inner {
     has_browser: AtomicBool,
     pending_internal_reset: AtomicBool,
 
-    // app-level callback slots (slice 6). C++ wraps std::function into
-    // (fn_ptr, ctx, dtor) triples; Rust owns them and invokes via FFI.
-    message_handler: Mutex<Option<CallbackSlot>>,
-    created_callback: Mutex<Option<CallbackSlot>>,
-    before_close_callback: Mutex<Option<CallbackSlot>>,
-    context_menu_builder: Mutex<Option<CallbackSlot>>,
-    context_menu_dispatcher: Mutex<Option<CallbackSlot>>,
+    // app-level callback slots. C++ installs handlers as (fn_ptr, ctx, dtor)
+    // triples via the C ABI; the setter boxes each into a typed closure so
+    // future in-process Rust callers can install `Box<dyn Fn>` directly
+    // without going through C. The Box drop closes over a RawHolder whose
+    // Drop runs the C++ dtor.
+    message_handler: Mutex<Option<Box<MessageFn>>>,
+    created_callback: Mutex<Option<Box<CreatedFn>>>,
+    before_close_callback: Mutex<Option<Box<BeforeCloseFn>>>,
+    context_menu_builder: Mutex<Option<Box<ContextBuilderFn>>>,
+    context_menu_dispatcher: Mutex<Option<Box<ContextDispatcherFn>>>,
 }
 
-struct CallbackSlot {
+// Typed closure signatures stored in each callback slot. `*mut c_void` args
+// stay raw because callers may want to receive cef-rs handles or C++
+// CefRefPtr objects depending on which side installed the handler.
+pub type MessageFn = dyn Fn(&str, *mut c_void, *mut c_void) -> bool + Send + Sync;
+pub type CreatedFn = dyn Fn(*mut c_void) + Send + Sync;
+pub type BeforeCloseFn = dyn Fn() + Send + Sync;
+pub type ContextBuilderFn = dyn Fn(*mut c_void) + Send + Sync;
+pub type ContextDispatcherFn = dyn Fn(c_int) -> bool + Send + Sync;
+
+// Owns the lifetime of a C-side handler triple. Drop runs dtor exactly once.
+struct RawHolder {
     fn_ptr: *mut c_void,
     ctx: *mut c_void,
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 }
 
-// SAFETY: ctx points at a C++-allocated holder; ownership is transferred to
-// the slot. dtor cleans up the holder on slot drop.
-unsafe impl Send for CallbackSlot {}
-unsafe impl Sync for CallbackSlot {}
+// SAFETY: the C++ side guarantees the holder is thread-safe to invoke; ctx
+// ownership is transferred to this struct, dtor runs once on drop.
+unsafe impl Send for RawHolder {}
+unsafe impl Sync for RawHolder {}
 
-impl Drop for CallbackSlot {
+impl Drop for RawHolder {
     fn drop(&mut self) {
         if let Some(d) = self.dtor {
             if !self.ctx.is_null() {
@@ -958,13 +971,11 @@ impl Inner {
         // Invoke user-installed created callback with a raw, add-refed
         // CefBrowser pointer (C++ side wraps in CefRefPtr).
         let g = self.created_callback.lock().unwrap();
-        if let Some(slot) = g.as_ref() {
-            type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
-            let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
+        if let Some(f) = g.as_ref() {
             unsafe {
                 browser.add_ref();
                 let raw = ImplBrowser::get_raw(&browser) as *mut c_void;
-                f(slot.ctx, raw);
+                f(raw);
             }
         }
         drop(g);
@@ -996,10 +1007,8 @@ impl Inner {
         // Take-and-invoke so the callback can install a new slot without
         // destroying its own closure mid-call.
         let slot = self.before_close_callback.lock().unwrap().take();
-        if let Some(s) = slot {
-            type F = unsafe extern "C" fn(*mut c_void);
-            let f: F = unsafe { std::mem::transmute(s.fn_ptr) };
-            unsafe { f(s.ctx) };
+        if let Some(f) = slot {
+            f();
         }
     }
 
@@ -1077,16 +1086,7 @@ impl Inner {
         browser: *mut c_void,
     ) -> bool {
         let g = self.message_handler.lock().unwrap();
-        let Some(slot) = g.as_ref() else { return false };
-        type F = unsafe extern "C" fn(
-            *mut c_void,
-            *const c_char,
-            usize,
-            *mut c_void,
-            *mut c_void,
-        ) -> bool;
-        let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
-        unsafe { f(slot.ctx, name.as_ptr() as *const c_char, name.len(), args, browser) }
+        g.as_ref().map(|f| f(name, args, browser)).unwrap_or(false)
     }
 
     pub(crate) fn has_context_menu_builder(&self) -> bool {
@@ -1095,18 +1095,14 @@ impl Inner {
 
     pub(crate) fn invoke_context_menu_builder(&self, menu_model_raw: *mut c_void) {
         let g = self.context_menu_builder.lock().unwrap();
-        let Some(slot) = g.as_ref() else { return };
-        type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
-        let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
-        unsafe { f(slot.ctx, menu_model_raw) };
+        if let Some(f) = g.as_ref() {
+            f(menu_model_raw);
+        }
     }
 
     fn invoke_context_menu_dispatcher(&self, command_id: c_int) -> bool {
         let g = self.context_menu_dispatcher.lock().unwrap();
-        let Some(slot) = g.as_ref() else { return false };
-        type F = unsafe extern "C" fn(*mut c_void, c_int) -> bool;
-        let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
-        unsafe { f(slot.ctx, command_id) }
+        g.as_ref().map(|f| f(command_id)).unwrap_or(false)
     }
 
     pub(crate) fn on_before_popup(&self, url: &str) -> bool {
@@ -1850,18 +1846,104 @@ pub unsafe extern "C" fn jfn_cef_layer_on_before_popup(
     unsafe { arc(h) }.on_before_popup(&url)
 }
 
-fn store_slot(
-    slot: &Mutex<Option<CallbackSlot>>,
+// Per-slot raw-triple → Box<dyn Fn> wrappers. Each closure moves a RawHolder
+// so the slot's Drop releases the C-side dtor exactly once.
+
+fn box_raw_message(
     fn_ptr: *mut c_void,
     ctx: *mut c_void,
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) {
-    let new = if fn_ptr.is_null() {
-        None
-    } else {
-        Some(CallbackSlot { fn_ptr, ctx, dtor })
-    };
-    *slot.lock().unwrap() = new;
+) -> Box<MessageFn> {
+    let h = RawHolder { fn_ptr, ctx, dtor };
+    Box::new(move |name, args, browser| {
+        let h = &h; // force whole-struct capture (Send+Sync via RawHolder)
+        type F = unsafe extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            usize,
+            *mut c_void,
+            *mut c_void,
+        ) -> bool;
+        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
+        unsafe { f(h.ctx, name.as_ptr() as *const c_char, name.len(), args, browser) }
+    })
+}
+
+fn box_raw_created(
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> Box<CreatedFn> {
+    let h = RawHolder { fn_ptr, ctx, dtor };
+    Box::new(move |browser| {
+        let h = &h;
+        type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
+        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
+        unsafe { f(h.ctx, browser) };
+    })
+}
+
+fn box_raw_before_close(
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> Box<BeforeCloseFn> {
+    let h = RawHolder { fn_ptr, ctx, dtor };
+    Box::new(move || {
+        let h = &h;
+        type F = unsafe extern "C" fn(*mut c_void);
+        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
+        unsafe { f(h.ctx) };
+    })
+}
+
+fn box_raw_ctx_builder(
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> Box<ContextBuilderFn> {
+    let h = RawHolder { fn_ptr, ctx, dtor };
+    Box::new(move |menu_model| {
+        let h = &h;
+        type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
+        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
+        unsafe { f(h.ctx, menu_model) };
+    })
+}
+
+fn box_raw_ctx_dispatcher(
+    fn_ptr: *mut c_void,
+    ctx: *mut c_void,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> Box<ContextDispatcherFn> {
+    let h = RawHolder { fn_ptr, ctx, dtor };
+    Box::new(move |cmd| {
+        let h = &h;
+        type F = unsafe extern "C" fn(*mut c_void, c_int) -> bool;
+        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
+        unsafe { f(h.ctx, cmd) }
+    })
+}
+
+// Pub Rust API: in-process callers (e.g. future jfn-browsers crate) install
+// closures directly. Pass `None` to clear; the previously installed closure
+// is dropped (which fires the C dtor for any wrapped raw triple).
+impl JfnCefLayer {
+    pub fn set_message_handler_rust(&self, f: Option<Box<MessageFn>>) {
+        *self.inner.message_handler.lock().unwrap() = f;
+    }
+    pub fn set_created_callback_rust(&self, f: Option<Box<CreatedFn>>) {
+        *self.inner.created_callback.lock().unwrap() = f;
+    }
+    pub fn set_before_close_callback_rust(&self, f: Option<Box<BeforeCloseFn>>) {
+        *self.inner.before_close_callback.lock().unwrap() = f;
+    }
+    pub fn set_context_menu_builder_rust(&self, f: Option<Box<ContextBuilderFn>>) {
+        *self.inner.context_menu_builder.lock().unwrap() = f;
+    }
+    pub fn set_context_menu_dispatcher_rust(&self, f: Option<Box<ContextDispatcherFn>>) {
+        *self.inner.context_menu_dispatcher.lock().unwrap() = f;
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1871,7 +1953,9 @@ pub unsafe extern "C" fn jfn_cef_layer_set_message_handler(
     ctx: *mut c_void,
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
-    store_slot(&unsafe { arc(h) }.message_handler, fn_ptr, ctx, dtor);
+    let inner = unsafe { arc(h) };
+    let new = if fn_ptr.is_null() { None } else { Some(box_raw_message(fn_ptr, ctx, dtor)) };
+    *inner.message_handler.lock().unwrap() = new;
 }
 
 #[unsafe(no_mangle)]
@@ -1881,7 +1965,9 @@ pub unsafe extern "C" fn jfn_cef_layer_set_created_callback(
     ctx: *mut c_void,
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
-    store_slot(&unsafe { arc(h) }.created_callback, fn_ptr, ctx, dtor);
+    let inner = unsafe { arc(h) };
+    let new = if fn_ptr.is_null() { None } else { Some(box_raw_created(fn_ptr, ctx, dtor)) };
+    *inner.created_callback.lock().unwrap() = new;
 }
 
 #[unsafe(no_mangle)]
@@ -1891,7 +1977,9 @@ pub unsafe extern "C" fn jfn_cef_layer_set_before_close_callback(
     ctx: *mut c_void,
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
-    store_slot(&unsafe { arc(h) }.before_close_callback, fn_ptr, ctx, dtor);
+    let inner = unsafe { arc(h) };
+    let new = if fn_ptr.is_null() { None } else { Some(box_raw_before_close(fn_ptr, ctx, dtor)) };
+    *inner.before_close_callback.lock().unwrap() = new;
 }
 
 #[unsafe(no_mangle)]
@@ -1901,7 +1989,9 @@ pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_builder(
     ctx: *mut c_void,
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
-    store_slot(&unsafe { arc(h) }.context_menu_builder, fn_ptr, ctx, dtor);
+    let inner = unsafe { arc(h) };
+    let new = if fn_ptr.is_null() { None } else { Some(box_raw_ctx_builder(fn_ptr, ctx, dtor)) };
+    *inner.context_menu_builder.lock().unwrap() = new;
 }
 
 #[unsafe(no_mangle)]
@@ -1911,7 +2001,9 @@ pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_dispatcher(
     ctx: *mut c_void,
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
-    store_slot(&unsafe { arc(h) }.context_menu_dispatcher, fn_ptr, ctx, dtor);
+    let inner = unsafe { arc(h) };
+    let new = if fn_ptr.is_null() { None } else { Some(box_raw_ctx_dispatcher(fn_ptr, ctx, dtor)) };
+    *inner.context_menu_dispatcher.lock().unwrap() = new;
 }
 
 #[unsafe(no_mangle)]
@@ -1928,17 +2020,9 @@ pub unsafe extern "C" fn jfn_cef_layer_invoke_message_handler(
     browser: *mut c_void,
 ) -> bool {
     let inner = unsafe { arc(h) };
+    let name = read_utf8(name_utf8, name_len);
     let g = inner.message_handler.lock().unwrap();
-    let Some(slot) = g.as_ref() else { return false };
-    type F = unsafe extern "C" fn(
-        *mut c_void,
-        *const c_char,
-        usize,
-        *mut c_void,
-        *mut c_void,
-    ) -> bool;
-    let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
-    unsafe { f(slot.ctx, name_utf8, name_len, args, browser) }
+    g.as_ref().map(|f| f(&name, args, browser)).unwrap_or(false)
 }
 
 #[unsafe(no_mangle)]
@@ -1948,10 +2032,9 @@ pub unsafe extern "C" fn jfn_cef_layer_invoke_created_callback(
 ) {
     let inner = unsafe { arc(h) };
     let g = inner.created_callback.lock().unwrap();
-    let Some(slot) = g.as_ref() else { return };
-    type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
-    let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
-    unsafe { f(slot.ctx, browser) };
+    if let Some(f) = g.as_ref() {
+        f(browser);
+    }
 }
 
 /// Atomically take the before-close slot and invoke it. Matches the original
@@ -1964,11 +2047,9 @@ pub unsafe extern "C" fn jfn_cef_layer_take_and_invoke_before_close(h: *const Jf
         .lock()
         .unwrap()
         .take();
-    let Some(s) = slot else { return };
-    type F = unsafe extern "C" fn(*mut c_void);
-    let f: F = unsafe { std::mem::transmute(s.fn_ptr) };
-    unsafe { f(s.ctx) };
-    // s drops here — dtor cleans up the C++ holder.
+    if let Some(f) = slot {
+        f();
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1978,10 +2059,9 @@ pub unsafe extern "C" fn jfn_cef_layer_invoke_context_menu_builder(
 ) {
     let inner = unsafe { arc(h) };
     let g = inner.context_menu_builder.lock().unwrap();
-    let Some(slot) = g.as_ref() else { return };
-    type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
-    let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
-    unsafe { f(slot.ctx, menu_model) };
+    if let Some(f) = g.as_ref() {
+        f(menu_model);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1991,10 +2071,7 @@ pub unsafe extern "C" fn jfn_cef_layer_invoke_context_menu_dispatcher(
 ) -> bool {
     let inner = unsafe { arc(h) };
     let g = inner.context_menu_dispatcher.lock().unwrap();
-    let Some(slot) = g.as_ref() else { return false };
-    type F = unsafe extern "C" fn(*mut c_void, c_int) -> bool;
-    let f: F = unsafe { std::mem::transmute(slot.fn_ptr) };
-    unsafe { f(slot.ctx, command_id) }
+    g.as_ref().map(|f| f(command_id)).unwrap_or(false)
 }
 
 fn read_utf8(p: *const c_char, len: usize) -> String {

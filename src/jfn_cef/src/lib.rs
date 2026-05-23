@@ -11,7 +11,7 @@
 
 mod app;
 mod bridge;
-mod client;
+pub mod client;
 mod client_impl;
 mod embedded_js;
 pub mod ffi;
@@ -23,6 +23,9 @@ mod resource;
 mod state;
 mod v8_handler;
 
+pub use client::{
+    BeforeCloseFn, ContextBuilderFn, ContextDispatcherFn, CreatedFn, JfnCefLayer, MessageFn,
+};
 pub use ffi::*;
 
 pub const APP_VERSION: &str = env!("JFN_APP_VERSION");
