@@ -221,3 +221,41 @@ extern "C" void jfn_platform_restack(void* const* ordered, size_t n) {
 extern "C" Platform* jfn_g_platform_ptr(void) {
     return &g_platform;
 }
+
+// Field/method accessors used by jfn_app_main (jfn_rust/src/app.rs). The
+// Rust port reads the Platform vtable through these instead of mirroring
+// the whole struct shape on the Rust side.
+
+extern "C" int jfn_g_platform_display(void) {
+    return static_cast<int>(g_platform.display);
+}
+
+extern "C" float jfn_g_platform_get_scale(void) {
+    return g_platform.get_scale ? g_platform.get_scale() : 1.0f;
+}
+
+extern "C" float jfn_g_platform_get_display_scale(int x, int y) {
+    return g_platform.get_display_scale ? g_platform.get_display_scale(x, y) : 1.0f;
+}
+
+extern "C" void jfn_g_platform_clamp_window_geometry(int* w, int* h, int* x, int* y) {
+    if (g_platform.clamp_window_geometry)
+        g_platform.clamp_window_geometry(w, h, x, y);
+}
+
+extern "C" void jfn_g_platform_pump(void) {
+    if (g_platform.pump) g_platform.pump();
+}
+
+extern "C" bool jfn_g_platform_query_window_position(int* x, int* y) {
+    return g_platform.query_window_position
+        ? g_platform.query_window_position(x, y) : false;
+}
+
+extern "C" void jfn_g_platform_post_window_cleanup(void) {
+    if (g_platform.post_window_cleanup) g_platform.post_window_cleanup();
+}
+
+extern "C" void jfn_g_video_bg_set(uint32_t rgb) {
+    g_video_bg = Color{rgb};
+}

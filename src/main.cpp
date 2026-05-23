@@ -461,6 +461,7 @@ struct JfnBootArgs {
 extern "C" int jfn_app_main(int argc, const char* const* argv);
 extern "C" const JfnBootArgs* jfn_app_boot_args(void);
 extern "C" void jfn_app_teardown(void);
+extern "C" void jfn_app_vo_size(int* w, int* h);
 
 int main(int argc, char* argv[]) {
     // Linux platform selection is deferred until after CLI parsing; on
@@ -487,205 +488,15 @@ int main(int argc, char* argv[]) {
     args.disable_gpu_compositing = ba && ba->disable_gpu_compositing;
     args.remote_debugging_port = ba ? ba->remote_debugging_port : 0;
 
-    // Platform selection, signal handler, single-instance check, MPV_HOME,
-    // and wlproxy startup are all owned by jfn_app_main now.
+    // jfn_app_main owns mpv boot: geometry restore, audio_passthrough
+    // dts-hd normalisation, mpv log level selection, jfn_mpv_handle_init,
+    // jfn_playback_observe_mpv_properties, video-bg capture + override,
+    // version logging, CLOSE_WIN keybind, and the VO wait loop. mw/mh
+    // come back via jfn_app_vo_size().
 
-    // Restore saved window geometry. mpv's --geometry is always physical
-    // pixels (m_geometry_apply at third_party/mpv/options/m_option.c:2296
-    // assigns gm->w/h to widw/widh without applying dpi_scale), so we pass
-    // physical pixels here. If the live display scale differs from what
-    // these pixels were computed against, the post-CEF-init resize block
-    // below corrects the window size once display-hidpi-scale is known.
-    std::string boot_geometry;
-    bool boot_force_position = false;
-    bool boot_window_max = false;
-    {
-        using WG = Settings::WindowGeometry;
-        auto saved_geom = Settings::instance().windowGeometry();
-
-        int x = saved_geom.x, y = saved_geom.y;
-        float scale = g_platform.get_display_scale(x, y);
-        int w, h;
-        if (saved_geom.logical_width > 0 && saved_geom.logical_height > 0) {
-            w = static_cast<int>(std::lround(saved_geom.logical_width  * scale));
-            h = static_cast<int>(std::lround(saved_geom.logical_height * scale));
-        } else if (saved_geom.width > 0 && saved_geom.height > 0) {
-            w = saved_geom.width;
-            h = saved_geom.height;
-        } else {
-            w = static_cast<int>(std::lround(WG::kDefaultLogicalWidth  * scale));
-            h = static_cast<int>(std::lround(WG::kDefaultLogicalHeight * scale));
-        }
-        LOG_DEBUG(LOG_MAIN, "initial scale: {} -> {}x{}", scale, w, h);
-
-        if (g_platform.clamp_window_geometry)
-            g_platform.clamp_window_geometry(&w, &h, &x, &y);
-        boot_geometry = std::to_string(w) + "x" + std::to_string(h);
-        if (x >= 0 && y >= 0) {
-            boot_geometry += "+" + std::to_string(x) + "+" + std::to_string(y);
-            boot_force_position = true;
-        }
-        boot_window_max = saved_geom.maximized;
-    }
-
-    if (!args.audio_passthrough.empty()) {
-        // Normalize: dts-hd subsumes dts
-        if (args.audio_passthrough.find("dts-hd") != std::string::npos) {
-            std::string filtered;
-            size_t pos = 0;
-            while (pos < args.audio_passthrough.size()) {
-                size_t comma = args.audio_passthrough.find(',', pos);
-                if (comma == std::string::npos) comma = args.audio_passthrough.size();
-                std::string codec = args.audio_passthrough.substr(pos, comma - pos);
-                if (codec != "dts") {
-                    if (!filtered.empty()) filtered += ',';
-                    filtered += codec;
-                }
-                pos = comma + 1;
-            }
-            args.audio_passthrough = filtered;
-        }
-    }
-
-    // Pick the libmpv log subscription level to match what jfn-logging
-    // would actually surface for LOG_MPV. Cap at "debug"; mpv's "trace"
-    // is extreme and not worth the IPC. mpv's "v" maps to our Debug;
-    // mpv's "debug" maps to our Trace.
-    const char* mpv_log_level = "no";
-    if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Trace))      mpv_log_level = "debug";
-    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Debug)) mpv_log_level = "v";
-    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Info))  mpv_log_level = "info";
-    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Warn))  mpv_log_level = "warn";
-    else if (jfn_log_enabled(LOG_MPV, (uint8_t)LogLevel::Error)) mpv_log_level = "error";
-
-    JfnMpvBoot boot{};
-    boot.display_backend          = static_cast<uint8_t>(g_platform.display);
-    boot.hwdec                    = args.hwdec.c_str();
-    boot.user_agent               = APP_USER_AGENT;
-    boot.audio_passthrough        = args.audio_passthrough.empty()
-                                  ? nullptr : args.audio_passthrough.c_str();
-    boot.audio_exclusive          = args.audio_exclusive;
-    boot.audio_channels           = args.audio_channels.empty()
-                                  ? nullptr : args.audio_channels.c_str();
-    boot.geometry                 = boot_geometry.c_str();
-    boot.force_window_position    = boot_force_position;
-    boot.window_maximized_at_boot = boot_window_max;
-    boot.mpv_log_level            = mpv_log_level;
-
-    mpv_handle* raw = jfn_mpv_handle_init(&boot);
-    if (!raw) { LOG_ERROR(LOG_MAIN, "mpv handle init failed"); return 1; }
-
-    // Register property observations after init via the Rust ingest layer.
-    jfn_playback_observe_mpv_properties(static_cast<uint8_t>(g_platform.display));
-
-    // Capture user's mpv.conf bg, then force startup color. Safe here:
-    // force-window=yes (not "immediate") defers VO creation, so the user's
-    // color never flashes before we override.
-    g_video_bg = Color{jfn_mpv_get_background_color()};
-    LOG_INFO(LOG_MAIN, "video bg captured: {}", g_video_bg.hex);
-    jfn_mpv_set_background_color_hex(kBgColor.hex);
-
-    for (const char* prop : {"mpv-version", "ffmpeg-version"}) {
-        char* v = jfn_mpv_get_property_string(prop);
-        LOG_INFO(LOG_MAIN, "{} {}", prop, v ? v : "");
-        jfn_mpv_free_string(v);
-    }
-
-    // input-default-bindings=no removes all builtin bindings including
-    // CLOSE_WIN → quit.  Re-bind it so the WM close button works.
-    {
-        const char* cmd[] = {"keybind", "CLOSE_WIN", "quit", nullptr};
-        mpv_command(jfn_mpv_handle_get(), cmd);
-    }
-
-    // Wait for the VO window. Reads osd-dimensions from the event payload
-    // (no sync mpv_get_property call) so it stays safe against a
-    // DispatchQueue.main.sync deadlock against core_thread on macOS.
-    LOG_INFO(LOG_MAIN, "Waiting for mpv window...");
-    int64_t mw = 0, mh = 0;
-    // First OSD_DIMS event reflects the pre-configure geometry hint, not the
-    // post-configure surface size. When maximized startup is requested, also
-    // wait for the window-maximized property to flip true (proves mpv has
-    // processed the compositor's maximize configure) and take the OSD_DIMS
-    // that follows.
-    //
-    // On Wayland we don't observe osd-dimensions: the proxy's
-    // xdg_toplevel.configure intercept (jfn-wayland::proxy::on_configure)
-    // calls jfn_playback_post_osd_pixels directly, filling the same
-    // osd_pw/osd_ph atomics from a non-mpv-event source.
-    // The poll below reads the atomics every iteration to pick up the
-    // value regardless of whether a mpv property-change event arrived.
-    bool need_max = Settings::instance().windowGeometry().maximized;
-    // On Wayland the initial logical-pixel computation in run_with_cef
-    // needs cached_scale populated by the proxy's preferred_scale callback.
-    // Wait for it explicitly — otherwise CEF starts at physical*1.0 size on
-    // fractional displays.
-#if !defined(_WIN32) && !defined(__APPLE__)
-    const bool wait_for_scale = g_platform.display == DisplayBackend::Wayland;
-#else
-    const bool wait_for_scale = false;
-#endif
-    auto consume = [&](mpv_event* ev) -> bool {
-        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            float scale = g_platform.get_scale ? g_platform.get_scale() : 1.0f;
-            if (scale <= 0.f) scale = 1.0f;
-            bool has_macos_logical = false;
-            int  mac_lw = 0, mac_lh = 0;
-#ifdef __APPLE__
-            has_macos_logical = macos_platform::query_logical_content_size(
-                &mac_lw, &mac_lh);
-#endif
-            jfn_playback_ingest_mpv_event(
-                ev, scale, has_macos_logical, mac_lw, mac_lh);
-            if (ev->reply_userdata == JFN_OBSERVE_WINDOW_MAX &&
-                jfn_playback_window_maximized())
-                need_max = false;
-        }
-        if (jfn_playback_osd_pw() > 0 && jfn_playback_osd_ph() > 0) {
-            mw = jfn_playback_osd_pw();
-            mh = jfn_playback_osd_ph();
-        }
-#if !defined(_WIN32) && !defined(__APPLE__)
-        bool scale_ready = !wait_for_scale || jfn_wl_scale_known();
-#else
-        bool scale_ready = true;
-#endif
-        return mw > 0 && !need_max && scale_ready;
-    };
-
-#ifdef __APPLE__
-    while (true) {
-        g_platform.pump();
-        mpv_event* ev = jfn_mpv_wait_event(0);
-        if (ev->event_id == MPV_EVENT_NONE) { usleep(10000); continue; }
-        if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
-            continue;
-        }
-        if (ev->event_id == MPV_EVENT_SHUTDOWN || ev->event_id == MPV_EVENT_END_FILE) {
-            return 0;
-        }
-        if (consume(ev)) break;
-    }
-#else
-    // Short timeout so the loop polls jfn_playback_osd_pw/ph on Wayland
-    // too — the proxy can update those atomics without producing any mpv
-    // event.
-    const double wait_timeout = g_platform.display == DisplayBackend::Wayland
-        ? 0.1 : 1.0;
-    while (true) {
-        mpv_event* ev = jfn_mpv_wait_event(wait_timeout);
-        if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
-            log_mpv_message(static_cast<mpv_event_log_message*>(ev->data));
-            continue;
-        }
-        if (ev->event_id == MPV_EVENT_SHUTDOWN) return 0;
-        if (ev->event_id == MPV_EVENT_END_FILE) return 0;
-        if (consume(ev)) break;
-    }
-#endif
-
-    int rc = run_with_cef(static_cast<int>(mw), static_cast<int>(mh), args);
+    int mw = 0, mh = 0;
+    jfn_app_vo_size(&mw, &mh);
+    int rc = run_with_cef(mw, mh, args);
     if (rc != 0) return rc;
 
 #ifdef __APPLE__

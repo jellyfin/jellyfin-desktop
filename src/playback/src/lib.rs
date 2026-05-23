@@ -12,7 +12,7 @@ mod ffi;
 mod hotkey;
 mod ingest;
 mod idle_inhibit_sink;
-mod ingest_driver;
+pub mod ingest_driver;
 mod mpris;
 #[cfg(target_os = "linux")]
 mod mpris_sink;
