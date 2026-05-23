@@ -70,33 +70,20 @@ unsafe extern "C" {
 const LOG_MAIN: u8 = 0;
 const DEFAULT_LOG_FILTER: &str = "info";
 
-/// Subset of the legacy `cli::Args` consumed by what's still in main.cpp.
-/// String fields are CString-owned by Rust; pointers are valid for the
-/// lifetime of the process (we hold the storage in [`BOOT_ARGS_STORAGE`]).
-#[repr(C)]
-pub struct JfnBootArgs {
-    pub hwdec: *const c_char,
-    pub audio_passthrough: *const c_char,
-    pub audio_channels: *const c_char,
-    pub log_level: *const c_char,
-    pub ozone_platform: *const c_char,
-    pub platform_override: *const c_char,
-    pub audio_exclusive: bool,
-    pub disable_gpu_compositing: bool,
-    pub remote_debugging_port: c_int,
+/// Parsed CLI args + settings overrides, threaded through the rest of
+/// `jfn_app_main`. After slice 1f the C++ side no longer reads these;
+/// they stay as a plain owned Rust struct.
+struct BootArgs {
+    hwdec: String,
+    audio_passthrough: String,
+    audio_channels: String,
+    log_level: String,
+    ozone_platform: String,
+    platform_override: String,
+    audio_exclusive: bool,
+    disable_gpu_compositing: bool,
+    remote_debugging_port: c_int,
 }
-
-struct BootArgsStorage {
-    _hwdec: CString,
-    _audio_passthrough: CString,
-    _audio_channels: CString,
-    _log_level: CString,
-    _ozone_platform: CString,
-    _platform_override: CString,
-    flat: JfnBootArgs,
-}
-
-static BOOT_ARGS_STORAGE: OnceLock<Box<BootArgsStorage>> = OnceLock::new();
 
 unsafe fn take_owned_cstring(p: *mut c_char) -> String {
     if p.is_null() {
@@ -336,36 +323,6 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
         tracing::info!(target: "Main", "Log file: {log_path}");
     }
 
-    // 8. Stash parsed args in BOOT_ARGS_STORAGE so jfn_app_run_with_cef
-    //    (still in this crate) can read them as a flat C struct.
-    //    Heap-allocated; the Box never moves so the as_ptr() values stay
-    //    valid for the lifetime of the process.
-    let mut storage = Box::new(BootArgsStorage {
-        _hwdec: cs(&hwdec),
-        _audio_passthrough: cs(&audio_passthrough),
-        _audio_channels: cs(&audio_channels),
-        _log_level: cs(&log_level),
-        _ozone_platform: cs(&ozone_platform),
-        _platform_override: cs(&platform_override),
-        flat: JfnBootArgs {
-            hwdec: ptr::null(),
-            audio_passthrough: ptr::null(),
-            audio_channels: ptr::null(),
-            log_level: ptr::null(),
-            ozone_platform: ptr::null(),
-            platform_override: ptr::null(),
-            audio_exclusive,
-            disable_gpu_compositing,
-            remote_debugging_port,
-        },
-    });
-    storage.flat.hwdec = storage._hwdec.as_ptr();
-    storage.flat.audio_passthrough = storage._audio_passthrough.as_ptr();
-    storage.flat.audio_channels = storage._audio_channels.as_ptr();
-    storage.flat.log_level = storage._log_level.as_ptr();
-    storage.flat.ozone_platform = storage._ozone_platform.as_ptr();
-    storage.flat.platform_override = storage._platform_override.as_ptr();
-    let _ = BOOT_ARGS_STORAGE.set(storage);
     let _ = LOG_MAIN;
     // 9. Linux: pick display backend, populate g_platform, run early_init,
     //    register the platform-ops vtable with the Rust-side jfn-cef.
@@ -595,7 +552,18 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     // 22. run_with_cef body + post-run mpv terminate. From here jfn_app_main
     //     fully owns the rest of the process lifetime — main.cpp doesn't
     //     touch the post-VO path anymore.
-    let rc = unsafe { jfn_app_run_with_cef(mw, mh) };
+    let boot_args = BootArgs {
+        hwdec,
+        audio_passthrough,
+        audio_channels,
+        log_level,
+        ozone_platform,
+        platform_override,
+        audio_exclusive,
+        disable_gpu_compositing,
+        remote_debugging_port,
+    };
+    let rc = unsafe { run_with_cef(&boot_args, mw, mh) };
     if rc != 0 {
         return rc;
     }
@@ -636,21 +604,6 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     0
 }
 
-/// Return a borrowed pointer to the parsed CLI/settings args. Valid for
-/// the rest of the process lifetime once [`jfn_app_main`] returns -1.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_app_boot_args() -> *const JfnBootArgs {
-    match BOOT_ARGS_STORAGE.get() {
-        Some(s) => &s.flat as *const JfnBootArgs,
-        None => ptr::null(),
-    }
-}
-
-// JfnBootArgs holds raw pointers but they all reference the same Box,
-// which never moves and is read-only after init — safe to share across
-// threads. The Box itself is Send + Sync because of this.
-unsafe impl Send for BootArgsStorage {}
-unsafe impl Sync for BootArgsStorage {}
 
 // =====================================================================
 // Signal handler + listener guard + wlproxy lifetime
@@ -759,12 +712,6 @@ unsafe fn start_wlproxy() {
     let _ = WLPROXY.set(WlproxySlot(p));
 }
 
-/// C accessor for whether jfn_app_main already set up signal/single-instance/
-/// platform/wlproxy. Lets main.cpp skip the duplicated work during the port.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_app_boot_done() -> bool {
-    BOOT_ARGS_STORAGE.get().is_some()
-}
 
 // =====================================================================
 // mpv boot helpers + VO wait loop
@@ -1016,20 +963,12 @@ extern "C" fn h_shutdown_close_browsers() {
     unsafe { jfn_g_platform_wake_main_loop() };
 }
 
-/// Port of `run_with_cef`. Returns exit code (0 on success). Called from
-/// main.cpp right after the VO wait loop until that path is ported too.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_app_run_with_cef(mut mw: c_int, mut mh: c_int) -> c_int {
-    let ba = match BOOT_ARGS_STORAGE.get() {
-        Some(s) => &s.flat,
-        None => {
-            tracing::error!(target: "Main", "boot args not initialised");
-            return 1;
-        }
-    };
-
+/// Internal helper. Owns the run_with_cef body. No longer extern "C"
+/// because main.cpp doesn't call it directly anymore — slice 1f folded
+/// the call into jfn_app_main.
+unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     // 1. Resolve final ozone_platform + write into g_platform.cef_ozone_platform.
-    let mut ozone_platform = unsafe { cstr_to_string(ba.ozone_platform) };
+    let mut ozone_platform = ba.ozone_platform.clone();
     #[cfg(target_os = "linux")]
     {
         if ozone_platform.is_empty() {
