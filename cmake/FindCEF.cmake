@@ -66,6 +66,32 @@ if(EXTERNAL_CEF_DIR)
         message(FATAL_ERROR "libcef_dll_wrapper not found. Searched: ${_WRAPPER_SEARCH_PATHS}")
     endif()
 
+    # A pre-built wrapper here must have been compiled with -Dapi_version
+    # matching cef-rs's binding ABI. If the packager didn't pin it the wrapper
+    # defaults to CEF_API_VERSION_EXPERIMENTAL (999999) and ctocpp wrap
+    # runtime-aborts on the first Rust→C++ handoff. The packager-side
+    # CMakeCache.txt — if shipped alongside the wrapper — is the only on-disk
+    # record we can verify against; without it we cannot prove the pin held,
+    # so fail loud rather than silently shipping a mis-pinned wrapper.
+    set(_CEF_EXT_CACHE "${EXTERNAL_CEF_DIR}/build/CMakeCache.txt")
+    if(NOT EXISTS "${_CEF_EXT_CACHE}")
+        message(FATAL_ERROR
+            "Pre-built libcef_dll_wrapper at ${CEF_WRAPPER_PATH} but no "
+            "CMakeCache.txt at ${_CEF_EXT_CACHE} to verify it was built with "
+            "api_version=${JFN_CEF_API_VERSION}. Either ship that cache file "
+            "next to the wrapper, drop the pre-built wrapper and point "
+            "CEF_ROOT at the SDK source so we build it here, or rebuild the "
+            "wrapper out-of-tree with -Dapi_version=${JFN_CEF_API_VERSION}.")
+    endif()
+    file(READ "${_CEF_EXT_CACHE}" _CEF_CMAKE_CACHE)
+    if(NOT _CEF_CMAKE_CACHE MATCHES "api_version:[A-Z]+=${JFN_CEF_API_VERSION}")
+        message(FATAL_ERROR
+            "Pre-built libcef_dll_wrapper at ${CEF_WRAPPER_PATH} was built "
+            "with the wrong api_version (expected ${JFN_CEF_API_VERSION}, "
+            "per ${_CEF_EXT_CACHE}). Rebuild it with "
+            "-Dapi_version=${JFN_CEF_API_VERSION}.")
+    endif()
+
     message(STATUS "Using libcef_dll_wrapper: ${CEF_WRAPPER_PATH}")
 
     if(WIN32)
@@ -130,13 +156,26 @@ elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
     # (999999) and has different struct sizes than cef-rs — runtime wrap fails
     # with "invalid base.size". JFN_CEF_API_VERSION is set by
     # DetectCefApiVersion.cmake from cef-dll-sys's CEF_API_VERSION_LAST.
-    if(CEF_WRAPPER_PATH AND EXISTS "${CEF_ROOT}/build/CMakeCache.txt")
-        file(READ "${CEF_ROOT}/build/CMakeCache.txt" _CEF_CMAKE_CACHE)
-        if(NOT _CEF_CMAKE_CACHE MATCHES "api_version:[A-Z]+=${JFN_CEF_API_VERSION}")
-            message(STATUS "Cached libcef_dll_wrapper has wrong api_version, rebuilding")
+    if(CEF_WRAPPER_PATH)
+        if(NOT EXISTS "${CEF_ROOT}/build/CMakeCache.txt")
+            # Wrapper present but no cache to prove its api_version. A pre-built
+            # wrapper dropped in by a packager without the cache file falls into
+            # this branch and would otherwise be used silently. Force a rebuild
+            # against the standard build/ layout so the pin is observable.
+            message(STATUS
+                "libcef_dll_wrapper present at ${CEF_WRAPPER_PATH} but no "
+                "CMakeCache.txt at ${CEF_ROOT}/build to verify api_version; "
+                "rebuilding to guarantee api_version=${JFN_CEF_API_VERSION}")
             file(REMOVE "${CEF_WRAPPER_PATH}")
-            file(REMOVE "${CEF_ROOT}/build/CMakeCache.txt")
             set(CEF_WRAPPER_PATH "")
+        else()
+            file(READ "${CEF_ROOT}/build/CMakeCache.txt" _CEF_CMAKE_CACHE)
+            if(NOT _CEF_CMAKE_CACHE MATCHES "api_version:[A-Z]+=${JFN_CEF_API_VERSION}")
+                message(STATUS "Cached libcef_dll_wrapper has wrong api_version, rebuilding")
+                file(REMOVE "${CEF_WRAPPER_PATH}")
+                file(REMOVE "${CEF_ROOT}/build/CMakeCache.txt")
+                set(CEF_WRAPPER_PATH "")
+            endif()
         endif()
     endif()
 
@@ -153,8 +192,16 @@ elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
            (UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64"))
             list(APPEND _CEF_CMAKE_ARGS -DPROJECT_ARCH=arm64)
         endif()
+        # Clear CFLAGS / CXXFLAGS for the sub-build. CEF's CMake sets its own
+        # -W and -D flags (including -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2);
+        # an inherited `-Wp,-D_FORTIFY_SOURCE=3` from a hardened build env
+        # (e.g. flatpak's default CXXFLAGS) collides with that and trips
+        # -Werror on `_FORTIFY_SOURCE redefined`. The wrapper is a small
+        # static lib linked into our binary, so dropping the outer env's
+        # hardening flags here is a no-op for the final binary's hardening.
+        set(_CEF_SUBBUILD_ENV ${CMAKE_COMMAND} -E env --unset=CFLAGS --unset=CXXFLAGS --unset=CPPFLAGS)
         execute_process(
-            COMMAND ${CMAKE_COMMAND} ${_CEF_CMAKE_ARGS}
+            COMMAND ${_CEF_SUBBUILD_ENV} ${CMAKE_COMMAND} ${_CEF_CMAKE_ARGS}
             WORKING_DIRECTORY ${CEF_ROOT}
             RESULT_VARIABLE CEF_CONFIG_RESULT
         )
@@ -164,9 +211,9 @@ elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
         # Limit parallelism - CEF wrapper builds OOM with unlimited -j even on 16GB RAM
         # Windows multi-config generators need --config Release
         if(WIN32)
-            set(_CEF_BUILD_CMD ${CMAKE_COMMAND} --build build --target libcef_dll_wrapper --config Release -j2)
+            set(_CEF_BUILD_CMD ${_CEF_SUBBUILD_ENV} ${CMAKE_COMMAND} --build build --target libcef_dll_wrapper --config Release -j2)
         else()
-            set(_CEF_BUILD_CMD ${CMAKE_COMMAND} --build build --target libcef_dll_wrapper -j2)
+            set(_CEF_BUILD_CMD ${_CEF_SUBBUILD_ENV} ${CMAKE_COMMAND} --build build --target libcef_dll_wrapper -j2)
         endif()
         execute_process(
             COMMAND ${_CEF_BUILD_CMD}

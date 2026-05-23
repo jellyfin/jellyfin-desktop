@@ -21,31 +21,27 @@ cleanup:
   - '*.a'
   - '*.la'
   - /bin/event_rpcgen.py
+  - /cef
   - /include
   - /lib/cmake
   - /lib/pkgconfig
   - /share/man
 modules:
+  # Stage the CEF SDK tree at /app/cef in its standard layout. The wrapper is
+  # NOT built here — jellyfin-desktop's FindCEF.cmake builds it during the
+  # next module, where DetectCefApiVersion.cmake has already derived the
+  # api_version from cef-dll-sys's Cargo manifest and can pin the wrapper to
+  # match cef-rs's binding ABI. Building it here would default to
+  # CEF_API_VERSION_EXPERIMENTAL (999999), mismatch the app's struct sizes,
+  # and trip a runtime CHECK on the first Rust→C++ handoff. /app/cef itself
+  # is pruned at finish via the cleanup entry above; the wrapper .a is
+  # already linked into the binary and the SDK headers/libs that need to
+  # ship are copied to /app by the app's install rules.
   - name: cef
-    buildsystem: cmake-ninja
-    no-make-install: true
-    build-options:
-      env:
-        CFLAGS: -O2 -pipe -g -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fcf-protection -fno-omit-frame-pointer
-        CXXFLAGS: -O2 -pipe -g -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fcf-protection -fno-omit-frame-pointer
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DPROJECT_ARCH=x86_64
-    subdir: .
+    buildsystem: simple
     build-commands:
-      - cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DPROJECT_ARCH=x86_64 .
-      - ninja libcef_dll_wrapper
-      - mkdir -p /app/cef/lib
-      - cp -r Release/* /app/cef/lib/
-      - cp -r Resources/* /app/cef/lib/
-      - cp -r include /app/cef/
-      - cp -r libcef_dll /app/cef/
-      - cp libcef_dll_wrapper/libcef_dll_wrapper.a /app/cef/lib/
+      - mkdir -p /app/cef
+      - cp -r CMakeLists.txt cmake include libcef_dll Release Resources /app/cef/
     sources:
       - type: dir
         path: ../../../third_party/cef
@@ -182,7 +178,7 @@ modules:
         - --share=network
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
-      - -DEXTERNAL_CEF_DIR=/app/cef
+      - -DCEF_ROOT=/app/cef
       - -DEXTERNAL_MPV_DIR=/app
     post-install:
       - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
