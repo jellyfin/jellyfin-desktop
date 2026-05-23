@@ -178,6 +178,24 @@ fn print_version() {
 /// `argv` must point to `argc` valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // Windows/macOS use a fixed display backend so g_platform must be
+    // populated before CefExecuteProcess (subprocesses bail out of the
+    // browser-process flow but may still query the vtable).
+    #[cfg(target_os = "windows")]
+    unsafe {
+        unsafe extern "C" {
+            fn make_windows_platform_init();
+        }
+        make_windows_platform_init();
+    }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        unsafe extern "C" {
+            fn make_macos_platform_init();
+        }
+        make_macos_platform_init();
+    }
+
     // 1. CEF subprocess dispatch: returns >= 0 in renderer/GPU/utility
     //    subprocesses (subprocess exit code), -1 in the browser process.
     let rc = jfn_cef::ffi::jfn_cef_start(argc, argv);
@@ -318,9 +336,10 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
         tracing::info!(target: "Main", "Log file: {log_path}");
     }
 
-    // 8. Stash parsed args so the remaining C++ body can read them while
-    //    the port is in progress. Heap-allocated; the Box never moves so
-    //    the CString::as_ptr() values stored in `flat` stay valid.
+    // 8. Stash parsed args in BOOT_ARGS_STORAGE so jfn_app_run_with_cef
+    //    (still in this crate) can read them as a flat C struct.
+    //    Heap-allocated; the Box never moves so the as_ptr() values stay
+    //    valid for the lifetime of the process.
     let mut storage = Box::new(BootArgsStorage {
         _hwdec: cs(&hwdec),
         _audio_passthrough: cs(&audio_passthrough),
@@ -340,6 +359,14 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
             remote_debugging_port,
         },
     });
+    storage.flat.hwdec = storage._hwdec.as_ptr();
+    storage.flat.audio_passthrough = storage._audio_passthrough.as_ptr();
+    storage.flat.audio_channels = storage._audio_channels.as_ptr();
+    storage.flat.log_level = storage._log_level.as_ptr();
+    storage.flat.ozone_platform = storage._ozone_platform.as_ptr();
+    storage.flat.platform_override = storage._platform_override.as_ptr();
+    let _ = BOOT_ARGS_STORAGE.set(storage);
+    let _ = LOG_MAIN;
     // 9. Linux: pick display backend, populate g_platform, run early_init,
     //    register the platform-ops vtable with the Rust-side jfn-cef.
     //    Windows/macOS: g_platform was populated by main() before jfn_app_main
@@ -565,16 +592,48 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     }
     store_vo_size(mw, mh);
 
-    storage.flat.hwdec = storage._hwdec.as_ptr();
-    storage.flat.audio_passthrough = storage._audio_passthrough.as_ptr();
-    storage.flat.audio_channels = storage._audio_channels.as_ptr();
-    storage.flat.log_level = storage._log_level.as_ptr();
-    storage.flat.ozone_platform = storage._ozone_platform.as_ptr();
-    storage.flat.platform_override = storage._platform_override.as_ptr();
-    let _ = BOOT_ARGS_STORAGE.set(storage);
-    let _ = LOG_MAIN;
+    // 22. run_with_cef body + post-run mpv terminate. From here jfn_app_main
+    //     fully owns the rest of the process lifetime — main.cpp doesn't
+    //     touch the post-VO path anymore.
+    let rc = unsafe { jfn_app_run_with_cef(mw, mh) };
+    if rc != 0 {
+        return rc;
+    }
 
-    -1
+    // 23. mpv terminate. macOS needs to run TerminateDestroy off the main
+    //     thread (mpv's VO uninit does DispatchQueue.main.sync), so we
+    //     spawn a side thread and pump CFRunLoop here.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        unsafe extern "C" {
+            fn signal(signum: c_int, handler: unsafe extern "C" fn(c_int)) -> usize;
+            fn CFRunLoopWakeUp(rl: *const std::ffi::c_void);
+            fn CFRunLoopGetMain() -> *const std::ffi::c_void;
+            fn CFRunLoopRunInMode(mode: *const std::ffi::c_void, seconds: f64, returnAfterSourceHandled: i32) -> i32;
+            static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+        }
+        unsafe extern "C" fn sigalrm_noop(_: c_int) {}
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let d2 = done.clone();
+        let t = std::thread::spawn(move || {
+            signal(libc::SIGALRM as c_int, sigalrm_noop);
+            jfn_mpv::boot::jfn_mpv_handle_terminate();
+            d2.store(true, std::sync::atomic::Ordering::Release);
+            CFRunLoopWakeUp(CFRunLoopGetMain());
+        });
+        while !done.load(std::sync::atomic::Ordering::Acquire) {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, f64::MAX, 1);
+        }
+        let _ = t.join();
+    }
+    #[cfg(not(target_os = "macos"))]
+    jfn_mpv::boot::jfn_mpv_handle_terminate();
+
+    // 24. Boot-resource teardown + platform post-window cleanup.
+    jfn_app_teardown();
+    unsafe { jfn_g_platform_post_window_cleanup() };
+
+    0
 }
 
 /// Return a borrowed pointer to the parsed CLI/settings args. Valid for
