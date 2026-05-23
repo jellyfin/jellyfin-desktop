@@ -68,10 +68,12 @@ impl OfferMimes {
 }
 
 type ReadCb = unsafe extern "C" fn(ctx: *mut c_void, text: *const c_char, len: usize);
+type CbDtor = unsafe extern "C" fn(*mut c_void);
 
 struct PendingCb {
     cb: ReadCb,
     ctx: *mut c_void,
+    dtor: Option<CbDtor>,
 }
 
 // Safety: the C side owns ctx lifetime and is responsible for thread safety,
@@ -230,6 +232,9 @@ fn drain_wake(fd: c_int) {
 fn fire(cb: PendingCb, text: &[u8]) {
     unsafe {
         (cb.cb)(cb.ctx, text.as_ptr() as *const c_char, text.len());
+        if let Some(d) = cb.dtor {
+            d(cb.ctx);
+        }
     }
 }
 
@@ -417,40 +422,56 @@ fn init_impl() -> Option<JfnClipboardWayland> {
     })
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_clipboard_wayland_init() -> *mut JfnClipboardWayland {
-    match init_impl() {
-        Some(c) => Box::into_raw(Box::new(c)),
-        None => std::ptr::null_mut(),
+// Process-global singleton mirroring the previous C++ `detail::instance()`.
+// The wayland lifecycle drives init/cleanup; the read path looks the
+// instance up here.
+static INSTANCE: Mutex<Option<Box<JfnClipboardWayland>>> = Mutex::new(None);
+
+pub fn clipboard_init() {
+    let mut g = INSTANCE.lock().unwrap();
+    if g.is_some() {
+        return;
+    }
+    if let Some(c) = init_impl() {
+        *g = Some(Box::new(c));
     }
 }
 
-/// # Safety
-/// `c` must be a pointer previously returned by `jfn_clipboard_wayland_init`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_clipboard_wayland_read_text_async(
-    c: *mut JfnClipboardWayland,
+pub fn clipboard_available() -> bool {
+    INSTANCE.lock().unwrap().is_some()
+}
+
+pub fn clipboard_read_text_async(
     cb: Option<ReadCb>,
     ctx: *mut c_void,
+    dtor: Option<CbDtor>,
 ) {
-    let Some(c) = (unsafe { c.as_ref() }) else { return };
-    let Some(cb) = cb else { return };
+    let Some(cb) = cb else {
+        if let Some(d) = dtor {
+            unsafe { d(ctx) };
+        }
+        return;
+    };
+    let g = INSTANCE.lock().unwrap();
+    let Some(c) = g.as_ref() else {
+        // No clipboard: deliver an empty read so the caller's promise resolves.
+        unsafe { cb(ctx, c"".as_ptr(), 0) };
+        if let Some(d) = dtor {
+            unsafe { d(ctx) };
+        }
+        return;
+    };
     {
         let mut q = c.shared.queued.lock().unwrap();
-        q.push(PendingCb { cb, ctx });
+        q.push(PendingCb { cb, ctx, dtor });
     }
     signal_wake(c.shared.wake_fd);
 }
 
-/// # Safety
-/// `c` must be a pointer previously returned by `jfn_clipboard_wayland_init`,
-/// or null. Consumes the box.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_clipboard_wayland_cleanup(c: *mut JfnClipboardWayland) {
-    if c.is_null() {
+pub fn clipboard_cleanup() {
+    let Some(mut boxed) = INSTANCE.lock().unwrap().take() else {
         return;
-    }
-    let mut boxed = unsafe { Box::from_raw(c) };
+    };
     boxed.shared.stop.store(true, Ordering::Relaxed);
     signal_wake(boxed.shared.wake_fd);
     if let Some(w) = boxed.worker.take() {

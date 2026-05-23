@@ -166,11 +166,6 @@ unsafe extern "C" {
         done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
     );
     fn jfn_wl_fade_apply_frame(surface: *mut c_void, alpha: u32) -> bool;
-    fn jfn_clipboard_wayland_lifecycle_read_text_async(
-        cb: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-        ctx: *mut c_void,
-        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    );
 }
 
 // =====================================================================
@@ -499,7 +494,7 @@ unsafe extern "C" fn wl_clipboard_read_text_async(
     ctx: *mut c_void,
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
-    unsafe { jfn_clipboard_wayland_lifecycle_read_text_async(on_done, ctx, dtor) };
+    crate::clipboard::clipboard_read_text_async(on_done, ctx, dtor);
 }
 
 unsafe extern "C" fn wl_open_external_url(utf8: *const c_char, _len: usize) {
