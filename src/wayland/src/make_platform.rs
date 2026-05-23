@@ -324,7 +324,15 @@ unsafe extern "C" fn wl_fade_surface(
     done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
     let fps = unsafe { jfn_playback_display_hz() };
-    if s.is_null() || fps <= 0.0 {
+    let surf_ptr = s as *mut crate::wl_state::PlatformSurface;
+    let can_fade = !s.is_null() && fps > 0.0 && wl_ops::surface_has_alpha(surf_ptr);
+    if !can_fade {
+        // No wp_alpha_modifier_v1 (e.g. niri) or no surface/fps: hard-unmap
+        // the subsurface so the splash disappears synchronously, then fire
+        // the callback contract inline. Mirrors X11's jfn_x11_fade_surface.
+        if !s.is_null() {
+            wl_ops::surface_set_visible(surf_ptr, false, BG_R, BG_G, BG_B);
+        }
         if let Some(f) = on_start { unsafe { f(start_ctx) } }
         if let Some(d) = start_dtor { unsafe { d(start_ctx) } }
         if let Some(f) = on_done { unsafe { f(done_ctx) } }
