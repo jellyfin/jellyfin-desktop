@@ -10,6 +10,7 @@ members = [
     "jfn_cef",
     "jfn_rust",
     "logging",
+    "macos_sink",
     "mpv",
     "open_url_linux",
     "paths",

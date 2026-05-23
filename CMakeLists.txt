@@ -123,8 +123,6 @@ if(APPLE)
     set(PLATFORM_SOURCES
         src/platform/macos.mm
         src/input/input_macos.mm
-        src/playback/sinks/queued_sink.cpp
-        src/playback/sinks/macos/macos_sink.mm
     )
 
     # LetsMove - prompts user to move app to /Applications (clears quarantine)
@@ -153,6 +151,8 @@ elseif(WIN32)
         src/playback/sinks/windows/windows_sink.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
     )
+    # Note: macos_sink is now Rust-side (src/macos_sink/), windows_sink
+    # still C++ until slice 3.
     set(PLATFORM_LIBRARIES
         dwmapi
         d3d11
@@ -581,7 +581,6 @@ if(APPLE)
     set_source_files_properties(
         src/platform/macos.mm
         src/input/input_macos.mm
-        src/playback/sinks/macos/macos_sink.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
 endif()
