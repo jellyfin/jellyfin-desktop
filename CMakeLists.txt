@@ -1,31 +1,16 @@
 cmake_minimum_required(VERSION 3.21)
-project(jellyfin-desktop LANGUAGES C CXX)
+project(jellyfin-desktop LANGUAGES NONE)
 
-# Enable Objective-C++ on macOS
-if(APPLE)
-    enable_language(OBJCXX)
-endif()
+# Pure-Rust binary. CMake is retained only to orchestrate the meson-built
+# mpv submodule (when EXTERNAL_MPV_DIR is unset), invoke cargo to produce
+# the final binary, stage runtime resources (CEF + libmpv) next to it,
+# and run the per-platform install/CPack rules. All native code lives in
+# the Rust workspace at src/Cargo.toml; libcef_dll_wrapper is built and
+# linked by cef-dll-sys's build.rs.
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# Version info (checks VERSION file and git hash each build, only writes if changed)
-add_custom_target(generate_version ALL
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR="${CMAKE_SOURCE_DIR}"
-        -DBINARY_DIR="${CMAKE_BINARY_DIR}"
-        -P "${CMAKE_SOURCE_DIR}/cmake/GenerateVersion.cmake"
-    BYPRODUCTS "${CMAKE_BINARY_DIR}/src/version.h"
-    COMMENT "Checking version info"
-)
-include_directories("${CMAKE_BINARY_DIR}/src")
-
-# Configure-time version parsing for Info.plist / Windows VERSIONINFO.
-# APP_VERSION is the full string from VERSION (e.g. "3.0.0-dev"); APP_VERSION_NUMERIC
-# strips any "-<suffix>" for contexts that demand three-integer versions (Windows
-# FILEVERSION fields). APP_VERSION_FULL appends "+<git-describe>" for dev builds
-# and is used in macOS Info.plist so Finder's Get Info shows the commit SHA.
+# Version metadata (used by Info.plist on macOS; consumed inside the
+# Rust binary via src/jfn_cef/build.rs which reads VERSION / CEF_VERSION
+# directly).
 file(READ "${CMAKE_SOURCE_DIR}/VERSION" APP_VERSION)
 string(STRIP "${APP_VERSION}" APP_VERSION)
 string(REGEX REPLACE "-.*$" "" APP_VERSION_NUMERIC "${APP_VERSION}")
@@ -36,12 +21,6 @@ set(APP_VERSION_MAJOR ${CMAKE_MATCH_1})
 set(APP_VERSION_MINOR ${CMAKE_MATCH_2})
 set(APP_VERSION_PATCH ${CMAKE_MATCH_3})
 if(APP_VERSION MATCHES "-")
-    set(APP_VERSION_FILEFLAGS "VS_FF_PRERELEASE")
-    # Zero out numeric FILEVERSION/PRODUCTVERSION for dev builds so they
-    # can never be confused with or outrank a real release by comparison.
-    set(APP_VERSION_MAJOR 0)
-    set(APP_VERSION_MINOR 0)
-    set(APP_VERSION_PATCH 0)
     execute_process(
         COMMAND git describe --always --dirty
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
@@ -56,50 +35,55 @@ if(APP_VERSION MATCHES "-")
         set(APP_VERSION_FULL "${APP_VERSION}")
     endif()
 else()
-    set(APP_VERSION_FILEFLAGS "0x0L")
     set(APP_VERSION_FULL "${APP_VERSION}")
 endif()
 
-# Use static runtime on Windows to match CEF wrapper (which uses /MT)
-if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    add_compile_definitions(NOMINMAX)
-    # Conforming preprocessor: fmt relies on standard ##__VA_ARGS__ handling.
-    add_compile_options(/Zc:preprocessor)
-endif()
-
-# Match CEF's compile flags for ABI compatibility
-if(UNIX AND NOT APPLE)
-    add_compile_options(
-        -fno-strict-aliasing
-        $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
-        -fPIC
-        -fstack-protector
-        -funwind-tables
-        -fvisibility=hidden
-        --param=ssp-buffer-size=4
-        -pipe
-        -pthread
-    )
-endif()
-
-# CEF configuration
+# CEF resource discovery (needed only for staging resources next to the
+# binary + install rules — libcef_dll_wrapper is built and linked by
+# cef-dll-sys's build.rs during the cargo build).
+#
+# Precedence: EXTERNAL_CEF_DIR > USE_SYSTEM_CEF > CEF_ROOT (third_party/cef).
 set(CEF_ROOT "${CMAKE_SOURCE_DIR}/third_party/cef" CACHE PATH "CEF binary distribution root")
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-include(DetectCefApiVersion)
-find_package(CEF REQUIRED)
+set(EXTERNAL_CEF_DIR "" CACHE PATH "Path to external CEF installation")
 
-# Verify CEF version matches CEF_VERSION file
+set(_DEFAULT_USE_SYSTEM_CEF OFF)
+if(EXISTS "/usr/include/cef/include/cef_version.h"
+   AND NOT EXTERNAL_CEF_DIR
+   AND NOT (CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h"))
+    set(_DEFAULT_USE_SYSTEM_CEF ON)
+endif()
+option(USE_SYSTEM_CEF "Use system-installed CEF from the 'cef' package" ${_DEFAULT_USE_SYSTEM_CEF})
+
+if(EXTERNAL_CEF_DIR)
+    set(CEF_RESOURCE_DIR "${EXTERNAL_CEF_DIR}/lib")
+    set(CEF_RELEASE_DIR  "${EXTERNAL_CEF_DIR}/lib")
+    set(_CEF_VERSION_HEADER "${EXTERNAL_CEF_DIR}/include/cef_version.h")
+elseif(USE_SYSTEM_CEF)
+    set(CEF_RESOURCE_DIR "/usr/lib/cef")
+    set(CEF_RELEASE_DIR  "/usr/lib/cef")
+    set(_CEF_VERSION_HEADER "/usr/include/cef/include/cef_version.h")
+elseif(CEF_ROOT AND EXISTS "${CEF_ROOT}/include/cef_version.h")
+    set(CEF_RESOURCE_DIR "${CEF_ROOT}/Resources")
+    set(CEF_RELEASE_DIR  "${CEF_ROOT}/Release")
+    set(_CEF_VERSION_HEADER "${CEF_ROOT}/include/cef_version.h")
+else()
+    message(FATAL_ERROR "CEF not found. Set EXTERNAL_CEF_DIR, enable USE_SYSTEM_CEF, or populate third_party/cef (dev/tools/download_cef.py).")
+endif()
+
+file(READ "${_CEF_VERSION_HEADER}" CEF_VERSION_CONTENT)
+string(REGEX MATCH "CEF_VERSION \"([^\"]+)\"" _ ${CEF_VERSION_CONTENT})
+set(CEF_VERSION ${CMAKE_MATCH_1})
+message(STATUS "Found CEF: ${CEF_VERSION}")
+
 if(EXISTS "${CMAKE_SOURCE_DIR}/CEF_VERSION")
     file(READ "${CMAKE_SOURCE_DIR}/CEF_VERSION" _EXPECTED_CEF_VERSION)
     string(STRIP "${_EXPECTED_CEF_VERSION}" _EXPECTED_CEF_VERSION)
     if(NOT CEF_VERSION STREQUAL _EXPECTED_CEF_VERSION)
-        if(CEF_IS_SYSTEM)
+        if(USE_SYSTEM_CEF)
             message(WARNING
                 "System CEF version does not match CEF_VERSION file:\n"
                 "  CEF_VERSION file: ${_EXPECTED_CEF_VERSION}\n"
-                "  System CEF:       ${CEF_VERSION}\n"
-                "  This may cause build failures or runtime issues.")
+                "  System CEF:       ${CEF_VERSION}")
         else()
             message(FATAL_ERROR
                 "CEF version mismatch:\n"
@@ -109,310 +93,12 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/CEF_VERSION")
     endif()
 endif()
 
-
-# Platform-specific dependencies
-if(APPLE)
-    find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
-    find_library(METAL_FRAMEWORK Metal REQUIRED)
-    find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
-    find_library(IOSURFACE_FRAMEWORK IOSurface REQUIRED)
-    find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
-    find_library(MEDIAPLAYER_FRAMEWORK MediaPlayer REQUIRED)
-    find_library(SYSTEMCONFIGURATION_FRAMEWORK SystemConfiguration REQUIRED)
-
-    set(PLATFORM_SOURCES
-        src/platform/macos.mm
-    )
-
-    # LetsMove - prompts user to move app to /Applications (clears quarantine)
-    add_subdirectory(third_party/letsmove)
-    set(PLATFORM_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/third_party/letsmove)
-
-    set(PLATFORM_LIBRARIES
-        ${COCOA_FRAMEWORK}
-        ${METAL_FRAMEWORK}
-        ${QUARTZCORE_FRAMEWORK}
-        ${IOSURFACE_FRAMEWORK}
-        ${IOKIT_FRAMEWORK}
-        ${MEDIAPLAYER_FRAMEWORK}
-        ${SYSTEMCONFIGURATION_FRAMEWORK}
-    )
-elseif(WIN32)
-    configure_file(
-        "${CMAKE_SOURCE_DIR}/resources/win/iconres.rc.in"
-        "${CMAKE_BINARY_DIR}/iconres.rc"
-        @ONLY
-    )
-    set(PLATFORM_SOURCES
-        src/platform/windows.cpp
-        ${CMAKE_BINARY_DIR}/iconres.rc
-    )
-    # macos_sink + windows_sink are Rust-side (src/macos_sink/,
-    # src/windows_sink/). queued_sink.{h,cpp} is no longer referenced
-    # by any compile target — kept on disk until slice 4 deletes it
-    # together with the C++ platform layer.
-    set(PLATFORM_LIBRARIES
-        dwmapi
-        d3d11
-        dxgi
-        dcomp
-        crypt32
-        windowsapp
-    )
-else()
-    # Linux: Wayland + X11 backends (runtime selection)
-    find_package(PkgConfig REQUIRED)
-
-    # Shared Linux deps
-    pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
-    find_package(OpenGL REQUIRED COMPONENTS EGL)
-
-    # Wayland deps
-    pkg_check_modules(LIBDRM REQUIRED libdrm)
-    pkg_check_modules(WAYLAND REQUIRED wayland-client)
-    pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
-
-    # X11 (optional)
-    option(ENABLE_X11 "X11 backend support" ON)
-    if(ENABLE_X11)
-    	pkg_check_modules(XCB REQUIRED xcb)
-        pkg_check_modules(XCB_SHM REQUIRED xcb-shm)
-        pkg_check_modules(XCB_SHAPE REQUIRED xcb-shape)
-        pkg_check_modules(XCB_CURSOR REQUIRED xcb-cursor)
-        pkg_check_modules(XCB_XKB REQUIRED xcb-xkb)
-        pkg_check_modules(XKBCOMMON_X11 REQUIRED xkbcommon-x11)
-    endif()
-
-    # Find wayland-scanner
-    find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
-    pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
-
-    # Generate Wayland protocol sources
-    set(WAYLAND_GENERATED_DIR "${CMAKE_BINARY_DIR}/wayland-protocols")
-    file(MAKE_DIRECTORY ${WAYLAND_GENERATED_DIR})
-
-    set(LINUX_DMABUF_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml")
-    set(LINUX_DMABUF_CLIENT_H "${WAYLAND_GENERATED_DIR}/linux-dmabuf-v1-client.h")
-    set(LINUX_DMABUF_CODE_C "${WAYLAND_GENERATED_DIR}/linux-dmabuf-v1-code.c")
-
-    set(VIEWPORTER_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/stable/viewporter/viewporter.xml")
-    set(VIEWPORTER_CLIENT_H "${WAYLAND_GENERATED_DIR}/viewporter-client.h")
-    set(VIEWPORTER_CODE_C "${WAYLAND_GENERATED_DIR}/viewporter-code.c")
-
-    set(ALPHA_MODIFIER_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/staging/alpha-modifier/alpha-modifier-v1.xml")
-    set(ALPHA_MODIFIER_CLIENT_H "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-client.h")
-    set(ALPHA_MODIFIER_CODE_C "${WAYLAND_GENERATED_DIR}/alpha-modifier-v1-code.c")
-
-set(XDG_OUTPUT_PROTOCOL "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-output/xdg-output-unstable-v1.xml")
-    set(XDG_OUTPUT_CLIENT_H "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-client.h")
-    set(XDG_OUTPUT_CODE_C "${WAYLAND_GENERATED_DIR}/xdg-output-unstable-v1-code.c")
-
-    # KDE server-decoration-palette protocol lives entirely in the
-    # jfn-wayland Rust crate (src/wayland/protocols/ + wayland-scanner
-    # proc-macro in src/wayland/src/kde_palette.rs). No C++ generation
-    # needed here.
-
-    add_custom_command(
-        OUTPUT ${LINUX_DMABUF_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${LINUX_DMABUF_PROTOCOL} ${LINUX_DMABUF_CLIENT_H}
-        DEPENDS ${LINUX_DMABUF_PROTOCOL}
-        COMMENT "Generating linux-dmabuf-v1 client header"
-    )
-    add_custom_command(
-        OUTPUT ${LINUX_DMABUF_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${LINUX_DMABUF_PROTOCOL} ${LINUX_DMABUF_CODE_C}
-        DEPENDS ${LINUX_DMABUF_PROTOCOL}
-        COMMENT "Generating linux-dmabuf-v1 code"
-    )
-    add_custom_command(
-        OUTPUT ${VIEWPORTER_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${VIEWPORTER_PROTOCOL} ${VIEWPORTER_CLIENT_H}
-        DEPENDS ${VIEWPORTER_PROTOCOL}
-        COMMENT "Generating viewporter client header"
-    )
-    add_custom_command(
-        OUTPUT ${VIEWPORTER_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${VIEWPORTER_PROTOCOL} ${VIEWPORTER_CODE_C}
-        DEPENDS ${VIEWPORTER_PROTOCOL}
-        COMMENT "Generating viewporter code"
-    )
-    add_custom_command(
-        OUTPUT ${ALPHA_MODIFIER_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${ALPHA_MODIFIER_PROTOCOL} ${ALPHA_MODIFIER_CLIENT_H}
-        DEPENDS ${ALPHA_MODIFIER_PROTOCOL}
-        COMMENT "Generating alpha-modifier-v1 client header"
-    )
-    add_custom_command(
-        OUTPUT ${ALPHA_MODIFIER_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${ALPHA_MODIFIER_PROTOCOL} ${ALPHA_MODIFIER_CODE_C}
-        DEPENDS ${ALPHA_MODIFIER_PROTOCOL}
-        COMMENT "Generating alpha-modifier-v1 code"
-    )
-    add_custom_command(
-        OUTPUT ${XDG_OUTPUT_CLIENT_H}
-        COMMAND ${WAYLAND_SCANNER} client-header ${XDG_OUTPUT_PROTOCOL} ${XDG_OUTPUT_CLIENT_H}
-        DEPENDS ${XDG_OUTPUT_PROTOCOL}
-        COMMENT "Generating xdg-output-unstable-v1 client header"
-    )
-    add_custom_command(
-        OUTPUT ${XDG_OUTPUT_CODE_C}
-        COMMAND ${WAYLAND_SCANNER} private-code ${XDG_OUTPUT_PROTOCOL} ${XDG_OUTPUT_CODE_C}
-        DEPENDS ${XDG_OUTPUT_PROTOCOL}
-        COMMENT "Generating xdg-output-unstable-v1 code"
-    )
-    set(PLATFORM_SOURCES
-        # Shared Linux
-        src/playback/sinks/queued_sink.cpp
-        # Wayland (factory + input lifecycle + clipboard live in Rust: src/wayland/src/)
-        # Generated Wayland protocols
-        ${LINUX_DMABUF_CODE_C}
-        ${LINUX_DMABUF_CLIENT_H}
-        ${VIEWPORTER_CODE_C}
-        ${VIEWPORTER_CLIENT_H}
-        ${ALPHA_MODIFIER_CODE_C}
-        ${ALPHA_MODIFIER_CLIENT_H}
-        ${XDG_OUTPUT_CODE_C}
-        ${XDG_OUTPUT_CLIENT_H}
-    )
-    if(ENABLE_X11)
-        # X11 platform + input live in Rust (src/x11/src/). The static
-        # archive is contributed via jfn-rust below; no C++ sources.
-        add_compile_definitions(HAVE_X11)
-    endif()
-    set(PLATFORM_LIBRARIES
-        ${WAYLAND_LIBRARIES}
-        ${XKBCOMMON_LIBRARIES}
-        OpenGL::EGL
-        ${CMAKE_DL_LIBS}
-    )
-    if(ENABLE_X11)
-        list(APPEND PLATFORM_LIBRARIES
-            ${XCB_LIBRARIES}
-            ${XCB_SHM_LIBRARIES}
-            ${XCB_SHAPE_LIBRARIES}
-            ${XCB_CURSOR_LIBRARIES}
-            ${XCB_XKB_LIBRARIES}
-            ${XKBCOMMON_X11_LIBRARIES}
-        )
-    endif()
-    set(PLATFORM_INCLUDE_DIRS
-        ${WAYLAND_INCLUDE_DIRS}
-        ${LIBDRM_INCLUDE_DIRS}
-        ${XKBCOMMON_INCLUDE_DIRS}
-        ${WAYLAND_GENERATED_DIR}
-    )
-    if(ENABLE_X11)
-        list(APPEND PLATFORM_INCLUDE_DIRS
-            ${XCB_INCLUDE_DIRS}
-            ${XCB_SHM_INCLUDE_DIRS}
-            ${XCB_SHAPE_INCLUDE_DIRS}
-            ${XCB_CURSOR_INCLUDE_DIRS}
-            ${XCB_XKB_INCLUDE_DIRS}
-            ${XKBCOMMON_X11_INCLUDE_DIRS}
-        )
-    endif()
-endif()
-
-# Rust toolchain is required for jfn-config (all platforms) and jfn-wlproxy
-# (Linux only). Locate cargo once here so both blocks share the result.
+# Locate cargo for the Rust workspace build.
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
 
-# jfn-rust — single Rust staticlib that bundles every Rust crate in this repo.
-# Each crate is a workspace rlib member; this umbrella staticlib re-exports
-# them so the final C++ link sees one copy of std/core. MSVC link.exe rejects
-# duplicate symbols across staticlibs, so we cannot ship one staticlib per
-# crate. The workspace lives at src/Cargo.toml.
-set(JFN_RUST_DIR "${CMAKE_SOURCE_DIR}/src/jfn_rust")
-set(JFN_RUST_WORKSPACE_DIR "${CMAKE_SOURCE_DIR}/src")
-set(JFN_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/jfn-rust-target")
-set(JFN_RUST_LIB "${JFN_RUST_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}jfn_rust${CMAKE_STATIC_LIBRARY_SUFFIX}")
-file(GLOB_RECURSE JFN_RUST_SOURCES CONFIGURE_DEPENDS
-    "${JFN_RUST_WORKSPACE_DIR}/*/src/*.rs"
-    "${JFN_RUST_WORKSPACE_DIR}/*/Cargo.toml"
-    "${JFN_RUST_WORKSPACE_DIR}/Cargo.toml"
-)
-file(GLOB_RECURSE WEB_RESOURCES "${CMAKE_SOURCE_DIR}/src/web/*")
+# mpv build (meson submodule or external).
+option(BUILD_MPV_CLI "Also build the standalone mpv CLI binary from the submodule" OFF)
 
-option(JFN_ENABLE_KDE_PALETTE "Build with KWin per-window titlebar color support" ON)
-set(_JFN_CARGO_ARGS build --release --manifest-path ${JFN_RUST_DIR}/Cargo.toml)
-if(NOT JFN_ENABLE_KDE_PALETTE)
-    list(APPEND _JFN_CARGO_ARGS --no-default-features)
-endif()
-
-# -ffat-lto-objects: distro CFLAGS may set -flto, which makes cc-crate
-# emit slim objects whose symbols vanish from the archive index.
-add_custom_command(
-    OUTPUT ${JFN_RUST_LIB}
-    COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TARGET_DIR=${JFN_RUST_TARGET_DIR}
-        "CFLAGS=$ENV{CFLAGS} -ffat-lto-objects"
-        "CXXFLAGS=$ENV{CXXFLAGS} -ffat-lto-objects"
-        # Forward libmpv / libavcodec discovery paths to jfn-mpv's
-        # build.rs. On Windows pkg-config can't find these from the
-        # cmd.exe shell that runs cmake; the build.rs falls back to
-        # these env overrides (see src/mpv/build.rs).
-        "EXTERNAL_MPV_DIR=${EXTERNAL_MPV_DIR}"
-        ${CARGO_EXECUTABLE} ${_JFN_CARGO_ARGS}
-    DEPENDS ${JFN_RUST_SOURCES} ${WEB_RESOURCES}
-    COMMENT "Building jfn-rust (Rust workspace)"
-    VERBATIM
-)
-add_custom_target(jfn_rust_build DEPENDS ${JFN_RUST_LIB})
-add_library(jfn_rust STATIC IMPORTED GLOBAL)
-add_dependencies(jfn_rust jfn_rust_build)
-set_target_properties(jfn_rust PROPERTIES
-    IMPORTED_LOCATION ${JFN_RUST_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES
-        "${CMAKE_SOURCE_DIR}/src/cli;${CMAKE_SOURCE_DIR}/src/config;${CMAKE_SOURCE_DIR}/src/idle_inhibit_linux;${CMAKE_SOURCE_DIR}/src/jellyfin;${CMAKE_SOURCE_DIR}/src/logging;${CMAKE_SOURCE_DIR}/src/open_url_linux;${CMAKE_SOURCE_DIR}/src/paths;${CMAKE_SOURCE_DIR}/src/signal_guard;${CMAKE_SOURCE_DIR}/src/single_instance;${CMAKE_SOURCE_DIR}/src/wayland;${CMAKE_SOURCE_DIR}/src/wlproxy"
-)
-# Native deps pulled in by the Rust standard library and our crate deps.
-# cargo rustc --print=native-static-libs emits the exact set per platform.
-if(WIN32)
-    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        ws2_32 userenv advapi32 bcrypt ntdll)
-elseif(APPLE)
-    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        "-framework CoreFoundation" "-framework Security")
-else()
-    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        pthread dl m rt util)
-    # jfn-wayland + jfn-x11 link xkbcommon / xcb / xcb-cursor via `#[link]`
-    # in the corresponding -sys crates. GNU ld is single-pass left-to-right,
-    # so PLATFORM_LIBRARIES (which lists these too) ends up before jfn_rust.a
-    # and won't resolve the static archive's later-discovered references.
-    # Attach the libs to the jfn_rust target so they always trail the archive.
-    set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-        ${XKBCOMMON_LIBRARIES})
-    if(ENABLE_X11)
-        set_property(TARGET jfn_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES
-            ${XCB_LIBRARIES}
-            ${XCB_CURSOR_LIBRARIES}
-            ${XKBCOMMON_X11_LIBRARIES})
-    endif()
-endif()
-
-# libavcodec — used to enumerate the decoders mpv will route through ffmpeg.
-# Source of truth for the device profile's codec lists; mpv links the same
-# libavcodec at runtime, so what we enumerate here matches what mpv decodes.
-#
-# On Linux/macOS this comes via pkg-config. On Windows, build_mpv_source.ps1
-# stages ffmpeg headers + a generated avcodec.lib alongside mpv inside
-# EXTERNAL_MPV_DIR (see dev/windows/build_mpv_source.ps1) and we use those.
-if(WIN32)
-    set(LIBAVCODEC_INCLUDE_DIRS "${EXTERNAL_MPV_DIR}/include")
-    set(LIBAVCODEC_LIBRARIES    "${EXTERNAL_MPV_DIR}/lib/avcodec.lib")
-    if(NOT EXISTS "${LIBAVCODEC_LIBRARIES}")
-        message(FATAL_ERROR "avcodec.lib not found at ${LIBAVCODEC_LIBRARIES}. Re-run dev/windows/build_mpv_source.ps1 to regenerate.")
-    endif()
-else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBAVCODEC REQUIRED IMPORTED_TARGET libavcodec)
-endif()
-
-# mpv configuration
-option(BUILD_MPV_CLI "Also build the standalone mpv CLI binary from the submodule (for rendering comparisons; requires building mpv from submodule, not EXTERNAL_MPV_DIR)" OFF)
-
-# Auto-detect external mpv from /opt if it exists
 set(_DEFAULT_EXTERNAL_MPV_DIR "")
 if(EXISTS "/opt/jellyfin-desktop/libmpv/lib/libmpv.so")
     set(_DEFAULT_EXTERNAL_MPV_DIR "/opt/jellyfin-desktop/libmpv")
@@ -424,7 +110,6 @@ set(EXTERNAL_MPV_DIR "${_DEFAULT_EXTERNAL_MPV_DIR}" CACHE PATH "Path to external
 
 if(EXTERNAL_MPV_DIR)
     message(STATUS "Using external mpv from: ${EXTERNAL_MPV_DIR}")
-    set(MPV_INCLUDE_DIRS "${EXTERNAL_MPV_DIR}/include")
     if(APPLE)
         set(MPV_LIBRARY "${EXTERNAL_MPV_DIR}/lib/libmpv.dylib")
     elseif(WIN32)
@@ -435,12 +120,9 @@ if(EXTERNAL_MPV_DIR)
     if(NOT EXISTS "${MPV_LIBRARY}")
         message(FATAL_ERROR "mpv library not found at ${MPV_LIBRARY}")
     endif()
-    set(MPV_LIBRARIES "${MPV_LIBRARY}")
 else()
-    # Build mpv from submodule using meson
     set(MPV_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/mpv")
     set(MPV_BUILD_DIR "${CMAKE_BINARY_DIR}/mpv-build")
-
     if(APPLE)
         set(MPV_LIBRARY "${MPV_BUILD_DIR}/libmpv.dylib")
     elseif(WIN32)
@@ -448,14 +130,11 @@ else()
     else()
         set(MPV_LIBRARY "${MPV_BUILD_DIR}/libmpv.so")
     endif()
-
     if(BUILD_MPV_CLI)
         set(_MPV_CPLAYER "true")
     else()
         set(_MPV_CPLAYER "false")
     endif()
-
-    # Configure meson if not yet configured; otherwise reconcile cplayer option
     if(NOT EXISTS "${MPV_BUILD_DIR}/build.ninja")
         message(STATUS "Configuring mpv with meson (cplayer=${_MPV_CPLAYER})...")
         execute_process(
@@ -475,240 +154,160 @@ else()
             message(FATAL_ERROR "Failed to reconfigure mpv cplayer option")
         endif()
     endif()
-
-    # Custom target that always invokes meson compile (meson handles incremental builds)
-    add_custom_target(mpv_build
+    add_custom_target(mpv_build ALL
         COMMAND meson compile -C ${MPV_BUILD_DIR}
         COMMENT "Building mpv (meson handles incremental builds)"
         BYPRODUCTS ${MPV_LIBRARY}
     )
-
-    set(MPV_INCLUDE_DIRS "${MPV_SOURCE_DIR}/include")
-    set(MPV_LIBRARIES "${MPV_LIBRARY}")
-
-    if(BUILD_MPV_CLI)
-        if(WIN32)
-            set(MPV_CLI_BINARY "${MPV_BUILD_DIR}/mpv.exe")
-        else()
-            set(MPV_CLI_BINARY "${MPV_BUILD_DIR}/mpv")
-        endif()
-        message(STATUS "Standalone mpv CLI will be built at: ${MPV_CLI_BINARY}")
-    endif()
 endif()
 
-# Common sources — the Platform vtable lives entirely in Rust now, so
-# main.cpp is the only C++ translation unit left at the top level.
-set(COMMON_SOURCES src/main.cpp)
+# Rust workspace build. Single cargo invocation produces the final binary
+# and (via cef-dll-sys's build.rs) stages CEF runtime files into the
+# cargo target dir. The custom command copies the binary + libmpv into
+# ${CMAKE_BINARY_DIR} so the bundle scripts find them at the same paths
+# they used before.
+set(JFN_RUST_DIR "${CMAKE_SOURCE_DIR}/src/jfn_rust")
+set(JFN_RUST_WORKSPACE_DIR "${CMAKE_SOURCE_DIR}/src")
+set(JFN_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/jfn-rust-target")
 
-add_executable(jellyfin-desktop
-    ${COMMON_SOURCES}
-    ${PLATFORM_SOURCES}
-)
-
-# Windows: hide console window (use WinMain entry via mainCRTStartup)
 if(WIN32)
-    if(MSVC)
-        target_link_options(jellyfin-desktop PRIVATE
-            /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup
-        )
-    else()
-        target_link_options(jellyfin-desktop PRIVATE -mwindows)
-    endif()
-endif()
-
-# fmt (vendored, third_party/fmt). Built static; consumed via fmt::fmt.
-set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
-set(FMT_TEST OFF CACHE BOOL "" FORCE)
-set(FMT_DOC OFF CACHE BOOL "" FORCE)
-add_subdirectory(third_party/fmt EXCLUDE_FROM_ALL)
-
-add_dependencies(jellyfin-desktop generate_version)
-
-target_include_directories(jellyfin-desktop PRIVATE
-    ${CEF_INCLUDE_DIRS}
-    ${MPV_INCLUDE_DIRS}
-    ${LIBAVCODEC_INCLUDE_DIRS}
-    ${PLATFORM_INCLUDE_DIRS}
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_BINARY_DIR}/generated
-)
-
-target_link_libraries(jellyfin-desktop PRIVATE
-    ${CEF_LIBRARIES}
-    ${MPV_LIBRARIES}
-    ${PLATFORM_LIBRARIES}
-    fmt::fmt
-)
-if(WIN32)
-    target_link_libraries(jellyfin-desktop PRIVATE ${LIBAVCODEC_LIBRARIES})
+    set(JFN_BIN_NAME "jellyfin-desktop.exe")
 else()
-    target_link_libraries(jellyfin-desktop PRIVATE PkgConfig::LIBAVCODEC)
+    set(JFN_BIN_NAME "jellyfin-desktop")
 endif()
-target_link_libraries(jellyfin-desktop PRIVATE jfn_rust)
+set(JFN_BIN_SRC "${JFN_RUST_TARGET_DIR}/release/${JFN_BIN_NAME}")
+set(JFN_BIN_DST "${CMAKE_BINARY_DIR}/${JFN_BIN_NAME}")
 
-# Lock C++ CEF API version to match the cef-rs binding ABI used by jfn-cef.
-# JFN_CEF_API_VERSION is derived from cef-dll-sys's CEF_API_VERSION_LAST by
-# DetectCefApiVersion.cmake; see that file for the failure mode if it drifts.
-target_compile_definitions(jellyfin-desktop PRIVATE
-    CEF_API_VERSION=${JFN_CEF_API_VERSION}
-    # Required to include libcef_dll/ctocpp/*.h headers (CToCpp translators
-    # convert raw C cef_*_t pointers from Rust FFI into proper CefRefPtr<>
-    # C++ wrappers). Without this define the headers #error out.
-    WRAPPING_CEF_SHARED
+file(GLOB_RECURSE JFN_RUST_SOURCES CONFIGURE_DEPENDS
+    "${JFN_RUST_WORKSPACE_DIR}/*/src/*.rs"
+    "${JFN_RUST_WORKSPACE_DIR}/*/Cargo.toml"
+    "${JFN_RUST_WORKSPACE_DIR}/Cargo.toml"
+)
+file(GLOB_RECURSE WEB_RESOURCES "${CMAKE_SOURCE_DIR}/src/web/*")
+
+option(JFN_ENABLE_KDE_PALETTE "Build with KWin per-window titlebar color support" ON)
+set(_JFN_CARGO_ARGS build --release --bin jellyfin-desktop --manifest-path ${JFN_RUST_DIR}/Cargo.toml)
+if(NOT JFN_ENABLE_KDE_PALETTE)
+    list(APPEND _JFN_CARGO_ARGS --no-default-features)
+endif()
+
+add_custom_command(
+    OUTPUT ${JFN_BIN_DST}
+    COMMAND ${CMAKE_COMMAND} -E env
+        CARGO_TARGET_DIR=${JFN_RUST_TARGET_DIR}
+        "EXTERNAL_MPV_DIR=${EXTERNAL_MPV_DIR}"
+        ${CARGO_EXECUTABLE} ${_JFN_CARGO_ARGS}
+    COMMAND ${CMAKE_COMMAND} -E copy ${JFN_BIN_SRC} ${JFN_BIN_DST}
+    DEPENDS ${JFN_RUST_SOURCES} ${WEB_RESOURCES}
+    COMMENT "Building jellyfin-desktop (Rust binary)"
+    VERBATIM
 )
 
-# When using external/system CEF, tell the app where to find resources
-if(EXTERNAL_CEF_DIR OR USE_SYSTEM_CEF)
-    target_compile_definitions(jellyfin-desktop PRIVATE
-        CEF_RESOURCES_DIR="${CEF_RESOURCE_DIR}"
-    )
+# Driver target — `cmake --build build` produces ${JFN_BIN_DST} and
+# stages runtime resources alongside it. Marked ALL so it's the default.
+add_custom_target(jellyfin_desktop ALL DEPENDS ${JFN_BIN_DST})
+
+if(NOT EXTERNAL_MPV_DIR)
+    add_dependencies(jellyfin_desktop mpv_build)
 endif()
 
-# Enable ARC for Objective-C++ files on macOS
-if(APPLE)
-    set_source_files_properties(
-        src/platform/macos.mm
-        PROPERTIES COMPILE_FLAGS "-fobjc-arc"
-    )
-endif()
-
-# Linux RPATH configuration
-if(UNIX AND NOT APPLE)
-    set(RPATH_DIRS "$ORIGIN")
-    if(EXTERNAL_MPV_DIR)
-        list(APPEND RPATH_DIRS "${EXTERNAL_MPV_DIR}/lib")
-    endif()
-    if(USE_SYSTEM_CEF OR EXTERNAL_CEF_DIR)
-        list(APPEND RPATH_DIRS "${CEF_RELEASE_DIR}")
-    endif()
-    list(JOIN RPATH_DIRS ";" RPATH_STRING)
-    set_target_properties(jellyfin-desktop PROPERTIES
-        INSTALL_RPATH "${RPATH_STRING}"
-        BUILD_WITH_INSTALL_RPATH TRUE
-    )
-endif()
-
-# Copy CEF resources to build directory (only when not using external/system CEF)
+# Stage CEF resources next to the binary. cef-dll-sys copies the runtime
+# bits into the cargo target dir already; we additionally mirror them
+# into ${CMAKE_BINARY_DIR} so the existing AppImage / bundle scripts
+# (which look in build/) keep working. Skip when an
+# external/system CEF is configured — those flow comes via install.
 if(NOT EXTERNAL_CEF_DIR AND NOT USE_SYSTEM_CEF)
     if(APPLE)
-        # macOS: Copy framework to build/Frameworks/ and fix install_name paths
-        # CEF ships with @executable_path/../Frameworks/... but we want @executable_path/Frameworks/...
         set(CEF_FRAMEWORK_NAME "Chromium Embedded Framework")
         set(CEF_FRAMEWORK_DIR "${CMAKE_BINARY_DIR}/Frameworks/${CEF_FRAMEWORK_NAME}.framework")
-        set(CEF_FRAMEWORK_LIB "${CEF_FRAMEWORK_DIR}/${CEF_FRAMEWORK_NAME}")
-        set(OLD_INSTALL_NAME "@executable_path/../Frameworks/${CEF_FRAMEWORK_NAME}.framework/${CEF_FRAMEWORK_NAME}")
         set(NEW_INSTALL_NAME "@executable_path/Frameworks/${CEF_FRAMEWORK_NAME}.framework/${CEF_FRAMEWORK_NAME}")
-
-        add_custom_command(TARGET jellyfin-desktop POST_BUILD
-            # Copy framework
+        set(OLD_INSTALL_NAME "@executable_path/../Frameworks/${CEF_FRAMEWORK_NAME}.framework/${CEF_FRAMEWORK_NAME}")
+        add_custom_command(TARGET jellyfin_desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Frameworks"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CEF_RELEASE_DIR}/${CEF_FRAMEWORK_NAME}.framework"
                 "${CEF_FRAMEWORK_DIR}"
-            # Fix framework's install_name
-            COMMAND install_name_tool -id "${NEW_INSTALL_NAME}" "${CEF_FRAMEWORK_LIB}"
-            # Fix executable's reference to framework
-            COMMAND install_name_tool -change "${OLD_INSTALL_NAME}" "${NEW_INSTALL_NAME}" "$<TARGET_FILE:jellyfin-desktop>"
-            # Symlink GL libraries next to executable (CEF GPU compositor needs them at executable path)
+            COMMAND install_name_tool -id "${NEW_INSTALL_NAME}" "${CEF_FRAMEWORK_DIR}/${CEF_FRAMEWORK_NAME}"
+            COMMAND install_name_tool -change "${OLD_INSTALL_NAME}" "${NEW_INSTALL_NAME}" "${JFN_BIN_DST}"
             COMMAND ${CMAKE_COMMAND} -E create_symlink
                 "Frameworks/${CEF_FRAMEWORK_NAME}.framework/Libraries/libEGL.dylib"
                 "${CMAKE_BINARY_DIR}/libEGL.dylib"
             COMMAND ${CMAKE_COMMAND} -E create_symlink
                 "Frameworks/${CEF_FRAMEWORK_NAME}.framework/Libraries/libGLESv2.dylib"
                 "${CMAKE_BINARY_DIR}/libGLESv2.dylib"
-            COMMENT "Copying CEF framework and fixing install_name paths"
+            COMMENT "Staging CEF framework next to binary"
         )
     else()
-        # Linux: Separate Resources and Release directories
-        add_custom_command(TARGET jellyfin-desktop POST_BUILD
+        add_custom_command(TARGET jellyfin_desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CEF_RESOURCE_DIR}"
-                "$<TARGET_FILE_DIR:jellyfin-desktop>"
+                "${CMAKE_BINARY_DIR}"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CEF_RELEASE_DIR}"
-                "$<TARGET_FILE_DIR:jellyfin-desktop>"
+                "${CMAKE_BINARY_DIR}"
         )
     endif()
 endif()
 
-if(NOT EXTERNAL_MPV_DIR)
-    add_dependencies(jellyfin-desktop mpv_build)
-endif()
-
-# Copy libmpv to build directory
+# Stage libmpv next to the binary.
 if(NOT EXTERNAL_MPV_DIR)
     if(APPLE)
-        add_custom_command(TARGET jellyfin-desktop POST_BUILD
+        add_custom_command(TARGET jellyfin_desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${MPV_BUILD_DIR}/libmpv.2.dylib"
-                "$<TARGET_FILE_DIR:jellyfin-desktop>/libmpv.2.dylib"
-            # Fix libmpv install_name to load from executable directory
+                "${CMAKE_BINARY_DIR}/libmpv.2.dylib"
             COMMAND install_name_tool -id "@executable_path/libmpv.2.dylib"
-                "$<TARGET_FILE_DIR:jellyfin-desktop>/libmpv.2.dylib"
-            # Fix executable to use local libmpv
+                "${CMAKE_BINARY_DIR}/libmpv.2.dylib"
             COMMAND install_name_tool -change "@rpath/libmpv.2.dylib"
-                "@executable_path/libmpv.2.dylib" "$<TARGET_FILE:jellyfin-desktop>"
+                "@executable_path/libmpv.2.dylib" "${JFN_BIN_DST}"
         )
     elseif(WIN32)
-        add_custom_command(TARGET jellyfin-desktop POST_BUILD
+        add_custom_command(TARGET jellyfin_desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${MPV_BUILD_DIR}/libmpv-2.dll"
-                "$<TARGET_FILE_DIR:jellyfin-desktop>/libmpv-2.dll"
+                "${CMAKE_BINARY_DIR}/libmpv-2.dll"
         )
     else()
-        add_custom_command(TARGET jellyfin-desktop POST_BUILD
+        add_custom_command(TARGET jellyfin_desktop POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${MPV_BUILD_DIR}/libmpv.so.2"
-                "$<TARGET_FILE_DIR:jellyfin-desktop>/libmpv.so.2"
+                "${CMAKE_BINARY_DIR}/libmpv.so.2"
         )
     endif()
 elseif(WIN32)
-    # External mpv: copy all DLLs (libmpv + dependencies) to build directory
     file(GLOB _MPV_BUILD_DLLS "${EXTERNAL_MPV_DIR}/lib/*.dll")
-    add_custom_command(TARGET jellyfin-desktop POST_BUILD
+    add_custom_command(TARGET jellyfin_desktop POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${_MPV_BUILD_DLLS}
-            "$<TARGET_FILE_DIR:jellyfin-desktop>"
+            "${CMAKE_BINARY_DIR}"
     )
 endif()
 
-# Install rules
-install(TARGETS jellyfin-desktop RUNTIME DESTINATION .)
+# ---- Install rules ----------------------------------------------------
+# Everything below assumes ${JFN_BIN_DST} + the post-build staged
+# resources exist at ${CMAKE_BINARY_DIR}.
+
+install(PROGRAMS ${JFN_BIN_DST} DESTINATION .)
 
 if(WIN32)
-    # CEF binaries and resources
     install(DIRECTORY "${CEF_RELEASE_DIR}/" DESTINATION .
         FILES_MATCHING PATTERN "*.dll" PATTERN "*.bin" PATTERN "*.json")
     install(DIRECTORY "${CEF_RESOURCE_DIR}/" DESTINATION .
         FILES_MATCHING PATTERN "*.pak" PATTERN "*.dat")
     install(DIRECTORY "${CEF_RESOURCE_DIR}/locales" DESTINATION .)
-
-    # libmpv and its runtime dependencies
     if(EXTERNAL_MPV_DIR)
         file(GLOB _MPV_DLLS "${EXTERNAL_MPV_DIR}/lib/*.dll")
         install(FILES ${_MPV_DLLS} DESTINATION .)
     endif()
 elseif(APPLE)
-    # macOS app bundle installation
     set(APP_NAME "Jellyfin Desktop.app")
-    set(BUNDLE_CONTENTS "${CMAKE_INSTALL_PREFIX}/${APP_NAME}/Contents")
-
-    # Install executable
-    install(PROGRAMS $<TARGET_FILE:jellyfin-desktop>
-        DESTINATION "${APP_NAME}/Contents/MacOS"
-    )
-
-    # Install libmpv
+    install(PROGRAMS ${JFN_BIN_DST} DESTINATION "${APP_NAME}/Contents/MacOS")
     install(FILES "${CMAKE_BINARY_DIR}/libmpv.2.dylib"
         DESTINATION "${APP_NAME}/Contents/MacOS"
     )
-
-    # Install CEF framework
     install(DIRECTORY "${CMAKE_BINARY_DIR}/Frameworks/Chromium Embedded Framework.framework"
         DESTINATION "${APP_NAME}/Contents/Frameworks"
     )
-
-    # Symlink GL libraries next to executable (CEF GPU compositor needs them at executable path)
     install(CODE "
         execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink
             \"../Frameworks/Chromium Embedded Framework.framework/Libraries/libEGL.dylib\"
@@ -717,8 +316,6 @@ elseif(APPLE)
             \"../Frameworks/Chromium Embedded Framework.framework/Libraries/libGLESv2.dylib\"
             \"\${CMAKE_INSTALL_PREFIX}/${APP_NAME}/Contents/MacOS/libGLESv2.dylib\")
     ")
-
-    # Install Info.plist (uses configure-time APP_VERSION / APP_VERSION_NUMERIC)
     configure_file(
         "${CMAKE_SOURCE_DIR}/resources/macos/Info.plist.in"
         "${CMAKE_BINARY_DIR}/Info.plist"
@@ -727,33 +324,22 @@ elseif(APPLE)
     install(FILES "${CMAKE_BINARY_DIR}/Info.plist"
         DESTINATION "${APP_NAME}/Contents"
     )
-
-    # Install icon if exists
     if(EXISTS "${CMAKE_SOURCE_DIR}/resources/macos/AppIcon.icns")
         install(FILES "${CMAKE_SOURCE_DIR}/resources/macos/AppIcon.icns"
             DESTINATION "${APP_NAME}/Contents/Resources"
         )
     endif()
-
-    # Create Resources directory (required even if empty)
     install(DIRECTORY DESTINATION "${APP_NAME}/Contents/Resources")
-
-    # Install MoltenVK ICD manifest (Vulkan loader uses this to find bundled MoltenVK)
     install(FILES "${CMAKE_SOURCE_DIR}/resources/macos/MoltenVK_icd.json"
         DESTINATION "${APP_NAME}/Contents/Resources/vulkan/icd.d"
     )
-
-    # Configure bundle completion script
     configure_file(
         "${CMAKE_SOURCE_DIR}/cmake/CompleteBundleMac.cmake.in"
         "${CMAKE_BINARY_DIR}/CompleteBundleMac.cmake"
         @ONLY
     )
-
-    # Run bundle completion (fixes library paths)
     install(SCRIPT "${CMAKE_BINARY_DIR}/CompleteBundleMac.cmake")
 else()
-    # Linux: CEF resources and libraries
     install(DIRECTORY "${CEF_RELEASE_DIR}/" DESTINATION .
         FILES_MATCHING PATTERN "*.so*" PATTERN "*.bin")
     install(DIRECTORY "${CEF_RESOURCE_DIR}/" DESTINATION .
@@ -764,7 +350,7 @@ else()
     endif()
 endif()
 
-# CPack for creating distribution packages
+# CPack for creating distribution packages.
 set(CPACK_PACKAGE_NAME "jellyfin-desktop")
 set(CPACK_PACKAGE_VENDOR "Jellyfin")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Jellyfin Desktop Client")
