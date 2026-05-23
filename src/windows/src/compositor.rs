@@ -926,12 +926,6 @@ pub extern "C" fn jfn_win_wndproc_end_transition_locked() {
 // Popup helpers.
 // =====================================================================
 
-unsafe extern "C" {
-    /// Read the cached scale factor from C++ for popup placement.
-    /// Implemented by win_get_scale in src/platform/windows.cpp.
-    fn win_get_scale() -> f32;
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn win_popup_show(s: *mut c_void, req: *const JfnPopupRequest) {
     if s.is_null() || req.is_null() {
@@ -943,7 +937,7 @@ pub extern "C" fn win_popup_show(s: *mut c_void, req: *const JfnPopupRequest) {
         let surf = unsafe { &mut *(s as *mut Surface) };
         surf.popup_visible = true;
         if let Some(pv) = surf.popup_visual.as_ref() {
-            let scale = unsafe { win_get_scale() };
+            let scale = crate::platform::win_get_scale();
             unsafe {
                 let _ = pv.SetOffsetX2(req.x as f32 * scale);
                 let _ = pv.SetOffsetY2(req.y as f32 * scale);

@@ -393,3 +393,15 @@ void set_cursor(cef_cursor_type_t type) {
 extern "C" void jfn_input_windows_set_cursor(int t) {
     input::windows::set_cursor(static_cast<cef_cursor_type_t>(t));
 }
+
+// C-linkage thunks used by the Rust jfn-windows crate's win_init /
+// win_cleanup so the input thread can be spawned/joined from Rust.
+extern "C" void jfn_input_windows_run_input_thread(void* mpv_hwnd) {
+    input::windows::run_input_thread(reinterpret_cast<HWND>(mpv_hwnd));
+}
+extern "C" void jfn_input_windows_stop_input_thread() {
+    input::windows::stop_input_thread();
+}
+extern "C" void jfn_input_windows_resize_to_parent(int pw, int ph) {
+    input::windows::resize_to_parent(pw, ph);
+}
