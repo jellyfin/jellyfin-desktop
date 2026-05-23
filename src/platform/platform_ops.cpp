@@ -259,3 +259,46 @@ extern "C" void jfn_g_platform_post_window_cleanup(void) {
 extern "C" void jfn_g_video_bg_set(uint32_t rgb) {
     g_video_bg = Color{rgb};
 }
+
+extern "C" uint32_t jfn_g_video_bg_get(void) {
+    return g_video_bg.rgb;
+}
+
+extern "C" bool jfn_g_platform_init(struct mpv_handle* h) {
+    return g_platform.init ? g_platform.init(h) : false;
+}
+
+extern "C" void jfn_g_platform_cleanup(void) {
+    if (g_platform.cleanup) g_platform.cleanup();
+}
+
+extern "C" void jfn_g_platform_set_theme_color(uint32_t rgb) {
+    if (g_platform.set_theme_color) g_platform.set_theme_color(rgb);
+}
+
+extern "C" void jfn_g_platform_set_idle_inhibit(uint32_t level) {
+    if (g_platform.set_idle_inhibit)
+        g_platform.set_idle_inhibit(static_cast<IdleInhibitLevel>(level));
+}
+
+extern "C" void jfn_g_platform_set_fullscreen2(bool fs) {
+    if (g_platform.set_fullscreen) g_platform.set_fullscreen(fs);
+}
+
+extern "C" void jfn_g_platform_run_main_loop(void) {
+    if (g_platform.run_main_loop) g_platform.run_main_loop();
+}
+
+extern "C" void jfn_g_platform_wake_main_loop(void) {
+    if (g_platform.wake_main_loop) g_platform.wake_main_loop();
+}
+
+extern "C" bool jfn_g_platform_shared_texture_supported(void) {
+    return g_platform.shared_texture_supported;
+}
+
+extern "C" void jfn_g_platform_set_cef_ozone_platform(const char* utf8) {
+    std::snprintf(g_platform.cef_ozone_platform,
+                  sizeof(g_platform.cef_ozone_platform),
+                  "%s", utf8 ? utf8 : "");
+}

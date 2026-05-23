@@ -55,6 +55,16 @@ unsafe extern "C" {
     fn jfn_g_platform_pump();
     fn jfn_g_platform_query_window_position(x: *mut c_int, y: *mut c_int) -> bool;
     fn jfn_g_platform_post_window_cleanup();
+    fn jfn_g_video_bg_get() -> u32;
+    fn jfn_g_platform_init(h: *mut std::ffi::c_void) -> bool;
+    fn jfn_g_platform_cleanup();
+    fn jfn_g_platform_set_theme_color(rgb: u32);
+    fn jfn_g_platform_set_idle_inhibit(level: u32);
+    fn jfn_g_platform_set_fullscreen2(fs: bool);
+    fn jfn_g_platform_run_main_loop();
+    fn jfn_g_platform_wake_main_loop();
+    fn jfn_g_platform_shared_texture_supported() -> bool;
+    fn jfn_g_platform_set_cef_ozone_platform(utf8: *const c_char);
 }
 
 const LOG_MAIN: u8 = 0;
@@ -867,6 +877,451 @@ pub extern "C" fn jfn_app_vo_size(w: *mut c_int, h: *mut c_int) {
         }
         if !h.is_null() {
             unsafe { *h = *hh };
+        }
+    }
+}
+
+// =====================================================================
+// run_with_cef body — Rust port
+// =====================================================================
+
+const LOG_CEF: u8 = 2;
+const LOG_SEVERITY_VERBOSE: c_int = -1;
+const LOG_SEVERITY_INFO: c_int = 0;
+const LOG_SEVERITY_WARNING: c_int = 1;
+const LOG_SEVERITY_ERROR: c_int = 2;
+
+fn cef_severity_for_cef_filter() -> c_int {
+    // Match toCefSeverity(effectiveLogLevel(LOG_CEF)) from C++ logging.h:
+    //   Trace/Debug -> VERBOSE, Info -> INFO, Warn -> WARNING, Error -> ERROR.
+    let e = jfn_logging::jfn_log_enabled;
+    if e(LOG_CEF, LEVEL_TRACE) || e(LOG_CEF, LEVEL_DEBUG) {
+        LOG_SEVERITY_VERBOSE
+    } else if e(LOG_CEF, LEVEL_INFO) {
+        LOG_SEVERITY_INFO
+    } else if e(LOG_CEF, LEVEL_WARN) {
+        LOG_SEVERITY_WARNING
+    } else {
+        LOG_SEVERITY_ERROR
+    }
+}
+
+// Handler thunks installed via jfn_playback_set_*_handler. They capture
+// nothing (Rust function items are 'static) and forward to g_platform /
+// jfn-cef as the C++ lambdas did.
+
+extern "C" fn h_idle_inhibit(level: u32) {
+    unsafe { jfn_g_platform_set_idle_inhibit(level) };
+}
+extern "C" fn h_theme_video_mode(active: bool) {
+    jfn_color::theme::jfn_theme_color_set_video_mode(active);
+}
+extern "C" fn h_web_exec_js(js: *const c_char) {
+    if !js.is_null() {
+        unsafe { jfn_cef::business_web::jfn_web_exec_js(js) };
+    }
+}
+extern "C" fn h_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
+    jfn_cef::browsers::jfn_browsers_set_size(lw, lh, pw, ph);
+}
+extern "C" fn h_browsers_set_refresh_rate(hz: f64) {
+    tracing::info!(target: "Main", "Display refresh rate changed: {hz} Hz");
+    jfn_cef::browsers::jfn_browsers_set_refresh_rate(hz);
+}
+extern "C" fn h_display_scale(s: f64) {
+    if s > 0.0 {
+        jfn_cef::browsers::jfn_browsers_set_scale(s);
+    }
+}
+extern "C" fn h_scale_provider() -> f32 {
+    let s = unsafe { jfn_g_platform_get_scale() };
+    if s > 0.0 { s } else { 1.0 }
+}
+extern "C" fn h_fullscreen(fs: bool) {
+    unsafe { jfn_g_platform_set_fullscreen2(fs) };
+}
+extern "C" fn h_shutdown() {
+    tracing::info!(target: "Main", "MPV_EVENT_SHUTDOWN received");
+    jfn_playback::jfn_shutdown_initiate();
+}
+
+extern "C" fn h_theme_set_titlebar(rgb: u32) {
+    unsafe { jfn_g_platform_set_theme_color(rgb) };
+}
+extern "C" fn h_theme_set_mpv_bg(hex: *const c_char) {
+    unsafe { jfn_mpv::api::jfn_mpv_set_background_color_hex(hex) };
+}
+
+extern "C" fn h_shutdown_close_browsers() {
+    jfn_cef::browsers::jfn_browsers_close_all();
+    unsafe { jfn_g_platform_wake_main_loop() };
+}
+
+/// Port of `run_with_cef`. Returns exit code (0 on success). Called from
+/// main.cpp right after the VO wait loop until that path is ported too.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_app_run_with_cef(mut mw: c_int, mut mh: c_int) -> c_int {
+    let ba = match BOOT_ARGS_STORAGE.get() {
+        Some(s) => &s.flat,
+        None => {
+            tracing::error!(target: "Main", "boot args not initialised");
+            return 1;
+        }
+    };
+
+    // 1. Resolve final ozone_platform + write into g_platform.cef_ozone_platform.
+    let mut ozone_platform = unsafe { cstr_to_string(ba.ozone_platform) };
+    #[cfg(target_os = "linux")]
+    {
+        if ozone_platform.is_empty() {
+            ozone_platform = if unsafe { jfn_g_platform_display() } == DisplayBackend::Wayland as i32 {
+                "wayland".to_string()
+            } else {
+                "x11".to_string()
+            };
+        }
+    }
+    let ozone_c = cs(&ozone_platform);
+    unsafe { jfn_g_platform_set_cef_ozone_platform(ozone_c.as_ptr()) };
+
+    // 2. Platform init (PlatformScope). Cleanup happens in jfn_app_teardown.
+    let mpv_raw = jfn_mpv::boot::jfn_mpv_handle_get();
+    let platform_ok = unsafe { jfn_g_platform_init(mpv_raw as *mut std::ffi::c_void) };
+    if !platform_ok {
+        tracing::error!(target: "Main", "Platform init failed");
+        return 1;
+    }
+    tracing::info!(target: "Main", "Platform init ok");
+    PLATFORM_INITED.store(true, std::sync::atomic::Ordering::Release);
+
+    // 3. Apply titlebar theme color before CefInitialize so the window doesn't
+    //    sit with the system default palette during init.
+    if jfn_config::jfn_settings_get_titlebar_theme_color() {
+        unsafe { jfn_g_platform_set_theme_color(0x101010) };
+    }
+
+    // 4. Build device profile. Must run after VO-init wait — sync mpv API
+    //    calls would deadlock against core_thread on macOS.
+    {
+        let caps = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_query(mpv_raw) };
+        let name = cs("Jellyfin Desktop");
+        let ver = cs(APP_VERSION_FULL);
+        let force = jfn_config::jfn_settings_get_force_transcoding();
+        let n_dec = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_decoder_count(caps) };
+        let mut codec_arr: Vec<jfn_jellyfin::JfnCodec> = Vec::with_capacity(n_dec);
+        for i in 0..n_dec {
+            let name = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_decoder_name(caps, i) };
+            let kind = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_decoder_kind(caps, i) };
+            codec_arr.push(jfn_jellyfin::JfnCodec { name, kind });
+        }
+        let n_dem = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_demuxer_count(caps) };
+        let mut demuxer_ptrs: Vec<*const c_char> = Vec::with_capacity(n_dem);
+        for i in 0..n_dem {
+            demuxer_ptrs.push(unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_demuxer_name(caps, i) });
+        }
+        let raw = unsafe {
+            jfn_jellyfin::jfn_jellyfin_build_device_profile(
+                codec_arr.as_ptr(),
+                codec_arr.len(),
+                demuxer_ptrs.as_ptr(),
+                demuxer_ptrs.len(),
+                name.as_ptr(),
+                ver.as_ptr(),
+                force,
+            )
+        };
+        unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_free(caps) };
+        if !raw.is_null() {
+            let profile = unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+            tracing::info!(target: "Main", "Device profile: {profile}");
+            unsafe {
+                jfn_jellyfin::jfn_jellyfin_set_cached_profile(raw);
+                jfn_cef::injection::jfn_cef_set_device_profile_json(profile.as_ptr() as *const _, profile.len());
+                jfn_jellyfin::jfn_jellyfin_free_string(raw);
+            }
+        }
+    }
+
+    // 5. CEF init flags + initialise.
+    let use_shared_textures = unsafe { jfn_g_platform_shared_texture_supported() }
+        && !ba.disable_gpu_compositing;
+    jfn_cef::ffi::jfn_cef_set_log_severity(cef_severity_for_cef_filter());
+    jfn_cef::ffi::jfn_cef_set_remote_debugging_port(ba.remote_debugging_port);
+    jfn_cef::ffi::jfn_cef_set_disable_gpu_compositing(!use_shared_textures);
+    #[cfg(target_os = "linux")]
+    {
+        if !ozone_platform.is_empty() {
+            unsafe { jfn_cef::ffi::jfn_cef_set_ozone_platform(ozone_c.as_ptr()) };
+        }
+    }
+    tracing::info!(target: "Main", "[FLOW] calling CefInitialize...");
+    if !jfn_cef::ffi::jfn_cef_initialize() {
+        tracing::error!(target: "Main", "CefInitialize failed");
+        return 1;
+    }
+    CEF_INITED.store(true, std::sync::atomic::Ordering::Release);
+    tracing::info!(target: "Main", "[FLOW] CefInitialize returned ok");
+
+    // 6. Read display-hidpi-scale + fullscreen sync.
+    let mut display_hidpi_scale: f64 = 0.0;
+    unsafe {
+        let name = cs("display-hidpi-scale");
+        jfn_mpv::sys::mpv_get_property(
+            mpv_raw,
+            name.as_ptr(),
+            jfn_mpv::sys::mpv_format::MPV_FORMAT_DOUBLE,
+            &mut display_hidpi_scale as *mut f64 as *mut std::ffi::c_void,
+        );
+    }
+    let mut fs_flag: c_int = 0;
+    unsafe {
+        let name = cs("fullscreen");
+        jfn_mpv::sys::mpv_get_property(
+            mpv_raw,
+            name.as_ptr(),
+            jfn_mpv::sys::mpv_format::MPV_FORMAT_FLAG,
+            &mut fs_flag as *mut c_int as *mut std::ffi::c_void,
+        );
+    }
+    jfn_playback::ingest_driver::jfn_playback_seed_display_hz_sync();
+    let hz = jfn_playback::ingest_driver::jfn_playback_display_hz();
+    tracing::info!(target: "Main",
+        "[FLOW] display-hidpi-scale={display_hidpi_scale} fullscreen={fs_flag} display-hz={hz}");
+
+    // 7. Scale-correct the window size when live display scale differs from
+    //    saved. Skip while the compositor has the surface locked.
+    {
+        let mut saved = jfn_config::JfnWindowGeometry::default();
+        unsafe { jfn_config::jfn_settings_get_window_geometry(&mut saved) };
+        let locked = fs_flag != 0 || jfn_playback::ingest_driver::jfn_playback_window_maximized();
+        if !locked
+            && display_hidpi_scale > 0.0
+            && saved.scale > 0.0
+            && (display_hidpi_scale - saved.scale as f64).abs() >= 0.01
+        {
+            let mut new_pw = (saved.logical_width as f64 * display_hidpi_scale).round() as c_int;
+            let mut new_ph = (saved.logical_height as f64 * display_hidpi_scale).round() as c_int;
+            let mut dummy_x: c_int = -1;
+            let mut dummy_y: c_int = -1;
+            unsafe {
+                jfn_g_platform_clamp_window_geometry(
+                    &mut new_pw, &mut new_ph, &mut dummy_x, &mut dummy_y,
+                );
+            }
+            let geom_str = format!("{new_pw}x{new_ph}");
+            tracing::info!(target: "Main",
+                "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
+            let g_c = cs(&geom_str);
+            unsafe { jfn_mpv::api::jfn_mpv_set_geometry(g_c.as_ptr()) };
+            mw = new_pw;
+            mh = new_ph;
+        }
+        jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
+    }
+
+    let scale = if display_hidpi_scale > 0.0 {
+        display_hidpi_scale as f32
+    } else {
+        unsafe { jfn_g_platform_get_scale() }
+    };
+    let lw = (mw as f32 / scale) as c_int;
+    let lh = (mh as f32 / scale) as c_int;
+
+    // 8. Theme color init — must exist before main browser create (the
+    //    pre-loaded page fires its initial theme-color IPC at DOMContentLoaded).
+    let titlebar_themed = jfn_config::jfn_settings_get_titlebar_theme_color();
+    unsafe {
+        jfn_color::theme::jfn_theme_color_init(
+            if titlebar_themed { Some(h_theme_set_titlebar) } else { None },
+            Some(h_theme_set_mpv_bg),
+        );
+    }
+    jfn_color::theme::jfn_theme_color_set_video_bg(unsafe { jfn_g_video_bg_get() });
+
+    // 9. Browsers init, shutdown handler, main browser create, overlay/web init.
+    jfn_cef::browsers::jfn_browsers_init(lw, lh, mw, mh, hz, use_shared_textures);
+    jfn_playback::jfn_shutdown_set_handler(Some(h_shutdown_close_browsers));
+
+    let web_kind = cs("web");
+    let main_layer = unsafe { jfn_cef::browsers::jfn_browsers_create(web_kind.as_ptr()) };
+    jfn_cef::business_web::jfn_web_init(main_layer);
+
+    let server_url = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_server_url()) };
+    tracing::info!(target: "Main",
+        "[FLOW] CreateBrowser(main) url={server_url} lw={lw} lh={lh} pw={mw} ph={mh}");
+    unsafe {
+        jfn_cef::client::jfn_cef_layer_create(
+            main_layer,
+            server_url.as_ptr() as *const _,
+            server_url.len(),
+        );
+    }
+    tracing::info!(target: "Main", "[FLOW] CreateBrowser(main) call returned");
+
+    tracing::info!(target: "Main", "[FLOW] jfn_overlay_init(main_layer)");
+    jfn_cef::business_overlay::jfn_overlay_init(main_layer);
+    tracing::info!(target: "Main", "[FLOW] jfn_overlay_init returned");
+
+    // 10. Playback coordinator + handler installation.
+    jfn_playback::ffi::jfn_playback_init();
+    COORD_INITED.store(true, std::sync::atomic::Ordering::Release);
+
+    jfn_playback::idle_inhibit_sink::jfn_playback_set_idle_inhibit_handler(Some(h_idle_inhibit));
+    jfn_playback::theme_color_sink::jfn_playback_set_theme_video_mode_handler(Some(h_theme_video_mode));
+    jfn_playback::exec_js::jfn_playback_set_web_exec_js_handler(Some(h_web_exec_js));
+    jfn_playback::browser_sink::jfn_playback_set_browsers_size_handler(Some(h_browsers_set_size));
+    jfn_playback::browser_sink::jfn_playback_set_browsers_refresh_rate_handler(Some(h_browsers_set_refresh_rate));
+
+    // 11. Platform-specific media sink.
+    #[cfg(target_os = "linux")]
+    {
+        let empty = cs("");
+        unsafe { jfn_playback::mpris_sink::jfn_mpris_sink_start(empty.as_ptr()) };
+    }
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn jfn_macos_sink_start();
+            fn jfn_macos_sink_stop();
+        }
+        unsafe { jfn_macos_sink_start() };
+    }
+    #[cfg(target_os = "windows")]
+    {
+        unsafe extern "C" {
+            fn jfn_windows_sink_start();
+            fn jfn_windows_sink_stop();
+        }
+        unsafe { jfn_windows_sink_start() };
+    }
+
+    // 12. Remaining handlers.
+    jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(h_display_scale);
+    jfn_playback::ingest_driver::jfn_playback_set_scale_provider(h_scale_provider);
+    jfn_playback::ingest_driver::jfn_playback_set_fullscreen_handler(h_fullscreen);
+    jfn_playback::ingest_driver::jfn_playback_set_shutdown_handler(h_shutdown);
+
+    // 13. Start mpv event thread.
+    tracing::info!(target: "Main", "[FLOW] starting Rust-owned mpv event thread");
+    if !jfn_playback::ingest_driver::jfn_playback_start_mpv_event_thread() {
+        tracing::error!(target: "Main", "failed to start mpv event thread");
+        return 1;
+    }
+
+    // 14. Wait for the main browser to finish loading (non-macOS).
+    #[cfg(not(target_os = "macos"))]
+    unsafe { jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer) };
+    tracing::info!(target: "Main", "Main browser loaded");
+
+    tracing::info!(target: "Main", "[FLOW] Running — about to enter run_main_loop");
+
+    // 15. Main loop. macOS pumps NSApp; other platforms wait for browser close.
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { jfn_g_platform_run_main_loop() };
+        tracing::info!(target: "Main", "[FLOW] run_main_loop returned — entering post-run drain");
+        // Spin CFRunLoop until browsers are gone.
+        unsafe extern "C" {
+            fn CFRunLoopRunInMode(mode: *const std::ffi::c_void, seconds: f64, returnAfterSourceHandled: i32) -> i32;
+            static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+        }
+        while !jfn_cef::browsers::jfn_browsers_all_closed() {
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, 1) };
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        jfn_cef::browsers::jfn_browsers_wait_all_closed();
+    }
+
+    // 16. Shutdown drain.
+    jfn_color::theme::jfn_theme_color_shutdown();
+    #[cfg(target_os = "macos")]
+    unsafe {
+        unsafe extern "C" {
+            fn jfn_macos_sink_stop();
+        }
+        jfn_macos_sink_stop();
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        unsafe extern "C" {
+            fn jfn_windows_sink_stop();
+        }
+        jfn_windows_sink_stop();
+    }
+    #[cfg(target_os = "linux")]
+    jfn_playback::mpris_sink::jfn_mpris_sink_stop();
+
+    jfn_playback::ingest_driver::jfn_playback_stop_mpv_event_thread();
+
+    // 17. Save window geometry.
+    save_window_geometry_on_exit();
+    jfn_config::jfn_settings_save();
+    jfn_config::jfn_settings_shutdown_save_worker();
+
+    // 18. Browsers shutdown.
+    jfn_cef::browsers::jfn_browsers_shutdown();
+    jfn_cef::ffi::jfn_cef_shutdown();
+    CEF_INITED.store(false, std::sync::atomic::Ordering::Release);
+
+    // 19. Idle inhibit release (mirrors C++ IdleInhibitGuard).
+    unsafe { jfn_g_platform_set_idle_inhibit(0) };
+
+    // 20. Platform cleanup (mirrors PlatformScope dtor).
+    unsafe { jfn_g_platform_cleanup() };
+    PLATFORM_INITED.store(false, std::sync::atomic::Ordering::Release);
+
+    // 21. Playback coordinator shutdown.
+    jfn_playback::ffi::jfn_playback_shutdown();
+    COORD_INITED.store(false, std::sync::atomic::Ordering::Release);
+
+    0
+}
+
+static PLATFORM_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CEF_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static COORD_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn save_window_geometry_on_exit() {
+    let fs = jfn_playback::ingest_driver::jfn_playback_fullscreen();
+    let max = jfn_playback::ingest_driver::jfn_playback_window_maximized();
+
+    let mut saved = jfn_config::JfnWindowGeometry::default();
+    unsafe { jfn_config::jfn_settings_get_window_geometry(&mut saved) };
+
+    if fs {
+        let mut g = saved;
+        g.maximized = jfn_playback::browser_sink::jfn_playback_was_maximized_before_fullscreen();
+        unsafe { jfn_config::jfn_settings_set_window_geometry(&g) };
+    } else if max {
+        let mut g = saved;
+        g.maximized = true;
+        unsafe { jfn_config::jfn_settings_set_window_geometry(&g) };
+    } else {
+        let mut pw = jfn_playback::ingest_driver::jfn_playback_window_pw();
+        let mut ph = jfn_playback::ingest_driver::jfn_playback_window_ph();
+        if pw <= 0 || ph <= 0 {
+            pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
+            ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
+        }
+        if pw > 0 && ph > 0 {
+            let mut g = jfn_config::JfnWindowGeometry::default();
+            g.width = pw;
+            g.height = ph;
+            let scale_raw = unsafe { jfn_g_platform_get_scale() };
+            let win_scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
+            g.scale = win_scale;
+            g.logical_width = (pw as f32 / win_scale).round() as i32;
+            g.logical_height = (ph as f32 / win_scale).round() as i32;
+            g.maximized = false;
+            let mut wx: c_int = -1;
+            let mut wy: c_int = -1;
+            if unsafe { jfn_g_platform_query_window_position(&mut wx, &mut wy) } {
+                g.x = wx;
+                g.y = wy;
+            }
+            unsafe { jfn_config::jfn_settings_set_window_geometry(&g) };
         }
     }
 }
