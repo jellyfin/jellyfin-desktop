@@ -1,9 +1,14 @@
 #include "platform_ops.h"
 #include "platform.h"
+#include "../common.h"
 
 #include <cstddef>
 
-extern Platform g_platform;
+// Owning definitions for the two C++ globals; main.cpp shrinks during the
+// Rust port and can no longer host them. Declarations live in
+// platform/platform.h (g_platform) and common.h (g_video_bg).
+Platform g_platform{};
+Color g_video_bg{};
 
 // The Wayland backend authors `make_wayland_platform()` in Rust
 // (src/wayland/src/make_platform.rs) and returns the Platform vtable by

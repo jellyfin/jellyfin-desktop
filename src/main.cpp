@@ -82,9 +82,8 @@ extern "C" void jfn_browsers_set_refresh_rate(double hz);
 // Globals
 // =====================================================================
 
-Color g_video_bg;
-
-Platform g_platform{};
+// g_platform / g_video_bg definitions live in platform/platform_ops.cpp
+// so main.cpp can be progressively shrunk without losing the owners.
 
 // Boot-time mpv log forwarder. Used only by the pre-CEF event loop;
 // the Rust-owned event thread routes its own log messages via
