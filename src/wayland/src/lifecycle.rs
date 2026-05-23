@@ -130,6 +130,7 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
         unsafe { jfn_platform_set_shared_texture_unsupported() };
     }
 
+    #[cfg(feature = "kde-palette")]
     unsafe { crate::kde_palette::jfn_wl_kde_palette_attach(display, parent) };
 
     crate::input_lifecycle::lifecycle_start();

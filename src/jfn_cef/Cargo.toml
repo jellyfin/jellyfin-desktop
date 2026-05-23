@@ -8,6 +8,10 @@ publish = false
 name = "jfn_cef"
 crate-type = ["rlib"]
 
+[features]
+default = ["kde-palette"]
+kde-palette = []
+
 [dependencies]
 cef = { version = "=148.1.0", default-features = false }
 jfn-config = { path = "../config" }

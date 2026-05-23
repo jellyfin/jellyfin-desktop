@@ -6,6 +6,7 @@ pub mod egl_dyn;
 pub mod fade;
 pub mod input;
 pub mod input_lifecycle;
+#[cfg(feature = "kde-palette")]
 pub mod kde_palette;
 pub mod lifecycle;
 pub mod make_platform;

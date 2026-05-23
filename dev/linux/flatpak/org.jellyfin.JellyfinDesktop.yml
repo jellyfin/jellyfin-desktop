@@ -180,6 +180,7 @@ modules:
       - -DCMAKE_BUILD_TYPE=Release
       - -DCEF_ROOT=/app/cef
       - -DEXTERNAL_MPV_DIR=/app
+      - -DJFN_ENABLE_KDE_PALETTE=OFF
     post-install:
       - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
