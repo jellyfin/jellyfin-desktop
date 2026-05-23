@@ -13,10 +13,22 @@
 #include "common.h"
 #include "cef/cef_app.h"
 #include "cef/cef_client.h"
-#include "browser/browsers.h"
 extern "C" void jfn_overlay_init(JfnCefLayer* main_layer);
 extern "C" void jfn_web_init(JfnCefLayer* layer);
 extern "C" void jfn_web_exec_js(const char* js_utf8);
+
+// Rust Browsers registry C ABI (src/jfn_cef/src/browsers.rs).
+extern "C" void jfn_browsers_init(int lw, int lh, int pw, int ph,
+                                  double frame_rate, bool use_shared_textures);
+extern "C" void jfn_browsers_shutdown(void);
+extern "C" JfnCefLayer* jfn_browsers_create(const char* kind);
+extern "C" void jfn_browsers_close_all(void);
+extern "C" void jfn_browsers_wait_all_closed(void);
+extern "C" bool jfn_browsers_all_closed(void);
+extern "C" void jfn_browsers_set_size(int lw, int lh, int pw, int ph);
+extern "C" void jfn_browsers_set_scale(double scale);
+extern "C" void jfn_browsers_set_refresh_rate(double hz);
+
 #include "mpv/jfn_mpv_api.h"
 #include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
@@ -73,7 +85,6 @@ extern "C" void jfn_web_exec_js(const char* js_utf8);
 Color g_video_bg;
 
 Platform g_platform{};
-// g_browsers is defined in src/browser/browsers.cpp.
 
 // Boot-time mpv log forwarder. Used only by the pre-CEF event loop;
 // the Rust-owned event thread routes its own log messages via
@@ -245,15 +256,14 @@ static int run_with_cef(int mw, int mh,
         +[](const char* hex) { jfn_mpv_set_background_color_hex(hex); });
     jfn_theme_color_set_video_bg(g_video_bg.rgb);
 
-    Browsers browsers(lw, lh, mw, mh, jfn_playback_display_hz(), use_shared_textures);
-    g_browsers = &browsers;
+    jfn_browsers_init(lw, lh, mw, mh, jfn_playback_display_hz(), use_shared_textures);
     jfn_shutdown_set_handler(+[]() {
-        if (g_browsers) g_browsers->closeAll();
+        jfn_browsers_close_all();
         if (g_platform.wake_main_loop) g_platform.wake_main_loop();
     });
 
-    auto main_layer = browsers.create("web");
-    jfn_web_init(main_layer->rs());
+    JfnCefLayer* main_layer = jfn_browsers_create("web");
+    jfn_web_init(main_layer);
 
     std::string server_url = Settings::instance().serverUrl();
     std::string main_url;
@@ -264,11 +274,11 @@ static int run_with_cef(int mw, int mh,
 
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) url={} lw={} lh={} pw={} ph={}",
              main_url.c_str(), lw, lh, mw, mh);
-    main_layer->create(main_url);
+    jfn_cef_layer_create(main_layer, main_url.data(), main_url.size());
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
 
     LOG_INFO(LOG_MAIN, "[FLOW] jfn_overlay_init(main_layer)");
-    jfn_overlay_init(main_layer->rs());
+    jfn_overlay_init(main_layer);
     LOG_INFO(LOG_MAIN, "[FLOW] jfn_overlay_init returned");
 
     // Coordinator + sinks must exist before any thread can post inputs or
@@ -289,11 +299,11 @@ static int run_with_cef(int mw, int mh,
         if (js) jfn_web_exec_js(js);
     });
     jfn_playback_set_browsers_size_handler([](int32_t lw, int32_t lh, int32_t pw, int32_t ph) {
-        if (g_browsers) g_browsers->setSize(lw, lh, pw, ph);
+        jfn_browsers_set_size(lw, lh, pw, ph);
     });
     jfn_playback_set_browsers_refresh_rate_handler([](double hz) {
         LOG_INFO(LOG_MAIN, "Display refresh rate changed: {} Hz", hz);
-        if (g_browsers) g_browsers->setRefreshRate(hz);
+        jfn_browsers_set_refresh_rate(hz);
     });
 #if defined(__APPLE__)
     auto media_sink = std::make_shared<MacosSink>();
@@ -313,7 +323,7 @@ static int run_with_cef(int mw, int mh,
 #endif
     // MpvActionSink lives Rust-side (jfn_playback::ffi::register_builtin_sinks).
     jfn_playback_set_display_scale_handler([](double s) {
-        if (g_browsers && s > 0) g_browsers->setScale(s);
+        if (s > 0) jfn_browsers_set_scale(s);
     });
     jfn_playback_set_scale_provider(&mpv_event_scale_provider);
 #ifdef __APPLE__
@@ -332,7 +342,7 @@ static int run_with_cef(int mw, int mh,
     }
 
 #ifndef __APPLE__
-    main_layer->waitForLoad();
+    jfn_cef_layer_wait_for_load(main_layer);
 #endif
     LOG_INFO(LOG_MAIN, "Main browser loaded");
 
@@ -347,12 +357,12 @@ static int run_with_cef(int mw, int mh,
 
     // CEF may still have browser-close work in flight after the main loop
     // breaks. Spin the runloop event-driven until all browsers report closed.
-    while (g_browsers && !g_browsers->allClosed()) {
+    while (!jfn_browsers_all_closed()) {
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, true);
     }
 
 #else
-    if (g_browsers) g_browsers->waitAllClosed();
+    jfn_browsers_wait_all_closed();
 #endif
 
     jfn_theme_color_shutdown();
@@ -423,16 +433,11 @@ static int run_with_cef(int mw, int mh,
     // the worker so nothing is lost when CEF/platform teardown runs next.
     Settings::instance().shutdownSaveWorker();
 
-    // Business owners released first — their dtors call g_browsers->remove,
-    // freeing the platform surfaces and clearing the active pointer. About
-    // is a self-managed singleton: its BeforeCloseCallback already deleted
-    // it during the close drain above. Any straggler surface gets freed by
-    // Browsers' dtor when `browsers` goes out of scope.
-    // Web and overlay are Rust-side singletons; their BeforeClose callbacks
-    // already tore down INSTANCE during the close drain above.
-    g_browsers = nullptr;
-    // `browsers` itself goes out of scope here; any straggler surfaces
-    // get freed by its dtor.
+    // All three business browsers are Rust-side singletons; their
+    // BeforeClose callbacks already removed themselves from Browsers
+    // during the close drain above. Browsers shutdown frees any
+    // straggler surface and the Vec of layer handles.
+    jfn_browsers_shutdown();
 
     return 0;
 }

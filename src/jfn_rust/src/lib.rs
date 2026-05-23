@@ -10,6 +10,7 @@ pub use jfn_cef::*;
 pub use jfn_cef::business_about::*;
 pub use jfn_cef::business_overlay::*;
 pub use jfn_cef::business_web::*;
+pub use jfn_cef::browsers::*;
 pub use jfn_cli::*;
 pub use jfn_color::*;
 pub use jfn_color::theme::*;

@@ -2,11 +2,8 @@
 
 #include "input.h"
 #include "jfn_hotkey.h"
-#include "logging.h"
 #include "../common.h"
-#include "../browser/browsers.h"
 #include "../cef/cef_client.h"
-#include "../platform/platform.h"
 
 #include "include/internal/cef_types.h"
 
@@ -17,14 +14,17 @@
 
 #include <mutex>
 
+// Rust Browsers active query (src/jfn_cef/src/browsers.rs).
+extern "C" JfnCefLayer* jfn_browsers_active(void);
+
 namespace input {
 namespace {
 
 std::mutex g_last_pos_mtx;
 LastMousePos g_last_pos;  // guarded by g_last_pos_mtx
 
-CefRefPtr<CefLayer> active_layer() {
-    return g_browsers ? g_browsers->active() : nullptr;
+JfnCefLayer* active_layer() {
+    return jfn_browsers_active();
 }
 
 int to_cef_button(MouseButton b) {
@@ -43,6 +43,15 @@ LastMousePos last_mouse_pos() {
     return g_last_pos;
 }
 
+extern "C" int jfn_input_last_mouse_pos(int32_t* out_x, int32_t* out_y,
+                                        uint32_t* out_modifiers) {
+    std::lock_guard<std::mutex> lk(g_last_pos_mtx);
+    if (out_x) *out_x = g_last_pos.x;
+    if (out_y) *out_y = g_last_pos.y;
+    if (out_modifiers) *out_modifiers = g_last_pos.modifiers;
+    return g_last_pos.valid ? 1 : 0;
+}
+
 void dispatch_key(const KeyEvent& e) {
     if (e.action == KeyAction::Down) {
         switch (jfn_hotkey_classify_keydown(e.windows_key_code, e.modifiers)) {
@@ -51,29 +60,33 @@ void dispatch_key(const KeyEvent& e) {
         default: break;
         }
     }
-    auto l = active_layer();
+    auto* l = active_layer();
     if (!l) return;
     int type_ = (e.action == KeyAction::Down) ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
-    l->sendKeyEvent(type_, e.modifiers, e.windows_key_code, e.native_key_code,
-                    e.is_system_key, static_cast<uint16_t>(e.character),
-                    static_cast<uint16_t>(e.unmodified_character));
+    jfn_cef_layer_send_key_event(
+        l, type_, e.modifiers, e.windows_key_code, e.native_key_code,
+        e.is_system_key, static_cast<uint16_t>(e.character),
+        static_cast<uint16_t>(e.unmodified_character));
 }
 
 void dispatch_char(uint32_t codepoint, uint32_t modifiers,
                    int native_key_code, bool is_system_key) {
     if (codepoint == 0 || codepoint >= 0x10FFFF) return;
-    auto l = active_layer();
+    auto* l = active_layer();
     if (!l) return;
-    l->sendKeyEvent(KEYEVENT_CHAR, modifiers, static_cast<int>(codepoint),
-                    native_key_code, is_system_key,
-                    static_cast<uint16_t>(codepoint),
-                    static_cast<uint16_t>(codepoint));
+    jfn_cef_layer_send_key_event(
+        l, KEYEVENT_CHAR, modifiers, static_cast<int>(codepoint),
+        native_key_code, is_system_key,
+        static_cast<uint16_t>(codepoint),
+        static_cast<uint16_t>(codepoint));
 }
 
 void dispatch_mouse_button(const MouseButtonEvent& e) {
-    auto l = active_layer();
+    auto* l = active_layer();
     if (!l) return;
-    l->sendMouseClick(e.x, e.y, e.modifiers, to_cef_button(e.button), !e.pressed, e.click_count);
+    jfn_cef_layer_send_mouse_click(
+        l, e.x, e.y, e.modifiers, to_cef_button(e.button),
+        !e.pressed, e.click_count);
 }
 
 void dispatch_mouse_move(const MouseMoveEvent& e) {
@@ -88,40 +101,38 @@ void dispatch_mouse_move(const MouseMoveEvent& e) {
             g_last_pos.modifiers = e.modifiers;
         }
     }
-    auto l = active_layer();
+    auto* l = active_layer();
     if (!l) return;
-    l->sendMouseMove(e.x, e.y, e.modifiers, e.leave);
+    jfn_cef_layer_send_mouse_move(l, e.x, e.y, e.modifiers, e.leave);
 }
 
 void dispatch_history_nav(bool forward) {
-    auto l = active_layer();
+    auto* l = active_layer();
     if (!l) return;
     if (forward) {
-        if (l->canGoForward()) l->goForward();
+        if (jfn_cef_layer_can_go_forward(l)) jfn_cef_layer_go_forward(l);
     } else {
-        if (l->canGoBack()) l->goBack();
+        if (jfn_cef_layer_can_go_back(l)) jfn_cef_layer_go_back(l);
     }
 }
 
 void dispatch_scroll(const ScrollEvent& e) {
-    auto l = active_layer();
+    auto* l = active_layer();
     if (!l) return;
     uint32_t mods = e.modifiers;
     if (e.precise) mods |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
-    l->sendMouseWheel(e.x, e.y, mods, e.dx, e.dy);
+    jfn_cef_layer_send_mouse_wheel(l, e.x, e.y, mods, e.dx, e.dy);
 }
 
 void dispatch_keyboard_focus(bool gained) {
-    auto l = active_layer();
-    if (l) l->setFocus(gained);
+    auto* l = active_layer();
+    if (l) jfn_cef_layer_set_focus(l, gained);
 }
 
 }  // namespace input
 
 // extern "C" dispatch shims callable from Rust. Reconstruct the C++ event
 // structs from primitive args and forward to the dispatch_* functions above.
-// Used by src/wayland/src/input_lifecycle.rs to wire the Rust input thread's
-// callbacks directly into C++ dispatch without an intermediate .cpp glue file.
 extern "C" void jfn_input_dispatch_mouse_move(int32_t x, int32_t y, uint32_t mods, int leave) {
     input::dispatch_mouse_move({
         .x = x, .y = y, .modifiers = mods, .leave = leave != 0,
@@ -174,10 +185,6 @@ extern "C" void jfn_input_dispatch_key_raw(uint32_t keysym, uint32_t native_code
     e.action           = pressed ? input::KeyAction::Down : input::KeyAction::Up;
     e.modifiers        = mods;
     // CEF on Linux expects an X11 keycode (evdev keycode + 8) for native_key_code.
-    // Both Wayland and X11 input paths deliver the raw evdev keycode here, so
-    // add the offset to produce the X11 keycode that Chromium uses when mapping
-    // native_key_code → KeyboardEvent.code (e.g. evdev 108 + 8 = X11 116 = "ArrowDown",
-    // not X11 108 = "AltRight").
     e.native_key_code  = static_cast<int>(native_code) + 8;
     e.is_system_key    = false;
     input::dispatch_key(e);

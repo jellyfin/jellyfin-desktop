@@ -1601,6 +1601,11 @@ pub unsafe extern "C" fn jfn_cef_layer_set_surface(h: *const JfnCefLayer, s: *mu
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_get_surface(h: *const JfnCefLayer) -> *mut c_void {
+    unsafe { arc(h) }.surface_ptr()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_cef_layer_resize(
     h: *const JfnCefLayer,
     w: c_int,
