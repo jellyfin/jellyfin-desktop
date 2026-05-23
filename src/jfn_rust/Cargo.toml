@@ -15,6 +15,7 @@ kde-palette = ["jfn-cef/kde-palette", "jfn-wayland/kde-palette"]
 [dependencies]
 jfn-cef = { path = "../jfn_cef", default-features = false }
 jfn-cli = { path = "../cli" }
+jfn-input = { path = "../input" }
 jfn-color = { path = "../color" }
 jfn-config = { path = "../config" }
 jfn-jellyfin = { path = "../jellyfin" }

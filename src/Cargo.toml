@@ -5,6 +5,7 @@ members = [
     "color",
     "config",
     "idle_inhibit_linux",
+    "input",
     "jellyfin",
     "jfn_cef",
     "jfn_rust",
