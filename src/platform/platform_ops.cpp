@@ -179,3 +179,9 @@ extern "C" void jfn_platform_set_shared_texture_unsupported(void) {
 extern "C" void jfn_platform_clear_clipboard_handler(void) {
     g_platform.clipboard_read_text_async = nullptr;
 }
+
+// Toggle fullscreen state. Used by Rust app_menu's "Toggle Fullscreen"
+// dispatch and the playerOsdActive cleanup path.
+extern "C" void jfn_platform_toggle_fullscreen(void) {
+    if (g_platform.toggle_fullscreen) g_platform.toggle_fullscreen();
+}

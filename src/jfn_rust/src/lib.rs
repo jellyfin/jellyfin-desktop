@@ -7,6 +7,7 @@
 // entry point visible in the resulting `libjfn_rust` archive.
 
 pub use jfn_cef::*;
+pub use jfn_cef::business_about::*;
 pub use jfn_cli::*;
 pub use jfn_color::*;
 pub use jfn_color::theme::*;
