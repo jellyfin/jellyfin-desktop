@@ -334,6 +334,7 @@ file(GLOB_RECURSE JFN_RUST_SOURCES CONFIGURE_DEPENDS
     "${JFN_RUST_WORKSPACE_DIR}/*/Cargo.toml"
     "${JFN_RUST_WORKSPACE_DIR}/Cargo.toml"
 )
+file(GLOB_RECURSE WEB_RESOURCES "${CMAKE_SOURCE_DIR}/src/web/*")
 
 option(JFN_ENABLE_KDE_PALETTE "Build with KWin per-window titlebar color support" ON)
 set(_JFN_CARGO_ARGS build --release --manifest-path ${JFN_RUST_DIR}/Cargo.toml)
@@ -355,7 +356,7 @@ add_custom_command(
         # these env overrides (see src/mpv/build.rs).
         "EXTERNAL_MPV_DIR=${EXTERNAL_MPV_DIR}"
         ${CARGO_EXECUTABLE} ${_JFN_CARGO_ARGS}
-    DEPENDS ${JFN_RUST_SOURCES}
+    DEPENDS ${JFN_RUST_SOURCES} ${WEB_RESOURCES}
     COMMENT "Building jfn-rust (Rust workspace)"
     VERBATIM
 )
