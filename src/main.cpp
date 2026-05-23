@@ -15,7 +15,8 @@
 #include "cef/cef_client.h"
 #include "browser/browsers.h"
 #include "browser/web_browser.h"
-#include "browser/overlay_browser.h"
+
+extern "C" void jfn_overlay_init(JfnCefLayer* main_layer);
 #include "mpv/jfn_mpv_api.h"
 #include "mpv/jfn_mpv_boot.h"
 #include "jellyfin/device_profile.h"
@@ -268,16 +269,9 @@ static int run_with_cef(int mw, int mh,
     main_layer->create(main_url);
     LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(main) call returned");
 
-    std::unique_ptr<OverlayBrowser> overlay_browser_owner;
-    {
-        auto overlay_layer = browsers.create("overlay");
-        overlay_layer->setVisible(true);
-        overlay_browser_owner = std::make_unique<OverlayBrowser>(
-            overlay_layer, *g_web_browser);
-        LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay)");
-        overlay_layer->create("app://resources/overlay.html");
-        LOG_INFO(LOG_MAIN, "[FLOW] CreateBrowser(overlay) call returned");
-    }
+    LOG_INFO(LOG_MAIN, "[FLOW] jfn_overlay_init(main_layer)");
+    jfn_overlay_init(main_layer->rs());
+    LOG_INFO(LOG_MAIN, "[FLOW] jfn_overlay_init returned");
 
     // Coordinator + sinks must exist before any thread can post inputs or
     // observe playback state. Sinks register before start() so the worker
@@ -438,7 +432,8 @@ static int run_with_cef(int mw, int mh,
     // Browsers' dtor when `browsers` goes out of scope.
     g_web_browser = nullptr;
     web_browser_owner.reset();
-    overlay_browser_owner.reset();
+    // Overlay is a Rust-side singleton; its BeforeClose callback already
+    // tore down INSTANCE during the close drain above.
     g_browsers = nullptr;
     // `browsers` itself goes out of scope here; any straggler surfaces
     // get freed by its dtor.
