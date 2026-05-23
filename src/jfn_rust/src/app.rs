@@ -13,6 +13,34 @@ use std::sync::OnceLock;
 
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
 
+// DisplayBackend discriminants must match `enum class DisplayBackend`
+// in `src/platform/display_backend.h`. Pinned by the static_asserts in
+// platform_ops.cpp.
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(dead_code)]
+pub enum DisplayBackend {
+    Wayland = 0,
+    X11 = 1,
+    Windows = 2,
+    MacOS = 3,
+}
+
+// Linux: the `Platform` vtable lives in jfn-wayland / jfn-x11; both crates
+// export `make_*_platform` with C linkage returning the same C-layout
+// struct. We type the FFI through jfn-wayland's mirror — jfn-x11's mirror
+// has the same layout so blind transmute would also work, but going via a
+// single type keeps things readable. `jfn_g_platform_ptr` is a thin C++
+// accessor for the legacy `g_platform` global (platform/platform_ops.cpp);
+// it stays in place until slice 4 collapses the vtable into a trait.
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn make_wayland_platform() -> jfn_wayland::make_platform::Platform;
+    fn make_x11_platform() -> jfn_wayland::make_platform::Platform;
+    fn jfn_g_platform_ptr() -> *mut jfn_wayland::make_platform::Platform;
+    fn jfn_platform_ops() -> *const jfn_cef::platform_ops::JfnPlatformOps;
+}
+
 const LOG_MAIN: u8 = 0;
 const DEFAULT_LOG_FILTER: &str = "info";
 
@@ -258,10 +286,10 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     let filter_c = cs(&filter);
     unsafe { jfn_logging::jfn_log_init(log_path_c.as_ptr(), filter_c.as_ptr()) };
 
-    tracing::info!(target: "main", "jellyfin-desktop {APP_VERSION_FULL}");
-    tracing::info!(target: "main", "CEF {APP_CEF_VERSION}");
+    tracing::info!(target: "Main", "jellyfin-desktop {APP_VERSION_FULL}");
+    tracing::info!(target: "Main", "CEF {APP_CEF_VERSION}");
     if !log_path.is_empty() {
-        tracing::info!(target: "main", "Log file: {log_path}");
+        tracing::info!(target: "Main", "Log file: {log_path}");
     }
 
     // 8. Stash parsed args so the remaining C++ body can read them while
@@ -286,6 +314,103 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
             remote_debugging_port,
         },
     });
+    // 9. Linux: pick display backend, populate g_platform, run early_init,
+    //    register the platform-ops vtable with the Rust-side jfn-cef.
+    //    Windows/macOS: g_platform was populated by main() before jfn_app_main
+    //    returned (we ran before CefExecuteProcess on those platforms).
+    #[cfg(target_os = "linux")]
+    {
+        let backend = if platform_override == "wayland" {
+            DisplayBackend::Wayland
+        } else if platform_override == "x11" {
+            DisplayBackend::X11
+        } else if !platform_override.is_empty() {
+            eprintln!(
+                "Unknown platform: {} (expected wayland or x11)",
+                platform_override
+            );
+            return 1;
+        } else {
+            let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+            let has_display = std::env::var_os("DISPLAY").is_some();
+            if has_wayland || !has_display {
+                DisplayBackend::Wayland
+            } else {
+                DisplayBackend::X11
+            }
+        };
+        unsafe {
+            let p = match backend {
+                DisplayBackend::Wayland => make_wayland_platform(),
+                DisplayBackend::X11 => make_x11_platform(),
+                _ => unreachable!(),
+            };
+            *jfn_g_platform_ptr() = p;
+            // Mirror `make_platform()`'s C++ inline: early_init then wire
+            // platform_ops into jfn-cef.
+            if let Some(ei) = (*jfn_g_platform_ptr()).early_init {
+                ei();
+            }
+            jfn_cef::platform_ops::jfn_cef_set_platform_ops(jfn_platform_ops());
+        }
+        tracing::info!(target: "Main", "Display backend: {}",
+            if backend == DisplayBackend::Wayland { "wayland" } else { "x11" });
+    }
+
+    // 10. Install signal handler (Unix) / Windows ConsoleCtrl handler.
+    install_signal_handler();
+
+    // 11. Single-instance check (Linux + Windows; macOS uses NSApp delegate
+    //     activation).
+    #[cfg(not(target_os = "macos"))]
+    {
+        if jfn_single_instance::jfn_single_instance_try_signal_existing() != 0 {
+            tracing::info!(target: "Main", "Signaled existing instance, exiting");
+            return 0;
+        }
+        unsafe extern "C" fn on_activate(_token: *const c_char, _userdata: *mut std::ffi::c_void) {
+            // TODO: raise window via xdg-activation
+        }
+        let ok = unsafe {
+            jfn_single_instance::jfn_single_instance_start_listener(
+                Some(on_activate),
+                ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            tracing::warn!(target: "Main", "Single-instance listener failed to start");
+        }
+        // Stop on process exit. Held in a Drop guard via static slot below.
+        install_listener_guard();
+    }
+
+    // 12. Export MPV_HOME so libmpv reads our packaged config dir.
+    {
+        let mpv_home = unsafe { take_owned_paths_string(jfn_paths::jfn_paths_mpv_home()) };
+        #[cfg(unix)]
+        unsafe {
+            std::env::set_var("MPV_HOME", &mpv_home);
+        }
+        #[cfg(windows)]
+        unsafe {
+            std::env::set_var("MPV_HOME", &mpv_home);
+        }
+        let _ = mpv_home;
+    }
+
+    // 13. Linux/Wayland: start the wl-proxy that intercepts xdg_toplevel
+    //     configure + fractional-scale events for the mpv subwindow.
+    #[cfg(target_os = "linux")]
+    {
+        // Read backend as i32 discriminant; matches the C++ enum class.
+        let backend_now: i32 = unsafe {
+            *(jfn_g_platform_ptr() as *const i32)
+        };
+        if backend_now == DisplayBackend::Wayland as i32 {
+            unsafe { start_wlproxy() };
+        }
+    }
+
     storage.flat.hwdec = storage._hwdec.as_ptr();
     storage.flat.audio_passthrough = storage._audio_passthrough.as_ptr();
     storage.flat.audio_channels = storage._audio_channels.as_ptr();
@@ -313,3 +438,132 @@ pub extern "C" fn jfn_app_boot_args() -> *const JfnBootArgs {
 // threads. The Box itself is Send + Sync because of this.
 unsafe impl Send for BootArgsStorage {}
 unsafe impl Sync for BootArgsStorage {}
+
+// =====================================================================
+// Signal handler + listener guard + wlproxy lifetime
+// =====================================================================
+
+#[cfg(unix)]
+static SIGNAL_GUARD: OnceLock<SignalGuardSlot> = OnceLock::new();
+
+#[cfg(unix)]
+struct SignalGuardSlot(*mut jfn_signal_guard::SignalGuard);
+#[cfg(unix)]
+unsafe impl Send for SignalGuardSlot {}
+#[cfg(unix)]
+unsafe impl Sync for SignalGuardSlot {}
+
+#[cfg(unix)]
+unsafe extern "C" fn on_shutdown_signal(_sig: c_int) {
+    jfn_playback::jfn_shutdown_initiate();
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn console_ctrl_handler(_t: u32) -> i32 {
+    jfn_playback::jfn_shutdown_initiate();
+    1
+}
+
+fn install_signal_handler() {
+    #[cfg(unix)]
+    {
+        let g = unsafe { jfn_signal_guard::jfn_signal_guard_install(Some(on_shutdown_signal)) };
+        let _ = SIGNAL_GUARD.set(SignalGuardSlot(g));
+    }
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn SetConsoleCtrlHandler(handler: unsafe extern "system" fn(u32) -> i32, add: i32) -> i32;
+        }
+        unsafe { SetConsoleCtrlHandler(console_ctrl_handler, 1) };
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+static LISTENER_GUARD: OnceLock<ListenerGuardSlot> = OnceLock::new();
+
+#[cfg(not(target_os = "macos"))]
+struct ListenerGuardSlot;
+#[cfg(not(target_os = "macos"))]
+impl Drop for ListenerGuardSlot {
+    fn drop(&mut self) {
+        jfn_single_instance::jfn_single_instance_stop_listener();
+    }
+}
+#[cfg(not(target_os = "macos"))]
+unsafe impl Send for ListenerGuardSlot {}
+#[cfg(not(target_os = "macos"))]
+unsafe impl Sync for ListenerGuardSlot {}
+
+#[cfg(not(target_os = "macos"))]
+fn install_listener_guard() {
+    let _ = LISTENER_GUARD.set(ListenerGuardSlot);
+}
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn jfn_wlproxy_start() -> *mut std::ffi::c_void;
+    fn jfn_wlproxy_display_name(p: *const std::ffi::c_void) -> *const c_char;
+    fn jfn_wlproxy_stop(p: *mut std::ffi::c_void);
+    fn jfn_wl_register_proxy_callbacks();
+}
+
+#[cfg(target_os = "linux")]
+static WLPROXY: OnceLock<WlproxySlot> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+struct WlproxySlot(*mut std::ffi::c_void);
+#[cfg(target_os = "linux")]
+unsafe impl Send for WlproxySlot {}
+#[cfg(target_os = "linux")]
+unsafe impl Sync for WlproxySlot {}
+
+#[cfg(target_os = "linux")]
+unsafe fn start_wlproxy() {
+    let p = unsafe { jfn_wlproxy_start() };
+    if p.is_null() {
+        tracing::error!(target: "Main", "wlproxy start failed; continuing without proxy");
+        return;
+    }
+    let disp_p = unsafe { jfn_wlproxy_display_name(p) };
+    if disp_p.is_null() {
+        tracing::error!(target: "Main", "wlproxy display name empty; aborting proxy");
+        unsafe { jfn_wlproxy_stop(p) };
+        return;
+    }
+    let disp = unsafe { CStr::from_ptr(disp_p) }.to_string_lossy().into_owned();
+    if disp.is_empty() {
+        tracing::error!(target: "Main", "wlproxy display name empty; aborting proxy");
+        unsafe { jfn_wlproxy_stop(p) };
+        return;
+    }
+    tracing::info!(target: "Main", "wlproxy listening on {disp}");
+    unsafe { std::env::set_var("WAYLAND_DISPLAY", &disp) };
+    // Register the configure intercept BEFORE mpv_create so the first
+    // compositor configure (which arrives shortly after mpv_initialize) is
+    // captured.
+    unsafe { jfn_wl_register_proxy_callbacks() };
+    let _ = WLPROXY.set(WlproxySlot(p));
+}
+
+/// C accessor for whether jfn_app_main already set up signal/single-instance/
+/// platform/wlproxy. Lets main.cpp skip the duplicated work during the port.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_app_boot_done() -> bool {
+    BOOT_ARGS_STORAGE.get().is_some()
+}
+
+/// Tear down boot-owned resources at process exit (wlproxy, single-instance
+/// listener). Called from main.cpp's tail until that path is ported too.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_app_teardown() {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(slot) = WLPROXY.get() {
+            unsafe { jfn_wlproxy_stop(slot.0) };
+        }
+    }
+    // Single-instance listener is dropped via the OnceLock at process exit;
+    // no explicit teardown call needed here. SignalGuard slot stays until
+    // exit and restores the original disposition via libsignal_guard's Drop.
+}

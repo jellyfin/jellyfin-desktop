@@ -21,7 +21,7 @@ mod client_impl;
 mod embedded_js;
 pub mod ffi;
 mod injection;
-mod platform_ops;
+pub mod platform_ops;
 #[cfg(target_os = "macos")]
 mod pump;
 mod resource;

@@ -214,3 +214,10 @@ extern "C" void jfn_platform_restack(void* const* ordered, size_t n) {
         g_platform.restack(
             reinterpret_cast<PlatformSurface* const*>(ordered), n);
 }
+
+// Raw accessor for the Rust jfn_app_main port: lets Rust populate the
+// global Platform vtable on Linux (where make_*_platform lives in Rust).
+// The pointer is stable for the lifetime of the process.
+extern "C" Platform* jfn_g_platform_ptr(void) {
+    return &g_platform;
+}
