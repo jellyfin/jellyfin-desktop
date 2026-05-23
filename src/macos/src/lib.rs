@@ -14,6 +14,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_char, c_int, c_void};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
@@ -28,6 +29,41 @@ pub extern "C" fn macos_end_transition() {
     // Transition-end is detected inline by macos_surface_present when
     // an incoming frame matches g_expected_w/h; the explicit vtable
     // entry is a no-op.
+}
+
+// =====================================================================
+// Fullscreen-transition gating flag. The C++ compositor reads this on
+// every frame (macos_surface_present) and clears it when an incoming
+// frame matches g_expected_w/h. Set by macos_begin_transition below;
+// SeqCst matches the prior plain-bool semantics with no surrounding
+// ordering requirements.
+// =====================================================================
+
+static G_IN_TRANSITION: AtomicBool = AtomicBool::new(false);
+
+unsafe extern "C" {
+    /// Implemented in src/platform/macos.mm: drops cached input-surface
+    /// textures across the surface stack so the next paint re-wraps at
+    /// the new size.
+    fn macos_drop_input_textures();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_begin_transition() {
+    G_IN_TRANSITION.store(true, Ordering::SeqCst);
+    unsafe { macos_drop_input_textures() };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_in_transition() -> bool {
+    G_IN_TRANSITION.load(Ordering::SeqCst)
+}
+
+/// Called by C++ macos_surface_present when an incoming frame matches
+/// the expected post-transition size.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_macos_transition_clear() {
+    G_IN_TRANSITION.store(false, Ordering::SeqCst);
 }
 
 /// Backing scale factor of the main screen. Args are unused — the C++
@@ -134,8 +170,6 @@ unsafe extern "C" {
     fn macos_popup_show(s: *mut c_void, req: *const JfnPopupRequest);
     fn macos_set_fullscreen(fullscreen: bool);
     fn macos_toggle_fullscreen();
-    fn macos_begin_transition();
-    fn macos_in_transition() -> bool;
     fn macos_set_expected_size(w: c_int, h: c_int);
     fn macos_get_scale() -> f32;
     fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> bool;
