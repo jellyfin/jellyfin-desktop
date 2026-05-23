@@ -15,16 +15,74 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
-// Trivial no-ops ported to native Rust. The C++ statics were deleted so
-// the link table picks these up by symbol name.
-#[unsafe(no_mangle)]
-pub extern "C" fn win_set_theme_color(_rgb: u32) {
-    // DWM owns Windows titlebar appearance — no per-window override.
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn win_pump() {
     // Input handled by dedicated input-thread message loop.
+}
+
+// =====================================================================
+// State-bound bodies ported to native Rust.
+// =====================================================================
+
+unsafe extern "C" {
+    /// C++ accessor exporting `g_win.mpv_hwnd` (src/platform/windows.cpp).
+    /// Returns nullptr before win_init or after cleanup.
+    fn jfn_win_get_hwnd() -> *mut c_void;
+
+    /// C++ helper that posts a SetThreadExecutionState(flags) call onto
+    /// TID_UI so the assertion lives on a stable CEF UI thread. Per-thread
+    /// state is released when that thread calls ES_CONTINUOUS alone.
+    fn jfn_win_post_execution_state(flags: u32);
+
+    // dwmapi.dll — tints the titlebar to match the app's theme color.
+    fn DwmSetWindowAttribute(
+        hwnd: *mut c_void,
+        attribute: u32,
+        pv_attribute: *const c_void,
+        cb_attribute: u32,
+    ) -> i32;
+}
+
+const DWMWA_CAPTION_COLOR: u32 = 35;
+
+// SetThreadExecutionState flags (winbase.h).
+const ES_CONTINUOUS: u32 = 0x8000_0000;
+const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
+
+/// Tint the DWM titlebar so it matches the current theme color.
+/// rgb is 0x00RRGGBB; DWMWA_CAPTION_COLOR wants 0x00BBGGRR (COLORREF).
+#[unsafe(no_mangle)]
+pub extern "C" fn win_set_theme_color(rgb: u32) {
+    let hwnd = unsafe { jfn_win_get_hwnd() };
+    if hwnd.is_null() {
+        return;
+    }
+    let r = (rgb >> 16) & 0xFF;
+    let g = (rgb >> 8) & 0xFF;
+    let b = rgb & 0xFF;
+    let colorref: u32 = r | (g << 8) | (b << 16);
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_CAPTION_COLOR,
+            &colorref as *const u32 as *const c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+    }
+}
+
+/// Map IdleInhibitLevel (None=0, System=1, Display=2) to execution-state
+/// flags and post the call onto TID_UI so it lives on a stable thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn win_set_idle_inhibit(level: c_int) {
+    let mut flags = ES_CONTINUOUS;
+    match level {
+        2 => flags |= ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED,
+        1 => flags |= ES_SYSTEM_REQUIRED,
+        _ => {}
+    }
+    unsafe { jfn_win_post_execution_state(flags) };
 }
 
 // =====================================================================
@@ -113,7 +171,6 @@ unsafe extern "C" {
         x: *mut c_int,
         y: *mut c_int,
     );
-    fn win_set_idle_inhibit(level: c_int);
     fn win_clipboard_read_text_async(
         on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
         ctx: *mut c_void,

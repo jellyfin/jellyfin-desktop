@@ -702,22 +702,20 @@ private:
 };
 }
 
-extern "C" void win_set_idle_inhibit(IdleInhibitLevel level) {
-    CefPostTask(TID_UI, new FnTask([level]() {
-        UINT flags = ES_CONTINUOUS;
-        switch (level) {
-        case IdleInhibitLevel::Display:
-            flags |= ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED;
-            break;
-        case IdleInhibitLevel::System:
-            flags |= ES_SYSTEM_REQUIRED;
-            break;
-        case IdleInhibitLevel::None:
-            // ES_CONTINUOUS alone releases the inhibit
-            break;
-        }
-        SetThreadExecutionState(flags);
+// win_set_idle_inhibit now lives in src/windows/src/lib.rs. It maps the
+// IdleInhibitLevel to the EXECUTION_STATE flags and bounces them onto
+// TID_UI via jfn_win_post_execution_state below so the assertion lives
+// on a stable thread (SetThreadExecutionState is per-thread state).
+extern "C" void jfn_win_post_execution_state(uint32_t flags) {
+    CefPostTask(TID_UI, new FnTask([flags]() {
+        SetThreadExecutionState(static_cast<EXECUTION_STATE>(flags));
     }));
+}
+
+// Narrow accessor exposing g_win.mpv_hwnd to the Rust crate. Returns
+// nullptr before win_init runs or after cleanup zeroes it.
+extern "C" void* jfn_win_get_hwnd() {
+    return reinterpret_cast<void*>(g_win.mpv_hwnd);
 }
 
 // Monitor mpv's HWND for size/fullscreen changes.
@@ -866,7 +864,8 @@ extern "C" void win_cleanup() {
     g_win.mpv_hwnd = nullptr;
 }
 
-// win_pump and win_set_theme_color now live in src/windows/src/lib.rs.
+// win_pump, win_set_theme_color, and win_set_idle_inhibit now live in
+// src/windows/src/lib.rs.
 
 // =====================================================================
 // Clipboard (Win32 CF_UNICODETEXT) — read only; writes go through CEF's
