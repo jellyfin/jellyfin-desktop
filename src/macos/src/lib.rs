@@ -374,10 +374,129 @@ unsafe extern "C" {
     fn macos_set_fullscreen(fullscreen: bool);
     fn macos_toggle_fullscreen();
     fn macos_set_expected_size(w: c_int, h: c_int);
-    fn macos_pump();
-    fn macos_run_main_loop();
-    fn macos_wake_main_loop();
     fn jfn_input_macos_set_cursor(t: c_int);
+}
+
+// =====================================================================
+// Message pump / NSApplication run loop / wake. The C++ originals
+// lived in src/platform/macos.mm; ported here so the C++ side no
+// longer owns any AppKit lifecycle primitives. Symbol names are kept
+// (`macos_pump`, etc.) because src/platform/macos.mm still calls
+// `macos_pump()` directly during `macos_init`'s wait-for-window loop;
+// the link table picks up this Rust definition.
+// =====================================================================
+
+type CFStringRef = *const c_void;
+type CFRunLoopRef = *const c_void;
+
+unsafe extern "C" {
+    fn CFRunLoopRunInMode(mode: CFStringRef, seconds: f64, return_after_source_handled: i32) -> i32;
+    fn CFRunLoopGetMain() -> CFRunLoopRef;
+    fn CFRunLoopWakeUp(rl: CFRunLoopRef);
+    static kCFRunLoopDefaultMode: CFStringRef;
+    static NSDefaultRunLoopMode: *mut objc2::runtime::AnyObject;
+}
+
+/// NSEventMask is NSUInteger; NSEventMaskAny is the bit-or of all event
+/// types. The canonical macro expands to `NSUIntegerMax` (all bits set).
+const NS_EVENT_MASK_ANY: u64 = u64::MAX;
+
+/// Drain pending NSEvents without blocking, then service the default
+/// CFRunLoop mode for sources that don't deliver via NSEvent (e.g.
+/// CEF's wake source, GCD main-queue blocks). Used during the
+/// pre-CefInitialize wait-for-VO loop where we interleave with mpv
+/// events and during the macos_init wait-for-window loop.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_pump() {
+    unsafe {
+        // @autoreleasepool — bracket allocations from sendEvent / event
+        // delivery so AppKit temporaries don't accumulate.
+        let pool: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSAutoreleasePool), new];
+        let app: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSApplication), sharedApplication];
+        let distant_past: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSDate), distantPast];
+        loop {
+            let event: *mut objc2::runtime::AnyObject = objc2::msg_send![
+                app,
+                nextEventMatchingMask: NS_EVENT_MASK_ANY,
+                untilDate: distant_past,
+                inMode: NSDefaultRunLoopMode,
+                dequeue: true,
+            ];
+            if event.is_null() {
+                break;
+            }
+            let _: () = objc2::msg_send![app, sendEvent: event];
+        }
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, 0);
+        let _: () = objc2::msg_send![pool, drain];
+    }
+}
+
+/// Block on the NSApplication run loop. Returns when wake_main_loop
+/// calls `[NSApp stop:]`. `[NSApp run]` is the canonical Cocoa main
+/// loop and properly services every run-loop mode CEF and AppKit care
+/// about (default, event-tracking during drag, modal panels, etc.) —
+/// which a hand-rolled nextEventMatchingMask loop in
+/// NSDefaultRunLoopMode does not. CFRunLoop sources installed in
+/// CommonModes (CEF wake source, GCD main-queue blocks) all fire from
+/// inside this call without polling.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_run_main_loop() {
+    unsafe {
+        let app: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSApplication), sharedApplication];
+        let _: () = objc2::msg_send![app, run];
+    }
+}
+
+unsafe extern "C" fn wake_trampoline(_ctx: *mut c_void) {
+    unsafe {
+        let pool: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSAutoreleasePool), new];
+        let app: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSApplication), sharedApplication];
+        // -stop: marks the loop for exit on its next iteration.
+        let _: () = objc2::msg_send![app, stop: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
+        // Sentinel applicationDefined NSEvent guarantees there *is* a
+        // next iteration even if no other events arrive.
+        // NSEventTypeApplicationDefined == 15.
+        const NS_EVENT_TYPE_APPLICATION_DEFINED: u64 = 15;
+        let zero_point = objc2_foundation::NSPoint { x: 0.0, y: 0.0 };
+        let sentinel: *mut objc2::runtime::AnyObject = objc2::msg_send![
+            objc2::class!(NSEvent),
+            otherEventWithType: NS_EVENT_TYPE_APPLICATION_DEFINED,
+            location: zero_point,
+            modifierFlags: 0u64,
+            timestamp: 0.0f64,
+            windowNumber: 0isize,
+            context: std::ptr::null_mut::<objc2::runtime::AnyObject>(),
+            subtype: 0i16,
+            data1: 0isize,
+            data2: 0isize,
+        ];
+        if !sentinel.is_null() {
+            let _: () = objc2::msg_send![app, postEvent: sentinel, atStart: true];
+        }
+        let _: () = objc2::msg_send![pool, drain];
+    }
+}
+
+/// Stop the NSApplication run loop from any thread. Hops to main via
+/// `dispatch_async_f` and from there calls `-stop:` plus a sentinel
+/// NSEvent so the loop wakes and exits on its next iteration. The
+/// trampoline carries no state — wake is fire-and-forget.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_wake_main_loop() {
+    unsafe {
+        dispatch_async_f(dispatch_get_main_queue(), std::ptr::null_mut(), wake_trampoline);
+        // Belt-and-suspenders: also wake the main CFRunLoop directly in
+        // case the main thread is currently in CFRunLoopRunInMode rather
+        // than [NSApp run]. Harmless when [NSApp run] is active.
+        CFRunLoopWakeUp(CFRunLoopGetMain());
+    }
 }
 
 // =====================================================================
