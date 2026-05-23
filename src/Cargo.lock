@@ -1073,6 +1073,8 @@ name = "jfn-macos"
 version = "0.1.0"
 dependencies = [
  "jfn-platform-abi",
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]
