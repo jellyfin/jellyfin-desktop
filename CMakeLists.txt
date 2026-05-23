@@ -147,12 +147,12 @@ elseif(WIN32)
     set(PLATFORM_SOURCES
         src/platform/windows.cpp
         src/input/input_windows.cpp
-        src/playback/sinks/queued_sink.cpp
-        src/playback/sinks/windows/windows_sink.cpp
         ${CMAKE_BINARY_DIR}/iconres.rc
     )
-    # Note: macos_sink is now Rust-side (src/macos_sink/), windows_sink
-    # still C++ until slice 3.
+    # macos_sink + windows_sink are Rust-side (src/macos_sink/,
+    # src/windows_sink/). queued_sink.{h,cpp} is no longer referenced
+    # by any compile target — kept on disk until slice 4 deletes it
+    # together with the C++ platform layer.
     set(PLATFORM_LIBRARIES
         dwmapi
         d3d11
