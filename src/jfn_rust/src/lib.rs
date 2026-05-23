@@ -6,6 +6,8 @@
 // into this crate, which keeps every `#[unsafe(no_mangle)] pub extern "C"` C
 // entry point visible in the resulting `libjfn_rust` archive.
 
+pub mod app;
+
 pub use jfn_cef::*;
 pub use jfn_cef::business_about::*;
 pub use jfn_cef::business_overlay::*;
