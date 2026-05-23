@@ -302,3 +302,13 @@ extern "C" void jfn_g_platform_set_cef_ozone_platform(const char* utf8) {
                   sizeof(g_platform.cef_ozone_platform),
                   "%s", utf8 ? utf8 : "");
 }
+
+#ifdef _WIN32
+extern "C" void make_windows_platform_init(void) {
+    g_platform = make_platform(DisplayBackend::Windows);
+}
+#elif defined(__APPLE__)
+extern "C" void make_macos_platform_init(void) {
+    g_platform = make_platform(DisplayBackend::macOS);
+}
+#endif
