@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
 mod compositor;
+mod platform;
 pub use compositor::{
     jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
     jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
@@ -24,6 +25,11 @@ pub use compositor::{
     win_popup_present_software, win_popup_show, win_restack, win_set_expected_size,
     win_surface_present, win_surface_present_software, win_surface_resize,
     win_surface_set_visible,
+};
+pub use platform::{
+    jfn_win_get_hwnd, win_clamp_window_geometry, win_cleanup, win_early_init,
+    win_get_display_scale, win_get_scale, win_init, win_query_window_position,
+    win_set_fullscreen, win_toggle_fullscreen,
 };
 
 #[unsafe(no_mangle)]
@@ -36,10 +42,6 @@ pub extern "C" fn win_pump() {
 // =====================================================================
 
 unsafe extern "C" {
-    /// C++ accessor exporting `g_win.mpv_hwnd` (src/platform/windows.cpp).
-    /// Returns nullptr before win_init or after cleanup.
-    fn jfn_win_get_hwnd() -> *mut c_void;
-
     /// C++ helper that posts a SetThreadExecutionState(flags) call onto
     /// TID_UI so the assertion lives on a stable CEF UI thread. Per-thread
     /// state is released when that thread calls ES_CONTINUOUS alone.
@@ -117,20 +119,6 @@ pub extern "C" fn win_in_transition() -> bool {
 }
 
 unsafe extern "C" {
-    fn win_early_init();
-    fn win_init(mpv: *mut c_void) -> bool;
-    fn win_cleanup();
-    fn win_set_fullscreen(fullscreen: bool);
-    fn win_toggle_fullscreen();
-    fn win_get_scale() -> f32;
-    fn win_get_display_scale(x: c_int, y: c_int) -> f32;
-    fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> bool;
-    fn win_clamp_window_geometry(
-        w: *mut c_int,
-        h: *mut c_int,
-        x: *mut c_int,
-        y: *mut c_int,
-    );
     fn jfn_input_windows_set_cursor(t: c_int);
 }
 
