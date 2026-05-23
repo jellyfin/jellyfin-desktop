@@ -9,6 +9,7 @@
 pub use jfn_cef::*;
 pub use jfn_cli::*;
 pub use jfn_color::*;
+pub use jfn_color::theme::*;
 pub use jfn_config::*;
 pub use jfn_jellyfin::*;
 pub use jfn_logging::*;

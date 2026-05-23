@@ -149,7 +149,7 @@ bool WebBrowser::handleMessage(const std::string& name,
             playback::post_position(static_cast<int64_t>(startMs) * 1000);
         }
         if (!metadataJson.empty()) {
-            if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
+            jfn_theme_color_set_video_mode(meta.media_type == MediaType::Video);
             if (g_playback_coord_running.load(std::memory_order_acquire))
                 playback::post_metadata(meta);
         }
@@ -218,11 +218,11 @@ bool WebBrowser::handleMessage(const std::string& name,
     } else if (name == "themeColor") {
         std::string color = args->GetString(0).ToString();
         LOG_DEBUG(LOG_CEF, "themeColor IPC: {}", color.c_str());
-        if (g_theme_color) g_theme_color->onThemeColor(Color{jfn_cef_parse_color(color.c_str())});
+        jfn_theme_color_on_color(jfn_cef_parse_color(color.c_str()));
     } else if (name == "notifyMetadata") {
         std::string json = args->GetString(0).ToString();
         MediaMetadata meta = parseMetadataJson(json);
-        if (g_theme_color) g_theme_color->setVideoMode(meta.media_type == MediaType::Video);
+        jfn_theme_color_set_video_mode(meta.media_type == MediaType::Video);
         if (g_playback_coord_running.load(std::memory_order_acquire))
             playback::post_metadata(meta);
     } else if (name == "notifyArtwork") {
