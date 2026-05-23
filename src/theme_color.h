@@ -1,50 +1,38 @@
 #pragma once
 
-#include "common.h"
-#include <functional>
-#include <optional>
-#include <utility>
+#include <stdint.h>
 
-// Window-scoped chrome color. Owns no platform or transport detail — it
-// tracks the active theme (theme-color updates, overlay buffering, video
-// mode) and emits the resolved Color to whatever sink the caller wires up.
-// While video plays, the resolved color is g_video_bg (user's mpv.conf) so
-// resize letterbox gaps match mpv exactly.
-class ThemeColor {
-public:
-    using Sink = std::function<void(const Color&)>;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-    explicit ThemeColor(Sink sink) : sink_(std::move(sink)) { apply(); }
+// Window-scoped theme color tracker. Implementation in jfn-color
+// (src/color/src/theme.rs). One process-wide instance; init once after
+// platform startup, before any browser creates.
+//
+// `on_set_theme_color` may be null when titlebarThemeColor is disabled.
+// `on_set_bg_hex` is required and receives a NUL-terminated `#RRGGBB`
+// pointer valid for the duration of the call.
+void jfn_theme_color_init(
+    void (*on_set_theme_color)(uint32_t rgb),
+    void (*on_set_bg_hex)(const char* hex_cstr));
 
-    // Buffered until onOverlayDismissed unlocks, so the chrome doesn't flash
-    // through the loading screen color.
-    void onThemeColor(const Color& c) {
-        current_ = c;
-        if (unlocked_) apply();
-    }
+// Update the video-mode background. Captured from mpv after startup.
+void jfn_theme_color_set_video_bg(uint32_t rgb);
 
-    void onOverlayDismissed() {
-        unlocked_ = true;
-        apply();
-    }
+// Renderer fired a `<meta name="theme-color">` update.
+void jfn_theme_color_on_color(uint32_t rgb);
 
-    void setVideoMode(bool active) {
-        if (active == video_active_) return;
-        video_active_ = active;
-        if (unlocked_) apply();
-    }
+// Loading overlay dismissed; buffered theme color is now allowed to apply.
+void jfn_theme_color_on_overlay_dismissed(void);
 
-private:
-    void apply() {
-        Color c = video_active_ ? g_video_bg : current_;
-        if (last_applied_ && *last_applied_ == c) return;
-        last_applied_ = c;
-        sink_(c);
-    }
+// Playback transitioned in/out of video mode; resolved color flips to mpv
+// bg while active.
+void jfn_theme_color_set_video_mode(bool active);
 
-    Sink sink_;
-    bool unlocked_ = false;
-    bool video_active_ = false;
-    Color current_ = kBgColor;
-    std::optional<Color> last_applied_;
-};
+// Drop the singleton; subsequent calls are no-ops until reinitialised.
+void jfn_theme_color_shutdown(void);
+
+#ifdef __cplusplus
+}
+#endif

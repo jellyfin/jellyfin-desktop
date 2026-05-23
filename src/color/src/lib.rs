@@ -1,6 +1,10 @@
 //! CSS- and mpv-form color string parsing. Replaces `src/cef/color.cpp` and
 //! `src/mpv/color.cpp`. Both parsers pack the result into a 24-bit RGB integer
 //! and use 0 (black) for malformed input — matching the C++ `Color{}` default.
+//!
+//! Also hosts the window-scoped ThemeColor tracker (see [`theme`]).
+
+pub mod theme;
 
 use std::ffi::{CStr, c_char};
 

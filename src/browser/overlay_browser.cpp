@@ -175,7 +175,7 @@ bool OverlayBrowser::handleMessage(const std::string& name,
         CefRefPtr<CefBrowser> overlay_browser = browser;
         layer_->fade(OVERLAY_FADE_DURATION_SEC,
             []() {
-                if (g_theme_color) g_theme_color->onOverlayDismissed();
+                jfn_theme_color_on_overlay_dismissed();
             },
             [overlay_browser]() {
                 if (overlay_browser)

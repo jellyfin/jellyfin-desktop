@@ -71,8 +71,6 @@
 
 Color g_video_bg;
 
-ThemeColor* g_theme_color = nullptr;
-
 Platform g_platform{};
 WebBrowser* g_web_browser = nullptr;
 // g_browsers is defined in src/browser/browsers.cpp.
@@ -242,11 +240,10 @@ static int run_with_cef(int mw, int mh,
     // its initial theme-color IPC at DOMContentLoaded; onOverlayDismissed
     // needs a color already captured.
     bool titlebar_themed = Settings::instance().titlebarThemeColor();
-    ThemeColor theme_color_obj([titlebar_themed](const Color& c) {
-        if (titlebar_themed) g_platform.set_theme_color(c.rgb);
-        jfn_mpv_set_background_color_hex(c.hex);
-    });
-    g_theme_color = &theme_color_obj;
+    jfn_theme_color_init(
+        titlebar_themed ? +[](uint32_t rgb) { g_platform.set_theme_color(rgb); } : nullptr,
+        +[](const char* hex) { jfn_mpv_set_background_color_hex(hex); });
+    jfn_theme_color_set_video_bg(g_video_bg.rgb);
 
     Browsers browsers(lw, lh, mw, mh, jfn_playback_display_hz(), use_shared_textures);
     g_browsers = &browsers;
@@ -292,7 +289,7 @@ static int run_with_cef(int mw, int mh,
         g_platform.set_idle_inhibit(static_cast<IdleInhibitLevel>(level));
     });
     jfn_playback_set_theme_video_mode_handler([](bool active) {
-        if (g_theme_color) g_theme_color->setVideoMode(active);
+        jfn_theme_color_set_video_mode(active);
     });
     // Rust-side builtin browser sink forwards UI events through exec_js
     // and the side-channel handlers below.
@@ -366,7 +363,7 @@ static int run_with_cef(int mw, int mh,
     if (g_browsers) g_browsers->waitAllClosed();
 #endif
 
-    g_theme_color = nullptr;
+    jfn_theme_color_shutdown();
 #if defined(__APPLE__) || defined(_WIN32)
     media_sink->stop();
 #else
