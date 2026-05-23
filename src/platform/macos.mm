@@ -724,61 +724,8 @@ bool query_logical_content_size(int* w, int* h) {
 
 // macos_clamp_window_geometry now lives in src/macos/src/lib.rs.
 
-extern "C" void macos_pump() {
-    @autoreleasepool {
-        // distantPast = return immediately if no event. `nil` means distantFuture
-        // (block forever), which would freeze the caller. Used during the
-        // pre-CefInitialize wait-for-VO loop where we interleave with mpv events.
-        NSEvent* event;
-        while ((event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                                           untilDate:[NSDate distantPast]
-                                              inMode:NSDefaultRunLoopMode
-                                             dequeue:YES])) {
-            [NSApp sendEvent:event];
-        }
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, false);
-    }
-}
-
-// Block on the NSApplication run loop. Returns when wake_main_loop calls
-// [NSApp stop:nil]. [NSApp run] is the canonical Cocoa main loop and
-// properly services every run-loop mode CEF and AppKit care about (default,
-// event-tracking during drag, modal panels, etc.) — which a hand-rolled
-// nextEventMatchingMask loop in NSDefaultRunLoopMode does not. CFRunLoop
-// sources installed in CommonModes (like the CEF wake source set up in
-// cef_app.cpp:InitWakePipe) and GCD main-queue blocks (mpv VO
-// DispatchQueue.main.sync) all fire from inside this call without polling.
-// Mirrors cefclient's MainMessageLoopExternalPumpMac::Run.
-extern "C" void macos_run_main_loop() {
-    LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_run_main_loop: entering [NSApp run]");
-    [NSApp run];
-    LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_run_main_loop: [NSApp run] returned");
-}
-
-// Stop the NSApplication run loop from any thread. dispatch_async hops to
-// main and runs the block from inside [NSApp run]'s servicing of CFRunLoop;
-// the block then calls -stop: which marks the loop for exit on its next
-// iteration. A sentinel applicationDefined NSEvent guarantees there *is* a
-// next iteration even if no other events arrive. Documented thread-safe.
-extern "C" void macos_wake_main_loop() {
-    LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_wake_main_loop: requesting stop");
-    dispatch_async(dispatch_get_main_queue(), ^{
-        @autoreleasepool {
-            LOG_INFO(LOG_PLATFORM, "[NSAPP] macos_wake_main_loop: [NSApp stop:] on main");
-            [NSApp stop:nil];
-            NSEvent* sentinel = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
-                                                   location:NSZeroPoint
-                                              modifierFlags:0
-                                                  timestamp:0
-                                               windowNumber:0
-                                                    context:nil
-                                                    subtype:0
-                                                      data1:0
-                                                      data2:0];
-            [NSApp postEvent:sentinel atStart:YES];
-        }
-    });
-}
+// macos_pump, macos_run_main_loop, and macos_wake_main_loop now live in
+// src/macos/src/lib.rs.
 
 extern "C" void macos_cleanup() {
     // Stop the display link first so no more BeginFrames race the teardown.
