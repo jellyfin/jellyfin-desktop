@@ -8,6 +8,10 @@ publish = false
 name = "jfn_wayland"
 crate-type = ["rlib"]
 
+[features]
+default = ["kde-palette"]
+kde-palette = []
+
 [dependencies]
 cef-dll-sys = { version = "=148.1.0" }
 libc = "0.2"

@@ -39,7 +39,7 @@ pub use jfn_wayland::fade::*;
 #[cfg(target_os = "linux")]
 pub use jfn_wayland::input::*;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "kde-palette"))]
 pub use jfn_wayland::kde_palette::*;
 
 #[cfg(target_os = "linux")]

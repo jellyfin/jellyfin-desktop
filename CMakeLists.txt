@@ -334,6 +334,13 @@ file(GLOB_RECURSE JFN_RUST_SOURCES CONFIGURE_DEPENDS
     "${JFN_RUST_WORKSPACE_DIR}/*/Cargo.toml"
     "${JFN_RUST_WORKSPACE_DIR}/Cargo.toml"
 )
+
+option(JFN_ENABLE_KDE_PALETTE "Build with KWin per-window titlebar color support" ON)
+set(_JFN_CARGO_ARGS build --release --manifest-path ${JFN_RUST_DIR}/Cargo.toml)
+if(NOT JFN_ENABLE_KDE_PALETTE)
+    list(APPEND _JFN_CARGO_ARGS --no-default-features)
+endif()
+
 # -ffat-lto-objects: distro CFLAGS may set -flto, which makes cc-crate
 # emit slim objects whose symbols vanish from the archive index.
 add_custom_command(
@@ -347,7 +354,7 @@ add_custom_command(
         # cmd.exe shell that runs cmake; the build.rs falls back to
         # these env overrides (see src/mpv/build.rs).
         "EXTERNAL_MPV_DIR=${EXTERNAL_MPV_DIR}"
-        ${CARGO_EXECUTABLE} build --release --manifest-path ${JFN_RUST_DIR}/Cargo.toml
+        ${CARGO_EXECUTABLE} ${_JFN_CARGO_ARGS}
     DEPENDS ${JFN_RUST_SOURCES}
     COMMENT "Building jfn-rust (Rust workspace)"
     VERBATIM

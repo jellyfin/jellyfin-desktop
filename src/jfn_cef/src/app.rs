@@ -506,6 +506,15 @@ fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
         &bridge::settings_cli_json(&platform_device_name(), &hwdec_options()),
     );
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
+    replace_first(
+        &mut code,
+        "__KDE_PALETTE_SUPPORTED__",
+        if cfg!(all(target_os = "linux", feature = "kde-palette")) {
+            "true"
+        } else {
+            "false"
+        },
+    );
 
     let device_profile_key = CefString::from("device_profile_json");
     if profile.has_key(Some(&device_profile_key)) == 1 {

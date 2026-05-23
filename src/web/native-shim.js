@@ -149,8 +149,8 @@
         });
     }
 
-    // Linux-only: titlebar theme color toggle
-    if (navigator.platform.startsWith('Linux')) {
+    // Titlebar theme color toggle (only when build supports KDE palette protocol)
+    if (__KDE_PALETTE_SUPPORTED__) {
         jmpInfo.settingsDescriptions.advanced.unshift({
             key: 'titlebarThemeColor',
             displayName: 'Titlebar Theme Color',

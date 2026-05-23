@@ -8,8 +8,12 @@ publish = false
 name = "jfn_rust"
 crate-type = ["staticlib"]
 
+[features]
+default = ["kde-palette"]
+kde-palette = ["jfn-cef/kde-palette", "jfn-wayland/kde-palette"]
+
 [dependencies]
-jfn-cef = { path = "../jfn_cef" }
+jfn-cef = { path = "../jfn_cef", default-features = false }
 jfn-cli = { path = "../cli" }
 jfn-color = { path = "../color" }
 jfn-config = { path = "../config" }
@@ -26,6 +30,6 @@ jfn-signal-guard = { path = "../signal_guard" }
 [target.'cfg(target_os = "linux")'.dependencies]
 jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
 jfn-open-url-linux = { path = "../open_url_linux" }
-jfn-wayland = { path = "../wayland" }
+jfn-wayland = { path = "../wayland", default-features = false }
 jfn-wlproxy = { path = "../wlproxy" }
 jfn-x11 = { path = "../x11" }
