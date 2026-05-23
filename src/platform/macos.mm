@@ -97,53 +97,19 @@ extern "C" void macos_pump();
 @end
 
 // =====================================================================
-// Compositor state (two CAMetalLayers: main + overlay)
+// Per-surface compositor state, surface registry, Metal device/queue/
+// pipeline, and the expected-size transition gate all live in the Rust
+// jfn-macos crate (src/macos/src/lib.rs). The C++ side here keeps only
+// the NSWindow* / input-view pair set up by macos_init below and the
+// objects that haven't been ported yet (popup, fullscreen, NSApp menus).
+// PlatformSurface itself is opaque to this file.
 // =====================================================================
-//
-// CEF's OSR pipeline delivers a BGRA8 IOSurface in STRAIGHT alpha via
-// OnAcceleratedPaint (confirmed from Chromium: components/viz/service/
-// frame_sinks/video_capture/video_capture_overlay_unittest.cc:476-477
-// "kUnpremul_SkAlphaType since that is the semantics of PIXEL_FORMAT_ARGB").
-// CoreAnimation expects premultiplied contents, so we render CEF's
-// IOSurface into a CAMetalLayer drawable with premultiplication in the
-// fragment shader. CAMetalLayer.colorspace = sRGB tells CA how to
-// color-manage the content for the display (P3, EDR, etc.).
-
-static id<MTLDevice> g_mtl_device = nil;
-static id<MTLCommandQueue> g_mtl_queue = nil;
-static id<MTLRenderPipelineState> g_mtl_pipeline = nil;
-
-
-// Per-surface state. One per CefLayer (allocated by macos_alloc_surface,
-// destroyed by macos_free_surface). The bottom-most surface in the
-// current stack is treated as the cef-main surface for fullscreen-
-// transition gating (see macos_begin_transition in src/macos/src/lib.rs).
-struct PlatformSurface {
-    NSView* __strong view = nil;
-    CAMetalLayer* __strong layer = nil;
-
-    // Input side: CEF's IOSurface, wrapped as an MTLTexture for sampling.
-    // Recreated when the input IOSurface changes (new frame may use a new
-    // backing surface from CEF's own pool).
-    IOSurfaceRef cached_input = nullptr;
-    id<MTLTexture> __strong input_texture = nil;
-};
-
-// Current stack order, bottom-to-top, as last applied via macos_restack.
-// stack[0] is the cef-main surface for transition-gating purposes.
-static std::vector<PlatformSurface*> g_surface_stack;
 
 // Input NSView (owned by input::macos)
 static NSView* g_input_view = nil;
 
-// Window + transition state. The transition flag itself lives in the
-// Rust macos crate (src/macos/src/lib.rs) as an AtomicBool — set by
-// macos_begin_transition, read by macos_in_transition, cleared via
-// jfn_macos_transition_clear from macos_surface_present below.
+// Window
 static NSWindow* g_window = nullptr;
-static int g_expected_w = 0, g_expected_h = 0;
-
-extern "C" void jfn_macos_transition_clear();
 
 // CADisplayLink drives CEF BeginFrame production synchronized with the
 // real display refresh. The callback fires on the main runloop each
@@ -151,165 +117,6 @@ extern "C" void jfn_macos_transition_clear();
 // ready. CEF produces a frame immediately if its compositor has
 // invalidation, or does nothing if not — no polling, no wasted work.
 static CADisplayLink* g_display_link = nil;
-
-// Metal shaders (fullscreen triangle, straight→premultiplied alpha).
-// Output target is a plain BGRA8 render texture backed by our IOSurface;
-// the fragment shader's `color.rgb *= color.a` converts from CEF's straight
-// alpha to the premultiplied convention CoreAnimation expects.
-static NSString* const g_shader_source = @R"(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexOut {
-    float4 position [[position]];
-    float2 texCoord;
-};
-
-vertex VertexOut vertexShader(uint vertexID [[vertex_id]]) {
-    float2 positions[3] = { float2(-1,-1), float2(3,-1), float2(-1,3) };
-    float2 texCoords[3] = { float2(0,1), float2(2,1), float2(0,-1) };
-    VertexOut out;
-    out.position = float4(positions[vertexID], 0.0, 1.0);
-    out.texCoord = texCoords[vertexID];
-    return out;
-}
-
-fragment float4 fragmentShader(VertexOut in [[stage_in]],
-                                texture2d<float> tex [[texture(0)]]) {
-    constexpr sampler s(mag_filter::linear, min_filter::linear);
-    float4 color = tex.sample(s, in.texCoord);
-    color.rgb *= color.a;
-    return color;
-}
-)";
-
-// =====================================================================
-// Input surface caching
-// =====================================================================
-
-// Wrap the CEF input IOSurface as an MTLTexture for sampling. Recreated
-// when the input surface identity changes. Also updates the layer's
-// colorspace from the IOSurface's kIOSurfaceColorSpace tag (set by
-// Chromium's viz compositor). Falls back to sRGB if untagged.
-static bool wrap_input_surface(PlatformSurface& s, IOSurfaceRef surface, int w, int h) {
-    if (surface == s.cached_input && s.input_texture != nil) return true;
-
-    MTLTextureDescriptor* desc = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-        width:w height:h mipmapped:NO];
-    desc.usage = MTLTextureUsageShaderRead;
-    desc.storageMode = MTLStorageModeShared;
-    id<MTLTexture> tex = [g_mtl_device newTextureWithDescriptor:desc
-                                                       iosurface:surface
-                                                           plane:0];
-    if (!tex) {
-        LOG_ERROR(LOG_PLATFORM, "[METAL] wrap input IOSurface failed");
-        return false;
-    }
-    s.input_texture = tex;
-    s.cached_input = surface;
-
-    CFTypeRef cs = IOSurfaceCopyValue(surface, kIOSurfaceColorSpace);
-    if (cs && CFGetTypeID(cs) == CFStringGetTypeID()) {
-        CGColorSpaceRef cg = CGColorSpaceCreateWithName((CFStringRef)cs);
-        if (cg) {
-            s.layer.colorspace = cg;
-            CGColorSpaceRelease(cg);
-        }
-    }
-    if (cs) CFRelease(cs);
-
-    return true;
-}
-
-// =====================================================================
-// Present helper: render CEF's straight-alpha IOSurface into the
-// CAMetalLayer's next drawable with premultiplied alpha.
-// =====================================================================
-
-static void present_iosurface(PlatformSurface& s, const CefAcceleratedPaintInfo& info) {
-    if (!g_mtl_device || !s.layer) {
-        LOG_WARN(LOG_PLATFORM, "[METAL] present skipped: device={} layer={}",
-                 (__bridge void*)g_mtl_device, (__bridge void*)s.layer);
-        return;
-    }
-
-    IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
-    if (!surface) {
-        LOG_WARN(LOG_PLATFORM, "[METAL] present skipped: null IOSurface");
-        return;
-    }
-
-    int w = IOSurfaceGetWidth(surface);
-    int h = IOSurfaceGetHeight(surface);
-
-    if (!wrap_input_surface(s, surface, w, h)) return;
-
-    // Update drawable size if the input dimensions changed.
-    CGSize cur = s.layer.drawableSize;
-    if ((int)cur.width != w || (int)cur.height != h) {
-        s.layer.drawableSize = CGSizeMake(w, h);
-    }
-
-    @autoreleasepool {
-        id<CAMetalDrawable> drawable = [s.layer nextDrawable];
-        if (!drawable) {
-            LOG_WARN(LOG_PLATFORM, "[METAL] nextDrawable returned nil");
-            return;
-        }
-
-        MTLRenderPassDescriptor* passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
-        passDesc.colorAttachments[0].texture     = drawable.texture;
-        passDesc.colorAttachments[0].loadAction  = MTLLoadActionClear;
-        passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-        passDesc.colorAttachments[0].clearColor  = MTLClearColorMake(0, 0, 0, 0);
-
-        id<MTLCommandBuffer> cmdBuf = [g_mtl_queue commandBuffer];
-        id<MTLRenderCommandEncoder> enc =
-            [cmdBuf renderCommandEncoderWithDescriptor:passDesc];
-        [enc setRenderPipelineState:g_mtl_pipeline];
-        [enc setFragmentTexture:s.input_texture atIndex:0];
-        [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-        [enc endEncoding];
-        [cmdBuf presentDrawable:drawable];
-        [cmdBuf commit];
-    }
-}
-
-// =====================================================================
-// Helper: create a CAMetalLayer + hosting NSView
-// =====================================================================
-
-static void create_content_layer(NSView* contentView, CGRect frame, CGFloat scale,
-                                 NSView* __strong& out_view, CAMetalLayer* __strong& out_layer,
-                                 NSView* positionAbove) {
-    out_view = [[NSView alloc] initWithFrame:frame];
-    [out_view setWantsLayer:YES];
-    [out_view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-
-    out_layer = [CAMetalLayer layer];
-    out_layer.device = g_mtl_device;
-    out_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-    CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    out_layer.colorspace = srgb;
-    CGColorSpaceRelease(srgb);
-    out_layer.framebufferOnly = YES;
-    out_layer.frame = frame;
-    out_layer.contentsScale = scale;
-    out_layer.opaque = NO;
-    // Disable implicit animations on property changes — we update contents
-    // every frame and don't want CA to cross-fade between them.
-    out_layer.actions = @{
-        @"bounds":       [NSNull null],
-        @"position":     [NSNull null],
-        @"contents":     [NSNull null],
-        @"anchorPoint":  [NSNull null],
-        @"contentsRect": [NSNull null],
-    };
-
-    [out_view setLayer:out_layer];
-    [contentView addSubview:out_view positioned:NSWindowAbove relativeTo:positionAbove];
-}
 
 // =====================================================================
 // CADisplayLink → CEF BeginFrame
@@ -383,6 +190,19 @@ extern "C" void* jfn_macos_get_window() {
     return (__bridge void*)g_window;
 }
 
+// Narrow accessor for the input NSView — owned by input::macos and
+// installed by macos_init below. Rust's macos_restack re-anchors it on
+// top of the CefLayer subviews after any reorder.
+extern "C" void* jfn_macos_get_input_view() {
+    return (__bridge void*)g_input_view;
+}
+
+// Rust crate (src/macos/src/lib.rs) owns the per-surface compositor
+// state (surface registry, Metal device/queue/pipeline, expected-size
+// transition gate). Called from macos_cleanup below to tear down the
+// Rust side before we drop the NSWindow.
+extern "C" void jfn_macos_compositor_cleanup();
+
 extern "C" bool macos_init(mpv_handle* mpv) {
     LOG_INFO(LOG_PLATFORM, "[INIT] macos_init: waiting for mpv window");
     for (int i = 0; i < 500 && !g_window; i++) {
@@ -434,25 +254,8 @@ extern "C" bool macos_init(mpv_handle* mpv) {
     // takes over from overlay-dismissal onward.
     macos_set_theme_color(kBgColor.rgb);
 
-    // Metal setup
-    g_mtl_device = MTLCreateSystemDefaultDevice();
-    if (!g_mtl_device) { LOG_ERROR(LOG_PLATFORM, "Metal device creation failed"); return false; }
-    g_mtl_queue = [g_mtl_device newCommandQueue];
-
-    NSError* error = nil;
-    id<MTLLibrary> library = [g_mtl_device newLibraryWithSource:g_shader_source options:nil error:&error];
-    if (!library) { LOG_ERROR(LOG_PLATFORM, "Metal shader compile: {}", [[error localizedDescription] UTF8String]); return false; }
-
-    // Render pipeline: writes straight → premultiplied conversion into a
-    // plain BGRA8 render target (no blending; the render target is our
-    // own IOSurface and we overwrite the whole thing each frame).
-    MTLRenderPipelineDescriptor* pipeDesc = [[MTLRenderPipelineDescriptor alloc] init];
-    pipeDesc.vertexFunction = [library newFunctionWithName:@"vertexShader"];
-    pipeDesc.fragmentFunction = [library newFunctionWithName:@"fragmentShader"];
-    pipeDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-    pipeDesc.colorAttachments[0].blendingEnabled = NO;
-    g_mtl_pipeline = [g_mtl_device newRenderPipelineStateWithDescriptor:pipeDesc error:&error];
-    if (!g_mtl_pipeline) { LOG_ERROR(LOG_PLATFORM, "Metal pipeline: {}", [[error localizedDescription] UTF8String]); return false; }
+    // Metal device/queue/pipeline are created lazily on first
+    // macos_alloc_surface inside the Rust jfn-macos crate.
 
     // CefLayer surfaces are created on demand via macos_alloc_surface and
     // ordered by macos_restack. The input NSView sits above whatever
@@ -502,12 +305,6 @@ extern "C" bool macos_init(mpv_handle* mpv) {
     return true;
 }
 
-// True when s is the bottom-most surface in the current stack (cef-main).
-// Used to gate fullscreen-transition logic onto the main surface only.
-static bool is_cef_main(PlatformSurface* s) {
-    return !g_surface_stack.empty() && g_surface_stack.front() == s;
-}
-
 // =====================================================================
 // Native NSMenu popup (replaces CEF's HTML popup widget for <select>)
 // =====================================================================
@@ -554,7 +351,7 @@ struct PopupCb {
     void fire(int idx) { if (fn) fn(ctx, idx); }
 };
 
-extern "C" void macos_popup_show(PlatformSurface*, const JfnPopupRequest* req) {
+extern "C" void macos_popup_show(void*, const JfnPopupRequest* req) {
     // NSMenu is a window-level OS overlay — not tied to a CefLayer
     // surface, so the surface arg is ignored.
     auto cb = std::make_shared<PopupCb>(
@@ -609,73 +406,8 @@ extern "C" void macos_popup_show(PlatformSurface*, const JfnPopupRequest* req) {
     });
 }
 
-// Per-surface visibility. Focus management is owned by Browsers::setActive,
-// not by the platform — matches the Wayland and Windows backends.
-extern "C" void macos_surface_set_visible(PlatformSurface* s, bool visible) {
-    if (!s) return;
-    auto apply = ^{
-        if (s->view) [s->view setHidden:!visible];
-    };
-    if ([NSThread isMainThread]) apply();
-    else dispatch_async(dispatch_get_main_queue(), apply);
-}
-
-// Per-surface opacity fade. Mirrors the previous overlay-only fade path:
-// animate CALayer.opacity from 1.0 to 0.0 over fade_sec, fire on_fade_start
-// before kicking the animation, fire on_complete from CATransaction's
-// completion block. After the animation we hide the view and reset opacity
-// so a subsequent setVisible(true) shows it fully opaque again.
-// Holds a (fn, ctx, dtor) triple; ~RustCb fires dtor once when the
-// last shared_ptr ref is dropped.
-struct RustCb {
-    void (*fn)(void*) = nullptr;
-    void* ctx = nullptr;
-    void (*dtor)(void*) = nullptr;
-    RustCb(void (*f)(void*), void* c, void (*d)(void*)) : fn(f), ctx(c), dtor(d) {}
-    RustCb(const RustCb&) = delete;
-    RustCb& operator=(const RustCb&) = delete;
-    ~RustCb() { if (dtor) dtor(ctx); }
-    void fire() { if (fn) fn(ctx); }
-};
-
-extern "C" void macos_fade_surface(PlatformSurface* s, float fade_sec,
-                               void (*on_fade_start)(void*), void* start_ctx,
-                               void (*start_dtor)(void*),
-                               void (*on_complete)(void*), void* done_ctx,
-                               void (*done_dtor)(void*)) {
-    auto start_cb = std::make_shared<RustCb>(on_fade_start, start_ctx, start_dtor);
-    auto done_cb = std::make_shared<RustCb>(on_complete, done_ctx, done_dtor);
-    if (!s || !s->view || !s->view.layer) {
-        start_cb->fire();
-        done_cb->fire();
-        return;
-    }
-    PlatformSurface* surface_ptr = s;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        start_cb->fire();
-        if (!surface_ptr->view || !surface_ptr->view.layer) {
-            done_cb->fire();
-            return;
-        }
-        CABasicAnimation* fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
-        fade.fromValue = @1.0;
-        fade.toValue = @0.0;
-        fade.duration = fade_sec;
-        fade.removedOnCompletion = NO;
-        fade.fillMode = kCAFillModeForwards;
-        [CATransaction begin];
-        [CATransaction setCompletionBlock:^{
-            if (surface_ptr->view) [surface_ptr->view setHidden:YES];
-            if (surface_ptr->view.layer) {
-                [surface_ptr->view.layer removeAllAnimations];
-                surface_ptr->view.layer.opacity = 1.0;
-            }
-            done_cb->fire();
-        }];
-        [surface_ptr->view.layer addAnimation:fade forKey:@"fadeOut"];
-        [CATransaction commit];
-    });
-}
+// macos_surface_set_visible and macos_fade_surface now live in
+// src/macos/src/lib.rs.
 
 extern "C" void macos_set_fullscreen(bool fullscreen) {
     if (!jfn_mpv_handle_get()) return;
@@ -687,24 +419,9 @@ extern "C" void macos_toggle_fullscreen() {
     jfn_mpv_toggle_fullscreen();
 }
 
-// macos_begin_transition / macos_in_transition now live in
-// src/macos/src/lib.rs. The Rust side calls this helper from
-// macos_begin_transition to drop cached input-surface wrappers across
-// the whole stack so the next paint re-wraps at the new size.
-// drawableSize is updated in present_iosurface.
-extern "C" void macos_drop_input_textures() {
-    for (PlatformSurface* s : g_surface_stack) {
-        s->input_texture = nil;
-        s->cached_input = nullptr;
-    }
-}
-
-// macos_end_transition now lives in src/macos/src/lib.rs.
-
-extern "C" void macos_set_expected_size(int w, int h) {
-    g_expected_w = w;
-    g_expected_h = h;
-}
+// macos_begin_transition, macos_in_transition, macos_end_transition,
+// macos_drop_input_textures and macos_set_expected_size all now live in
+// src/macos/src/lib.rs.
 
 // macos_get_scale now lives in src/macos/src/lib.rs.
 
@@ -733,19 +450,10 @@ extern "C" void macos_cleanup() {
 
     if (g_input_view) { [g_input_view removeFromSuperview]; g_input_view = nil; }
 
-    // Browsers::~Browsers should have called free_surface on each layer,
-    // but defensively tear down any stragglers so AppKit objects are
-    // released before the window goes away.
-    for (PlatformSurface* s : g_surface_stack) {
-        if (s->view) [s->view removeFromSuperview];
-        s->view = nil;
-        s->layer = nil;
-        s->input_texture = nil;
-        s->cached_input = nullptr;
-    }
-    g_surface_stack.clear();
+    // Tear down per-surface compositor state (surface registry, Metal
+    // device/queue/pipeline) inside the Rust crate.
+    jfn_macos_compositor_cleanup();
 
-    g_mtl_pipeline = nil; g_mtl_queue = nil; g_mtl_device = nil;
     g_window = nil;
 }
 
@@ -868,122 +576,7 @@ extern "C" void macos_early_init() {
 // macos_clipboard_read_text_async + macos_open_external_url now live in
 // src/macos/src/lib.rs.
 
-// =====================================================================
-// Generic per-surface lifecycle / present / resize / restack
-// =====================================================================
-
-// All AppKit operations must run on the main thread; if Browsers calls
-// alloc/free/restack/resize off-main, dispatch_sync onto the main queue.
-template <typename Block>
-static void run_on_main_sync(Block block) {
-    if ([NSThread isMainThread]) { block(); return; }
-    dispatch_sync(dispatch_get_main_queue(), block);
-}
-
-extern "C" PlatformSurface* macos_alloc_surface() {
-    auto* s = new PlatformSurface;
-    run_on_main_sync(^{
-        if (!g_window) return;
-        NSView* contentView = [g_window contentView];
-        if (!contentView) return;
-        CGRect frame = [contentView bounds];
-        CGFloat scale = [g_window backingScaleFactor];
-        // positionAbove=nil — final ordering is applied by macos_restack
-        // once Browsers pushes the new layer onto the stack.
-        create_content_layer(contentView, frame, scale, s->view, s->layer, nil);
-    });
-    return s;
-}
-
-extern "C" void macos_free_surface(PlatformSurface* s) {
-    if (!s) return;
-    run_on_main_sync(^{
-        // Defensive remove from the cached stack — Browsers will normally
-        // restack to a smaller order after this call, but clearing the
-        // entry here keeps is_cef_main coherent in the meantime.
-        auto it = std::find(g_surface_stack.begin(), g_surface_stack.end(), s);
-        if (it != g_surface_stack.end()) g_surface_stack.erase(it);
-        if (s->view) [s->view removeFromSuperview];
-        s->view = nil;
-        s->layer = nil;
-        s->input_texture = nil;
-        s->cached_input = nullptr;
-    });
-    delete s;
-}
-
-extern "C" bool macos_surface_present(PlatformSurface* s, const void* raw_info) {
-    if (!s || !raw_info) return false;
-    const CefAcceleratedPaintInfo& info =
-        *static_cast<const CefAcceleratedPaintInfo*>(raw_info);
-    // Fullscreen-transition gating runs only on the cef-main surface
-    // (bottom of stack), matching the pre-refactor macos_present path.
-    if (is_cef_main(s)) {
-        if (macos_in_transition()) return false;
-        present_iosurface(*s, info);
-        if (g_expected_w > 0) {
-            IOSurfaceRef surface = (IOSurfaceRef)info.shared_texture_io_surface;
-            if (surface && (int)IOSurfaceGetWidth(surface) == g_expected_w &&
-                (int)IOSurfaceGetHeight(surface) == g_expected_h) {
-                g_expected_w = 0; g_expected_h = 0;
-                jfn_macos_transition_clear();
-            }
-        }
-        return true;
-    }
-    present_iosurface(*s, info);
-    return true;
-}
-
-// macos_surface_present_software now lives in src/macos/src/lib.rs.
-
-extern "C" void macos_surface_resize(PlatformSurface* s, int lw, int lh, int pw, int ph) {
-    if (!s) return;
-    // The NSView is autoresized to fit the contentView, and present_iosurface
-    // updates the CAMetalLayer.drawableSize when CEF delivers a frame at the
-    // new pixel size. Update contentsScale + drawableSize defensively so
-    // resizes that don't immediately produce a new CEF frame still take
-    // effect on the layer.
-    auto apply = ^{
-        if (!s->view || !s->layer) return;
-        // Setting the NSView frame is redundant under autoresizing but
-        // keeps the layer geometry in sync for late configures.
-        s->view.frame = [[g_window contentView] bounds];
-        CGFloat scale = pw > 0 && lw > 0 ? (CGFloat)pw / (CGFloat)lw
-                                         : [g_window backingScaleFactor];
-        s->layer.contentsScale = scale;
-        if (pw > 0 && ph > 0)
-            s->layer.drawableSize = CGSizeMake(pw, ph);
-        (void)lh;
-    };
-    if ([NSThread isMainThread]) apply();
-    else dispatch_async(dispatch_get_main_queue(), apply);
-}
-
-extern "C" void macos_restack(PlatformSurface* const* ordered, size_t n) {
-    auto apply = ^{
-        g_surface_stack.assign(ordered, ordered + n);
-        if (!g_window) return;
-        NSView* contentView = [g_window contentView];
-        if (!contentView) return;
-        NSView* prev = nil;
-        for (size_t i = 0; i < n; i++) {
-            PlatformSurface* s = ordered[i];
-            if (!s || !s->view) continue;
-            // addSubview:positioned:relativeTo: re-anchors an existing
-            // subview; safe to call repeatedly.
-            [contentView addSubview:s->view positioned:NSWindowAbove relativeTo:prev];
-            prev = s->view;
-        }
-        // Keep the input view on top of every CefLayer.
-        if (g_input_view)
-            [contentView addSubview:g_input_view positioned:NSWindowAbove relativeTo:prev];
-    };
-    if ([NSThread isMainThread]) apply();
-    else dispatch_sync(dispatch_get_main_queue(), apply);
-}
-
-// Platform vtable composition moved to the Rust jfn-macos crate
-// (src/macos/src/lib.rs). The individual macos_* statics above are
-// exposed via extern "C" linkage so the Rust crate can populate the
-// vtable from them by symbol name.
+// Per-surface lifecycle (alloc_surface, free_surface, surface_present,
+// surface_resize, surface_set_visible, restack, fade_surface) all live
+// in src/macos/src/lib.rs. Platform vtable composition is in the same
+// crate (jfn-macos).
