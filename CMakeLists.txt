@@ -122,7 +122,6 @@ if(APPLE)
 
     set(PLATFORM_SOURCES
         src/platform/macos.mm
-        src/input/input_macos.mm
     )
 
     # LetsMove - prompts user to move app to /Applications (clears quarantine)
@@ -580,7 +579,6 @@ endif()
 if(APPLE)
     set_source_files_properties(
         src/platform/macos.mm
-        src/input/input_macos.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
 endif()
