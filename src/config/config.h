@@ -57,12 +57,14 @@ bool jfn_settings_get_disable_gpu_compositing(void);
 bool jfn_settings_get_titlebar_theme_color(void);
 bool jfn_settings_get_transparent_titlebar(void);
 bool jfn_settings_get_force_transcoding(void);
+bool jfn_settings_get_ignore_ssl_errors(void);
 
 void jfn_settings_set_audio_exclusive(bool v);
 void jfn_settings_set_disable_gpu_compositing(bool v);
 void jfn_settings_set_titlebar_theme_color(bool v);
 void jfn_settings_set_transparent_titlebar(bool v);
 void jfn_settings_set_force_transcoding(bool v);
+void jfn_settings_set_ignore_ssl_errors(bool v);
 
 void jfn_settings_get_window_geometry(JfnWindowGeometry* out);
 void jfn_settings_set_window_geometry(const JfnWindowGeometry* in_);

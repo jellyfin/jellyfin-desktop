@@ -25,6 +25,7 @@ int  jfn_cef_start(int argc, char* argv[]);
 void jfn_cef_set_log_severity(int severity);
 void jfn_cef_set_remote_debugging_port(int port);
 void jfn_cef_set_disable_gpu_compositing(bool disable);
+void jfn_cef_set_ignore_certificate_errors(bool ignore);
 #ifdef __linux__
 void jfn_cef_set_ozone_platform(const char* platform_utf8);
 #endif
