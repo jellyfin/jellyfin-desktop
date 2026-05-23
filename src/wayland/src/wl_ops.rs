@@ -224,6 +224,20 @@ pub(crate) fn surface_set_visible(
     }
 }
 
+/// True when the surface has a `wp_alpha_modifier_surface_v1` proxy,
+/// i.e. the compositor advertised `wp_alpha_modifier_v1` at bind time.
+/// Used by the fade thunk to decide between animated fade and a hard
+/// unmap (compositors without the protocol, e.g. niri, have no way to
+/// drive per-surface opacity).
+pub(crate) fn surface_has_alpha(ptr: *mut PlatformSurface) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    let _st = lock();
+    let s = unsafe { surface_mut(ptr) };
+    s.alpha.is_some()
+}
+
 // =====================================================================
 // Fade per-frame apply (called from Rust fade thread via FFI thunk)
 // =====================================================================
