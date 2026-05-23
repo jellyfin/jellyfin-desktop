@@ -445,18 +445,23 @@ static int run_with_cef(int mw, int mh,
 // Main
 // =====================================================================
 
+// Owns the process entry point. Returns >= 0 in CEF subprocesses (GPU,
+// renderer) and propagates that exit code. Returns -1 in the browser
+// process; remaining main.cpp body continues until the rest is ported.
+extern "C" int jfn_app_main(int argc, const char* const* argv);
+
 int main(int argc, char* argv[]) {
-    // CEF subprocesses (GPU, renderer) re-execute this binary; they must
-    // hit CefExecuteProcess immediately, before CLI parsing or anything
-    // else touches shared state. Linux platform selection is deferred
-    // until after CLI parsing.
+    // Linux platform selection is deferred until after CLI parsing; on
+    // Windows/macOS the choice is fixed so we can populate g_platform now
+    // (before jfn_app_main runs CefExecuteProcess for subprocesses).
 #ifdef _WIN32
     g_platform = make_platform(DisplayBackend::Windows);
 #elif defined(__APPLE__)
     g_platform = make_platform(DisplayBackend::macOS);
 #endif
 
-    if (int rc = jfn_cef_start(argc, argv); rc >= 0) return rc;
+    if (int rc = jfn_app_main(argc, const_cast<const char* const*>(argv)); rc >= 0)
+        return rc;
 
     Settings::instance().load();
     const auto& saved = Settings::instance();
