@@ -502,18 +502,14 @@ endif()
 if(WIN32)
     set(COMMON_SOURCES
         src/main.cpp
-        src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
-        src/browser/browsers.cpp
         src/input/dispatch.cpp
     )
 else()
     # Linux + macOS: shared main with platform abstraction
     set(COMMON_SOURCES
         src/main.cpp
-        src/cef/cef_client.cpp
         src/platform/platform_ops.cpp
-        src/browser/browsers.cpp
         src/input/dispatch.cpp
     )
 endif()

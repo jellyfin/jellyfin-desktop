@@ -12,6 +12,7 @@
 mod app;
 pub mod app_menu;
 mod bridge;
+pub mod browsers;
 pub mod business_about;
 pub mod business_overlay;
 pub mod business_web;

@@ -194,3 +194,18 @@ extern "C" void jfn_platform_set_cursor(int type_) {
     if (g_platform.set_cursor)
         g_platform.set_cursor(static_cast<cef_cursor_type_t>(type_));
 }
+
+extern "C" void* jfn_platform_alloc_surface(void) {
+    return g_platform.alloc_surface ? g_platform.alloc_surface() : nullptr;
+}
+
+extern "C" void jfn_platform_free_surface(void* s) {
+    if (s && g_platform.free_surface)
+        g_platform.free_surface(static_cast<PlatformSurface*>(s));
+}
+
+extern "C" void jfn_platform_restack(void* const* ordered, size_t n) {
+    if (g_platform.restack)
+        g_platform.restack(
+            reinterpret_cast<PlatformSurface* const*>(ordered), n);
+}
