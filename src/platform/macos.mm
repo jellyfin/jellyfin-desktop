@@ -360,21 +360,27 @@ static void stop_display_link() {
 // Platform interface implementation
 // =====================================================================
 
-extern "C" void macos_set_theme_color(uint32_t rgb) {
+// macos_set_theme_color now lives in src/macos/src/lib.rs. It reaches the
+// NSWindow* via jfn_macos_get_window() below and re-enters via
+// jfn_macos_apply_theme_color_on_main on the main queue.
+extern "C" void macos_set_theme_color(uint32_t rgb);
+
+// Reached by Rust on the main thread (either inline or via the dispatch
+// queue) to write the NSColor onto g_window + its content layer.
+extern "C" void jfn_macos_apply_theme_color_on_main(uint32_t rgb) {
     Color c{rgb};
-    // Updates AppKit fills behind mpv's CAMetalLayer / NSWindow root so the
-    // resize-gap stale-texture window (which CLAUDE.md explicitly accepts
-    // over stretching) matches mpv's own background — no flash visible.
     NSColor* ns = [NSColor colorWithSRGBRed:c.r/255.0 green:c.g/255.0
                                        blue:c.b/255.0 alpha:1.0];
-    auto apply = ^{
-        if (!g_window) return;
-        g_window.backgroundColor = ns;
-        if (NSView* cv = [g_window contentView]; cv.layer)
-            cv.layer.backgroundColor = ns.CGColor;
-    };
-    if ([NSThread isMainThread]) apply();
-    else dispatch_async(dispatch_get_main_queue(), apply);
+    if (!g_window) return;
+    g_window.backgroundColor = ns;
+    if (NSView* cv = [g_window contentView]; cv.layer)
+        cv.layer.backgroundColor = ns.CGColor;
+}
+
+// Narrow accessor for Rust crate to reach the AppKit NSWindow*. Returns
+// nullptr before macos_init has located mpv's window or after cleanup.
+extern "C" void* jfn_macos_get_window() {
+    return (__bridge void*)g_window;
 }
 
 extern "C" bool macos_init(mpv_handle* mpv) {
@@ -700,14 +706,7 @@ extern "C" void macos_set_expected_size(int w, int h) {
     g_expected_h = h;
 }
 
-extern "C" float macos_get_scale() {
-    if (g_window) return static_cast<float>([g_window backingScaleFactor]);
-    // Pre-window: fall back to the main screen's scale so callers (e.g.
-    // default-geometry sizing at startup) get an accurate value.
-    NSScreen* screen = [NSScreen mainScreen];
-    if (screen) return static_cast<float>([screen backingScaleFactor]);
-    return 1.0f;
-}
+// macos_get_scale now lives in src/macos/src/lib.rs.
 
 // macos_get_display_scale now lives in src/macos/src/lib.rs.
 
@@ -721,23 +720,7 @@ bool query_logical_content_size(int* w, int* h) {
 }
 }
 
-extern "C" bool macos_query_window_position(int* x, int* y) {
-    if (!g_window || ![g_window screen]) return false;
-    // mpv's --geometry +X+Y is in backing pixels, relative to the screen's
-    // visible frame (excluding menu bar / dock), with Y measured from the
-    // top. Match that coordinate system exactly so save→restore is lossless.
-    NSScreen* screen = [g_window screen];
-    NSRect frame = [g_window frame];
-    NSRect visible = [screen visibleFrame];
-    CGFloat scale = [screen backingScaleFactor];
-    // Logical offset within the visible frame, then convert to backing pixels.
-    CGFloat lx = frame.origin.x - visible.origin.x;
-    CGFloat ly = (visible.origin.y + visible.size.height)
-               - (frame.origin.y + frame.size.height);
-    *x = static_cast<int>(lx * scale);
-    *y = static_cast<int>(ly * scale);
-    return true;
-}
+// macos_query_window_position now lives in src/macos/src/lib.rs.
 
 // macos_clamp_window_geometry now lives in src/macos/src/lib.rs.
 
@@ -933,34 +916,7 @@ extern "C" void macos_early_init() {
     [NSApp activateIgnoringOtherApps:YES];
 }
 
-static IOPMAssertionID g_idle_assertion = kIOPMNullAssertionID;
-
-extern "C" void macos_set_idle_inhibit(IdleInhibitLevel level) {
-    // Release existing assertion if one is active
-    if (g_idle_assertion != kIOPMNullAssertionID) {
-        IOPMAssertionRelease(g_idle_assertion);
-        g_idle_assertion = kIOPMNullAssertionID;
-    }
-
-    // If level is None, just return after releasing
-    if (level == IdleInhibitLevel::None) {
-        return;
-    }
-
-    // Determine assertion type based on level
-    CFStringRef type = nullptr;
-    if (level == IdleInhibitLevel::Display) {
-        type = kIOPMAssertionTypePreventUserIdleDisplaySleep;
-    } else if (level == IdleInhibitLevel::System) {
-        type = kIOPMAssertionTypePreventUserIdleSystemSleep;
-    }
-
-    if (type) {
-        IOPMAssertionCreateWithName(type, kIOPMAssertionLevelOn,
-                                    CFSTR("Jellyfin Desktop media playback"),
-                                    &g_idle_assertion);
-    }
-}
+// macos_set_idle_inhibit now lives in src/macos/src/lib.rs.
 
 // =====================================================================
 // Clipboard (NSPasteboard) — read only; writes go through CEF's own

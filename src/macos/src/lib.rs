@@ -32,6 +32,209 @@ pub extern "C" fn macos_end_transition() {
 }
 
 // =====================================================================
+// State-bound bodies ported to native Rust. Each reaches the AppKit
+// NSWindow* through the jfn_macos_get_window() accessor (C++ still owns
+// g_window for now); call paths and side-effects mirror the original.
+// =====================================================================
+
+unsafe extern "C" {
+    /// C++ accessor exporting `g_window` (defined in src/platform/macos.mm).
+    /// Returns a `__bridge` (non-retaining) pointer; treat as borrowed for
+    /// the duration of the call. nullptr before macos_init or after cleanup.
+    fn jfn_macos_get_window() -> *mut objc2::runtime::AnyObject;
+
+    /// C++ helper that applies the rgb color to g_window + content layer.
+    /// Must be invoked on the main thread. macos_set_theme_color routes
+    /// to this either inline or via dispatch_async_f.
+    fn jfn_macos_apply_theme_color_on_main(rgb: u32);
+
+    // GCD entry points used to bounce onto the main queue for the theme-
+    // color apply path. libdispatch ships in libSystem so no extra link
+    // step is needed. dispatch_get_main_queue() is a real exported
+    // function on modern macOS (10.12+), not a macro.
+    fn dispatch_async_f(
+        queue: *mut c_void,
+        ctx: *mut c_void,
+        work: unsafe extern "C" fn(*mut c_void),
+    );
+    fn dispatch_get_main_queue() -> *mut c_void;
+}
+
+/// Returns true if the current thread is the AppKit main thread. Avoids
+/// pulling in `objc2-foundation` `MainThreadMarker` infrastructure for a
+/// single check.
+fn is_main_thread() -> bool {
+    unsafe {
+        let cls = objc2::class!(NSThread);
+        let b: bool = objc2::msg_send![cls, isMainThread];
+        b
+    }
+}
+
+unsafe extern "C" fn theme_color_trampoline(ctx: *mut c_void) {
+    let rgb = ctx as usize as u32;
+    unsafe { jfn_macos_apply_theme_color_on_main(rgb) };
+}
+
+/// Tint AppKit fills behind mpv's CAMetalLayer / NSWindow root so the
+/// resize-gap stale-texture window (which CLAUDE.md explicitly accepts
+/// over stretching) matches mpv's own background — no visible flash.
+/// Hops to the main queue when called from another thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_set_theme_color(rgb: u32) {
+    if is_main_thread() {
+        unsafe { jfn_macos_apply_theme_color_on_main(rgb) };
+    } else {
+        let ctx = rgb as usize as *mut c_void;
+        unsafe { dispatch_async_f(dispatch_get_main_queue(), ctx, theme_color_trampoline) };
+    }
+}
+
+// =====================================================================
+// IOPMLib idle inhibit. Keeps an assertion alive across calls; level==0
+// releases it. Mirrors the C++ enum: 0=None, 1=System, 2=Display.
+// =====================================================================
+
+#[allow(non_camel_case_types)]
+type IOPMAssertionID = u32;
+#[allow(non_camel_case_types)]
+type IOPMAssertionLevel = u32;
+type IOReturn = i32;
+
+const K_IOPM_NULL_ASSERTION_ID: IOPMAssertionID = 0;
+const K_IOPM_ASSERTION_LEVEL_ON: IOPMAssertionLevel = 255;
+
+// CFStringRef is an opaque pointer.
+type CFStringRef = *const c_void;
+
+unsafe extern "C" {
+    fn IOPMAssertionCreateWithName(
+        assertion_type: CFStringRef,
+        assertion_level: IOPMAssertionLevel,
+        assertion_name: CFStringRef,
+        assertion_id: *mut IOPMAssertionID,
+    ) -> IOReturn;
+    fn IOPMAssertionRelease(assertion_id: IOPMAssertionID) -> IOReturn;
+
+    // IOPMLib publishes the CFString constants used here as ordinary
+    // `extern const CFStringRef` symbols.
+    static kIOPMAssertionTypePreventUserIdleDisplaySleep: CFStringRef;
+    static kIOPMAssertionTypePreventUserIdleSystemSleep: CFStringRef;
+
+    fn CFStringCreateWithCStringNoCopy(
+        alloc: *const c_void,
+        c_str: *const c_char,
+        encoding: u32,
+        contents_deallocator: *const c_void,
+    ) -> CFStringRef;
+
+    /// `kCFAllocatorNull` — pass as `contents_deallocator` so CF doesn't
+    /// try to free our `'static` byte buffer when the CFString is released.
+    static kCFAllocatorNull: *const c_void;
+
+    fn CFRelease(cf: *const c_void);
+}
+
+const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+
+static G_IDLE_ASSERTION: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(K_IOPM_NULL_ASSERTION_ID);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_set_idle_inhibit(level: c_int) {
+    // Release any active assertion first (matches C++ behavior on every
+    // call, not just level == None).
+    let prev = G_IDLE_ASSERTION.swap(K_IOPM_NULL_ASSERTION_ID, Ordering::SeqCst);
+    if prev != K_IOPM_NULL_ASSERTION_ID {
+        unsafe { IOPMAssertionRelease(prev) };
+    }
+
+    // C++ enum: None=0, System=1, Display=2.
+    let assertion_type: CFStringRef = match level {
+        2 => unsafe { kIOPMAssertionTypePreventUserIdleDisplaySleep },
+        1 => unsafe { kIOPMAssertionTypePreventUserIdleSystemSleep },
+        _ => return,
+    };
+
+    // Build a CFString for the assertion name. CFSTR() is a compiler
+    // intrinsic so we synthesize the equivalent via NoCopy.
+    let name_bytes = b"Jellyfin Desktop media playback\0";
+    let name = unsafe {
+        CFStringCreateWithCStringNoCopy(
+            std::ptr::null(),
+            name_bytes.as_ptr() as *const c_char,
+            K_CF_STRING_ENCODING_UTF8,
+            kCFAllocatorNull,
+        )
+    };
+    if name.is_null() {
+        return;
+    }
+
+    let mut id: IOPMAssertionID = K_IOPM_NULL_ASSERTION_ID;
+    let rc = unsafe {
+        IOPMAssertionCreateWithName(assertion_type, K_IOPM_ASSERTION_LEVEL_ON, name, &mut id)
+    };
+    // Release our reference; IOPM retains its own copy of the name.
+    unsafe { CFRelease(name) };
+    if rc == 0 && id != K_IOPM_NULL_ASSERTION_ID {
+        G_IDLE_ASSERTION.store(id, Ordering::SeqCst);
+    }
+}
+
+// =====================================================================
+// Window-bound queries. g_window stays C-owned for the moment; both
+// route through the jfn_macos_get_window() accessor.
+// =====================================================================
+
+/// Backing scale factor of `g_window`'s screen. Falls back to the main
+/// screen pre-window so default-geometry sizing at startup gets a real
+/// value instead of 1.0.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_get_scale() -> f32 {
+    unsafe {
+        let win = jfn_macos_get_window();
+        if !win.is_null() {
+            let scale: f64 = objc2::msg_send![win, backingScaleFactor];
+            return scale as f32;
+        }
+        let screen: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSScreen), mainScreen];
+        if !screen.is_null() {
+            let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
+            return scale as f32;
+        }
+        1.0
+    }
+}
+
+/// Query the saved window position in backing pixels, relative to the
+/// screen's visible frame (excluding menu bar / dock), Y measured from
+/// the top. Lossless round-trip with mpv's `--geometry +X+Y`.
+#[unsafe(no_mangle)]
+pub extern "C" fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
+    unsafe {
+        let win = jfn_macos_get_window();
+        if win.is_null() {
+            return false;
+        }
+        let screen: *mut objc2::runtime::AnyObject = objc2::msg_send![win, screen];
+        if screen.is_null() {
+            return false;
+        }
+        let frame: objc2_foundation::NSRect = objc2::msg_send![win, frame];
+        let visible: objc2_foundation::NSRect = objc2::msg_send![screen, visibleFrame];
+        let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
+        let lx = frame.origin.x - visible.origin.x;
+        let ly = (visible.origin.y + visible.size.height)
+            - (frame.origin.y + frame.size.height);
+        *x = (lx * scale) as c_int;
+        *y = (ly * scale) as c_int;
+        true
+    }
+}
+
+// =====================================================================
 // Fullscreen-transition gating flag. The C++ compositor reads this on
 // every frame (macos_surface_present) and clears it when an incoming
 // frame matches g_expected_w/h. Set by macos_begin_transition below;
@@ -171,13 +374,9 @@ unsafe extern "C" {
     fn macos_set_fullscreen(fullscreen: bool);
     fn macos_toggle_fullscreen();
     fn macos_set_expected_size(w: c_int, h: c_int);
-    fn macos_get_scale() -> f32;
-    fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> bool;
     fn macos_pump();
     fn macos_run_main_loop();
     fn macos_wake_main_loop();
-    fn macos_set_idle_inhibit(level: c_int);
-    fn macos_set_theme_color(rgb: u32);
     fn macos_clipboard_read_text_async(
         on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
         ctx: *mut c_void,
