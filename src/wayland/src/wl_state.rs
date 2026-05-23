@@ -7,7 +7,7 @@
 //!   * A dedicated `EventQueue` over an mpv-owned `wl_display`
 //!     (foreign-display backend, never closes the fd)
 //!   * Bindings for `wl_compositor`, `wl_subcompositor`, `wl_shm`,
-//!     `zwp_linux_dmabuf_v1`, `wp_viewporter`, `wp_alpha_modifier_v1`
+//!     `zwp_linux_dmabuf_v1`, `wp_viewporter`
 //!   * The list of per-layer `PlatformSurface`s and their popup
 //!     children
 //!   * The fullscreen-transition state machine (begin/end + tolerance
@@ -38,9 +38,6 @@ use wayland_client::protocol::{
     wl_surface::WlSurface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
-use wayland_protocols::wp::alpha_modifier::v1::client::{
-    wp_alpha_modifier_surface_v1::WpAlphaModifierSurfaceV1, wp_alpha_modifier_v1::WpAlphaModifierV1,
-};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1::{Flags as DmabufFlags, ZwpLinuxBufferParamsV1},
     zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
@@ -63,13 +60,12 @@ pub(crate) const TRANSITION_TOLERANCE_TEXELS: i32 = 32;
 // Per-surface state
 // =====================================================================
 
-/// Per-CefLayer surface. Owns its subsurface, viewport, alpha modifier
+/// Per-CefLayer surface. Owns its subsurface, viewport
 /// proxies, and its on-demand popup child.
 pub(crate) struct PlatformSurface {
     pub surface: Option<WlSurface>,
     pub subsurface: Option<WlSubsurface>,
     pub viewport: Option<WpViewport>,
-    pub alpha: Option<WpAlphaModifierSurfaceV1>,
     pub buffer: Option<WlBuffer>,
     pub buffer_w: i32,
     pub buffer_h: i32,
@@ -95,7 +91,6 @@ impl PlatformSurface {
             surface: None,
             subsurface: None,
             viewport: None,
-            alpha: None,
             buffer: None,
             buffer_w: 0,
             buffer_h: 0,
@@ -145,7 +140,6 @@ pub(crate) struct WlState {
     pub shm: WlShm,
     pub dmabuf: Option<ZwpLinuxDmabufV1>,
     pub viewporter: Option<WpViewporter>,
-    pub alpha_modifier: Option<WpAlphaModifierV1>,
 
     /// mpv-owned parent surface (foreign object — never destroyed by us).
     pub parent: WlSurface,
@@ -225,8 +219,6 @@ noop_dispatch!(
     ZwpLinuxBufferParamsV1,
     WpViewporter,
     WpViewport,
-    WpAlphaModifierV1,
-    WpAlphaModifierSurfaceV1,
 );
 
 // =====================================================================
@@ -267,7 +259,6 @@ pub(crate) unsafe fn init(
         .map_err(|e| format!("bind wl_shm: {e}"))?;
     let dmabuf: Option<ZwpLinuxDmabufV1> = globals.bind(&qh, 1..=4, ()).ok();
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
-    let alpha_modifier: Option<WpAlphaModifierV1> = globals.bind(&qh, 1..=1, ()).ok();
 
     // Wrap mpv's parent surface as a Proxy. Foreign object — never
     // destroyed on our side (Drop on a non-rust-managed ObjectId is a
@@ -288,7 +279,6 @@ pub(crate) unsafe fn init(
         shm,
         dmabuf,
         viewporter,
-        alpha_modifier,
         parent,
         stack: Vec::new(),
         was_fullscreen: false,

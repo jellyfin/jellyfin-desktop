@@ -8,7 +8,7 @@
 use std::ffi::{c_int, c_void};
 
 use crate::surface::{
-    jfn_x11_alloc_surface, jfn_x11_fade_surface, jfn_x11_free_surface, jfn_x11_restack,
+    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_restack,
     jfn_x11_surface_present, jfn_x11_surface_present_software, jfn_x11_surface_resize,
     jfn_x11_surface_set_visible,
 };
@@ -83,23 +83,6 @@ impl Platform for X11Platform {
 
     fn restack(&self, handles: *const SurfaceHandle, n: usize) {
         unsafe { jfn_x11_restack(handles as *const *mut crate::x11_state::PlatformSurface, n) };
-    }
-
-    fn fade_surface(
-        &self,
-        s: SurfaceHandle,
-        fade_sec: f32,
-        on_start: Option<Box<dyn FnOnce() + Send>>,
-        on_done: Option<Box<dyn FnOnce() + Send>>,
-    ) {
-        unsafe {
-            jfn_x11_fade_surface(
-                s as *mut crate::x11_state::PlatformSurface,
-                fade_sec,
-                on_start,
-                on_done,
-            )
-        };
     }
 
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {

@@ -294,15 +294,6 @@ pub(crate) unsafe fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, visible: b
     unsafe { arc(h) }.set_visible(visible);
 }
 
-pub(crate) unsafe fn jfn_cef_layer_fade(
-    h: *const JfnCefLayer,
-    sec: f32,
-    on_start: Option<Box<dyn FnOnce() + Send>>,
-    on_done: Option<Box<dyn FnOnce() + Send>>,
-) {
-    unsafe { arc(h) }.fade(sec, on_start, on_done);
-}
-
 pub(crate) unsafe fn jfn_cef_layer_on_deactivated(h: *const JfnCefLayer) {
     unsafe { arc(h) }.on_deactivated();
 }

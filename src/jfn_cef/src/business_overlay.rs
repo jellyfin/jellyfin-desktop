@@ -14,11 +14,9 @@ use std::os::raw::c_void;
 
 use crate::client::JfnCefLayer;
 
-const OVERLAY_FADE_DURATION_SEC: f32 = 0.25;
-
 use crate::browsers::{jfn_browsers_create, jfn_browsers_set_active};
 use crate::client::{
-    jfn_cef_layer_create, jfn_cef_layer_fade, jfn_cef_layer_load_url, jfn_cef_layer_reset,
+    jfn_cef_layer_create, jfn_cef_layer_load_url, jfn_cef_layer_reset,
     jfn_cef_layer_set_name, jfn_cef_layer_set_visible,
 };
 use jfn_color::theme::jfn_theme_color_on_overlay_dismissed;
@@ -157,28 +155,12 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 jfn_logging::LEVEL_INFO,
                 "Overlay: dismissOverlay",
             );
-            let (overlay, main_layer) = match INSTANCE.lock().as_ref() {
+            let (_, main_layer) = match INSTANCE.lock().as_ref() {
                 Some(s) => (s.layer, s.main_layer),
                 None => return true,
             };
             jfn_browsers_set_active(main_layer);
-            let browser_for_close = browser.clone();
-            let on_start: Box<dyn FnOnce() + Send> = Box::new(jfn_theme_color_on_overlay_dismissed);
-            let on_done: Box<dyn FnOnce() + Send> = Box::new(move || {
-                if let Some(b) = browser_for_close.as_ref()
-                    && let Some(host) = b.host()
-                {
-                    host.close_browser(0);
-                }
-            });
-            unsafe {
-                jfn_cef_layer_fade(
-                    overlay,
-                    OVERLAY_FADE_DURATION_SEC,
-                    Some(on_start),
-                    Some(on_done),
-                );
-            }
+            jfn_theme_color_on_overlay_dismissed();
             true
         }
         "saveServerUrl" => {

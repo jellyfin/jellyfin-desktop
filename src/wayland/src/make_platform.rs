@@ -26,14 +26,11 @@ pub use jfn_platform_abi::{
 // External symbols
 // =====================================================================
 
-use crate::fade::jfn_wl_fade_start;
 #[cfg(feature = "kde-palette")]
 use crate::kde_palette::{jfn_wl_kde_palette_post_window_cleanup, jfn_wl_kde_palette_set_color};
 use crate::lifecycle::{jfn_wl_lifecycle_cleanup, jfn_wl_lifecycle_init};
 use crate::proxy::jfn_wl_get_cached_scale;
 use crate::scale_probe::jfn_wayland_scale_probe;
-use crate::wl_ffi::jfn_wl_fade_apply_frame;
-use jfn_playback::ingest_driver::jfn_playback_display_hz;
 
 // =====================================================================
 // Helpers
@@ -168,35 +165,6 @@ impl Platform for WaylandPlatform {
             std::slice::from_raw_parts(ordered as *const *mut crate::wl_state::PlatformSurface, n)
         };
         wl_ops::restack(typed);
-    }
-
-    fn fade_surface(
-        &self,
-        s: SurfaceHandle,
-        fade_sec: f32,
-        on_start: Option<Box<dyn FnOnce() + Send>>,
-        on_done: Option<Box<dyn FnOnce() + Send>>,
-    ) {
-        let fps = jfn_playback_display_hz();
-        let surf_ptr = s as *mut crate::wl_state::PlatformSurface;
-        let can_fade = !s.is_null() && fps > 0.0 && wl_ops::surface_has_alpha(surf_ptr);
-        if !can_fade {
-            // No wp_alpha_modifier_v1 (e.g. niri) or no surface/fps:
-            // hard-unmap and fire the closures inline.
-            if !s.is_null() {
-                wl_ops::surface_set_visible(surf_ptr, false, BG_R, BG_G, BG_B);
-            }
-            if let Some(f) = on_start {
-                f();
-            }
-            if let Some(f) = on_done {
-                f();
-            }
-            return;
-        }
-        unsafe {
-            jfn_wl_fade_start(s, fade_sec, fps, jfn_wl_fade_apply_frame, on_start, on_done);
-        }
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {

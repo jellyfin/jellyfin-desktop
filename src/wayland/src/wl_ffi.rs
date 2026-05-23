@@ -186,11 +186,3 @@ pub fn jfn_wl_on_configure(width: i32, height: i32, fullscreen: i32) {
     let scale = crate::proxy::jfn_wl_get_cached_scale();
     wl_ops::on_configure(width, height, fullscreen != 0, scale);
 }
-
-// =====================================================================
-// Fade — per-frame callback wired into jfn-fade by the C++ wrapper.
-// =====================================================================
-
-pub unsafe extern "C" fn jfn_wl_fade_apply_frame(handle: *mut c_void, alpha: u32) -> bool {
-    wl_ops::fade_apply_frame(cast(handle), alpha)
-}

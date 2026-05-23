@@ -1,5 +1,6 @@
 * {
     box-sizing: border-box;
+    opacity: inherit;
 }
 body {
     background: var(--bg-color);
@@ -136,14 +137,11 @@ button:disabled {
     100% { opacity: 1; }
 }
 @keyframes fadeOut {
-    0% { opacity: 1; }
-    100% { opacity: 0; }
+    0% { opacity: 1; background-color: var(--bg-color); }
+    100% { opacity: 0; background-color: transparent; }
 }
-#spinner.fade-out {
-    animation: spin 1s linear infinite, fadeOut 0.3s ease-out forwards;
-}
-body.fade-out {
-    animation: fadeOut 0.25s ease-out forwards;
+.fade-out {
+    animation: fadeOut 0.5s ease-out forwards;
 }
 #connect-button.cancel {
     background: #cb272a;

@@ -568,7 +568,7 @@ mod init;
 mod input;
 mod popup;
 use compositor::{
-    macos_alloc_surface, macos_fade_surface, macos_free_surface, macos_restack,
+    macos_alloc_surface, macos_free_surface, macos_restack,
     macos_set_expected_size, macos_surface_present, macos_surface_resize,
     macos_surface_set_visible,
 };
@@ -633,16 +633,6 @@ impl Platform for MacosPlatform {
 
     fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
         macos_restack(ordered, n);
-    }
-
-    fn fade_surface(
-        &self,
-        s: SurfaceHandle,
-        sec: f32,
-        on_start: Option<Box<dyn FnOnce() + Send>>,
-        on_done: Option<Box<dyn FnOnce() + Send>>,
-    ) {
-        macos_fade_surface(s, sec, on_start, on_done);
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
