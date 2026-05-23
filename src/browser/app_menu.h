@@ -3,7 +3,8 @@
 #include "include/cef_menu_model.h"
 
 #include "../common.h"
-#include "about_browser.h"
+
+extern "C" void jfn_about_open(void);
 
 // App-level context menu: items appended to every CEF context menu and the
 // dispatcher that runs when the user picks one. Lives at the app layer (not
@@ -31,7 +32,7 @@ inline void build(CefRefPtr<CefMenuModel> model) {
 inline bool dispatch(int command_id) {
     switch (command_id) {
     case detail::MENU_ID_TOGGLE_FULLSCREEN: g_platform.toggle_fullscreen(); return true;
-    case detail::MENU_ID_ABOUT: AboutBrowser::open(); return true;
+    case detail::MENU_ID_ABOUT: jfn_about_open(); return true;
     case detail::MENU_ID_EXIT: initiate_shutdown(); return true;
     default: return false;
     }

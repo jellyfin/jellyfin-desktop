@@ -10,7 +10,9 @@
 //! follow-up commits.
 
 mod app;
+pub mod app_menu;
 mod bridge;
+pub mod business_about;
 pub mod client;
 mod client_impl;
 mod embedded_js;

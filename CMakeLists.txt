@@ -507,7 +507,6 @@ if(WIN32)
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
-        src/browser/about_browser.cpp
         src/input/dispatch.cpp
     )
 else()
@@ -519,7 +518,6 @@ else()
         src/browser/browsers.cpp
         src/browser/web_browser.cpp
         src/browser/overlay_browser.cpp
-        src/browser/about_browser.cpp
         src/input/dispatch.cpp
     )
 endif()
