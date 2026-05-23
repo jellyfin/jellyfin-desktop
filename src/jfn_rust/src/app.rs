@@ -12,47 +12,25 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
-use jfn_platform_abi::{DisplayBackend, Platform};
+use jfn_platform_abi::{DisplayBackend, IdleInhibitLevel, Platform};
 
-// Linux: the `Platform` vtable lives in jfn-wayland / jfn-x11; both crates
-// export `make_*_platform` with C linkage returning a Platform from the
-// shared jfn-platform-abi crate. The narrow C accessors in
-// `src/platform/platform_ops.cpp` are still used during the port for fields
-// jfn_app_run_with_cef reads.
-#[cfg(target_os = "linux")]
-unsafe extern "C" {
-    fn make_wayland_platform() -> Platform;
-    fn make_x11_platform() -> Platform;
-    fn jfn_g_platform_ptr() -> *mut Platform;
-    fn jfn_platform_ops() -> *const jfn_cef::platform_ops::JfnPlatformOps;
+// Shorthand for the installed Platform backend. `install()` happens before
+// any of the call sites here run.
+fn plat() -> &'static dyn Platform {
+    jfn_platform_abi::get()
 }
 
-// Narrow accessors over `g_platform` (defined in platform_ops.cpp). Used
-// during the main.cpp -> Rust port so this crate doesn't need a full
-// Platform mirror.
-unsafe extern "C" {
-    fn jfn_g_platform_display() -> c_int;
-    fn jfn_g_platform_get_scale() -> f32;
-    fn jfn_g_platform_get_display_scale(x: c_int, y: c_int) -> f32;
-    fn jfn_g_platform_clamp_window_geometry(
-        w: *mut c_int,
-        h: *mut c_int,
-        x: *mut c_int,
-        y: *mut c_int,
-    );
-    fn jfn_g_platform_pump();
-    fn jfn_g_platform_query_window_position(x: *mut c_int, y: *mut c_int) -> bool;
-    fn jfn_g_platform_post_window_cleanup();
-    fn jfn_g_video_bg_get() -> u32;
-    fn jfn_g_platform_init(h: *mut std::ffi::c_void) -> bool;
-    fn jfn_g_platform_cleanup();
-    fn jfn_g_platform_set_theme_color(rgb: u32);
-    fn jfn_g_platform_set_idle_inhibit(level: u32);
-    fn jfn_g_platform_set_fullscreen2(fs: bool);
-    fn jfn_g_platform_run_main_loop();
-    fn jfn_g_platform_wake_main_loop();
-    fn jfn_g_platform_shared_texture_supported() -> bool;
-    fn jfn_g_platform_set_cef_ozone_platform(utf8: *const c_char);
+// `g_video_bg` previously lived in C++ (`src/platform/platform_ops.cpp`).
+// It's read once by `jfn_app_main` after CEF boot to seed the theme
+// rotator; store it Rust-side now that nothing C++ depends on it.
+static VIDEO_BG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn video_bg_set(rgb: u32) {
+    VIDEO_BG.store(rgb, std::sync::atomic::Ordering::Release);
+}
+
+fn video_bg_get() -> u32 {
+    VIDEO_BG.load(std::sync::atomic::Ordering::Acquire)
 }
 
 const LOG_MAIN: u8 = 0;
@@ -153,22 +131,20 @@ fn print_version() {
 /// `argv` must point to `argc` valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
-    // Windows/macOS use a fixed display backend so g_platform must be
-    // populated before CefExecuteProcess (subprocesses bail out of the
-    // browser-process flow but may still query the vtable).
+    // Windows/macOS use a fixed display backend so the Platform must be
+    // installed before CefExecuteProcess (subprocesses bail out of the
+    // browser-process flow but may still query the platform).
     #[cfg(target_os = "windows")]
-    unsafe {
-        unsafe extern "C" {
-            fn make_windows_platform_init();
-        }
-        make_windows_platform_init();
+    {
+        let p = jfn_windows::make_windows_platform();
+        p.early_init();
+        jfn_platform_abi::install(p);
     }
     #[cfg(target_os = "macos")]
-    unsafe {
-        unsafe extern "C" {
-            fn make_macos_platform_init();
-        }
-        make_macos_platform_init();
+    {
+        let p = jfn_macos::make_macos_platform();
+        p.early_init();
+        jfn_platform_abi::install(p);
     }
 
     // 1. CEF subprocess dispatch: returns >= 0 in renderer/GPU/utility
@@ -337,20 +313,13 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
                 DisplayBackend::X11
             }
         };
-        unsafe {
-            let p = match backend {
-                DisplayBackend::Wayland => make_wayland_platform(),
-                DisplayBackend::X11 => make_x11_platform(),
-                _ => unreachable!(),
-            };
-            *jfn_g_platform_ptr() = p;
-            // Mirror `make_platform()`'s C++ inline: early_init then wire
-            // platform_ops into jfn-cef.
-            if let Some(ei) = (*jfn_g_platform_ptr()).early_init {
-                ei();
-            }
-            jfn_cef::platform_ops::jfn_cef_set_platform_ops(jfn_platform_ops());
-        }
+        let p: Box<dyn Platform> = match backend {
+            DisplayBackend::Wayland => jfn_wayland::make_platform::make_wayland_platform(),
+            DisplayBackend::X11 => jfn_x11::make_platform::make_x11_platform(),
+            _ => unreachable!(),
+        };
+        p.early_init();
+        jfn_platform_abi::install(p);
         tracing::info!(target: "Main", "Display backend: {}",
             if backend == DisplayBackend::Wayland { "wayland" } else { "x11" });
     }
@@ -400,11 +369,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     //     configure + fractional-scale events for the mpv subwindow.
     #[cfg(target_os = "linux")]
     {
-        // Read backend as i32 discriminant; matches the C++ enum class.
-        let backend_now: i32 = unsafe {
-            *(jfn_g_platform_ptr() as *const i32)
-        };
-        if backend_now == DisplayBackend::Wayland as i32 {
+        if plat().display() == DisplayBackend::Wayland {
             unsafe { start_wlproxy() };
         }
     }
@@ -422,7 +387,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     let mpv_log_level = mpv_log_level_from_filter();
 
     // 16. Initialise the mpv handle via the Rust boot path.
-    let backend_byte: u8 = unsafe { jfn_g_platform_display() as u8 };
+    let backend_byte: u8 = plat().display() as u8;
     let geometry_c = cs(&boot_geometry);
     let hwdec_c = cs(&hwdec);
     let user_agent_c = cs(&format!("JellyfinDesktop/{}", APP_VERSION_FULL));
@@ -499,7 +464,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
         g.maximized
     };
     let wait_for_scale = cfg!(target_os = "linux")
-        && unsafe { jfn_g_platform_display() } == DisplayBackend::Wayland as i32;
+        && plat().display() == DisplayBackend::Wayland;
     let wait_timeout = if wait_for_scale { 0.1 } else { 1.0 };
     tracing::info!(target: "Main", "Waiting for mpv window...");
 
@@ -509,7 +474,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     loop {
         #[cfg(target_os = "macos")]
         {
-            unsafe { jfn_g_platform_pump() };
+            plat().pump();
             let ev = jfn_mpv::api::jfn_mpv_wait_event(0.0);
             if ev.is_null() { continue; }
             let event_id = unsafe { (*ev).event_id }.0;
@@ -587,7 +552,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
 
     // 24. Boot-resource teardown + platform post-window cleanup.
     jfn_app_teardown();
-    unsafe { jfn_g_platform_post_window_cleanup() };
+    plat().post_window_cleanup();
 
     0
 }
@@ -713,7 +678,7 @@ fn compute_boot_geometry() -> (String, bool, bool) {
     unsafe { jfn_config::jfn_settings_get_window_geometry(&mut g) };
     let mut x = g.x;
     let mut y = g.y;
-    let scale = unsafe { jfn_g_platform_get_display_scale(x, y) };
+    let scale = plat().get_display_scale(x, y);
     let scale_f = if scale > 0.0 { scale } else { 1.0 };
     let (mut w, mut h) = if g.logical_width > 0 && g.logical_height > 0 {
         (
@@ -729,7 +694,7 @@ fn compute_boot_geometry() -> (String, bool, bool) {
         )
     };
     tracing::debug!(target: "Main", "initial scale: {scale_f} -> {w}x{h}");
-    unsafe { jfn_g_platform_clamp_window_geometry(&mut w, &mut h, &mut x, &mut y) };
+    plat().clamp_window_geometry(&mut w, &mut h, &mut x, &mut y);
     let mut s = format!("{w}x{h}");
     let force_position = x >= 0 && y >= 0;
     if force_position {
@@ -763,13 +728,7 @@ fn mpv_log_level_from_filter() -> &'static str {
 }
 
 fn publish_video_bg(rgb: u32) {
-    // Mirror the C++ `g_video_bg = Color{rgb}` write. Color is POD on the
-    // C++ side; store via the accessor so platform_ops.cpp keeps owning
-    // the global.
-    unsafe extern "C" {
-        fn jfn_g_video_bg_set(rgb: u32);
-    }
-    unsafe { jfn_g_video_bg_set(rgb) };
+    video_bg_set(rgb);
 }
 
 fn log_mpv_event(ev: *mut jfn_mpv::sys::mpv_event) {
@@ -804,7 +763,7 @@ fn consume_vo_event(
     let event_id = unsafe { (*ev).event_id }.0;
     if event_id == 22 {
         // MPV_EVENT_PROPERTY_CHANGE
-        let scale_raw = unsafe { jfn_g_platform_get_scale() };
+        let scale_raw = plat().get_scale();
         let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
         let has_macos_logical;
         let mut mac_lw: c_int = 0;
@@ -905,7 +864,12 @@ fn cef_severity_for_cef_filter() -> c_int {
 // jfn-cef as the C++ lambdas did.
 
 extern "C" fn h_idle_inhibit(level: u32) {
-    unsafe { jfn_g_platform_set_idle_inhibit(level) };
+    let lvl = match level {
+        1 => IdleInhibitLevel::System,
+        2 => IdleInhibitLevel::Display,
+        _ => IdleInhibitLevel::None,
+    };
+    plat().set_idle_inhibit(lvl);
 }
 extern "C" fn h_theme_video_mode(active: bool) {
     jfn_color::theme::jfn_theme_color_set_video_mode(active);
@@ -928,11 +892,11 @@ extern "C" fn h_display_scale(s: f64) {
     }
 }
 extern "C" fn h_scale_provider() -> f32 {
-    let s = unsafe { jfn_g_platform_get_scale() };
+    let s = plat().get_scale();
     if s > 0.0 { s } else { 1.0 }
 }
 extern "C" fn h_fullscreen(fs: bool) {
-    unsafe { jfn_g_platform_set_fullscreen2(fs) };
+    plat().set_fullscreen(fs);
 }
 extern "C" fn h_shutdown() {
     tracing::info!(target: "Main", "MPV_EVENT_SHUTDOWN received");
@@ -940,7 +904,7 @@ extern "C" fn h_shutdown() {
 }
 
 extern "C" fn h_theme_set_titlebar(rgb: u32) {
-    unsafe { jfn_g_platform_set_theme_color(rgb) };
+    plat().set_theme_color(rgb);
 }
 extern "C" fn h_theme_set_mpv_bg(hex: *const c_char) {
     unsafe { jfn_mpv::api::jfn_mpv_set_background_color_hex(hex) };
@@ -948,7 +912,7 @@ extern "C" fn h_theme_set_mpv_bg(hex: *const c_char) {
 
 extern "C" fn h_shutdown_close_browsers() {
     jfn_cef::browsers::jfn_browsers_close_all();
-    unsafe { jfn_g_platform_wake_main_loop() };
+    plat().wake_main_loop();
 }
 
 /// Internal helper. Owns the run_with_cef body. No longer extern "C"
@@ -960,7 +924,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     #[cfg(target_os = "linux")]
     {
         if ozone_platform.is_empty() {
-            ozone_platform = if unsafe { jfn_g_platform_display() } == DisplayBackend::Wayland as i32 {
+            ozone_platform = if plat().display() == DisplayBackend::Wayland {
                 "wayland".to_string()
             } else {
                 "x11".to_string()
@@ -968,11 +932,11 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
         }
     }
     let ozone_c = cs(&ozone_platform);
-    unsafe { jfn_g_platform_set_cef_ozone_platform(ozone_c.as_ptr()) };
+    plat().set_cef_ozone_platform(ozone_c.as_ptr());
 
     // 2. Platform init (PlatformScope). Cleanup happens in jfn_app_teardown.
     let mpv_raw = jfn_mpv::boot::jfn_mpv_handle_get();
-    let platform_ok = unsafe { jfn_g_platform_init(mpv_raw as *mut std::ffi::c_void) };
+    let platform_ok = plat().init(mpv_raw as *mut std::ffi::c_void);
     if !platform_ok {
         tracing::error!(target: "Main", "Platform init failed");
         return 1;
@@ -983,7 +947,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     // 3. Apply titlebar theme color before CefInitialize so the window doesn't
     //    sit with the system default palette during init.
     if jfn_config::jfn_settings_get_titlebar_theme_color() {
-        unsafe { jfn_g_platform_set_theme_color(0x101010) };
+        plat().set_theme_color(0x101010);
     }
 
     // 4. Build device profile. Must run after VO-init wait — sync mpv API
@@ -1029,7 +993,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     }
 
     // 5. CEF init flags + initialise.
-    let use_shared_textures = unsafe { jfn_g_platform_shared_texture_supported() }
+    let use_shared_textures = plat().shared_texture_supported()
         && !ba.disable_gpu_compositing;
     jfn_cef::ffi::jfn_cef_set_log_severity(cef_severity_for_cef_filter());
     jfn_cef::ffi::jfn_cef_set_remote_debugging_port(ba.remote_debugging_port);
@@ -1089,11 +1053,9 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
             let mut new_ph = (saved.logical_height as f64 * display_hidpi_scale).round() as c_int;
             let mut dummy_x: c_int = -1;
             let mut dummy_y: c_int = -1;
-            unsafe {
-                jfn_g_platform_clamp_window_geometry(
-                    &mut new_pw, &mut new_ph, &mut dummy_x, &mut dummy_y,
-                );
-            }
+            plat().clamp_window_geometry(
+                &mut new_pw, &mut new_ph, &mut dummy_x, &mut dummy_y,
+            );
             let geom_str = format!("{new_pw}x{new_ph}");
             tracing::info!(target: "Main",
                 "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
@@ -1108,7 +1070,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     let scale = if display_hidpi_scale > 0.0 {
         display_hidpi_scale as f32
     } else {
-        unsafe { jfn_g_platform_get_scale() }
+        plat().get_scale()
     };
     let lw = (mw as f32 / scale) as c_int;
     let lh = (mh as f32 / scale) as c_int;
@@ -1122,7 +1084,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
             Some(h_theme_set_mpv_bg),
         );
     }
-    jfn_color::theme::jfn_theme_color_set_video_bg(unsafe { jfn_g_video_bg_get() });
+    jfn_color::theme::jfn_theme_color_set_video_bg(video_bg_get());
 
     // 9. Browsers init, shutdown handler, main browser create, overlay/web init.
     jfn_cef::browsers::jfn_browsers_init(lw, lh, mw, mh, hz, use_shared_textures);
@@ -1204,7 +1166,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     // 15. Main loop. macOS pumps NSApp; other platforms wait for browser close.
     #[cfg(target_os = "macos")]
     {
-        unsafe { jfn_g_platform_run_main_loop() };
+        plat().run_main_loop();
         tracing::info!(target: "Main", "[FLOW] run_main_loop returned — entering post-run drain");
         // Spin CFRunLoop until browsers are gone.
         unsafe extern "C" {
@@ -1252,10 +1214,10 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     CEF_INITED.store(false, std::sync::atomic::Ordering::Release);
 
     // 19. Idle inhibit release (mirrors C++ IdleInhibitGuard).
-    unsafe { jfn_g_platform_set_idle_inhibit(0) };
+    plat().set_idle_inhibit(IdleInhibitLevel::None);
 
     // 20. Platform cleanup (mirrors PlatformScope dtor).
-    unsafe { jfn_g_platform_cleanup() };
+    plat().cleanup();
     PLATFORM_INITED.store(false, std::sync::atomic::Ordering::Release);
 
     // 21. Playback coordinator shutdown.
@@ -1295,7 +1257,7 @@ fn save_window_geometry_on_exit() {
             let mut g = jfn_config::JfnWindowGeometry::default();
             g.width = pw;
             g.height = ph;
-            let scale_raw = unsafe { jfn_g_platform_get_scale() };
+            let scale_raw = plat().get_scale();
             let win_scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
             g.scale = win_scale;
             g.logical_width = (pw as f32 / win_scale).round() as i32;
@@ -1303,7 +1265,7 @@ fn save_window_geometry_on_exit() {
             g.maximized = false;
             let mut wx: c_int = -1;
             let mut wy: c_int = -1;
-            if unsafe { jfn_g_platform_query_window_position(&mut wx, &mut wy) } {
+            if plat().query_window_position(&mut wx, &mut wy) {
                 g.x = wx;
                 g.y = wy;
             }

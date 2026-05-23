@@ -497,10 +497,8 @@ impl Inner {
         // src/dst — runs immediately.
         let surface = self.surface_ptr();
         if !surface.is_null() {
-            if let Some(ops) = platform_ops::ops() {
-                if let Some(f) = ops.surface_resize {
-                    unsafe { f(surface, w, h, pw, ph) };
-                }
+            if let Some(p) = platform_ops::ops() {
+                p.surface_resize(surface, w, h, pw, ph);
             }
         }
 
@@ -582,10 +580,8 @@ impl Inner {
         if !show {
             let surface = self.surface_ptr();
             if !surface.is_null() {
-                if let Some(ops) = platform_ops::ops() {
-                    if let Some(f) = ops.popup_hide {
-                        unsafe { f(surface) };
-                    }
+                if let Some(p) = platform_ops::ops() {
+                    p.popup_hide(surface);
                 }
             }
             return;
@@ -636,8 +632,7 @@ impl Inner {
         if surface.is_null() {
             return;
         }
-        let Some(ops) = platform_ops::ops() else { return };
-        let Some(popup_show_fn) = ops.popup_show else { return };
+        let Some(p) = platform_ops::ops() else { return };
 
         let opts_ptrs: Vec<*const c_char> = opts_cstr.iter().map(|c| c.as_ptr()).collect();
         let req = platform_ops::JfnPopupRequest {
@@ -659,7 +654,7 @@ impl Inner {
             on_selected_ctx: Arc::into_raw(Arc::clone(self)) as *mut c_void,
             on_selected_dtor: Some(popup_on_selected_dtor),
         };
-        unsafe { popup_show_fn(surface, &req) };
+        p.popup_show(surface, &req);
     }
 
     fn on_deactivated(&self) {
@@ -679,10 +674,8 @@ impl Inner {
         if surface.is_null() {
             return;
         }
-        if let Some(ops) = platform_ops::ops() {
-            if let Some(f) = ops.popup_hide {
-                unsafe { f(surface) };
-            }
+        if let Some(p) = platform_ops::ops() {
+            p.popup_hide(surface);
         }
     }
 
@@ -768,18 +761,14 @@ impl Inner {
     }
 
     pub(crate) fn on_fullscreen_mode_change(&self, fullscreen: bool) {
-        if let Some(ops) = platform_ops::ops() {
-            if let Some(f) = ops.set_fullscreen {
-                unsafe { f(fullscreen) };
-            }
+        if let Some(p) = platform_ops::ops() {
+            p.set_fullscreen(fullscreen);
         }
     }
 
     pub(crate) fn on_cursor_change(&self, cursor_type: c_int) {
-        if let Some(ops) = platform_ops::ops() {
-            if let Some(f) = ops.set_cursor {
-                unsafe { f(cursor_type) };
-            }
+        if let Some(p) = platform_ops::ops() {
+            p.set_cursor(cursor_type);
         }
     }
 
@@ -840,10 +829,8 @@ impl Inner {
         if surface.is_null() {
             return;
         }
-        if let Some(ops) = platform_ops::ops() {
-            if let Some(f) = ops.surface_set_visible {
-                unsafe { f(surface, visible) };
-            }
+        if let Some(p) = platform_ops::ops() {
+            p.surface_set_visible(surface, visible);
         }
     }
 
@@ -855,14 +842,14 @@ impl Inner {
     }
 
     pub(crate) fn try_paste(self: &Arc<Self>) -> bool {
-        let Some(ops) = platform_ops::ops() else {
+        let Some(p) = platform_ops::ops() else {
             return false;
         };
-        let Some(read) = ops.clipboard_read_text_async else {
+        if !p.clipboard_text_supported() {
             return false;
-        };
+        }
         let ctx = Arc::into_raw(Arc::clone(self)) as *mut c_void;
-        unsafe { read(Some(paste_clipboard_cb), ctx, Some(paste_clipboard_dtor)) };
+        p.clipboard_read_text_async(Some(paste_clipboard_cb), ctx, Some(paste_clipboard_dtor));
         true
     }
 
@@ -877,31 +864,31 @@ impl Inner {
         done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
     ) {
         let surface = self.surface_ptr();
-        let fade_op = platform_ops::ops().and_then(|o| o.fade_surface);
         if !surface.is_null() {
-            if let Some(f) = fade_op {
-                unsafe {
-                    f(
-                        surface, sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx,
-                        done_dtor,
-                    )
-                };
+            if let Some(p) = platform_ops::ops() {
+                p.fade_surface(
+                    surface, sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx,
+                    done_dtor,
+                );
                 return;
             }
         }
-        // Backend without fade support — fire callbacks; on_complete typically
+        // No platform installed (early helper-process boot) — fire callbacks
+        // synchronously so any boxed state is freed; on_complete typically
         // closes the browser, which destroys the surface via Browsers::remove.
-        if let Some(f) = start_fn {
-            unsafe { f(start_ctx) };
-        }
-        if let Some(d) = start_dtor {
-            unsafe { d(start_ctx) };
-        }
-        if let Some(f) = done_fn {
-            unsafe { f(done_ctx) };
-        }
-        if let Some(d) = done_dtor {
-            unsafe { d(done_ctx) };
+        unsafe {
+            if let Some(f) = start_fn {
+                f(start_ctx);
+            }
+            if let Some(d) = start_dtor {
+                d(start_ctx);
+            }
+            if let Some(f) = done_fn {
+                f(done_ctx);
+            }
+            if let Some(d) = done_dtor {
+                d(done_ctx);
+            }
         }
     }
 
@@ -1111,10 +1098,8 @@ impl Inner {
         if url.is_empty() || url.starts_with('-') {
             return true;
         }
-        if let Some(ops) = platform_ops::ops() {
-            if let Some(f) = ops.open_external_url {
-                unsafe { f(url.as_ptr() as *const c_char, url.len()) };
-            }
+        if let Some(p) = platform_ops::ops() {
+            p.open_external_url(url.as_ptr() as *const c_char, url.len());
         }
         true
     }
@@ -1134,20 +1119,16 @@ impl Inner {
         if surface.is_null() {
             return;
         }
-        let Some(ops) = platform_ops::ops() else { return };
+        let Some(p) = platform_ops::ops() else { return };
         if is_popup {
             let (pw, ph) = self.popup_rect();
-            if let Some(f) = ops.popup_present_software {
-                unsafe { f(surface, buffer, w, h, pw, ph) };
-            }
+            p.popup_present_software(surface, buffer, w, h, pw, ph);
             return;
         }
         if !self.should_present_paint() {
             return;
         }
-        if let Some(f) = ops.surface_present_software {
-            unsafe { f(surface, dirty, n, buffer, w, h) };
-        }
+        p.surface_present_software(surface, dirty, n, buffer, w, h);
     }
 
     pub(crate) fn on_accelerated_paint(&self, is_popup: bool, info: *const c_void) {
@@ -1155,20 +1136,16 @@ impl Inner {
         if surface.is_null() || info.is_null() {
             return;
         }
-        let Some(ops) = platform_ops::ops() else { return };
+        let Some(p) = platform_ops::ops() else { return };
         if is_popup {
             let (pw, ph) = self.popup_rect();
-            if let Some(f) = ops.popup_present {
-                unsafe { f(surface, info, pw, ph) };
-            }
+            p.popup_present(surface, info, pw, ph);
             return;
         }
         if !self.should_present_paint() {
             return;
         }
-        if let Some(f) = ops.surface_present {
-            unsafe { f(surface, info) };
-        }
+        p.surface_present(surface, info);
     }
 
     fn should_present_paint(&self) -> bool {

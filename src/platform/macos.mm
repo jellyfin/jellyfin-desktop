@@ -7,15 +7,10 @@
 // tells CoreAnimation how to color-manage the content into the window's
 // working space (P3/EDR). Input is owned by src/input/input_macos.mm.
 
-#include "platform/platform.h"
-#include "platform/macos_platform.h"
-#include "common.h"
-#include "browser/browsers.h"
-#include "browser/about_browser.h"
-#include "cef/cef_app.h"
-#include "cef/cef_client.h"
+#include "color.h"
 #include "logging.h"
 #include "mpv/jfn_mpv_api.h"
+#include "shutdown/jfn_shutdown.h"
 
 #include "include/cef_application_mac.h"
 

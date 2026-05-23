@@ -496,19 +496,9 @@ else()
     endif()
 endif()
 
-# Common sources
-if(WIN32)
-    set(COMMON_SOURCES
-        src/main.cpp
-        src/platform/platform_ops.cpp
-    )
-else()
-    # Linux + macOS: shared main with platform abstraction
-    set(COMMON_SOURCES
-        src/main.cpp
-        src/platform/platform_ops.cpp
-    )
-endif()
+# Common sources — the Platform vtable lives entirely in Rust now, so
+# main.cpp is the only C++ translation unit left at the top level.
+set(COMMON_SOURCES src/main.cpp)
 
 add_executable(jellyfin-desktop
     ${COMMON_SOURCES}

@@ -256,47 +256,194 @@ pub extern "C" fn win_open_external_url(utf8: *const c_char, len: usize) {
     }
 }
 
-/// Returns the Windows `Platform` vtable by value across the C ABI.
-/// Called from C++ `make_platform(DisplayBackend::Windows)` (platform.h).
-#[unsafe(no_mangle)]
-pub extern "C" fn make_windows_platform() -> Platform {
-    Platform {
-        display: DisplayBackend::Windows,
-        early_init: Some(win_early_init),
-        init: Some(win_init),
-        cleanup: Some(win_cleanup),
-        post_window_cleanup: None,
-        alloc_surface: Some(win_alloc_surface),
-        free_surface: Some(win_free_surface),
-        surface_present: Some(win_surface_present),
-        surface_present_software: Some(win_surface_present_software),
-        surface_resize: Some(win_surface_resize),
-        surface_set_visible: Some(win_surface_set_visible),
-        restack: Some(win_restack),
-        fade_surface: Some(win_fade_surface),
-        popup_show: Some(win_popup_show),
-        popup_hide: Some(win_popup_hide),
-        popup_present: Some(win_popup_present),
-        popup_present_software: Some(win_popup_present_software),
-        set_fullscreen: Some(win_set_fullscreen),
-        toggle_fullscreen: Some(win_toggle_fullscreen),
-        begin_transition: Some(win_begin_transition),
-        end_transition: Some(win_end_transition),
-        in_transition: Some(win_in_transition),
-        set_expected_size: Some(win_set_expected_size),
-        get_scale: Some(win_get_scale),
-        get_display_scale: Some(win_get_display_scale),
-        query_window_position: Some(win_query_window_position),
-        clamp_window_geometry: Some(win_clamp_window_geometry),
-        pump: Some(win_pump),
-        run_main_loop: None,
-        wake_main_loop: None,
-        set_cursor: Some(jfn_input_windows_set_cursor),
-        set_idle_inhibit: Some(win_set_idle_inhibit),
-        set_theme_color: Some(win_set_theme_color),
-        shared_texture_supported: true,
-        cef_ozone_platform: [0; 32],
-        clipboard_read_text_async: Some(win_clipboard_read_text_async),
-        open_external_url: Some(win_open_external_url),
+// =====================================================================
+// Backend impl
+// =====================================================================
+
+use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle};
+
+pub struct WindowsPlatform;
+
+impl Platform for WindowsPlatform {
+    fn display(&self) -> DisplayBackend {
+        DisplayBackend::Windows
     }
+
+    fn early_init(&self) {
+        win_early_init();
+    }
+
+    fn init(&self, mpv: *mut c_void) -> bool {
+        win_init(mpv)
+    }
+
+    fn cleanup(&self) {
+        win_cleanup();
+    }
+
+    fn alloc_surface(&self) -> SurfaceHandle {
+        win_alloc_surface()
+    }
+
+    fn free_surface(&self, s: SurfaceHandle) {
+        win_free_surface(s);
+    }
+
+    fn surface_present(&self, s: SurfaceHandle, info: *const c_void) -> bool {
+        win_surface_present(s, info)
+    }
+
+    fn surface_present_software(
+        &self,
+        s: SurfaceHandle,
+        _dirty: *const JfnRect,
+        _dirty_len: usize,
+        _buffer: *const c_void,
+        _w: c_int,
+        _h: c_int,
+    ) -> bool {
+        win_surface_present_software(s, _dirty, _dirty_len, _buffer, _w, _h)
+    }
+
+    fn surface_resize(
+        &self,
+        s: SurfaceHandle,
+        lw: c_int,
+        lh: c_int,
+        pw: c_int,
+        ph: c_int,
+    ) {
+        win_surface_resize(s, lw, lh, pw, ph);
+    }
+
+    fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
+        win_surface_set_visible(s, visible);
+    }
+
+    fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
+        win_restack(ordered, n);
+    }
+
+    fn fade_surface(
+        &self,
+        s: SurfaceHandle,
+        sec: f32,
+        on_start: Option<unsafe extern "C" fn(*mut c_void)>,
+        start_ctx: *mut c_void,
+        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        on_done: Option<unsafe extern "C" fn(*mut c_void)>,
+        done_ctx: *mut c_void,
+        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) {
+        win_fade_surface(s, sec, on_start, start_ctx, start_dtor, on_done, done_ctx, done_dtor);
+    }
+
+    fn popup_show(&self, s: SurfaceHandle, req: *const JfnPopupRequest) {
+        win_popup_show(s, req);
+    }
+
+    fn popup_hide(&self, s: SurfaceHandle) {
+        win_popup_hide(s);
+    }
+
+    fn popup_present(
+        &self,
+        s: SurfaceHandle,
+        info: *const c_void,
+        lw: c_int,
+        lh: c_int,
+    ) {
+        win_popup_present(s, info, lw, lh);
+    }
+
+    fn popup_present_software(
+        &self,
+        s: SurfaceHandle,
+        buffer: *const c_void,
+        pw: c_int,
+        ph: c_int,
+        lw: c_int,
+        lh: c_int,
+    ) {
+        win_popup_present_software(s, buffer, pw, ph, lw, lh);
+    }
+
+    fn set_fullscreen(&self, v: bool) {
+        win_set_fullscreen(v);
+    }
+
+    fn toggle_fullscreen(&self) {
+        win_toggle_fullscreen();
+    }
+
+    fn begin_transition(&self) {
+        win_begin_transition();
+    }
+
+    fn end_transition(&self) {
+        win_end_transition();
+    }
+
+    fn in_transition(&self) -> bool {
+        win_in_transition()
+    }
+
+    fn set_expected_size(&self, w: c_int, h: c_int) {
+        win_set_expected_size(w, h);
+    }
+
+    fn get_scale(&self) -> f32 {
+        win_get_scale()
+    }
+
+    fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
+        win_get_display_scale(x, y)
+    }
+
+    fn query_window_position(&self, x: *mut c_int, y: *mut c_int) -> bool {
+        win_query_window_position(x, y)
+    }
+
+    fn clamp_window_geometry(
+        &self,
+        w: *mut c_int,
+        h: *mut c_int,
+        x: *mut c_int,
+        y: *mut c_int,
+    ) {
+        win_clamp_window_geometry(w, h, x, y);
+    }
+
+    fn pump(&self) {
+        win_pump();
+    }
+
+    fn set_cursor(&self, t: c_int) {
+        jfn_input_windows_set_cursor(t);
+    }
+
+    fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
+        win_set_idle_inhibit(level as c_int);
+    }
+
+    fn set_theme_color(&self, rgb: u32) {
+        win_set_theme_color(rgb);
+    }
+
+    fn clipboard_read_text_async(
+        &self,
+        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
+        ctx: *mut c_void,
+        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) {
+        win_clipboard_read_text_async(on_done, ctx, dtor);
+    }
+
+    fn open_external_url(&self, utf8: *const c_char, len: usize) {
+        win_open_external_url(utf8, len);
+    }
+}
+
+pub fn make_windows_platform() -> Box<dyn Platform> {
+    Box::new(WindowsPlatform)
 }
