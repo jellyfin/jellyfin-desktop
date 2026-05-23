@@ -47,11 +47,6 @@ pub extern "C" fn win_pump() {
 // =====================================================================
 
 unsafe extern "C" {
-    /// C++ helper that posts a SetThreadExecutionState(flags) call onto
-    /// TID_UI so the assertion lives on a stable CEF UI thread. Per-thread
-    /// state is released when that thread calls ES_CONTINUOUS alone.
-    fn jfn_win_post_execution_state(flags: u32);
-
     // dwmapi.dll — tints the titlebar to match the app's theme color.
     fn DwmSetWindowAttribute(
         hwnd: *mut c_void,
@@ -59,6 +54,79 @@ unsafe extern "C" {
         pv_attribute: *const c_void,
         cb_attribute: u32,
     ) -> i32;
+}
+
+// =====================================================================
+// CEF task bouncer — posts SetThreadExecutionState(flags) onto TID_UI so
+// the assertion lives on a stable CEF UI thread. Per-thread state is
+// released when that thread calls ES_CONTINUOUS alone. Allocates a small
+// ref-counted cef_task_t whose execute() runs on TID_UI and self-deletes.
+// =====================================================================
+
+use cef_dll_sys::{
+    cef_base_ref_counted_t, cef_post_task, cef_task_t, cef_thread_id_t::TID_UI,
+};
+use std::sync::atomic::AtomicI32;
+
+#[repr(C)]
+struct ExecutionStateTask {
+    task: cef_task_t,
+    ref_count: AtomicI32,
+    flags: u32,
+}
+
+unsafe extern "C" fn task_add_ref(self_: *mut cef_base_ref_counted_t) {
+    let t = self_ as *mut ExecutionStateTask;
+    unsafe { (*t).ref_count.fetch_add(1, Ordering::SeqCst) };
+}
+
+unsafe extern "C" fn task_release(self_: *mut cef_base_ref_counted_t) -> c_int {
+    let t = self_ as *mut ExecutionStateTask;
+    let prev = unsafe { (*t).ref_count.fetch_sub(1, Ordering::SeqCst) };
+    if prev == 1 {
+        let _ = unsafe { Box::from_raw(t) };
+        return 1;
+    }
+    0
+}
+
+unsafe extern "C" fn task_has_one_ref(self_: *mut cef_base_ref_counted_t) -> c_int {
+    let t = self_ as *mut ExecutionStateTask;
+    (unsafe { (*t).ref_count.load(Ordering::SeqCst) } == 1) as c_int
+}
+
+unsafe extern "C" fn task_has_at_least_one_ref(self_: *mut cef_base_ref_counted_t) -> c_int {
+    let t = self_ as *mut ExecutionStateTask;
+    (unsafe { (*t).ref_count.load(Ordering::SeqCst) } >= 1) as c_int
+}
+
+unsafe extern "C" fn task_execute(self_: *mut cef_task_t) {
+    let t = self_ as *mut ExecutionStateTask;
+    let flags = unsafe { (*t).flags };
+    unsafe { SetThreadExecutionState(flags) };
+}
+
+unsafe extern "C" {
+    fn SetThreadExecutionState(flags: u32) -> u32;
+}
+
+fn post_execution_state(flags: u32) {
+    let boxed = Box::new(ExecutionStateTask {
+        task: cef_task_t {
+            base: cef_base_ref_counted_t {
+                size: std::mem::size_of::<ExecutionStateTask>(),
+                add_ref: Some(task_add_ref),
+                release: Some(task_release),
+                has_one_ref: Some(task_has_one_ref),
+                has_at_least_one_ref: Some(task_has_at_least_one_ref),
+            },
+            execute: Some(task_execute),
+        },
+        ref_count: AtomicI32::new(1),
+        flags,
+    });
+    let raw = Box::into_raw(boxed);
+    unsafe { cef_post_task(TID_UI, raw as *mut cef_task_t) };
 }
 
 const DWMWA_CAPTION_COLOR: u32 = 35;
@@ -100,7 +168,7 @@ pub extern "C" fn win_set_idle_inhibit(level: c_int) {
         1 => flags |= ES_SYSTEM_REQUIRED,
         _ => {}
     }
-    unsafe { jfn_win_post_execution_state(flags) };
+    post_execution_state(flags);
 }
 
 // =====================================================================

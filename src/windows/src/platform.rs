@@ -36,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 unsafe extern "C" {
     // jellyfin-desktop runtime hooks
-    fn initiate_shutdown();
+    fn jfn_shutdown_initiate();
 
     // mpv handle + property/window helpers (src/mpv/jfn_mpv_api.h)
     fn jfn_mpv_handle_get() -> *mut c_void;
@@ -298,7 +298,7 @@ unsafe extern "system" fn mpv_wndproc_hook(
                     crate::compositor::jfn_win_update_surface_size(lw, lh, pw, ph);
                 }
             } else if msg.message == WM_CLOSE {
-                unsafe { initiate_shutdown() };
+                unsafe { jfn_shutdown_initiate() };
             }
         }
     }
