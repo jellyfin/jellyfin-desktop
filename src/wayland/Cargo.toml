@@ -1,8 +1,8 @@
 [package]
 name = "jfn-wayland"
 version = "0.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_wayland"
@@ -14,10 +14,10 @@ kde-palette = []
 
 [dependencies]
 jfn-platform-abi = { path = "../platform_abi" }
-cef-dll-sys = { version = "=148.1.0" }
-libc = "0.2"
+cef-dll-sys.workspace = true
+libc.workspace = true
 libloading = "0.9"
-log = "0.4"
+log.workspace = true
 memmap2 = "0.9"
 smithay-client-toolkit = { version = "0.20", default-features = false }
 wayland-backend = { version = "0.3", features = ["client_system"] }

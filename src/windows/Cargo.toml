@@ -1,8 +1,8 @@
 [package]
 name = "jfn-windows"
 version = "0.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_windows"
@@ -10,9 +10,9 @@ crate-type = ["rlib"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
 jfn-platform-abi = { path = "../platform_abi" }
-cef-dll-sys = { version = "=148.1.0" }
-tracing = "0.1"
-windows = { version = "0.62", features = [
+cef-dll-sys.workspace = true
+tracing.workspace = true
+windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
@@ -29,4 +29,4 @@ windows = { version = "0.62", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
-windows-core = "0.62"
+windows-core.workspace = true

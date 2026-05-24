@@ -1,8 +1,8 @@
 [package]
 name = "jfn-windows-sink"
 version = "0.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_windows_sink"
@@ -12,8 +12,8 @@ crate-type = ["rlib"]
 jfn-mpv = { path = "../mpv" }
 jfn-playback = { path = "../playback" }
 jfn-cef = { path = "../jfn_cef", default-features = false }
-tracing = "0.1"
-windows = { version = "0.62", features = [
+tracing.workspace = true
+windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_System_Com",
@@ -25,5 +25,5 @@ windows = { version = "0.62", features = [
     "Foundation",
     "Foundation_Collections",
 ] }
-windows-core = "0.62"
+windows-core.workspace = true
 windows-future = "0.3"

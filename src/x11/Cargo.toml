@@ -1,8 +1,8 @@
 [package]
 name = "jfn-x11"
 version = "0.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_x11"
@@ -10,7 +10,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 jfn-platform-abi = { path = "../platform_abi" }
-libc = "0.2"
+libc.workspace = true
 xcb = { version = "1.7", features = ["shm", "shape", "xkb", "as-raw-xcb-connection"] }
 xcb-util-cursor-sys = "0.2"
 xkbcommon = { version = "0.9", default-features = false, features = ["x11"] }

@@ -1,12 +1,12 @@
 [package]
 name = "jfn-open-url-linux"
 version = "0.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_open_url_linux"
 crate-type = ["rlib"]
 
 [dependencies]
-log = "0.4"
+log.workspace = true
