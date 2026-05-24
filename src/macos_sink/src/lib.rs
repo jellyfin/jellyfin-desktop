@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use jfn_playback::{MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
@@ -35,103 +36,19 @@ fn ns_key(s: &NSString) -> &ProtocolObject<dyn NSCopying> {
     ProtocolObject::from_ref(s)
 }
 
-// =====================================================================
-// Mirror of jfn-playback's C ABI event shape — needed because the sink
-// registers as an event consumer through the C vtable
-// (jfn_playback_register_event_sink).
-// =====================================================================
-
-#[repr(C)]
-struct JfnBufferedRange {
-    start_ticks: i64,
-    end_ticks: i64,
-}
-
-#[repr(C)]
-struct JfnPlaybackSnapshotC {
-    presence: u8,
-    phase: u8,
-    seeking: bool,
-    buffering: bool,
-    media_type: u8,
-    position_us: i64,
-    variant_switch_pending: bool,
-    rate: f64,
-    duration_us: i64,
-    fullscreen: bool,
-    maximized_before_fullscreen: bool,
-    layout_w: i32,
-    layout_h: i32,
-    pixel_w: i32,
-    pixel_h: i32,
-    display_hz: f64,
-    buffered: *const JfnBufferedRange,
-    buffered_len: usize,
-}
-
-#[repr(C)]
-struct JfnMediaMetadataC {
-    id: *const c_char,
-    id_len: usize,
-    title: *const c_char,
-    title_len: usize,
-    artist: *const c_char,
-    artist_len: usize,
-    album: *const c_char,
-    album_len: usize,
-    track_number: i32,
-    duration_us: i64,
-    art_url: *const c_char,
-    art_url_len: usize,
-    art_data_uri: *const c_char,
-    art_data_uri_len: usize,
-    media_type: u8,
-}
-
-#[repr(C)]
-struct JfnPlaybackEventC {
-    kind: u8,
-    flag: bool,
-    error_message: *const c_char,
-    error_message_len: usize,
-    snapshot: JfnPlaybackSnapshotC,
-    metadata: JfnMediaMetadataC,
-    artwork_uri: *const c_char,
-    artwork_uri_len: usize,
-    can_go_next: bool,
-    can_go_prev: bool,
-}
-
-// Mirrors jfn-playback's PlaybackEvent::Kind discriminants.
-mod kind {
-    pub const STARTED: u8 = 0;
-    pub const PAUSED: u8 = 1;
-    pub const FINISHED: u8 = 2;
-    pub const CANCELED: u8 = 3;
-    pub const ERROR: u8 = 4;
-    pub const TRACK_LOADED: u8 = 8;
-    pub const POSITION_CHANGED: u8 = 9;
-    pub const RATE_CHANGED: u8 = 11;
-    pub const METADATA_CHANGED: u8 = 16;
-    pub const ARTWORK_CHANGED: u8 = 17;
-    pub const QUEUE_CAPS_CHANGED: u8 = 18;
-    pub const SEEKED: u8 = 19;
-}
-
-mod media_type {
-    pub const AUDIO: u8 = 1;
-    pub const _VIDEO: u8 = 2;
-}
-
-mod phase {
-    pub const _STARTING: u8 = 0;
-    pub const PLAYING: u8 = 1;
-    pub const PAUSED: u8 = 2;
-    pub const STOPPED: u8 = 3;
+// Stopped maps to MPNowPlayingPlaybackState::Stopped via a local Phase
+// enum so we keep the kind→phase mapping table.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Phase {
+    Playing,
+    Paused,
+    Stopped,
 }
 
 // =====================================================================
-// Owned event copy (heap-allocated for the consumer thread).
+// Owned event copy (heap-allocated for the consumer thread). Holds only
+// the fields the consumer reads, so we avoid keeping the full event
+// clone alive across thread hops.
 // =====================================================================
 
 #[derive(Default, Clone)]
@@ -143,11 +60,11 @@ struct OwnedMetadata {
     track_number: i32,
     duration_us: i64,
     art_data_uri: String,
-    media_type: u8,
+    media_type: PbMediaType,
 }
 
 struct OwnedEvent {
-    kind: u8,
+    kind: PlaybackEventKind,
     metadata: OwnedMetadata,
     snapshot_position_us: i64,
     snapshot_rate: f64,
@@ -156,40 +73,24 @@ struct OwnedEvent {
     can_go_prev: bool,
 }
 
-unsafe fn cstr_slice(p: *const c_char, n: usize) -> String {
-    if p.is_null() || n == 0 {
-        return String::new();
-    }
-    let s = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
-    String::from_utf8_lossy(s).into_owned()
-}
-
-unsafe fn owned_metadata(m: &JfnMediaMetadataC) -> OwnedMetadata {
-    unsafe {
-        OwnedMetadata {
-            id: cstr_slice(m.id, m.id_len),
-            title: cstr_slice(m.title, m.title_len),
-            artist: cstr_slice(m.artist, m.artist_len),
-            album: cstr_slice(m.album, m.album_len),
-            track_number: m.track_number,
-            duration_us: m.duration_us,
-            art_data_uri: cstr_slice(m.art_data_uri, m.art_data_uri_len),
-            media_type: m.media_type,
-        }
-    }
-}
-
-unsafe fn owned_event(ev: &JfnPlaybackEventC) -> OwnedEvent {
-    unsafe {
-        OwnedEvent {
-            kind: ev.kind,
-            metadata: owned_metadata(&ev.metadata),
-            snapshot_position_us: ev.snapshot.position_us,
-            snapshot_rate: ev.snapshot.rate,
-            artwork_uri: cstr_slice(ev.artwork_uri, ev.artwork_uri_len),
-            can_go_next: ev.can_go_next,
-            can_go_prev: ev.can_go_prev,
-        }
+fn owned_event(ev: &PlaybackEvent) -> OwnedEvent {
+    OwnedEvent {
+        kind: ev.kind,
+        metadata: OwnedMetadata {
+            id: ev.metadata.id.clone(),
+            title: ev.metadata.title.clone(),
+            artist: ev.metadata.artist.clone(),
+            album: ev.metadata.album.clone(),
+            track_number: ev.metadata.track_number,
+            duration_us: ev.metadata.duration_us,
+            art_data_uri: ev.metadata.art_data_uri.clone(),
+            media_type: ev.metadata.media_type,
+        },
+        snapshot_position_us: ev.snapshot.position_us,
+        snapshot_rate: ev.snapshot.rate,
+        artwork_uri: ev.artwork_uri.clone(),
+        can_go_next: ev.can_go_next,
+        can_go_prev: ev.can_go_prev,
     }
 }
 
@@ -220,48 +121,32 @@ fn inner() -> Arc<Inner> {
     .clone()
 }
 
-// Coordinator-side: jfn-playback walks every registered event sink via
-// this thunk. Heap-copies the event into the consumer queue.
-extern "C" fn event_sink_thunk(_ctx: *mut c_void, ev: *const JfnPlaybackEventC) -> bool {
-    if ev.is_null() {
-        return false;
-    }
-    let owned = unsafe { owned_event(&*ev) };
+// Coordinator-side: jfn-playback invokes this for every event. We copy
+// the small subset of fields the consumer thread reads.
+fn on_event(ev: &PlaybackEvent) {
+    let owned = owned_event(ev);
     let inner = inner();
     {
-        let mut q = match inner.queue.lock() {
-            Ok(q) => q,
-            Err(_) => return false,
-        };
+        let mut q = inner.queue.lock().expect("queue poisoned");
         if q.len() >= EVENT_QUEUE_CAP {
-            return false;
+            return;
         }
         q.push_back(owned);
     }
     inner.cv.notify_one();
-    true
 }
 
 // =====================================================================
-// Public start/stop entry points. Called from jfn_app_run_with_cef.
+// Public start/stop entry points.
 // =====================================================================
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_macos_sink_start() {
+pub fn jfn_macos_sink_start() {
     let inner = inner();
     if inner.running.swap(true, Ordering::AcqRel) {
         return;
     }
 
-    // Register with the coordinator. ctx is unused — sink state lives in
-    // the SINK OnceLock. The thunk signature is bytewise identical to
-    // jfn-playback's JfnPlaybackEventC type (mirrored above).
-    unsafe {
-        jfn_playback::ffi::jfn_playback_register_event_sink(
-            std::ptr::null_mut(),
-            std::mem::transmute(event_sink_thunk as extern "C" fn(_, _) -> _),
-        );
-    }
+    jfn_playback::ffi::register_event_sink(Box::new(on_event));
 
     // Consumer thread drains the queue and dispatches MPNowPlayingInfo /
     // command-center updates onto the main thread.
@@ -271,8 +156,7 @@ pub extern "C" fn jfn_macos_sink_start() {
         .expect("spawn macos-sink thread");
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_macos_sink_stop() {
+pub fn jfn_macos_sink_stop() {
     let inner = match SINK.get() {
         Some(i) => i.clone(),
         None => return,
@@ -528,12 +412,12 @@ fn media_remote_set_can_be_now_playing(yes: bool) {
 const VISIBILITY_NEVER: c_int = 3;
 const VISIBILITY_ALWAYS: c_int = 1;
 
-fn media_remote_set_visibility_for_phase(phase: u8) {
+fn media_remote_set_visibility_for_phase(phase: Phase) {
     if let Some(mr) = media_remote() {
         if let (Some(set_vis), Some(get_origin)) = (mr.set_visibility, mr.get_local_origin) {
             unsafe {
                 let origin = get_origin();
-                let vis = if phase == phase::STOPPED {
+                let vis = if phase == Phase::Stopped {
                     VISIBILITY_NEVER
                 } else {
                     VISIBILITY_ALWAYS
@@ -548,34 +432,35 @@ fn media_remote_set_visibility_for_phase(phase: u8) {
 // Event delivery (mirrors C++ MacosSink::deliver).
 // =====================================================================
 
-fn map_kind_to_phase(kind: u8) -> u8 {
+fn map_kind_to_phase(kind: PlaybackEventKind) -> Phase {
     match kind {
-        kind::STARTED => phase::PLAYING,
-        kind::PAUSED | kind::TRACK_LOADED => phase::PAUSED,
-        kind::FINISHED | kind::CANCELED | kind::ERROR => phase::STOPPED,
-        _ => phase::STOPPED,
+        PlaybackEventKind::Started => Phase::Playing,
+        PlaybackEventKind::Paused | PlaybackEventKind::TrackLoaded => Phase::Paused,
+        PlaybackEventKind::Finished
+        | PlaybackEventKind::Canceled
+        | PlaybackEventKind::Error => Phase::Stopped,
+        _ => Phase::Stopped,
     }
 }
 
-fn convert_state(phase: u8) -> MPNowPlayingPlaybackState {
+fn convert_state(phase: Phase) -> MPNowPlayingPlaybackState {
     match phase {
-        self::phase::PLAYING => MPNowPlayingPlaybackState::Playing,
-        self::phase::PAUSED => MPNowPlayingPlaybackState::Paused,
-        self::phase::STOPPED => MPNowPlayingPlaybackState::Stopped,
-        _ => MPNowPlayingPlaybackState::Unknown,
+        Phase::Playing => MPNowPlayingPlaybackState::Playing,
+        Phase::Paused => MPNowPlayingPlaybackState::Paused,
+        Phase::Stopped => MPNowPlayingPlaybackState::Stopped,
     }
 }
 
 fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
     match ev.kind {
-        kind::METADATA_CHANGED => {
+        PlaybackEventKind::MetadataChanged => {
             if !ev.metadata.id.is_empty() && ev.metadata.id == state.metadata.id {
                 return;
             }
             state.metadata = ev.metadata.clone();
             update_now_playing_info(state);
         }
-        kind::ARTWORK_CHANGED => {
+        PlaybackEventKind::ArtworkChanged => {
             state.metadata.art_data_uri = ev.artwork_uri.clone();
             let Some(comma) = ev.artwork_uri.find(',') else {
                 return;
@@ -614,19 +499,19 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
                 }
             }
         }
-        kind::QUEUE_CAPS_CHANGED => unsafe {
+        PlaybackEventKind::QueueCapsChanged => unsafe {
             let center = MPRemoteCommandCenter::sharedCommandCenter();
             center.nextTrackCommand().setEnabled(ev.can_go_next);
             center.previousTrackCommand().setEnabled(ev.can_go_prev);
         },
-        kind::STARTED
-        | kind::PAUSED
-        | kind::TRACK_LOADED
-        | kind::FINISHED
-        | kind::CANCELED
-        | kind::ERROR => {
+        PlaybackEventKind::Started
+        | PlaybackEventKind::Paused
+        | PlaybackEventKind::TrackLoaded
+        | PlaybackEventKind::Finished
+        | PlaybackEventKind::Canceled
+        | PlaybackEventKind::Error => {
             let p = map_kind_to_phase(ev.kind);
-            if p == phase::STOPPED {
+            if p == Phase::Stopped {
                 state.metadata = OwnedMetadata::default();
                 state.position_us = 0;
                 unsafe {
@@ -646,14 +531,14 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
                 center.setPlaybackState(convert_state(p));
             }
             media_remote_set_visibility_for_phase(p);
-            if p != phase::STOPPED {
+            if p != Phase::Stopped {
                 update_timeline_throttled(state, ev.snapshot_position_us, true);
             }
         }
-        kind::POSITION_CHANGED => {
+        PlaybackEventKind::PositionChanged => {
             update_timeline_throttled(state, ev.snapshot_position_us, false);
         }
-        kind::RATE_CHANGED => unsafe {
+        PlaybackEventKind::RateChanged => unsafe {
             state.rate = ev.snapshot_rate;
             let center = MPNowPlayingInfoCenter::defaultCenter();
             if let Some(existing) = center.nowPlayingInfo() {
@@ -663,7 +548,7 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
                 center.setNowPlayingInfo(Some(&info));
             }
         },
-        kind::SEEKED => unsafe {
+        PlaybackEventKind::Seeked => unsafe {
             state.position_us = ev.snapshot_position_us;
             let center = MPNowPlayingInfoCenter::defaultCenter();
             if let Some(existing) = center.nowPlayingInfo() {
@@ -742,7 +627,7 @@ fn update_now_playing_info(state: &mut ConsumerState) {
         info.setObject_forKey(&*rate_v as &AnyObject, ns_key(&*rate_key));
         let media_type_key = mp_const("MPNowPlayingInfoPropertyMediaType");
         let media_type_v: MPNowPlayingInfoMediaType =
-            if state.metadata.media_type == media_type::AUDIO {
+            if state.metadata.media_type == PbMediaType::Audio {
                 MPNowPlayingInfoMediaType::Audio
             } else {
                 MPNowPlayingInfoMediaType::Video

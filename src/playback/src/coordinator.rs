@@ -10,12 +10,12 @@ use std::thread::{self, JoinHandle};
 
 use crate::wake_event::WakeEvent;
 
-use crate::ffi::{ActionSinkEntry, EventSinkEntry};
+use crate::ffi::{ActionSink, EventSink};
 use crate::state_machine::PlaybackStateMachine;
 use crate::types::*;
 
 #[derive(Debug)]
-pub(crate) enum Input {
+pub enum Input {
     FileLoaded,
     LoadStarting(String),
     PauseChanged(bool),
@@ -52,20 +52,15 @@ pub(crate) enum Input {
     Seeked(i64),
 }
 
-/// Rust-side sink closure types. Run inline on the coordinator worker
-/// thread immediately after the FFI sinks. Must not block.
-pub(crate) type BuiltinEventSink = Box<dyn Fn(&PlaybackEvent) + Send + Sync>;
-pub(crate) type BuiltinActionSink = Box<dyn Fn(&PlaybackAction) + Send + Sync>;
-
 struct Shared {
     queue: Mutex<VecDeque<Input>>,
     wake: WakeEvent,
     running: AtomicBool,
     snapshot: Mutex<PlaybackSnapshot>,
-    event_sinks: Mutex<Vec<EventSinkEntry>>,
-    action_sinks: Mutex<Vec<ActionSinkEntry>>,
-    builtin_event_sinks: Mutex<Vec<BuiltinEventSink>>,
-    builtin_action_sinks: Mutex<Vec<BuiltinActionSink>>,
+    event_sinks: Mutex<Vec<EventSink>>,
+    action_sinks: Mutex<Vec<ActionSink>>,
+    builtin_event_sinks: Mutex<Vec<EventSink>>,
+    builtin_action_sinks: Mutex<Vec<ActionSink>>,
 }
 
 pub struct PlaybackCoordinator {
@@ -114,7 +109,7 @@ impl PlaybackCoordinator {
         }
     }
 
-    pub(crate) fn enqueue(&self, in_: Input) {
+    pub fn enqueue(&self, in_: Input) {
         {
             let mut q = self.shared.queue.lock().unwrap();
             q.push_back(in_);
@@ -126,19 +121,19 @@ impl PlaybackCoordinator {
         self.shared.snapshot.lock().unwrap().clone()
     }
 
-    pub(crate) fn add_event_sink(&self, sink: EventSinkEntry) {
+    pub fn add_event_sink(&self, sink: EventSink) {
         self.shared.event_sinks.lock().unwrap().push(sink);
     }
 
-    pub(crate) fn add_action_sink(&self, sink: ActionSinkEntry) {
+    pub fn add_action_sink(&self, sink: ActionSink) {
         self.shared.action_sinks.lock().unwrap().push(sink);
     }
 
-    pub fn add_builtin_event_sink(&self, sink: BuiltinEventSink) {
+    pub fn add_builtin_event_sink(&self, sink: EventSink) {
         self.shared.builtin_event_sinks.lock().unwrap().push(sink);
     }
 
-    pub fn add_builtin_action_sink(&self, sink: BuiltinActionSink) {
+    pub fn add_builtin_action_sink(&self, sink: ActionSink) {
         self.shared.builtin_action_sinks.lock().unwrap().push(sink);
     }
 }
@@ -179,18 +174,18 @@ fn worker(shared: Arc<Shared>) {
             *s = snap;
         }
 
-        // Sinks: dispatched in registration order. Each sink's try_post
-        // must not block; the sink owns its own queue + consumer thread.
+        // Sinks: dispatched in registration order. Each closure must
+        // not block; sinks own their own queue + consumer thread.
         let event_sinks = shared.event_sinks.lock().unwrap();
         for sink in event_sinks.iter() {
             for e in &events {
-                sink.dispatch(e);
+                sink(e);
             }
         }
         let action_sinks = shared.action_sinks.lock().unwrap();
         for sink in action_sinks.iter() {
             for a in &actions {
-                sink.dispatch(a);
+                sink(a);
             }
         }
         let builtin_event_sinks = shared.builtin_event_sinks.lock().unwrap();

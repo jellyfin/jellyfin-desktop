@@ -13,11 +13,12 @@
 #![cfg(target_os = "windows")]
 
 use std::collections::VecDeque;
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use jfn_playback::{MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
 use windows::Foundation::TimeSpan;
 use windows::Media::{
     MediaPlaybackStatus, MediaPlaybackType, SystemMediaTransportControls,
@@ -32,91 +33,6 @@ use windows::Win32::Security::Cryptography::{CRYPT_STRING_BASE64, CryptStringToB
 use windows::Win32::System::WinRT::{ISystemMediaTransportControlsInterop, RoGetActivationFactory};
 use windows::core::{HSTRING, Interface, h};
 
-// =====================================================================
-// Mirror of jfn-playback's C ABI event shape (kept private so we don't
-// add a cross-crate dependency on the raw C types).
-// =====================================================================
-
-#[repr(C)]
-struct JfnBufferedRange {
-    start_ticks: i64,
-    end_ticks: i64,
-}
-
-#[repr(C)]
-struct JfnPlaybackSnapshotC {
-    presence: u8,
-    phase: u8,
-    seeking: bool,
-    buffering: bool,
-    media_type: u8,
-    position_us: i64,
-    variant_switch_pending: bool,
-    rate: f64,
-    duration_us: i64,
-    fullscreen: bool,
-    maximized_before_fullscreen: bool,
-    layout_w: i32,
-    layout_h: i32,
-    pixel_w: i32,
-    pixel_h: i32,
-    display_hz: f64,
-    buffered: *const JfnBufferedRange,
-    buffered_len: usize,
-}
-
-#[repr(C)]
-struct JfnMediaMetadataC {
-    id: *const c_char,
-    id_len: usize,
-    title: *const c_char,
-    title_len: usize,
-    artist: *const c_char,
-    artist_len: usize,
-    album: *const c_char,
-    album_len: usize,
-    track_number: i32,
-    duration_us: i64,
-    art_url: *const c_char,
-    art_url_len: usize,
-    art_data_uri: *const c_char,
-    art_data_uri_len: usize,
-    media_type: u8,
-}
-
-#[repr(C)]
-struct JfnPlaybackEventC {
-    kind: u8,
-    flag: bool,
-    error_message: *const c_char,
-    error_message_len: usize,
-    snapshot: JfnPlaybackSnapshotC,
-    metadata: JfnMediaMetadataC,
-    artwork_uri: *const c_char,
-    artwork_uri_len: usize,
-    can_go_next: bool,
-    can_go_prev: bool,
-}
-
-mod kind {
-    pub const STARTED: u8 = 0;
-    pub const PAUSED: u8 = 1;
-    pub const FINISHED: u8 = 2;
-    pub const CANCELED: u8 = 3;
-    pub const ERROR: u8 = 4;
-    pub const TRACK_LOADED: u8 = 8;
-    pub const POSITION_CHANGED: u8 = 9;
-    pub const METADATA_CHANGED: u8 = 16;
-    pub const ARTWORK_CHANGED: u8 = 17;
-    pub const QUEUE_CAPS_CHANGED: u8 = 18;
-    pub const SEEKED: u8 = 19;
-}
-
-mod media_type {
-    pub const AUDIO: u8 = 1;
-    pub const _VIDEO: u8 = 2;
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Playing,
@@ -125,7 +41,9 @@ enum Phase {
 }
 
 // =====================================================================
-// Owned event copy.
+// Owned event copy — slim mirror of PlaybackEvent fields the consumer
+// thread actually uses, so we can fan events out without holding the
+// full event clone in memory.
 // =====================================================================
 
 #[derive(Default, Clone)]
@@ -136,11 +54,11 @@ struct OwnedMetadata {
     album: String,
     track_number: i32,
     duration_us: i64,
-    media_type: u8,
+    media_type: PbMediaType,
 }
 
 struct OwnedEvent {
-    kind: u8,
+    kind: PlaybackEventKind,
     metadata: OwnedMetadata,
     position_us: i64,
     artwork_uri: String,
@@ -148,38 +66,22 @@ struct OwnedEvent {
     can_go_prev: bool,
 }
 
-unsafe fn cstr_slice(p: *const c_char, n: usize) -> String {
-    if p.is_null() || n == 0 {
-        return String::new();
-    }
-    let s = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
-    String::from_utf8_lossy(s).into_owned()
-}
-
-unsafe fn owned_metadata(m: &JfnMediaMetadataC) -> OwnedMetadata {
-    unsafe {
-        OwnedMetadata {
-            id: cstr_slice(m.id, m.id_len),
-            title: cstr_slice(m.title, m.title_len),
-            artist: cstr_slice(m.artist, m.artist_len),
-            album: cstr_slice(m.album, m.album_len),
-            track_number: m.track_number,
-            duration_us: m.duration_us,
-            media_type: m.media_type,
-        }
-    }
-}
-
-unsafe fn owned_event(ev: &JfnPlaybackEventC) -> OwnedEvent {
-    unsafe {
-        OwnedEvent {
-            kind: ev.kind,
-            metadata: owned_metadata(&ev.metadata),
-            position_us: ev.snapshot.position_us,
-            artwork_uri: cstr_slice(ev.artwork_uri, ev.artwork_uri_len),
-            can_go_next: ev.can_go_next,
-            can_go_prev: ev.can_go_prev,
-        }
+fn owned_event(ev: &PlaybackEvent) -> OwnedEvent {
+    OwnedEvent {
+        kind: ev.kind,
+        metadata: OwnedMetadata {
+            id: ev.metadata.id.clone(),
+            title: ev.metadata.title.clone(),
+            artist: ev.metadata.artist.clone(),
+            album: ev.metadata.album.clone(),
+            track_number: ev.metadata.track_number,
+            duration_us: ev.metadata.duration_us,
+            media_type: ev.metadata.media_type,
+        },
+        position_us: ev.snapshot.position_us,
+        artwork_uri: ev.artwork_uri.clone(),
+        can_go_next: ev.can_go_next,
+        can_go_prev: ev.can_go_prev,
     }
 }
 
@@ -209,42 +111,29 @@ fn inner() -> Arc<Inner> {
     .clone()
 }
 
-extern "C" fn event_sink_thunk(_ctx: *mut c_void, ev: *const JfnPlaybackEventC) -> bool {
-    if ev.is_null() {
-        return false;
-    }
-    let owned = unsafe { owned_event(&*ev) };
+fn on_event(ev: &PlaybackEvent) {
+    let owned = owned_event(ev);
     let inner = inner();
     {
-        let mut q = match inner.queue.lock() {
-            Ok(q) => q,
-            Err(_) => return false,
-        };
+        let mut q = inner.queue.lock().expect("queue poisoned");
         if q.len() >= EVENT_QUEUE_CAP {
-            return false;
+            return;
         }
         q.push_back(owned);
     }
     inner.cv.notify_one();
-    true
 }
 
 /// Start the sink. `hwnd_raw` is the HWND of the mpv window — required
 /// to bind SMTC via ISystemMediaTransportControlsInterop::GetForWindow.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_windows_sink_start_for(hwnd_raw: isize) {
+pub fn jfn_windows_sink_start_for(hwnd_raw: isize) {
     let inner = inner();
     if inner.running.swap(true, Ordering::AcqRel) {
         return;
     }
     *inner.hwnd.lock().expect("hwnd poisoned") = hwnd_raw;
 
-    unsafe {
-        jfn_playback::ffi::jfn_playback_register_event_sink(
-            std::ptr::null_mut(),
-            std::mem::transmute(event_sink_thunk as extern "C" fn(_, _) -> _),
-        );
-    }
+    jfn_playback::ffi::register_event_sink(Box::new(on_event));
 
     std::thread::Builder::new()
         .name("windows-sink".into())
@@ -253,10 +142,7 @@ pub extern "C" fn jfn_windows_sink_start_for(hwnd_raw: isize) {
 }
 
 /// Convenience entry: queries mpv for the window-id and starts the sink.
-/// Mirrors the C++ `jfn_app_run_with_cef` block that constructs a
-/// WindowsSink from `jfn_mpv_get_property_int("window-id", &wid)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_windows_sink_start() {
+pub fn jfn_windows_sink_start() {
     let mut wid: i64 = 0;
     let name = std::ffi::CString::new("window-id").expect("nul");
     let rc = unsafe { jfn_mpv::api::jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
@@ -267,8 +153,7 @@ pub extern "C" fn jfn_windows_sink_start() {
     jfn_windows_sink_start_for(wid as isize);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_windows_sink_stop() {
+pub fn jfn_windows_sink_stop() {
     let inner = match SINK.get() {
         Some(i) => i.clone(),
         None => return,
@@ -434,11 +319,13 @@ struct ConsumerState {
     pending_update: bool,
 }
 
-fn map_kind_to_phase(kind: u8) -> Phase {
+fn map_kind_to_phase(kind: PlaybackEventKind) -> Phase {
     match kind {
-        kind::STARTED => Phase::Playing,
-        kind::PAUSED | kind::TRACK_LOADED => Phase::Paused,
-        kind::FINISHED | kind::CANCELED | kind::ERROR => Phase::Stopped,
+        PlaybackEventKind::Started => Phase::Playing,
+        PlaybackEventKind::Paused | PlaybackEventKind::TrackLoaded => Phase::Paused,
+        PlaybackEventKind::Finished
+        | PlaybackEventKind::Canceled
+        | PlaybackEventKind::Error => Phase::Stopped,
         _ => Phase::Stopped,
     }
 }
@@ -463,7 +350,7 @@ fn on_button_pressed(button: SystemMediaTransportControlsButton) {
 
 fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
     match ev.kind {
-        kind::METADATA_CHANGED => {
+        PlaybackEventKind::MetadataChanged => {
             if !ev.metadata.id.is_empty() && ev.metadata.id == state.metadata.id {
                 return;
             }
@@ -472,7 +359,7 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
                 update_display_properties(state, smtc);
             }
         }
-        kind::ARTWORK_CHANGED => {
+        PlaybackEventKind::ArtworkChanged => {
             let Some(smtc) = smtc.as_mut() else { return };
             if ev.artwork_uri.is_empty() {
                 return;
@@ -491,18 +378,18 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
                 smtc.cached_thumbnail = Some(ref_stream);
             }
         }
-        kind::QUEUE_CAPS_CHANGED => {
+        PlaybackEventKind::QueueCapsChanged => {
             if let Some(s) = smtc.as_ref() {
                 let _ = s.smtc.SetIsNextEnabled(ev.can_go_next);
                 let _ = s.smtc.SetIsPreviousEnabled(ev.can_go_prev);
             }
         }
-        kind::STARTED
-        | kind::PAUSED
-        | kind::TRACK_LOADED
-        | kind::FINISHED
-        | kind::CANCELED
-        | kind::ERROR => {
+        PlaybackEventKind::Started
+        | PlaybackEventKind::Paused
+        | PlaybackEventKind::TrackLoaded
+        | PlaybackEventKind::Finished
+        | PlaybackEventKind::Canceled
+        | PlaybackEventKind::Error => {
             let p = map_kind_to_phase(ev.kind);
             state.phase = Some(p);
             let Some(s) = smtc.as_mut() else { return };
@@ -527,7 +414,7 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
             }
             state.pending_update = true;
         }
-        kind::POSITION_CHANGED => {
+        PlaybackEventKind::PositionChanged => {
             state.position_us = ev.position_us;
             let now = Instant::now();
             let elapsed = state
@@ -542,7 +429,7 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
                 state.pending_update = false;
             }
         }
-        kind::SEEKED => {
+        PlaybackEventKind::Seeked => {
             state.position_us = ev.position_us;
             if let Some(s) = smtc.as_mut() {
                 update_timeline(state, s);
@@ -568,7 +455,7 @@ fn update_display_properties_inner(state: &mut ConsumerState, s: &mut Smtc) {
         return;
     }
     let _ = s.updater.ClearAll();
-    if state.metadata.media_type == media_type::AUDIO {
+    if state.metadata.media_type == PbMediaType::Audio {
         let _ = s.updater.SetType(MediaPlaybackType::Music);
         if let Ok(music) = s.updater.MusicProperties() {
             let _ = music.SetTitle(&HSTRING::from(&state.metadata.title));
