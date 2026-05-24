@@ -42,16 +42,19 @@ pub extern "C" fn macos_end_transition() {
 use crate::init::{jfn_macos_apply_theme_color_on_main, jfn_macos_get_window};
 
 unsafe extern "C" {
-    // GCD entry points used to bounce onto the main queue for the theme-
-    // color apply path. libdispatch ships in libSystem so no extra link
-    // step is needed. dispatch_get_main_queue() is a real exported
-    // function on modern macOS (10.12+), not a macro.
+    // dispatch_get_main_queue() is an inline C function that returns
+    // &_dispatch_main_q, so the exported symbol is the queue object itself.
+    static _dispatch_main_q: c_void;
     fn dispatch_async_f(
         queue: *mut c_void,
         ctx: *mut c_void,
         work: unsafe extern "C" fn(*mut c_void),
     );
-    fn dispatch_get_main_queue() -> *mut c_void;
+}
+
+#[inline]
+fn dispatch_get_main_queue() -> *mut c_void {
+    unsafe { std::ptr::addr_of!(_dispatch_main_q) as *mut c_void }
 }
 
 /// Returns true if the current thread is the AppKit main thread. Avoids
@@ -110,11 +113,6 @@ unsafe extern "C" {
     ) -> IOReturn;
     fn IOPMAssertionRelease(assertion_id: IOPMAssertionID) -> IOReturn;
 
-    // IOPMLib publishes the CFString constants used here as ordinary
-    // `extern const CFStringRef` symbols.
-    static kIOPMAssertionTypePreventUserIdleDisplaySleep: CFStringRef;
-    static kIOPMAssertionTypePreventUserIdleSystemSleep: CFStringRef;
-
     fn CFStringCreateWithCStringNoCopy(
         alloc: *const c_void,
         c_str: *const c_char,
@@ -122,8 +120,7 @@ unsafe extern "C" {
         contents_deallocator: *const c_void,
     ) -> CFStringRef;
 
-    /// `kCFAllocatorNull` — pass as `contents_deallocator` so CF doesn't
-    /// try to free our `'static` byte buffer when the CFString is released.
+    // kCFAllocatorNull as contents_deallocator: CF won't free our static byte buffers.
     static kCFAllocatorNull: *const c_void;
 
     fn CFRelease(cf: *const c_void);
@@ -144,14 +141,26 @@ pub extern "C" fn macos_set_idle_inhibit(level: c_int) {
     }
 
     // C++ enum: None=0, System=1, Display=2.
-    let assertion_type: CFStringRef = match level {
-        2 => unsafe { kIOPMAssertionTypePreventUserIdleDisplaySleep },
-        1 => unsafe { kIOPMAssertionTypePreventUserIdleSystemSleep },
+    // kIOPMAssertionTypePrevent* are CFSTR() macros — no linker symbols;
+    // build equivalent CFStrings via NoCopy using static byte strings.
+    let type_cstr: &std::ffi::CStr = match level {
+        2 => c"PreventUserIdleDisplaySleep",
+        1 => c"PreventUserIdleSystemSleep",
         _ => return,
     };
+    let assertion_type = unsafe {
+        CFStringCreateWithCStringNoCopy(
+            std::ptr::null(),
+            type_cstr.as_ptr(),
+            K_CF_STRING_ENCODING_UTF8,
+            kCFAllocatorNull,
+        )
+    };
+    if assertion_type.is_null() {
+        return;
+    }
 
-    // Build a CFString for the assertion name. CFSTR() is a compiler
-    // intrinsic so we synthesize the equivalent via NoCopy.
+    // Build a CFString for the assertion name.
     let name_bytes = b"Jellyfin Desktop media playback\0";
     let name = unsafe {
         CFStringCreateWithCStringNoCopy(
@@ -162,6 +171,7 @@ pub extern "C" fn macos_set_idle_inhibit(level: c_int) {
         )
     };
     if name.is_null() {
+        unsafe { CFRelease(assertion_type) };
         return;
     }
 
@@ -169,8 +179,9 @@ pub extern "C" fn macos_set_idle_inhibit(level: c_int) {
     let rc = unsafe {
         IOPMAssertionCreateWithName(assertion_type, K_IOPM_ASSERTION_LEVEL_ON, name, &mut id)
     };
-    // Release our reference; IOPM retains its own copy of the name.
+    // Release our references; IOPM retains its own copies.
     unsafe { CFRelease(name) };
+    unsafe { CFRelease(assertion_type) };
     if rc == 0 && id != K_IOPM_NULL_ASSERTION_ID {
         G_IDLE_ASSERTION.store(id, Ordering::SeqCst);
     }

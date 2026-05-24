@@ -121,11 +121,17 @@ pub extern "C" fn jfn_macos_query_logical_content_size(w: *mut c_int, h: *mut c_
 
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_macos_apply_theme_color_on_main(rgb: u32) {
+    let win = INIT_STATE.lock().unwrap().window;
+    unsafe { apply_theme_color_to_window(win, rgb) };
+}
+
+/// Lock-free body. Callers that already hold `INIT_STATE` must use this
+/// directly with the window they own — re-entering `INIT_STATE` self-deadlocks.
+unsafe fn apply_theme_color_to_window(win: *mut AnyObject, rgb: u32) {
+    if win.is_null() {
+        return;
+    }
     unsafe {
-        let win = INIT_STATE.lock().unwrap().window;
-        if win.is_null() {
-            return;
-        }
         let r = ((rgb >> 16) & 0xff) as f64 / 255.0;
         let g = ((rgb >> 8) & 0xff) as f64 / 255.0;
         let b = (rgb & 0xff) as f64 / 255.0;
@@ -174,7 +180,7 @@ define_class!(
     #[unsafe(super(NSApplication))]
     #[name = "JellyfinApplication"]
     #[ivars = JellyfinAppIvars]
-    pub struct JellyfinApplication;
+    struct JellyfinApplication;
 
     impl JellyfinApplication {
         #[unsafe(method(isHandlingSendEvent))]
@@ -521,8 +527,9 @@ pub extern "C" fn macos_init(_mpv: *mut c_void) -> bool {
         // Cover AppKit fill before CEF delivers its first frame.
         // kBgColor = 0x101010 matches src/color/src/theme.rs.
         const K_BG_COLOR: u32 = 0x101010;
-        // Apply directly — we're on the main thread here.
-        jfn_macos_apply_theme_color_on_main(K_BG_COLOR);
+        // Apply directly — we're on the main thread here. Use the lock-free
+        // helper since we already hold INIT_STATE.
+        apply_theme_color_to_window(state.window, K_BG_COLOR);
 
         // Adopt the +1-retained NSView returned by the Rust input crate.
         state.input_view = jfn_input_macos_create_view();

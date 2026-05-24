@@ -40,6 +40,19 @@ use crate::state;
 /// subprocess exit code otherwise.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_cef_start(_argc: c_int, _argv: *const *const c_char) -> c_int {
+    // macOS distributes CEF as a framework loaded at runtime via a thunk table
+    // in libcef_dll_wrapper (`cef_load_library` populates it). Without this,
+    // every CEF call dispatches through a NULL pointer.
+    #[cfg(target_os = "macos")]
+    {
+        static LOADER: OnceLock<cef::library_loader::LibraryLoader> = OnceLock::new();
+        LOADER.get_or_init(|| {
+            let exe = std::env::current_exe().expect("current_exe");
+            let loader = cef::library_loader::LibraryLoader::new(&exe, false);
+            assert!(loader.load(), "failed to load Chromium Embedded Framework");
+            loader
+        });
+    }
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     let args = args::Args::new();
     let mut app = JfnAppBuilder::new(JfnApp::new());
