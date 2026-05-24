@@ -18,13 +18,12 @@ use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-#[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DisplayBackend {
-    Wayland = 0,
-    X11 = 1,
-    Windows = 2,
-    MacOS = 3,
+    Wayland,
+    X11,
+    Windows,
+    MacOS,
 }
 
 #[repr(C)]
@@ -50,12 +49,11 @@ pub struct JfnPopupRequest {
 }
 
 /// Idle-inhibit level.
-#[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum IdleInhibitLevel {
-    None = 0,
-    System = 1,
-    Display = 2,
+    None,
+    System,
+    Display,
 }
 
 /// Backend-allocated per-surface handle. Backends define the layout
