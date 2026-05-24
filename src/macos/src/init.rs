@@ -321,15 +321,27 @@ unsafe fn start_display_link(state: &mut InitState) -> bool {
         // autoreleased.
         let _: () = msg_send![link, retain];
 
-        // Add to the main run loop in common modes.
+        // Force-unpause defensively (NSScreen's factory does NOT document
+        // a default state for paused).
+        let _: () = msg_send![link, setPaused: false];
+
+        // Add to the main run loop in common modes AND default mode (belt
+        // and braces — common modes should cover default, but if our
+        // NSString constant doesn't match the runtime's @"kCFRunLoopCommonModes"
+        // identity, default mode is a guaranteed fallback).
         let main_runloop: *mut AnyObject = msg_send![class!(NSRunLoop), mainRunLoop];
-        // NSRunLoopCommonModes is the constant @"kCFRunLoopCommonModes".
         let common_modes_name = c"kCFRunLoopCommonModes";
-        let ns_str: *mut AnyObject = msg_send![
+        let common_ns: *mut AnyObject = msg_send![
             class!(NSString),
             stringWithUTF8String: common_modes_name.as_ptr()
         ];
-        let _: () = msg_send![link, addToRunLoop: main_runloop, forMode: ns_str];
+        let _: () = msg_send![link, addToRunLoop: main_runloop, forMode: common_ns];
+        let default_modes_name = c"kCFRunLoopDefaultMode";
+        let default_ns: *mut AnyObject = msg_send![
+            class!(NSString),
+            stringWithUTF8String: default_modes_name.as_ptr()
+        ];
+        let _: () = msg_send![link, addToRunLoop: main_runloop, forMode: default_ns];
 
         state.display_link_target = target_obj;
         state.display_link = link;
