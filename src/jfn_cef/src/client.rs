@@ -625,17 +625,12 @@ impl Inner {
     }
 
     fn try_show_popup(self: &Arc<Self>) {
-        let (x, y, w, h, opts_cstr, selected) = {
+        let (x, y, w, h, opts, selected) = {
             let p = self.popup.lock().unwrap();
             if !p.visible || !p.size_received || !p.options_received {
                 return;
             }
-            let opts: Vec<std::ffi::CString> = p
-                .options
-                .iter()
-                .map(|s| std::ffi::CString::new(s.as_str()).unwrap_or_default())
-                .collect();
-            (p.x, p.y, p.w, p.h, opts, p.selected_idx)
+            (p.x, p.y, p.w, p.h, p.options.clone(), p.selected_idx)
         };
 
         let surface = self.surface_ptr();
@@ -644,27 +639,23 @@ impl Inner {
         }
         let Some(p) = platform_ops::ops() else { return };
 
-        let opts_ptrs: Vec<*const c_char> = opts_cstr.iter().map(|c| c.as_ptr()).collect();
+        let inner = Arc::clone(self);
         let req = platform_ops::JfnPopupRequest {
             x,
             y,
             lw: w,
             lh: h,
-            options: if opts_ptrs.is_empty() {
-                std::ptr::null()
-            } else {
-                opts_ptrs.as_ptr()
-            },
-            options_len: opts_ptrs.len(),
+            options: opts,
             initial_highlight: selected,
-            // on_selected fires only on native-menu backends (macOS).
-            // Compositor backends (Wayland/X11/Windows) ignore it — CEF
+            // Fires only on native-menu backends (macOS); compositor
+            // backends (Wayland/X11/Windows) drop the closure — CEF
             // dispatches selection itself on click.
-            on_selected: Some(popup_on_selected_cb),
-            on_selected_ctx: Arc::into_raw(Arc::clone(self)) as *mut c_void,
-            on_selected_dtor: Some(popup_on_selected_dtor),
+            on_selected: Some(Box::new(move |idx| {
+                let mut task = DispatchPopupTask::new(inner, idx);
+                let _ = post_task(ThreadId::UI, Some(&mut task));
+            })),
         };
-        p.popup_show(surface, &req);
+        p.popup_show(surface, req);
     }
 
     fn on_deactivated(&self) {
@@ -1338,28 +1329,6 @@ unsafe extern "C" fn paste_clipboard_cb(ctx: *mut c_void, utf8: *const c_char, l
 }
 
 unsafe extern "C" fn paste_clipboard_dtor(ctx: *mut c_void) {
-    let raw = ctx as *const Inner;
-    if !raw.is_null() {
-        drop(unsafe { Arc::from_raw(raw) });
-    }
-}
-
-// Invoked by g_platform.popup_show (native-menu backends only — macOS) when
-// the user picks an option. May fire on any thread; posts to TID_UI before
-// touching CEF. Does NOT consume the Arc — dtor handles that.
-unsafe extern "C" fn popup_on_selected_cb(ctx: *mut c_void, idx: c_int) {
-    let raw = ctx as *const Inner;
-    if raw.is_null() {
-        return;
-    }
-    let inner = unsafe { Arc::from_raw(raw) };
-    let cloned = Arc::clone(&inner);
-    std::mem::forget(inner); // restore — dtor will Arc::from_raw
-    let mut task = DispatchPopupTask::new(cloned, idx);
-    let _ = post_task(ThreadId::UI, Some(&mut task));
-}
-
-unsafe extern "C" fn popup_on_selected_dtor(ctx: *mut c_void) {
     let raw = ctx as *const Inner;
     if !raw.is_null() {
         drop(unsafe { Arc::from_raw(raw) });

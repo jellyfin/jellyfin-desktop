@@ -701,7 +701,7 @@ impl Platform for MacosPlatform {
         );
     }
 
-    fn popup_show(&self, s: SurfaceHandle, req: *const JfnPopupRequest) {
+    fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
         macos_popup_show(s, req);
     }
 

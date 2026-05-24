@@ -216,21 +216,16 @@ impl Platform for WaylandPlatform {
         }
     }
 
-    fn popup_show(&self, s: SurfaceHandle, req: *const JfnPopupRequest) {
-        if req.is_null() {
-            return;
-        }
-        let r = unsafe { &*req };
+    fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
         wl_ops::popup_show(
             s as *mut crate::wl_state::PlatformSurface,
-            r.x,
-            r.y,
-            r.lw,
-            r.lh,
+            req.x,
+            req.y,
+            req.lw,
+            req.lh,
         );
-        if let Some(d) = r.on_selected_dtor {
-            unsafe { d(r.on_selected_ctx) };
-        }
+        // Dropping `req.on_selected` here is the cancel path — CEF
+        // dispatches selection itself on this backend.
     }
 
     fn popup_hide(&self, s: SurfaceHandle) {

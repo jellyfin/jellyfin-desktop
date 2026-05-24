@@ -36,7 +36,7 @@ use windows::Win32::Graphics::Dxgi::{
 use windows_core::Interface;
 
 use crate::G_TRANSITIONING;
-use jfn_platform_abi::{JfnPopupRequest, JfnRect};
+use jfn_platform_abi::JfnRect;
 
 // =====================================================================
 // Per-surface state. Stored as `Box<Surface>` and exposed across the C
@@ -916,26 +916,19 @@ pub extern "C" fn jfn_win_wndproc_end_transition_locked() {
 // Popup helpers.
 // =====================================================================
 
-#[unsafe(no_mangle)]
-pub extern "C" fn win_popup_show(s: *mut c_void, req: *const JfnPopupRequest) {
-    if s.is_null() || req.is_null() {
+pub fn win_popup_show(s: *mut c_void, x: c_int, y: c_int) {
+    if s.is_null() {
         return;
     }
-    let req = unsafe { &*req };
-    {
-        let _st = STATE.lock().unwrap();
-        let surf = unsafe { &mut *(s as *mut Surface) };
-        surf.popup_visible = true;
-        if let Some(pv) = surf.popup_visual.as_ref() {
-            let scale = crate::platform::win_get_scale();
-            unsafe {
-                let _ = pv.SetOffsetX2(req.x as f32 * scale);
-                let _ = pv.SetOffsetY2(req.y as f32 * scale);
-            }
+    let _st = STATE.lock().unwrap();
+    let surf = unsafe { &mut *(s as *mut Surface) };
+    surf.popup_visible = true;
+    if let Some(pv) = surf.popup_visual.as_ref() {
+        let scale = crate::platform::win_get_scale();
+        unsafe {
+            let _ = pv.SetOffsetX2(x as f32 * scale);
+            let _ = pv.SetOffsetY2(y as f32 * scale);
         }
-    }
-    if let Some(d) = req.on_selected_dtor {
-        unsafe { d(req.on_selected_ctx) };
     }
 }
 

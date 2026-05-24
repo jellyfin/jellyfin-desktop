@@ -7,10 +7,10 @@
 //!
 //! The previous C-ABI `Platform` struct (a vtable of `Option<extern "C"
 //! fn(...)>`) is gone — backends now author native Rust methods on a
-//! concrete impl rather than populating a fn-pointer table. The shared
-//! types (`JfnRect`, `JfnPopupRequest`, `DisplayBackend`) stay `#[repr(C)]`
-//! so they can still cross the CEF C ABI surface (`OnAcceleratedPaint`
-//! accel-paint info etc).
+//! concrete impl rather than populating a fn-pointer table. `JfnRect`
+//! stays `#[repr(C)]` because CEF's `OnAcceleratedPaint` accel-paint
+//! info hands it across the C ABI surface; the popup request and other
+//! payloads are plain Rust.
 
 #![allow(non_snake_case)]
 
@@ -35,18 +35,18 @@ pub struct JfnRect {
     pub h: c_int,
 }
 
-#[repr(C)]
 pub struct JfnPopupRequest {
     pub x: c_int,
     pub y: c_int,
     pub lw: c_int,
     pub lh: c_int,
-    pub options: *const *const c_char,
-    pub options_len: usize,
+    pub options: Vec<String>,
     pub initial_highlight: c_int,
-    pub on_selected: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
-    pub on_selected_ctx: *mut c_void,
-    pub on_selected_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    /// Fires on the platform backend's thread when the user picks an
+    /// option (or `-1` for cancel). Native-menu backends (macOS) call
+    /// it; compositor backends (Wayland / X11 / Windows) drop the
+    /// closure without firing — CEF dispatches selection itself.
+    pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
 }
 
 /// Idle-inhibit level. Mirrors C++ `IdleInhibitLevel`.
@@ -116,7 +116,7 @@ pub trait Platform: Send + Sync {
     }
 
     // Popup
-    fn popup_show(&self, _s: SurfaceHandle, _req: *const JfnPopupRequest) {}
+    fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {}
     fn popup_hide(&self, _s: SurfaceHandle) {}
     fn popup_present(&self, _s: SurfaceHandle, _info: *const c_void, _lw: c_int, _lh: c_int) {}
     fn popup_present_software(

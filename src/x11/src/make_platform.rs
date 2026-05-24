@@ -107,13 +107,8 @@ impl Platform for X11Platform {
         };
     }
 
-    fn popup_show(&self, _s: SurfaceHandle, req: *const JfnPopupRequest) {
-        if !req.is_null() {
-            let r = unsafe { &*req };
-            if let Some(d) = r.on_selected_dtor {
-                unsafe { d(r.on_selected_ctx) };
-            }
-        }
+    fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {
+        // CEF dispatches selection itself on X11; drop the closure.
     }
 
     fn set_fullscreen(&self, fullscreen: bool) {
