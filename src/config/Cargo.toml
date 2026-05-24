@@ -9,5 +9,4 @@ name = "jfn_config"
 crate-type = ["rlib"]
 
 [dependencies]
-serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
