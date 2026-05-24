@@ -142,6 +142,7 @@ impl Event {
     /// `ev` must reference a valid `mpv_event` returned by `mpv_wait_event`.
     /// All borrowed pointers are copied; the caller may invoke
     /// `mpv_wait_event` again immediately after this returns.
+    #[allow(clippy::unnecessary_cast)] // mpv_event_id.0 is i32 on windows, u32 on linux
     pub unsafe fn from_raw(ev: *const sys::mpv_event) -> Self {
         if ev.is_null() {
             return Event::None;

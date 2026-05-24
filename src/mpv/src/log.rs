@@ -7,6 +7,7 @@ use crate::sys;
 /// subscription.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
+#[allow(clippy::unnecessary_cast)] // bindgen emits i32 on windows, u32 on linux; cast keeps both green
 pub enum LogLevel {
     Off = sys::mpv_log_level::MPV_LOG_LEVEL_NONE.0 as u32,
     Fatal = sys::mpv_log_level::MPV_LOG_LEVEL_FATAL.0 as u32,

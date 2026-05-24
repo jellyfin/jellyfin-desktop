@@ -44,10 +44,14 @@ fn strip_accelerator(s: &str) -> String {
     s.chars().filter(|c| *c != '&').collect()
 }
 
+// cef_event_flags_t.0 is i32 on non-macos, u32 on macos; cast keeps both green.
+#[allow(clippy::unnecessary_cast)]
 #[cfg(target_os = "macos")]
 const ACTION_MODIFIER: u32 = sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0 as u32;
+#[allow(clippy::unnecessary_cast)]
 #[cfg(not(target_os = "macos"))]
 const ACTION_MODIFIER: u32 = sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0 as u32;
+#[allow(clippy::unnecessary_cast)]
 const ALT_FLAG: u32 = sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0 as u32;
 
 fn is_paste_shortcut(e: &KeyEvent) -> bool {
