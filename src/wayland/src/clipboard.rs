@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use wayland_client::globals::{registry_queue_init, GlobalListContents};
+use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_registry, wl_seat};
-use wayland_client::{event_created_child, Connection, Dispatch, Proxy, QueueHandle};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 use wayland_protocols::ext::data_control::v1::client::{
     ext_data_control_device_v1::{self as dc_device, ExtDataControlDeviceV1},
     ext_data_control_manager_v1::ExtDataControlManagerV1,
@@ -152,7 +152,9 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for State {
     ) {
         match event {
             dc_device::Event::DataOffer { id } => {
-                state.pending_offer_mimes.insert(id.id().protocol_id(), OfferMimes::default());
+                state
+                    .pending_offer_mimes
+                    .insert(id.id().protocol_id(), OfferMimes::default());
             }
             dc_device::Event::Selection { id } => {
                 if let Some((prev, _)) = state.current_offer.take() {
@@ -199,9 +201,10 @@ impl Dispatch<ExtDataControlOfferV1, ()> for State {
             if let Some(mimes) = state.pending_offer_mimes.get_mut(&key) {
                 mimes.observe(&mime_type);
             } else if let Some((cur, mimes)) = state.current_offer.as_mut()
-                && cur.id().protocol_id() == key {
-                    mimes.observe(&mime_type);
-                }
+                && cur.id().protocol_id() == key
+            {
+                mimes.observe(&mime_type);
+            }
         }
     }
 }
@@ -277,10 +280,22 @@ fn worker_loop(
         };
 
         let mut pfds: Vec<libc::pollfd> = Vec::with_capacity(3);
-        pfds.push(libc::pollfd { fd: display_fd, events: libc::POLLIN, revents: 0 });
-        pfds.push(libc::pollfd { fd: wake_fd, events: libc::POLLIN, revents: 0 });
+        pfds.push(libc::pollfd {
+            fd: display_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        });
+        pfds.push(libc::pollfd {
+            fd: wake_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        });
         if let Some((fd, _, _)) = &active {
-            pfds.push(libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 });
+            pfds.push(libc::pollfd {
+                fd: fd.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
         }
 
         let r = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as _, -1) };
@@ -311,38 +326,39 @@ fn worker_loop(
 
         // Active receive.
         if let Some((fd, _, buf)) = active.as_mut()
-            && pfds.len() > 2 {
-                let revents = pfds[2].revents;
-                let mut done = false;
-                if revents & libc::POLLIN != 0 {
-                    let mut tmp = [0u8; 4096];
-                    let mut file = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
-                    loop {
-                        match file.read(&mut tmp) {
-                            Ok(0) => {
-                                done = true;
-                                break;
-                            }
-                            Ok(n) => buf.extend_from_slice(&tmp[..n]),
-                            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-                            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-                            Err(_) => {
-                                done = true;
-                                break;
-                            }
+            && pfds.len() > 2
+        {
+            let revents = pfds[2].revents;
+            let mut done = false;
+            if revents & libc::POLLIN != 0 {
+                let mut tmp = [0u8; 4096];
+                let mut file = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
+                loop {
+                    match file.read(&mut tmp) {
+                        Ok(0) => {
+                            done = true;
+                            break;
+                        }
+                        Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                        Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                        Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                        Err(_) => {
+                            done = true;
+                            break;
                         }
                     }
-                    // Don't let File drop close the fd — it's owned by OwnedFd above.
-                    let _ = file.into_raw_fd();
                 }
-                if revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
-                    done = true;
-                }
-                if done {
-                    let (_, cb, buf) = active.take().unwrap();
-                    fire(cb, &buf);
-                }
+                // Don't let File drop close the fd — it's owned by OwnedFd above.
+                let _ = file.into_raw_fd();
             }
+            if revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+                done = true;
+            }
+            if done {
+                let (_, cb, buf) = active.take().unwrap();
+                fire(cb, &buf);
+            }
+        }
 
         // Promote the next queued request if the active slot is free.
         if active.is_none() {
@@ -439,11 +455,7 @@ pub fn clipboard_available() -> bool {
     INSTANCE.lock().unwrap().is_some()
 }
 
-pub fn clipboard_read_text_async(
-    cb: Option<ReadCb>,
-    ctx: *mut c_void,
-    dtor: Option<CbDtor>,
-) {
+pub fn clipboard_read_text_async(cb: Option<ReadCb>, ctx: *mut c_void, dtor: Option<CbDtor>) {
     let Some(cb) = cb else {
         if let Some(d) = dtor {
             unsafe { d(ctx) };

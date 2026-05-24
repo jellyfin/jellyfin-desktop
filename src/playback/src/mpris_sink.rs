@@ -21,9 +21,7 @@ use zbus::names::InterfaceName;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 use crate::mpris;
-use crate::types::{
-    MediaMetadata, PlaybackEvent, PlaybackEventKind, PlaybackSnapshot,
-};
+use crate::types::{MediaMetadata, PlaybackEvent, PlaybackEventKind, PlaybackSnapshot};
 
 const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
 const BASE_SERVICE_NAME: &str = "org.mpris.MediaPlayer2.JellyfinDesktop";
@@ -122,16 +120,36 @@ fn project_view(snap: &PlaybackSnapshot, content: &Content) -> View {
 /// Returns the MPRIS property names that differ between two views.
 fn diff_view(prev: &View, next: &View) -> Vec<&'static str> {
     let mut out = Vec::new();
-    if prev.playback_status != next.playback_status { out.push("PlaybackStatus"); }
-    if prev.can_play != next.can_play { out.push("CanPlay"); }
-    if prev.can_pause != next.can_pause { out.push("CanPause"); }
-    if prev.can_seek != next.can_seek { out.push("CanSeek"); }
-    if prev.can_control != next.can_control { out.push("CanControl"); }
-    if prev.metadata != next.metadata { out.push("Metadata"); }
-    if prev.rate != next.rate { out.push("Rate"); }
-    if prev.volume != next.volume { out.push("Volume"); }
-    if prev.can_go_next != next.can_go_next { out.push("CanGoNext"); }
-    if prev.can_go_previous != next.can_go_previous { out.push("CanGoPrevious"); }
+    if prev.playback_status != next.playback_status {
+        out.push("PlaybackStatus");
+    }
+    if prev.can_play != next.can_play {
+        out.push("CanPlay");
+    }
+    if prev.can_pause != next.can_pause {
+        out.push("CanPause");
+    }
+    if prev.can_seek != next.can_seek {
+        out.push("CanSeek");
+    }
+    if prev.can_control != next.can_control {
+        out.push("CanControl");
+    }
+    if prev.metadata != next.metadata {
+        out.push("Metadata");
+    }
+    if prev.rate != next.rate {
+        out.push("Rate");
+    }
+    if prev.volume != next.volume {
+        out.push("Volume");
+    }
+    if prev.can_go_next != next.can_go_next {
+        out.push("CanGoNext");
+    }
+    if prev.can_go_previous != next.can_go_previous {
+        out.push("CanGoPrevious");
+    }
     out
 }
 
@@ -217,21 +235,37 @@ impl Root {
     fn quit(&self) {}
 
     #[zbus(property)]
-    fn identity(&self) -> &str { "Jellyfin Desktop" }
+    fn identity(&self) -> &str {
+        "Jellyfin Desktop"
+    }
     #[zbus(property)]
-    fn can_quit(&self) -> bool { false }
+    fn can_quit(&self) -> bool {
+        false
+    }
     #[zbus(property)]
-    fn can_raise(&self) -> bool { true }
+    fn can_raise(&self) -> bool {
+        true
+    }
     #[zbus(property)]
-    fn can_set_fullscreen(&self) -> bool { true }
+    fn can_set_fullscreen(&self) -> bool {
+        true
+    }
     #[zbus(property)]
-    fn fullscreen(&self) -> bool { false }
+    fn fullscreen(&self) -> bool {
+        false
+    }
     #[zbus(property)]
-    fn has_track_list(&self) -> bool { false }
+    fn has_track_list(&self) -> bool {
+        false
+    }
     #[zbus(property)]
-    fn supported_uri_schemes(&self) -> Vec<String> { Vec::new() }
+    fn supported_uri_schemes(&self) -> Vec<String> {
+        Vec::new()
+    }
     #[zbus(property)]
-    fn supported_mime_types(&self) -> Vec<String> { Vec::new() }
+    fn supported_mime_types(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 struct Player {
@@ -240,10 +274,18 @@ struct Player {
 
 #[interface(name = "org.mpris.MediaPlayer2.Player")]
 impl Player {
-    fn play(&self) { jfn_mpv::api::jfn_mpv_play() }
-    fn pause(&self) { jfn_mpv::api::jfn_mpv_pause() }
-    fn play_pause(&self) { jfn_mpv::api::jfn_mpv_toggle_pause() }
-    fn stop(&self) { jfn_mpv::api::jfn_mpv_stop() }
+    fn play(&self) {
+        jfn_mpv::api::jfn_mpv_play()
+    }
+    fn pause(&self) {
+        jfn_mpv::api::jfn_mpv_pause()
+    }
+    fn play_pause(&self) {
+        jfn_mpv::api::jfn_mpv_toggle_pause()
+    }
+    fn stop(&self) {
+        jfn_mpv::api::jfn_mpv_stop()
+    }
     fn next(&self) {
         call_exec_js("if(window._nativeHostInput) window._nativeHostInput(['next']);");
     }
@@ -272,23 +314,31 @@ impl Player {
         self.state.lock().unwrap().view.playback_status.to_string()
     }
     #[zbus(property)]
-    fn rate(&self) -> f64 { self.state.lock().unwrap().view.rate }
+    fn rate(&self) -> f64 {
+        self.state.lock().unwrap().view.rate
+    }
     #[zbus(property)]
     fn set_rate(&self, value: f64) {
         let clamped = value.clamp(0.25, 2.0);
         jfn_mpv::api::jfn_mpv_set_speed(clamped);
     }
     #[zbus(property)]
-    fn minimum_rate(&self) -> f64 { 0.25 }
+    fn minimum_rate(&self) -> f64 {
+        0.25
+    }
     #[zbus(property)]
-    fn maximum_rate(&self) -> f64 { 2.0 }
+    fn maximum_rate(&self) -> f64 {
+        2.0
+    }
     #[zbus(property)]
     fn metadata(&self) -> HashMap<String, OwnedValue> {
         let s = self.state.lock().unwrap();
         metadata_to_dict(&s.view.metadata)
     }
     #[zbus(property)]
-    fn volume(&self) -> f64 { self.state.lock().unwrap().view.volume }
+    fn volume(&self) -> f64 {
+        self.state.lock().unwrap().view.volume
+    }
     #[zbus(property)]
     fn position(&self) -> i64 {
         self.state.lock().unwrap().snapshot.position_us
@@ -302,13 +352,21 @@ impl Player {
         self.state.lock().unwrap().view.can_go_previous
     }
     #[zbus(property)]
-    fn can_play(&self) -> bool { self.state.lock().unwrap().view.can_play }
+    fn can_play(&self) -> bool {
+        self.state.lock().unwrap().view.can_play
+    }
     #[zbus(property)]
-    fn can_pause(&self) -> bool { self.state.lock().unwrap().view.can_pause }
+    fn can_pause(&self) -> bool {
+        self.state.lock().unwrap().view.can_pause
+    }
     #[zbus(property)]
-    fn can_seek(&self) -> bool { self.state.lock().unwrap().view.can_seek }
+    fn can_seek(&self) -> bool {
+        self.state.lock().unwrap().view.can_seek
+    }
     #[zbus(property)]
-    fn can_control(&self) -> bool { self.state.lock().unwrap().view.can_control }
+    fn can_control(&self) -> bool {
+        self.state.lock().unwrap().view.can_control
+    }
 }
 
 // ============================================================================
@@ -355,7 +413,9 @@ fn worker(rx: Receiver<Msg>, service_suffix: String) {
     }
 
     let state = Arc::new(Mutex::new(State::fresh()));
-    let player = Player { state: Arc::clone(&state) };
+    let player = Player {
+        state: Arc::clone(&state),
+    };
     if let Err(e) = conn.object_server().at(MPRIS_PATH, player) {
         eprintln!("mpris: register player iface: {}", e);
         return;
@@ -377,11 +437,7 @@ fn worker(rx: Receiver<Msg>, service_suffix: String) {
     let _ = conn.release_name(service_name.as_str());
 }
 
-fn handle_event(
-    ev: PlaybackEvent,
-    state: &Arc<Mutex<State>>,
-    conn: &Connection,
-) {
+fn handle_event(ev: PlaybackEvent, state: &Arc<Mutex<State>>, conn: &Connection) {
     let snap = ev.snapshot.clone();
 
     // last_snap_ tracks every snapshot so getPosition() reads the latest.
@@ -453,9 +509,10 @@ fn handle_event(
             "org.mpris.MediaPlayer2.Player",
             "Seeked",
             &snap.position_us,
-        ) {
-            eprintln!("mpris: emit Seeked: {}", e);
-        }
+        )
+    {
+        eprintln!("mpris: emit Seeked: {}", e);
+    }
 }
 
 fn recompute_and_emit(state: &Arc<Mutex<State>>, conn: &Connection) {

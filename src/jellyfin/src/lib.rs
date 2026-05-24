@@ -356,7 +356,8 @@ pub unsafe extern "C" fn jfn_jellyfin_free_string(s: *mut c_char) {
 pub fn normalize_input(user_input: &str) -> String {
     let trimmed = user_input.trim();
     let mut s = String::with_capacity(trimmed.len() + 7);
-    let lower_prefix = |s: &str, p: &str| s.len() >= p.len() && s[..p.len()].eq_ignore_ascii_case(p);
+    let lower_prefix =
+        |s: &str, p: &str| s.len() >= p.len() && s[..p.len()].eq_ignore_ascii_case(p);
     if lower_prefix(trimmed, "http:") {
         s.push_str("http:");
         s.push_str(&trimmed[5..]);
@@ -469,10 +470,7 @@ pub unsafe extern "C" fn jfn_jellyfin_set_cached_profile(json: *const c_char) {
 /// Free with `jfn_jellyfin_free_string`.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_jellyfin_cached_profile() -> *mut c_char {
-    let s = CACHED_PROFILE
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
+    let s = CACHED_PROFILE.lock().map(|g| g.clone()).unwrap_or_default();
     cstring_or_null(s)
 }
 
@@ -584,22 +582,34 @@ mod tests {
 
     #[test]
     fn normalize_trims_whitespace() {
-        assert_eq!(normalize_input("  http://example.com  "), "http://example.com");
+        assert_eq!(
+            normalize_input("  http://example.com  "),
+            "http://example.com"
+        );
         assert_eq!(normalize_input("\thttps://host\n"), "https://host");
     }
 
     #[test]
     fn normalize_lowercases_scheme() {
         assert_eq!(normalize_input("HTTP://example.com"), "http://example.com");
-        assert_eq!(normalize_input("HTTPS://example.com"), "https://example.com");
+        assert_eq!(
+            normalize_input("HTTPS://example.com"),
+            "https://example.com"
+        );
         assert_eq!(normalize_input("Http://example.com"), "http://example.com");
-        assert_eq!(normalize_input("Https://example.com"), "https://example.com");
+        assert_eq!(
+            normalize_input("Https://example.com"),
+            "https://example.com"
+        );
     }
 
     #[test]
     fn normalize_prepends_http_when_no_scheme() {
         assert_eq!(normalize_input("example.com"), "http://example.com");
-        assert_eq!(normalize_input("example.com:8096"), "http://example.com:8096");
+        assert_eq!(
+            normalize_input("example.com:8096"),
+            "http://example.com:8096"
+        );
         assert_eq!(normalize_input("192.168.1.10"), "http://192.168.1.10");
     }
 
@@ -629,7 +639,10 @@ mod tests {
 
     #[test]
     fn extract_base_truncates_at_web() {
-        assert_eq!(extract_base_url("https://host/web/index.html"), "https://host");
+        assert_eq!(
+            extract_base_url("https://host/web/index.html"),
+            "https://host"
+        );
         assert_eq!(extract_base_url("https://host/web"), "https://host");
     }
 
@@ -655,9 +668,18 @@ mod tests {
 
     #[test]
     fn extract_base_case_insensitive_web() {
-        assert_eq!(extract_base_url("https://host/WEB/index.html"), "https://host");
-        assert_eq!(extract_base_url("https://host/Web/index.html"), "https://host");
-        assert_eq!(extract_base_url("https://host/wEb/index.html"), "https://host");
+        assert_eq!(
+            extract_base_url("https://host/WEB/index.html"),
+            "https://host"
+        );
+        assert_eq!(
+            extract_base_url("https://host/Web/index.html"),
+            "https://host"
+        );
+        assert_eq!(
+            extract_base_url("https://host/wEb/index.html"),
+            "https://host"
+        );
     }
 
     #[test]
@@ -674,18 +696,30 @@ mod tests {
             extract_base_url("http://host:8096/web/index.html"),
             "http://host:8096"
         );
-        assert_eq!(extract_base_url("http://localhost:8096/web/"), "http://localhost:8096");
+        assert_eq!(
+            extract_base_url("http://localhost:8096/web/"),
+            "http://localhost:8096"
+        );
         assert_eq!(
             extract_base_url("http://192.168.1.100:8096/web/"),
             "http://192.168.1.100:8096"
         );
-        assert_eq!(extract_base_url("http://[::1]:8096/web/"), "http://[::1]:8096");
+        assert_eq!(
+            extract_base_url("http://[::1]:8096/web/"),
+            "http://[::1]:8096"
+        );
     }
 
     #[test]
     fn extract_base_strips_query_and_fragment_after_web() {
-        assert_eq!(extract_base_url("https://host/web/?foo=bar"), "https://host");
-        assert_eq!(extract_base_url("https://host/web/#section"), "https://host");
+        assert_eq!(
+            extract_base_url("https://host/web/?foo=bar"),
+            "https://host"
+        );
+        assert_eq!(
+            extract_base_url("https://host/web/#section"),
+            "https://host"
+        );
         assert_eq!(
             extract_base_url("https://host/jellyfin/web/?foo=bar#section"),
             "https://host/jellyfin"
@@ -708,7 +742,10 @@ mod tests {
 
     #[test]
     fn idn_hosts_survive_unchanged() {
-        assert_eq!(normalize_input("http://example.みんな"), "http://example.みんな");
+        assert_eq!(
+            normalize_input("http://example.みんな"),
+            "http://example.みんな"
+        );
         assert_eq!(normalize_input("example.みんな"), "http://example.みんな");
         assert_eq!(
             normalize_input("  HTTPS://example.みんな/web "),
@@ -723,7 +760,10 @@ mod tests {
             extract_base_url("https://example.みんな/jellyfin/web"),
             "https://example.みんな/jellyfin"
         );
-        assert_eq!(extract_base_url("http://example.みんな/"), "http://example.みんな");
+        assert_eq!(
+            extract_base_url("http://example.みんな/"),
+            "http://example.みんな"
+        );
     }
 
     #[test]

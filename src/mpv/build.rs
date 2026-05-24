@@ -152,8 +152,7 @@ fn generate_avcodec_bindings() {
         .generate()
         .expect("failed to generate libavcodec bindings");
 
-    let out_path =
-        PathBuf::from(env::var("OUT_DIR").unwrap()).join("avcodec_bindings.rs");
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("avcodec_bindings.rs");
     bindings
         .write_to_file(&out_path)
         .expect("failed to write avcodec_bindings.rs");

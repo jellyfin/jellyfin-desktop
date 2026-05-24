@@ -47,7 +47,10 @@ fn main() {
         format!("{version}+{git_hash}")
     };
     println!("cargo:rustc-env=JFN_APP_VERSION_FULL={version_full}");
-    println!("cargo:rerun-if-changed={}", repo_root.join(".git/HEAD").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root.join(".git/HEAD").display()
+    );
 
     let web_dir = repo_root.join("src").join("web");
     for entry in std::fs::read_dir(&web_dir).expect("read src/web").flatten() {

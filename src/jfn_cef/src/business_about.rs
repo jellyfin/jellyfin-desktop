@@ -7,7 +7,7 @@
 //! Browsers.
 
 use cef::rc::ConvertReturnValue;
-use cef::{sys, Browser, CefString, ImplBrowser, ImplBrowserHost, ImplListValue, ListValue};
+use cef::{Browser, CefString, ImplBrowser, ImplBrowserHost, ImplListValue, ListValue, sys};
 use std::ffi::CString;
 use std::os::raw::c_void;
 use std::sync::Mutex;
@@ -130,8 +130,7 @@ fn handle_message(
         }
         // Adopt and drop the args ref so we don't leak it.
         if !args_raw.is_null() {
-            let _: ListValue =
-                unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
+            let _: ListValue = unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
         }
         return true;
     }
@@ -145,8 +144,7 @@ fn handle_message(
             path = cs.to_string();
         }
         if !browser_raw.is_null() {
-            let _: Browser =
-                unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
+            let _: Browser = unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
         }
         if path.is_empty() {
             return true;
@@ -158,8 +156,7 @@ fn handle_message(
     }
     // Unhandled — still adopt-and-drop refs so we don't leak.
     if !args_raw.is_null() {
-        let _: ListValue =
-            unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
+        let _: ListValue = unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
     }
     if !browser_raw.is_null() {
         let _: Browser = unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };

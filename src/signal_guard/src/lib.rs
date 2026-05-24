@@ -34,5 +34,8 @@ pub unsafe fn install(handler: unsafe extern "C" fn(c_int)) -> SignalGuard {
         libc::sigaction(SIGINT, &sa, &mut prev_int);
         libc::sigaction(SIGTERM, &sa, &mut prev_term);
     }
-    SignalGuard { prev_int, prev_term }
+    SignalGuard {
+        prev_int,
+        prev_term,
+    }
 }

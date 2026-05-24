@@ -260,7 +260,11 @@ pub extern "C" fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
     // is registered before osd-dimensions so mpv's FIFO initial-value
     // delivery seeds the scale before osd-dimensions consumes it.
     let pairs: &[(u64, &std::ffi::CStr, mpv_format)] = &[
-        (DISPLAY_SCALE, c"display-hidpi-scale", mpv_format::MPV_FORMAT_DOUBLE),
+        (
+            DISPLAY_SCALE,
+            c"display-hidpi-scale",
+            mpv_format::MPV_FORMAT_DOUBLE,
+        ),
         (OSD_DIMS, c"osd-dimensions", mpv_format::MPV_FORMAT_NODE),
         (FULLSCREEN, c"fullscreen", mpv_format::MPV_FORMAT_FLAG),
         (PAUSE, c"pause", mpv_format::MPV_FORMAT_FLAG),
@@ -269,11 +273,23 @@ pub extern "C" fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
         (SPEED, c"speed", mpv_format::MPV_FORMAT_DOUBLE),
         (SEEKING, c"seeking", mpv_format::MPV_FORMAT_FLAG),
         (DISPLAY_FPS, c"display-fps", mpv_format::MPV_FORMAT_DOUBLE),
-        (CACHE_STATE, c"demuxer-cache-state", mpv_format::MPV_FORMAT_NODE),
+        (
+            CACHE_STATE,
+            c"demuxer-cache-state",
+            mpv_format::MPV_FORMAT_NODE,
+        ),
         (WINDOW_MAX, c"window-maximized", mpv_format::MPV_FORMAT_FLAG),
-        (PAUSED_FOR_CACHE, c"paused-for-cache", mpv_format::MPV_FORMAT_FLAG),
+        (
+            PAUSED_FOR_CACHE,
+            c"paused-for-cache",
+            mpv_format::MPV_FORMAT_FLAG,
+        ),
         (CORE_IDLE, c"core-idle", mpv_format::MPV_FORMAT_FLAG),
-        (VIDEO_FRAME_INFO, c"video-frame-info", mpv_format::MPV_FORMAT_NODE),
+        (
+            VIDEO_FRAME_INFO,
+            c"video-frame-info",
+            mpv_format::MPV_FORMAT_NODE,
+        ),
     ];
 
     for &(id, name, fmt) in pairs {
@@ -292,7 +308,9 @@ pub extern "C" fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
 /// No-op if the handle isn't initialized or the property is unavailable.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_playback_seed_display_hz_sync() {
-    let Some(raw) = jfn_mpv::boot::current_raw_handle() else { return };
+    let Some(raw) = jfn_mpv::boot::current_raw_handle() else {
+        return;
+    };
     let mut fps: f64 = 0.0;
     let rc = unsafe {
         jfn_mpv::sys::mpv_get_property(
@@ -466,9 +484,10 @@ fn event_loop(handle_addr: usize, stop: std::sync::Arc<AtomicBool>) {
             }
             Event::PropertyChange { id, ref value, .. } => {
                 if id == crate::ingest::observe_id::FULLSCREEN
-                    && let PropertyValue::Flag(f) = value {
-                        invoke_fullscreen_handler(*f);
-                    }
+                    && let PropertyValue::Flag(f) = value
+                {
+                    invoke_fullscreen_handler(*f);
+                }
             }
             _ => {}
         }

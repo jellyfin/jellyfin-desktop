@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -98,15 +98,7 @@ pub trait Platform: Send + Sync {
     ) -> bool {
         false
     }
-    fn surface_resize(
-        &self,
-        _s: SurfaceHandle,
-        _lw: c_int,
-        _lh: c_int,
-        _pw: c_int,
-        _ph: c_int,
-    ) {
-    }
+    fn surface_resize(&self, _s: SurfaceHandle, _lw: c_int, _lh: c_int, _pw: c_int, _ph: c_int) {}
     fn surface_set_visible(&self, _s: SurfaceHandle, _visible: bool) {}
     fn restack(&self, _ordered: *const SurfaceHandle, _n: usize) {}
     #[allow(clippy::too_many_arguments)]
@@ -126,14 +118,7 @@ pub trait Platform: Send + Sync {
     // Popup
     fn popup_show(&self, _s: SurfaceHandle, _req: *const JfnPopupRequest) {}
     fn popup_hide(&self, _s: SurfaceHandle) {}
-    fn popup_present(
-        &self,
-        _s: SurfaceHandle,
-        _info: *const c_void,
-        _lw: c_int,
-        _lh: c_int,
-    ) {
-    }
+    fn popup_present(&self, _s: SurfaceHandle, _info: *const c_void, _lw: c_int, _lh: c_int) {}
     fn popup_present_software(
         &self,
         _s: SurfaceHandle,
@@ -261,7 +246,11 @@ static OZONE_PLATFORM: AtomicPtr<c_char> = AtomicPtr::new(std::ptr::null_mut());
 
 fn ozone_platform_get() -> *const c_char {
     let p = OZONE_PLATFORM.load(Ordering::Acquire);
-    if p.is_null() { c"".as_ptr() } else { p as *const c_char }
+    if p.is_null() {
+        c"".as_ptr()
+    } else {
+        p as *const c_char
+    }
 }
 
 fn ozone_platform_set(utf8: *const c_char) {
@@ -290,4 +279,3 @@ pub fn get() -> &'static dyn Platform {
 pub fn try_get() -> Option<&'static dyn Platform> {
     PLATFORM.get().copied()
 }
-

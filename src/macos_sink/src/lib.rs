@@ -16,20 +16,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use std::ptr::NonNull;
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{ClassType, DefinedClass, define_class, msg_send, MainThreadOnly};
+use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2_app_kit::NSImage;
 use objc2_foundation::{
     NSCopying, NSData, NSDataBase64DecodingOptions, NSDictionary, NSMutableDictionary, NSNumber,
     NSObject, NSSize, NSString,
 };
-use objc2_app_kit::NSImage;
 use objc2_media_player::{
     MPChangePlaybackPositionCommandEvent, MPMediaItemArtwork, MPNowPlayingInfoCenter,
-    MPNowPlayingInfoMediaType, MPNowPlayingPlaybackState, MPRemoteCommand,
-    MPRemoteCommandCenter, MPRemoteCommandEvent, MPRemoteCommandHandlerStatus,
+    MPNowPlayingInfoMediaType, MPNowPlayingPlaybackState, MPRemoteCommand, MPRemoteCommandCenter,
+    MPRemoteCommandEvent, MPRemoteCommandHandlerStatus,
 };
+use std::ptr::NonNull;
 
 fn ns_key(s: &NSString) -> &ProtocolObject<dyn NSCopying> {
     ProtocolObject::from_ref(s)
@@ -402,9 +402,7 @@ unsafe impl Sync for DelegateSlot {}
 
 fn init_remote_command_center() {
     unsafe {
-        let delegate: Retained<MediaKeysDelegate> = msg_send![
-            MediaKeysDelegate::class(), new
-        ];
+        let delegate: Retained<MediaKeysDelegate> = msg_send![MediaKeysDelegate::class(), new];
         let center = MPRemoteCommandCenter::sharedCommandCenter();
         let sel_cmd = objc2::sel!(handleCommand:);
         let sel_seek = objc2::sel!(handleSeek:);
@@ -492,32 +490,29 @@ static MEDIA_REMOTE: OnceLock<Option<MediaRemoteSyms>> = OnceLock::new();
 
 fn media_remote() -> Option<&'static MediaRemoteSyms> {
     MEDIA_REMOTE
-        .get_or_init(|| {
-            unsafe {
-                let path =
-                    c"/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote";
-                let handle = libc::dlopen(path.as_ptr(), libc::RTLD_NOW);
-                if handle.is_null() {
-                    tracing::error!(
-                        target: "Media",
-                        "macOS Media: Failed to load MediaRemote.framework"
-                    );
-                    return None;
-                }
-                let dl = |name: &CStr| {
-                    let p = libc::dlsym(handle, name.as_ptr());
-                    if p.is_null() { None } else { Some(p) }
-                };
-                Some(MediaRemoteSyms {
-                    set_visibility: dl(c"MRMediaRemoteSetNowPlayingVisibility")
-                        .map(|p| std::mem::transmute(p)),
-                    get_local_origin: dl(c"MRMediaRemoteGetLocalOrigin")
-                        .map(|p| std::mem::transmute(p)),
-                    set_can_be_now_playing: dl(c"MRMediaRemoteSetCanBeNowPlayingApplication")
-                        .map(|p| std::mem::transmute(p)),
-                    _handle: handle,
-                })
+        .get_or_init(|| unsafe {
+            let path = c"/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote";
+            let handle = libc::dlopen(path.as_ptr(), libc::RTLD_NOW);
+            if handle.is_null() {
+                tracing::error!(
+                    target: "Media",
+                    "macOS Media: Failed to load MediaRemote.framework"
+                );
+                return None;
             }
+            let dl = |name: &CStr| {
+                let p = libc::dlsym(handle, name.as_ptr());
+                if p.is_null() { None } else { Some(p) }
+            };
+            Some(MediaRemoteSyms {
+                set_visibility: dl(c"MRMediaRemoteSetNowPlayingVisibility")
+                    .map(|p| std::mem::transmute(p)),
+                get_local_origin: dl(c"MRMediaRemoteGetLocalOrigin")
+                    .map(|p| std::mem::transmute(p)),
+                set_can_be_now_playing: dl(c"MRMediaRemoteSetCanBeNowPlayingApplication")
+                    .map(|p| std::mem::transmute(p)),
+                _handle: handle,
+            })
         })
         .as_ref()
 }
@@ -746,11 +741,12 @@ fn update_now_playing_info(state: &mut ConsumerState) {
         let rate_v = NSNumber::new_f64(state.rate);
         info.setObject_forKey(&*rate_v as &AnyObject, ns_key(&*rate_key));
         let media_type_key = mp_const("MPNowPlayingInfoPropertyMediaType");
-        let media_type_v: MPNowPlayingInfoMediaType = if state.metadata.media_type == media_type::AUDIO {
-            MPNowPlayingInfoMediaType::Audio
-        } else {
-            MPNowPlayingInfoMediaType::Video
-        };
+        let media_type_v: MPNowPlayingInfoMediaType =
+            if state.metadata.media_type == media_type::AUDIO {
+                MPNowPlayingInfoMediaType::Audio
+            } else {
+                MPNowPlayingInfoMediaType::Video
+            };
         let media_type_num = NSNumber::new_u64(media_type_v.0 as u64);
         info.setObject_forKey(&*media_type_num as &AnyObject, ns_key(&*media_type_key));
 

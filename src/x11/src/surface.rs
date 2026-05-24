@@ -122,9 +122,10 @@ pub unsafe extern "C" fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     {
         let mut g = MUT.lock().unwrap();
         if let Some(m) = g.as_mut()
-            && let Some(pos) = m.live.iter().position(|&p| p == s) {
-                m.live.swap_remove(pos);
-            }
+            && let Some(pos) = m.live.iter().position(|&p| p == s)
+        {
+            m.live.swap_remove(pos);
+        }
     }
 
     let surf = unsafe { &mut *s };
@@ -132,13 +133,17 @@ pub unsafe extern "C" fn jfn_x11_free_surface(s: *mut PlatformSurface) {
         shm_free(buf, Some(&conn));
     }
     if !is_none_window(surf.window) {
-        conn.send_request(&x::UnmapWindow { window: surf.window });
+        conn.send_request(&x::UnmapWindow {
+            window: surf.window,
+        });
     }
     if !is_none_gc(surf.gc) {
         conn.send_request(&x::FreeGc { gc: surf.gc });
     }
     if !is_none_window(surf.window) {
-        conn.send_request(&x::DestroyWindow { window: surf.window });
+        conn.send_request(&x::DestroyWindow {
+            window: surf.window,
+        });
     }
     let _ = conn.flush();
     drop(unsafe { Box::from_raw(s) });
@@ -146,10 +151,7 @@ pub unsafe extern "C" fn jfn_x11_free_surface(s: *mut PlatformSurface) {
 
 /// Accelerated present is not supported on the X11 backend.
 #[unsafe(no_mangle)]
-pub extern "C" fn jfn_x11_surface_present(
-    _s: *mut PlatformSurface,
-    _info: *const c_void,
-) -> bool {
+pub extern "C" fn jfn_x11_surface_present(_s: *mut PlatformSurface, _info: *const c_void) -> bool {
     false
 }
 
@@ -335,19 +337,20 @@ pub unsafe extern "C" fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, vi
                 x::ConfigWindow::Height(ph),
             ],
         });
-        conn.send_request(&x::MapWindow { window: surf.window });
+        conn.send_request(&x::MapWindow {
+            window: surf.window,
+        });
     } else {
-        conn.send_request(&x::UnmapWindow { window: surf.window });
+        conn.send_request(&x::UnmapWindow {
+            window: surf.window,
+        });
     }
     let _ = conn.flush();
 }
 
 /// Stack `ordered[0..n]` above the mpv parent, bottom to top.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_x11_restack(
-    ordered: *const *mut PlatformSurface,
-    n: usize,
-) {
+pub unsafe extern "C" fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
     if n == 0 || ordered.is_null() {
         return;
     }
@@ -414,4 +417,3 @@ pub unsafe extern "C" fn jfn_x11_fade_surface(
         unsafe { d(done_ctx) };
     }
 }
-

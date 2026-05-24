@@ -7,9 +7,7 @@
 use std::ffi::c_void;
 use std::slice;
 
-use crate::wl_ops::{
-    self, JfnDmabufFrame,
-};
+use crate::wl_ops::{self, JfnDmabufFrame};
 use crate::wl_state::PlatformSurface;
 
 #[inline]
@@ -38,9 +36,10 @@ pub unsafe extern "C" fn jfn_wl_core_init(
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_core_set_was_fullscreen(fs: bool) {
     if let Some(m) = crate::wl_state::try_state()
-        && let Ok(mut st) = m.lock() {
-            st.was_fullscreen = fs;
-        }
+        && let Ok(mut st) = m.lock()
+    {
+        st.was_fullscreen = fs;
+    }
 }
 
 // =====================================================================
@@ -124,13 +123,7 @@ pub unsafe extern "C" fn jfn_wl_surface_present_software(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_wl_popup_show(
-    handle: *mut c_void,
-    x: i32,
-    y: i32,
-    lw: i32,
-    lh: i32,
-) {
+pub unsafe extern "C" fn jfn_wl_popup_show(handle: *mut c_void, x: i32, y: i32, lw: i32, lh: i32) {
     wl_ops::popup_show(cast(handle), x, y, lw, lh);
 }
 

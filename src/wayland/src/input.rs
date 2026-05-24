@@ -14,10 +14,8 @@ use std::thread::{self, JoinHandle};
 
 use memmap2::MmapOptions;
 use wayland_backend::client::Backend;
-use wayland_client::globals::{registry_queue_init, GlobalListContents};
-use wayland_client::protocol::{
-    wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_surface,
-};
+use wayland_client::globals::{GlobalListContents, registry_queue_init};
+use wayland_client::protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_surface};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1::{self, WpCursorShapeDeviceV1},
@@ -133,8 +131,7 @@ pub struct Callbacks {
     pub scroll: Option<unsafe extern "C" fn(x: i32, y: i32, dx: i32, dy: i32, mods: u32)>,
     pub history_nav: Option<unsafe extern "C" fn(forward: c_int)>,
     pub kb_focus: Option<unsafe extern "C" fn(gained: c_int)>,
-    pub key:
-        Option<unsafe extern "C" fn(keysym: u32, native_code: u32, mods: u32, pressed: c_int)>,
+    pub key: Option<unsafe extern "C" fn(keysym: u32, native_code: u32, mods: u32, pressed: c_int)>,
     pub char_: Option<unsafe extern "C" fn(codepoint: u32, mods: u32, native_code: u32)>,
 }
 
@@ -213,9 +210,10 @@ impl State {
             return;
         }
         if self.cursor_dev.is_none()
-            && let Some(mgr) = &self.cursor_mgr {
-                self.cursor_dev = Some(mgr.get_pointer(pointer, qh, ()));
-            }
+            && let Some(mgr) = &self.cursor_mgr
+        {
+            self.cursor_dev = Some(mgr.get_pointer(pointer, qh, ()));
+        }
         if let Some(dev) = &self.cursor_dev {
             let shape: wp_cursor_shape_device_v1::Shape = unsafe {
                 std::mem::transmute::<u32, wp_cursor_shape_device_v1::Shape>(cef_to_wl_shape(cef))
@@ -272,36 +270,61 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
     ) {
         use wl_pointer::Event;
         match event {
-            Event::Enter { serial, surface_x, surface_y, .. } => {
+            Event::Enter {
+                serial,
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_serial = serial;
                 state.apply_cursor(qh);
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
                 if let Some(f) = state.cb.mouse_move {
                     unsafe {
-                        f(state.ptr_x as i32, state.ptr_y as i32, state.cef_modifiers(), 0);
+                        f(
+                            state.ptr_x as i32,
+                            state.ptr_y as i32,
+                            state.cef_modifiers(),
+                            0,
+                        );
                     }
                 }
             }
             Event::Leave { .. } => {
                 if let Some(f) = state.cb.mouse_move {
                     unsafe {
-                        f(state.ptr_x as i32, state.ptr_y as i32, state.cef_modifiers(), 1);
+                        f(
+                            state.ptr_x as i32,
+                            state.ptr_y as i32,
+                            state.cef_modifiers(),
+                            1,
+                        );
                     }
                 }
             }
-            Event::Motion { surface_x, surface_y, .. } => {
+            Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
                 if let Some(f) = state.cb.mouse_move {
                     unsafe {
-                        f(state.ptr_x as i32, state.ptr_y as i32, state.cef_modifiers(), 0);
+                        f(
+                            state.ptr_x as i32,
+                            state.ptr_y as i32,
+                            state.cef_modifiers(),
+                            0,
+                        );
                     }
                 }
             }
-            Event::Button { button, state: bs, .. } => {
-                let pressed =
-                    matches!(bs, WEnum::Value(wl_pointer::ButtonState::Pressed));
+            Event::Button {
+                button, state: bs, ..
+            } => {
+                let pressed = matches!(bs, WEnum::Value(wl_pointer::ButtonState::Pressed));
                 if button == BTN_SIDE
                     || button == BTN_EXTRA
                     || button == BTN_BACK
@@ -452,19 +475,24 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 let Some(st) = &state.xkb_st else { return };
                 let kc: xkb::Keycode = (key + 8).into();
                 let sym = st.key_get_one_sym(kc);
-                let pressed =
-                    matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                let pressed = matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
                 if let Some(f) = state.cb.key {
                     unsafe {
-                        f(sym.into(), key, state.modifiers, if pressed { 1 } else { 0 });
+                        f(
+                            sym.into(),
+                            key,
+                            state.modifiers,
+                            if pressed { 1 } else { 0 },
+                        );
                     }
                 }
                 if pressed {
                     let cp = st.key_get_utf32(kc);
                     if cp > 0
-                        && let Some(f) = state.cb.char_ {
-                            unsafe { f(cp, state.modifiers, key) };
-                        }
+                        && let Some(f) = state.cb.char_
+                    {
+                        unsafe { f(cp, state.modifiers, key) };
+                    }
                 }
             }
             Event::Modifiers {
@@ -559,8 +587,16 @@ fn worker_loop(
         };
 
         let mut pfds = [
-            libc::pollfd { fd: display_fd, events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: wake_fd, events: libc::POLLIN, revents: 0 },
+            libc::pollfd {
+                fd: display_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: wake_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
         ];
         let r = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as _, -1) };
         if r < 0 {
@@ -586,9 +622,7 @@ fn worker_loop(
             // Drain wake fd.
             let mut buf = [0u8; 64];
             loop {
-                let n = unsafe {
-                    libc::read(wake_fd, buf.as_mut_ptr() as *mut c_void, buf.len())
-                };
+                let n = unsafe { libc::read(wake_fd, buf.as_mut_ptr() as *mut c_void, buf.len()) };
                 if n <= 0 {
                     break;
                 }
@@ -654,7 +688,15 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let inbox_thread = set_cursor_inbox.clone();
     let stop_thread = stop.clone();
     let worker = thread::spawn(move || {
-        worker_loop(conn, queue, state, wake_fd, stop_thread, cursor_type_thread, inbox_thread)
+        worker_loop(
+            conn,
+            queue,
+            state,
+            wake_fd,
+            stop_thread,
+            cursor_type_thread,
+            inbox_thread,
+        )
     });
     Some(JfnInputWayland {
         cursor_type,
@@ -691,7 +733,9 @@ pub unsafe extern "C" fn jfn_input_wayland_set_cursor(
     ctx: *mut JfnInputWayland,
     cef_cursor_type: u32,
 ) {
-    let Some(c) = (unsafe { ctx.as_ref() }) else { return };
+    let Some(c) = (unsafe { ctx.as_ref() }) else {
+        return;
+    };
     c.cursor_type.store(cef_cursor_type, Ordering::Relaxed);
     *c.set_cursor_inbox.lock().unwrap() = Some(cef_cursor_type);
     // Wake the input thread so it picks up the cursor change.

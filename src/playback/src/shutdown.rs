@@ -45,7 +45,9 @@ pub extern "C" fn jfn_shutdown_event() -> *const WakeEvent {
 /// browsers and post a main-loop sentinel so a parked event loop wakes up.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_shutdown_set_handler(handler: Option<extern "C" fn()>) {
-    let ptr = handler.map(|f| f as *mut ()).unwrap_or(std::ptr::null_mut());
+    let ptr = handler
+        .map(|f| f as *mut ())
+        .unwrap_or(std::ptr::null_mut());
     HANDLER.store(ptr, Ordering::Release);
 }
 

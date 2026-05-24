@@ -10,7 +10,6 @@
 use cef::*;
 use std::sync::{Arc, Mutex};
 
-
 // ---- embedded resources ----------------------------------------------------
 
 struct Embedded {
@@ -20,10 +19,13 @@ struct Embedded {
 
 macro_rules! embedded {
     ($name:literal, $mime:literal) => {
-        ($name, Embedded {
-            bytes: include_bytes!(concat!("../../web/", $name)),
-            mime: $mime,
-        })
+        (
+            $name,
+            Embedded {
+                bytes: include_bytes!(concat!("../../web/", $name)),
+                mime: $mime,
+            },
+        )
     };
 }
 

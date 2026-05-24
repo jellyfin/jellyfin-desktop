@@ -314,14 +314,22 @@ mod tests {
     fn space_form_all_flags() {
         let r = parse(&[
             "app",
-            "--hwdec", "vaapi",
-            "--log-level", "debug",
-            "--log-file", "/tmp/x.log",
-            "--audio-passthrough", "ac3,dts-hd",
-            "--audio-channels", "5.1",
-            "--remote-debug-port", "9222",
-            "--ozone-platform", "wayland",
-            "--platform", "x11",
+            "--hwdec",
+            "vaapi",
+            "--log-level",
+            "debug",
+            "--log-file",
+            "/tmp/x.log",
+            "--audio-passthrough",
+            "ac3,dts-hd",
+            "--audio-channels",
+            "5.1",
+            "--remote-debug-port",
+            "9222",
+            "--ozone-platform",
+            "wayland",
+            "--platform",
+            "x11",
         ]);
         assert!(matches!(r.kind, JfnCliResultKind::Continue));
         let cs = |p| unsafe { CStr::from_ptr(p) }.to_str().unwrap();
@@ -370,7 +378,14 @@ mod tests {
 
     #[test]
     fn error_leaves_value_fields_null() {
-        let r = parse(&["app", "--hwdec", "vaapi", "--garbage", "--log-level", "debug"]);
+        let r = parse(&[
+            "app",
+            "--hwdec",
+            "vaapi",
+            "--garbage",
+            "--log-level",
+            "debug",
+        ]);
         assert!(matches!(r.kind, JfnCliResultKind::Error));
         assert!(r.hwdec.is_null());
         assert!(r.log_level.is_null());

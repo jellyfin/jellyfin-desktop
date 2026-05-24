@@ -1,12 +1,12 @@
 use crate::{InstallArgs, fs as xfs};
-use anyhow::{Result, bail};
-use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use crate::{bundle_macos, paths, template, version};
 #[cfg(target_os = "macos")]
 use anyhow::Context;
+use anyhow::{Result, bail};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
 pub const MACOS_APP_NAME: &str = "Jellyfin Desktop.app";

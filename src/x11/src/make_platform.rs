@@ -66,41 +66,20 @@ impl Platform for X11Platform {
         }
     }
 
-    fn surface_resize(
-        &self,
-        s: SurfaceHandle,
-        lw: c_int,
-        lh: c_int,
-        pw: c_int,
-        ph: c_int,
-    ) {
+    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
         unsafe {
-            jfn_x11_surface_resize(
-                s as *mut crate::x11_state::PlatformSurface,
-                lw,
-                lh,
-                pw,
-                ph,
-            )
+            jfn_x11_surface_resize(s as *mut crate::x11_state::PlatformSurface, lw, lh, pw, ph)
         };
     }
 
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
         unsafe {
-            jfn_x11_surface_set_visible(
-                s as *mut crate::x11_state::PlatformSurface,
-                visible,
-            )
+            jfn_x11_surface_set_visible(s as *mut crate::x11_state::PlatformSurface, visible)
         };
     }
 
     fn restack(&self, handles: *const SurfaceHandle, n: usize) {
-        unsafe {
-            jfn_x11_restack(
-                handles as *const *mut crate::x11_state::PlatformSurface,
-                n,
-            )
-        };
+        unsafe { jfn_x11_restack(handles as *const *mut crate::x11_state::PlatformSurface, n) };
     }
 
     fn fade_surface(
@@ -158,16 +137,18 @@ impl Platform for X11Platform {
         if s > 0.0 {
             let f = s as f32;
             if let Ok(mut g) = crate::x11_state::MUT.lock()
-                && let Some(m) = g.as_mut() {
-                    m.cached_scale = f;
-                }
+                && let Some(m) = g.as_mut()
+            {
+                m.cached_scale = f;
+            }
             return f;
         }
         if let Ok(g) = crate::x11_state::MUT.lock()
             && let Some(m) = g.as_ref()
-                && m.cached_scale > 0.0 {
-                    return m.cached_scale;
-                }
+            && m.cached_scale > 0.0
+        {
+            return m.cached_scale;
+        }
         1.0
     }
 
@@ -177,8 +158,7 @@ impl Platform for X11Platform {
         };
         let g = crate::x11_state::MUT.lock().unwrap();
         let Some(m) = g.as_ref() else { return false };
-        let Some((px, py, _, _)) =
-            crate::lifecycle::query_parent_geometry(&conn, m.parent, m.root)
+        let Some((px, py, _, _)) = crate::lifecycle::query_parent_geometry(&conn, m.parent, m.root)
         else {
             return false;
         };
@@ -189,13 +169,7 @@ impl Platform for X11Platform {
         true
     }
 
-    fn clamp_window_geometry(
-        &self,
-        w: *mut c_int,
-        h: *mut c_int,
-        _x: *mut c_int,
-        _y: *mut c_int,
-    ) {
+    fn clamp_window_geometry(&self, w: *mut c_int, h: *mut c_int, _x: *mut c_int, _y: *mut c_int) {
         if w.is_null() || h.is_null() {
             return;
         }

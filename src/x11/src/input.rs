@@ -220,12 +220,8 @@ fn setup_xkb(conn: &xcb::Connection, st: &mut State) -> bool {
     }
     st.xkb_device_id = device_id;
 
-    let kmap = xkb_x11::keymap_new_from_device(
-        &st.xkb_ctx,
-        conn,
-        device_id,
-        xkb::KEYMAP_COMPILE_NO_FLAGS,
-    );
+    let kmap =
+        xkb_x11::keymap_new_from_device(&st.xkb_ctx, conn, device_id, xkb::KEYMAP_COMPILE_NO_FLAGS);
     if kmap.get_raw_ptr().is_null() {
         return false;
     }
@@ -288,7 +284,9 @@ fn to_logical(physical: i32) -> i32 {
 }
 
 fn handle_key(st: &mut State, detail: u8, pressed: bool) {
-    let Some(xst) = st.xkb_st.as_mut() else { return };
+    let Some(xst) = st.xkb_st.as_mut() else {
+        return;
+    };
     let kc_raw = detail as u32;
     let kc = xkb::Keycode::new(kc_raw);
     let sym: u32 = xst.key_get_one_sym(kc).raw();
@@ -690,4 +688,3 @@ pub fn start(conn: Arc<xcb::Connection>, screen_num: i32, parent: x::Window) -> 
 pub fn set_cursor(handle: &Handle, t: u32) {
     handle.mailbox.push(CursorReq::Set(t));
 }
-

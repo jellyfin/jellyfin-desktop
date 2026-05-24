@@ -8,7 +8,7 @@
 use cef::rc::ConvertReturnValue;
 use cef::*;
 use serde_json::Value;
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 use std::os::raw::c_void;
 use std::sync::Mutex;
 
@@ -96,7 +96,9 @@ pub unsafe extern "C" fn jfn_web_exec_js(js_utf8: *const c_char) {
         Some(s) => s.layer,
         None => return,
     };
-    let len = unsafe { std::ffi::CStr::from_ptr(js_utf8) }.to_bytes().len();
+    let len = unsafe { std::ffi::CStr::from_ptr(js_utf8) }
+        .to_bytes()
+        .len();
     unsafe { jfn_cef_layer_exec_js(layer, js_utf8, len) };
 }
 
@@ -153,9 +155,10 @@ fn parse_metadata_json(json: &str) -> MediaMetadata {
     out.artist = get_str("SeriesName");
     if out.artist.is_empty()
         && let Some(arr) = d.get("Artists").and_then(Value::as_array)
-            && let Some(first) = arr.first().and_then(Value::as_str) {
-                out.artist = first.to_string();
-            }
+        && let Some(first) = arr.first().and_then(Value::as_str)
+    {
+        out.artist = first.to_string();
+    }
     out.album = get_str("SeasonName");
     if out.album.is_empty() {
         out.album = get_str("Album");
@@ -164,7 +167,10 @@ fn parse_metadata_json(json: &str) -> MediaMetadata {
         out.track_number = n as i32;
     }
     if let Some(t) = d.get("RunTimeTicks") {
-        let ticks = t.as_f64().or_else(|| t.as_i64().map(|n| n as f64)).unwrap_or(0.0);
+        let ticks = t
+            .as_f64()
+            .or_else(|| t.as_i64().map(|n| n as f64))
+            .unwrap_or(0.0);
         out.duration_us = ticks as i64 / 10;
     }
     out.media_type = match get_str("Type").as_str() {
@@ -222,12 +228,10 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
     if unsafe { jfn_mpv_handle_get() }.is_null() {
         // Adopt and drop refs so we don't leak.
         if !args_raw.is_null() {
-            let _: ListValue =
-                unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
+            let _: ListValue = unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
         }
         if !browser_raw.is_null() {
-            let _: Browser =
-                unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
+            let _: Browser = unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
         }
         return false;
     }
@@ -244,14 +248,34 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "playerLoad" => {
             let Some(args) = args else { return true };
             let url = list_string(&args, 0);
-            let start_ms = if args.size() > 1 { list_int(&args, 1) } else { 0 };
+            let start_ms = if args.size() > 1 {
+                list_int(&args, 1)
+            } else {
+                0
+            };
             let video_idx = list_int(&args, 2) as i64;
             let audio_idx = list_int(&args, 3) as i64;
             let sub_idx = list_int(&args, 4) as i64;
-            let metadata_json = if args.size() > 5 { list_string(&args, 5) } else { String::new() };
-            let external_audio_url = if args.size() > 6 { list_string(&args, 6) } else { String::new() };
-            let external_sub_url = if args.size() > 7 { list_string(&args, 7) } else { String::new() };
-            let is_infinite_stream = if args.size() > 8 { args.bool(8) != 0 } else { false };
+            let metadata_json = if args.size() > 5 {
+                list_string(&args, 5)
+            } else {
+                String::new()
+            };
+            let external_audio_url = if args.size() > 6 {
+                list_string(&args, 6)
+            } else {
+                String::new()
+            };
+            let external_sub_url = if args.size() > 7 {
+                list_string(&args, 7)
+            } else {
+                String::new()
+            };
+            let is_infinite_stream = if args.size() > 8 {
+                args.bool(8) != 0
+            } else {
+                false
+            };
             jfn_logging::log(
                 jfn_logging::CATEGORY_CEF,
                 jfn_logging::LEVEL_INFO,
@@ -299,9 +323,18 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             unsafe { jfn_mpv_load_file(url_c.as_ptr(), &opts) };
             true
         }
-        "playerStop" => { unsafe { jfn_mpv_stop() }; true }
-        "playerPause" => { unsafe { jfn_mpv_pause() }; true }
-        "playerPlay" => { unsafe { jfn_mpv_play() }; true }
+        "playerStop" => {
+            unsafe { jfn_mpv_stop() };
+            true
+        }
+        "playerPause" => {
+            unsafe { jfn_mpv_pause() };
+            true
+        }
+        "playerPlay" => {
+            unsafe { jfn_mpv_play() };
+            true
+        }
         "playerSeek" => {
             if let Some(args) = args {
                 let pos = list_int(&args, 0) as f64 / 1000.0;
@@ -330,7 +363,11 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "playerSetSubtitle" => {
             if let Some(args) = args {
                 let id = list_int(&args, 0) as i64;
-                jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &format!("playerSetSubtitle: {id}"));
+                jfn_logging::log(
+                    jfn_logging::CATEGORY_CEF,
+                    jfn_logging::LEVEL_INFO,
+                    &format!("playerSetSubtitle: {id}"),
+                );
                 unsafe { jfn_mpv_set_subtitle_track(id) };
             }
             true
@@ -338,7 +375,11 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "playerAddSubtitle" => {
             if let Some(args) = args {
                 let url = list_string(&args, 0);
-                jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &format!("playerAddSubtitle: {url}"));
+                jfn_logging::log(
+                    jfn_logging::CATEGORY_CEF,
+                    jfn_logging::LEVEL_INFO,
+                    &format!("playerAddSubtitle: {url}"),
+                );
                 let c = CString::new(url).unwrap_or_default();
                 unsafe { jfn_mpv_sub_add(c.as_ptr()) };
             }
@@ -353,7 +394,11 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "playerAddAudio" => {
             if let Some(args) = args {
                 let url = list_string(&args, 0);
-                jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &format!("playerAddAudio: {url}"));
+                jfn_logging::log(
+                    jfn_logging::CATEGORY_CEF,
+                    jfn_logging::LEVEL_INFO,
+                    &format!("playerAddAudio: {url}"),
+                );
                 let c = CString::new(url).unwrap_or_default();
                 unsafe { jfn_mpv_audio_add(c.as_ptr()) };
             }
@@ -419,7 +464,11 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "themeColor" => {
             if let Some(args) = args {
                 let color = list_string(&args, 0);
-                jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_DEBUG, &format!("themeColor IPC: {color}"));
+                jfn_logging::log(
+                    jfn_logging::CATEGORY_CEF,
+                    jfn_logging::LEVEL_DEBUG,
+                    &format!("themeColor IPC: {color}"),
+                );
                 let c = CString::new(color).unwrap_or_default();
                 let rgb = unsafe { jfn_cef_parse_color(c.as_ptr()) };
                 unsafe { jfn_theme_color_on_color(rgb) };
@@ -474,7 +523,11 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             true
         }
         "openConfigDir" => {
-            jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, "Opening mpv home directory");
+            jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_INFO,
+                "Opening mpv home directory",
+            );
             jfn_paths::open_mpv_home();
             true
         }

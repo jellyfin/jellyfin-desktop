@@ -100,7 +100,9 @@ impl Platform for WaylandPlatform {
 
     fn post_window_cleanup(&self) {
         #[cfg(feature = "kde-palette")]
-        unsafe { jfn_wl_kde_palette_post_window_cleanup() };
+        unsafe {
+            jfn_wl_kde_palette_post_window_cleanup()
+        };
     }
 
     fn alloc_surface(&self) -> SurfaceHandle {
@@ -135,29 +137,11 @@ impl Platform for WaylandPlatform {
             .and_then(|n| n.checked_mul(4));
         let Some(len) = len else { return false };
         let pixels = unsafe { std::slice::from_raw_parts(buffer as *const u8, len) };
-        wl_ops::surface_present_software(
-            s as *mut crate::wl_state::PlatformSurface,
-            pixels,
-            w,
-            h,
-        )
+        wl_ops::surface_present_software(s as *mut crate::wl_state::PlatformSurface, pixels, w, h)
     }
 
-    fn surface_resize(
-        &self,
-        s: SurfaceHandle,
-        lw: c_int,
-        lh: c_int,
-        pw: c_int,
-        ph: c_int,
-    ) {
-        wl_ops::surface_resize(
-            s as *mut crate::wl_state::PlatformSurface,
-            lw,
-            lh,
-            pw,
-            ph,
-        );
+    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
+        wl_ops::surface_resize(s as *mut crate::wl_state::PlatformSurface, lw, lh, pw, ph);
     }
 
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
@@ -175,10 +159,7 @@ impl Platform for WaylandPlatform {
             return;
         }
         let typed: &[*mut crate::wl_state::PlatformSurface] = unsafe {
-            std::slice::from_raw_parts(
-                ordered as *const *mut crate::wl_state::PlatformSurface,
-                n,
-            )
+            std::slice::from_raw_parts(ordered as *const *mut crate::wl_state::PlatformSurface, n)
         };
         wl_ops::restack(typed);
     }
@@ -204,10 +185,18 @@ impl Platform for WaylandPlatform {
                 wl_ops::surface_set_visible(surf_ptr, false, BG_R, BG_G, BG_B);
             }
             unsafe {
-                if let Some(f) = on_start { f(start_ctx) }
-                if let Some(d) = start_dtor { d(start_ctx) }
-                if let Some(f) = on_done { f(done_ctx) }
-                if let Some(d) = done_dtor { d(done_ctx) }
+                if let Some(f) = on_start {
+                    f(start_ctx)
+                }
+                if let Some(d) = start_dtor {
+                    d(start_ctx)
+                }
+                if let Some(f) = on_done {
+                    f(done_ctx)
+                }
+                if let Some(d) = done_dtor {
+                    d(done_ctx)
+                }
             }
             return;
         }
@@ -248,22 +237,11 @@ impl Platform for WaylandPlatform {
         wl_ops::popup_hide(s as *mut crate::wl_state::PlatformSurface);
     }
 
-    fn popup_present(
-        &self,
-        s: SurfaceHandle,
-        info: *const c_void,
-        lw: c_int,
-        lh: c_int,
-    ) {
+    fn popup_present(&self, s: SurfaceHandle, info: *const c_void, lw: c_int, lh: c_int) {
         let Some(frame) = (unsafe { to_dmabuf_frame(info) }) else {
             return;
         };
-        wl_ops::popup_present(
-            s as *mut crate::wl_state::PlatformSurface,
-            &frame,
-            lw,
-            lh,
-        );
+        wl_ops::popup_present(s as *mut crate::wl_state::PlatformSurface, &frame, lw, lh);
     }
 
     fn popup_present_software(

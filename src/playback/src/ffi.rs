@@ -224,9 +224,7 @@ fn cstr_nul_to_string(p: *const c_char) -> String {
     if p.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(p) }
-            .to_string_lossy()
-            .into_owned()
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
     }
 }
 
@@ -266,11 +264,9 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
     // into the mpv FFI. Preserves the prior ordering relative to the
     // FILE_LOADED drain — coordinator emits events first, actions after,
     // all on the worker thread.
-    c.add_builtin_action_sink(Box::new(|a: &PlaybackAction| {
-        match a.kind {
-            PlaybackActionKind::ApplyPendingTrackSelectionAndPlay => {
-                jfn_mpv::api::jfn_mpv_apply_pending_track_selection_and_play();
-            }
+    c.add_builtin_action_sink(Box::new(|a: &PlaybackAction| match a.kind {
+        PlaybackActionKind::ApplyPendingTrackSelectionAndPlay => {
+            jfn_mpv::api::jfn_mpv_apply_pending_track_selection_and_play();
         }
     }));
 

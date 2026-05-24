@@ -24,9 +24,7 @@ pub extern "C" fn jfn_playback_set_theme_video_mode_handler(cb: Option<SetCb>) {
 
 pub(crate) fn deliver(ev: &PlaybackEvent) {
     match ev.kind {
-        PlaybackEventKind::Finished
-        | PlaybackEventKind::Canceled
-        | PlaybackEventKind::Error => {
+        PlaybackEventKind::Finished | PlaybackEventKind::Canceled | PlaybackEventKind::Error => {
             if let Some(cb) = *cb_slot().lock().unwrap() {
                 cb(false);
             }

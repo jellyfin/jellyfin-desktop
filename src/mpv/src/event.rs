@@ -64,15 +64,9 @@ impl PropertyValue {
             return Self::None;
         }
         match p.format {
-            sys::mpv_format::MPV_FORMAT_FLAG => {
-                Self::Flag(unsafe { *(p.data as *const i32) } != 0)
-            }
-            sys::mpv_format::MPV_FORMAT_INT64 => {
-                Self::Int(unsafe { *(p.data as *const i64) })
-            }
-            sys::mpv_format::MPV_FORMAT_DOUBLE => {
-                Self::Double(unsafe { *(p.data as *const f64) })
-            }
+            sys::mpv_format::MPV_FORMAT_FLAG => Self::Flag(unsafe { *(p.data as *const i32) } != 0),
+            sys::mpv_format::MPV_FORMAT_INT64 => Self::Int(unsafe { *(p.data as *const i64) }),
+            sys::mpv_format::MPV_FORMAT_DOUBLE => Self::Double(unsafe { *(p.data as *const f64) }),
             sys::mpv_format::MPV_FORMAT_STRING => unsafe {
                 let pp = p.data as *const *const std::os::raw::c_char;
                 let s = *pp;
@@ -166,7 +160,11 @@ impl Event {
             },
             sys::mpv_event_id::MPV_EVENT_GET_PROPERTY_REPLY => unsafe {
                 let p = ev.data as *const sys::mpv_event_property;
-                let name = if p.is_null() { String::new() } else { cstr_to_string((*p).name) };
+                let name = if p.is_null() {
+                    String::new()
+                } else {
+                    cstr_to_string((*p).name)
+                };
                 Event::GetPropertyReply {
                     reply: ev.reply_userdata,
                     error: ev.error,
@@ -203,7 +201,11 @@ impl Event {
             sys::mpv_event_id::MPV_EVENT_PLAYBACK_RESTART => Event::PlaybackRestart,
             sys::mpv_event_id::MPV_EVENT_PROPERTY_CHANGE => unsafe {
                 let p = ev.data as *const sys::mpv_event_property;
-                let name = if p.is_null() { String::new() } else { cstr_to_string((*p).name) };
+                let name = if p.is_null() {
+                    String::new()
+                } else {
+                    cstr_to_string((*p).name)
+                };
                 Event::PropertyChange {
                     id: ev.reply_userdata,
                     name,

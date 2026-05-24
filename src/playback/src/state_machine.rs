@@ -304,10 +304,7 @@ impl PlaybackStateMachine {
         vec![PlaybackEvent::new(PlaybackEventKind::OsdDimsChanged)]
     }
 
-    pub fn on_buffered_ranges(
-        &mut self,
-        ranges: Vec<PlaybackBufferedRange>,
-    ) -> Vec<PlaybackEvent> {
+    pub fn on_buffered_ranges(&mut self, ranges: Vec<PlaybackBufferedRange>) -> Vec<PlaybackEvent> {
         if ranges == self.s.buffered {
             return vec![];
         }
@@ -663,7 +660,10 @@ mod tests {
         sm.on_file_loaded();
         sm.on_pause_changed(false);
         let out = sm.on_end_file(EndReason::Error, "boom".into());
-        assert!(out.iter().any(|e| e.kind == PlaybackEventKind::Error && e.error_message == "boom"));
+        assert!(
+            out.iter()
+                .any(|e| e.kind == PlaybackEventKind::Error && e.error_message == "boom")
+        );
     }
 
     #[test]
@@ -764,8 +764,10 @@ mod tests {
         let out = sm.on_position(1234567);
         assert_eq!(sm.snapshot().position_us, 1234567);
         assert!(!sm.snapshot().seeking);
-        assert!(out.iter().any(|e|
-            e.kind == PlaybackEventKind::SeekingChanged && !e.flag));
+        assert!(
+            out.iter()
+                .any(|e| e.kind == PlaybackEventKind::SeekingChanged && !e.flag)
+        );
     }
 
     #[test]

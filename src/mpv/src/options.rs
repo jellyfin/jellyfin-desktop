@@ -21,9 +21,7 @@ pub fn hwdec_options() -> Vec<&'static str> {
 }
 
 pub fn is_valid_hwdec(value: &str) -> bool {
-    HWDEC_LIST
-        .iter()
-        .any(|s| s.to_bytes() == value.as_bytes())
+    HWDEC_LIST.iter().any(|s| s.to_bytes() == value.as_bytes())
 }
 
 #[unsafe(no_mangle)]

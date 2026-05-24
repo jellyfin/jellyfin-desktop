@@ -43,11 +43,7 @@ impl Node {
                 if s.is_null() {
                     Node::String(String::new())
                 } else {
-                    Node::String(
-                        unsafe { CStr::from_ptr(s) }
-                            .to_string_lossy()
-                            .into_owned(),
-                    )
+                    Node::String(unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned())
                 }
             }
             sys::mpv_format::MPV_FORMAT_FLAG => Node::Flag(unsafe { raw.u.flag } != 0),
@@ -102,27 +98,51 @@ impl Node {
     }
 
     pub fn as_str(&self) -> Option<&str> {
-        if let Node::String(s) = self { Some(s) } else { None }
+        if let Node::String(s) = self {
+            Some(s)
+        } else {
+            None
+        }
     }
 
     pub fn as_int(&self) -> Option<i64> {
-        if let Node::Int(v) = self { Some(*v) } else { None }
+        if let Node::Int(v) = self {
+            Some(*v)
+        } else {
+            None
+        }
     }
 
     pub fn as_double(&self) -> Option<f64> {
-        if let Node::Double(v) = self { Some(*v) } else { None }
+        if let Node::Double(v) = self {
+            Some(*v)
+        } else {
+            None
+        }
     }
 
     pub fn as_flag(&self) -> Option<bool> {
-        if let Node::Flag(v) = self { Some(*v) } else { None }
+        if let Node::Flag(v) = self {
+            Some(*v)
+        } else {
+            None
+        }
     }
 
     pub fn as_array(&self) -> Option<&NodeArray> {
-        if let Node::Array(a) = self { Some(a) } else { None }
+        if let Node::Array(a) = self {
+            Some(a)
+        } else {
+            None
+        }
     }
 
     pub fn as_map(&self) -> Option<&NodeMap> {
-        if let Node::Map(m) = self { Some(m) } else { None }
+        if let Node::Map(m) = self {
+            Some(m)
+        } else {
+            None
+        }
     }
 
     /// Lookup a key in a `Node::Map`. Returns `None` for non-maps or missing keys.

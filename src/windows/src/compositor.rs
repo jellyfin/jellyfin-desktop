@@ -23,8 +23,8 @@ use windows::Win32::Graphics::Direct3D11::{
     ID3D11Device, ID3D11Device1, ID3D11DeviceContext, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice, IDCompositionDevice, IDCompositionEffectGroup,
-    IDCompositionTarget, IDCompositionVisual,
+    DCompositionCreateDevice, IDCompositionDevice, IDCompositionEffectGroup, IDCompositionTarget,
+    IDCompositionVisual,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
@@ -276,10 +276,11 @@ fn create_swap_chain(
         ..Default::default()
     };
     unsafe {
-        match devices
-            .dxgi_factory
-            .CreateSwapChainForComposition(&devices.d3d_device, &desc, None::<&windows::Win32::Graphics::Dxgi::IDXGIOutput>)
-        {
+        match devices.dxgi_factory.CreateSwapChainForComposition(
+            &devices.d3d_device,
+            &desc,
+            None::<&windows::Win32::Graphics::Dxgi::IDXGIOutput>,
+        ) {
             Ok(sc) => Some(sc),
             Err(e) => {
                 tracing::error!(target: "platform", "CreateSwapChainForComposition failed: {e:?}");
@@ -337,11 +338,7 @@ fn ensure_swap_chain(
     }
 }
 
-fn present_to_swap_chain(
-    devices: &CompositorDevices,
-    sc: &IDXGISwapChain1,
-    src: &ID3D11Texture2D,
-) {
+fn present_to_swap_chain(devices: &CompositorDevices, sc: &IDXGISwapChain1, src: &ID3D11Texture2D) {
     unsafe {
         match sc.GetBuffer::<ID3D11Texture2D>(0) {
             Ok(bb) => {
@@ -392,7 +389,10 @@ pub extern "C" fn win_alloc_surface() -> *mut c_void {
                 tracing::error!(target: "platform", "CreateVisual(popup) failed");
             }
 
-            match devices.dcomp_root.AddVisual(&visual, true, None::<&IDCompositionVisual>) {
+            match devices
+                .dcomp_root
+                .AddVisual(&visual, true, None::<&IDCompositionVisual>)
+            {
                 Ok(()) => s.in_tree = true,
                 Err(e) => tracing::error!(target: "platform", "AddVisual failed: {e:?}"),
             }
@@ -625,13 +625,7 @@ pub extern "C" fn win_surface_present_software(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn win_surface_resize(
-    s: *mut c_void,
-    _lw: c_int,
-    _lh: c_int,
-    pw: c_int,
-    ph: c_int,
-) {
+pub extern "C" fn win_surface_resize(s: *mut c_void, _lw: c_int, _lh: c_int, pw: c_int, ph: c_int) {
     if s.is_null() || pw <= 0 || ph <= 0 {
         return;
     }
@@ -787,8 +781,7 @@ pub extern "C" fn win_fade_surface(
         if total_frames < 1 {
             total_frames = 1;
         }
-        let frame_duration =
-            std::time::Duration::from_micros((1e6 / fps) as u64);
+        let frame_duration = std::time::Duration::from_micros((1e6 / fps) as u64);
 
         for i in 1..=total_frames {
             let t = i as f32 / total_frames as f32;
@@ -880,10 +873,7 @@ pub extern "C" fn win_end_transition() {
 #[unsafe(no_mangle)]
 pub extern "C" fn win_set_expected_size(w: c_int, h: c_int) {
     let mut st = STATE.lock().unwrap();
-    if G_TRANSITIONING.load(Ordering::SeqCst)
-        && w == st.transition_pw
-        && h == st.transition_ph
-    {
+    if G_TRANSITIONING.load(Ordering::SeqCst) && w == st.transition_pw && h == st.transition_ph {
         return;
     }
     st.expected_w = w;
@@ -995,7 +985,10 @@ pub extern "C" fn win_popup_present(
         None => return,
     };
     let src: ID3D11Texture2D = unsafe {
-        match devices.d3d_device.OpenSharedResource1::<ID3D11Texture2D>(HANDLE(handle)) {
+        match devices
+            .d3d_device
+            .OpenSharedResource1::<ID3D11Texture2D>(HANDLE(handle))
+        {
             Ok(t) => t,
             Err(_) => return,
         }

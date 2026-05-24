@@ -110,9 +110,8 @@ fn write_color_scheme(r: u8, g: u8, b: u8, path: &std::path::Path) -> std::io::R
     let bg = format!("{},{},{}", r, g, b);
 
     // BT.709 luminance — choose readable foreground.
-    let lum = 0.2126 * (r as f64 / 255.0)
-        + 0.7152 * (g as f64 / 255.0)
-        + 0.0722 * (b as f64 / 255.0);
+    let lum =
+        0.2126 * (r as f64 / 255.0) + 0.7152 * (g as f64 / 255.0) + 0.0722 * (b as f64 / 255.0);
     let active_fg = if lum < 0.5 { "252,252,252" } else { "35,38,41" };
     let inactive_fg = if lum < 0.5 { "126,126,126" } else { "35,38,41" };
 
@@ -181,15 +180,14 @@ pub unsafe extern "C" fn jfn_wl_kde_palette_attach(
     };
 
     // Wrap mpv's parent surface as a foreign Proxy.
-    let parent_id = match unsafe {
-        ObjectId::from_ptr(WlSurface::interface(), parent_surface.cast())
-    } {
-        Ok(id) => id,
-        Err(_) => {
-            log::warn!("kde_palette: parent surface interface mismatch");
-            return false;
-        }
-    };
+    let parent_id =
+        match unsafe { ObjectId::from_ptr(WlSurface::interface(), parent_surface.cast()) } {
+            Ok(id) => id,
+            Err(_) => {
+                log::warn!("kde_palette: parent surface interface mismatch");
+                return false;
+            }
+        };
     let parent = match WlSurface::from_id(&conn, parent_id) {
         Ok(p) => p,
         Err(_) => {
@@ -227,12 +225,7 @@ pub unsafe extern "C" fn jfn_wl_kde_palette_attach(
 ///
 /// SAFETY: `hex` must be a valid NUL-terminated UTF-8 pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_wl_kde_palette_set_color(
-    r: u8,
-    g: u8,
-    b: u8,
-    hex: *const c_char,
-) {
+pub unsafe extern "C" fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_char) {
     if hex.is_null() {
         return;
     }

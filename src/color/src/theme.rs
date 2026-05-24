@@ -54,7 +54,11 @@ fn format_hex_rgb(rgb: u32, out: &mut [u8; 8]) {
     out[0] = b'#';
     for i in 0..6 {
         let nibble = ((rgb >> (20 - i * 4)) & 0xF) as u8;
-        out[1 + i] = if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) };
+        out[1 + i] = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + (nibble - 10)
+        };
     }
     out[7] = 0;
 }

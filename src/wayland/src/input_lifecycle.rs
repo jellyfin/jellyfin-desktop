@@ -18,13 +18,13 @@ use jfn_input::{
 };
 
 const CALLBACKS: Callbacks = Callbacks {
-    mouse_move:   Some(jfn_input_dispatch_mouse_move),
+    mouse_move: Some(jfn_input_dispatch_mouse_move),
     mouse_button: Some(jfn_input_dispatch_mouse_button),
-    scroll:       Some(jfn_input_dispatch_scroll),
-    history_nav:  Some(jfn_input_dispatch_history_nav),
-    kb_focus:     Some(jfn_input_dispatch_keyboard_focus),
-    key:          Some(jfn_input_dispatch_key_raw),
-    char_:        Some(jfn_input_dispatch_char),
+    scroll: Some(jfn_input_dispatch_scroll),
+    history_nav: Some(jfn_input_dispatch_history_nav),
+    kb_focus: Some(jfn_input_dispatch_keyboard_focus),
+    key: Some(jfn_input_dispatch_key_raw),
+    char_: Some(jfn_input_dispatch_char),
 };
 
 static G_CTX: AtomicPtr<JfnInputWayland> = AtomicPtr::new(std::ptr::null_mut());

@@ -54,7 +54,11 @@ pub extern "C" fn jfn_cef_start(_argc: c_int, _argv: *const *const c_char) -> c_
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     let args = args::Args::new();
     let mut app = JfnAppBuilder::new(JfnApp::new());
-    execute_process(Some(args.as_main_args()), Some(&mut app), std::ptr::null_mut())
+    execute_process(
+        Some(args.as_main_args()),
+        Some(&mut app),
+        std::ptr::null_mut(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -133,9 +137,10 @@ pub extern "C" fn jfn_cef_initialize() -> bool {
         log_severity: log_severity_from_int(cfg_severity),
         remote_debugging_port: cfg_port,
         locale: CefString::from("en-US"),
-        user_agent: CefString::from(
-            concat!("Mozilla/5.0 jellyfin-desktop/", env!("JFN_APP_VERSION")),
-        ),
+        user_agent: CefString::from(concat!(
+            "Mozilla/5.0 jellyfin-desktop/",
+            env!("JFN_APP_VERSION")
+        )),
         root_cache_path: CefString::from(jfn_paths::cache_dir().to_string_lossy().as_ref()),
         ..Settings::default()
     };
@@ -206,7 +211,10 @@ fn browser_main_args() -> MainArgs {
             argv: leaked.as_mut_ptr(),
         }
     });
-    MainArgs { argc: c.argc, argv: c.argv }
+    MainArgs {
+        argc: c.argc,
+        argv: c.argv,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -259,8 +267,7 @@ fn fill_paths(settings: &mut Settings) {
     let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     settings.browser_subprocess_path = CefString::from(exe.to_string_lossy().as_ref());
     settings.resources_dir_path = CefString::from(dir.to_string_lossy().as_ref());
-    settings.locales_dir_path =
-        CefString::from(dir.join("locales").to_string_lossy().as_ref());
+    settings.locales_dir_path = CefString::from(dir.join("locales").to_string_lossy().as_ref());
 }
 
 #[cfg(target_os = "linux")]

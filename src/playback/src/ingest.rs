@@ -154,11 +154,7 @@ pub(crate) fn ingest_property_for_ffi<C: IngestCtx>(
     digest_property(id, value, state, ctx)
 }
 
-pub(crate) fn ingest<C: IngestCtx>(
-    event: &Event,
-    state: &IngestState,
-    ctx: &C,
-) -> Vec<IngestOut> {
+pub(crate) fn ingest<C: IngestCtx>(event: &Event, state: &IngestState, ctx: &C) -> Vec<IngestOut> {
     match event {
         Event::Shutdown => vec![IngestOut::Shutdown],
         Event::FileLoaded => vec![IngestOut::Input(Input::FileLoaded)],
@@ -201,25 +197,15 @@ fn digest_property<C: IngestCtx>(
 ) -> Vec<IngestOut> {
     use observe_id::*;
     match id {
-        OSD_DIMS => digest_osd_dims(value, state, ctx)
-            .into_iter()
-            .collect(),
+        OSD_DIMS => digest_osd_dims(value, state, ctx).into_iter().collect(),
         PAUSE => as_flag(value)
             .map(|f| vec![IngestOut::Input(Input::PauseChanged(f))])
             .unwrap_or_default(),
         TIME_POS => as_double(value)
-            .map(|d| {
-                vec![IngestOut::Input(Input::Position(
-                    (d * 1_000_000.0) as i64,
-                ))]
-            })
+            .map(|d| vec![IngestOut::Input(Input::Position((d * 1_000_000.0) as i64))])
             .unwrap_or_default(),
         DURATION => as_double(value)
-            .map(|d| {
-                vec![IngestOut::Input(Input::Duration(
-                    (d * 1_000_000.0) as i64,
-                ))]
-            })
+            .map(|d| vec![IngestOut::Input(Input::Duration((d * 1_000_000.0) as i64))])
             .unwrap_or_default(),
         FULLSCREEN => match as_flag(value) {
             Some(f) => {
@@ -243,9 +229,10 @@ fn digest_property<C: IngestCtx>(
         CORE_IDLE => as_flag(value)
             .map(|f| vec![IngestOut::Input(Input::CoreIdle(f))])
             .unwrap_or_default(),
-        VIDEO_FRAME_INFO => vec![IngestOut::Input(Input::VideoFrameAvailable(
-            !matches!(value, PropertyValue::None),
-        ))],
+        VIDEO_FRAME_INFO => vec![IngestOut::Input(Input::VideoFrameAvailable(!matches!(
+            value,
+            PropertyValue::None
+        )))],
         WINDOW_MAX => {
             if let Some(f) = as_flag(value) {
                 state.window_maximized.store(f, Ordering::Relaxed);
@@ -307,12 +294,14 @@ fn digest_osd_dims<C: IngestCtx>(
     let mut lw = (pw as f32 / scale) as i32;
     let mut lh = (ph as f32 / scale) as i32;
     if let Some((qlw, qlh)) = ctx.macos_logical_size()
-        && qlw > 0 && qlh > 0 {
-            lw = qlw;
-            lh = qlh;
-            pw = (qlw as f32 * scale) as i32;
-            ph = (qlh as f32 * scale) as i32;
-        }
+        && qlw > 0
+        && qlh > 0
+    {
+        lw = qlw;
+        lh = qlh;
+        pw = (qlw as f32 * scale) as i32;
+        ph = (qlh as f32 * scale) as i32;
+    }
     if lw <= 0 || lh <= 0 {
         return Vec::new();
     }
@@ -331,7 +320,10 @@ fn digest_cache_state(value: &PropertyValue) -> Vec<IngestOut> {
     };
     let mut ranges = Vec::with_capacity(arr.len().min(MAX_BUFFERED_RANGES));
     for range in arr.iter().take(MAX_BUFFERED_RANGES) {
-        let start = range.get("start").and_then(|v| v.as_double()).unwrap_or(0.0);
+        let start = range
+            .get("start")
+            .and_then(|v| v.as_double())
+            .unwrap_or(0.0);
         let end = range.get("end").and_then(|v| v.as_double()).unwrap_or(0.0);
         ranges.push(PlaybackBufferedRange {
             start_ticks: (start * 10_000_000.0) as i64,
@@ -459,7 +451,11 @@ mod tests {
     fn display_scale_suppresses_duplicates() {
         let state = IngestState::new();
         let v = PropertyValue::Double(2.0);
-        let out = ingest(&prop(observe_id::DISPLAY_SCALE, v.clone()), &state, &ctx(1.0));
+        let out = ingest(
+            &prop(observe_id::DISPLAY_SCALE, v.clone()),
+            &state,
+            &ctx(1.0),
+        );
         assert!(matches!(out[0], IngestOut::DisplayScaleChanged(s) if s == 2.0));
         let out = ingest(&prop(observe_id::DISPLAY_SCALE, v), &state, &ctx(1.0));
         assert!(out.is_empty());

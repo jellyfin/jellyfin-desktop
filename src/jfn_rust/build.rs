@@ -50,22 +50,20 @@ fn main() {
 
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
-        let rc_template = repo_root.join("resources").join("win").join("iconres.rc.in");
+        let rc_template = repo_root
+            .join("resources")
+            .join("win")
+            .join("iconres.rc.in");
         println!("cargo:rerun-if-changed={}", rc_template.display());
 
-        let template = std::fs::read_to_string(&rc_template)
-            .expect("read resources/win/iconres.rc.in");
+        let template =
+            std::fs::read_to_string(&rc_template).expect("read resources/win/iconres.rc.in");
 
         let version = std::fs::read_to_string(repo_root.join("VERSION"))
             .expect("read VERSION")
             .trim()
             .to_string();
-        let numeric: Vec<&str> = version
-            .splitn(2, '-')
-            .next()
-            .unwrap()
-            .split('.')
-            .collect();
+        let numeric: Vec<&str> = version.splitn(2, '-').next().unwrap().split('.').collect();
         let mut major: u32 = numeric.first().and_then(|s| s.parse().ok()).unwrap_or(0);
         let mut minor: u32 = numeric.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
         let mut patch: u32 = numeric.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);

@@ -103,8 +103,7 @@ struct CGSize {
 }
 
 unsafe impl Encode for CGSize {
-    const ENCODING: Encoding =
-        Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+    const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
 }
 
 // =====================================================================
@@ -172,7 +171,9 @@ impl Surface {
     /// at the (possibly new) IOSurface size.
     fn drop_input_texture(&mut self) {
         if !self.input_texture.is_null() {
-            unsafe { let _: () = objc2::msg_send![self.input_texture, release]; }
+            unsafe {
+                let _: () = objc2::msg_send![self.input_texture, release];
+            }
             self.input_texture = ptr::null_mut();
         }
         self.cached_input = ptr::null_mut();
@@ -205,9 +206,9 @@ static G_EXPECTED_SIZE: Mutex<(c_int, c_int)> = Mutex::new((0, 0));
 // =====================================================================
 
 struct MetalState {
-    device: *mut AnyObject,       // id<MTLDevice>, retained
-    queue: *mut AnyObject,        // id<MTLCommandQueue>, retained
-    pipeline: *mut AnyObject,     // id<MTLRenderPipelineState>, retained
+    device: *mut AnyObject,   // id<MTLDevice>, retained
+    queue: *mut AnyObject,    // id<MTLCommandQueue>, retained
+    pipeline: *mut AnyObject, // id<MTLRenderPipelineState>, retained
 }
 unsafe impl Send for MetalState {}
 
@@ -250,8 +251,7 @@ unsafe extern "C" {
 unsafe fn nsstring_from_str(s: &str) -> *mut AnyObject {
     unsafe {
         let bytes = s.as_bytes();
-        let alloc: *mut AnyObject =
-            objc2::msg_send![objc2::class!(NSString), alloc];
+        let alloc: *mut AnyObject = objc2::msg_send![objc2::class!(NSString), alloc];
         let init: *mut AnyObject = objc2::msg_send![
             alloc,
             initWithBytes: bytes.as_ptr() as *const c_void,
@@ -315,9 +315,9 @@ fn ensure_metal() -> bool {
         let _: () = objc2::msg_send![pipe_desc, setFragmentFunction: ffn];
 
         let attachments: *mut AnyObject = objc2::msg_send![pipe_desc, colorAttachments];
-        let attach0: *mut AnyObject = objc2::msg_send![attachments, objectAtIndexedSubscript: 0usize];
-        let _: () =
-            objc2::msg_send![attach0, setPixelFormat: MTL_PIXEL_FORMAT_BGRA8_UNORM];
+        let attach0: *mut AnyObject =
+            objc2::msg_send![attachments, objectAtIndexedSubscript: 0usize];
+        let _: () = objc2::msg_send![attach0, setPixelFormat: MTL_PIXEL_FORMAT_BGRA8_UNORM];
         let _: () = objc2::msg_send![attach0, setBlendingEnabled: false];
 
         let mut err2: *mut AnyObject = ptr::null_mut();
@@ -444,7 +444,13 @@ unsafe fn create_content_layer(
         let null_obj: *mut AnyObject = objc2::msg_send![null_cls, null];
         let dict_cls = objc2::class!(NSMutableDictionary);
         let dict: *mut AnyObject = objc2::msg_send![dict_cls, dictionaryWithCapacity: 5usize];
-        for key in &["bounds", "position", "contents", "anchorPoint", "contentsRect"] {
+        for key in &[
+            "bounds",
+            "position",
+            "contents",
+            "anchorPoint",
+            "contentsRect",
+        ] {
             let k = nsstring_from_str(key);
             let _: () = objc2::msg_send![dict, setObject: null_obj, forKey: k];
             let _: () = objc2::msg_send![k, release];
@@ -567,8 +573,7 @@ unsafe fn present_iosurface(s: &mut Surface, info: &cef_dll_sys::_cef_accelerate
         }
 
         // @autoreleasepool — bracket the per-frame AppKit allocations.
-        let pool: *mut AnyObject =
-            objc2::msg_send![objc2::class!(NSAutoreleasePool), new];
+        let pool: *mut AnyObject = objc2::msg_send![objc2::class!(NSAutoreleasePool), new];
 
         let drawable: *mut AnyObject = objc2::msg_send![s.layer, nextDrawable];
         if drawable.is_null() {
@@ -979,7 +984,8 @@ pub extern "C" fn macos_fade_surface(
         // still applies the animation; we just close it out on a timer
         // synchronized with the animation duration.
 
-        let _: () = objc2::msg_send![surf.layer, addAnimation: anim, forKey: ptr::null_mut::<AnyObject>()];
+        let _: () =
+            objc2::msg_send![surf.layer, addAnimation: anim, forKey: ptr::null_mut::<AnyObject>()];
         let _: () = objc2::msg_send![tx_cls, commit];
 
         // dispatch_after_f at fade_sec: hide view + reset opacity + fire done.
@@ -1075,4 +1081,3 @@ pub extern "C" fn jfn_macos_compositor_cleanup() {
         }
     }
 }
-

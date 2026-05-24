@@ -8,7 +8,7 @@
 
 use cef::rc::ConvertReturnValue;
 use cef::*;
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::os::raw::c_void;
 use std::sync::Mutex;
 
@@ -26,8 +26,7 @@ use jfn_config::{
     jfn_settings_free_string, jfn_settings_get_server_url, jfn_settings_save_async,
     jfn_settings_set_audio_channels, jfn_settings_set_audio_exclusive,
     jfn_settings_set_audio_passthrough, jfn_settings_set_device_name, jfn_settings_set_hwdec,
-    jfn_settings_set_log_level, jfn_settings_set_server_url,
-    jfn_settings_set_titlebar_theme_color,
+    jfn_settings_set_log_level, jfn_settings_set_server_url, jfn_settings_set_titlebar_theme_color,
 };
 use jfn_jellyfin::{
     jfn_jellyfin_extract_base_url, jfn_jellyfin_free_string, jfn_jellyfin_is_valid_public_info,
@@ -103,9 +102,7 @@ fn take_cstring_into_rust(p: *mut c_char) -> String {
     if p.is_null() {
         return String::new();
     }
-    let s = unsafe { CStr::from_ptr(p) }
-        .to_string_lossy()
-        .into_owned();
+    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
     unsafe { jfn_settings_free_string(p) };
     s
 }
@@ -114,9 +111,7 @@ fn take_jellyfin_string(p: *mut c_char) -> String {
     if p.is_null() {
         return String::new();
     }
-    let s = unsafe { CStr::from_ptr(p) }
-        .to_string_lossy()
-        .into_owned();
+    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
     unsafe { jfn_jellyfin_free_string(p) };
     s
 }
@@ -160,14 +155,15 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
     let args = (!args_raw.is_null()).then(|| -> ListValue {
         unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() }
     });
-    let browser = (!browser_raw.is_null()).then(|| -> Browser {
-        unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() }
-    });
+    let browser = (!browser_raw.is_null())
+        .then(|| -> Browser { unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() } });
 
     match name {
         "getSavedServerUrl" => {
             let Some(b) = browser else { return true };
-            let Some(frame) = b.main_frame() else { return true };
+            let Some(frame) = b.main_frame() else {
+                return true;
+            };
             let url = take_cstring_into_rust(unsafe { jfn_settings_get_server_url() });
             send_process_message(&frame, "savedServerUrl", |args| {
                 args.set_string(0, Some(&CefString::from(url.as_str())));
@@ -177,7 +173,11 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "navigateMain" => {
             let Some(args) = args else { return true };
             let url = list_string(&args, 0);
-            jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &format!("Overlay: navigateMain {url}"));
+            jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_INFO,
+                &format!("Overlay: navigateMain {url}"),
+            );
             let curl = CString::new(url.clone()).unwrap_or_default();
             unsafe {
                 jfn_settings_set_server_url(curl.as_ptr());
@@ -190,7 +190,11 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             true
         }
         "dismissOverlay" => {
-            jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, "Overlay: dismissOverlay");
+            jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_INFO,
+                "Overlay: dismissOverlay",
+            );
             let (overlay, main_layer) = match INSTANCE.lock().unwrap().as_ref() {
                 Some(s) => (s.layer, s.main_layer),
                 None => return true,
@@ -202,9 +206,10 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             });
             let done_box: Box<FadeFn> = Box::new(move || {
                 if let Some(b) = browser_for_close.as_ref()
-                    && let Some(host) = b.host() {
-                        host.close_browser(0);
-                    }
+                    && let Some(host) = b.host()
+                {
+                    host.close_browser(0);
+                }
             });
             unsafe {
                 jfn_cef_layer_fade(
@@ -292,7 +297,9 @@ fn start_probe(browser: Browser, user_url: String, normalized: String) {
     let probe = ServerProbeClient::new(
         normalized.clone(),
         Box::new(move |success, base_url| {
-            let Some(frame) = browser.main_frame() else { return };
+            let Some(frame) = browser.main_frame() else {
+                return;
+            };
             let reply_url = if success {
                 base_url.clone()
             } else {
@@ -405,7 +412,11 @@ impl ProbeInner {
                 st.base = take_jellyfin_string(base_raw);
                 st.phase = Phase::Get;
                 let next_url = format!("{}/System/Info/Public", st.base);
-                let req = make_request("GET", &next_url, JfnServerProbeClient::new(Arc::clone(self)));
+                let req = make_request(
+                    "GET",
+                    &next_url,
+                    JfnServerProbeClient::new(Arc::clone(self)),
+                );
                 if let Some(r) = req.clone() {
                     st.current_request = Some(r);
                 }
@@ -424,12 +435,12 @@ impl ProbeInner {
             let status = request.request_status();
             if status.as_ref() == &sys::cef_urlrequest_status_t::UR_SUCCESS
                 && let Some(resp) = request.response()
-                    && resp.status() == 200 {
-                        let body_ptr = st.body.as_ptr() as *const c_char;
-                        let valid =
-                            unsafe { jfn_jellyfin_is_valid_public_info(body_ptr, st.body.len()) };
-                        ok = valid;
-                    }
+                && resp.status() == 200
+            {
+                let body_ptr = st.body.as_ptr() as *const c_char;
+                let valid = unsafe { jfn_jellyfin_is_valid_public_info(body_ptr, st.body.len()) };
+                ok = valid;
+            }
             (ok, st.base.clone())
         };
         let cb = self.callback.lock().unwrap().take();
