@@ -24,7 +24,9 @@ impl Error {
         if ptr.is_null() {
             return "unknown mpv error";
         }
-        unsafe { CStr::from_ptr(ptr) }.to_str().unwrap_or("invalid utf-8")
+        unsafe { CStr::from_ptr(ptr) }
+            .to_str()
+            .unwrap_or("invalid utf-8")
     }
 }
 
@@ -47,5 +49,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Wrap a libmpv return code into `Result<()>`. libmpv contract: `>= 0` on
 /// success, negative on failure.
 pub(crate) fn check(code: i32) -> Result<()> {
-    if code >= 0 { Ok(()) } else { Err(Error::new(code)) }
+    if code >= 0 {
+        Ok(())
+    } else {
+        Err(Error::new(code))
+    }
 }

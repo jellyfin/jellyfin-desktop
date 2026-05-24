@@ -233,7 +233,10 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
         Input::FileLoaded => sm.on_file_loaded(),
         Input::LoadStarting(id) => sm.on_load_starting(id),
         Input::PauseChanged(paused) => sm.on_pause_changed(paused),
-        Input::EndFile { reason, error_message } => sm.on_end_file(reason, error_message),
+        Input::EndFile {
+            reason,
+            error_message,
+        } => sm.on_end_file(reason, error_message),
         Input::SeekingChanged(seeking) => sm.on_seeking_changed(seeking),
         Input::PausedForCache(pfc) => sm.on_paused_for_cache(pfc),
         Input::CoreIdle(ci) => sm.on_core_idle(ci),
@@ -242,9 +245,10 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
         Input::VideoFrameAvailable(a) => sm.on_video_frame_available(a),
         Input::Speed(r) => sm.on_speed(r),
         Input::Duration(d) => sm.on_duration(d),
-        Input::Fullscreen { fullscreen, was_maximized } => {
-            sm.on_fullscreen(fullscreen, was_maximized)
-        }
+        Input::Fullscreen {
+            fullscreen,
+            was_maximized,
+        } => sm.on_fullscreen(fullscreen, was_maximized),
         Input::OsdDims { lw, lh, pw, ph } => sm.on_osd_dims(lw, lh, pw, ph),
         Input::BufferedRanges(r) => sm.on_buffered_ranges(r),
         Input::DisplayHz(h) => sm.on_display_hz(h),
@@ -262,7 +266,10 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
             ev.artwork_uri = uri;
             vec![ev]
         }
-        Input::QueueCaps { can_go_next, can_go_prev } => {
+        Input::QueueCaps {
+            can_go_next,
+            can_go_prev,
+        } => {
             let mut ev = PlaybackEvent::new(PlaybackEventKind::QueueCapsChanged);
             ev.can_go_next = can_go_next;
             ev.can_go_prev = can_go_prev;

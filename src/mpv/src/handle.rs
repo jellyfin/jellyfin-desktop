@@ -78,7 +78,8 @@ impl Handle {
     // -----------------------------------------------------------------
 
     pub fn set_option<T: Format + Copy>(&self, name: &str, value: T) -> Result<()> {
-        let c = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let c = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         let mut v = value;
         check(unsafe {
             sys::mpv_set_option(
@@ -92,7 +93,8 @@ impl Handle {
 
     pub fn set_option_flag(&self, name: &str, value: bool) -> Result<()> {
         let mut v: i32 = if value { 1 } else { 0 };
-        let c = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let c = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         check(unsafe {
             sys::mpv_set_option(
                 self.raw,
@@ -104,8 +106,10 @@ impl Handle {
     }
 
     pub fn set_option_string(&self, name: &str, value: &str) -> Result<()> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
-        let v = CString::new(value).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let v = CString::new(value)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         check(unsafe { sys::mpv_set_option_string(self.raw, n.as_ptr(), v.as_ptr()) })
     }
 
@@ -114,7 +118,8 @@ impl Handle {
     // -----------------------------------------------------------------
 
     pub fn get_property<T: Format + Copy + Default>(&self, name: &str) -> Result<T> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         let mut out: T = T::default();
         check(unsafe {
             sys::mpv_get_property(
@@ -128,7 +133,8 @@ impl Handle {
     }
 
     pub fn get_property_flag(&self, name: &str) -> Result<bool> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         let mut out: i32 = 0;
         check(unsafe {
             sys::mpv_get_property(
@@ -145,7 +151,8 @@ impl Handle {
     /// copied into Rust ownership, then `mpv_free_node_contents` is called
     /// before returning.
     pub fn get_property_node(&self, name: &str) -> Result<Node> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         let mut raw: sys::mpv_node = unsafe { std::mem::zeroed() };
         check(unsafe {
             sys::mpv_get_property(
@@ -161,7 +168,8 @@ impl Handle {
     }
 
     pub fn get_property_string(&self, name: &str) -> Result<String> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         let p = unsafe { sys::mpv_get_property_string(self.raw, n.as_ptr()) };
         if p.is_null() {
             return Err(Error::new(sys::mpv_error::MPV_ERROR_PROPERTY_UNAVAILABLE.0));
@@ -183,7 +191,8 @@ impl Handle {
         name: &str,
         value: T,
     ) -> Result<()> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         let mut v = value;
         check(unsafe {
             sys::mpv_set_property_async(
@@ -197,7 +206,8 @@ impl Handle {
     }
 
     pub fn set_property_flag_async(&self, reply: u64, name: &str, value: bool) -> Result<()> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         let mut v: i32 = if value { 1 } else { 0 };
         check(unsafe {
             sys::mpv_set_property_async(
@@ -211,10 +221,12 @@ impl Handle {
     }
 
     pub fn set_property_string_async(&self, reply: u64, name: &str, value: &str) -> Result<()> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         // libmpv's MPV_FORMAT_STRING takes a `const char**` pointing at a
         // C string; copy the value into a CString so it survives the call.
-        let v = CString::new(value).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let v = CString::new(value)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         let mut ptr_value: *const c_char = v.as_ptr();
         check(unsafe {
             sys::mpv_set_property_async(
@@ -232,7 +244,8 @@ impl Handle {
     // -----------------------------------------------------------------
 
     pub fn observe_property(&self, reply: u64, name: &str, format: sys::mpv_format) -> Result<()> {
-        let n = CString::new(name).map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
+        let n = CString::new(name)
+            .map_err(|_| Error::new(sys::mpv_error::MPV_ERROR_INVALID_PARAMETER.0))?;
         check(unsafe { sys::mpv_observe_property(self.raw, reply, n.as_ptr(), format) })
     }
 

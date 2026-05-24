@@ -18,7 +18,7 @@ use std::thread::JoinHandle;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, MonitorFromWindow,
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
@@ -238,11 +238,7 @@ pub extern "C" fn win_toggle_fullscreen() {
 // WndProc hook.
 // =====================================================================
 
-unsafe extern "system" fn mpv_wndproc_hook(
-    n_code: c_int,
-    wp: WPARAM,
-    lp: LPARAM,
-) -> LRESULT {
+unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if n_code >= 0 {
         let msg = unsafe { &*(lp.0 as *const CWPRETSTRUCT) };
         let target_hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
@@ -266,9 +262,8 @@ unsafe extern "system" fn mpv_wndproc_hook(
                     let lw = (pw as f32 / scale) as c_int;
                     let lh = (ph as f32 / scale) as c_int;
 
-                    let style = unsafe {
-                        GetWindowLongPtrW(hwnd_from_raw(target_hwnd_raw), GWL_STYLE)
-                    };
+                    let style =
+                        unsafe { GetWindowLongPtrW(hwnd_from_raw(target_hwnd_raw), GWL_STYLE) };
                     let fs = is_fullscreen_style(style);
 
                     let recovering_from_minimize = STATE.lock().unwrap().was_minimized;
@@ -352,11 +347,9 @@ pub extern "C" fn win_init(_mpv: *mut c_void) -> bool {
         STATE.lock().unwrap().was_fullscreen = is_fullscreen_style(style);
     }
 
-    let mpv_tid =
-        unsafe { GetWindowThreadProcessId(hwnd_from_raw(hwnd_raw), None) };
-    let hook = unsafe {
-        SetWindowsHookExW(WH_CALLWNDPROCRET, Some(mpv_wndproc_hook), None, mpv_tid)
-    };
+    let mpv_tid = unsafe { GetWindowThreadProcessId(hwnd_from_raw(hwnd_raw), None) };
+    let hook =
+        unsafe { SetWindowsHookExW(WH_CALLWNDPROCRET, Some(mpv_wndproc_hook), None, mpv_tid) };
     match hook {
         Ok(h) => STATE.lock().unwrap().wndproc_hook_raw = h.0 as usize,
         Err(e) => {
@@ -455,13 +448,29 @@ pub extern "C" fn win_clamp_window_geometry(
     let vw = work.right - work.left;
     let vh = work.bottom - work.top;
     unsafe {
-        if *w > vw { *w = vw; }
-        if *h > vh { *h = vh; }
-        if *x < 0 { *x = (vw - *w) / 2; }
-        if *y < 0 { *y = (vh - *h) / 2; }
-        if *x + *w > vw { *x = vw - *w; }
-        if *y + *h > vh { *y = vh - *h; }
-        if *x < 0 { *x = 0; }
-        if *y < 0 { *y = 0; }
+        if *w > vw {
+            *w = vw;
+        }
+        if *h > vh {
+            *h = vh;
+        }
+        if *x < 0 {
+            *x = (vw - *w) / 2;
+        }
+        if *y < 0 {
+            *y = (vh - *h) / 2;
+        }
+        if *x + *w > vw {
+            *x = vw - *w;
+        }
+        if *y + *h > vh {
+            *y = vh - *h;
+        }
+        if *x < 0 {
+            *x = 0;
+        }
+        if *y < 0 {
+            *y = 0;
+        }
     }
 }

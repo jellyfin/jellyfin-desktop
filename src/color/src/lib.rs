@@ -39,15 +39,33 @@ pub fn parse_cef(s: &[u8]) -> u32 {
     let hex = &s[1..];
     match hex.len() {
         3 => {
-            let r = match parse_hex_nibble(hex[0]) { Some(v) => v, None => return 0 };
-            let g = match parse_hex_nibble(hex[1]) { Some(v) => v, None => return 0 };
-            let b = match parse_hex_nibble(hex[2]) { Some(v) => v, None => return 0 };
+            let r = match parse_hex_nibble(hex[0]) {
+                Some(v) => v,
+                None => return 0,
+            };
+            let g = match parse_hex_nibble(hex[1]) {
+                Some(v) => v,
+                None => return 0,
+            };
+            let b = match parse_hex_nibble(hex[2]) {
+                Some(v) => v,
+                None => return 0,
+            };
             pack(r * 0x11, g * 0x11, b * 0x11)
         }
         6 => {
-            let r = match parse_hex_byte(&hex[0..2]) { Some(v) => v, None => return 0 };
-            let g = match parse_hex_byte(&hex[2..4]) { Some(v) => v, None => return 0 };
-            let b = match parse_hex_byte(&hex[4..6]) { Some(v) => v, None => return 0 };
+            let r = match parse_hex_byte(&hex[0..2]) {
+                Some(v) => v,
+                None => return 0,
+            };
+            let g = match parse_hex_byte(&hex[2..4]) {
+                Some(v) => v,
+                None => return 0,
+            };
+            let b = match parse_hex_byte(&hex[4..6]) {
+                Some(v) => v,
+                None => return 0,
+            };
             pack(r, g, b)
         }
         _ => 0,
@@ -84,9 +102,18 @@ pub fn parse_mpv(s: &[u8]) -> u32 {
             8 => &hex[2..],
             _ => return 0,
         };
-        let r = match parse_hex_byte(&rgb[0..2]) { Some(v) => v, None => return 0 };
-        let g = match parse_hex_byte(&rgb[2..4]) { Some(v) => v, None => return 0 };
-        let b = match parse_hex_byte(&rgb[4..6]) { Some(v) => v, None => return 0 };
+        let r = match parse_hex_byte(&rgb[0..2]) {
+            Some(v) => v,
+            None => return 0,
+        };
+        let g = match parse_hex_byte(&rgb[2..4]) {
+            Some(v) => v,
+            None => return 0,
+        };
+        let b = match parse_hex_byte(&rgb[4..6]) {
+            Some(v) => v,
+            None => return 0,
+        };
         return pack(r, g, b);
     }
     if !s.contains(&b'/') {
@@ -143,8 +170,12 @@ pub unsafe extern "C" fn jfn_mpv_parse_color(s: *const c_char) -> u32 {
 mod tests {
     use super::*;
 
-    fn cef(s: &str) -> u32 { parse_cef(s.as_bytes()) }
-    fn mpv(s: &str) -> u32 { parse_mpv(s.as_bytes()) }
+    fn cef(s: &str) -> u32 {
+        parse_cef(s.as_bytes())
+    }
+    fn mpv(s: &str) -> u32 {
+        parse_mpv(s.as_bytes())
+    }
 
     #[test]
     fn cef_empty_or_non_hash_is_zero() {

@@ -10,8 +10,8 @@ use std::os::fd::BorrowedFd;
 use wayland_client::protocol::wl_subsurface::WlSubsurface;
 
 use crate::wl_state::{
-    create_dmabuf_buffer, create_shm_buffer, create_solid_color_buffer, lock,
-    size_in_tolerance, PlatformSurface, PresentMode, WlState,
+    PlatformSurface, PresentMode, WlState, create_dmabuf_buffer, create_shm_buffer,
+    create_solid_color_buffer, lock, size_in_tolerance,
 };
 
 // =====================================================================
@@ -46,9 +46,9 @@ pub(crate) fn alloc_surface() -> *mut PlatformSurface {
     let s = unsafe { surface_mut(ptr) };
 
     let surface = st.compositor.create_surface(&st.qh, ());
-    let subsurface =
-        st.subcompositor
-            .get_subsurface(&surface, &st.parent, &st.qh, ());
+    let subsurface = st
+        .subcompositor
+        .get_subsurface(&surface, &st.parent, &st.qh, ());
     subsurface.set_desync();
 
     // No input region on subsurface — keystrokes/clicks go to parent only.
@@ -151,11 +151,7 @@ pub(crate) fn surface_resize(ptr: *mut PlatformSurface, lw: i32, lh: i32, pw: i3
     let Some(viewport) = s.viewport.as_ref() else {
         return;
     };
-    let is_main = st
-        .stack
-        .first()
-        .map(|p| *p == ptr)
-        .unwrap_or(false);
+    let is_main = st.stack.first().map(|p| *p == ptr).unwrap_or(false);
     if st.transitioning && is_main {
         viewport.set_destination(lw, lh);
     } else if s.buffer_w > 0 && s.buffer_h > 0 && pw > 0 && ph > 0 {
@@ -278,9 +274,11 @@ pub(crate) fn popup_show(ptr: *mut PlatformSurface, x: i32, y: i32, lw: i32, lh:
     };
     sub.set_position(x, y);
     if let Some(vp) = s.popup_viewport.as_ref()
-        && lw > 0 && lh > 0 {
-            vp.set_destination(lw, lh);
-        }
+        && lw > 0
+        && lh > 0
+    {
+        vp.set_destination(lw, lh);
+    }
     st.flush();
 }
 
@@ -303,9 +301,7 @@ fn popup_create_locked(s: &mut PlatformSurface, st: &WlState) {
         return;
     }
     let surf = st.compositor.create_surface(&st.qh, ());
-    let sub: WlSubsurface =
-        st.subcompositor
-            .get_subsurface(&surf, parent, &st.qh, ());
+    let sub: WlSubsurface = st.subcompositor.get_subsurface(&surf, parent, &st.qh, ());
     sub.set_desync();
     let empty = st.compositor.create_region(&st.qh, ());
     surf.set_input_region(Some(&empty));
@@ -426,12 +422,7 @@ pub(crate) fn surface_present_software(
     true
 }
 
-pub(crate) fn popup_present(
-    ptr: *mut PlatformSurface,
-    frame: &JfnDmabufFrame,
-    lw: i32,
-    lh: i32,
-) {
+pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, lw: i32, lh: i32) {
     if ptr.is_null() || lw <= 0 || lh <= 0 {
         return;
     }
@@ -442,8 +433,16 @@ pub(crate) fn popup_present(
     }
     let w = frame.coded_w;
     let h = frame.coded_h;
-    let vw = if frame.visible_w > 0 { frame.visible_w } else { w };
-    let vh = if frame.visible_h > 0 { frame.visible_h } else { h };
+    let vw = if frame.visible_w > 0 {
+        frame.visible_w
+    } else {
+        w
+    };
+    let vh = if frame.visible_h > 0 {
+        frame.visible_h
+    } else {
+        h
+    };
     let buf = {
         let fd = unsafe { BorrowedFd::borrow_raw(frame.fd) };
         create_dmabuf_buffer(&st, fd, frame.stride, frame.modifier, w, h)
@@ -511,7 +510,12 @@ pub(crate) fn popup_present_software(
 // Internal helpers
 // =====================================================================
 
-fn attach_and_commit_locked(s: &mut PlatformSurface, buf: wayland_client::protocol::wl_buffer::WlBuffer, w: i32, h: i32) {
+fn attach_and_commit_locked(
+    s: &mut PlatformSurface,
+    buf: wayland_client::protocol::wl_buffer::WlBuffer,
+    w: i32,
+    h: i32,
+) {
     if let Some(old) = s.buffer.take() {
         old.destroy();
     }
@@ -520,14 +524,16 @@ fn attach_and_commit_locked(s: &mut PlatformSurface, buf: wayland_client::protoc
     s.placeholder = false;
     s.null_attached = false;
     if let Some(viewport) = s.viewport.as_ref()
-        && s.pw > 0 && s.lw > 0 {
-            let src_w = w.min(s.pw);
-            let src_h = h.min(s.ph);
-            let dst_w = src_w * s.lw / s.pw;
-            let dst_h = src_h * s.lh / s.ph;
-            viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
-            viewport.set_destination(dst_w, dst_h);
-        }
+        && s.pw > 0
+        && s.lw > 0
+    {
+        let src_w = w.min(s.pw);
+        let src_h = h.min(s.ph);
+        let dst_w = src_w * s.lw / s.pw;
+        let dst_h = src_h * s.lh / s.ph;
+        viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
+        viewport.set_destination(dst_w, dst_h);
+    }
     let surface = s.surface.as_ref().expect("attach without surface");
     surface.attach(Some(&buf), 0, 0);
     surface.damage_buffer(0, 0, w, h);
@@ -599,12 +605,13 @@ fn end_transition_locked(st: &mut WlState) {
             return;
         }
         let s = unsafe { surface_mut(p) };
-        if let (Some(viewport), pw, ph, lw, lh) =
-            (s.viewport.as_ref(), s.pw, s.ph, s.lw, s.lh)
-            && pw > 0 && lw > 0 {
-                viewport.set_source(0.0, 0.0, pw as f64, ph as f64);
-                viewport.set_destination(lw, lh);
-            }
+        if let (Some(viewport), pw, ph, lw, lh) = (s.viewport.as_ref(), s.pw, s.ph, s.lw, s.lh)
+            && pw > 0
+            && lw > 0
+        {
+            viewport.set_source(0.0, 0.0, pw as f64, ph as f64);
+            viewport.set_destination(lw, lh);
+        }
         let _ = (s,);
     }
 }
@@ -619,7 +626,11 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
     }
     let pw = width;
     let ph = height;
-    let scale = if cached_scale > 0.0 { cached_scale } else { 1.0 };
+    let scale = if cached_scale > 0.0 {
+        cached_scale
+    } else {
+        1.0
+    };
     let lw = (pw as f32 / scale) as i32;
     let lh = (ph as f32 / scale) as i32;
 
@@ -649,15 +660,14 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
     if st.transitioning {
         st.present_mode = PresentMode::Attach;
         if let Some(&p) = st.stack.first()
-            && !p.is_null() {
-                let s = unsafe { surface_mut(p) };
-                if let (Some(viewport), true) =
-                    (s.viewport.as_ref(), s.pw > 0 && s.lw > 0)
-                {
-                    viewport.set_source(0.0, 0.0, s.pw as f64, s.ph as f64);
-                    viewport.set_destination(s.lw, s.lh);
-                }
+            && !p.is_null()
+        {
+            let s = unsafe { surface_mut(p) };
+            if let (Some(viewport), true) = (s.viewport.as_ref(), s.pw > 0 && s.lw > 0) {
+                viewport.set_source(0.0, 0.0, s.pw as f64, s.ph as f64);
+                viewport.set_destination(s.lw, s.lh);
             }
+        }
     }
     st.flush();
 }
@@ -689,10 +699,7 @@ fn update_surface_size_locked(st: &WlState, lw: i32, lh: i32, pw: i32, ph: i32) 
     }
 }
 
-pub(crate) fn set_fullscreen_via(
-    fullscreen: bool,
-    set_wlproxy: unsafe extern "C" fn(i32),
-) {
+pub(crate) fn set_fullscreen_via(fullscreen: bool, set_wlproxy: unsafe extern "C" fn(i32)) {
     {
         let mut st = lock();
         if st.was_fullscreen == fullscreen {
@@ -718,4 +725,3 @@ pub(crate) fn toggle_fullscreen_via(set_wlproxy: unsafe extern "C" fn(i32)) {
     };
     unsafe { set_wlproxy(target) };
 }
-

@@ -33,12 +33,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDC_HAND, IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
     IDC_SIZEWE, IDC_WAIT, KF_EXTENDED, LoadCursorW, MSG, PostMessageW, PostThreadMessageW,
     RegisterClassExW, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetCursor,
-    SetWindowPos, TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_APPCOMMAND, WM_CHAR, WM_CLOSE, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP,
-    WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW, WS_CHILD, WS_VISIBLE, XBUTTON2,
+    SetWindowPos, TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APPCOMMAND,
+    WM_CHAR, WM_CLOSE, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR,
+    WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW,
+    WS_CHILD, WS_VISIBLE, XBUTTON2,
 };
 use windows::core::{PCWSTR, w};
 
@@ -103,13 +103,7 @@ const MOUSE_BTN_MIDDLE: u32 = 0x112;
 
 unsafe extern "C" {
     fn jfn_input_dispatch_mouse_move(x: i32, y: i32, mods: u32, leave: c_int);
-    fn jfn_input_dispatch_mouse_button(
-        button_code: u32,
-        pressed: c_int,
-        x: i32,
-        y: i32,
-        mods: u32,
-    );
+    fn jfn_input_dispatch_mouse_button(button_code: u32, pressed: c_int, x: i32, y: i32, mods: u32);
     fn jfn_input_dispatch_scroll(x: i32, y: i32, dx: i32, dy: i32, mods: u32);
     fn jfn_input_dispatch_history_nav(forward: c_int);
     fn jfn_input_dispatch_keyboard_focus(gained: c_int);
@@ -354,12 +348,7 @@ fn is_button_down(msg: u32) -> bool {
 // WndProc.
 // =====================================================================
 
-unsafe extern "system" fn input_wndproc(
-    hwnd: HWND,
-    msg: u32,
-    wp: WPARAM,
-    lp: LPARAM,
-) -> LRESULT {
+unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_SETCURSOR => {
             // HTCLIENT = 1
@@ -435,7 +424,10 @@ unsafe extern "system" fn input_wndproc(
         }
 
         WM_MOUSEWHEEL => {
-            let mut pt = POINT { x: get_x_lparam(lp), y: get_y_lparam(lp) };
+            let mut pt = POINT {
+                x: get_x_lparam(lp),
+                y: get_y_lparam(lp),
+            };
             unsafe {
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
@@ -447,7 +439,10 @@ unsafe extern "system" fn input_wndproc(
         }
 
         WM_MOUSEHWHEEL => {
-            let mut pt = POINT { x: get_x_lparam(lp), y: get_y_lparam(lp) };
+            let mut pt = POINT {
+                x: get_x_lparam(lp),
+                y: get_y_lparam(lp),
+            };
             unsafe {
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
@@ -644,12 +639,5 @@ pub extern "C" fn jfn_input_windows_set_cursor(t: c_int) {
     }
     let hwnd = HWND(hwnd_raw as *mut _);
     // wparam = hwnd, lparam = MAKELPARAM(HTCLIENT=1, 0)
-    let _ = unsafe {
-        PostMessageW(
-            Some(hwnd),
-            WM_SETCURSOR,
-            WPARAM(hwnd_raw),
-            LPARAM(1),
-        )
-    };
+    let _ = unsafe { PostMessageW(Some(hwnd), WM_SETCURSOR, WPARAM(hwnd_raw), LPARAM(1)) };
 }

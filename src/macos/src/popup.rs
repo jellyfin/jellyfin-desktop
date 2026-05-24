@@ -163,13 +163,12 @@ unsafe fn show_menu_on_main(run: PopupRun) {
         y: run.y as f64,
     };
 
-    let initial: *mut AnyObject = if run.initial_highlight >= 0
-        && (run.initial_highlight as usize) < run.options.len()
-    {
-        unsafe { msg_send![menu, itemAtIndex: run.initial_highlight as isize] }
-    } else {
-        std::ptr::null_mut()
-    };
+    let initial: *mut AnyObject =
+        if run.initial_highlight >= 0 && (run.initial_highlight as usize) < run.options.len() {
+            unsafe { msg_send![menu, itemAtIndex: run.initial_highlight as isize] }
+        } else {
+            std::ptr::null_mut()
+        };
 
     let _: () = unsafe { msg_send![menu, setMinimumWidth: run.min_width as f64] };
 

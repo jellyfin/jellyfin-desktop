@@ -207,16 +207,18 @@ fn apply_boot_options(handle: &Handle, boot: &JfnMpvBoot) -> crate::error::Resul
         set("window-maximized", "yes")?;
     }
     if let Some(spdif) = unsafe { cstr_opt(boot.audio_passthrough) }
-        && !spdif.is_empty() {
-            set("audio-spdif", &spdif)?;
-        }
+        && !spdif.is_empty()
+    {
+        set("audio-spdif", &spdif)?;
+    }
     if boot.audio_exclusive {
         set_flag("audio-exclusive", true)?;
     }
     if let Some(ch) = unsafe { cstr_opt(boot.audio_channels) }
-        && !ch.is_empty() {
-            set("audio-channels", &ch)?;
-        }
+        && !ch.is_empty()
+    {
+        set("audio-channels", &ch)?;
+    }
     Ok(())
 }
 
@@ -265,14 +267,15 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
     // mpv log subscription. Token is the same one
     // `mpv_request_log_messages` accepts directly.
     if let Some(level) = unsafe { cstr_opt(boot.mpv_log_level) }
-        && !level.is_empty() {
-            unsafe {
-                use std::ffi::CString;
-                if let Ok(c) = CString::new(level) {
-                    sys::mpv_request_log_messages(handle.raw(), c.as_ptr());
-                }
+        && !level.is_empty()
+    {
+        unsafe {
+            use std::ffi::CString;
+            if let Ok(c) = CString::new(level) {
+                sys::mpv_request_log_messages(handle.raw(), c.as_ptr());
             }
         }
+    }
 
     let raw = handle.raw();
     *handle_slot().lock().unwrap() = Some(handle);
@@ -302,11 +305,7 @@ pub extern "C" fn jfn_mpv_handle_get() -> *mut sys::mpv_handle {
 /// want to talk to the live handle without round-tripping through the
 /// C ABI. Returns `None` until [`jfn_mpv_handle_init`] has succeeded.
 pub fn current_raw_handle() -> Option<*mut sys::mpv_handle> {
-    handle_slot()
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|h| h.raw())
+    handle_slot().lock().unwrap().as_ref().map(|h| h.raw())
 }
 
 /// Wake the live handle's `mpv_wait_event` from any thread. No-op if

@@ -204,7 +204,10 @@ pub fn init() -> bool {
     // `sync_overlay_positions_locked`; shutdown callback hides surfaces.
     crate::input_lifecycle::start(conn.clone(), parent);
 
-    eprintln!("[x11] platform initialized (parent=0x{:x})", parent.resource_id());
+    eprintln!(
+        "[x11] platform initialized (parent=0x{:x})",
+        parent.resource_id()
+    );
     true
 }
 

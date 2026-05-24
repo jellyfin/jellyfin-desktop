@@ -18,23 +18,22 @@ pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 mod compositor;
 mod input;
 mod platform;
+pub use compositor::{
+    jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
+    jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
+    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition, win_fade_surface,
+    win_free_surface, win_popup_hide, win_popup_present, win_popup_present_software,
+    win_popup_show, win_restack, win_set_expected_size, win_surface_present,
+    win_surface_present_software, win_surface_resize, win_surface_set_visible,
+};
 pub use input::{
     jfn_input_windows_resize_to_parent, jfn_input_windows_run_input_thread,
     jfn_input_windows_set_cursor, jfn_input_windows_stop_input_thread,
 };
-pub use compositor::{
-    jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
-    jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
-    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition,
-    win_fade_surface, win_free_surface, win_popup_hide, win_popup_present,
-    win_popup_present_software, win_popup_show, win_restack, win_set_expected_size,
-    win_surface_present, win_surface_present_software, win_surface_resize,
-    win_surface_set_visible,
-};
 pub use platform::{
     jfn_win_get_hwnd, win_clamp_window_geometry, win_cleanup, win_early_init,
-    win_get_display_scale, win_get_scale, win_init, win_query_window_position,
-    win_set_fullscreen, win_toggle_fullscreen,
+    win_get_display_scale, win_get_scale, win_init, win_query_window_position, win_set_fullscreen,
+    win_toggle_fullscreen,
 };
 
 #[unsafe(no_mangle)]
@@ -63,9 +62,7 @@ unsafe extern "C" {
 // ref-counted cef_task_t whose execute() runs on TID_UI and self-deletes.
 // =====================================================================
 
-use cef_dll_sys::{
-    cef_base_ref_counted_t, cef_post_task, cef_task_t, cef_thread_id_t::TID_UI,
-};
+use cef_dll_sys::{cef_base_ref_counted_t, cef_post_task, cef_task_t, cef_thread_id_t::TID_UI};
 use std::sync::atomic::AtomicI32;
 
 #[repr(C)]
@@ -295,7 +292,14 @@ pub fn win_open_external_url(url: &str) {
     }
     let bytes = url.as_bytes();
     let wlen = unsafe {
-        MultiByteToWideChar(CP_UTF8, 0, bytes.as_ptr(), bytes.len() as c_int, std::ptr::null_mut(), 0)
+        MultiByteToWideChar(
+            CP_UTF8,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as c_int,
+            std::ptr::null_mut(),
+            0,
+        )
     };
     if wlen <= 0 {
         return;
@@ -375,14 +379,7 @@ impl Platform for WindowsPlatform {
         win_surface_present_software(s, _dirty, _dirty_len, _buffer, _w, _h)
     }
 
-    fn surface_resize(
-        &self,
-        s: SurfaceHandle,
-        lw: c_int,
-        lh: c_int,
-        pw: c_int,
-        ph: c_int,
-    ) {
+    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
         win_surface_resize(s, lw, lh, pw, ph);
     }
 
@@ -405,7 +402,9 @@ impl Platform for WindowsPlatform {
         done_ctx: *mut c_void,
         done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
     ) {
-        win_fade_surface(s, sec, on_start, start_ctx, start_dtor, on_done, done_ctx, done_dtor);
+        win_fade_surface(
+            s, sec, on_start, start_ctx, start_dtor, on_done, done_ctx, done_dtor,
+        );
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: *const JfnPopupRequest) {
@@ -416,13 +415,7 @@ impl Platform for WindowsPlatform {
         win_popup_hide(s);
     }
 
-    fn popup_present(
-        &self,
-        s: SurfaceHandle,
-        info: *const c_void,
-        lw: c_int,
-        lh: c_int,
-    ) {
+    fn popup_present(&self, s: SurfaceHandle, info: *const c_void, lw: c_int, lh: c_int) {
         win_popup_present(s, info, lw, lh);
     }
 
@@ -474,13 +467,7 @@ impl Platform for WindowsPlatform {
         win_query_window_position(x, y)
     }
 
-    fn clamp_window_geometry(
-        &self,
-        w: *mut c_int,
-        h: *mut c_int,
-        x: *mut c_int,
-        y: *mut c_int,
-    ) {
+    fn clamp_window_geometry(&self, w: *mut c_int, h: *mut c_int, x: *mut c_int, y: *mut c_int) {
         win_clamp_window_geometry(w, h, x, y);
     }
 

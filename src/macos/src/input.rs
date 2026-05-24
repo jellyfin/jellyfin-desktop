@@ -82,13 +82,7 @@ const NS_VIEW_HEIGHT_SIZABLE: u64 = 16;
 
 unsafe extern "C" {
     fn jfn_input_dispatch_mouse_move(x: i32, y: i32, mods: u32, leave: c_int);
-    fn jfn_input_dispatch_mouse_button(
-        button_code: u32,
-        pressed: c_int,
-        x: i32,
-        y: i32,
-        mods: u32,
-    );
+    fn jfn_input_dispatch_mouse_button(button_code: u32, pressed: c_int, x: i32, y: i32, mods: u32);
     fn jfn_input_dispatch_scroll_precise(
         x: i32,
         y: i32,
@@ -99,7 +93,12 @@ unsafe extern "C" {
     );
     fn jfn_input_dispatch_history_nav(forward: c_int);
     fn jfn_input_dispatch_keyboard_focus(gained: c_int);
-    fn jfn_input_dispatch_char_sys(codepoint: u32, mods: u32, native_code: u32, is_system_key: c_int);
+    fn jfn_input_dispatch_char_sys(
+        codepoint: u32,
+        mods: u32,
+        native_code: u32,
+        is_system_key: c_int,
+    );
     fn jfn_input_dispatch_key_full(
         pressed: c_int,
         windows_key_code: i32,
@@ -157,27 +156,73 @@ fn ns_to_cef_modifiers(flags: u64) -> u32 {
 fn ns_keycode_to_vkey(kc: u16) -> i32 {
     match kc {
         // Letters (VK_A = 0x41 .. VK_Z = 0x5A)
-        0x00 => b'A' as i32, 0x0B => b'B' as i32, 0x08 => b'C' as i32, 0x02 => b'D' as i32,
-        0x0E => b'E' as i32, 0x03 => b'F' as i32, 0x05 => b'G' as i32, 0x04 => b'H' as i32,
-        0x22 => b'I' as i32, 0x26 => b'J' as i32, 0x28 => b'K' as i32, 0x25 => b'L' as i32,
-        0x2E => b'M' as i32, 0x2D => b'N' as i32, 0x1F => b'O' as i32, 0x23 => b'P' as i32,
-        0x0C => b'Q' as i32, 0x0F => b'R' as i32, 0x01 => b'S' as i32, 0x11 => b'T' as i32,
-        0x20 => b'U' as i32, 0x09 => b'V' as i32, 0x0D => b'W' as i32, 0x07 => b'X' as i32,
-        0x10 => b'Y' as i32, 0x06 => b'Z' as i32,
+        0x00 => b'A' as i32,
+        0x0B => b'B' as i32,
+        0x08 => b'C' as i32,
+        0x02 => b'D' as i32,
+        0x0E => b'E' as i32,
+        0x03 => b'F' as i32,
+        0x05 => b'G' as i32,
+        0x04 => b'H' as i32,
+        0x22 => b'I' as i32,
+        0x26 => b'J' as i32,
+        0x28 => b'K' as i32,
+        0x25 => b'L' as i32,
+        0x2E => b'M' as i32,
+        0x2D => b'N' as i32,
+        0x1F => b'O' as i32,
+        0x23 => b'P' as i32,
+        0x0C => b'Q' as i32,
+        0x0F => b'R' as i32,
+        0x01 => b'S' as i32,
+        0x11 => b'T' as i32,
+        0x20 => b'U' as i32,
+        0x09 => b'V' as i32,
+        0x0D => b'W' as i32,
+        0x07 => b'X' as i32,
+        0x10 => b'Y' as i32,
+        0x06 => b'Z' as i32,
         // Digits (VK_0 = 0x30 .. VK_9 = 0x39)
-        0x1D => b'0' as i32, 0x12 => b'1' as i32, 0x13 => b'2' as i32, 0x14 => b'3' as i32,
-        0x15 => b'4' as i32, 0x17 => b'5' as i32, 0x16 => b'6' as i32, 0x1A => b'7' as i32,
-        0x1C => b'8' as i32, 0x19 => b'9' as i32,
+        0x1D => b'0' as i32,
+        0x12 => b'1' as i32,
+        0x13 => b'2' as i32,
+        0x14 => b'3' as i32,
+        0x15 => b'4' as i32,
+        0x17 => b'5' as i32,
+        0x16 => b'6' as i32,
+        0x1A => b'7' as i32,
+        0x1C => b'8' as i32,
+        0x19 => b'9' as i32,
         // Function keys (VK_F1 = 0x70 .. VK_F12 = 0x7B)
-        0x7A => 0x70, 0x78 => 0x71, 0x63 => 0x72, 0x76 => 0x73,
-        0x60 => 0x74, 0x61 => 0x75, 0x62 => 0x76, 0x64 => 0x77,
-        0x65 => 0x78, 0x6D => 0x79, 0x67 => 0x7A, 0x6F => 0x7B,
+        0x7A => 0x70,
+        0x78 => 0x71,
+        0x63 => 0x72,
+        0x76 => 0x73,
+        0x60 => 0x74,
+        0x61 => 0x75,
+        0x62 => 0x76,
+        0x64 => 0x77,
+        0x65 => 0x78,
+        0x6D => 0x79,
+        0x67 => 0x7A,
+        0x6F => 0x7B,
         // Navigation
-        0x7B => 0x25, 0x7E => 0x26, 0x7C => 0x27, 0x7D => 0x28,
-        0x73 => 0x24, 0x77 => 0x23, 0x74 => 0x21, 0x79 => 0x22,
+        0x7B => 0x25,
+        0x7E => 0x26,
+        0x7C => 0x27,
+        0x7D => 0x28,
+        0x73 => 0x24,
+        0x77 => 0x23,
+        0x74 => 0x21,
+        0x79 => 0x22,
         // Editing
-        0x30 => 0x09, 0x24 => 0x0D, 0x35 => 0x1B, 0x33 => 0x08,
-        0x75 => 0x2E, 0x31 => 0x20, 0x72 => 0x2D,
+        0x30 => 0x09,
+        0x24 => 0x0D,
+        0x35 => 0x1B,
+        0x33 => 0x08,
+        0x75 => 0x2E,
+        0x31 => 0x20,
+        0x72 => 0x2D,
         // Modifiers
         0x38 | 0x3C => 0x10,
         0x3B | 0x3E => 0x11,
@@ -185,9 +230,17 @@ fn ns_keycode_to_vkey(kc: u16) -> i32 {
         0x36 | 0x37 => 0x5B,
         0x39 => 0x14,
         // OEM punctuation
-        0x29 => 0xBA, 0x18 => 0xBB, 0x2B => 0xBC, 0x1B => 0xBD,
-        0x2F => 0xBE, 0x2C => 0xBF, 0x32 => 0xC0, 0x21 => 0xDB,
-        0x2A => 0xDC, 0x1E => 0xDD, 0x27 => 0xDE,
+        0x29 => 0xBA,
+        0x18 => 0xBB,
+        0x2B => 0xBC,
+        0x1B => 0xBD,
+        0x2F => 0xBE,
+        0x2C => 0xBF,
+        0x32 => 0xC0,
+        0x21 => 0xDB,
+        0x2A => 0xDC,
+        0x1E => 0xDD,
+        0x27 => 0xDE,
         _ => 0,
     }
 }
@@ -207,22 +260,22 @@ static G_MOUSE_BUTTON_MODIFIERS: AtomicU32 = AtomicU32::new(0);
 unsafe fn ns_cursor_for(ct: i32) -> *mut AnyObject {
     let cls = objc2::class!(NSCursor);
     let sel: Sel = match ct {
-        1 => sel!(crosshairCursor),        // CT_CROSS
-        2 => sel!(pointingHandCursor),     // CT_HAND
-        3 => sel!(IBeamCursor),            // CT_IBEAM
-        30 => sel!(IBeamCursorForVerticalLayout), // CT_VERTICALTEXT
-        6 => sel!(resizeRightCursor),      // CT_EASTRESIZE
-        13 => sel!(resizeLeftCursor),      // CT_WESTRESIZE
-        7 => sel!(resizeUpCursor),         // CT_NORTHRESIZE
-        10 => sel!(resizeDownCursor),      // CT_SOUTHRESIZE
-        14 | 19 => sel!(resizeUpDownCursor),     // CT_NORTHSOUTHRESIZE / CT_ROWRESIZE
-        15 | 18 => sel!(resizeLeftRightCursor),  // CT_EASTWESTRESIZE / CT_COLUMNRESIZE
-        29 | 41 => sel!(openHandCursor),         // CT_MOVE / CT_GRAB
-        42 => sel!(closedHandCursor),            // CT_GRABBING
+        1 => sel!(crosshairCursor),                 // CT_CROSS
+        2 => sel!(pointingHandCursor),              // CT_HAND
+        3 => sel!(IBeamCursor),                     // CT_IBEAM
+        30 => sel!(IBeamCursorForVerticalLayout),   // CT_VERTICALTEXT
+        6 => sel!(resizeRightCursor),               // CT_EASTRESIZE
+        13 => sel!(resizeLeftCursor),               // CT_WESTRESIZE
+        7 => sel!(resizeUpCursor),                  // CT_NORTHRESIZE
+        10 => sel!(resizeDownCursor),               // CT_SOUTHRESIZE
+        14 | 19 => sel!(resizeUpDownCursor),        // CT_NORTHSOUTHRESIZE / CT_ROWRESIZE
+        15 | 18 => sel!(resizeLeftRightCursor),     // CT_EASTWESTRESIZE / CT_COLUMNRESIZE
+        29 | 41 => sel!(openHandCursor),            // CT_MOVE / CT_GRAB
+        42 => sel!(closedHandCursor),               // CT_GRABBING
         35 | 38 => sel!(operationNotAllowedCursor), // CT_NODROP / CT_NOTALLOWED
-        36 => sel!(dragCopyCursor),              // CT_COPY
-        33 => sel!(dragLinkCursor),              // CT_ALIAS
-        32 => sel!(contextualMenuCursor),        // CT_CONTEXTMENU
+        36 => sel!(dragCopyCursor),                 // CT_COPY
+        33 => sel!(dragLinkCursor),                 // CT_ALIAS
+        32 => sel!(contextualMenuCursor),           // CT_CONTEXTMENU
         _ => sel!(arrowCursor),
     };
     unsafe { msg_send![cls, performSelector: sel] }
@@ -260,7 +313,11 @@ unsafe extern "C" fn cursor_trampoline(_ctx: *mut c_void) {
 pub extern "C" fn jfn_input_macos_set_cursor(t: c_int) {
     G_PENDING_CURSOR.store(t, Ordering::SeqCst);
     unsafe {
-        dispatch_async_f(dispatch_get_main_queue(), std::ptr::null_mut(), cursor_trampoline);
+        dispatch_async_f(
+            dispatch_get_main_queue(),
+            std::ptr::null_mut(),
+            cursor_trampoline,
+        );
     }
 }
 
@@ -670,7 +727,13 @@ fn key_event_fields(event: &AnyObject) -> (i32, u32, u16, u16, u16) {
             }
         }
     }
-    (ns_keycode_to_vkey(kc), ns_to_cef_modifiers(raw_flags), kc, ch, ch_nomod)
+    (
+        ns_keycode_to_vkey(kc),
+        ns_to_cef_modifiers(raw_flags),
+        kc,
+        ch,
+        ch_nomod,
+    )
 }
 
 // =====================================================================
@@ -684,7 +747,10 @@ fn key_event_fields(event: &AnyObject) -> (i32, u32, u16, u16, u16) {
 pub extern "C" fn jfn_input_macos_create_view() -> *mut c_void {
     let zero_rect = NSRect {
         origin: NSPoint { x: 0.0, y: 0.0 },
-        size: NSSize { width: 0.0, height: 0.0 },
+        size: NSSize {
+            width: 0.0,
+            height: 0.0,
+        },
     };
     let view = InputView::alloc().set_ivars(ViewIvars::default());
     let view: Retained<InputView> = unsafe { msg_send![super(view), initWithFrame: zero_rect] };

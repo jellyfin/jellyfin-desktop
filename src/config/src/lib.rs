@@ -157,7 +157,10 @@ impl SettingsData {
             o.insert("windowHeight".into(), json!(self.window.height));
         }
         if self.window.logical_width > 0 && self.window.logical_height > 0 {
-            o.insert("windowLogicalWidth".into(), json!(self.window.logical_width));
+            o.insert(
+                "windowLogicalWidth".into(),
+                json!(self.window.logical_width),
+            );
             o.insert(
                 "windowLogicalHeight".into(),
                 json!(self.window.logical_height),
@@ -170,10 +173,7 @@ impl SettingsData {
             o.insert("windowX".into(), json!(self.window.x));
             o.insert("windowY".into(), json!(self.window.y));
         }
-        o.insert(
-            "windowMaximized".into(),
-            Value::Bool(self.window.maximized),
-        );
+        o.insert("windowMaximized".into(), Value::Bool(self.window.maximized));
         if !self.hwdec.is_empty() && self.hwdec != HWDEC_DEFAULT {
             o.insert("hwdec".into(), Value::String(self.hwdec.clone()));
         }
@@ -458,8 +458,7 @@ pub extern "C" fn jfn_settings_save_async() {
     };
     w.cv.notify_one();
     if need_spawn {
-        *w.handle.lock().unwrap() =
-            Some(thread::spawn(|| save_worker_loop(save_worker())));
+        *w.handle.lock().unwrap() = Some(thread::spawn(|| save_worker_loop(save_worker())));
     }
 }
 
@@ -600,8 +599,14 @@ fn normalize_device_name(raw: &str, platform_default: &str) -> String {
 
 bool_getter!(jfn_settings_get_audio_exclusive, audio_exclusive);
 bool_setter!(jfn_settings_set_audio_exclusive, audio_exclusive);
-bool_getter!(jfn_settings_get_disable_gpu_compositing, disable_gpu_compositing);
-bool_setter!(jfn_settings_set_disable_gpu_compositing, disable_gpu_compositing);
+bool_getter!(
+    jfn_settings_get_disable_gpu_compositing,
+    disable_gpu_compositing
+);
+bool_setter!(
+    jfn_settings_set_disable_gpu_compositing,
+    disable_gpu_compositing
+);
 bool_getter!(jfn_settings_get_titlebar_theme_color, titlebar_theme_color);
 bool_setter!(jfn_settings_set_titlebar_theme_color, titlebar_theme_color);
 bool_getter!(jfn_settings_get_transparent_titlebar, transparent_titlebar);
@@ -722,4 +727,3 @@ mod tests {
         assert_eq!(normalize_device_name(&padded, PLATFORM), "");
     }
 }
-

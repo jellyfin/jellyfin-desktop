@@ -11,9 +11,7 @@ use std::os::raw::{c_double, c_int};
 
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
-use smithay_client_toolkit::{
-    delegate_output, delegate_registry, registry_handlers,
-};
+use smithay_client_toolkit::{delegate_output, delegate_registry, registry_handlers};
 use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::wl_output;
 use wayland_client::{Connection, QueueHandle};
@@ -64,7 +62,11 @@ fn probe(x: i32, y: i32) -> Option<f64> {
         let info = state.output_state.info(&output)?;
         let (lx, ly) = info.logical_position?;
         let (lw, lh) = info.logical_size?;
-        let mode = info.modes.iter().find(|m| m.current).or_else(|| info.modes.first())?;
+        let mode = info
+            .modes
+            .iter()
+            .find(|m| m.current)
+            .or_else(|| info.modes.first())?;
         let (mw, _mh) = mode.dimensions;
         if lw <= 0 || mw <= 0 {
             continue;

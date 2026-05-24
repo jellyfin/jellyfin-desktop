@@ -35,7 +35,11 @@ unsafe extern "C" {
 fn mpv_prop_intptr(name: &CStr) -> Option<usize> {
     let mut v: i64 = 0;
     let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut v) };
-    if rc == 0 && v != 0 { Some(v as usize) } else { None }
+    if rc == 0 && v != 0 {
+        Some(v as usize)
+    } else {
+        None
+    }
 }
 
 // Installs `cb` into mpv's wayland-close-cb-ptr slot (a
@@ -79,7 +83,9 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
 
     // Seed Rust state with mpv's current fullscreen — first configure
     // after this point won't start a spurious transition.
-    crate::wl_ffi::jfn_wl_core_set_was_fullscreen(jfn_playback::ingest_driver::jfn_playback_fullscreen());
+    crate::wl_ffi::jfn_wl_core_set_was_fullscreen(
+        jfn_playback::ingest_driver::jfn_playback_fullscreen(),
+    );
 
     // Prepare the input layer first so its xkb context is ready before
     // any seat_caps wires up keyboard listeners that need xkb.
@@ -120,7 +126,9 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
     }
 
     #[cfg(feature = "kde-palette")]
-    unsafe { crate::kde_palette::jfn_wl_kde_palette_attach(display, parent) };
+    unsafe {
+        crate::kde_palette::jfn_wl_kde_palette_attach(display, parent)
+    };
 
     crate::input_lifecycle::lifecycle_start();
 
@@ -150,4 +158,3 @@ pub extern "C" fn jfn_wl_lifecycle_cleanup() {
     crate::input_lifecycle::lifecycle_cleanup();
     // Rust-side WlState lives until process exit (mirrors C++ globals).
 }
-

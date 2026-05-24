@@ -15,11 +15,11 @@
 
 use cef::rc::Rc;
 use cef::{
-    browser_host_create_browser, post_delayed_task, post_task, process_message_create, sys,
-    wrap_task, Browser, BrowserHost, BrowserSettings, CefString, Frame, ImplBrowser,
-    ImplBrowserHost, ImplFrame, ImplListValue, ImplProcessMessage, ImplRunContextMenuCallback,
-    ImplTask, KeyEvent, MenuId, MouseButtonType, MouseEvent, PaintElementType, ProcessId,
-    RunContextMenuCallback, Task, ThreadId, WindowInfo, WrapTask,
+    Browser, BrowserHost, BrowserSettings, CefString, Frame, ImplBrowser, ImplBrowserHost,
+    ImplFrame, ImplListValue, ImplProcessMessage, ImplRunContextMenuCallback, ImplTask, KeyEvent,
+    MenuId, MouseButtonType, MouseEvent, PaintElementType, ProcessId, RunContextMenuCallback, Task,
+    ThreadId, WindowInfo, WrapTask, browser_host_create_browser, post_delayed_task, post_task,
+    process_message_create, sys, wrap_task,
 };
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
@@ -149,9 +149,10 @@ unsafe impl Sync for RawHolder {}
 impl Drop for RawHolder {
     fn drop(&mut self) {
         if let Some(d) = self.dtor
-            && !self.ctx.is_null() {
-                unsafe { d(self.ctx) };
-            }
+            && !self.ctx.is_null()
+        {
+            unsafe { d(self.ctx) };
+        }
     }
 }
 
@@ -269,14 +270,20 @@ impl Inner {
         }
     }
     pub(crate) fn exec_js(&self, js: &str) {
-        let Some(b) = self.browser_clone() else { return };
+        let Some(b) = self.browser_clone() else {
+            return;
+        };
         let Some(f) = b.main_frame() else { return };
         let code = CefString::from(js);
         f.execute_java_script(Some(&code), Some(&CefString::from("")), 0);
     }
     fn send_process_message_named(&self, name: &str) {
-        let Some(f) = self.focused_or_main() else { return };
-        let Some(mut msg) = process_message_create(Some(&CefString::from(name))) else { return };
+        let Some(f) = self.focused_or_main() else {
+            return;
+        };
+        let Some(mut msg) = process_message_create(Some(&CefString::from(name))) else {
+            return;
+        };
         f.send_process_message(
             ProcessId::from(sys::cef_process_id_t::PID_RENDERER),
             Some(&mut msg),
@@ -328,12 +335,16 @@ impl Inner {
         }
     }
     fn cef_load_url(&self, url: &str) {
-        let Some(b) = self.browser_clone() else { return };
+        let Some(b) = self.browser_clone() else {
+            return;
+        };
         let Some(f) = b.main_frame() else { return };
         f.load_url(Some(&CefString::from(url)));
     }
     fn exec_js_focused(&self, js: &str) {
-        let Some(f) = self.focused_or_main() else { return };
+        let Some(f) = self.focused_or_main() else {
+            return;
+        };
         let code = CefString::from(js);
         let url_uf = f.url();
         let url = CefString::from(&url_uf);
@@ -346,19 +357,23 @@ impl Inner {
         if let Some(f) = self.focused_or_main()
             && let Some(mut msg) =
                 process_message_create(Some(&CefString::from("applyPopupSelection")))
-            {
-                if let Some(args) = msg.argument_list() {
-                    args.set_int(0, idx);
-                }
-                f.send_process_message(
-                    ProcessId::from(sys::cef_process_id_t::PID_RENDERER),
-                    Some(&mut msg),
-                );
+        {
+            if let Some(args) = msg.argument_list() {
+                args.set_int(0, idx);
             }
+            f.send_process_message(
+                ProcessId::from(sys::cef_process_id_t::PID_RENDERER),
+                Some(&mut msg),
+            );
+        }
         // Only public path to CancelWidget on a CEF OSR popup is a mouse-wheel
         // event outside popup_position_ — render_widget_host_view_osr.cc:1337-1343.
         if let Some(h) = self.host() {
-            let me = MouseEvent { x: -1, y: -1, modifiers: 0 };
+            let me = MouseEvent {
+                x: -1,
+                y: -1,
+                modifiers: 0,
+            };
             h.send_mouse_wheel_event(Some(&me), 0, 1);
         }
     }
@@ -492,9 +507,10 @@ impl Inner {
         // src/dst — runs immediately.
         let surface = self.surface_ptr();
         if !surface.is_null()
-            && let Some(p) = platform_ops::ops() {
-                p.surface_resize(surface, w, h, pw, ph);
-            }
+            && let Some(p) = platform_ops::ops()
+        {
+            p.surface_resize(surface, w, h, pw, ph);
+        }
 
         // Defer kick until the browser exists; OnAfterCreated will fire it.
         if !self.browser_alive() {
@@ -574,9 +590,10 @@ impl Inner {
         if !show {
             let surface = self.surface_ptr();
             if !surface.is_null()
-                && let Some(p) = platform_ops::ops() {
-                    p.popup_hide(surface);
-                }
+                && let Some(p) = platform_ops::ops()
+            {
+                p.popup_hide(surface);
+            }
             return;
         }
         // Ask the renderer to walk the focused <select> and ship the option
@@ -795,7 +812,11 @@ impl Inner {
             code,
             url,
         );
-        jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &formatted);
+        jfn_logging::log(
+            jfn_logging::CATEGORY_CEF,
+            jfn_logging::LEVEL_INFO,
+            &formatted,
+        );
         if is_main {
             let _g = self.load_mtx.lock().unwrap();
             self.loaded.store(true, Ordering::Release);
@@ -811,7 +832,11 @@ impl Inner {
             code,
             text,
         );
-        jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_ERROR, &formatted);
+        jfn_logging::log(
+            jfn_logging::CATEGORY_CEF,
+            jfn_logging::LEVEL_ERROR,
+            &formatted,
+        );
     }
 
     /// OnPreKeyEvent paste intercept. C++ side has already matched the
@@ -858,13 +883,13 @@ impl Inner {
     ) {
         let surface = self.surface_ptr();
         if !surface.is_null()
-            && let Some(p) = platform_ops::ops() {
-                p.fade_surface(
-                    surface, sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx,
-                    done_dtor,
-                );
-                return;
-            }
+            && let Some(p) = platform_ops::ops()
+        {
+            p.fade_surface(
+                surface, sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx, done_dtor,
+            );
+            return;
+        }
         // No platform installed (early helper-process boot) — fire callbacks
         // synchronously so any boxed state is freed; on_complete typically
         // closes the browser, which destroys the surface via Browsers::remove.
@@ -906,11 +931,12 @@ impl Inner {
     }
 
     pub(crate) fn handle_on_after_created(self: &Arc<Self>, browser: Browser) {
-        let formatted = format!(
-            "CefLayer::OnAfterCreated name={}",
-            self.name_str()
+        let formatted = format!("CefLayer::OnAfterCreated name={}", self.name_str());
+        jfn_logging::log(
+            jfn_logging::CATEGORY_CEF,
+            jfn_logging::LEVEL_DEBUG,
+            &formatted,
         );
-        jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_DEBUG, &formatted);
         *self.browser.lock().unwrap() = Some(browser.clone());
         {
             let _g = self.close_mtx.lock().unwrap();
@@ -962,9 +988,10 @@ impl Inner {
 
         // Flush any URL buffered while the browser wasn't ready.
         if let Some(url) = self.take_pending_url()
-            && let Some(f) = browser.main_frame() {
-                f.load_url(Some(&CefString::from(url.as_str())));
-            }
+            && let Some(f) = browser.main_frame()
+        {
+            f.load_url(Some(&CefString::from(url.as_str())));
+        }
     }
 
     pub(crate) fn handle_on_before_close(self: &Arc<Self>) {
@@ -1022,22 +1049,34 @@ impl Inner {
         } else if cmd == menu_stop {
             b.stop_load();
         } else if cmd == menu_undo {
-            if let Some(f) = frame { f.undo() }
+            if let Some(f) = frame {
+                f.undo()
+            }
         } else if cmd == menu_redo {
-            if let Some(f) = frame { f.redo() }
+            if let Some(f) = frame {
+                f.redo()
+            }
         } else if cmd == menu_cut {
-            if let Some(f) = frame { f.cut() }
+            if let Some(f) = frame {
+                f.cut()
+            }
         } else if cmd == menu_copy {
-            if let Some(f) = frame { f.copy() }
+            if let Some(f) = frame {
+                f.copy()
+            }
         } else if cmd == menu_paste {
             // menu_paste needs Arc to schedule the clipboard read; route via
             // a self-Arc fetched from the FFI surface. We can't easily get an
             // Arc here from `&self`, so the caller (on_process_message_received)
             // re-routes via the layer FFI helper. Inline frame.paste() is fine
             // as the platform-clipboard async path is the same shape.
-            if let Some(f) = frame { f.paste() }
+            if let Some(f) = frame {
+                f.paste()
+            }
         } else if cmd == menu_select_all {
-            if let Some(f) = frame { f.select_all() }
+            if let Some(f) = frame {
+                f.select_all()
+            }
         } else {
             self.invoke_context_menu_dispatcher(cmd);
         }
@@ -1502,7 +1541,9 @@ pub unsafe extern "C" fn jfn_cef_layer_send_key_event(
     character: u16,
     unmodified_character: u16,
 ) {
-    let Some(host) = unsafe { arc(h) }.host() else { return };
+    let Some(host) = unsafe { arc(h) }.host() else {
+        return;
+    };
     let raw_type: sys::cef_key_event_type_t = unsafe { std::mem::transmute(type_ as u32) };
     let mut ev = KeyEvent::default();
     ev.type_ = raw_type.into();
@@ -1525,7 +1566,9 @@ pub unsafe extern "C" fn jfn_cef_layer_send_mouse_click(
     mouse_up: bool,
     click_count: c_int,
 ) {
-    let Some(host) = unsafe { arc(h) }.host() else { return };
+    let Some(host) = unsafe { arc(h) }.host() else {
+        return;
+    };
     let me = MouseEvent { x, y, modifiers };
     let raw_btn: sys::cef_mouse_button_type_t = unsafe { std::mem::transmute(button as u32) };
     host.send_mouse_click_event(
@@ -1544,7 +1587,9 @@ pub unsafe extern "C" fn jfn_cef_layer_send_mouse_move(
     modifiers: u32,
     leave: bool,
 ) {
-    let Some(host) = unsafe { arc(h) }.host() else { return };
+    let Some(host) = unsafe { arc(h) }.host() else {
+        return;
+    };
     let me = MouseEvent { x, y, modifiers };
     host.send_mouse_move_event(Some(&me), if leave { 1 } else { 0 });
 }
@@ -1558,7 +1603,9 @@ pub unsafe extern "C" fn jfn_cef_layer_send_mouse_wheel(
     dx: c_int,
     dy: c_int,
 ) {
-    let Some(host) = unsafe { arc(h) }.host() else { return };
+    let Some(host) = unsafe { arc(h) }.host() else {
+        return;
+    };
     let me = MouseEvent { x, y, modifiers };
     host.send_mouse_wheel_event(Some(&me), dx, dy);
 }
@@ -1731,10 +1778,7 @@ pub unsafe extern "C" fn jfn_cef_layer_on_fullscreen_mode_change(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_cursor_change(
-    h: *const JfnCefLayer,
-    cursor_type: c_int,
-) {
+pub unsafe extern "C" fn jfn_cef_layer_on_cursor_change(h: *const JfnCefLayer, cursor_type: c_int) {
     unsafe { arc(h) }.on_cursor_change(cursor_type);
 }
 
@@ -1839,7 +1883,15 @@ fn box_raw_message(
             *mut c_void,
         ) -> bool;
         let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
-        unsafe { f(h.ctx, name.as_ptr() as *const c_char, name.len(), args, browser) }
+        unsafe {
+            f(
+                h.ctx,
+                name.as_ptr() as *const c_char,
+                name.len(),
+                args,
+                browser,
+            )
+        }
     })
 }
 
@@ -1928,7 +1980,11 @@ pub unsafe extern "C" fn jfn_cef_layer_set_message_handler(
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
     let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() { None } else { Some(box_raw_message(fn_ptr, ctx, dtor)) };
+    let new = if fn_ptr.is_null() {
+        None
+    } else {
+        Some(box_raw_message(fn_ptr, ctx, dtor))
+    };
     *inner.message_handler.lock().unwrap() = new;
 }
 
@@ -1940,7 +1996,11 @@ pub unsafe extern "C" fn jfn_cef_layer_set_created_callback(
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
     let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() { None } else { Some(box_raw_created(fn_ptr, ctx, dtor)) };
+    let new = if fn_ptr.is_null() {
+        None
+    } else {
+        Some(box_raw_created(fn_ptr, ctx, dtor))
+    };
     *inner.created_callback.lock().unwrap() = new;
 }
 
@@ -1952,7 +2012,11 @@ pub unsafe extern "C" fn jfn_cef_layer_set_before_close_callback(
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
     let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() { None } else { Some(box_raw_before_close(fn_ptr, ctx, dtor)) };
+    let new = if fn_ptr.is_null() {
+        None
+    } else {
+        Some(box_raw_before_close(fn_ptr, ctx, dtor))
+    };
     *inner.before_close_callback.lock().unwrap() = new;
 }
 
@@ -1964,7 +2028,11 @@ pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_builder(
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
     let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() { None } else { Some(box_raw_ctx_builder(fn_ptr, ctx, dtor)) };
+    let new = if fn_ptr.is_null() {
+        None
+    } else {
+        Some(box_raw_ctx_builder(fn_ptr, ctx, dtor))
+    };
     *inner.context_menu_builder.lock().unwrap() = new;
 }
 
@@ -1976,13 +2044,21 @@ pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_dispatcher(
     dtor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) {
     let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() { None } else { Some(box_raw_ctx_dispatcher(fn_ptr, ctx, dtor)) };
+    let new = if fn_ptr.is_null() {
+        None
+    } else {
+        Some(box_raw_ctx_dispatcher(fn_ptr, ctx, dtor))
+    };
     *inner.context_menu_dispatcher.lock().unwrap() = new;
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_cef_layer_has_context_menu_builder(h: *const JfnCefLayer) -> bool {
-    unsafe { arc(h) }.context_menu_builder.lock().unwrap().is_some()
+    unsafe { arc(h) }
+        .context_menu_builder
+        .lock()
+        .unwrap()
+        .is_some()
 }
 
 #[unsafe(no_mangle)]

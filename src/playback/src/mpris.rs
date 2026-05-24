@@ -82,8 +82,7 @@ pub fn project(input: &ProjectInput) -> MprisDerived {
     // Rate reflects actual frame motion, not user intent. Anything other
     // than steady playback (pre-roll, seek, buffer underrun) pins it to 0
     // so MPRIS clients don't extrapolate position.
-    let rolling =
-        input.phase == PlaybackPhase::Playing && !input.seeking && !input.buffering;
+    let rolling = input.phase == PlaybackPhase::Playing && !input.seeking && !input.buffering;
     MprisDerived {
         status: status_for(input.phase),
         can_play: active,

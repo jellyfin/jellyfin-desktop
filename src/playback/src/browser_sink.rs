@@ -118,10 +118,7 @@ pub(crate) fn deliver(ev: &PlaybackEvent) {
                 .map(|r| json!({ "start": r.start_ticks, "end": r.end_ticks }))
                 .collect();
             let json_str = serde_json::Value::Array(arr).to_string();
-            call_exec_js(&format!(
-                "window._nativeUpdateBufferedRanges({})",
-                json_str
-            ));
+            call_exec_js(&format!("window._nativeUpdateBufferedRanges({})", json_str));
         }
         PlaybackEventKind::BufferingChanged
         | PlaybackEventKind::MediaTypeChanged
@@ -133,4 +130,3 @@ pub(crate) fn deliver(ev: &PlaybackEvent) {
         }
     }
 }
-

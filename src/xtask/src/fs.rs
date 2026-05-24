@@ -31,9 +31,9 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
             {
                 // No symlinks expected in our staged trees on non-unix; fall back
                 // to copying the resolved target so the layout still works.
-                std::fs::copy(std::fs::canonicalize(&src_path)?, &dst_path).with_context(
-                    || format!("copy {} -> {}", src_path.display(), dst_path.display()),
-                )?;
+                std::fs::copy(std::fs::canonicalize(&src_path)?, &dst_path).with_context(|| {
+                    format!("copy {} -> {}", src_path.display(), dst_path.display())
+                })?;
             }
         } else {
             std::fs::copy(&src_path, &dst_path).with_context(|| {

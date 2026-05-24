@@ -30,9 +30,7 @@ use tracing_core::{
 };
 use tracing_subscriber::{EnvFilter, Registry, fmt, layer::SubscriberExt};
 
-const CATEGORY_NAMES: &[&str] = &[
-    "Main", "mpv", "CEF", "Media", "Platform", "JS", "Resource",
-];
+const CATEGORY_NAMES: &[&str] = &["Main", "mpv", "CEF", "Media", "Platform", "JS", "Resource"];
 
 // Public category/level constants. Indices into CATEGORY_NAMES, and the u8
 // values accepted by `log` / `log_enabled` / `jfn_log` / `jfn_log_enabled`.
@@ -280,8 +278,7 @@ const CONSOLE_TRACE_FMT: &[FormatItem<'static>] =
 const N_LEVELS: usize = 5;
 const ENABLED_LEN: usize = 7 * N_LEVELS; // CATEGORY_NAMES.len() == 7
 
-static ENABLED: [AtomicBool; ENABLED_LEN] =
-    [const { AtomicBool::new(false) }; ENABLED_LEN];
+static ENABLED: [AtomicBool; ENABLED_LEN] = [const { AtomicBool::new(false) }; ENABLED_LEN];
 
 #[inline]
 fn enabled_slot(category: u8, level: u8) -> usize {
@@ -336,9 +333,10 @@ fn prime_enabled_table() {
 /// anywhere — used to decide whether to prepend HH:MM:SS.mmm on console
 /// lines (preserving the previous crate's trace-mode timestamps).
 fn directive_contains_trace(filter: &str) -> bool {
-    filter
-        .split(',')
-        .any(|tok| tok.trim().eq_ignore_ascii_case("trace") || tok.trim().to_ascii_lowercase().ends_with("=trace"))
+    filter.split(',').any(|tok| {
+        tok.trim().eq_ignore_ascii_case("trace")
+            || tok.trim().to_ascii_lowercase().ends_with("=trace")
+    })
 }
 
 // =====================================================================
@@ -747,9 +745,10 @@ where
     ) -> std::fmt::Result {
         if self.trace_mode
             && let Ok(now) = OffsetDateTime::now_local()
-                && let Ok(s) = now.format(&CONSOLE_TRACE_FMT) {
-                    write!(w, "{s} ")?;
-                }
+            && let Ok(s) = now.format(&CONSOLE_TRACE_FMT)
+        {
+            write!(w, "{s} ")?;
+        }
         let meta = event.metadata();
         let target = meta.target();
         if self.color {
@@ -778,9 +777,10 @@ where
         event: &Event<'_>,
     ) -> std::fmt::Result {
         if let Ok(now) = OffsetDateTime::now_local()
-            && let Ok(s) = now.format(&ISO_FILE_FMT) {
-                write!(w, "{s} ")?;
-            }
+            && let Ok(s) = now.format(&ISO_FILE_FMT)
+        {
+            write!(w, "{s} ")?;
+        }
         let meta = event.metadata();
         let label = level_to_local_level(meta.level()).label();
         write!(w, "{label}")?;
@@ -876,7 +876,10 @@ mod tests {
             !text.contains("abc123secret"),
             "secret leaked through redactor: {text}"
         );
-        assert!(text.contains("api_key=xxx"), "expected censored bytes: {text}");
+        assert!(
+            text.contains("api_key=xxx"),
+            "expected censored bytes: {text}"
+        );
     }
 
     #[test]
@@ -937,7 +940,10 @@ mod tests {
     #[test]
     fn enabled_table_respects_global_filter() {
         // "warn" → Info+ disabled, Warn/Error enabled for any category.
-        assert!(!probe_with_filter("warn", 0 /* Main */, 2 /* Info */));
+        assert!(!probe_with_filter(
+            "warn", 0, /* Main */
+            2  /* Info */
+        ));
         assert!(probe_with_filter("warn", 0, 3 /* Warn */));
         assert!(probe_with_filter("warn", 0, 4 /* Error */));
     }
@@ -945,14 +951,22 @@ mod tests {
     #[test]
     fn enabled_table_respects_target_override() {
         // Global warn, but mpv=trace → mpv Trace enabled, Main Trace not.
-        assert!(probe_with_filter("warn,mpv=trace", 1 /* mpv */, 0 /* Trace */));
+        assert!(probe_with_filter(
+            "warn,mpv=trace",
+            1, /* mpv */
+            0  /* Trace */
+        ));
         assert!(!probe_with_filter("warn,mpv=trace", 0 /* Main */, 0));
     }
 
     #[test]
     fn enabled_table_respects_off_directive() {
         // Global info, CEF=off → CEF Error disabled, Main Error enabled.
-        assert!(!probe_with_filter("info,CEF=off", 2 /* CEF */, 4 /* Error */));
+        assert!(!probe_with_filter(
+            "info,CEF=off",
+            2, /* CEF */
+            4  /* Error */
+        ));
         assert!(probe_with_filter("info,CEF=off", 0 /* Main */, 4));
     }
 

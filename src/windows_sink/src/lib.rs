@@ -28,12 +28,8 @@ use windows::Storage::Streams::{
     DataWriter, InMemoryRandomAccessStream, RandomAccessStreamReference,
 };
 use windows::Win32::Foundation::HWND;
-use windows::Win32::Security::Cryptography::{
-    CRYPT_STRING_BASE64, CryptStringToBinaryA,
-};
-use windows::Win32::System::WinRT::{
-    ISystemMediaTransportControlsInterop, RoGetActivationFactory,
-};
+use windows::Win32::Security::Cryptography::{CRYPT_STRING_BASE64, CryptStringToBinaryA};
+use windows::Win32::System::WinRT::{ISystemMediaTransportControlsInterop, RoGetActivationFactory};
 use windows::core::{HSTRING, Interface, h};
 
 // =====================================================================
@@ -309,10 +305,9 @@ fn init_smtc(hwnd_raw: isize) -> Option<Smtc> {
         return None;
     }
     let smtc: SystemMediaTransportControls = match unsafe {
-        let interop: ISystemMediaTransportControlsInterop = RoGetActivationFactory(
-            &HSTRING::from("Windows.Media.SystemMediaTransportControls"),
-        )
-        .ok()?;
+        let interop: ISystemMediaTransportControlsInterop =
+            RoGetActivationFactory(&HSTRING::from("Windows.Media.SystemMediaTransportControls"))
+                .ok()?;
         let hwnd = HWND(hwnd_raw as *mut _);
         interop
             .GetForWindow::<SystemMediaTransportControls>(hwnd)
@@ -352,27 +347,26 @@ fn init_smtc(hwnd_raw: isize) -> Option<Smtc> {
     };
 
     let seek_token = {
-        let handler = windows::Foundation::TypedEventHandler::new(
-            |_sender: windows_core::Ref<SystemMediaTransportControls>,
-             args: windows_core::Ref<
-                windows::Media::PlaybackPositionChangeRequestedEventArgs,
-            >| {
-                if let Some(args) = args.as_ref() {
-                    if let Ok(span) = args.RequestedPlaybackPosition() {
-                        // TimeSpan.Duration is 100-ns ticks.
-                        let pos_us = span.Duration / 10;
-                        let ms = pos_us / 1000;
-                        let js = format!(
-                            "if(window._nativeSeek) window._nativeSeek({ms});\0"
-                        );
-                        unsafe {
-                            jfn_cef::business_web::jfn_web_exec_js(js.as_ptr() as *const c_char);
+        let handler =
+            windows::Foundation::TypedEventHandler::new(
+                |_sender: windows_core::Ref<SystemMediaTransportControls>,
+                 args: windows_core::Ref<
+                    windows::Media::PlaybackPositionChangeRequestedEventArgs,
+                >| {
+                    if let Some(args) = args.as_ref() {
+                        if let Ok(span) = args.RequestedPlaybackPosition() {
+                            // TimeSpan.Duration is 100-ns ticks.
+                            let pos_us = span.Duration / 10;
+                            let ms = pos_us / 1000;
+                            let js = format!("if(window._nativeSeek) window._nativeSeek({ms});\0");
+                            unsafe {
+                                jfn_cef::business_web::jfn_web_exec_js(js.as_ptr() as *const c_char);
+                            }
                         }
                     }
-                }
-                Ok(())
-            },
-        );
+                    Ok(())
+                },
+            );
         smtc.PlaybackPositionChangeRequested(&handler).ok()?
     };
 
@@ -619,14 +613,7 @@ fn decode_base64(s: &str) -> Option<Vec<u8>> {
     let bytes = s.as_bytes();
     let mut needed: u32 = 0;
     unsafe {
-        let ok = CryptStringToBinaryA(
-            bytes,
-            CRYPT_STRING_BASE64,
-            None,
-            &mut needed,
-            None,
-            None,
-        );
+        let ok = CryptStringToBinaryA(bytes, CRYPT_STRING_BASE64, None, &mut needed, None, None);
         if ok.is_err() || needed == 0 {
             return None;
         }

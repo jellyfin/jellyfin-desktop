@@ -31,27 +31,17 @@ pub type FnGetDisplay = unsafe extern "C" fn(NativeDisplayType) -> EGLDisplay;
 pub type FnInitialize = unsafe extern "C" fn(EGLDisplay, *mut Int, *mut Int) -> Boolean;
 pub type FnTerminate = unsafe extern "C" fn(EGLDisplay) -> Boolean;
 pub type FnBindApi = unsafe extern "C" fn(Enum) -> Boolean;
-pub type FnChooseConfig = unsafe extern "C" fn(
-    EGLDisplay,
-    *const Int,
-    *mut EGLConfig,
-    Int,
-    *mut Int,
-) -> Boolean;
-pub type FnCreateContext = unsafe extern "C" fn(
-    EGLDisplay,
-    EGLConfig,
-    EGLContext,
-    *const Int,
-) -> EGLContext;
+pub type FnChooseConfig =
+    unsafe extern "C" fn(EGLDisplay, *const Int, *mut EGLConfig, Int, *mut Int) -> Boolean;
+pub type FnCreateContext =
+    unsafe extern "C" fn(EGLDisplay, EGLConfig, EGLContext, *const Int) -> EGLContext;
 pub type FnCreatePbufferSurface =
     unsafe extern "C" fn(EGLDisplay, EGLConfig, *const Int) -> EGLSurface;
 pub type FnMakeCurrent =
     unsafe extern "C" fn(EGLDisplay, EGLSurface, EGLSurface, EGLContext) -> Boolean;
 pub type FnDestroySurface = unsafe extern "C" fn(EGLDisplay, EGLSurface) -> Boolean;
 pub type FnDestroyContext = unsafe extern "C" fn(EGLDisplay, EGLContext) -> Boolean;
-pub type FnGetProcAddress =
-    unsafe extern "C" fn(*const c_char) -> Option<extern "system" fn()>;
+pub type FnGetProcAddress = unsafe extern "C" fn(*const c_char) -> Option<extern "system" fn()>;
 pub type FnGetError = unsafe extern "C" fn() -> Int;
 
 pub struct Egl {

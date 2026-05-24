@@ -14,8 +14,8 @@ use crate::client::JfnCefLayer;
 
 use crate::client::{
     jfn_cef_layer_close_browser_force, jfn_cef_layer_free, jfn_cef_layer_get_surface,
-    jfn_cef_layer_is_closed, jfn_cef_layer_new, jfn_cef_layer_on_deactivated,
-    jfn_cef_layer_resize, jfn_cef_layer_send_mouse_move, jfn_cef_layer_set_focus,
+    jfn_cef_layer_is_closed, jfn_cef_layer_new, jfn_cef_layer_on_deactivated, jfn_cef_layer_resize,
+    jfn_cef_layer_send_mouse_move, jfn_cef_layer_set_focus,
     jfn_cef_layer_set_injection_profile_kind, jfn_cef_layer_set_refresh_rate,
     jfn_cef_layer_set_surface, jfn_cef_layer_wait_for_close, jfn_cef_set_default_frame_rate,
     jfn_cef_set_use_shared_textures,
@@ -68,7 +68,9 @@ pub extern "C" fn jfn_browsers_init(
 /// Tear down all remaining layers. Called once at the end of run_with_cef.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_browsers_shutdown() {
-    let Some(b) = INSTANCE.lock().unwrap().take() else { return };
+    let Some(b) = INSTANCE.lock().unwrap().take() else {
+        return;
+    };
     for layer in &b.layers {
         let s = unsafe { jfn_cef_layer_get_surface(*layer) };
         if !s.is_null() {
@@ -81,7 +83,9 @@ pub extern "C" fn jfn_browsers_shutdown() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
     let mut g = INSTANCE.lock().unwrap();
-    let Some(b) = g.as_mut() else { return std::ptr::null_mut() };
+    let Some(b) = g.as_mut() else {
+        return std::ptr::null_mut();
+    };
 
     let surface = jfn_platform_abi::get().alloc_surface();
     let layer = unsafe { jfn_cef_layer_new() };
@@ -168,7 +172,12 @@ pub extern "C" fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_browsers_active() -> *mut JfnCefLayer {
-    INSTANCE.lock().unwrap().as_ref().map(|b| b.active).unwrap_or(std::ptr::null_mut())
+    INSTANCE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|b| b.active)
+        .unwrap_or(std::ptr::null_mut())
 }
 
 #[unsafe(no_mangle)]
@@ -195,7 +204,12 @@ pub extern "C" fn jfn_browsers_set_scale(scale: f64) {
         if scale <= 0.0 || b.pw <= 0 || b.ph <= 0 {
             return;
         }
-        ((b.pw as f64 / scale) as i32, (b.ph as f64 / scale) as i32, b.pw, b.ph)
+        (
+            (b.pw as f64 / scale) as i32,
+            (b.ph as f64 / scale) as i32,
+            b.pw,
+            b.ph,
+        )
     };
     jfn_browsers_set_size(new_lw, new_lh, pw, ph);
 }
@@ -283,4 +297,3 @@ fn restack(layers: &[*mut JfnCefLayer]) {
     }
     jfn_platform_abi::get().restack(ordered.as_ptr(), ordered.len());
 }
-

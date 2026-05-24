@@ -231,8 +231,7 @@ pub extern "C" fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> b
         let visible: objc2_foundation::NSRect = objc2::msg_send![screen, visibleFrame];
         let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
         let lx = frame.origin.x - visible.origin.x;
-        let ly = (visible.origin.y + visible.size.height)
-            - (frame.origin.y + frame.size.height);
+        let ly = (visible.origin.y + visible.size.height) - (frame.origin.y + frame.size.height);
         *x = (lx * scale) as c_int;
         *y = (ly * scale) as c_int;
         true
@@ -350,9 +349,7 @@ pub extern "C" fn macos_surface_present_software(
 
 // macos_early_init / macos_init / macos_cleanup + jfn_macos_get_input_view
 // now live in src/macos/src/init.rs.
-use crate::init::{
-    jfn_macos_get_input_view, macos_cleanup, macos_early_init, macos_init,
-};
+use crate::init::{jfn_macos_get_input_view, macos_cleanup, macos_early_init, macos_init};
 
 // jfn_input_macos_set_cursor lives in src/macos/src/input.rs (Rust).
 use input::jfn_input_macos_set_cursor;
@@ -397,7 +394,8 @@ pub extern "C" fn macos_toggle_fullscreen() {
 type CFRunLoopRef = *const c_void;
 
 unsafe extern "C" {
-    fn CFRunLoopRunInMode(mode: CFStringRef, seconds: f64, return_after_source_handled: i32) -> i32;
+    fn CFRunLoopRunInMode(mode: CFStringRef, seconds: f64, return_after_source_handled: i32)
+    -> i32;
     fn CFRunLoopGetMain() -> CFRunLoopRef;
     fn CFRunLoopWakeUp(rl: CFRunLoopRef);
     static kCFRunLoopDefaultMode: CFStringRef;
@@ -498,7 +496,11 @@ unsafe extern "C" fn wake_trampoline(_ctx: *mut c_void) {
 #[unsafe(no_mangle)]
 pub extern "C" fn macos_wake_main_loop() {
     unsafe {
-        dispatch_async_f(dispatch_get_main_queue(), std::ptr::null_mut(), wake_trampoline);
+        dispatch_async_f(
+            dispatch_get_main_queue(),
+            std::ptr::null_mut(),
+            wake_trampoline,
+        );
         // Belt-and-suspenders: also wake the main CFRunLoop directly in
         // case the main thread is currently in CFRunLoopRunInMode rather
         // than [NSApp run]. Harmless when [NSApp run] is active.
@@ -531,8 +533,7 @@ pub extern "C" fn macos_clipboard_read_text_async(
                 objc2::class!(NSString),
                 stringWithUTF8String: type_cstr.as_ptr()
             ];
-            let ns: *mut objc2::runtime::AnyObject =
-                objc2::msg_send![pb, stringForType: ns_type];
+            let ns: *mut objc2::runtime::AnyObject = objc2::msg_send![pb, stringForType: ns_type];
             if ns.is_null() {
                 None
             } else {
@@ -570,10 +571,8 @@ pub fn macos_open_external_url(url: &str) {
     unsafe {
         // Build an NSString from the borrowed UTF-8 bytes (NSString copies).
         let bytes = url.as_bytes();
-        let ns_str: *mut objc2::runtime::AnyObject = objc2::msg_send![
-            objc2::class!(NSString),
-            alloc
-        ];
+        let ns_str: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSString), alloc];
         let ns_str: *mut objc2::runtime::AnyObject = objc2::msg_send![
             ns_str,
             initWithBytes: bytes.as_ptr() as *const c_void,
@@ -592,10 +591,8 @@ pub fn macos_open_external_url(url: &str) {
         if nsurl.is_null() {
             return;
         }
-        let ws: *mut objc2::runtime::AnyObject = objc2::msg_send![
-            objc2::class!(NSWorkspace),
-            sharedWorkspace
-        ];
+        let ws: *mut objc2::runtime::AnyObject =
+            objc2::msg_send![objc2::class!(NSWorkspace), sharedWorkspace];
         if ws.is_null() {
             return;
         }
@@ -676,14 +673,7 @@ impl Platform for MacosPlatform {
         macos_surface_present_software(s, dirty, dirty_len, buffer, w, h)
     }
 
-    fn surface_resize(
-        &self,
-        s: SurfaceHandle,
-        lw: c_int,
-        lh: c_int,
-        pw: c_int,
-        ph: c_int,
-    ) {
+    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
         macos_surface_resize(s, lw, lh, pw, ph);
     }
 
@@ -751,13 +741,7 @@ impl Platform for MacosPlatform {
         macos_query_window_position(x, y)
     }
 
-    fn clamp_window_geometry(
-        &self,
-        w: *mut c_int,
-        h: *mut c_int,
-        x: *mut c_int,
-        y: *mut c_int,
-    ) {
+    fn clamp_window_geometry(&self, w: *mut c_int, h: *mut c_int, x: *mut c_int, y: *mut c_int) {
         macos_clamp_window_geometry(w, h, x, y);
     }
 

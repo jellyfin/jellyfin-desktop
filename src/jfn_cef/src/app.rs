@@ -314,14 +314,18 @@ enum Arg<'a> {
 }
 
 fn call_js_global_string(frame: &Frame, fn_name: &str, args: &[Arg<'_>]) {
-    let Some(ctx) = frame.v8_context() else { return };
+    let Some(ctx) = frame.v8_context() else {
+        return;
+    };
     if ctx.enter() != 1 {
         return;
     }
     let _drop = ContextExit(&ctx);
     let Some(global) = ctx.global() else { return };
     let fn_key = CefString::from(fn_name);
-    let Some(fn_val) = global.value_bykey(Some(&fn_key)) else { return };
+    let Some(fn_val) = global.value_bykey(Some(&fn_key)) else {
+        return;
+    };
     if fn_val.is_function() != 1 {
         return;
     }
@@ -346,21 +350,31 @@ impl Drop for ContextExit<'_> {
 fn collect_popup_options(frame: &Frame) -> (Vec<String>, i32) {
     let mut options = Vec::new();
     let mut selected = -1;
-    let Some(ctx) = frame.v8_context() else { return (options, selected) };
+    let Some(ctx) = frame.v8_context() else {
+        return (options, selected);
+    };
     if ctx.enter() != 1 {
         return (options, selected);
     }
     let _drop = ContextExit(&ctx);
-    let Some(global) = ctx.global() else { return (options, selected) };
+    let Some(global) = ctx.global() else {
+        return (options, selected);
+    };
     let doc_key = CefString::from("document");
-    let Some(doc) = global.value_bykey(Some(&doc_key)) else { return (options, selected) };
+    let Some(doc) = global.value_bykey(Some(&doc_key)) else {
+        return (options, selected);
+    };
     let active_key = CefString::from("activeElement");
-    let Some(el) = doc.value_bykey(Some(&active_key)) else { return (options, selected) };
+    let Some(el) = doc.value_bykey(Some(&active_key)) else {
+        return (options, selected);
+    };
     if el.is_object() != 1 {
         return (options, selected);
     }
     let tag_key = CefString::from("tagName");
-    let Some(tag) = el.value_bykey(Some(&tag_key)) else { return (options, selected) };
+    let Some(tag) = el.value_bykey(Some(&tag_key)) else {
+        return (options, selected);
+    };
     if tag.is_string() != 1 {
         return (options, selected);
     }
@@ -368,9 +382,13 @@ fn collect_popup_options(frame: &Frame) -> (Vec<String>, i32) {
         return (options, selected);
     }
     let opts_key = CefString::from("options");
-    let Some(opts) = el.value_bykey(Some(&opts_key)) else { return (options, selected) };
+    let Some(opts) = el.value_bykey(Some(&opts_key)) else {
+        return (options, selected);
+    };
     let len_key = CefString::from("length");
-    let Some(len_val) = opts.value_bykey(Some(&len_key)) else { return (options, selected) };
+    let Some(len_val) = opts.value_bykey(Some(&len_key)) else {
+        return (options, selected);
+    };
     if opts.is_object() != 1 || len_val.is_int() != 1 {
         return (options, selected);
     }
@@ -384,30 +402,32 @@ fn collect_popup_options(frame: &Frame) -> (Vec<String>, i32) {
         if opt.is_object() == 1 {
             let text_key = CefString::from("text");
             if let Some(t) = opt.value_bykey(Some(&text_key))
-                && t.is_string() == 1 {
-                    s = userfree_to_string(&t.string_value());
-                }
+                && t.is_string() == 1
+            {
+                s = userfree_to_string(&t.string_value());
+            }
         }
         options.push(s);
     }
     let sel_key = CefString::from("selectedIndex");
     if let Some(sel) = el.value_bykey(Some(&sel_key))
-        && sel.is_int() == 1 {
-            selected = sel.int_value();
-        }
+        && sel.is_int() == 1
+    {
+        selected = sel.int_value();
+    }
     (options, selected)
 }
 
-fn inject_jmp_native(
-    browser: &mut Browser,
-    profile: &DictionaryValue,
-    context: &mut V8Context,
-) {
-    let Some(global) = context.global() else { return };
+fn inject_jmp_native(browser: &mut Browser, profile: &DictionaryValue, context: &mut V8Context) {
+    let Some(global) = context.global() else {
+        return;
+    };
     let functions_key = CefString::from("functions");
     let functions = profile.list(Some(&functions_key));
 
-    let Some(mut jmp_native) = v8_value_create_object(None, None) else { return };
+    let Some(mut jmp_native) = v8_value_create_object(None, None) else {
+        return;
+    };
     let browser_id = browser.identifier();
     if let Some(list) = functions {
         let count = list.size();
@@ -420,16 +440,11 @@ fn inject_jmp_native(
             let cef_name = CefString::from(fn_name_str.as_str());
             let _ = browser_id;
             let mut handler = NativeHandlerBuilder::new(crate::v8_handler::NativeHandler);
-            let Some(mut fn_val) =
-                v8_value_create_function(Some(&cef_name), Some(&mut handler))
+            let Some(mut fn_val) = v8_value_create_function(Some(&cef_name), Some(&mut handler))
             else {
                 continue;
             };
-            jmp_native.set_value_bykey(
-                Some(&cef_name),
-                Some(&mut fn_val),
-                readonly_attr(),
-            );
+            jmp_native.set_value_bykey(Some(&cef_name), Some(&mut fn_val), readonly_attr());
         }
     }
     let key = CefString::from("jmpNative");
@@ -470,7 +485,9 @@ fn install_raf_nudge(frame: &Frame) {
 
 fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
     let scripts_key = CefString::from("scripts");
-    let Some(scripts) = profile.list(Some(&scripts_key)) else { return };
+    let Some(scripts) = profile.list(Some(&scripts_key)) else {
+        return;
+    };
     let n = scripts.size();
     if n == 0 {
         return;

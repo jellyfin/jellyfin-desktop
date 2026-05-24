@@ -18,7 +18,12 @@ use crate::sys;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString, c_char};
 
-#[allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+#[allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    dead_code
+)]
 mod avcodec_sys {
     include!(concat!(env!("OUT_DIR"), "/avcodec_bindings.rs"));
 }
@@ -110,7 +115,8 @@ pub unsafe extern "C" fn jfn_mpv_capabilities_query(
     for c in caps.decoders {
         // Decoder names come from avcodec_get_name → bare ASCII; never
         // contain NUL bytes, so unwrap is safe.
-        out.decoder_names.push(CString::new(c.name).expect("avcodec name without NUL"));
+        out.decoder_names
+            .push(CString::new(c.name).expect("avcodec name without NUL"));
         out.decoder_kinds.push(match c.kind {
             MediaKind::Video => 0,
             MediaKind::Audio => 1,
@@ -118,7 +124,8 @@ pub unsafe extern "C" fn jfn_mpv_capabilities_query(
         });
     }
     for d in caps.demuxers {
-        out.demuxer_names.push(CString::new(d).expect("demuxer name without NUL"));
+        out.demuxer_names
+            .push(CString::new(d).expect("demuxer name without NUL"));
     }
     Box::into_raw(Box::new(out))
 }
@@ -131,10 +138,10 @@ pub unsafe extern "C" fn jfn_mpv_capabilities_free(p: *mut JfnMpvCapabilities) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_decoder_count(
-    p: *const JfnMpvCapabilities,
-) -> usize {
-    let Some(r) = (unsafe { p.as_ref() }) else { return 0 };
+pub unsafe extern "C" fn jfn_mpv_capabilities_decoder_count(p: *const JfnMpvCapabilities) -> usize {
+    let Some(r) = (unsafe { p.as_ref() }) else {
+        return 0;
+    };
     r.decoder_names.len()
 }
 
@@ -146,7 +153,9 @@ pub unsafe extern "C" fn jfn_mpv_capabilities_decoder_name(
     p: *const JfnMpvCapabilities,
     i: usize,
 ) -> *const c_char {
-    let Some(r) = (unsafe { p.as_ref() }) else { return std::ptr::null() };
+    let Some(r) = (unsafe { p.as_ref() }) else {
+        return std::ptr::null();
+    };
     r.decoder_names
         .get(i)
         .map(|s| s.as_ptr())
@@ -161,15 +170,17 @@ pub unsafe extern "C" fn jfn_mpv_capabilities_decoder_kind(
     p: *const JfnMpvCapabilities,
     i: usize,
 ) -> u8 {
-    let Some(r) = (unsafe { p.as_ref() }) else { return 0xFF };
+    let Some(r) = (unsafe { p.as_ref() }) else {
+        return 0xFF;
+    };
     r.decoder_kinds.get(i).copied().unwrap_or(0xFF)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_demuxer_count(
-    p: *const JfnMpvCapabilities,
-) -> usize {
-    let Some(r) = (unsafe { p.as_ref() }) else { return 0 };
+pub unsafe extern "C" fn jfn_mpv_capabilities_demuxer_count(p: *const JfnMpvCapabilities) -> usize {
+    let Some(r) = (unsafe { p.as_ref() }) else {
+        return 0;
+    };
     r.demuxer_names.len()
 }
 
@@ -178,7 +189,9 @@ pub unsafe extern "C" fn jfn_mpv_capabilities_demuxer_name(
     p: *const JfnMpvCapabilities,
     i: usize,
 ) -> *const c_char {
-    let Some(r) = (unsafe { p.as_ref() }) else { return std::ptr::null() };
+    let Some(r) = (unsafe { p.as_ref() }) else {
+        return std::ptr::null();
+    };
     r.demuxer_names
         .get(i)
         .map(|s| s.as_ptr())

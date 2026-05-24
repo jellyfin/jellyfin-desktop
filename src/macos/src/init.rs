@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
-use objc2::{class, define_class, extern_class, msg_send, sel, AnyThread, ClassType, DefinedClass};
+use objc2::{AnyThread, ClassType, DefinedClass, class, define_class, extern_class, msg_send, sel};
 use objc2_foundation::{NSObject, NSObjectProtocol, NSRect};
 
 // Reach the input view created by the Rust input crate. We adopt the
@@ -38,10 +38,7 @@ unsafe extern "C" {
     fn objc_getProtocol(name: *const c_char) -> *mut AnyObject;
     fn protocol_getName(p: *mut AnyObject) -> *const c_char;
     fn class_addProtocol(cls: *const AnyClass, p: *mut AnyObject) -> Bool;
-    fn class_getInstanceMethod(
-        cls: *const AnyClass,
-        sel: Sel,
-    ) -> *mut c_void;
+    fn class_getInstanceMethod(cls: *const AnyClass, sel: Sel) -> *mut c_void;
     fn method_setImplementation(method: *mut c_void, imp: *const c_void) -> *const c_void;
     fn imp_implementationWithBlock(block: *const c_void) -> *const c_void;
 }
@@ -452,11 +449,7 @@ pub extern "C" fn macos_init(_mpv: *mut c_void) -> bool {
                 isa: *const c_void,
                 flags: i32,
                 reserved: i32,
-                invoke: unsafe extern "C" fn(
-                    *mut c_void,
-                    *mut AnyObject,
-                    *mut AnyObject,
-                ) -> Bool,
+                invoke: unsafe extern "C" fn(*mut c_void, *mut AnyObject, *mut AnyObject) -> Bool,
                 descriptor: *const BlockDescriptor,
             }
             #[repr(C)]
@@ -502,10 +495,7 @@ pub extern "C" fn macos_init(_mpv: *mut c_void) -> bool {
                     stringByAppendingPathComponent: icon_ns
                 ];
                 if !icon_path.is_null() {
-                    let icon: *mut AnyObject = msg_send![
-                        class!(NSImage),
-                        alloc
-                    ];
+                    let icon: *mut AnyObject = msg_send![class!(NSImage), alloc];
                     let icon: *mut AnyObject = msg_send![
                         icon,
                         initWithContentsOfFile: icon_path
@@ -613,8 +603,7 @@ pub extern "C" fn macos_early_init() {
         // is called so CEF's runtime conforms-to check passes.
         attach_cef_app_protocol(JellyfinApplication::class());
 
-        let app_obj: *mut AnyObject =
-            msg_send![JellyfinApplication::class(), sharedApplication];
+        let app_obj: *mut AnyObject = msg_send![JellyfinApplication::class(), sharedApplication];
 
         // Install Apple-event reopen handler (Dock click etc.).
         let ae_mgr: *mut AnyObject =
@@ -644,21 +633,18 @@ pub extern "C" fn macos_early_init() {
 
         // Disable AppKit's automatic Edit-menu inserts (Dictation,
         // Character Palette) so a plain "e" can't trigger them.
-        let defaults: *mut AnyObject =
-            msg_send![class!(NSUserDefaults), standardUserDefaults];
+        let defaults: *mut AnyObject = msg_send![class!(NSUserDefaults), standardUserDefaults];
         for k in [
             c"NSDisabledDictationMenuItem",
             c"NSDisabledCharacterPaletteMenuItem",
         ] {
-            let ns: *mut AnyObject =
-                msg_send![class!(NSString), stringWithUTF8String: k.as_ptr()];
+            let ns: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: k.as_ptr()];
             let _: () = msg_send![defaults, setBool: true, forKey: ns];
         }
 
         // Allocate the App menu target (kept alive for process lifetime
         // via INIT_STATE).
-        let mt: Retained<JellyfinAppMenuTarget> =
-            msg_send![JellyfinAppMenuTarget::class(), new];
+        let mt: Retained<JellyfinAppMenuTarget> = msg_send![JellyfinAppMenuTarget::class(), new];
         let mt_obj: *mut AnyObject = Retained::into_raw(mt) as *mut AnyObject;
         INIT_STATE.lock().unwrap().app_menu_target = mt_obj;
 

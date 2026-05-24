@@ -5,7 +5,7 @@
 //! `set_context_menu_dispatcher_rust` by each business wrapper.
 
 use cef::rc::ConvertReturnValue;
-use cef::{sys, ImplMenuModel, MenuModel};
+use cef::{ImplMenuModel, MenuModel, sys};
 use std::os::raw::{c_int, c_void};
 
 // Lifted from cef_menu_id_t::MENU_ID_USER_FIRST. The C++ side defined the
@@ -26,9 +26,7 @@ pub fn build_closure() -> Box<crate::client::ContextBuilderFn> {
         if raw.is_null() {
             return;
         }
-        let m: MenuModel = unsafe {
-            (raw as *mut sys::_cef_menu_model_t).wrap_result()
-        };
+        let m: MenuModel = unsafe { (raw as *mut sys::_cef_menu_model_t).wrap_result() };
         m.add_item(
             MENU_ID_TOGGLE_FULLSCREEN,
             Some(&cef::CefString::from("Toggle Fullscreen")),

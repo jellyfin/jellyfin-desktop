@@ -13,15 +13,13 @@ const SYSTEM_PREFIXES: &[&str] = &["/usr/lib/", "/System/", "/Library/"];
 fn copy_writable(src: &Path, dst: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     if dst.exists() {
-        std::fs::remove_file(dst)
-            .with_context(|| format!("remove_file {}", dst.display()))?;
+        std::fs::remove_file(dst).with_context(|| format!("remove_file {}", dst.display()))?;
     }
     std::fs::copy(src, dst)
         .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
     let mut perms = std::fs::metadata(dst)?.permissions();
     perms.set_mode(0o644);
-    std::fs::set_permissions(dst, perms)
-        .with_context(|| format!("chmod {}", dst.display()))?;
+    std::fs::set_permissions(dst, perms).with_context(|| format!("chmod {}", dst.display()))?;
     Ok(())
 }
 

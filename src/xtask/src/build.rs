@@ -36,7 +36,10 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         cmd.env_remove("JFN_MPV_LIB_DIR");
     } else {
         cmd.env_remove("EXTERNAL_MPV_DIR");
-        cmd.env("JFN_MPV_INCLUDE_DIR", paths::mpv_source_dir().join("include"));
+        cmd.env(
+            "JFN_MPV_INCLUDE_DIR",
+            paths::mpv_source_dir().join("include"),
+        );
         cmd.env("JFN_MPV_LIB_DIR", &mpv_info.build_dir);
     }
 

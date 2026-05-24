@@ -46,9 +46,7 @@ unsafe fn take_owned_cstring(p: *mut c_char) -> String {
     if p.is_null() {
         return String::new();
     }
-    let s = unsafe { CStr::from_ptr(p) }
-        .to_string_lossy()
-        .into_owned();
+    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
     unsafe { jfn_config::jfn_settings_free_string(p) };
     s
 }
@@ -84,7 +82,9 @@ fn print_help() {
     println!("Options:");
     println!("  -h, --help                Show this help");
     println!("  -v, --version             Show version");
-    println!("  --log-level <filter>      e.g. info | debug | debug,mpv=trace,CEF=off (default: {DEFAULT_LOG_FILTER})");
+    println!(
+        "  --log-level <filter>      e.g. info | debug | debug,mpv=trace,CEF=off (default: {DEFAULT_LOG_FILTER})"
+    );
     println!("  --log-file <path>         Write logs to file ('' to disable)");
     println!("  --hwdec <mode>            Hardware decoding mode (default: {hwdec_default})");
     println!("  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd");
@@ -99,7 +99,10 @@ fn print_help() {
 }
 
 fn print_version() {
-    println!("jellyfin-desktop {}\n\nCEF {}\n", APP_VERSION_FULL, APP_CEF_VERSION);
+    println!(
+        "jellyfin-desktop {}\n\nCEF {}\n",
+        APP_VERSION_FULL, APP_CEF_VERSION
+    );
     use std::io::Write;
     let _ = std::io::stdout().flush();
     jfn_mpv::probe::jfn_mpv_print_version_info();
@@ -135,20 +138,27 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     }
 
     // 2. Settings init + load.
-    let settings_path = cs(&jfn_paths::config_dir().join("settings.json").to_string_lossy());
+    let settings_path = cs(&jfn_paths::config_dir()
+        .join("settings.json")
+        .to_string_lossy());
     unsafe { jfn_config::jfn_settings_init(settings_path.as_ptr()) };
     jfn_config::jfn_settings_load();
 
     // 3. Seed CLI defaults from saved settings.
     let saved_hwdec = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_hwdec()) };
-    let saved_pass = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_audio_passthrough()) };
+    let saved_pass =
+        unsafe { take_owned_cstring(jfn_config::jfn_settings_get_audio_passthrough()) };
     let saved_chans = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_audio_channels()) };
     let saved_log_level = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_log_level()) };
     let saved_audio_exclusive = jfn_config::jfn_settings_get_audio_exclusive();
 
     let mpv_hwdec_default = jfn_mpv::HWDEC_DEFAULT.to_string();
 
-    let mut hwdec = if saved_hwdec.is_empty() { mpv_hwdec_default.clone() } else { saved_hwdec };
+    let mut hwdec = if saved_hwdec.is_empty() {
+        mpv_hwdec_default.clone()
+    } else {
+        saved_hwdec
+    };
     let mut audio_passthrough = saved_pass;
     let mut audio_exclusive = saved_audio_exclusive;
     let mut audio_channels = saved_chans;
@@ -372,9 +382,17 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
         display_backend: backend_byte,
         hwdec: hwdec_c.as_ptr(),
         user_agent: user_agent_c.as_ptr(),
-        audio_passthrough: if audio_passthrough.is_empty() { ptr::null() } else { passthrough_c.as_ptr() },
+        audio_passthrough: if audio_passthrough.is_empty() {
+            ptr::null()
+        } else {
+            passthrough_c.as_ptr()
+        },
         audio_exclusive,
-        audio_channels: if audio_channels.is_empty() { ptr::null() } else { channels_c.as_ptr() },
+        audio_channels: if audio_channels.is_empty() {
+            ptr::null()
+        } else {
+            channels_c.as_ptr()
+        },
         geometry: geometry_c.as_ptr(),
         force_window_position: boot_force_position,
         window_maximized_at_boot: boot_window_max,
@@ -437,8 +455,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
         unsafe { jfn_config::jfn_settings_get_window_geometry(&mut g) };
         g.maximized
     };
-    let wait_for_scale = cfg!(target_os = "linux")
-        && plat().display() == DisplayBackend::Wayland;
+    let wait_for_scale = cfg!(target_os = "linux") && plat().display() == DisplayBackend::Wayland;
     let wait_timeout = if wait_for_scale { 0.1 } else { 1.0 };
     tracing::info!(target: "Main", "Waiting for mpv window...");
 
@@ -450,14 +467,21 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
         {
             plat().pump();
             let ev = jfn_mpv::api::jfn_mpv_wait_event(0.0);
-            if ev.is_null() { continue; }
+            if ev.is_null() {
+                continue;
+            }
             let event_id = unsafe { (*ev).event_id }.0;
-            if event_id == 0 { unsafe { libc::usleep(10000) }; continue; }
+            if event_id == 0 {
+                unsafe { libc::usleep(10000) };
+                continue;
+            }
             if event_id == 2 {
                 log_mpv_event(ev);
                 continue;
             }
-            if event_id == 1 || event_id == 7 { return 0; }
+            if event_id == 1 || event_id == 7 {
+                return 0;
+            }
             if consume_vo_event(ev, &mut mw, &mut mh, &mut need_max, wait_for_scale) {
                 break;
             }
@@ -465,10 +489,17 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
         #[cfg(not(target_os = "macos"))]
         {
             let ev = jfn_mpv::api::jfn_mpv_wait_event(wait_timeout);
-            if ev.is_null() { continue; }
+            if ev.is_null() {
+                continue;
+            }
             let event_id = unsafe { (*ev).event_id }.0;
-            if event_id == 2 { log_mpv_event(ev); continue; }
-            if event_id == 1 || event_id == 7 { return 0; }
+            if event_id == 2 {
+                log_mpv_event(ev);
+                continue;
+            }
+            if event_id == 1 || event_id == 7 {
+                return 0;
+            }
             if consume_vo_event(ev, &mut mw, &mut mh, &mut need_max, wait_for_scale) {
                 break;
             }
@@ -498,7 +529,11 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
             fn signal(signum: c_int, handler: unsafe extern "C" fn(c_int)) -> usize;
             fn CFRunLoopWakeUp(rl: *const std::ffi::c_void);
             fn CFRunLoopGetMain() -> *const std::ffi::c_void;
-            fn CFRunLoopRunInMode(mode: *const std::ffi::c_void, seconds: f64, returnAfterSourceHandled: i32) -> i32;
+            fn CFRunLoopRunInMode(
+                mode: *const std::ffi::c_void,
+                seconds: f64,
+                returnAfterSourceHandled: i32,
+            ) -> i32;
             static kCFRunLoopDefaultMode: *const std::ffi::c_void;
         }
         unsafe extern "C" fn sigalrm_noop(_: c_int) {}
@@ -524,7 +559,6 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
 
     0
 }
-
 
 // =====================================================================
 // Signal handler + listener guard + wlproxy lifetime
@@ -553,7 +587,10 @@ fn install_signal_handler() {
     #[cfg(windows)]
     {
         unsafe extern "system" {
-            fn SetConsoleCtrlHandler(handler: unsafe extern "system" fn(u32) -> i32, add: i32) -> i32;
+            fn SetConsoleCtrlHandler(
+                handler: unsafe extern "system" fn(u32) -> i32,
+                add: i32,
+            ) -> i32;
         }
         unsafe { SetConsoleCtrlHandler(console_ctrl_handler, 1) };
     }
@@ -611,7 +648,9 @@ unsafe fn start_wlproxy() {
         unsafe { jfn_wlproxy_stop(p) };
         return;
     }
-    let disp = unsafe { CStr::from_ptr(disp_p) }.to_string_lossy().into_owned();
+    let disp = unsafe { CStr::from_ptr(disp_p) }
+        .to_string_lossy()
+        .into_owned();
     if disp.is_empty() {
         tracing::error!(target: "Main", "wlproxy display name empty; aborting proxy");
         unsafe { jfn_wlproxy_stop(p) };
@@ -625,7 +664,6 @@ unsafe fn start_wlproxy() {
     unsafe { jfn_wl_register_proxy_callbacks() };
     let _ = WLPROXY.set(WlproxySlot(p));
 }
-
 
 // =====================================================================
 // mpv boot helpers + VO wait loop
@@ -751,7 +789,9 @@ fn consume_vo_event(
             );
         }
         let reply = unsafe { (*ev).reply_userdata };
-        if reply == JFN_OBSERVE_WINDOW_MAX && jfn_playback::ingest_driver::jfn_playback_window_maximized() {
+        if reply == JFN_OBSERVE_WINDOW_MAX
+            && jfn_playback::ingest_driver::jfn_playback_window_maximized()
+        {
             *need_max = false;
         }
     }
@@ -762,12 +802,13 @@ fn consume_vo_event(
         *mh = ph;
     }
     #[cfg(target_os = "linux")]
-    let scale_ready = !wait_for_scale || unsafe {
-        unsafe extern "C" {
-            fn jfn_wl_scale_known() -> bool;
-        }
-        jfn_wl_scale_known()
-    };
+    let scale_ready = !wait_for_scale
+        || unsafe {
+            unsafe extern "C" {
+                fn jfn_wl_scale_known() -> bool;
+            }
+            jfn_wl_scale_known()
+        };
     #[cfg(not(target_os = "linux"))]
     let scale_ready = {
         let _ = wait_for_scale;
@@ -928,7 +969,8 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
         let n_dem = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_demuxer_count(caps) };
         let mut demuxer_ptrs: Vec<*const c_char> = Vec::with_capacity(n_dem);
         for i in 0..n_dem {
-            demuxer_ptrs.push(unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_demuxer_name(caps, i) });
+            demuxer_ptrs
+                .push(unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_demuxer_name(caps, i) });
         }
         let raw = unsafe {
             jfn_jellyfin::jfn_jellyfin_build_device_profile(
@@ -943,19 +985,23 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
         };
         unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_free(caps) };
         if !raw.is_null() {
-            let profile = unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+            let profile = unsafe { CStr::from_ptr(raw) }
+                .to_string_lossy()
+                .into_owned();
             tracing::info!(target: "Main", "Device profile: {profile}");
             unsafe {
                 jfn_jellyfin::jfn_jellyfin_set_cached_profile(raw);
-                jfn_cef::injection::jfn_cef_set_device_profile_json(profile.as_ptr() as *const _, profile.len());
+                jfn_cef::injection::jfn_cef_set_device_profile_json(
+                    profile.as_ptr() as *const _,
+                    profile.len(),
+                );
                 jfn_jellyfin::jfn_jellyfin_free_string(raw);
             }
         }
     }
 
     // 5. CEF init flags + initialise.
-    let use_shared_textures = plat().shared_texture_supported()
-        && !ba.disable_gpu_compositing;
+    let use_shared_textures = plat().shared_texture_supported() && !ba.disable_gpu_compositing;
     jfn_cef::ffi::jfn_cef_set_log_severity(cef_severity_for_cef_filter());
     jfn_cef::ffi::jfn_cef_set_remote_debugging_port(ba.remote_debugging_port);
     jfn_cef::ffi::jfn_cef_set_disable_gpu_compositing(!use_shared_textures);
@@ -1014,9 +1060,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
             let mut new_ph = (saved.logical_height as f64 * display_hidpi_scale).round() as c_int;
             let mut dummy_x: c_int = -1;
             let mut dummy_y: c_int = -1;
-            plat().clamp_window_geometry(
-                &mut new_pw, &mut new_ph, &mut dummy_x, &mut dummy_y,
-            );
+            plat().clamp_window_geometry(&mut new_pw, &mut new_ph, &mut dummy_x, &mut dummy_y);
             let geom_str = format!("{new_pw}x{new_ph}");
             tracing::info!(target: "Main",
                 "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
@@ -1041,7 +1085,11 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     let titlebar_themed = jfn_config::jfn_settings_get_titlebar_theme_color();
     unsafe {
         jfn_color::theme::jfn_theme_color_init(
-            if titlebar_themed { Some(h_theme_set_titlebar) } else { None },
+            if titlebar_themed {
+                Some(h_theme_set_titlebar)
+            } else {
+                None
+            },
             Some(h_theme_set_mpv_bg),
         );
     }
@@ -1076,10 +1124,14 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     COORD_INITED.store(true, std::sync::atomic::Ordering::Release);
 
     jfn_playback::idle_inhibit_sink::jfn_playback_set_idle_inhibit_handler(Some(h_idle_inhibit));
-    jfn_playback::theme_color_sink::jfn_playback_set_theme_video_mode_handler(Some(h_theme_video_mode));
+    jfn_playback::theme_color_sink::jfn_playback_set_theme_video_mode_handler(Some(
+        h_theme_video_mode,
+    ));
     jfn_playback::exec_js::jfn_playback_set_web_exec_js_handler(Some(h_web_exec_js));
     jfn_playback::browser_sink::jfn_playback_set_browsers_size_handler(Some(h_browsers_set_size));
-    jfn_playback::browser_sink::jfn_playback_set_browsers_refresh_rate_handler(Some(h_browsers_set_refresh_rate));
+    jfn_playback::browser_sink::jfn_playback_set_browsers_refresh_rate_handler(Some(
+        h_browsers_set_refresh_rate,
+    ));
 
     // 11. Platform-specific media sink.
     #[cfg(target_os = "linux")]
@@ -1119,7 +1171,9 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
 
     // 14. Wait for the main browser to finish loading (non-macOS).
     #[cfg(not(target_os = "macos"))]
-    unsafe { jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer) };
+    unsafe {
+        jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer)
+    };
     tracing::info!(target: "Main", "Main browser loaded");
 
     tracing::info!(target: "Main", "[FLOW] Running — about to enter run_main_loop");
@@ -1131,7 +1185,11 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
         tracing::info!(target: "Main", "[FLOW] run_main_loop returned — entering post-run drain");
         // Spin CFRunLoop until browsers are gone.
         unsafe extern "C" {
-            fn CFRunLoopRunInMode(mode: *const std::ffi::c_void, seconds: f64, returnAfterSourceHandled: i32) -> i32;
+            fn CFRunLoopRunInMode(
+                mode: *const std::ffi::c_void,
+                seconds: f64,
+                returnAfterSourceHandled: i32,
+            ) -> i32;
             static kCFRunLoopDefaultMode: *const std::ffi::c_void;
         }
         while !jfn_cef::browsers::jfn_browsers_all_closed() {
