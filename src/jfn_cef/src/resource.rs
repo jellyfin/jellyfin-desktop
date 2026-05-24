@@ -28,8 +28,7 @@ macro_rules! embedded {
     };
 }
 
-// Match the CMake-generated `embedded_resources` map. URL key is the path
-// after the `app://` scheme (no leading slash).
+// URL key is the path after the `app://` scheme (no leading slash).
 static RESOURCES: &[(&str, Embedded)] = &[
     embedded!("about.html", "text/html"),
     embedded!("about.js", "application/javascript"),
