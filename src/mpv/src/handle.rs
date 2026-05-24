@@ -30,7 +30,7 @@ pub struct Handle {
     /// Pinned wakeup callback, kept alive for the handle's lifetime so the
     /// trampoline pointer stays valid. libmpv guarantees no more callbacks
     /// fire after `mpv_terminate_destroy` returns.
-    wakeup: Mutex<Option<Box<WakeupCallback>>>,
+    wakeup: Mutex<Option<WakeupCallback>>,
 }
 
 // SAFETY: libmpv handle methods are thread-safe per documentation.
@@ -291,12 +291,12 @@ impl Handle {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        let boxed: Box<WakeupCallback> = Box::new(Box::new(cb));
-        let ptr = Box::as_ref(&boxed) as *const WakeupCallback as *mut c_void;
+        let cb: WakeupCallback = Box::new(cb);
         // Store first, then arm libmpv — otherwise a wakeup racing in
         // between would see a dangling pointer.
         let mut slot = self.wakeup.lock().unwrap();
-        *slot = Some(boxed);
+        *slot = Some(cb);
+        let ptr = slot.as_ref().unwrap() as *const WakeupCallback as *mut c_void;
         unsafe { sys::mpv_set_wakeup_callback(self.raw, Some(wakeup_trampoline), ptr) };
     }
 
