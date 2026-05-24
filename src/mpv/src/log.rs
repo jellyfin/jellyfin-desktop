@@ -8,17 +8,17 @@ use crate::sys;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum LogLevel {
-    Off = sys::mpv_log_level::MPV_LOG_LEVEL_NONE.0,
-    Fatal = sys::mpv_log_level::MPV_LOG_LEVEL_FATAL.0,
-    Error = sys::mpv_log_level::MPV_LOG_LEVEL_ERROR.0,
-    Warn = sys::mpv_log_level::MPV_LOG_LEVEL_WARN.0,
-    Info = sys::mpv_log_level::MPV_LOG_LEVEL_INFO.0,
+    Off = sys::mpv_log_level::MPV_LOG_LEVEL_NONE.0 as u32,
+    Fatal = sys::mpv_log_level::MPV_LOG_LEVEL_FATAL.0 as u32,
+    Error = sys::mpv_log_level::MPV_LOG_LEVEL_ERROR.0 as u32,
+    Warn = sys::mpv_log_level::MPV_LOG_LEVEL_WARN.0 as u32,
+    Info = sys::mpv_log_level::MPV_LOG_LEVEL_INFO.0 as u32,
     /// Maps to mpv's "v".
-    Verbose = sys::mpv_log_level::MPV_LOG_LEVEL_V.0,
+    Verbose = sys::mpv_log_level::MPV_LOG_LEVEL_V.0 as u32,
     /// Maps to mpv's "debug".
-    Debug = sys::mpv_log_level::MPV_LOG_LEVEL_DEBUG.0,
+    Debug = sys::mpv_log_level::MPV_LOG_LEVEL_DEBUG.0 as u32,
     /// Maps to mpv's "trace".
-    Trace = sys::mpv_log_level::MPV_LOG_LEVEL_TRACE.0,
+    Trace = sys::mpv_log_level::MPV_LOG_LEVEL_TRACE.0 as u32,
 }
 
 impl LogLevel {

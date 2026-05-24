@@ -220,7 +220,7 @@ impl Event {
                     name: cstr_to_string(h.name),
                 }
             },
-            other => Event::Other(other.0),
+            other => Event::Other(other.0 as u32),
         }
     }
 }
