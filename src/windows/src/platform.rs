@@ -1,13 +1,10 @@
-//! Native Rust port of the Windows-side platform vtable functions
-//! previously in `src/platform/windows.cpp`: window init/cleanup,
-//! fullscreen toggle helpers, scale + geometry queries, and the WndProc
-//! hook that drives compositor resize + transition bookkeeping.
+//! Windows platform impl: window init/cleanup, fullscreen toggle
+//! helpers, scale + geometry queries, and the WndProc hook that drives
+//! compositor resize + transition bookkeeping.
 //!
 //! All `g_win` state (HWND, cached scale, fullscreen bookkeeping, the
 //! WndProc hook handle, the input thread JoinHandle) lives in this
-//! module behind a `Mutex<WinState>`. C++ holds nothing Windows-specific
-//! anymore (apart from the SetThreadExecutionState bouncer which needs
-//! CefTask).
+//! module behind a `Mutex<WinState>`.
 
 #![allow(non_snake_case)]
 
@@ -28,10 +25,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW,
     UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_CLOSE, WM_SIZE, WS_CAPTION, WS_THICKFRAME,
 };
-
-// =====================================================================
-// External entry points (C ABI).
-// =====================================================================
 
 use jfn_mpv::api::{
     jfn_mpv_get_property_int, jfn_mpv_set_fullscreen, jfn_mpv_set_window_maximized,

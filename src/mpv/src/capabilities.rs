@@ -1,5 +1,4 @@
-//! Decoder + demuxer enumeration, matching the prior C++
-//! `mpv_capabilities::Query` exactly.
+//! Decoder + demuxer enumeration.
 //!
 //! Two sources:
 //! - **Decoders**: linked libavcodec, iterated via `av_codec_iterate` and

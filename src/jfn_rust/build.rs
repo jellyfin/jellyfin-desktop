@@ -22,7 +22,7 @@ fn main() {
     {
         println!("cargo:rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
         // Permit later DT_NEEDED libraries (libcef.so) to resolve symbols
-        // they don't list explicitly — matches the prior C++ ld defaults.
+        // they don't list explicitly.
         println!("cargo:rustc-link-arg-bins=-Wl,--disable-new-dtags");
 
         // Additional rpath entries for system / out-of-tree library

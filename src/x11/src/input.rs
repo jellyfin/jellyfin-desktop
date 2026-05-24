@@ -367,7 +367,7 @@ fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed
         st.mouse_button_modifiers &= !flag;
     }
 
-    // dispatch.cpp expects linux/input-event-codes.h button codes.
+    // Browser bridge expects linux/input-event-codes.h button codes.
     let code: u32 = match button {
         1 => 0x110, // BTN_LEFT
         2 => 0x112, // BTN_MIDDLE

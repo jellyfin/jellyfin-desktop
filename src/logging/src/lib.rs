@@ -269,9 +269,8 @@ const CONSOLE_TRACE_FMT: &[FormatItem<'static>] =
 
 // =====================================================================
 // Per-(category, level) enablement table — primed once at init from the
-// EnvFilter. C++ macros consult this via jfn_log_enabled to skip
-// formatting when filtered out, recovering the per-callsite gating that
-// tracing's own Interest cache would do for pure-Rust callers.
+// EnvFilter. Lets call sites skip formatting when filtered out, matching
+// the gating tracing's own Interest cache provides for pure-Rust callers.
 // =====================================================================
 
 const N_LEVELS: usize = 5;

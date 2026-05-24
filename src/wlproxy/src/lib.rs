@@ -409,8 +409,8 @@ impl XdgSurfaceHandler for SurfaceH {
         slf.send_get_toplevel(id);
     }
 
-    // Eat mpv's window-geometry hint. On Wayland the host (C++) is the sole
-    // authority for window state; mpv shouldn't be telling the compositor
+    // Eat mpv's window-geometry hint. The host is the sole authority for
+    // window state on Wayland; mpv shouldn't be telling the compositor
     // anything about geometry.
     fn handle_set_window_geometry(
         &mut self,
@@ -426,7 +426,7 @@ impl XdgSurfaceHandler for SurfaceH {
 struct ToplevelH;
 impl XdgToplevelHandler for ToplevelH {
     // ===== Eat mpv's state-change requests =====
-    // C++ drives all window state via jfn_wlproxy_set_fullscreen /
+    // The host drives all window state via jfn_wlproxy_set_fullscreen /
     // set_maximized (which fire send_* from the proxy directly). mpv's
     // outgoing state requests are dropped so they can't race the host.
 
