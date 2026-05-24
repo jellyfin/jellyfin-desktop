@@ -126,7 +126,7 @@ fn fire_configure() {
 /// channel before entering its blocking accept loop.
 ///
 /// Returns null on failure.
-pub extern "C" fn jfn_wlproxy_start() -> *mut Proxy {
+pub fn jfn_wlproxy_start() -> *mut Proxy {
     // Capture upstream BEFORE the caller overrides WAYLAND_DISPLAY. Per-client
     // States need this so they don't connect to our own socket.
     let upstream = std::env::var("WAYLAND_DISPLAY").ok();
@@ -165,7 +165,7 @@ pub extern "C" fn jfn_wlproxy_start() -> *mut Proxy {
 /// # Safety
 /// `p` must be null or a pointer previously returned by `jfn_wlproxy_start`
 /// that has not yet been passed to `jfn_wlproxy_stop`.
-pub unsafe extern "C" fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
+pub unsafe fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
     if p.is_null() {
         return std::ptr::null();
     }
@@ -178,7 +178,7 @@ pub unsafe extern "C" fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_c
 /// # Safety
 /// `p` must be null or a pointer previously returned by `jfn_wlproxy_start`.
 /// Each non-null pointer may only be passed here once.
-pub unsafe extern "C" fn jfn_wlproxy_stop(p: *mut Proxy) {
+pub unsafe fn jfn_wlproxy_stop(p: *mut Proxy) {
     if p.is_null() {
         return;
     }
@@ -194,7 +194,7 @@ pub unsafe extern "C" fn jfn_wlproxy_stop(p: *mut Proxy) {
 /// pixels (scaled by the current `scale_120 / 120` factor).
 ///
 /// The event still forwards to mpv after the callback runs.
-pub extern "C" fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
+pub fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
     *CONFIGURE_CB.lock().unwrap() = Some(cb);
 }
 
@@ -203,7 +203,7 @@ pub extern "C" fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
 /// Argument is the scale numerator over `WAYLAND_SCALE_FACTOR=120` (so 120 =
 /// 1.0x, 180 = 1.5x, 240 = 2.0x). Fires once whenever the compositor sends a
 /// new preferred scale for the toplevel's surface.
-pub extern "C" fn jfn_wlproxy_set_scale_callback(cb: ScaleCb) {
+pub fn jfn_wlproxy_set_scale_callback(cb: ScaleCb) {
     *SCALE_CB.lock().unwrap() = Some(cb);
 }
 
@@ -218,7 +218,7 @@ pub extern "C" fn jfn_wlproxy_set_fullscreen(enable: c_int) {
 
 /// Queue an xdg_toplevel.set_maximized / unset_maximized request. Applied
 /// from the proxy's per-client thread on its next dispatch iteration.
-pub extern "C" fn jfn_wlproxy_set_maximized(enable: c_int) {
+pub fn jfn_wlproxy_set_maximized(enable: c_int) {
     COMMANDS
         .lock()
         .unwrap()

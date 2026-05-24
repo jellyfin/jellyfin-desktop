@@ -79,19 +79,19 @@ static INIT_STATE: Mutex<InitState> = Mutex::new(InitState {
 
 /// Returns the `NSWindow*` (non-retaining) for use by other modules.
 /// Null before macos_init or after macos_cleanup.
-pub extern "C" fn jfn_macos_get_window() -> *mut AnyObject {
+pub fn jfn_macos_get_window() -> *mut AnyObject {
     INIT_STATE.lock().unwrap().window
 }
 
 /// Returns the `JellyfinInputView*` (non-retaining) so `macos_restack`
 /// can re-anchor it on top of the CefLayer subviews after a reorder.
-pub extern "C" fn jfn_macos_get_input_view() -> *mut AnyObject {
+pub fn jfn_macos_get_input_view() -> *mut AnyObject {
     INIT_STATE.lock().unwrap().input_view
 }
 
 /// Logical content view size in points. Backs `JfnIngest`'s macOS-only
 /// "use the OS's logical size, not osd-dimensions" branch.
-pub extern "C" fn jfn_macos_query_logical_content_size(w: *mut c_int, h: *mut c_int) -> bool {
+pub fn jfn_macos_query_logical_content_size(w: *mut c_int, h: *mut c_int) -> bool {
     unsafe {
         let win = INIT_STATE.lock().unwrap().window;
         if win.is_null() {
@@ -113,7 +113,7 @@ pub extern "C" fn jfn_macos_query_logical_content_size(w: *mut c_int, h: *mut c_
 // (lib.rs) either inline (already on main) or via dispatch_async_f.
 // =====================================================================
 
-pub extern "C" fn jfn_macos_apply_theme_color_on_main(rgb: u32) {
+pub fn jfn_macos_apply_theme_color_on_main(rgb: u32) {
     let win = INIT_STATE.lock().unwrap().window;
     unsafe { apply_theme_color_to_window(win, rgb) };
 }
@@ -375,7 +375,7 @@ unsafe extern "C" {
 // link.
 // =====================================================================
 
-pub extern "C" fn macos_init(_mpv: *mut c_void) -> bool {
+pub fn macos_init(_mpv: *mut c_void) -> bool {
     tracing::info!(target: LOG_TARGET, "[INIT] macos_init: waiting for mpv window");
 
     let mut state = INIT_STATE.lock().unwrap();
@@ -565,7 +565,7 @@ unsafe extern "C" {
     fn jfn_macos_compositor_cleanup();
 }
 
-pub extern "C" fn macos_cleanup() {
+pub fn macos_cleanup() {
     let mut state = INIT_STATE.lock().unwrap();
     unsafe {
         stop_display_link(&mut state);
@@ -590,7 +590,7 @@ pub extern "C" fn macos_cleanup() {
 // set the activation policy, build the App + Edit menu bar.
 // =====================================================================
 
-pub extern "C" fn macos_early_init() {
+pub fn macos_early_init() {
     unsafe {
         // Attach CefAppProtocol to our subclass before -sharedApplication
         // is called so CEF's runtime conforms-to check passes.

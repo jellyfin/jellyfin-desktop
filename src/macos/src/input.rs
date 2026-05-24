@@ -278,7 +278,7 @@ unsafe extern "C" fn cursor_trampoline(_ctx: *mut c_void) {
 }
 
 /// Platform::set_cursor — safe to call from any thread.
-pub extern "C" fn jfn_input_macos_set_cursor(t: c_int) {
+pub fn jfn_input_macos_set_cursor(t: c_int) {
     G_PENDING_CURSOR.store(t, Ordering::SeqCst);
     unsafe {
         dispatch_async_f(
@@ -717,7 +717,7 @@ fn key_event_fields(event: &AnyObject) -> (i32, u32, u16, u16, u16) {
 
 /// Returns a +1-retained NSView pointer (transfers ownership to the
 /// caller). The caller adds it to the window's content view subtree.
-pub extern "C" fn jfn_input_macos_create_view() -> *mut c_void {
+pub fn jfn_input_macos_create_view() -> *mut c_void {
     let zero_rect = NSRect {
         origin: NSPoint { x: 0.0, y: 0.0 },
         size: NSSize {

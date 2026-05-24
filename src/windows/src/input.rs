@@ -501,7 +501,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 
 const CLASS_NAME: PCWSTR = w!("JellyfinCefInput");
 
-pub extern "C" fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
+pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
     let mpv = HWND(mpv_hwnd);
     let tid = unsafe { GetCurrentThreadId() };
 
@@ -582,14 +582,14 @@ pub extern "C" fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_
     STATE.lock().unwrap().thread_id = 0;
 }
 
-pub extern "C" fn jfn_input_windows_stop_input_thread() {
+pub fn jfn_input_windows_stop_input_thread() {
     let tid = STATE.lock().unwrap().thread_id;
     if tid != 0 {
         let _ = unsafe { PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)) };
     }
 }
 
-pub extern "C" fn jfn_input_windows_resize_to_parent(pw: c_int, ph: c_int) {
+pub fn jfn_input_windows_resize_to_parent(pw: c_int, ph: c_int) {
     let hwnd_raw = STATE.lock().unwrap().input_hwnd_raw;
     if hwnd_raw == 0 {
         return;
@@ -603,7 +603,7 @@ pub extern "C" fn jfn_input_windows_resize_to_parent(pw: c_int, ph: c_int) {
 /// Platform::set_cursor — invoked from the CEF UI thread. Stores the
 /// pending cursor type and posts a synthetic WM_SETCURSOR so the input
 /// thread applies it via SetCursor (which is thread-affine).
-pub extern "C" fn jfn_input_windows_set_cursor(t: c_int) {
+pub fn jfn_input_windows_set_cursor(t: c_int) {
     let hwnd_raw = {
         let mut s = STATE.lock().unwrap();
         s.cursor_type = t;

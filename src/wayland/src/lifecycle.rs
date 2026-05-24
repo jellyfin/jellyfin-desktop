@@ -58,7 +58,7 @@ unsafe extern "C" fn close_cb_trampoline(_: *mut c_void) {
 // init / cleanup
 // =====================================================================
 
-pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
+pub fn jfn_wl_lifecycle_init() -> bool {
     let display = match mpv_prop_intptr(c"wayland-display") {
         Some(p) => p as *mut c_void,
         None => {
@@ -133,7 +133,7 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
     true
 }
 
-pub extern "C" fn jfn_wl_lifecycle_cleanup() {
+pub fn jfn_wl_lifecycle_cleanup() {
     crate::fade::jfn_wl_fade_stop_all();
 
     // Null the close trampoline before tearing down state it would read.

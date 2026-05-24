@@ -139,7 +139,7 @@ static STATE: Mutex<State> = Mutex::new(State {
 
 /// Build D3D11 + DXGI + DComp devices and the root visual. Returns false
 /// on failure with the partial state torn down.
-pub extern "C" fn jfn_win_init_compositor(hwnd: *mut c_void) -> bool {
+pub fn jfn_win_init_compositor(hwnd: *mut c_void) -> bool {
     let hwnd = HWND(hwnd);
     let mut st = STATE.lock().unwrap();
     if st.devices.is_some() {
@@ -203,7 +203,7 @@ fn init_devices(hwnd: HWND) -> windows_core::Result<CompositorDevices> {
 
 /// Release all surfaces + devices. Called from win_cleanup (C++) after the
 /// WndProc hook is unhooked and the input thread is joined.
-pub extern "C" fn jfn_win_cleanup_compositor() {
+pub fn jfn_win_cleanup_compositor() {
     let mut st = STATE.lock().unwrap();
     // Free any remaining surfaces. Browsers should normally free them
     // first, but be defensive.
@@ -353,7 +353,7 @@ fn present_to_swap_chain(devices: &CompositorDevices, sc: &IDXGISwapChain1, src:
 // Surface lifecycle + stacking.
 // =====================================================================
 
-pub extern "C" fn win_alloc_surface() -> *mut c_void {
+pub fn win_alloc_surface() -> *mut c_void {
     let mut st = STATE.lock().unwrap();
     if st.devices.is_none() {
         return std::ptr::null_mut();
@@ -410,7 +410,7 @@ pub extern "C" fn win_alloc_surface() -> *mut c_void {
     ptr as *mut c_void
 }
 
-pub extern "C" fn win_free_surface(s: *mut c_void) {
+pub fn win_free_surface(s: *mut c_void) {
     if s.is_null() {
         return;
     }
@@ -455,7 +455,7 @@ pub extern "C" fn win_free_surface(s: *mut c_void) {
 /// Rebuild the child-list under `dcomp_root` in `ordered` order
 /// (bottom -> top). Popup visuals stay nested under their owning surface,
 /// so they're not in this list.
-pub extern "C" fn win_restack(ordered: *const *mut c_void, n: usize) {
+pub fn win_restack(ordered: *const *mut c_void, n: usize) {
     let mut st = STATE.lock().unwrap();
     if st.devices.is_none() {
         return;
@@ -524,7 +524,7 @@ pub extern "C" fn win_restack(ordered: *const *mut c_void, n: usize) {
 // Per-frame presentation.
 // =====================================================================
 
-pub extern "C" fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
+pub fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     if s.is_null() || raw_info.is_null() {
         return false;
     }
@@ -606,7 +606,7 @@ pub extern "C" fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -
 
 /// Software fallback: Windows is shared-textures-only in practice.
 /// No-op to match prior overlay/about behavior.
-pub extern "C" fn win_surface_present_software(
+pub fn win_surface_present_software(
     _s: *mut c_void,
     _dirty: *const JfnRect,
     _dirty_len: usize,
@@ -617,7 +617,7 @@ pub extern "C" fn win_surface_present_software(
     false
 }
 
-pub extern "C" fn win_surface_resize(s: *mut c_void, _lw: c_int, _lh: c_int, pw: c_int, ph: c_int) {
+pub fn win_surface_resize(s: *mut c_void, _lw: c_int, _lh: c_int, pw: c_int, ph: c_int) {
     if s.is_null() || pw <= 0 || ph <= 0 {
         return;
     }
@@ -652,7 +652,7 @@ pub extern "C" fn win_surface_resize(s: *mut c_void, _lw: c_int, _lh: c_int, pw:
     }
 }
 
-pub extern "C" fn win_surface_set_visible(s: *mut c_void, visible: bool) {
+pub fn win_surface_set_visible(s: *mut c_void, visible: bool) {
     if s.is_null() {
         return;
     }
@@ -719,7 +719,7 @@ impl Drop for CbBox {
     }
 }
 
-pub extern "C" fn win_fade_surface(
+pub fn win_fade_surface(
     s: *mut c_void,
     fade_sec: f32,
     on_fade_start: Option<unsafe extern "C" fn(*mut c_void)>,
@@ -848,17 +848,17 @@ fn end_transition_locked(st: &mut State) {
 /// Called by `win_begin_transition` (in lib.rs) — replaces the old
 /// `win_begin_transition_impl` C++ helper. Takes STATE lock then runs
 /// the locked routine.
-pub extern "C" fn jfn_win_begin_transition_locked() {
+pub fn jfn_win_begin_transition_locked() {
     let mut st = STATE.lock().unwrap();
     begin_transition_locked(&mut st);
 }
 
-pub extern "C" fn win_end_transition() {
+pub fn win_end_transition() {
     let mut st = STATE.lock().unwrap();
     end_transition_locked(&mut st);
 }
 
-pub extern "C" fn win_set_expected_size(w: c_int, h: c_int) {
+pub fn win_set_expected_size(w: c_int, h: c_int) {
     let mut st = STATE.lock().unwrap();
     if G_TRANSITIONING.load(Ordering::SeqCst) && w == st.transition_pw && h == st.transition_ph {
         return;
@@ -874,7 +874,7 @@ pub extern "C" fn win_set_expected_size(w: c_int, h: c_int) {
 /// Called from C++ WndProc on WM_SIZE: stores mpv's current physical
 /// size (used by oversized-buffer rejection) and optionally records the
 /// logical size if a transition is in progress.
-pub extern "C" fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
+pub fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
     let mut st = STATE.lock().unwrap();
     if G_TRANSITIONING.load(Ordering::SeqCst) {
         st.pending_lw = lw;
@@ -886,12 +886,12 @@ pub extern "C" fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, p
 
 /// Called from C++ WndProc on WM_SIZE to run begin_transition under the
 /// state lock (matches the old win_begin_transition_locked behavior).
-pub extern "C" fn jfn_win_wndproc_begin_transition_locked() {
+pub fn jfn_win_wndproc_begin_transition_locked() {
     let mut st = STATE.lock().unwrap();
     begin_transition_locked(&mut st);
 }
 
-pub extern "C" fn jfn_win_wndproc_end_transition_locked() {
+pub fn jfn_win_wndproc_end_transition_locked() {
     let mut st = STATE.lock().unwrap();
     end_transition_locked(&mut st);
 }
@@ -916,7 +916,7 @@ pub fn win_popup_show(s: *mut c_void, x: c_int, y: c_int) {
     }
 }
 
-pub extern "C" fn win_popup_hide(s: *mut c_void) {
+pub fn win_popup_hide(s: *mut c_void) {
     if s.is_null() {
         return;
     }
@@ -940,7 +940,7 @@ pub extern "C" fn win_popup_hide(s: *mut c_void) {
     }
 }
 
-pub extern "C" fn win_popup_present(
+pub fn win_popup_present(
     s: *mut c_void,
     raw_info: *const c_void,
     _lw: c_int,
@@ -999,7 +999,7 @@ pub extern "C" fn win_popup_present(
     present_to_swap_chain(devices, &sc, &src);
 }
 
-pub extern "C" fn win_popup_present_software(
+pub fn win_popup_present_software(
     s: *mut c_void,
     buffer: *const c_void,
     pw: c_int,

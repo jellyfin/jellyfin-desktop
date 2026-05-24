@@ -78,7 +78,7 @@ fn join_existing() {
 /// Safety: `surface` must remain valid until the fade ends or
 /// `jfn_wl_fade_stop_all` is called. Apply / start / done callbacks are
 /// invoked from the fade thread.
-pub unsafe extern "C" fn jfn_wl_fade_start(
+pub unsafe fn jfn_wl_fade_start(
     surface: *mut c_void,
     fade_sec: f32,
     fps: f64,
@@ -142,6 +142,6 @@ pub unsafe extern "C" fn jfn_wl_fade_start(
 
 /// Stop the in-flight fade (if any) and join its thread. Called from C++
 /// cleanup before destroying the alpha-modifier proxy and the surfaces.
-pub extern "C" fn jfn_wl_fade_stop_all() {
+pub fn jfn_wl_fade_stop_all() {
     join_existing();
 }
