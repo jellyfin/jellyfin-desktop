@@ -4,6 +4,9 @@ use regex::Regex;
 use std::path::{Path, PathBuf};
 
 pub struct Cef {
+    // Read only by the non-macOS build/install paths; the macOS bundle copies
+    // CEF resources out of the framework instead.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub resource_dir: PathBuf,
     pub release_dir: PathBuf,
     pub system: bool,
