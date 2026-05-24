@@ -26,6 +26,7 @@ unsafe extern "C" {
 // jfn-cef Rust APIs we need.
 unsafe extern "C" {
     fn jfn_browsers_send_external_begin_frame_all();
+    fn jfn_browsers_reload_all();
     fn jfn_about_open();
     fn jfn_shutdown_initiate();
     fn jfn_shutting_down() -> bool;
@@ -291,6 +292,29 @@ define_class!(
 );
 
 // =====================================================================
+// WakeTarget — NSWorkspace observer for NSWorkspaceDidWakeNotification.
+// After the system wakes from sleep, CEF subprocesses tend to retain a
+// stale GPU context and the renderer stops processing input. Reloading
+// every browser is the simplest recovery that restores interactivity.
+// =====================================================================
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "JellyfinWakeTarget"]
+    pub struct JellyfinWakeTarget;
+
+    impl JellyfinWakeTarget {
+        #[unsafe(method(wokeUp:))]
+        unsafe fn woke_up(&self, _note: *mut AnyObject) {
+            tracing::info!(target: LOG_TARGET, "[WAKE] system woke; reloading all CEF browsers");
+            unsafe { jfn_browsers_reload_all() };
+        }
+    }
+
+    unsafe impl NSObjectProtocol for JellyfinWakeTarget {}
+);
+
+// =====================================================================
 // Display link lifecycle.
 // =====================================================================
 
@@ -347,6 +371,41 @@ unsafe fn start_display_link(state: &mut InitState) -> bool {
         state.display_link = link;
         tracing::info!(target: LOG_TARGET, "[CVDL] started");
         true
+    }
+}
+
+// =====================================================================
+// Wake-from-sleep observer. Subscribes [NSWorkspace sharedWorkspace]
+// .notificationCenter to NSWorkspaceDidWakeNotification; on fire,
+// reloads every CEF browser to recover from the stale GPU context that
+// macOS sleep leaves CEF subprocesses in. Once-installed, never removed.
+// =====================================================================
+
+unsafe fn start_wake_observer() {
+    unsafe {
+        let target: Retained<JellyfinWakeTarget> =
+            msg_send![JellyfinWakeTarget::class(), new];
+        // Leak the target on purpose — its lifetime is the whole app.
+        let target_obj: *mut AnyObject = Retained::into_raw(target) as *mut AnyObject;
+
+        let ws: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let nc: *mut AnyObject = msg_send![ws, notificationCenter];
+
+        let name_cstr = c"NSWorkspaceDidWakeNotification";
+        let name: *mut AnyObject = msg_send![
+            class!(NSString),
+            stringWithUTF8String: name_cstr.as_ptr()
+        ];
+
+        let sel_woke = sel!(wokeUp:);
+        let _: () = msg_send![
+            nc,
+            addObserver: target_obj,
+            selector: sel_woke,
+            name: name,
+            object: std::ptr::null_mut::<AnyObject>(),
+        ];
+        tracing::info!(target: LOG_TARGET, "[WAKE] subscribed to NSWorkspaceDidWakeNotification");
     }
 }
 
@@ -561,6 +620,8 @@ pub extern "C" fn macos_init(_mpv: *mut c_void) -> bool {
             tracing::error!(target: LOG_TARGET, "[INIT] failed to start CADisplayLink");
             return false;
         }
+
+        start_wake_observer();
 
         tracing::info!(
             target: LOG_TARGET,

@@ -290,6 +290,21 @@ pub extern "C" fn jfn_browsers_send_external_begin_frame_all() {
     }
 }
 
+/// Reload every layer's browser. Used by platform wake-from-sleep handlers
+/// to recover from stale GPU context / IPC after the system was asleep.
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_browsers_reload_all() {
+    let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|b| b.layers.clone())
+        .unwrap_or_default();
+    for l in snapshot {
+        unsafe { crate::client::jfn_cef_layer_reload(l) };
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_browsers_wait_all_closed() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE

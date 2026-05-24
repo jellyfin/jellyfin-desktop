@@ -261,6 +261,11 @@ impl Inner {
             h.invalidate(PaintElementType::VIEW);
         }
     }
+    fn reload(&self) {
+        if let Some(b) = self.browser_clone() {
+            b.reload();
+        }
+    }
     #[cfg(target_os = "macos")]
     fn send_external_begin_frame(&self) {
         if let Some(h) = self.host() {
@@ -1682,6 +1687,11 @@ pub unsafe extern "C" fn jfn_cef_layer_exec_js(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCefLayer) {
     unsafe { arc(h) }.send_external_begin_frame();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_cef_layer_reload(h: *const JfnCefLayer) {
+    unsafe { arc(h) }.reload();
 }
 
 #[unsafe(no_mangle)]
