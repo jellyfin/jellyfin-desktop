@@ -289,13 +289,13 @@ pub extern "C" fn win_clipboard_read_text_async(
 }
 
 /// Open an external URL via `ShellExecuteW(open)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn win_open_external_url(utf8: *const c_char, len: usize) {
-    if utf8.is_null() || len == 0 {
+pub fn win_open_external_url(url: &str) {
+    if url.is_empty() {
         return;
     }
+    let bytes = url.as_bytes();
     let wlen = unsafe {
-        MultiByteToWideChar(CP_UTF8, 0, utf8 as *const u8, len as c_int, std::ptr::null_mut(), 0)
+        MultiByteToWideChar(CP_UTF8, 0, bytes.as_ptr(), bytes.len() as c_int, std::ptr::null_mut(), 0)
     };
     if wlen <= 0 {
         return;
@@ -305,8 +305,8 @@ pub extern "C" fn win_open_external_url(utf8: *const c_char, len: usize) {
         MultiByteToWideChar(
             CP_UTF8,
             0,
-            utf8 as *const u8,
-            len as c_int,
+            bytes.as_ptr(),
+            bytes.len() as c_int,
             wurl.as_mut_ptr(),
             wlen,
         );
@@ -509,8 +509,8 @@ impl Platform for WindowsPlatform {
         win_clipboard_read_text_async(on_done, ctx, dtor);
     }
 
-    fn open_external_url(&self, utf8: *const c_char, len: usize) {
-        win_open_external_url(utf8, len);
+    fn open_external_url(&self, url: &str) {
+        win_open_external_url(url);
     }
 }
 

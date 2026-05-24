@@ -230,7 +230,7 @@ pub trait Platform: Send + Sync {
     /// device manager is available).
     fn clear_clipboard_handler(&self) {}
 
-    fn open_external_url(&self, _utf8: *const c_char, _len: usize) {}
+    fn open_external_url(&self, _url: &str) {}
 }
 
 // =====================================================================

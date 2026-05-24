@@ -10,6 +10,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
+jfn-open-url-linux = { path = "../open_url_linux" }
 jfn-platform-abi = { path = "../platform_abi" }
 libc.workspace = true
 xcb = { version = "1.7", features = ["shm", "shape", "xkb", "as-raw-xcb-connection"] }

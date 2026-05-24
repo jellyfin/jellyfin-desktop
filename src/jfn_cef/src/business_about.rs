@@ -162,8 +162,7 @@ fn handle_message(
             return true;
         }
         if let Some(p) = platform_ops::ops() {
-            let url = format!("file://{}", path);
-            p.open_external_url(url.as_ptr() as *const _, url.len());
+            p.open_external_url(&format!("file://{}", path));
         }
         return true;
     }
