@@ -14,4 +14,4 @@ clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 regex = "1"
 tar = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
