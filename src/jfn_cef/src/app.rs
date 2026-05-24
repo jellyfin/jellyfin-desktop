@@ -9,7 +9,6 @@ use cef::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::bridge;
 use crate::embedded_js;
 use crate::state;
 use crate::v8_handler::NativeHandlerBuilder;
@@ -157,7 +156,7 @@ wrap_browser_process_handler! {
 
     impl BrowserProcessHandler {
         fn on_context_initialized(&self) {
-            bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, "CEF context initialized");
+            jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, "CEF context initialized");
             crate::resource::register();
             // Optional C-side callback (kept for any future C++ context-init
             // hooks; currently unused now that scheme registration is in Rust).
@@ -499,11 +498,11 @@ fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
             code.replace_range(pos..pos + ph.len(), value);
         }
     }
-    replace_first(&mut code, "__SERVER_URL__", &bridge::settings_server_url());
+    replace_first(&mut code, "__SERVER_URL__", &jfn_config::server_url());
     replace_first(
         &mut code,
         "__SETTINGS_JSON__",
-        &bridge::settings_cli_json(&platform_device_name(), &hwdec_options()),
+        &jfn_config::cli_json(&platform_device_name(), &hwdec_options()),
     );
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
     replace_first(
@@ -532,9 +531,9 @@ fn ensure_renderer_settings_loaded() {
     use std::sync::OnceLock;
     static INITED: OnceLock<()> = OnceLock::new();
     INITED.get_or_init(|| {
-        let path = format!("{}/settings.json", bridge::paths_config_dir());
-        bridge::settings_init(&path);
-        let _ = bridge::settings_load();
+        let path = jfn_paths::config_dir().join("settings.json");
+        jfn_config::settings_init(&path);
+        let _ = jfn_config::settings_load();
     });
 }
 

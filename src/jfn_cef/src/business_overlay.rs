@@ -12,7 +12,6 @@ use std::ffi::{c_char, CStr, CString};
 use std::os::raw::c_void;
 use std::sync::Mutex;
 
-use crate::bridge;
 use crate::client::JfnCefLayer;
 
 const OVERLAY_FADE_DURATION_SEC: f32 = 0.25;
@@ -173,9 +172,9 @@ fn apply_setting_value(_section: &str, key: &str, value: &str) {
                 // for the overlay (set what the user typed, no auto-clear).
                 jfn_settings_set_device_name(cval.as_ptr(), c"".as_ptr());
             }
-            _ => bridge::log(
-                bridge::LOG_CEF,
-                bridge::LEVEL_WARN,
+            _ => jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_WARN,
                 &format!("Unknown setting key: {_section}.{key}"),
             ),
         }
@@ -205,7 +204,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "navigateMain" => {
             let Some(args) = args else { return true };
             let url = list_string(&args, 0);
-            bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, &format!("Overlay: navigateMain {url}"));
+            jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &format!("Overlay: navigateMain {url}"));
             let curl = CString::new(url.clone()).unwrap_or_default();
             unsafe {
                 jfn_settings_set_server_url(curl.as_ptr());
@@ -218,7 +217,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             true
         }
         "dismissOverlay" => {
-            bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, "Overlay: dismissOverlay");
+            jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, "Overlay: dismissOverlay");
             let (overlay, main_layer) = match INSTANCE.lock().unwrap().as_ref() {
                 Some(s) => (s.layer, s.main_layer),
                 None => return true,

@@ -12,7 +12,6 @@ use std::ffi::{c_char, CString};
 use std::os::raw::c_void;
 use std::sync::Mutex;
 
-use crate::bridge;
 use crate::client::JfnCefLayer;
 
 unsafe extern "C" {
@@ -271,9 +270,9 @@ fn apply_setting_value(_section: &str, key: &str, value: &str) {
             "logLevel" => jfn_settings_set_log_level(cval.as_ptr()),
             "forceTranscoding" => jfn_settings_set_force_transcoding(value == "true"),
             "deviceName" => jfn_settings_set_device_name(cval.as_ptr(), c"".as_ptr()),
-            _ => bridge::log(
-                bridge::LOG_CEF,
-                bridge::LEVEL_WARN,
+            _ => jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_WARN,
                 &format!("Unknown setting key: {_section}.{key}"),
             ),
         }
@@ -315,9 +314,9 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             let external_audio_url = if args.size() > 6 { list_string(&args, 6) } else { String::new() };
             let external_sub_url = if args.size() > 7 { list_string(&args, 7) } else { String::new() };
             let is_infinite_stream = if args.size() > 8 { args.bool(8) != 0 } else { false };
-            bridge::log(
-                bridge::LOG_CEF,
-                bridge::LEVEL_INFO,
+            jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_INFO,
                 &format!(
                     "playerLoad: video={video_idx} audio={audio_idx} sub={sub_idx} \
                      start={start_ms}ms infinite={is_infinite_stream} \
@@ -393,7 +392,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "playerSetSubtitle" => {
             if let Some(args) = args {
                 let id = list_int(&args, 0) as i64;
-                bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, &format!("playerSetSubtitle: {id}"));
+                jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &format!("playerSetSubtitle: {id}"));
                 unsafe { jfn_mpv_set_subtitle_track(id) };
             }
             true
@@ -401,7 +400,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "playerAddSubtitle" => {
             if let Some(args) = args {
                 let url = list_string(&args, 0);
-                bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, &format!("playerAddSubtitle: {url}"));
+                jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &format!("playerAddSubtitle: {url}"));
                 let c = CString::new(url).unwrap_or_default();
                 unsafe { jfn_mpv_sub_add(c.as_ptr()) };
             }
@@ -416,7 +415,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "playerAddAudio" => {
             if let Some(args) = args {
                 let url = list_string(&args, 0);
-                bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, &format!("playerAddAudio: {url}"));
+                jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &format!("playerAddAudio: {url}"));
                 let c = CString::new(url).unwrap_or_default();
                 unsafe { jfn_mpv_audio_add(c.as_ptr()) };
             }
@@ -482,7 +481,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "themeColor" => {
             if let Some(args) = args {
                 let color = list_string(&args, 0);
-                bridge::log(bridge::LOG_CEF, bridge::LEVEL_DEBUG, &format!("themeColor IPC: {color}"));
+                jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_DEBUG, &format!("themeColor IPC: {color}"));
                 let c = CString::new(color).unwrap_or_default();
                 let rgb = unsafe { jfn_cef_parse_color(c.as_ptr()) };
                 unsafe { jfn_theme_color_on_color(rgb) };
@@ -537,7 +536,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             true
         }
         "openConfigDir" => {
-            bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, "Opening mpv home directory");
+            jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, "Opening mpv home directory");
             unsafe { jfn_paths_open_mpv_home() };
             true
         }

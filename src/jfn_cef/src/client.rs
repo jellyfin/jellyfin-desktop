@@ -27,7 +27,6 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 
-use crate::bridge;
 use crate::platform_ops;
 
 unsafe extern "C" {
@@ -782,16 +781,16 @@ impl Inner {
         const LOGSEVERITY_DEFAULT: c_int = 0;
         let formatted = format!("{} ({}:{})", msg, src, line);
         let lvl = if level >= LOGSEVERITY_ERROR {
-            bridge::LEVEL_ERROR
+            jfn_logging::LEVEL_ERROR
         } else if level == LOGSEVERITY_WARNING {
-            bridge::LEVEL_WARN
+            jfn_logging::LEVEL_WARN
         } else if level == LOGSEVERITY_INFO || level == LOGSEVERITY_DEFAULT {
-            bridge::LEVEL_INFO
+            jfn_logging::LEVEL_INFO
         } else {
             let _ = LOGSEVERITY_VERBOSE;
-            bridge::LEVEL_DEBUG
+            jfn_logging::LEVEL_DEBUG
         };
-        bridge::log(bridge::LOG_JS, lvl, &formatted);
+        jfn_logging::log(jfn_logging::CATEGORY_JS, lvl, &formatted);
     }
 
     pub(crate) fn on_load_end(&self, is_main: bool, code: c_int, url: &str) {
@@ -802,7 +801,7 @@ impl Inner {
             code,
             url,
         );
-        bridge::log(bridge::LOG_CEF, bridge::LEVEL_INFO, &formatted);
+        jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, &formatted);
         if is_main {
             let _g = self.load_mtx.lock().unwrap();
             self.loaded.store(true, Ordering::Release);
@@ -818,7 +817,7 @@ impl Inner {
             code,
             text,
         );
-        bridge::log(bridge::LOG_CEF, bridge::LEVEL_ERROR, &formatted);
+        jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_ERROR, &formatted);
     }
 
     /// OnPreKeyEvent paste intercept. C++ side has already matched the
@@ -918,7 +917,7 @@ impl Inner {
             "CefLayer::OnAfterCreated name={}",
             self.name_str()
         );
-        bridge::log(bridge::LOG_CEF, bridge::LEVEL_DEBUG, &formatted);
+        jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_DEBUG, &formatted);
         *self.browser.lock().unwrap() = Some(browser.clone());
         {
             let _g = self.close_mtx.lock().unwrap();
