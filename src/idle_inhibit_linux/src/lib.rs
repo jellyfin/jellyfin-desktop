@@ -42,7 +42,7 @@ pub fn set(level: u32) {
         match Connection::system() {
             Ok(c) => state.bus = Some(c),
             Err(e) => {
-                log::error!("idle_inhibit: system bus connect failed: {}", e);
+                tracing::error!("idle_inhibit: system bus connect failed: {}", e);
                 return;
             }
         }
@@ -59,9 +59,9 @@ pub fn set(level: u32) {
     match reply {
         Ok(msg) => match msg.body().deserialize::<ZOwnedFd>() {
             Ok(fd) => state.fd = Some(fd.into()),
-            Err(e) => log::error!("idle_inhibit: Inhibit reply not fd: {}", e),
+            Err(e) => tracing::error!("idle_inhibit: Inhibit reply not fd: {}", e),
         },
-        Err(e) => log::error!("idle_inhibit: Inhibit call failed: {}", e),
+        Err(e) => tracing::error!("idle_inhibit: Inhibit call failed: {}", e),
     }
 }
 

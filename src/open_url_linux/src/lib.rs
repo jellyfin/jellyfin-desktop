@@ -20,7 +20,7 @@ pub fn open(url: &str) {
             });
         }
         Err(e) => {
-            log::error!("spawn(xdg-open) failed: {}", e);
+            tracing::error!("spawn(xdg-open) failed: {}", e);
         }
     }
 }

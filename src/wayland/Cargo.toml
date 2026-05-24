@@ -23,8 +23,8 @@ jfn-wlproxy = { path = "../wlproxy" }
 cef-dll-sys.workspace = true
 libc.workspace = true
 libloading = "0.9"
-log.workspace = true
 memmap2 = "0.9"
+tracing.workspace = true
 smithay-client-toolkit = { version = "0.20", default-features = false }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"

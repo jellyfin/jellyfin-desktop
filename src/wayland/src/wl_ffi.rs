@@ -25,7 +25,7 @@ pub unsafe fn jfn_wl_core_init(
     match unsafe { crate::wl_state::init(display, parent_surface) } {
         Ok(()) => true,
         Err(e) => {
-            log::error!("jfn_wl_core_init: {e}");
+            tracing::error!("jfn_wl_core_init: {e}");
             false
         }
     }

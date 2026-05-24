@@ -62,14 +62,14 @@ pub fn jfn_wl_lifecycle_init() -> bool {
     let display = match mpv_prop_intptr(c"wayland-display") {
         Some(p) => p as *mut c_void,
         None => {
-            log::error!("Failed to get Wayland display from mpv");
+            tracing::error!("Failed to get Wayland display from mpv");
             return false;
         }
     };
     let parent = match mpv_prop_intptr(c"wayland-surface") {
         Some(p) => p as *mut c_void,
         None => {
-            log::error!("Failed to get Wayland surface from mpv");
+            tracing::error!("Failed to get Wayland surface from mpv");
             return false;
         }
     };
@@ -85,7 +85,7 @@ pub fn jfn_wl_lifecycle_init() -> bool {
     crate::input_lifecycle::lifecycle_init(display);
 
     if !unsafe { crate::wl_ffi::jfn_wl_core_init(display, parent) } {
-        log::error!("jfn_wl_core_init failed");
+        tracing::error!("jfn_wl_core_init failed");
         return false;
     }
 
@@ -114,7 +114,7 @@ pub fn jfn_wl_lifecycle_init() -> bool {
 
     let ozone = jfn_platform_abi::get().cef_ozone_platform();
     if !unsafe { jfn_wl_dmabuf_probe(ozone, egl_dpy) } {
-        log::warn!("Shared textures not supported; using software CEF rendering");
+        tracing::warn!("Shared textures not supported; using software CEF rendering");
         jfn_platform_abi::get().set_shared_texture_unsupported();
     }
 
