@@ -25,12 +25,12 @@
 //!      palette object itself is dropped atomically by KWin when the
 //!      window goes away.
 
+use parking_lot::Mutex;
 use std::ffi::{CString, c_char, c_void};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use parking_lot::Mutex;
 
 use wayland_backend::client::{Backend, ObjectId};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
@@ -147,10 +147,7 @@ fn make_colors_dir() -> Option<PathBuf> {
 /// # Safety
 /// `display` must be a live `*mut wl_display`; `parent_surface` must be
 /// a live `*mut wl_proxy` referring to a `wl_surface` on it.
-pub unsafe fn jfn_wl_kde_palette_attach(
-    display: *mut c_void,
-    parent_surface: *mut c_void,
-) -> bool {
+pub unsafe fn jfn_wl_kde_palette_attach(display: *mut c_void, parent_surface: *mut c_void) -> bool {
     if display.is_null() || parent_surface.is_null() {
         return false;
     }

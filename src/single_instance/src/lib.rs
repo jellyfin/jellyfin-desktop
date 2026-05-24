@@ -31,9 +31,9 @@ mod imp {
         AF_UNIX, ECONNREFUSED, ENOENT, POLLIN, SOCK_STREAM, c_char, c_int, c_void, close, getuid,
         pipe, poll, pollfd, sockaddr_un,
     };
+    use parking_lot::Mutex;
     use std::ffi::{CStr, CString};
     use std::path::PathBuf;
-    use parking_lot::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
     use std::thread::{self, JoinHandle};
 
@@ -267,8 +267,8 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use super::Callback;
-    use std::ffi::CString;
     use parking_lot::Mutex;
+    use std::ffi::CString;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread::{self, JoinHandle};
     use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};

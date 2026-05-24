@@ -11,9 +11,9 @@
 //! window-Z-ordered list of opaque surface pointers extracted from each
 //! layer.
 
+use parking_lot::Mutex;
 use std::ffi::c_char;
 use std::os::raw::c_void;
-use parking_lot::Mutex;
 
 use crate::client::JfnCefLayer;
 
@@ -54,7 +54,7 @@ pub fn jfn_browsers_init(
     } else {
         0
     };
-        jfn_cef_set_default_frame_rate(fr);
+    jfn_cef_set_default_frame_rate(fr);
     jfn_cef_set_use_shared_textures(use_shared_textures);
     *INSTANCE.lock() = Some(Browsers {
         layers: Vec::new(),

@@ -8,9 +8,9 @@
 
 use cef::rc::ConvertReturnValue;
 use cef::*;
+use parking_lot::Mutex;
 use std::ffi::CString;
 use std::os::raw::c_void;
-use parking_lot::Mutex;
 
 use crate::client::JfnCefLayer;
 
@@ -118,9 +118,8 @@ fn apply_setting_value(_section: &str, key: &str, value: &str) {
 
 fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
     // Adopt the refs CEF added before invoke; release on function exit.
-    let args = (!args_raw.is_null()).then(|| -> ListValue {
-        (args_raw as *mut sys::_cef_list_value_t).wrap_result()
-    });
+    let args = (!args_raw.is_null())
+        .then(|| -> ListValue { (args_raw as *mut sys::_cef_list_value_t).wrap_result() });
     let browser = (!browser_raw.is_null())
         .then(|| -> Browser { (browser_raw as *mut sys::_cef_browser_t).wrap_result() });
 
@@ -164,8 +163,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             };
             jfn_browsers_set_active(main_layer);
             let browser_for_close = browser.clone();
-            let on_start: Box<dyn FnOnce() + Send> =
-                Box::new(jfn_theme_color_on_overlay_dismissed);
+            let on_start: Box<dyn FnOnce() + Send> = Box::new(jfn_theme_color_on_overlay_dismissed);
             let on_done: Box<dyn FnOnce() + Send> = Box::new(move || {
                 if let Some(b) = browser_for_close.as_ref()
                     && let Some(host) = b.host()
@@ -234,10 +232,7 @@ fn send_process_message<F: FnOnce(&ListValue)>(frame: &Frame, name: &str, fill: 
 }
 
 fn cancel_active_probe() {
-    let probe = INSTANCE
-        .lock()
-        .as_mut()
-        .and_then(|s| s.active_probe.take());
+    let probe = INSTANCE.lock().as_mut().and_then(|s| s.active_probe.take());
     if let Some(p) = probe {
         p.cancel();
     }
@@ -430,4 +425,3 @@ cef::wrap_urlrequest_client! {
         }
     }
 }
-

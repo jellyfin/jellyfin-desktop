@@ -265,12 +265,7 @@ pub fn macos_get_display_scale(_x: c_int, _y: c_int) -> f32 {
 /// Clamp the saved (w, h, x, y) window geometry — in backing pixels,
 /// relative to the main screen's visible frame — so the window stays
 /// fully on-screen. Centers any unset axis (negative input).
-pub fn macos_clamp_window_geometry(
-    w: &mut c_int,
-    h: &mut c_int,
-    x: &mut c_int,
-    y: &mut c_int,
-) {
+pub fn macos_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
     unsafe {
         let screen: *mut objc2::runtime::AnyObject =
             objc2::msg_send![objc2::class!(NSScreen), mainScreen];

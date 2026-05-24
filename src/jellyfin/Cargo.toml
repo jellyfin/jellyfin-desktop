@@ -10,3 +10,6 @@ crate-type = ["rlib"]
 
 [dependencies]
 serde_json = { workspace = true, features = ["preserve_order"] }
+
+[lints]
+workspace = true

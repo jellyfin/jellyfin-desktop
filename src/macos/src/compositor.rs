@@ -12,9 +12,9 @@
 //! returned from `macos_alloc_surface` is `Box::into_raw`; `macos_free_surface`
 //! reconstitutes via `Box::from_raw` after detaching the AppKit subview.
 
+use parking_lot::Mutex;
 use std::ffi::{c_int, c_void};
 use std::ptr;
-use parking_lot::Mutex;
 
 use objc2::encode::{Encode, Encoding};
 use objc2::runtime::AnyObject;
@@ -733,13 +733,7 @@ pub fn macos_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     true
 }
 
-pub fn macos_surface_resize(
-    s: *mut c_void,
-    lw: c_int,
-    _lh: c_int,
-    pw: c_int,
-    ph: c_int,
-) {
+pub fn macos_surface_resize(s: *mut c_void, lw: c_int, _lh: c_int, pw: c_int, ph: c_int) {
     if s.is_null() {
         return;
     }

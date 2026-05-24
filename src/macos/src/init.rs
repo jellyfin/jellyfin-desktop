@@ -5,10 +5,10 @@
 //! drives external BeginFrame per browser, and the NSWindow.windowShouldClose:
 //! swizzle that routes the WM close button into `jfn_shutdown_initiate`.
 
+use parking_lot::Mutex;
 use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
-use parking_lot::Mutex;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};

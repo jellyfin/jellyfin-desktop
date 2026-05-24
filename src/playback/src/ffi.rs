@@ -4,8 +4,8 @@
 //! Sync>`); the coordinator worker fans events out by invoking them
 //! directly. Producers call [`post`] with a typed [`Input`].
 
-use std::sync::{OnceLock};
 use parking_lot::Mutex;
+use std::sync::OnceLock;
 
 pub use crate::coordinator::Input;
 use crate::coordinator::PlaybackCoordinator;

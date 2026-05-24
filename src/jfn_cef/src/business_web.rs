@@ -10,10 +10,10 @@
 
 use cef::rc::ConvertReturnValue;
 use cef::*;
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::ffi::{CString, c_char};
 use std::os::raw::c_void;
-use parking_lot::Mutex;
 
 use crate::client::JfnCefLayer;
 
@@ -226,9 +226,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         return false;
     }
 
-    let args = (!args_raw.is_null()).then(|| -> ListValue {
-        (args_raw as *mut sys::_cef_list_value_t).wrap_result()
-    });
+    let args = (!args_raw.is_null())
+        .then(|| -> ListValue { (args_raw as *mut sys::_cef_list_value_t).wrap_result() });
     if !browser_raw.is_null() {
         // Browser ref isn't needed by any web handler; just drop it.
         let _: Browser = (browser_raw as *mut sys::_cef_browser_t).wrap_result();
@@ -288,8 +287,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             pb_post(PbInput::Position(start_ms as i64 * 1000));
 
             if !metadata_json.is_empty() {
-                                jfn_theme_color_set_video_mode(meta.media_type == MT_VIDEO);
-            
+                jfn_theme_color_set_video_mode(meta.media_type == MT_VIDEO);
+
                 post_metadata(&meta);
             }
 

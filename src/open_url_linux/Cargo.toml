@@ -10,3 +10,6 @@ crate-type = ["rlib"]
 
 [dependencies]
 tracing.workspace = true
+
+[lints]
+workspace = true

@@ -32,3 +32,6 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-scanner = "0.31"
 xkbcommon = "0.9"
+
+[lints]
+workspace = true

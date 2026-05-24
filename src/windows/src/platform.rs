@@ -8,8 +8,8 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_int, c_void};
 use parking_lot::Mutex;
+use std::ffi::{c_int, c_void};
 use std::thread::JoinHandle;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -148,8 +148,7 @@ pub fn win_set_fullscreen(fullscreen: bool) {
     let hwnd = hwnd_from_raw(hwnd_raw);
 
     if fullscreen {
-        STATE.lock().restore_maximized_on_unfullscreen =
-            unsafe { IsZoomed(hwnd) }.as_bool();
+        STATE.lock().restore_maximized_on_unfullscreen = unsafe { IsZoomed(hwnd) }.as_bool();
     }
 
     let mut should_restore_maximized = false;
@@ -185,8 +184,7 @@ pub fn win_toggle_fullscreen() {
     let hwnd = hwnd_from_raw(hwnd_raw);
 
     if target_fullscreen {
-        STATE.lock().restore_maximized_on_unfullscreen =
-            unsafe { IsZoomed(hwnd) }.as_bool();
+        STATE.lock().restore_maximized_on_unfullscreen = unsafe { IsZoomed(hwnd) }.as_bool();
     }
 
     let mut should_restore_maximized = false;
@@ -398,12 +396,7 @@ pub fn win_query_window_position(x: &mut c_int, y: &mut c_int) -> bool {
 /// Resolve saved geometry against the primary monitor's working area so the
 /// window never opens larger than the screen or off-screen, and center any
 /// unset axis.
-pub fn win_clamp_window_geometry(
-    w: &mut c_int,
-    h: &mut c_int,
-    x: &mut c_int,
-    y: &mut c_int,
-) {
+pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
     let mut work = RECT::default();
     let ok = unsafe {
         SystemParametersInfoW(

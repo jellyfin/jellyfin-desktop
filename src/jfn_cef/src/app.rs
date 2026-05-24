@@ -4,8 +4,8 @@
 //! `--type=` switch.
 
 use cef::*;
-use std::collections::HashMap;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 
 use crate::embedded_js;
 use crate::state;

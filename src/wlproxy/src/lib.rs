@@ -17,15 +17,21 @@
 //! but the caller overrides that env to OUR socket so mpv connects to us. We
 //! must capture the original `WAYLAND_DISPLAY` here at `start` (before any
 //! override) and pass it explicitly via `with_server_display_name`.
+//!
+//! The whole crate is gated to Linux: `wl-proxy` is a Wayland-only dependency,
+//! and nothing references this crate off-Linux (jfn_rust pulls it in only under
+//! its `cfg(target_os = "linux")` deps, and `jfn-wayland` is Linux-only). Off
+//! Linux this is an empty rlib, which keeps `cargo --workspace` uniform.
+#![cfg(target_os = "linux")]
 
+use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::os::fd::OwnedFd;
 use std::os::raw::{c_char, c_int};
 use std::rc::Rc;
-use std::sync::{mpsc};
-use parking_lot::Mutex;
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 

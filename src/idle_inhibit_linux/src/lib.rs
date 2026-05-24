@@ -4,8 +4,8 @@
 //! inhibit lasts as long as the fd is open. Replacing the inhibit closes the
 //! previous fd, which atomically releases the prior inhibitor.
 
-use std::os::fd::OwnedFd;
 use parking_lot::Mutex;
+use std::os::fd::OwnedFd;
 
 use zbus::blocking::Connection;
 use zbus::zvariant::OwnedFd as ZOwnedFd;

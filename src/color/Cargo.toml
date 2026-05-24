@@ -9,3 +9,6 @@ name = "jfn_color"
 
 [dependencies]
 parking_lot.workspace = true
+
+[lints]
+workspace = true

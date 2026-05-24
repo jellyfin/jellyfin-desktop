@@ -772,8 +772,7 @@ fn consume_vo_event(
         *mh = ph;
     }
     #[cfg(target_os = "linux")]
-    let scale_ready = !wait_for_scale
-        || jfn_wayland::proxy::jfn_wl_scale_known();
+    let scale_ready = !wait_for_scale || jfn_wayland::proxy::jfn_wl_scale_known();
     #[cfg(not(target_os = "linux"))]
     let scale_ready = {
         let _ = wait_for_scale;
@@ -1070,7 +1069,9 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
         let s = plat().get_scale();
         if s > 0.0 { s } else { 1.0 }
     });
-    jfn_playback::ingest_driver::jfn_playback_set_fullscreen_handler(|fs| plat().set_fullscreen(fs));
+    jfn_playback::ingest_driver::jfn_playback_set_fullscreen_handler(|fs| {
+        plat().set_fullscreen(fs)
+    });
     jfn_playback::ingest_driver::jfn_playback_set_shutdown_handler(|| {
         tracing::info!(target: "Main", "MPV_EVENT_SHUTDOWN received");
         jfn_playback::jfn_shutdown_initiate();

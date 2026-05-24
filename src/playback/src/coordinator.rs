@@ -3,10 +3,10 @@
 //! them in batches, runs transitions, publishes the canonical snapshot,
 //! and hands events to registered sinks via the FFI vtable.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc};
 use parking_lot::Mutex;
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use crate::wake_event::WakeEvent;

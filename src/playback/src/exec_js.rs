@@ -2,10 +2,10 @@
 //! Rust-side sinks (browser_sink, mpris_sink) call it to forward JS into
 //! the embedded web view.
 
+use parking_lot::Mutex;
 use std::ffi::CString;
 use std::os::raw::c_char;
-use std::sync::{OnceLock};
-use parking_lot::Mutex;
+use std::sync::OnceLock;
 
 type ExecJsCb = extern "C" fn(*const c_char);
 

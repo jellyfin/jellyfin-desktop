@@ -44,6 +44,12 @@ windows-core = "0.62"
 windows-sys = "0.61"
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

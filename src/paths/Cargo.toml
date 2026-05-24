@@ -7,3 +7,6 @@ publish.workspace = true
 [lib]
 name = "jfn_paths"
 crate-type = ["rlib"]
+
+[lints]
+workspace = true

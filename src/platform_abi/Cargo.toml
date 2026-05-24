@@ -10,3 +10,6 @@ crate-type = ["rlib"]
 
 [dependencies]
 cef-dll-sys.workspace = true
+
+[lints]
+workspace = true

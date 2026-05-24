@@ -4,8 +4,8 @@
 //! Platform-vtable cursor setter and the cleanup path can reach it from
 //! any thread.
 
-use std::sync::{Arc};
 use parking_lot::Mutex;
+use std::sync::Arc;
 
 use xcb::x;
 

@@ -11,10 +11,10 @@ use crate::log::LogLevel;
 use crate::node::Node;
 use crate::property::{Flag, Format};
 use crate::sys;
+use parking_lot::Mutex;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
-use parking_lot::Mutex;
 
 /// Type alias for the user-supplied wakeup callback. libmpv invokes this
 /// on an arbitrary thread when new events are queued.
