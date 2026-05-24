@@ -49,10 +49,8 @@ pub fn jfn_browsers_init(
     } else {
         0
     };
-    unsafe {
         jfn_cef_set_default_frame_rate(fr);
-        jfn_cef_set_use_shared_textures(use_shared_textures);
-    }
+    jfn_cef_set_use_shared_textures(use_shared_textures);
     *INSTANCE.lock().unwrap() = Some(Browsers {
         layers: Vec::new(),
         active: std::ptr::null_mut(),
