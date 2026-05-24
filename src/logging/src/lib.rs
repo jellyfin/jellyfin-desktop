@@ -11,7 +11,6 @@
 
 mod redact;
 
-use std::ffi::{CString, c_char};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -509,28 +508,9 @@ fn emit(category: u8, level: Level, msg: &str) {
     }
 }
 
-// =====================================================================
-// FFI
-// =====================================================================
-
-/// # Safety
-/// `path` and `filter` may be null or valid NUL-terminated C strings.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_log_init(path: *const c_char, filter: *const c_char) {
-    let path_str = if path.is_null() {
-        String::new()
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(path) }
-            .to_string_lossy()
-            .into_owned()
-    };
-    let filter_str_raw = if filter.is_null() {
-        String::new()
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(filter) }
-            .to_string_lossy()
-            .into_owned()
-    };
+pub fn jfn_log_init(path: &str, filter: &str) {
+    let path_str = path.to_string();
+    let filter_str_raw = filter.to_string();
     let filter_str = if filter_str_raw.trim().is_empty() {
         "info".to_string()
     } else {
@@ -642,41 +622,6 @@ pub fn active_path() -> String {
         .as_ref()
         .map(|st| st.active_log_path.clone())
         .unwrap_or_default()
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_log_enabled(category: u8, level: u8) -> bool {
-    log_enabled(category, level)
-}
-
-/// # Safety
-/// `msg` must point to `len` bytes of readable memory (or be null when
-/// `len == 0`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_log(category: u8, level: u8, msg: *const c_char, len: usize) {
-    if len == 0 || msg.is_null() {
-        return;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(msg as *const u8, len) };
-    let text = String::from_utf8_lossy(slice);
-    log(category, level, &text);
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_log_active_path() -> *mut c_char {
-    CString::new(active_path())
-        .map(|c| c.into_raw())
-        .unwrap_or(std::ptr::null_mut())
-}
-
-/// # Safety
-/// `s` must be null or a pointer previously returned by
-/// [`jfn_log_active_path`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_log_free_string(s: *mut c_char) {
-    if !s.is_null() {
-        unsafe { drop(CString::from_raw(s)) };
-    }
 }
 
 // =====================================================================
