@@ -1070,6 +1070,7 @@ name = "jfn-input"
 version = "0.1.0"
 dependencies = [
  "jfn-platform-abi",
+ "jfn-playback",
 ]
 
 [[package]]

@@ -18,11 +18,11 @@ use crate::egl_dyn as egl;
 // FFI declarations consumed during init/cleanup.
 // =====================================================================
 
+use jfn_playback::shutdown::jfn_shutdown_initiate;
+
 unsafe extern "C" {
     // mpv property reads
     fn jfn_mpv_get_property_int(name: *const c_char, out: *mut i64) -> i32;
-    // Shutdown trampoline target for the wayland-close-cb-ptr property.
-    fn jfn_shutdown_initiate();
 
     // Wayland-side subsystems already living in this crate's FFI surface.
     fn jfn_wl_dmabuf_probe(ozone_platform: *const c_char, egl_dpy: *mut c_void) -> bool;
@@ -57,7 +57,7 @@ unsafe fn write_close_cb(slot: usize, cb: Option<unsafe extern "C" fn(*mut c_voi
 }
 
 unsafe extern "C" fn close_cb_trampoline(_: *mut c_void) {
-    unsafe { jfn_shutdown_initiate() };
+    jfn_shutdown_initiate();
 }
 
 // =====================================================================

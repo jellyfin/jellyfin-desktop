@@ -912,7 +912,7 @@ extern "C" fn h_theme_set_mpv_bg(hex: *const c_char) {
     unsafe { jfn_mpv::api::jfn_mpv_set_background_color_hex(hex) };
 }
 
-extern "C" fn h_shutdown_close_browsers() {
+fn h_shutdown_close_browsers() {
     jfn_cef::browsers::jfn_browsers_close_all();
     plat().wake_main_loop();
 }
