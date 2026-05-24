@@ -539,7 +539,7 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
 // =====================================================================
 
 #[cfg(unix)]
-static SIGNAL_GUARD: OnceLock<jfn_signal_guard::SignalGuard> = OnceLock::new();
+static SIGNAL_GUARD: OnceLock<crate::signal_guard::SignalGuard> = OnceLock::new();
 
 #[cfg(unix)]
 unsafe extern "C" fn on_shutdown_signal(_sig: c_int) {
@@ -555,7 +555,7 @@ unsafe extern "system" fn console_ctrl_handler(_t: u32) -> i32 {
 fn install_signal_handler() {
     #[cfg(unix)]
     {
-        let g = unsafe { jfn_signal_guard::install(on_shutdown_signal) };
+        let g = unsafe { crate::signal_guard::install(on_shutdown_signal) };
         let _ = SIGNAL_GUARD.set(g);
     }
     #[cfg(windows)]
@@ -1230,5 +1230,5 @@ pub fn jfn_app_teardown() {
     }
     // Single-instance listener is dropped via the OnceLock at process exit;
     // no explicit teardown call needed here. SignalGuard slot stays until
-    // exit and restores the original disposition via libsignal_guard's Drop.
+    // exit and restores the original disposition via its Drop impl.
 }
