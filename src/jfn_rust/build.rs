@@ -41,11 +41,9 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
-        // VS_VERSION_INFO is parameterized by the values produced from
-        // /VERSION and git-describe — we expand iconres.rc.in inline here
-        // (the file uses CMake @VAR@ placeholders so we do a simple
-        // textual substitution rather than re-running cmake just for
-        // this).
+        // VS_VERSION_INFO is parameterized by VERSION + git-describe —
+        // expand iconres.rc.in inline (the template uses @VAR@
+        // placeholders, plain textual substitution).
         use std::path::PathBuf;
 
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
