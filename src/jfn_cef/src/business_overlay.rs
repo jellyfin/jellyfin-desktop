@@ -164,8 +164,9 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             };
             jfn_browsers_set_active(main_layer);
             let browser_for_close = browser.clone();
-            let start_box: Box<FadeFn> = Box::new(|| jfn_theme_color_on_overlay_dismissed());
-            let done_box: Box<FadeFn> = Box::new(move || {
+            let on_start: Box<dyn FnOnce() + Send> =
+                Box::new(jfn_theme_color_on_overlay_dismissed);
+            let on_done: Box<dyn FnOnce() + Send> = Box::new(move || {
                 if let Some(b) = browser_for_close.as_ref()
                     && let Some(host) = b.host()
                 {
@@ -176,12 +177,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 jfn_cef_layer_fade(
                     overlay,
                     OVERLAY_FADE_DURATION_SEC,
-                    Some(fade_thunk),
-                    Box::into_raw(Box::new(start_box)) as *mut c_void,
-                    Some(fade_dtor),
-                    Some(fade_thunk),
-                    Box::into_raw(Box::new(done_box)) as *mut c_void,
-                    Some(fade_dtor),
+                    Some(on_start),
+                    Some(on_done),
                 );
             }
             true
@@ -435,25 +432,3 @@ cef::wrap_urlrequest_client! {
     }
 }
 
-// ---- helpers for fade callbacks ------------------------------------------
-//
-// The platform fade FFI fires `fn(ctx)` then `dtor(ctx)`. We ship a
-// double-box: outer Box owns the heap holder, inner Box<dyn Fn> is what
-// the thunk reads. Thunk borrows; dtor drops.
-
-type FadeFn = dyn Fn() + Send + Sync;
-
-unsafe extern "C" fn fade_thunk(ctx: *mut c_void) {
-    if ctx.is_null() {
-        return;
-    }
-    let bx: &Box<FadeFn> = unsafe { &*(ctx as *const Box<FadeFn>) };
-    bx();
-}
-
-unsafe extern "C" fn fade_dtor(ctx: *mut c_void) {
-    if ctx.is_null() {
-        return;
-    }
-    drop(unsafe { Box::from_raw(ctx as *mut Box<FadeFn>) });
-}

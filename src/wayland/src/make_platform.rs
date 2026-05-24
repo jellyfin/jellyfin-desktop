@@ -167,51 +167,28 @@ impl Platform for WaylandPlatform {
         &self,
         s: SurfaceHandle,
         fade_sec: f32,
-        on_start: Option<unsafe extern "C" fn(*mut c_void)>,
-        start_ctx: *mut c_void,
-        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        on_done: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_ctx: *mut c_void,
-        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        on_start: Option<Box<dyn FnOnce() + Send>>,
+        on_done: Option<Box<dyn FnOnce() + Send>>,
     ) {
         let fps = jfn_playback_display_hz();
         let surf_ptr = s as *mut crate::wl_state::PlatformSurface;
         let can_fade = !s.is_null() && fps > 0.0 && wl_ops::surface_has_alpha(surf_ptr);
         if !can_fade {
             // No wp_alpha_modifier_v1 (e.g. niri) or no surface/fps:
-            // hard-unmap and fire the callback contract inline.
+            // hard-unmap and fire the closures inline.
             if !s.is_null() {
                 wl_ops::surface_set_visible(surf_ptr, false, BG_R, BG_G, BG_B);
             }
-            unsafe {
-                if let Some(f) = on_start {
-                    f(start_ctx)
-                }
-                if let Some(d) = start_dtor {
-                    d(start_ctx)
-                }
-                if let Some(f) = on_done {
-                    f(done_ctx)
-                }
-                if let Some(d) = done_dtor {
-                    d(done_ctx)
-                }
+            if let Some(f) = on_start {
+                f();
+            }
+            if let Some(f) = on_done {
+                f();
             }
             return;
         }
         unsafe {
-            jfn_wl_fade_start(
-                s,
-                fade_sec,
-                fps,
-                jfn_wl_fade_apply_frame,
-                on_start,
-                start_ctx,
-                start_dtor,
-                on_done,
-                done_ctx,
-                done_dtor,
-            );
+            jfn_wl_fade_start(s, fade_sec, fps, jfn_wl_fade_apply_frame, on_start, on_done);
         }
     }
 

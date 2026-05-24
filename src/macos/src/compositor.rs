@@ -857,76 +857,40 @@ pub fn macos_restack(ordered: *const *mut c_void, n: usize) {
 // opaque.
 // =====================================================================
 
-/// (fn, ctx, dtor) callback triple — `dtor` fires once on drop so the
-/// caller's owned context (e.g. a Box) is freed exactly once across the
-/// start + complete paths.
-struct CallbackTriple {
-    fn_ptr: Option<unsafe extern "C" fn(*mut c_void)>,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-}
-
-unsafe impl Send for CallbackTriple {}
-
-impl CallbackTriple {
-    fn fire(&self) {
-        if let Some(f) = self.fn_ptr {
-            unsafe { f(self.ctx) };
-        }
-    }
-}
-
-impl Drop for CallbackTriple {
-    fn drop(&mut self) {
-        if let Some(d) = self.dtor {
-            unsafe { d(self.ctx) };
-        }
+fn fire_cb(cb: Option<Box<dyn FnOnce() + Send>>) {
+    if let Some(f) = cb {
+        f();
     }
 }
 
 pub fn macos_fade_surface(
     s: *mut c_void,
     fade_sec: f32,
-    on_fade_start: Option<unsafe extern "C" fn(*mut c_void)>,
-    start_ctx: *mut c_void,
-    start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    on_complete: Option<unsafe extern "C" fn(*mut c_void)>,
-    done_ctx: *mut c_void,
-    done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    on_fade_start: Option<Box<dyn FnOnce() + Send>>,
+    on_complete: Option<Box<dyn FnOnce() + Send>>,
 ) {
-    let start_cb = CallbackTriple {
-        fn_ptr: on_fade_start,
-        ctx: start_ctx,
-        dtor: start_dtor,
-    };
-    let done_cb = CallbackTriple {
-        fn_ptr: on_complete,
-        ctx: done_ctx,
-        dtor: done_dtor,
-    };
-
-    // Null/empty surface: fire both callbacks inline, then drop.
+    // Null/empty surface: fire both closures inline.
     if s.is_null() {
-        start_cb.fire();
-        done_cb.fire();
+        fire_cb(on_fade_start);
+        fire_cb(on_complete);
         return;
     }
     let s_ptr = s as *mut Surface;
     let view = unsafe { (*s_ptr).view };
     let layer = unsafe { (*s_ptr).layer };
     if view.is_null() || layer.is_null() {
-        start_cb.fire();
-        done_cb.fire();
+        fire_cb(on_fade_start);
+        fire_cb(on_complete);
         return;
     }
 
     let s_addr = s_ptr as usize;
     let fade_dur = fade_sec as f64;
     run_on_main_async(move || unsafe {
-        start_cb.fire();
+        fire_cb(on_fade_start);
         let surf = &*(s_addr as *mut Surface);
         if surf.view.is_null() || surf.layer.is_null() {
-            done_cb.fire();
+            fire_cb(on_complete);
             return;
         }
 
@@ -984,13 +948,13 @@ pub fn macos_fade_surface(
         struct FadeDone {
             view: usize,
             layer: usize,
-            done_cb: CallbackTriple,
+            on_complete: Option<Box<dyn FnOnce() + Send>>,
         }
         unsafe impl Send for FadeDone {}
         let payload = Box::new(FadeDone {
             view: surf.view as usize,
             layer: surf.layer as usize,
-            done_cb,
+            on_complete,
         });
         let ctx_ptr = Box::into_raw(payload) as *mut c_void;
         unsafe extern "C" fn after_trampoline(ctx: *mut c_void) {
@@ -1005,8 +969,7 @@ pub fn macos_fade_surface(
                     let _: () = objc2::msg_send![layer, removeAllAnimations];
                     let _: () = objc2::msg_send![layer, setOpacity: 1.0f32];
                 }
-                payload.done_cb.fire();
-                // FadeDone drops here; done_cb's dtor fires exactly once.
+                fire_cb(payload.on_complete);
             }
         }
         // dispatch_time(DISPATCH_TIME_NOW, fade_sec * NSEC_PER_SEC).

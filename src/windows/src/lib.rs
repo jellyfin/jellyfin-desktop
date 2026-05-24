@@ -373,16 +373,10 @@ impl Platform for WindowsPlatform {
         &self,
         s: SurfaceHandle,
         sec: f32,
-        on_start: Option<unsafe extern "C" fn(*mut c_void)>,
-        start_ctx: *mut c_void,
-        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        on_done: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_ctx: *mut c_void,
-        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        on_start: Option<Box<dyn FnOnce() + Send>>,
+        on_done: Option<Box<dyn FnOnce() + Send>>,
     ) {
-        win_fade_surface(
-            s, sec, on_start, start_ctx, start_dtor, on_done, done_ctx, done_dtor,
-        );
+        win_fade_surface(s, sec, on_start, on_done);
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {

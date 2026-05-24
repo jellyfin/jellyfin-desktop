@@ -1,15 +1,11 @@
 //! Surface alpha-fade animation thread.
 //!
-//! Owns the join-handle and stop flag for the at-most-one fade animation in
-//! flight. The per-frame protocol calls
-//! (`wp_alpha_modifier_surface_v1_set_multiplier` + commit + display_flush)
-//! live on the C++ side — this module just drives the loop on a dedicated
-//! thread, gates each iteration on the stop flag, and fires the
-//! caller-supplied start/complete callbacks.
-//!
-//! The C++ vtable thunk for `fade_surface` calls `jfn_wl_fade_start`. The
-//! cleanup path calls `jfn_wl_fade_stop_all` before tearing down surfaces
-//! the in-flight fade may still touch.
+//! Owns the join-handle and stop flag for the at-most-one fade animation
+//! in flight. The per-frame protocol calls
+//! (`wp_alpha_modifier_surface_v1_set_multiplier` + commit +
+//! display_flush) live in `wl_ops` — this module just drives the loop on
+//! a dedicated thread, gates each iteration on the stop flag, and fires
+//! the caller-supplied start/complete closures.
 
 use std::ffi::c_void;
 use std::sync::Mutex;
@@ -17,41 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-/// Per-frame apply callback. Returns false to abort the loop (surface gone,
-/// alpha modifier dropped, etc.). Called under the C++ `surface_mtx` —
-/// implementation is in wayland.cpp.
+/// Per-frame apply callback. Returns false to abort the loop (surface
+/// gone, alpha modifier dropped, etc.).
 type ApplyFrameFn = unsafe extern "C" fn(surface: *mut c_void, alpha: u32) -> bool;
-
-type SimpleCb = unsafe extern "C" fn(ctx: *mut c_void);
-type CtxDtor = unsafe extern "C" fn(ctx: *mut c_void);
-
-struct CbTriple {
-    cb: Option<SimpleCb>,
-    ctx: *mut c_void,
-    dtor: Option<CtxDtor>,
-}
-
-unsafe impl Send for CbTriple {}
-
-impl CbTriple {
-    fn new(cb: Option<SimpleCb>, ctx: *mut c_void, dtor: Option<CtxDtor>) -> Self {
-        Self { cb, ctx, dtor }
-    }
-
-    fn fire(&self) {
-        if let Some(f) = self.cb {
-            unsafe { f(self.ctx) };
-        }
-    }
-}
-
-impl Drop for CbTriple {
-    fn drop(&mut self) {
-        if let Some(d) = self.dtor {
-            unsafe { d(self.ctx) };
-        }
-    }
-}
 
 static STOP: AtomicBool = AtomicBool::new(false);
 static HANDLE: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
@@ -66,46 +30,38 @@ fn join_existing() {
 
 /// Start a fade. Returns false when the caller should skip the animation
 /// entirely (surface unfadable, zero frame budget) — in that case the
-/// caller must fire its own start + complete callbacks; this function
-/// consumed neither.
+/// closures are dropped without firing.
 ///
-/// On success the returned thread will:
+/// On success the spawned thread will:
 ///   1. fire `on_start` once (before the loop)
-///   2. loop `total_frames` times, calling `apply` with the current alpha;
-///      bail out early if `apply` returns false or another fade is started
+///   2. loop `total_frames` times, calling `apply` with the current
+///      alpha; bail out early if `apply` returns false or another fade
+///      preempts via `jfn_wl_fade_stop_all`
 ///   3. fire `on_done` once on natural completion (skipped on abort)
 ///
 /// Safety: `surface` must remain valid until the fade ends or
-/// `jfn_wl_fade_stop_all` is called. Apply / start / done callbacks are
-/// invoked from the fade thread.
+/// `jfn_wl_fade_stop_all` is called.
 pub unsafe fn jfn_wl_fade_start(
     surface: *mut c_void,
     fade_sec: f32,
     fps: f64,
     apply: ApplyFrameFn,
-    on_start: Option<SimpleCb>,
-    start_ctx: *mut c_void,
-    start_dtor: Option<CtxDtor>,
-    on_done: Option<SimpleCb>,
-    done_ctx: *mut c_void,
-    done_dtor: Option<CtxDtor>,
+    on_start: Option<Box<dyn FnOnce() + Send>>,
+    on_done: Option<Box<dyn FnOnce() + Send>>,
 ) -> bool {
     if surface.is_null() || fps <= 0.0 {
-        // Caller fires its own callbacks; drop the triples we received.
-        drop(CbTriple::new(on_start, start_ctx, start_dtor));
-        drop(CbTriple::new(on_done, done_ctx, done_dtor));
         return false;
     }
 
     join_existing();
     STOP.store(false, Ordering::Release);
 
-    let start_triple = CbTriple::new(on_start, start_ctx, start_dtor);
-    let done_triple = CbTriple::new(on_done, done_ctx, done_dtor);
     let surface_addr = surface as usize;
 
     let handle = thread::spawn(move || {
-        start_triple.fire();
+        if let Some(f) = on_start {
+            f();
+        }
 
         let mut total_frames = (fade_sec as f64 * fps) as i32;
         if total_frames < 1 {
@@ -129,19 +85,20 @@ pub unsafe fn jfn_wl_fade_start(
         }
 
         if aborted {
-            // Drop done_triple without firing — matches C++ behaviour where
-            // on_complete is suppressed when stop_fade_thread() preempts.
+            // Drop on_done without firing — suppress on_complete when
+            // stop_fade_thread() preempts.
             return;
         }
-        done_triple.fire();
+        if let Some(f) = on_done {
+            f();
+        }
     });
 
     *HANDLE.lock().unwrap() = Some(handle);
     true
 }
 
-/// Stop the in-flight fade (if any) and join its thread. Called from C++
-/// cleanup before destroying the alpha-modifier proxy and the surfaces.
+/// Stop the in-flight fade (if any) and join its thread.
 pub fn jfn_wl_fade_stop_all() {
     join_existing();
 }
