@@ -1,8 +1,8 @@
 [package]
 name = "jfn-rust"
 version = "0.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_rust"
@@ -17,7 +17,7 @@ default = ["kde-palette"]
 kde-palette = ["jfn-cef/kde-palette", "jfn-wayland/kde-palette"]
 
 [dependencies]
-tracing = "0.1"
+tracing.workspace = true
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-cef = { path = "../jfn_cef", default-features = false }
 jfn-cli = { path = "../cli" }
@@ -37,7 +37,7 @@ jfn-signal-guard = { path = "../signal_guard" }
 [target.'cfg(target_os = "macos")'.dependencies]
 jfn-macos = { path = "../macos" }
 jfn-macos-sink = { path = "../macos_sink" }
-libc = "0.2"
+libc.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 jfn-windows = { path = "../windows" }

@@ -1,13 +1,13 @@
 [package]
 name = "jfn-jellyfin"
 version = "0.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_jellyfin"
 crate-type = ["rlib"]
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
