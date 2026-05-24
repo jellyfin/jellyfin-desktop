@@ -11,7 +11,6 @@ use cef::{
     dictionary_value_create, list_value_create, CefString, DictionaryValue, ImplDictionaryValue,
     ImplListValue,
 };
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::OnceLock;
 
@@ -119,7 +118,3 @@ pub fn build_for_kind(kind: &str, add_ctx_menu: bool) -> Option<DictionaryValue>
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn _silence_cstr() {
-    let _ = CStr::from_bytes_with_nul(b"\0");
-}

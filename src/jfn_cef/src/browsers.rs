@@ -6,7 +6,7 @@
 //! window-Z-ordered list of opaque surface pointers extracted from each
 //! layer.
 
-use std::ffi::{c_char, CString};
+use std::ffi::c_char;
 use std::os::raw::c_void;
 use std::sync::Mutex;
 
@@ -314,6 +314,3 @@ fn restack(layers: &[*mut JfnCefLayer]) {
     unsafe { jfn_platform_restack(ordered.as_ptr(), ordered.len()) };
 }
 
-// Avoid "unused" warning when only some platforms need CString helpers.
-#[allow(dead_code)]
-fn _silence_cstring(_: CString) {}

@@ -26,8 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CWPRETSTRUCT, CallNextHookEx, GWL_STYLE, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, HHOOK, IsIconic, IsZoomed, SIZE_MINIMIZED, SPI_GETWORKAREA,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW,
-    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WINDOW_STYLE, WM_CLOSE, WM_SIZE, WS_CAPTION,
-    WS_THICKFRAME,
+    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_CLOSE, WM_SIZE, WS_CAPTION, WS_THICKFRAME,
 };
 
 // =====================================================================
@@ -306,10 +305,6 @@ unsafe extern "system" fn mpv_wndproc_hook(
     let hook = HHOOK(hook_raw as *mut c_void);
     unsafe { CallNextHookEx(Some(hook), n_code, wp, lp) }
 }
-
-// Silence "WINDOW_STYLE never used directly" — referenced via constants.
-#[allow(dead_code)]
-const _USED: WINDOW_STYLE = WS_CAPTION;
 
 // =====================================================================
 // Platform vtable entry points.

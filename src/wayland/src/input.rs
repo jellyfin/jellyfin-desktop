@@ -34,7 +34,6 @@ const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
 const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
 
 // CEF cef_cursor_type_t values (order from cef_types.h).
-#[allow(dead_code)]
 const CT_POINTER: u32 = 0;
 const CT_CROSS: u32 = 1;
 const CT_HAND: u32 = 2;
@@ -56,14 +55,6 @@ const CT_NORTHWESTSOUTHEASTRESIZE: u32 = 17;
 const CT_COLUMNRESIZE: u32 = 18;
 const CT_ROWRESIZE: u32 = 19;
 const CT_MIDDLEPANNING: u32 = 20;
-#[allow(dead_code)] const CT_EASTPANNING: u32 = 21;
-#[allow(dead_code)] const CT_NORTHPANNING: u32 = 22;
-#[allow(dead_code)] const CT_NORTHEASTPANNING: u32 = 23;
-#[allow(dead_code)] const CT_NORTHWESTPANNING: u32 = 24;
-#[allow(dead_code)] const CT_SOUTHPANNING: u32 = 25;
-#[allow(dead_code)] const CT_SOUTHEASTPANNING: u32 = 26;
-#[allow(dead_code)] const CT_SOUTHWESTPANNING: u32 = 27;
-#[allow(dead_code)] const CT_WESTPANNING: u32 = 28;
 const CT_MOVE: u32 = 29;
 const CT_VERTICALTEXT: u32 = 30;
 const CT_CELL: u32 = 31;

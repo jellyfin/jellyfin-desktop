@@ -1242,7 +1242,6 @@ name = "jfn-wlproxy"
 version = "0.1.0"
 dependencies = [
  "error_reporter",
- "log",
  "wl-proxy",
 ]
 
@@ -1252,7 +1251,6 @@ version = "0.1.0"
 dependencies = [
  "jfn-platform-abi",
  "libc",
- "log",
  "xcb",
  "xcb-util-cursor-sys",
  "xkbcommon",
