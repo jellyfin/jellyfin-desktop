@@ -1053,7 +1053,6 @@ version = "0.1.0"
 name = "jfn-config"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
 ]
 
@@ -1077,7 +1076,6 @@ dependencies = [
 name = "jfn-jellyfin"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
 ]
 
@@ -1169,7 +1167,6 @@ dependencies = [
  "jfn-color",
  "jfn-config",
  "jfn-idle-inhibit-linux",
- "jfn-input",
  "jfn-jellyfin",
  "jfn-logging",
  "jfn-macos",
