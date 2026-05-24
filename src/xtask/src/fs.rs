@@ -44,6 +44,9 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+// Used only by the Linux/Windows install paths; the macOS bundle stages files
+// individually.
+#[cfg(not(target_os = "macos"))]
 pub fn copy_glob(src_dir: &Path, dst_dir: &Path, patterns: &[&str]) -> Result<()> {
     std::fs::create_dir_all(dst_dir)?;
     for entry in std::fs::read_dir(src_dir)? {
@@ -61,6 +64,7 @@ pub fn copy_glob(src_dir: &Path, dst_dir: &Path, patterns: &[&str]) -> Result<()
     Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn match_pattern(pat: &str, name: &str) -> bool {
     // Trivial glob: leading `*` (suffix match), trailing `*` (prefix match),
     // contains `.so` style middle match, or exact.
