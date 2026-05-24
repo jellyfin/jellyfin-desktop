@@ -8,7 +8,7 @@
 
 use cef::rc::ConvertReturnValue;
 use cef::*;
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::CString;
 use std::os::raw::c_void;
 use std::sync::Mutex;
 
@@ -22,12 +22,6 @@ use crate::client::{
     jfn_cef_layer_set_name, jfn_cef_layer_set_visible,
 };
 use jfn_color::theme::jfn_theme_color_on_overlay_dismissed;
-use jfn_config::{
-    jfn_settings_free_string, jfn_settings_get_server_url, jfn_settings_save_async,
-    jfn_settings_set_audio_channels, jfn_settings_set_audio_exclusive,
-    jfn_settings_set_audio_passthrough, jfn_settings_set_device_name, jfn_settings_set_hwdec,
-    jfn_settings_set_log_level, jfn_settings_set_server_url, jfn_settings_set_titlebar_theme_color,
-};
 use jfn_jellyfin::{extract_base_url, is_valid_public_info, normalize_input};
 
 struct OverlayState {
@@ -95,15 +89,6 @@ fn install_handlers(layer: *mut JfnCefLayer, _main_layer: *mut JfnCefLayer) {
     l.set_context_menu_dispatcher_rust(Some(crate::app_menu::dispatch_closure()));
 }
 
-fn take_cstring_into_rust(p: *mut c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
-    unsafe { jfn_settings_free_string(p) };
-    s
-}
-
 fn list_string(args: &ListValue, idx: usize) -> String {
     let userfree = args.string(idx);
     let cs: CefString = (&userfree).into();
@@ -111,31 +96,25 @@ fn list_string(args: &ListValue, idx: usize) -> String {
 }
 
 fn apply_setting_value(_section: &str, key: &str, value: &str) {
-    let cval = CString::new(value).unwrap_or_default();
-    unsafe {
-        match key {
-            "hwdec" => jfn_settings_set_hwdec(cval.as_ptr()),
-            "audioPassthrough" => jfn_settings_set_audio_passthrough(cval.as_ptr()),
-            "audioExclusive" => jfn_settings_set_audio_exclusive(value == "true"),
-            "audioChannels" => jfn_settings_set_audio_channels(cval.as_ptr()),
-            "titlebarThemeColor" => jfn_settings_set_titlebar_theme_color(value == "true"),
-            "logLevel" => jfn_settings_set_log_level(cval.as_ptr()),
-            "deviceName" => {
-                // Pass empty platform_default — Rust setter will clear when
-                // raw equals the empty string. The desktop main.cpp passed
-                // the live hostname here; overlay path doesn't have it
-                // handy and accepting empty matches the legacy behaviour
-                // for the overlay (set what the user typed, no auto-clear).
-                jfn_settings_set_device_name(cval.as_ptr(), c"".as_ptr());
-            }
-            _ => jfn_logging::log(
-                jfn_logging::CATEGORY_CEF,
-                jfn_logging::LEVEL_WARN,
-                &format!("Unknown setting key: {_section}.{key}"),
-            ),
-        }
-        jfn_settings_save_async();
+    match key {
+        "hwdec" => jfn_config::set_hwdec(value),
+        "audioPassthrough" => jfn_config::set_audio_passthrough(value),
+        "audioExclusive" => jfn_config::set_audio_exclusive(value == "true"),
+        "audioChannels" => jfn_config::set_audio_channels(value),
+        "titlebarThemeColor" => jfn_config::set_titlebar_theme_color(value == "true"),
+        "logLevel" => jfn_config::set_log_level(value),
+        // Pass empty platform_default — Rust setter clears when raw equals
+        // the empty string. The overlay path doesn't have the live hostname
+        // handy; accepting empty matches the legacy behaviour for the
+        // overlay (set what the user typed, no auto-clear).
+        "deviceName" => jfn_config::set_device_name(value, ""),
+        _ => jfn_logging::log(
+            jfn_logging::CATEGORY_CEF,
+            jfn_logging::LEVEL_WARN,
+            &format!("Unknown setting key: {_section}.{key}"),
+        ),
     }
+    jfn_config::settings_save_async();
 }
 
 fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
@@ -152,7 +131,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             let Some(frame) = b.main_frame() else {
                 return true;
             };
-            let url = take_cstring_into_rust(unsafe { jfn_settings_get_server_url() });
+            let url = jfn_config::server_url();
             send_process_message(&frame, "savedServerUrl", |args| {
                 args.set_string(0, Some(&CefString::from(url.as_str())));
             });
@@ -166,11 +145,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 jfn_logging::LEVEL_INFO,
                 &format!("Overlay: navigateMain {url}"),
             );
-            let curl = CString::new(url.clone()).unwrap_or_default();
-            unsafe {
-                jfn_settings_set_server_url(curl.as_ptr());
-                jfn_settings_save_async();
-            }
+            jfn_config::set_server_url(&url);
+            jfn_config::settings_save_async();
             let main_layer = INSTANCE.lock().unwrap().as_ref().map(|s| s.main_layer);
             if let Some(ml) = main_layer {
                 unsafe { jfn_cef_layer_load_url(ml, url.as_ptr() as *const _, url.len()) };
@@ -216,11 +192,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "saveServerUrl" => {
             let Some(args) = args else { return true };
             let url = list_string(&args, 0);
-            let curl = CString::new(url).unwrap_or_default();
-            unsafe {
-                jfn_settings_set_server_url(curl.as_ptr());
-                jfn_settings_save_async();
-            }
+            jfn_config::set_server_url(&url);
+            jfn_config::settings_save_async();
             true
         }
         "setSettingValue" => {

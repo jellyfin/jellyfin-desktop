@@ -18,12 +18,6 @@ use crate::browsers::{jfn_browsers_active, jfn_browsers_set_active};
 use crate::client::{jfn_cef_layer_exec_js, jfn_cef_layer_set_name};
 use jfn_color::jfn_cef_parse_color;
 use jfn_color::theme::{jfn_theme_color_on_color, jfn_theme_color_set_video_mode};
-use jfn_config::{
-    jfn_settings_save_async, jfn_settings_set_audio_channels, jfn_settings_set_audio_exclusive,
-    jfn_settings_set_audio_passthrough, jfn_settings_set_device_name,
-    jfn_settings_set_force_transcoding, jfn_settings_set_hwdec, jfn_settings_set_log_level,
-    jfn_settings_set_server_url, jfn_settings_set_titlebar_theme_color,
-};
 use jfn_mpv::api::{
     jfn_mpv_audio_add, jfn_mpv_load_file, jfn_mpv_pause, jfn_mpv_play, jfn_mpv_seek_absolute,
     jfn_mpv_set_aspect_mode, jfn_mpv_set_audio_delay, jfn_mpv_set_audio_track, jfn_mpv_set_muted,
@@ -203,25 +197,22 @@ fn post_metadata(meta: &MediaMetadata) {
 }
 
 fn apply_setting_value(_section: &str, key: &str, value: &str) {
-    let cval = CString::new(value).unwrap_or_default();
-    unsafe {
-        match key {
-            "hwdec" => jfn_settings_set_hwdec(cval.as_ptr()),
-            "audioPassthrough" => jfn_settings_set_audio_passthrough(cval.as_ptr()),
-            "audioExclusive" => jfn_settings_set_audio_exclusive(value == "true"),
-            "audioChannels" => jfn_settings_set_audio_channels(cval.as_ptr()),
-            "titlebarThemeColor" => jfn_settings_set_titlebar_theme_color(value == "true"),
-            "logLevel" => jfn_settings_set_log_level(cval.as_ptr()),
-            "forceTranscoding" => jfn_settings_set_force_transcoding(value == "true"),
-            "deviceName" => jfn_settings_set_device_name(cval.as_ptr(), c"".as_ptr()),
-            _ => jfn_logging::log(
-                jfn_logging::CATEGORY_CEF,
-                jfn_logging::LEVEL_WARN,
-                &format!("Unknown setting key: {_section}.{key}"),
-            ),
-        }
-        jfn_settings_save_async();
+    match key {
+        "hwdec" => jfn_config::set_hwdec(value),
+        "audioPassthrough" => jfn_config::set_audio_passthrough(value),
+        "audioExclusive" => jfn_config::set_audio_exclusive(value == "true"),
+        "audioChannels" => jfn_config::set_audio_channels(value),
+        "titlebarThemeColor" => jfn_config::set_titlebar_theme_color(value == "true"),
+        "logLevel" => jfn_config::set_log_level(value),
+        "forceTranscoding" => jfn_config::set_force_transcoding(value == "true"),
+        "deviceName" => jfn_config::set_device_name(value, ""),
+        _ => jfn_logging::log(
+            jfn_logging::CATEGORY_CEF,
+            jfn_logging::LEVEL_WARN,
+            &format!("Unknown setting key: {_section}.{key}"),
+        ),
     }
+    jfn_config::settings_save_async();
 }
 
 fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
@@ -444,11 +435,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "saveServerUrl" => {
             if let Some(args) = args {
                 let url = list_string(&args, 0);
-                let c = CString::new(url).unwrap_or_default();
-                unsafe {
-                    jfn_settings_set_server_url(c.as_ptr());
-                    jfn_settings_save_async();
-                }
+                jfn_config::set_server_url(&url);
+                jfn_config::settings_save_async();
             }
             true
         }

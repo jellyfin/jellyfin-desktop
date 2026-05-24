@@ -1,5 +1,5 @@
 //! Settings store. Owns the in-memory state, JSON persistence, and the
-//! singleton accessor that the C++ side calls through.
+//! singleton accessor that the rest of the workspace calls into.
 //!
 //! On-disk schema is a JSON object with the field names used by
 //! [`SettingsData::to_json`]. Missing keys keep their defaults on load; save
@@ -7,18 +7,15 @@
 //! values, zero geometry) so existing config files round-trip unchanged.
 
 use serde_json::{Map, Value, json};
-use std::ffi::{CStr, CString, c_char};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::ptr;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 
 const DEVICE_NAME_MAX: usize = 64;
 const HWDEC_DEFAULT: &str = "no";
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct JfnWindowGeometry {
     pub x: i32,
@@ -282,10 +279,10 @@ fn state() -> &'static Mutex<State> {
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
-// Single persistent background save worker. jfn_settings_save_async() coalesces
-// into Pending::data (only the newest snapshot survives); the worker wakes on
-// the condvar, writes the latest snapshot, then sleeps. Shutdown drains any
-// queued write and joins the thread so nothing is lost at exit.
+// Single persistent background save worker. save_async() coalesces into
+// Pending::data (only the newest snapshot survives); the worker wakes on the
+// condvar, writes the latest snapshot, then sleeps. Shutdown drains any queued
+// write and joins the thread so nothing is lost at exit.
 struct Pending {
     data: Option<SettingsData>,
     path: PathBuf,
@@ -356,19 +353,8 @@ fn save_data(path: &Path, data: &SettingsData) -> bool {
     write_atomic(path, text.as_bytes()).is_ok()
 }
 
-fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
-}
-
-fn string_to_cstr(s: &str) -> *mut c_char {
-    CString::new(s).unwrap_or_default().into_raw()
-}
-
 // =====================================================================
-// Settings singleton — pub Rust API + FFI bridge
+// Public Rust API
 // =====================================================================
 
 /// Initialize the settings store with the on-disk path. Idempotent: only the
@@ -398,32 +384,8 @@ pub fn settings_load() -> bool {
     true
 }
 
-pub fn server_url() -> String {
-    state().lock().unwrap().data.server_url.clone()
-}
-
-pub fn cli_json(platform_default: &str, hwdec_opts: &[&str]) -> String {
-    let snap = state().lock().unwrap().data.clone();
-    let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
-    snap.cli_json(platform_default, &opts)
-}
-
-/// # Safety
-/// `path` must be a valid NUL-terminated C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_init(path: *const c_char) {
-    let s = cstr_to_string(path);
-    settings_init(Path::new(&s));
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_settings_load() -> bool {
-    settings_load()
-}
-
 /// Serialize current state and atomically write to the configured path.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_settings_save() -> bool {
+pub fn settings_save() -> bool {
     let (path, snap) = {
         let st = state().lock().unwrap();
         (st.path.clone(), st.data.clone())
@@ -433,10 +395,9 @@ pub extern "C" fn jfn_settings_save() -> bool {
 
 /// Snapshot current state and hand it to the background save worker. Repeated
 /// calls coalesce: only the most recent snapshot is written. The worker is
-/// started lazily on the first call. After
-/// [`jfn_settings_shutdown_save_worker`] this becomes a no-op.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_settings_save_async() {
+/// started lazily on the first call. After [`settings_shutdown_save_worker`]
+/// this becomes a no-op.
+pub fn settings_save_async() {
     let (path, snap) = {
         let st = state().lock().unwrap();
         (st.path.clone(), st.data.clone())
@@ -464,8 +425,7 @@ pub extern "C" fn jfn_settings_save_async() {
 
 /// Stop the background save worker after draining any pending write. Safe to
 /// call if the worker was never started; safe to call multiple times.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_settings_shutdown_save_worker() {
+pub fn settings_shutdown_save_worker() {
     let Some(w) = SAVE_WORKER.get() else {
         return;
     };
@@ -483,89 +443,77 @@ pub extern "C" fn jfn_settings_shutdown_save_worker() {
     }
 }
 
-/// Free a string previously returned by this module.
-///
-/// # Safety
-/// `s` must be null or a pointer returned by one of the `jfn_settings_*`
-/// string-returning functions, freed at most once.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_free_string(s: *mut c_char) {
-    if !s.is_null() {
-        unsafe { drop(CString::from_raw(s)) };
-    }
-}
-
-macro_rules! string_getter {
-    ($name:ident, $field:ident) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $name() -> *mut c_char {
-            let st = state().lock().unwrap();
-            string_to_cstr(&st.data.$field)
+macro_rules! string_accessors {
+    ($getter:ident, $setter:ident, $field:ident) => {
+        pub fn $getter() -> String {
+            state().lock().unwrap().data.$field.clone()
+        }
+        pub fn $setter(v: &str) {
+            state().lock().unwrap().data.$field = v.to_string();
         }
     };
 }
 
-macro_rules! string_setter {
-    ($name:ident, $field:ident) => {
-        /// # Safety
-        /// `v` must be null or a valid NUL-terminated C string.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(v: *const c_char) {
-            let s = cstr_to_string(v);
-            let mut st = state().lock().unwrap();
-            st.data.$field = s;
-        }
-    };
-}
-
-macro_rules! bool_getter {
-    ($name:ident, $field:ident) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $name() -> bool {
+macro_rules! bool_accessors {
+    ($getter:ident, $setter:ident, $field:ident) => {
+        pub fn $getter() -> bool {
             state().lock().unwrap().data.$field
         }
-    };
-}
-
-macro_rules! bool_setter {
-    ($name:ident, $field:ident) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $name(v: bool) {
+        pub fn $setter(v: bool) {
             state().lock().unwrap().data.$field = v;
         }
     };
 }
 
-string_getter!(jfn_settings_get_server_url, server_url);
-string_setter!(jfn_settings_set_server_url, server_url);
-string_getter!(jfn_settings_get_hwdec, hwdec);
-string_setter!(jfn_settings_set_hwdec, hwdec);
-string_getter!(jfn_settings_get_audio_passthrough, audio_passthrough);
-string_setter!(jfn_settings_set_audio_passthrough, audio_passthrough);
-string_getter!(jfn_settings_get_audio_channels, audio_channels);
-string_setter!(jfn_settings_set_audio_channels, audio_channels);
-string_getter!(jfn_settings_get_log_level, log_level);
-string_setter!(jfn_settings_set_log_level, log_level);
-string_getter!(jfn_settings_get_device_name, device_name);
+string_accessors!(server_url, set_server_url, server_url);
+string_accessors!(hwdec, set_hwdec, hwdec);
+string_accessors!(audio_passthrough, set_audio_passthrough, audio_passthrough);
+string_accessors!(audio_channels, set_audio_channels, audio_channels);
+string_accessors!(log_level, set_log_level, log_level);
+
+pub fn device_name() -> String {
+    state().lock().unwrap().data.device_name.clone()
+}
 
 /// Setter for device_name. Trims and collapses whitespace, truncates to the
 /// server's 64-char DeviceName column limit, and clears the override when the
 /// result matches `platform_default` (so hostname changes propagate
 /// automatically on the next launch).
-///
-/// # Safety
-/// `v` and `platform_default` must each be null or a valid NUL-terminated C
-/// string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_set_device_name(
-    v: *const c_char,
-    platform_default: *const c_char,
-) {
-    let raw = cstr_to_string(v);
-    let platform = cstr_to_string(platform_default);
-    let cleaned = normalize_device_name(&raw, &platform);
-    let mut st = state().lock().unwrap();
-    st.data.device_name = cleaned;
+pub fn set_device_name(raw: &str, platform_default: &str) {
+    let cleaned = normalize_device_name(raw, platform_default);
+    state().lock().unwrap().data.device_name = cleaned;
+}
+
+bool_accessors!(audio_exclusive, set_audio_exclusive, audio_exclusive);
+bool_accessors!(
+    disable_gpu_compositing,
+    set_disable_gpu_compositing,
+    disable_gpu_compositing
+);
+bool_accessors!(
+    titlebar_theme_color,
+    set_titlebar_theme_color,
+    titlebar_theme_color
+);
+bool_accessors!(
+    transparent_titlebar,
+    set_transparent_titlebar,
+    transparent_titlebar
+);
+bool_accessors!(force_transcoding, set_force_transcoding, force_transcoding);
+
+pub fn window_geometry() -> JfnWindowGeometry {
+    state().lock().unwrap().data.window
+}
+
+pub fn set_window_geometry(g: JfnWindowGeometry) {
+    state().lock().unwrap().data.window = g;
+}
+
+pub fn cli_json(platform_default: &str, hwdec_opts: &[&str]) -> String {
+    let snap = state().lock().unwrap().data.clone();
+    let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
+    snap.cli_json(platform_default, &opts)
 }
 
 fn normalize_device_name(raw: &str, platform_default: &str) -> String {
@@ -595,78 +543,6 @@ fn normalize_device_name(raw: &str, platform_default: &str) -> String {
         trimmed.clear();
     }
     trimmed
-}
-
-bool_getter!(jfn_settings_get_audio_exclusive, audio_exclusive);
-bool_setter!(jfn_settings_set_audio_exclusive, audio_exclusive);
-bool_getter!(
-    jfn_settings_get_disable_gpu_compositing,
-    disable_gpu_compositing
-);
-bool_setter!(
-    jfn_settings_set_disable_gpu_compositing,
-    disable_gpu_compositing
-);
-bool_getter!(jfn_settings_get_titlebar_theme_color, titlebar_theme_color);
-bool_setter!(jfn_settings_set_titlebar_theme_color, titlebar_theme_color);
-bool_getter!(jfn_settings_get_transparent_titlebar, transparent_titlebar);
-bool_setter!(jfn_settings_set_transparent_titlebar, transparent_titlebar);
-bool_getter!(jfn_settings_get_force_transcoding, force_transcoding);
-bool_setter!(jfn_settings_set_force_transcoding, force_transcoding);
-
-/// Copy the window geometry into `out`.
-///
-/// # Safety
-/// `out` must be non-null and point to writable storage for a
-/// [`JfnWindowGeometry`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_get_window_geometry(out: *mut JfnWindowGeometry) {
-    if out.is_null() {
-        return;
-    }
-    let g = state().lock().unwrap().data.window;
-    unsafe { ptr::write(out, g) };
-}
-
-/// Overwrite the window geometry from `in_`.
-///
-/// # Safety
-/// `in_` must be non-null and point to a valid [`JfnWindowGeometry`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_set_window_geometry(in_: *const JfnWindowGeometry) {
-    if in_.is_null() {
-        return;
-    }
-    let g = unsafe { *in_ };
-    state().lock().unwrap().data.window = g;
-}
-
-/// Build the CLI-equivalent settings JSON string for injection into the web
-/// UI. Caller frees with [`jfn_settings_free_string`].
-///
-/// # Safety
-/// `platform_default` must be a valid NUL-terminated C string. `hwdec_opts`,
-/// if non-null, must point to an array of `n_opts` valid NUL-terminated C
-/// strings.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_cli_json(
-    platform_default: *const c_char,
-    hwdec_opts: *const *const c_char,
-    n_opts: usize,
-) -> *mut c_char {
-    let platform_default = cstr_to_string(platform_default);
-    let owned: Vec<String> = if hwdec_opts.is_null() {
-        Vec::new()
-    } else {
-        (0..n_opts)
-            .map(|i| cstr_to_string(unsafe { *hwdec_opts.add(i) }))
-            .collect()
-    };
-    let opts: Vec<&str> = owned.iter().map(String::as_str).collect();
-    let s = cli_json(&platform_default, &opts);
-    CString::new(s)
-        .map(|c| c.into_raw())
-        .unwrap_or(ptr::null_mut())
 }
 
 #[cfg(test)]
