@@ -36,8 +36,7 @@ const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
 const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
 const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
 
-// CEF cursor type values that need special handling (from cef_types.h).
-const CT_NONE: u32 = 37;
+use jfn_platform_abi::cursor::*;
 
 const XKB_KEY_XF86BACK: u32 = 0x1008ff26;
 const XKB_KEY_XF86FORWARD: u32 = 0x1008ff27;
@@ -157,41 +156,39 @@ fn build_cursor_screen(screen: &x::Screen, allowed_depths_len: u8) -> cursor_ffi
 }
 
 fn cef_cursor_to_name(t: u32) -> &'static str {
-    // Values follow cef_cursor_type_t in cef_types.h.
-    match t {
-        1 => "crosshair",        // CT_CROSS
-        2 => "pointer",          // CT_HAND
-        3 => "text",             // CT_IBEAM
-        4 => "wait",             // CT_WAIT
-        5 => "help",             // CT_HELP
-        6 => "e-resize",         // CT_EASTRESIZE
-        7 => "n-resize",         // CT_NORTHRESIZE
-        8 => "ne-resize",        // CT_NORTHEASTRESIZE
-        9 => "nw-resize",        // CT_NORTHWESTRESIZE
-        10 => "s-resize",        // CT_SOUTHRESIZE
-        11 => "se-resize",       // CT_SOUTHEASTRESIZE
-        12 => "sw-resize",       // CT_SOUTHWESTRESIZE
-        13 => "w-resize",        // CT_WESTRESIZE
-        14 => "ns-resize",       // CT_NORTHSOUTHRESIZE
-        15 => "ew-resize",       // CT_EASTWESTRESIZE
-        16 => "nesw-resize",     // CT_NORTHEASTSOUTHWESTRESIZE
-        17 => "nwse-resize",     // CT_NORTHWESTSOUTHEASTRESIZE
-        18 => "col-resize",      // CT_COLUMNRESIZE
-        19 => "row-resize",      // CT_ROWRESIZE
-        20 => "all-scroll",      // CT_MIDDLEPANNING
-        29 => "move",            // CT_MOVE
-        30 => "vertical-text",   // CT_VERTICALTEXT
-        31 => "cell",            // CT_CELL
-        32 => "context-menu",    // CT_CONTEXTMENU
-        33 => "alias",           // CT_ALIAS
-        34 => "progress",        // CT_PROGRESS
-        35 => "no-drop",         // CT_NODROP
-        38 => "not-allowed",     // CT_NOTALLOWED
-        39 => "zoom-in",         // CT_ZOOMIN
-        40 => "zoom-out",        // CT_ZOOMOUT
-        41 => "grab",            // CT_GRAB
-        42 => "grabbing",        // CT_GRABBING
-        43 | 44 => "all-scroll", // CT_MIDDLE_PANNING_VERTICAL/HORIZONTAL
+    match t as c_int {
+        CT_CROSS => "crosshair",
+        CT_HAND => "pointer",
+        CT_IBEAM => "text",
+        CT_WAIT => "wait",
+        CT_HELP => "help",
+        CT_EASTRESIZE => "e-resize",
+        CT_NORTHRESIZE => "n-resize",
+        CT_NORTHEASTRESIZE => "ne-resize",
+        CT_NORTHWESTRESIZE => "nw-resize",
+        CT_SOUTHRESIZE => "s-resize",
+        CT_SOUTHEASTRESIZE => "se-resize",
+        CT_SOUTHWESTRESIZE => "sw-resize",
+        CT_WESTRESIZE => "w-resize",
+        CT_NORTHSOUTHRESIZE => "ns-resize",
+        CT_EASTWESTRESIZE => "ew-resize",
+        CT_NORTHEASTSOUTHWESTRESIZE => "nesw-resize",
+        CT_NORTHWESTSOUTHEASTRESIZE => "nwse-resize",
+        CT_COLUMNRESIZE => "col-resize",
+        CT_ROWRESIZE => "row-resize",
+        CT_MIDDLEPANNING | CT_MIDDLE_PANNING_VERTICAL | CT_MIDDLE_PANNING_HORIZONTAL => "all-scroll",
+        CT_MOVE => "move",
+        CT_VERTICALTEXT => "vertical-text",
+        CT_CELL => "cell",
+        CT_CONTEXTMENU => "context-menu",
+        CT_ALIAS => "alias",
+        CT_PROGRESS => "progress",
+        CT_NODROP => "no-drop",
+        CT_NOTALLOWED => "not-allowed",
+        CT_ZOOMIN => "zoom-in",
+        CT_ZOOMOUT => "zoom-out",
+        CT_GRAB => "grab",
+        CT_GRABBING => "grabbing",
         _ => "default",
     }
 }
@@ -413,7 +410,7 @@ fn apply_cursor(st: &mut State, t: u32) {
     st.cursor_type = t;
     let conn = &st.conn;
 
-    if t == CT_NONE {
+    if t as c_int == CT_NONE {
         let pix: x::Pixmap = conn.generate_id();
         conn.send_request(&x::CreatePixmap {
             depth: 1,

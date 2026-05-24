@@ -32,9 +32,7 @@ use jfn_playback::ingest_driver::jfn_playback_fullscreen;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use jfn_playback::{Input as PbInput, MediaType as PbMediaType, post as pb_post};
 
-// Cursor types must match cef_cursor_type_t.
-const CT_POINTER: i32 = 1;
-const CT_NONE: i32 = 22;
+use jfn_platform_abi::cursor::{CT_NONE, CT_POINTER};
 
 use jfn_mpv::api::JfnMpvLoadOptions;
 

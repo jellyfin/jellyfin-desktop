@@ -49,36 +49,7 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 // CEF cursor-type ordinals + event flags (mirrors cef_types.h)
 // =====================================================================
 
-const CT_POINTER: i32 = 0;
-const CT_CROSS: i32 = 1;
-const CT_HAND: i32 = 2;
-const CT_IBEAM: i32 = 3;
-const CT_WAIT: i32 = 4;
-const CT_HELP: i32 = 5;
-const CT_EASTRESIZE: i32 = 6;
-const CT_NORTHRESIZE: i32 = 7;
-const CT_NORTHEASTRESIZE: i32 = 8;
-const CT_NORTHWESTRESIZE: i32 = 9;
-const CT_SOUTHRESIZE: i32 = 10;
-const CT_SOUTHEASTRESIZE: i32 = 11;
-const CT_SOUTHWESTRESIZE: i32 = 12;
-const CT_WESTRESIZE: i32 = 13;
-const CT_NORTHSOUTHRESIZE: i32 = 14;
-const CT_EASTWESTRESIZE: i32 = 15;
-const CT_NORTHEASTSOUTHWESTRESIZE: i32 = 16;
-const CT_NORTHWESTSOUTHEASTRESIZE: i32 = 17;
-const CT_COLUMNRESIZE: i32 = 18;
-const CT_ROWRESIZE: i32 = 19;
-const CT_MIDDLEPANNING: i32 = 20;
-const CT_MIDDLE_PANNING_VERTICAL: i32 = 21;
-const CT_MIDDLE_PANNING_HORIZONTAL: i32 = 22;
-const CT_PROGRESS: i32 = 26;
-const CT_MOVE: i32 = 29;
-const CT_NODROP: i32 = 35;
-const CT_NONE: i32 = 37;
-const CT_NOTALLOWED: i32 = 38;
-const CT_GRAB: i32 = 41;
-const CT_GRABBING: i32 = 42;
+use jfn_platform_abi::cursor::*;
 
 const EVENTFLAG_CAPS_LOCK_ON: u32 = 1 << 0;
 const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;

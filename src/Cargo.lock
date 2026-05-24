@@ -1156,6 +1156,9 @@ version = "0.1.0"
 [[package]]
 name = "jfn-platform-abi"
 version = "0.1.0"
+dependencies = [
+ "cef-dll-sys",
+]
 
 [[package]]
 name = "jfn-playback"
