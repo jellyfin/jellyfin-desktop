@@ -11,4 +11,3 @@ crate-type = ["rlib"]
 [dependencies]
 wl-proxy = { git = "https://github.com/mahkoh/wl-proxy", features = ["all-protocols"] }
 error_reporter = "1.0.0"
-log = "0.4"
