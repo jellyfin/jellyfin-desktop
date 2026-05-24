@@ -27,10 +27,7 @@ use crate::lifecycle::{jfn_wl_lifecycle_cleanup, jfn_wl_lifecycle_init};
 use crate::proxy::jfn_wl_get_cached_scale;
 use crate::scale_probe::jfn_wayland_scale_probe;
 use crate::wl_ffi::jfn_wl_fade_apply_frame;
-
-unsafe extern "C" {
-    fn jfn_playback_display_hz() -> f64;
-}
+use jfn_playback::ingest_driver::jfn_playback_display_hz;
 
 // =====================================================================
 // Helpers
