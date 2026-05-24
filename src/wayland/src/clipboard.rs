@@ -7,7 +7,7 @@
 //! managers. Mirrors mpv's clipboard-wayland.c: dedicated wl_display_connect,
 //! dedicated worker thread, no shared globals with the main display.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::c_void;
 use std::io::{ErrorKind, Read};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::raw::c_int;
@@ -67,18 +67,9 @@ impl OfferMimes {
     }
 }
 
-type ReadCb = unsafe extern "C" fn(ctx: *mut c_void, text: *const c_char, len: usize);
-type CbDtor = unsafe extern "C" fn(*mut c_void);
-
 struct PendingCb {
-    cb: ReadCb,
-    ctx: *mut c_void,
-    dtor: Option<CbDtor>,
+    cb: Box<dyn FnOnce(&str) + Send>,
 }
-
-// Safety: the C side owns ctx lifetime and is responsible for thread safety,
-// matching the C++ std::function semantics it replaces.
-unsafe impl Send for PendingCb {}
 
 struct Shared {
     queued: Mutex<Vec<PendingCb>>,
@@ -231,13 +222,9 @@ fn drain_wake(fd: c_int) {
     }
 }
 
-fn fire(cb: PendingCb, text: &[u8]) {
-    unsafe {
-        (cb.cb)(cb.ctx, text.as_ptr() as *const c_char, text.len());
-        if let Some(d) = cb.dtor {
-            d(cb.ctx);
-        }
-    }
+fn fire(pending: PendingCb, text: &[u8]) {
+    let s = std::str::from_utf8(text).unwrap_or("");
+    (pending.cb)(s);
 }
 
 fn start_receive(state: &mut State, conn: &Connection) -> Option<OwnedFd> {
@@ -455,25 +442,16 @@ pub fn clipboard_available() -> bool {
     INSTANCE.lock().unwrap().is_some()
 }
 
-pub fn clipboard_read_text_async(cb: Option<ReadCb>, ctx: *mut c_void, dtor: Option<CbDtor>) {
-    let Some(cb) = cb else {
-        if let Some(d) = dtor {
-            unsafe { d(ctx) };
-        }
-        return;
-    };
+pub fn clipboard_read_text_async(cb: Box<dyn FnOnce(&str) + Send>) {
     let g = INSTANCE.lock().unwrap();
     let Some(c) = g.as_ref() else {
         // No clipboard: deliver an empty read so the caller's promise resolves.
-        unsafe { cb(ctx, c"".as_ptr(), 0) };
-        if let Some(d) = dtor {
-            unsafe { d(ctx) };
-        }
+        cb("");
         return;
     };
     {
         let mut q = c.shared.queued.lock().unwrap();
-        q.push(PendingCb { cb, ctx, dtor });
+        q.push(PendingCb { cb });
     }
     signal_wake(c.shared.wake_fd);
 }

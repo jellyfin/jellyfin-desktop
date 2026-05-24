@@ -2,7 +2,7 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_int, c_void};
 
 use crate::surface::{
     jfn_x11_alloc_surface, jfn_x11_fade_surface, jfn_x11_free_surface, jfn_x11_restack,
@@ -193,22 +193,9 @@ impl Platform for X11Platform {
         false
     }
 
-    fn clipboard_read_text_async(
-        &self,
-        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-        ctx: *mut c_void,
-        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    ) {
-        // X11 has no native clipboard read path here — fire empty callback
-        // + dtor inline so any boxed state is released.
-        unsafe {
-            if let Some(cb) = on_done {
-                cb(ctx, c"".as_ptr(), 0);
-            }
-            if let Some(d) = dtor {
-                d(ctx);
-            }
-        }
+    fn clipboard_read_text_async(&self, on_done: Box<dyn FnOnce(&str) + Send>) {
+        // X11 has no native clipboard read path here — fire empty result.
+        on_done("");
     }
 
     fn open_external_url(&self, url: &str) {
