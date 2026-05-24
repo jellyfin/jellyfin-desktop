@@ -13,6 +13,7 @@ pub mod hotkey;
 pub mod idle_inhibit_sink;
 mod ingest;
 pub mod ingest_driver;
+#[cfg(target_os = "linux")]
 mod mpris;
 #[cfg(target_os = "linux")]
 pub mod mpris_sink;
