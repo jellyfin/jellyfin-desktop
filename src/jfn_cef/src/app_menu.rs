@@ -17,7 +17,6 @@ pub const MENU_ID_ABOUT: c_int = MENU_ID_USER_FIRST + 1;
 pub const MENU_ID_EXIT: c_int = MENU_ID_USER_FIRST + 2;
 
 unsafe extern "C" {
-    fn jfn_platform_toggle_fullscreen();
     fn jfn_shutdown_initiate();
 }
 
@@ -45,7 +44,9 @@ pub fn build_closure() -> Box<crate::client::ContextBuilderFn> {
 pub fn dispatch_closure() -> Box<crate::client::ContextDispatcherFn> {
     Box::new(|cmd: c_int| -> bool {
         if cmd == MENU_ID_TOGGLE_FULLSCREEN {
-            unsafe { jfn_platform_toggle_fullscreen() };
+            if let Some(p) = jfn_platform_abi::try_get() {
+                p.toggle_fullscreen();
+            }
             true
         } else if cmd == MENU_ID_ABOUT {
             crate::business_about::jfn_about_open();

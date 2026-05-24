@@ -55,9 +55,6 @@ unsafe extern "C" {
     fn jfn_theme_color_on_color(rgb: u32);
     fn jfn_theme_color_set_video_mode(active: bool);
     fn jfn_cef_parse_color(s: *const c_char) -> u32;
-    fn jfn_platform_toggle_fullscreen();
-    fn jfn_platform_set_fullscreen(v: bool);
-    fn jfn_platform_set_cursor(t: i32);
     fn jfn_shutdown_initiate();
     fn jfn_playback_fullscreen() -> bool;
 
@@ -448,13 +445,13 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 if active {
                     st.was_fullscreen_before_osd = unsafe { jfn_playback_fullscreen() };
                 } else if !st.was_fullscreen_before_osd {
-                    unsafe { jfn_platform_set_fullscreen(false) };
+                    jfn_platform_abi::get().set_fullscreen(false);
                 }
             }
             true
         }
         "toggleFullscreen" => {
-            unsafe { jfn_platform_toggle_fullscreen() };
+            jfn_platform_abi::get().toggle_fullscreen();
             true
         }
         "saveServerUrl" => {
@@ -526,7 +523,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "setCursorVisible" => {
             if let Some(args) = args {
                 let visible = args.bool(0) != 0;
-                unsafe { jfn_platform_set_cursor(if visible { CT_POINTER } else { CT_NONE }) };
+                jfn_platform_abi::get().set_cursor(if visible { CT_POINTER } else { CT_NONE });
             }
             true
         }

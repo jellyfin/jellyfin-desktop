@@ -63,9 +63,8 @@ unsafe extern "C" {
     // Hotkey classifier lives in jfn-playback.
     fn jfn_hotkey_classify_keydown(windows_key_code: i32, modifiers: u32) -> u8;
 
-    // Shutdown + fullscreen toggle bridges.
+    // Shutdown bridge.
     fn jfn_shutdown_initiate();
-    fn jfn_platform_toggle_fullscreen();
 }
 
 // CEF event-type constants (from include/internal/cef_types.h).
@@ -283,7 +282,9 @@ pub extern "C" fn jfn_input_dispatch_key_full(
                 return;
             }
             2 => {
-                unsafe { jfn_platform_toggle_fullscreen() };
+                if let Some(p) = jfn_platform_abi::try_get() {
+                    p.toggle_fullscreen();
+                }
                 return;
             }
             _ => {}
