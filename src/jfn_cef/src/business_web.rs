@@ -25,19 +25,15 @@ use jfn_mpv::api::{
     jfn_mpv_stop, jfn_mpv_sub_add,
 };
 use jfn_mpv::boot::jfn_mpv_handle_get;
-use jfn_playback::ffi::{
-    jfn_playback_post_artwork, jfn_playback_post_load_starting, jfn_playback_post_metadata,
-    jfn_playback_post_position, jfn_playback_post_queue_caps, jfn_playback_post_seeked,
-};
 use jfn_playback::ingest_driver::jfn_playback_fullscreen;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
+use jfn_playback::{Input as PbInput, MediaType as PbMediaType, post as pb_post};
 
 // Cursor types must match cef_cursor_type_t.
 const CT_POINTER: i32 = 1;
 const CT_NONE: i32 = 22;
 
 use jfn_mpv::api::JfnMpvLoadOptions;
-use jfn_playback::JfnMediaMetadataC;
 
 // MediaType matching jfn-playback's enum: Unknown=0, Audio=1, Video=2.
 const MT_UNKNOWN: u8 = 0;
@@ -175,25 +171,26 @@ fn parse_metadata_json(json: &str) -> MediaMetadata {
     out
 }
 
+fn media_type_to_pb(t: u8) -> PbMediaType {
+    match t {
+        MT_AUDIO => PbMediaType::Audio,
+        MT_VIDEO => PbMediaType::Video,
+        _ => PbMediaType::Unknown,
+    }
+}
+
 fn post_metadata(meta: &MediaMetadata) {
-    let c = JfnMediaMetadataC {
-        id: meta.id.as_ptr() as *const c_char,
-        id_len: meta.id.len(),
-        title: meta.title.as_ptr() as *const c_char,
-        title_len: meta.title.len(),
-        artist: meta.artist.as_ptr() as *const c_char,
-        artist_len: meta.artist.len(),
-        album: meta.album.as_ptr() as *const c_char,
-        album_len: meta.album.len(),
+    pb_post(PbInput::Metadata(jfn_playback::MediaMetadata {
+        id: meta.id.clone(),
+        title: meta.title.clone(),
+        artist: meta.artist.clone(),
+        album: meta.album.clone(),
         track_number: meta.track_number,
         duration_us: meta.duration_us,
-        art_url: std::ptr::null(),
-        art_url_len: 0,
-        art_data_uri: std::ptr::null(),
-        art_data_uri_len: 0,
-        media_type: meta.media_type,
-    };
-    unsafe { jfn_playback_post_metadata(&c) };
+        art_url: String::new(),
+        art_data_uri: String::new(),
+        media_type: media_type_to_pb(meta.media_type),
+    }));
 }
 
 fn apply_setting_value(_section: &str, key: &str, value: &str) {
@@ -285,11 +282,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
 
             // Atomic pre-load posts so MPRIS/JS see start position before
             // mpv has opened the file.
-            let cid = CString::new(meta.id.clone()).unwrap_or_default();
-            unsafe {
-                jfn_playback_post_load_starting(cid.as_ptr());
-                jfn_playback_post_position(start_ms as i64 * 1000);
-            }
+            pb_post(PbInput::LoadStarting(meta.id.clone()));
+            pb_post(PbInput::Position(start_ms as i64 * 1000));
 
             if !metadata_json.is_empty() {
                 unsafe {
@@ -475,16 +469,18 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "notifyArtwork" => {
             if let Some(args) = args {
                 let uri = list_string(&args, 0);
-                let c = CString::new(uri).unwrap_or_default();
-                unsafe { jfn_playback_post_artwork(c.as_ptr()) };
+                pb_post(PbInput::Artwork(uri));
             }
             true
         }
         "notifyQueueChange" => {
             if let Some(args) = args {
-                let can_next = args.bool(0) != 0;
-                let can_prev = args.bool(1) != 0;
-                unsafe { jfn_playback_post_queue_caps(can_next, can_prev) };
+                let can_go_next = args.bool(0) != 0;
+                let can_go_prev = args.bool(1) != 0;
+                pb_post(PbInput::QueueCaps {
+                    can_go_next,
+                    can_go_prev,
+                });
             }
             true
         }
@@ -495,7 +491,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "notifySeek" => {
             if let Some(args) = args {
                 let pos_ms = list_int(&args, 0) as i64;
-                unsafe { jfn_playback_post_seeked(pos_ms * 1000) };
+                pb_post(PbInput::Seeked(pos_ms * 1000));
             }
             true
         }

@@ -1093,21 +1093,9 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
         unsafe { jfn_playback::mpris_sink::jfn_mpris_sink_start(empty.as_ptr()) };
     }
     #[cfg(target_os = "macos")]
-    {
-        unsafe extern "C" {
-            fn jfn_macos_sink_start();
-            fn jfn_macos_sink_stop();
-        }
-        unsafe { jfn_macos_sink_start() };
-    }
+    jfn_macos_sink::jfn_macos_sink_start();
     #[cfg(target_os = "windows")]
-    {
-        unsafe extern "C" {
-            fn jfn_windows_sink_start();
-            fn jfn_windows_sink_stop();
-        }
-        unsafe { jfn_windows_sink_start() };
-    }
+    jfn_windows_sink::jfn_windows_sink_start();
 
     // 12. Remaining handlers.
     jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(|s| {
