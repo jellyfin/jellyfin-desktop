@@ -62,15 +62,8 @@ jobs:
         run: |
           python3 dev/tools/download_cef.py
 
-      - name: Configure and build
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build build
-
-      - name: Create app bundle
-        run: |
-          cmake --install build --prefix build/output
+      - name: Build app bundle
+        run: cargo xtask install --prefix build/output
 
       - name: Create DMG
         run: |

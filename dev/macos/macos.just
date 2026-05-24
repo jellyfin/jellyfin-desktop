@@ -12,15 +12,15 @@ deps:
 
 [macos]
 build: deps
-    ./dev/macos/build.sh
+    cargo xtask install --mpv-cli --prefix build/output
 
 [macos]
 test: build
-    ./dev/macos/test.sh
+    cargo test --manifest-path src/Cargo.toml --workspace --exclude jfn-wlproxy
 
 [macos]
 run *args: build
-    ./dev/macos/run.sh --log-level=debug --log-file=build/run.log {{args}}
+    "build/output/Jellyfin Desktop.app/Contents/MacOS/jellyfin-desktop" --log-level=debug --log-file=build/run.log {{args}}
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [macos]
@@ -29,5 +29,5 @@ run-mpv *args: build
 
 # Build app bundle and distributable DMG (outputs to dist/)
 [macos]
-dmg:
-    ./dev/macos/build_bundle.sh
+dmg: build
+    ./dev/macos/build_dmg.sh

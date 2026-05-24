@@ -137,18 +137,12 @@ jobs:
         run: |
           python3 dev/tools/download_cef.py
 
-      - name: Configure and build
+      - name: Build app bundle
         run: |
           export PKG_CONFIG_PATH="$HOME/jellyfin-deps/lib/pkgconfig:$PKG_CONFIG_PATH"
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET} \
-            -DCMAKE_PREFIX_PATH="$HOME/jellyfin-deps"
-          cmake --build build
-
-      - name: Create app bundle
-        run: |
-          cmake --install build --prefix build/output
+          export CMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}"
+          export CMAKE_PREFIX_PATH="$HOME/jellyfin-deps"
+          cargo xtask install --prefix build/output
 
       - name: Create DMG
         run: |

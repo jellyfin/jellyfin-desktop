@@ -24,6 +24,7 @@ members = [
     "windows_sink",
     "wlproxy",
     "x11",
+    "xtask",
 ]
 
 [profile.release]

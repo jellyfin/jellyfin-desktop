@@ -160,7 +160,7 @@ modules:
         sha256: 101e225ff0e035b8f4ed177a05cf6c985a5aba8c243b9f649cb1cd78d7c6b1f9
 
   - name: jellyfin-desktop
-    buildsystem: cmake-ninja
+    buildsystem: simple
     build-options:
       # Force ld to resolve libmpv's transitive ffmpeg deps from the base
       # runtime (matches the libavcodec we link via pkg-config), not from
@@ -171,17 +171,15 @@ modules:
       prepend-ld-library-path: /usr/lib/sdk/llvm20/lib
       env:
         CARGO_HOME: /run/build/jellyfin-desktop/cargo
+        CEF_PATH: /app/cef
+        EXTERNAL_MPV_DIR: /app
         # bindgen dlopens libclang from this SDK extension dir.
         LIBCLANG_PATH: /usr/lib/sdk/llvm20/lib
       build-args:
         # cargo fetches crates from crates.io during the build
         - --share=network
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCEF_ROOT=/app/cef
-      - -DEXTERNAL_MPV_DIR=/app
-      - -DJFN_ENABLE_KDE_PALETTE=OFF
-    post-install:
+    build-commands:
+      - cargo xtask install --external-cef /app/cef --external-mpv /app --no-kde-palette --prefix /app
       - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg

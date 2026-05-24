@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build .AppImage in dist/. Runs the container-based build via :base image.
-# Source / cmake / ninja / meson state persists in build/appimage/ on the host.
+# Source / cargo / meson state persists in build/appimage/ on the host.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
