@@ -9,7 +9,9 @@ name = "jfn_windows"
 crate-type = ["rlib"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
+jfn-input = { path = "../input" }
 jfn-platform-abi = { path = "../platform_abi" }
+jfn-playback = { path = "../playback" }
 cef-dll-sys.workspace = true
 tracing.workspace = true
 windows = { workspace = true, features = [
