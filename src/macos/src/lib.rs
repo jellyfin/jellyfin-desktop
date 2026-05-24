@@ -1,14 +1,4 @@
-//! Rust author of the macOS `Platform` vtable.
-//!
-//! Composition only — individual platform functions (compositor, NSApp
-//! lifecycle, idle inhibit, clipboard, etc.) still live in
-//! `src/platform/macos.mm`. They are exposed with `extern "C"` linkage so
-//! this crate can populate the vtable from them by symbol name. Subsequent
-//! slices replace each thunk with a native Rust implementation; the C ABI
-//! at the vtable boundary stays stable.
-//!
-//! Returns the shared `Platform` from `jfn-platform-abi`. Layout is pinned
-//! by `static_assert`s in `src/platform/platform_ops.cpp`.
+//! macOS `Platform` backend.
 
 #![cfg(target_os = "macos")]
 #![allow(non_snake_case)]

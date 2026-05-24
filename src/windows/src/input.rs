@@ -1,10 +1,10 @@
 //! Windows input — Win32 child window owning all keyboard/mouse for CEF.
 //!
-//! Ported from `src/input/input_windows.cpp`. Runs on a dedicated thread
-//! (spawned by `platform.rs::win_init`); registers a `JellyfinCefInput`
-//! window class, creates a child of mpv's HWND covering the client area,
-//! and translates `WM_*` messages into the platform-agnostic
-//! `jfn_input_dispatch_*` C ABI exposed by `src/input/src/lib.rs`.
+//! Runs on a dedicated thread (spawned by `platform.rs::win_init`);
+//! registers a `JellyfinCefInput` window class, creates a child of mpv's
+//! HWND covering the client area, and translates `WM_*` messages into
+//! the platform-agnostic `jfn_input_dispatch_*` entry points exposed by
+//! `src/input/src/lib.rs`.
 
 #![allow(non_snake_case)]
 

@@ -1,6 +1,5 @@
 //! Shared X11 state: connection, atoms, ARGB visual, per-surface table.
 //!
-//! Mirrors the file-static state in the former `src/platform/x11.cpp`.
 //! Connection lives behind an `Arc` so the input thread can hold a
 //! reference independent of the global mutex. The mutex protects every
 //! mutable field including the `live` surface list.

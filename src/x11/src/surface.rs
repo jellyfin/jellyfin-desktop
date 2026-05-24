@@ -1,6 +1,5 @@
 //! Per-surface ops: alloc/free, software present, resize, visibility,
-//! restack, fade. Mirrors the per-surface block of the former
-//! `src/platform/x11.cpp`.
+//! restack, fade.
 
 use std::ffi::{c_int, c_void};
 use std::ptr;

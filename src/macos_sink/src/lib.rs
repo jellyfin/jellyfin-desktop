@@ -1,6 +1,5 @@
-//! macOS Now Playing / MPRemoteCommandCenter sink. Port of
-//! `src/playback/sinks/macos/macos_sink.mm`. Owns its own thread that
-//! drains queued PlaybackEvents on wake. Inbound MPRemoteCommand
+//! macOS Now Playing / MPRemoteCommandCenter sink. Owns its own thread
+//! that drains queued PlaybackEvents on wake. Inbound MPRemoteCommand
 //! callbacks dispatch directly into mpv (jfn_mpv) / web browser
 //! (jfn_web_exec_js).
 //!
@@ -107,7 +106,6 @@ struct Inner {
 
 static SINK: OnceLock<Arc<Inner>> = OnceLock::new();
 
-// Capacity matches the C++ QueuedPlaybackSink for parity.
 const EVENT_QUEUE_CAP: usize = 256;
 
 fn inner() -> Arc<Inner> {
@@ -226,7 +224,7 @@ define_class!(
 
             // MPRemoteCommand identity comparison: each shared center
             // returns the same retained instance, so pointer equality
-            // matches the C++ implementation.
+            // is sufficient.
             let cp = (&*command as *const MPRemoteCommand) as *const ();
             let eq = |c: &MPRemoteCommand| (&*c as *const MPRemoteCommand) as *const () == cp;
             if eq(&play) {
@@ -429,7 +427,7 @@ fn media_remote_set_visibility_for_phase(phase: Phase) {
 }
 
 // =====================================================================
-// Event delivery (mirrors C++ MacosSink::deliver).
+// Event delivery.
 // =====================================================================
 
 fn map_kind_to_phase(kind: PlaybackEventKind) -> Phase {

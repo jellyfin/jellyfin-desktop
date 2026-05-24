@@ -1,6 +1,5 @@
-//! Windows SystemMediaTransportControls (SMTC) sink. Port of
-//! `src/playback/sinks/windows/windows_sink.cpp`. Owns its own MTA-
-//! initialised thread that drains queued PlaybackEvents on wake.
+//! Windows SystemMediaTransportControls (SMTC) sink. Owns its own
+//! MTA-initialised thread that drains queued PlaybackEvents on wake.
 //! SMTC ButtonPressed / PlaybackPositionChangeRequested callbacks
 //! dispatch directly into mpv (jfn_mpv) and jfn_web_exec_js.
 //!

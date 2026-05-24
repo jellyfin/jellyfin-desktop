@@ -1,5 +1,5 @@
-//! Port of `src/mpv/color.cpp`. Parses any color string mpv emits or accepts
-//! (see `third_party/mpv/options/m_option.c:2079-2147`). Returns 0 (black) on
+//! Parses any color string mpv emits or accepts (see
+//! `third_party/mpv/options/m_option.c:2079-2147`). Returns 0 (black) on
 //! malformed input.
 
 /// Parse an mpv-form color into a 24-bit RGB integer (`0x00RRGGBB`).

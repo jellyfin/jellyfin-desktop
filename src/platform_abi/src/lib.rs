@@ -49,7 +49,7 @@ pub struct JfnPopupRequest {
     pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
 }
 
-/// Idle-inhibit level. Mirrors C++ `IdleInhibitLevel`.
+/// Idle-inhibit level.
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum IdleInhibitLevel {
@@ -200,8 +200,7 @@ pub trait Platform: Send + Sync {
         ctx: *mut c_void,
         dtor: Option<unsafe extern "C" fn(*mut c_void)>,
     ) {
-        // No backend support — fire empty callback and dtor synchronously,
-        // matching the old C++ fallback in `platform_ops.cpp`.
+        // No backend support — fire empty callback and dtor synchronously.
         unsafe {
             if let Some(cb) = on_done {
                 cb(ctx, c"".as_ptr(), 0);
@@ -239,9 +238,8 @@ pub fn install(p: Box<dyn Platform>) {
 }
 
 // CEF ozone platform name (NUL-terminated). Set once by jfn_app_main
-// before `Platform::init`; read by the Wayland dmabuf probe and the C++
-// side via `jfn_platform_cef_ozone_platform`. Kept in `Mutex` for the
-// (very rare) set, but stable for read.
+// before `Platform::init`; read by the Wayland dmabuf probe. Kept in
+// `Mutex` for the (very rare) set, but stable for read.
 static OZONE_PLATFORM: AtomicPtr<c_char> = AtomicPtr::new(std::ptr::null_mut());
 
 fn ozone_platform_get() -> *const c_char {

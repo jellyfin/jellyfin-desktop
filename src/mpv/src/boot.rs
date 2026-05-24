@@ -1,12 +1,10 @@
-//! End-to-end handle bring-up driven from C++ main(). Replaces the
-//! prior C++ `MpvHandle::Create` + `SetDefaults` + per-arg option
-//! setters + `Initialize` + `SetLogLevel` sequence with a single
-//! `jfn_mpv_handle_init` C entry point.
+//! End-to-end mpv handle bring-up: create, apply defaults + per-arg
+//! options, initialize, and set log level — exposed as a single
+//! `jfn_mpv_handle_init` entry point.
 //!
-//! After init the raw `mpv_handle*` is returned for the C++ MpvHandle
-//! wrapper to borrow. Rust owns the lifetime: a process-global slot
-//! retains the [`Handle`], and `jfn_mpv_handle_terminate` drops it,
-//! calling `mpv_terminate_destroy` via [`Handle::Drop`].
+//! Rust owns the lifetime: a process-global slot retains the
+//! [`Handle`], and `jfn_mpv_handle_terminate` drops it, calling
+//! `mpv_terminate_destroy` via [`Handle::Drop`].
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -17,8 +15,7 @@ use std::sync::OnceLock;
 use crate::handle::Handle;
 use crate::sys;
 
-/// Display backend the C++ side reports. Matches the discriminants of
-/// `enum class DisplayBackend` so the C ABI need not negotiate names.
+/// Display backend in use for this process.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DisplayBackend {
@@ -37,9 +34,9 @@ impl DisplayBackend {
     }
 }
 
-/// Boot-time configuration handed to `jfn_mpv_handle_init`. Mirrors
-/// every option the prior C++ path applied between `mpv_create` and
-/// `mpv_initialize`. All string fields are NUL-terminated UTF-8 or
+/// Boot-time configuration handed to `jfn_mpv_handle_init`. Every
+/// option applied between `mpv_create` and `mpv_initialize` lives here.
+/// All string fields are NUL-terminated UTF-8 or
 /// null; non-null pointers must remain valid for the duration of the
 /// init call only (Rust copies what it needs).
 #[repr(C)]
@@ -108,7 +105,6 @@ fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::e
 }
 
 fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Result<()> {
-    // Mirror src/mpv/handle.h `SetDefaults`.
     let set = |name: &str, value: &str| set_option_or_skip(handle, name, value);
 
     // OSD/OSC off — CEF overlay handles all UI.
@@ -223,9 +219,9 @@ fn apply_boot_options(handle: &Handle, boot: &JfnMpvBoot) -> crate::error::Resul
 }
 
 /// Create + configure + initialize the libmpv handle. On success, the
-/// raw `mpv_handle*` is returned for the C++ MpvHandle wrapper to
-/// borrow. On failure, returns null and any partially-initialized
-/// handle is destroyed before returning.
+/// raw `mpv_handle*` is returned for callers to borrow. On failure,
+/// returns null and any partially-initialized handle is destroyed
+/// before returning.
 ///
 /// # Safety
 /// `boot` must point to a valid `JfnMpvBoot` whose string fields are
@@ -255,7 +251,7 @@ pub unsafe fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_hand
     }
 
     // Wakeup callback exists only to unstick mpv_wait_event during
-    // shutdown. No-op closure matches the prior C++ behavior.
+    // shutdown.
     handle.set_wakeup_callback(|| {});
 
     if let Err(e) = handle.initialize() {
@@ -285,8 +281,7 @@ pub unsafe fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_hand
 /// Idempotent — repeated calls are no-ops.
 ///
 /// On macOS the caller must invoke this off the main thread (mpv's VO
-/// uninit does `DispatchQueue.main.sync`); see the C++ side's
-/// existing teardown thread.
+/// uninit does `DispatchQueue.main.sync`).
 pub fn jfn_mpv_handle_terminate() {
     let _ = handle_slot().lock().unwrap().take();
 }
@@ -298,9 +293,8 @@ pub fn jfn_mpv_handle_get() -> *mut sys::mpv_handle {
     current_raw_handle().unwrap_or(ptr::null_mut())
 }
 
-/// Rust-side accessor used by sibling crates (e.g. `jfn-playback`) that
-/// want to talk to the live handle without round-tripping through the
-/// C ABI. Returns `None` until [`jfn_mpv_handle_init`] has succeeded.
+/// Returns the live mpv handle. `None` until [`jfn_mpv_handle_init`]
+/// has succeeded.
 pub fn current_raw_handle() -> Option<*mut sys::mpv_handle> {
     handle_slot().lock().unwrap().as_ref().map(|h| h.raw())
 }

@@ -1,11 +1,5 @@
-//! Process entry point. C++ main.cpp shrinks to a forwarder that calls
-//! [`jfn_app_main`]; new logic moves out of main.cpp into this module
-//! incrementally.
-//!
-//! `jfn_app_main` returns:
-//!   * `>= 0`  exit code — process should terminate (CEF subprocess
-//!             return code, `--help` / `--version`, CLI error).
-//!   * `-1`    continue in C++ main.cpp (remainder of the port).
+//! Process entry point. [`jfn_app_main`] owns the full main loop and
+//! returns the exit code.
 
 use std::ffi::{CStr, CString, c_char, c_int};
 use std::ptr;
@@ -20,9 +14,7 @@ fn plat() -> &'static dyn Platform {
     jfn_platform_abi::get()
 }
 
-// `g_video_bg` previously lived in C++ (`src/platform/platform_ops.cpp`).
-// It's read once by `jfn_app_main` after CEF boot to seed the theme
-// rotator; store it Rust-side now that nothing C++ depends on it.
+// Read once by `jfn_app_main` after CEF boot to seed the theme rotator.
 static VIDEO_BG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn video_bg_set(rgb: u32) {
@@ -54,9 +46,8 @@ fn cs(s: &str) -> CString {
     CString::new(s).unwrap_or_default()
 }
 
-/// Normalize the audio-passthrough list: if `dts-hd` is present, drop bare
-/// `dts` (the HD variant subsumes it). Mirrors the C++ inline logic in
-/// `main.cpp`.
+/// Normalize the audio-passthrough list: if `dts-hd` is present, drop
+/// bare `dts` (the HD variant subsumes it).
 fn normalize_passthrough(s: &str) -> String {
     if !s.contains("dts-hd") {
         return s.to_string();
@@ -491,9 +482,8 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     }
     store_vo_size(mw, mh);
 
-    // 22. run_with_cef body + post-run mpv terminate. From here jfn_app_main
-    //     fully owns the rest of the process lifetime — main.cpp doesn't
-    //     touch the post-VO path anymore.
+    // 22. run_with_cef body + post-run mpv terminate. From here on
+    //     jfn_app_main fully owns the rest of the process lifetime.
     let boot_args = BootArgs {
         ozone_platform,
         disable_gpu_compositing,
@@ -718,8 +708,8 @@ fn log_mpv_event(ev: *mut jfn_mpv::sys::mpv_event) {
     let prefix = unsafe { CStr::from_ptr((*msg).prefix) }.to_string_lossy();
     let text = unsafe { CStr::from_ptr((*msg).text) }.to_string_lossy();
     let level = unsafe { (*msg).log_level }.0 as i32;
-    // Mirror C++ log_mpv_message: LEVEL_FATAL=10, ERROR=20, WARN=30,
-    // INFO=40, V=50, DEBUG=60, TRACE=70.
+    // mpv log levels: FATAL=10, ERROR=20, WARN=30, INFO=40, V=50,
+    // DEBUG=60, TRACE=70.
     match level {
         10 | 20 => tracing::error!(target: "mpv", "{prefix}: {text}"),
         30 => tracing::warn!(target: "mpv", "{prefix}: {text}"),
@@ -821,7 +811,7 @@ const LOG_SEVERITY_WARNING: c_int = 1;
 const LOG_SEVERITY_ERROR: c_int = 2;
 
 fn cef_severity_for_cef_filter() -> c_int {
-    // Match toCefSeverity(effectiveLogLevel(LOG_CEF)) from C++ logging.h:
+    // Map LOG_CEF level to CEF severity:
     //   Trace/Debug -> VERBOSE, Info -> INFO, Warn -> WARNING, Error -> ERROR.
     let e = jfn_logging::log_enabled;
     if e(LOG_CEF, LEVEL_TRACE) || e(LOG_CEF, LEVEL_DEBUG) {
@@ -836,8 +826,8 @@ fn cef_severity_for_cef_filter() -> c_int {
 }
 
 // Handler thunks installed via jfn_playback_set_*_handler. They capture
-// nothing (Rust function items are 'static) and forward to g_platform /
-// jfn-cef as the C++ lambdas did.
+// nothing (Rust function items are 'static) and forward to the platform
+// backend / jfn-cef.
 
 extern "C" fn h_idle_inhibit(level: u32) {
     let lvl = match level {
@@ -874,9 +864,7 @@ fn h_shutdown_close_browsers() {
     plat().wake_main_loop();
 }
 
-/// Internal helper. Owns the run_with_cef body. No longer extern "C"
-/// because main.cpp doesn't call it directly anymore — slice 1f folded
-/// the call into jfn_app_main.
+/// Owns the run_with_cef body — invoked once by `jfn_app_main`.
 unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     // 1. Resolve final ozone_platform + write into g_platform.cef_ozone_platform.
     let mut ozone_platform = ba.ozone_platform.clone();
@@ -1171,10 +1159,10 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     jfn_cef::ffi::jfn_cef_shutdown();
     CEF_INITED.store(false, std::sync::atomic::Ordering::Release);
 
-    // 19. Idle inhibit release (mirrors C++ IdleInhibitGuard).
+    // 19. Idle inhibit release.
     plat().set_idle_inhibit(IdleInhibitLevel::None);
 
-    // 20. Platform cleanup (mirrors PlatformScope dtor).
+    // 20. Platform cleanup.
     plat().cleanup();
     PLATFORM_INITED.store(false, std::sync::atomic::Ordering::Release);
 
@@ -1231,8 +1219,8 @@ fn save_window_geometry_on_exit() {
     }
 }
 
-/// Tear down boot-owned resources at process exit (wlproxy, single-instance
-/// listener). Called from main.cpp's tail until that path is ported too.
+/// Tear down boot-owned resources at process exit (wlproxy,
+/// single-instance listener).
 pub fn jfn_app_teardown() {
     #[cfg(target_os = "linux")]
     {

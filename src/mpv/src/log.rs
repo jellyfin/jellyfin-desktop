@@ -52,10 +52,9 @@ impl LogLevel {
 }
 
 /// Forward an `MPV_EVENT_LOG_MESSAGE` payload to `tracing` under target
-/// `"mpv"`. Level mapping mirrors the historical C++ `log_mpv_message`:
-/// mpv's `v` lands at DEBUG and mpv's `debug` lands at TRACE so the
-/// console isn't flooded at default verbosity. Unknown/`trace` levels
-/// surface as WARN with an unhandled-level marker.
+/// `"mpv"`. mpv's `v` lands at DEBUG and mpv's `debug` lands at TRACE so
+/// the console isn't flooded at default verbosity. Unknown/`trace`
+/// levels surface as WARN with an unhandled-level marker.
 pub fn forward_to_tracing(msg: &LogMessage) {
     let text = msg.text.trim_end_matches(['\r', '\n']);
     let prefix = msg.prefix.as_str();

@@ -1,10 +1,7 @@
 //! Adapters wiring [`crate::ingest`] to the rest of the world:
-//! the global [`IngestState`], C ABI entry points for the C++ mpv event
-//! thread, and the side-channel callbacks (display scale, window
-//! pixels, shutdown) that don't flow through the coordinator queue.
-//!
-//! Replaces the legacy `src/playback/jfn_dispatcher.h` API and the C++
-//! `digest_property` switch in `src/mpv/event.cpp`.
+//! the global [`IngestState`], entry points for the mpv event thread,
+//! and the side-channel callbacks (display scale, window pixels,
+//! shutdown) that don't flow through the coordinator queue.
 
 use std::ffi::c_void;
 use std::sync::OnceLock;

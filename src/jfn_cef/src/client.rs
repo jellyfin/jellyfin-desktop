@@ -113,11 +113,7 @@ pub(crate) struct Inner {
     has_browser: AtomicBool,
     pending_internal_reset: AtomicBool,
 
-    // app-level callback slots. C++ installs handlers as (fn_ptr, ctx, dtor)
-    // triples via the C ABI; the setter boxes each into a typed closure so
-    // future in-process Rust callers can install `Box<dyn Fn>` directly
-    // without going through C. The Box drop closes over a RawHolder whose
-    // Drop runs the C++ dtor.
+    // app-level callback slots, stored as boxed closures.
     message_handler: Mutex<Option<Box<MessageFn>>>,
     created_callback: Mutex<Option<Box<CreatedFn>>>,
     before_close_callback: Mutex<Option<Box<BeforeCloseFn>>>,

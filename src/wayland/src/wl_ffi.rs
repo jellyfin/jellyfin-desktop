@@ -1,7 +1,6 @@
-//! C-ABI surface exposed to `src/platform/wayland.cpp`. Each thunk
-//! marshals raw C inputs into [`crate::wl_ops`] entry points.
+//! Thunks marshalling raw inputs into [`crate::wl_ops`] entry points.
 //!
-//! Opaque surface handles cross the FFI as `*mut c_void` aliasing a
+//! Opaque surface handles travel as `*mut c_void` aliasing a
 //! `PlatformSurface*` allocated by [`jfn_wl_alloc_surface`].
 
 use std::ffi::c_void;

@@ -1,7 +1,7 @@
-//! Argv parser for jellyfin-desktop. Replaces the hand-rolled C++ parser in
-//! `src/cli.cpp` with clap. Help/version short-circuits return distinct kinds
-//! so the C++ side can run its own printers (which need `mpv_handle` and
-//! version macros not available here).
+//! Argv parser for jellyfin-desktop, built on clap. Help/version
+//! short-circuits return distinct kinds so the caller can run its own
+//! printers (which need a live `mpv_handle` and version macros not
+//! available here).
 
 use clap::error::ContextKind;
 use clap::{ArgAction, Parser};

@@ -1,6 +1,4 @@
-//! Thin re-export shim over [`jfn_platform_abi`]. Historically this crate
-//! held a C-ABI mirror of a vtable populated by C++ thunks; the platform
-//! layer is now an all-Rust trait, so callers just dispatch through it.
+//! Thin re-export shim over [`jfn_platform_abi`].
 
 pub use jfn_platform_abi::{JfnPopupRequest, JfnRect, Platform};
 

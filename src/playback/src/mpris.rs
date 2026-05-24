@@ -94,60 +94,6 @@ pub fn project(input: &ProjectInput) -> MprisDerived {
     }
 }
 
-// ============================================================================
-// FFI
-// ============================================================================
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct JfnMprisDerivedC {
-    /// 0=Stopped 1=Playing 2=Paused
-    pub status: u8,
-    pub can_play: bool,
-    pub can_pause: bool,
-    pub can_seek: bool,
-    pub can_control: bool,
-    pub metadata_active: bool,
-    pub rate: f64,
-}
-
-/// # Safety
-/// `out` must point to writable storage for one `JfnMprisDerivedC`. `phase`
-/// must be a valid PlaybackPhase discriminant (0..=3).
-pub unsafe fn jfn_mpris_project(
-    phase: u8,
-    seeking: bool,
-    buffering: bool,
-    metadata_duration_us: i64,
-    pending_rate: f64,
-    out: *mut JfnMprisDerivedC,
-) {
-    let phase = match phase {
-        0 => PlaybackPhase::Starting,
-        1 => PlaybackPhase::Playing,
-        2 => PlaybackPhase::Paused,
-        _ => PlaybackPhase::Stopped,
-    };
-    let derived = project(&ProjectInput {
-        phase,
-        seeking,
-        buffering,
-        metadata_duration_us,
-        pending_rate,
-    });
-    unsafe {
-        out.write(JfnMprisDerivedC {
-            status: derived.status as u8,
-            can_play: derived.can_play,
-            can_pause: derived.can_pause,
-            can_seek: derived.can_seek,
-            can_control: derived.can_control,
-            metadata_active: derived.metadata_active,
-            rate: derived.rate,
-        });
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,10 +1,9 @@
 //! Jellyfin DeviceProfile JSON builder.
 //!
-//! Mirrors the C++ implementation that previously lived in
-//! `src/jellyfin/device_profile.cpp`. Jellyfin source pinned to commit
-//! 2c62d40 (matches the `third_party/jellyfin` submodule). Profile-vs-stream
-//! matching is plain case-insensitive equality against ffprobe-derived names,
-//! so any rename below has to mirror what the server stores on
+//! Jellyfin source pinned to commit 2c62d40 (matches the
+//! `third_party/jellyfin` submodule). Profile-vs-stream matching is
+//! plain case-insensitive equality against ffprobe-derived names, so
+//! any rename below has to mirror what the server stores on
 //! `MediaSource.Container` / `MediaStream.Codec` at probe time.
 //!
 //! Match logic:

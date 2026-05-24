@@ -1,20 +1,18 @@
-//! C ABI exposing the post-init mpv handle to C++ — replaces the
-//! legacy `MpvHandle` wrapper class in `src/mpv/handle.h`.
+//! Post-init mpv handle accessors used by sibling crates.
 //!
 //! All entry points borrow the global handle published by
 //! [`crate::boot::jfn_mpv_handle_init`]. They no-op silently if the
 //! handle has not yet been initialized or has already been terminated.
 //!
 //! Property writes and commands go through libmpv's async API
-//! (`reply_userdata == 0`, fire-and-forget) — matching the legacy
-//! wrapper's `*Async` methods. Property reads are synchronous and must
-//! only be issued from non-event contexts; observed properties should
-//! be read from the `jfn_playback_*` atomics instead.
+//! (`reply_userdata == 0`, fire-and-forget). Property reads are
+//! synchronous and must only be issued from non-event contexts; observed
+//! properties should be read from the `jfn_playback_*` atomics instead.
 //!
 //! Stateful helpers — `LoadFile` / `ApplyPendingTrackSelectionAndPlay`
 //! / `SetAspectMode` — live here too. The pending-track state is
-//! single-threaded by usage but guarded by a Mutex so the FFI is safe
-//! to invoke from any thread.
+//! single-threaded by usage but guarded by a Mutex so callers from any
+//! thread stay safe.
 
 use std::ffi::{CStr, CString, c_char};
 use std::os::raw::c_void;
@@ -196,7 +194,7 @@ pub unsafe fn jfn_mpv_command_async(args: *const *const c_char, n: usize) {
 }
 
 // =============================================================================
-// Event drain (wait_event / wakeup) — exposed for the C++ main loop.
+// Event drain (wait_event / wakeup).
 // =============================================================================
 
 /// Pumps libmpv's event queue. Returns the raw `mpv_event*` libmpv owns;
@@ -311,8 +309,7 @@ pub unsafe fn jfn_mpv_audio_add(url: *const c_char) {
 // LoadFile + deferred track selection (stateful)
 // =============================================================================
 
-/// Mirrors the C++ `MpvHandle::LoadOptions`. NULL string pointers are
-/// treated as empty.
+/// Load options for `LoadFile`. NULL string pointers are treated as empty.
 #[repr(C)]
 pub struct JfnMpvLoadOptions {
     pub start_secs: f64,
