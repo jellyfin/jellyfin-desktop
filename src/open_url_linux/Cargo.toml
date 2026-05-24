@@ -9,4 +9,4 @@ name = "jfn_open_url_linux"
 crate-type = ["rlib"]
 
 [dependencies]
-log.workspace = true
+tracing.workspace = true

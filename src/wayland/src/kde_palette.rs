@@ -132,7 +132,7 @@ fn make_colors_dir() -> Option<PathBuf> {
     let mut dir = PathBuf::from(runtime);
     dir.push("jellyfin-desktop");
     if let Err(e) = fs::create_dir_all(&dir) {
-        log::warn!("kde_palette: mkdir {} failed: {}", dir.display(), e);
+        tracing::warn!("kde_palette: mkdir {} failed: {}", dir.display(), e);
         return None;
     }
     let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
@@ -154,7 +154,7 @@ pub unsafe fn jfn_wl_kde_palette_attach(
         return false;
     }
     if STATE.lock().unwrap().is_some() {
-        log::warn!("kde_palette: attach called twice");
+        tracing::warn!("kde_palette: attach called twice");
         return false;
     }
 
@@ -164,7 +164,7 @@ pub unsafe fn jfn_wl_kde_palette_attach(
     let (globals, mut queue) = match registry_queue_init::<RegistrySink>(&conn) {
         Ok(p) => p,
         Err(e) => {
-            log::warn!("kde_palette: registry init: {e}");
+            tracing::warn!("kde_palette: registry init: {e}");
             return false;
         }
     };
@@ -173,7 +173,7 @@ pub unsafe fn jfn_wl_kde_palette_attach(
     let manager: OrgKdeKwinServerDecorationPaletteManager = match globals.bind(&qh, 1..=1, ()) {
         Ok(m) => m,
         Err(_) => {
-            log::info!("kde_palette: protocol not advertised; skipping titlebar colors");
+            tracing::info!("kde_palette: protocol not advertised; skipping titlebar colors");
             return false;
         }
     };
@@ -183,14 +183,14 @@ pub unsafe fn jfn_wl_kde_palette_attach(
         match unsafe { ObjectId::from_ptr(WlSurface::interface(), parent_surface.cast()) } {
             Ok(id) => id,
             Err(_) => {
-                log::warn!("kde_palette: parent surface interface mismatch");
+                tracing::warn!("kde_palette: parent surface interface mismatch");
                 return false;
             }
         };
     let parent = match WlSurface::from_id(&conn, parent_id) {
         Ok(p) => p,
         Err(_) => {
-            log::warn!("kde_palette: parent surface from_id failed");
+            tracing::warn!("kde_palette: parent surface from_id failed");
             return false;
         }
     };
@@ -213,7 +213,7 @@ pub unsafe fn jfn_wl_kde_palette_attach(
         current_path: None,
     });
 
-    log::info!("KDE decoration palette ready");
+    tracing::info!("KDE decoration palette ready");
     true
 }
 
@@ -250,7 +250,7 @@ pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_ch
     }
 
     if let Err(e) = write_color_scheme(r, g, b, &new_path) {
-        log::warn!("kde_palette: write {} failed: {}", new_path.display(), e);
+        tracing::warn!("kde_palette: write {} failed: {}", new_path.display(), e);
         return;
     }
 

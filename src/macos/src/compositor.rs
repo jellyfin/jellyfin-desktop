@@ -272,13 +272,13 @@ fn ensure_metal() -> bool {
     unsafe {
         let device = MTLCreateSystemDefaultDevice();
         if device.is_null() {
-            log::error!("[METAL] MTLCreateSystemDefaultDevice failed");
+            tracing::error!("[METAL] MTLCreateSystemDefaultDevice failed");
             return false;
         }
         let queue: *mut AnyObject = objc2::msg_send![device, newCommandQueue];
         if queue.is_null() {
             let _: () = objc2::msg_send![device, release];
-            log::error!("[METAL] newCommandQueue failed");
+            tracing::error!("[METAL] newCommandQueue failed");
             return false;
         }
 
@@ -293,7 +293,7 @@ fn ensure_metal() -> bool {
         ];
         let _: () = objc2::msg_send![src_ns, release];
         if library.is_null() {
-            log::error!("[METAL] newLibraryWithSource failed");
+            tracing::error!("[METAL] newLibraryWithSource failed");
             let _: () = objc2::msg_send![queue, release];
             let _: () = objc2::msg_send![device, release];
             return false;
@@ -331,7 +331,7 @@ fn ensure_metal() -> bool {
         let _: () = objc2::msg_send![pipe_desc, release];
         let _: () = objc2::msg_send![library, release];
         if pipeline.is_null() {
-            log::error!("[METAL] newRenderPipelineStateWithDescriptor failed");
+            tracing::error!("[METAL] newRenderPipelineStateWithDescriptor failed");
             let _: () = objc2::msg_send![queue, release];
             let _: () = objc2::msg_send![device, release];
             return false;
@@ -506,7 +506,7 @@ unsafe fn wrap_input_surface(s: &mut Surface, surface: IOSurfaceRef, w: u64, h: 
             plane: 0usize
         ];
         if tex.is_null() {
-            log::error!("[METAL] wrap input IOSurface failed");
+            tracing::error!("[METAL] wrap input IOSurface failed");
             return false;
         }
         // Replace cached texture (release previous).
@@ -538,13 +538,13 @@ unsafe fn wrap_input_surface(s: &mut Surface, surface: IOSurfaceRef, w: u64, h: 
 
 unsafe fn present_iosurface(s: &mut Surface, info: &cef_dll_sys::_cef_accelerated_paint_info_t) {
     if s.layer.is_null() {
-        log::warn!("[METAL] present skipped: layer null");
+        tracing::warn!("[METAL] present skipped: layer null");
         return;
     }
     let metal_q = match G_METAL.lock().unwrap().as_ref() {
         Some(m) => m.queue,
         None => {
-            log::warn!("[METAL] present skipped: metal not initialized");
+            tracing::warn!("[METAL] present skipped: metal not initialized");
             return;
         }
     };
@@ -552,7 +552,7 @@ unsafe fn present_iosurface(s: &mut Surface, info: &cef_dll_sys::_cef_accelerate
 
     let surface = info.shared_texture_io_surface as IOSurfaceRef;
     if surface.is_null() {
-        log::warn!("[METAL] present skipped: null IOSurface");
+        tracing::warn!("[METAL] present skipped: null IOSurface");
         return;
     }
     let w = unsafe { IOSurfaceGetWidth(surface) } as u64;
@@ -577,7 +577,7 @@ unsafe fn present_iosurface(s: &mut Surface, info: &cef_dll_sys::_cef_accelerate
 
         let drawable: *mut AnyObject = objc2::msg_send![s.layer, nextDrawable];
         if drawable.is_null() {
-            log::warn!("[METAL] nextDrawable returned nil");
+            tracing::warn!("[METAL] nextDrawable returned nil");
             let _: () = objc2::msg_send![pool, drain];
             return;
         }

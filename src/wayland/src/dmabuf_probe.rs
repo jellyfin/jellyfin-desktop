@@ -89,7 +89,7 @@ pub unsafe fn jfn_wl_dmabuf_probe(
     match probe(ozone, wayland_egl_dpy) {
         Ok(b) => b,
         Err(msg) => {
-            log::warn!("dmabuf probe: {}", msg);
+            tracing::warn!("dmabuf probe: {}", msg);
             false
         }
     }
@@ -161,9 +161,9 @@ fn probe(ozone: &str, wayland_egl_dpy: *mut c_void) -> Result<bool, String> {
     }
 
     match &result {
-        Ok(true) => log::info!("dmabuf probe: GBM -> EGL -> GL import OK"),
-        Ok(false) => log::warn!("dmabuf probe: ARGB8888 dmabuf import failed"),
-        Err(e) => log::warn!("dmabuf probe: {}", e),
+        Ok(true) => tracing::info!("dmabuf probe: GBM -> EGL -> GL import OK"),
+        Ok(false) => tracing::warn!("dmabuf probe: ARGB8888 dmabuf import failed"),
+        Err(e) => tracing::warn!("dmabuf probe: {}", e),
     }
     result
 }
@@ -188,7 +188,7 @@ fn acquire_display(
     wayland_egl_dpy: *mut c_void,
 ) -> Result<(egl::EGLDisplay, bool, Option<X11Owned>), String> {
     if ozone == "wayland" {
-        log::info!("dmabuf probe: testing on Wayland EGL display");
+        tracing::info!("dmabuf probe: testing on Wayland EGL display");
         return Ok((wayland_egl_dpy as egl::EGLDisplay, false, None));
     }
 
@@ -224,7 +224,7 @@ fn acquire_display(
     if unsafe { (egl.initialize)(display, &mut major, &mut minor) } != egl::TRUE {
         return Err("EGL init on X11 failed".into());
     }
-    log::info!(
+    tracing::info!(
         "dmabuf probe: testing on X11 EGL display ({}.{})",
         major,
         minor
@@ -245,14 +245,14 @@ fn run_gl_test(egl: &egl::Egl, display: egl::EGLDisplay) -> Result<bool, String>
     let gbm_lib = match unsafe { Library::new("libgbm.so.1") } {
         Ok(l) => l,
         Err(_) => {
-            log::warn!("dmabuf probe: libgbm not available, assuming supported");
+            tracing::warn!("dmabuf probe: libgbm not available, assuming supported");
             return Ok(true);
         }
     };
     let gbm = match GbmFns::load(&gbm_lib) {
         Some(g) => g,
         None => {
-            log::warn!("dmabuf probe: libgbm missing symbols, assuming supported");
+            tracing::warn!("dmabuf probe: libgbm missing symbols, assuming supported");
             return Ok(true);
         }
     };
@@ -263,7 +263,7 @@ fn run_gl_test(egl: &egl::Egl, display: egl::EGLDisplay) -> Result<bool, String>
     let drm_fd = match drm_fd {
         Ok(fd) => fd,
         Err(_) => {
-            log::warn!("dmabuf probe: no DRM render node, assuming supported");
+            tracing::warn!("dmabuf probe: no DRM render node, assuming supported");
             return Ok(true);
         }
     };
@@ -314,7 +314,7 @@ fn run_gl_test(egl: &egl::Egl, display: egl::EGLDisplay) -> Result<bool, String>
             )
         };
         if image.is_null() {
-            log::warn!("dmabuf probe: eglCreateImageKHR failed (0x{:x})", unsafe {
+            tracing::warn!("dmabuf probe: eglCreateImageKHR failed (0x{:x})", unsafe {
                 (egl.get_error)()
             });
             Ok(false)
@@ -327,7 +327,7 @@ fn run_gl_test(egl: &egl::Egl, display: egl::EGLDisplay) -> Result<bool, String>
                 let err = get_err();
                 let ok = err == GL_NO_ERROR;
                 if !ok {
-                    log::warn!(
+                    tracing::warn!(
                         "dmabuf probe: glEGLImageTargetTexture2DOES failed (0x{:x})",
                         err
                     );
@@ -397,7 +397,7 @@ fn find_drm_node(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<RawFd> {
     let node = unsafe { CStr::from_ptr(node_ptr) };
     let fd = unsafe { libc::open(node.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
     if fd >= 0 {
-        log::info!("dmabuf probe using render node: {}", node.to_string_lossy());
+        tracing::info!("dmabuf probe using render node: {}", node.to_string_lossy());
         Some(fd)
     } else {
         None

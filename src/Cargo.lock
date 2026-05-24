@@ -1061,7 +1061,7 @@ dependencies = [
 name = "jfn-idle-inhibit-linux"
 version = "0.1.0"
 dependencies = [
- "log",
+ "tracing",
  "zbus",
 ]
 
@@ -1101,7 +1101,6 @@ dependencies = [
  "jfn-input",
  "jfn-platform-abi",
  "jfn-playback",
- "log",
  "objc2",
  "objc2-foundation",
  "tracing",
@@ -1138,7 +1137,7 @@ dependencies = [
 name = "jfn-open-url-linux"
 version = "0.1.0"
 dependencies = [
- "log",
+ "tracing",
 ]
 
 [[package]]
@@ -1220,9 +1219,9 @@ dependencies = [
  "jfn-wlproxy",
  "libc",
  "libloading 0.9.0",
- "log",
  "memmap2",
  "smithay-client-toolkit",
+ "tracing",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
