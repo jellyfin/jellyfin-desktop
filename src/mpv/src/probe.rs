@@ -30,7 +30,7 @@ pub fn version_info() -> Vec<(String, String)> {
 
 /// C ABI for the C++ `cli::print_version` entry point. Prints each
 /// `"<name> <value>\n"` line to stdout.
-pub extern "C" fn jfn_mpv_print_version_info() {
+pub fn jfn_mpv_print_version_info() {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     for (name, value) in version_info() {

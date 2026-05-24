@@ -154,13 +154,13 @@ unsafe fn cstr_bytes<'a>(s: *const c_char) -> &'a [u8] {
 
 /// # Safety
 /// `s` must be NUL-terminated or null.
-pub unsafe extern "C" fn jfn_cef_parse_color(s: *const c_char) -> u32 {
+pub unsafe fn jfn_cef_parse_color(s: *const c_char) -> u32 {
     parse_cef(unsafe { cstr_bytes(s) })
 }
 
 /// # Safety
 /// `s` must be NUL-terminated or null.
-pub unsafe extern "C" fn jfn_mpv_parse_color(s: *const c_char) -> u32 {
+pub unsafe fn jfn_mpv_parse_color(s: *const c_char) -> u32 {
     parse_mpv(unsafe { cstr_bytes(s) })
 }
 

@@ -114,7 +114,7 @@ pub struct JfnMprisDerivedC {
 /// # Safety
 /// `out` must point to writable storage for one `JfnMprisDerivedC`. `phase`
 /// must be a valid PlaybackPhase discriminant (0..=3).
-pub unsafe extern "C" fn jfn_mpris_project(
+pub unsafe fn jfn_mpris_project(
     phase: u8,
     seeking: bool,
     buffering: bool,

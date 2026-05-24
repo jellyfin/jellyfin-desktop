@@ -154,7 +154,7 @@ fn parse_inner(args: Vec<String>, have_x11: bool) -> JfnCliResult {
 /// `argv` must point to `argc` valid NUL-terminated C strings (or null
 /// entries, which are treated as empty). The returned pointer is heap-owned
 /// by Rust; free with [`jfn_cli_result_free`].
-pub unsafe extern "C" fn jfn_cli_parse(
+pub unsafe fn jfn_cli_parse(
     argc: c_int,
     argv: *const *const c_char,
     have_x11: bool,
@@ -177,7 +177,7 @@ pub unsafe extern "C" fn jfn_cli_parse(
 /// # Safety
 /// `r` must either be null or a pointer returned by [`jfn_cli_parse`]. Each
 /// pointer may only be freed once.
-pub unsafe extern "C" fn jfn_cli_result_free(r: *mut JfnCliResult) {
+pub unsafe fn jfn_cli_result_free(r: *mut JfnCliResult) {
     if r.is_null() {
         return;
     }

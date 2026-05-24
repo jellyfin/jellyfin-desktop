@@ -590,7 +590,7 @@ pub fn jfn_log_init(path: &str, filter: &str) {
     });
 }
 
-pub extern "C" fn jfn_log_shutdown() {
+pub fn jfn_log_shutdown() {
     let mut guard = state().lock().unwrap();
     if let Some(mut s) = guard.take() {
         if let Some(mut cap) = s.stderr_capture.take() {

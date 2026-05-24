@@ -60,7 +60,7 @@ unsafe impl Send for WebState {}
 
 static INSTANCE: Mutex<Option<WebState>> = Mutex::new(None);
 
-pub extern "C" fn jfn_web_init(layer: *mut JfnCefLayer) {
+pub fn jfn_web_init(layer: *mut JfnCefLayer) {
     if layer.is_null() {
         return;
     }
@@ -76,7 +76,7 @@ pub extern "C" fn jfn_web_init(layer: *mut JfnCefLayer) {
 }
 
 /// Execute JS in the main web layer. Called by the playback browser sink.
-pub unsafe extern "C" fn jfn_web_exec_js(js_utf8: *const c_char) {
+pub unsafe fn jfn_web_exec_js(js_utf8: *const c_char) {
     if js_utf8.is_null() {
         return;
     }

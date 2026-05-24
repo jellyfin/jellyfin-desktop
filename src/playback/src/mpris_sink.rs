@@ -578,7 +578,7 @@ fn emit_properties_changed(conn: &Connection, names: &[&str], view: &View) {
 /// Spawn the MPRIS sink thread. `service_suffix` is appended to the base
 /// service name (`org.mpris.MediaPlayer2.JellyfinDesktop<suffix>`) — pass
 /// an empty NUL-terminated string for none. No-op if already running.
-pub unsafe extern "C" fn jfn_mpris_sink_start(service_suffix: *const c_char) {
+pub unsafe fn jfn_mpris_sink_start(service_suffix: *const c_char) {
     let mut slot = sink_slot().lock().unwrap();
     if slot.is_some() {
         return;
@@ -601,7 +601,7 @@ pub unsafe extern "C" fn jfn_mpris_sink_start(service_suffix: *const c_char) {
     });
 }
 
-pub extern "C" fn jfn_mpris_sink_stop() {
+pub fn jfn_mpris_sink_stop() {
     let mut slot = sink_slot().lock().unwrap();
     let Some(mut s) = slot.take() else {
         return;

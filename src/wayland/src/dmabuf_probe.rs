@@ -74,7 +74,7 @@ type FnEglQueryDeviceStringExt = unsafe extern "C" fn(*mut c_void, egl::Int) -> 
 /// stack disagrees.
 ///
 /// `wayland_egl_dpy` may be NULL when `ozone_platform != "wayland"`.
-pub unsafe extern "C" fn jfn_wl_dmabuf_probe(
+pub unsafe fn jfn_wl_dmabuf_probe(
     ozone_platform: *const c_char,
     wayland_egl_dpy: *mut c_void,
 ) -> bool {

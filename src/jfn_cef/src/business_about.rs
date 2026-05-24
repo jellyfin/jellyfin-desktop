@@ -31,13 +31,13 @@ unsafe impl Send for AboutState {}
 
 static INSTANCE: Mutex<Option<AboutState>> = Mutex::new(None);
 
-pub extern "C" fn jfn_about_is_open() -> bool {
+pub fn jfn_about_is_open() -> bool {
     INSTANCE.lock().unwrap().is_some()
 }
 
 /// Entry point. Creates the about layer and installs all Rust handler
 /// closures. Subsequent calls while the layer is alive are no-ops.
-pub extern "C" fn jfn_about_open() {
+pub fn jfn_about_open() {
     {
         let g = INSTANCE.lock().unwrap();
         if g.is_some() {
