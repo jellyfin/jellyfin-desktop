@@ -7,7 +7,6 @@
 //! `digest_property` switch in `src/mpv/event.cpp`.
 
 use std::ffi::c_void;
-use std::os::raw::c_int;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -100,19 +99,16 @@ pub fn jfn_playback_set_display_scale_handler<F: Fn(f64) + Send + Sync + 'static
 /// Push a device-pixel window size into the geometry-save cache.
 /// Mirrors the legacy `mpv::set_window_pixels` producer used at boot
 /// (geometry seed) and runtime resize.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_window_pixels(pw: c_int, ph: c_int) {
+pub fn jfn_playback_set_window_pixels(pw: i32, ph: i32) {
     state().set_window_pixels(pw, ph);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_window_pw() -> c_int {
-    state().window_pw() as c_int
+pub fn jfn_playback_window_pw() -> i32 {
+    state().window_pw() as i32
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_window_ph() -> c_int {
-    state().window_ph() as c_int
+pub fn jfn_playback_window_ph() -> i32 {
+    state().window_ph() as i32
 }
 
 /// Decode one raw `mpv_event*` (returned by `mpv_wait_event`) into
@@ -126,13 +122,12 @@ pub extern "C" fn jfn_playback_window_ph() -> c_int {
 /// # Safety
 /// `ev` must be a pointer returned by `mpv_wait_event` and not yet
 /// invalidated by a subsequent call on the same handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_playback_ingest_mpv_event(
+pub unsafe fn jfn_playback_ingest_mpv_event(
     ev: *const c_void,
     scale: f32,
     has_macos_logical: bool,
-    mac_lw: c_int,
-    mac_lh: c_int,
+    mac_lw: i32,
+    mac_lh: i32,
 ) -> u8 {
     if ev.is_null() {
         return 0;
@@ -154,14 +149,13 @@ pub unsafe extern "C" fn jfn_playback_ingest_mpv_event(
 /// `osd-dimensions` property observation drives. Used by the Wayland
 /// xdg_toplevel.configure intercept (`jfn_wayland::proxy::on_configure`)
 /// in place of mpv's own osd-dimensions delivery.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_post_osd_pixels(
-    pw: c_int,
-    ph: c_int,
+pub fn jfn_playback_post_osd_pixels(
+    pw: i32,
+    ph: i32,
     scale: f32,
     has_macos_logical: bool,
-    mac_lw: c_int,
-    mac_lh: c_int,
+    mac_lw: i32,
+    mac_lh: i32,
 ) {
     use jfn_mpv::Node;
     let node = Node::Map(vec![
@@ -191,41 +185,34 @@ const OSD_DIMS_OBSERVE_ID: ObserveId = crate::ingest::observe_id::OSD_DIMS;
 // State accessors mirroring the legacy `mpv::*` getters
 // ---------------------------------------------------------------------
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_fullscreen() -> bool {
+pub fn jfn_playback_fullscreen() -> bool {
     state().fullscreen()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_window_maximized() -> bool {
+pub fn jfn_playback_window_maximized() -> bool {
     state().window_maximized()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_osd_pw() -> c_int {
-    state().osd_pw() as c_int
+pub fn jfn_playback_osd_pw() -> i32 {
+    state().osd_pw() as i32
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_osd_ph() -> c_int {
-    state().osd_ph() as c_int
+pub fn jfn_playback_osd_ph() -> i32 {
+    state().osd_ph() as i32
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_display_scale() -> f64 {
+pub fn jfn_playback_display_scale() -> f64 {
     state().display_scale()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_display_hz() -> f64 {
+pub fn jfn_playback_display_hz() -> f64 {
     state().display_hz()
 }
 
 /// Seed the display-hz cache from a synchronous probe (call only from a
 /// non-event context — sync mpv property reads from inside the event
 /// thread deadlock).
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_display_hz(hz: f64) {
+pub fn jfn_playback_set_display_hz(hz: f64) {
     state().set_display_hz(hz);
 }
 
@@ -246,8 +233,7 @@ pub const BACKEND_WAYLAND: u8 = 0;
 ///
 /// Requires `jfn_mpv_handle_init` to have succeeded; returns false if
 /// the handle is missing.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
+pub fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
     use crate::ingest::observe_id::*;
     use jfn_mpv::sys::mpv_format;
 
@@ -305,8 +291,7 @@ pub extern "C" fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
 /// callback — sync property reads from the event thread deadlock.
 ///
 /// No-op if the handle isn't initialized or the property is unavailable.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_seed_display_hz_sync() {
+pub fn jfn_playback_seed_display_hz_sync() {
     let Some(raw) = jfn_mpv::boot::current_raw_handle() else {
         return;
     };
@@ -421,8 +406,7 @@ fn invoke_shutdown_handler() {
 /// `jfn_mpv::Event`, and routes through the same ingest path that
 /// [`jfn_playback_ingest_mpv_event`] uses. Returns `false` if the
 /// handle is not yet initialized or the thread is already running.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_start_mpv_event_thread() -> bool {
+pub fn jfn_playback_start_mpv_event_thread() -> bool {
     let mut guard = event_thread_slot().lock().unwrap();
     if guard.is_some() {
         return false;
@@ -447,8 +431,7 @@ pub extern "C" fn jfn_playback_start_mpv_event_thread() -> bool {
 /// Stop the Rust-owned mpv event thread and join it. Idempotent.
 /// `mpv_wakeup` is called on the live handle so the in-flight
 /// `mpv_wait_event` returns immediately.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_stop_mpv_event_thread() {
+pub fn jfn_playback_stop_mpv_event_thread() {
     let entry = event_thread_slot().lock().unwrap().take();
     let Some(mut t) = entry else { return };
     t.stop.store(true, Ordering::Release);

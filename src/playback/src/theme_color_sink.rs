@@ -17,8 +17,7 @@ fn cb_slot() -> &'static Mutex<Option<SetCb>> {
 }
 
 /// Install the ThemeColor::setVideoMode setter. `cb == None` disables.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_theme_video_mode_handler(cb: Option<SetCb>) {
+pub fn jfn_playback_set_theme_video_mode_handler(cb: Option<SetCb>) {
     *cb_slot().lock().unwrap() = cb;
 }
 

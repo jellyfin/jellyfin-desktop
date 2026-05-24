@@ -175,7 +175,7 @@ impl Platform for WaylandPlatform {
         done_ctx: *mut c_void,
         done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
     ) {
-        let fps = unsafe { jfn_playback_display_hz() };
+        let fps = jfn_playback_display_hz();
         let surf_ptr = s as *mut crate::wl_state::PlatformSurface;
         let can_fade = !s.is_null() && fps > 0.0 && wl_ops::surface_has_alpha(surf_ptr);
         if !can_fade {

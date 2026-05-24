@@ -63,9 +63,7 @@ extern "C" fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_i
     if crate::wl_state::try_state().is_some() {
         wl_ops::on_configure(physical_w, physical_h, fullscreen != 0, scale);
     }
-    unsafe {
-        jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
-    }
+    jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
 }
 
 #[unsafe(no_mangle)]

@@ -521,7 +521,7 @@ impl Inner {
         // period. Drag fires many configures per frame; coalescing them
         // saves N-1 wasted re-layouts.
         let now = now_ns();
-        let hz = unsafe { jfn_playback_display_hz() };
+        let hz = jfn_playback_display_hz();
         let period_ns = if hz > 0.0 {
             (1e9 / hz) as i64
         } else {
@@ -1178,7 +1178,7 @@ impl Inner {
             // many times per second; resetting on every bump would keep
             // wiping the counter before any paint clears the skip threshold.
             let now_ns_val = now_ns();
-            let hz = unsafe { jfn_playback_display_hz() };
+            let hz = jfn_playback_display_hz();
             let period_ns = if hz > 0.0 {
                 (1e9 / hz) as i64
             } else {

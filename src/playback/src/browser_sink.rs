@@ -31,14 +31,12 @@ fn slot() -> &'static Mutex<Handlers> {
 }
 
 /// Install / clear the browsers.setSize handler.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_browsers_size_handler(cb: Option<SetSizeCb>) {
+pub fn jfn_playback_set_browsers_size_handler(cb: Option<SetSizeCb>) {
     slot().lock().unwrap().set_size = cb;
 }
 
 /// Install / clear the browsers.setRefreshRate handler.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_browsers_refresh_rate_handler(cb: Option<SetHzCb>) {
+pub fn jfn_playback_set_browsers_refresh_rate_handler(cb: Option<SetHzCb>) {
     slot().lock().unwrap().set_hz = cb;
 }
 
@@ -47,8 +45,7 @@ pub extern "C" fn jfn_playback_set_browsers_refresh_rate_handler(cb: Option<SetH
 static WAS_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 
 /// Geometry-save tail reads this at shutdown.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_was_maximized_before_fullscreen() -> bool {
+pub fn jfn_playback_was_maximized_before_fullscreen() -> bool {
     WAS_MAXIMIZED.load(Ordering::Relaxed)
 }
 
