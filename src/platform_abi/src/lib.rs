@@ -279,3 +279,61 @@ pub fn get() -> &'static dyn Platform {
 pub fn try_get() -> Option<&'static dyn Platform> {
     PLATFORM.get().copied()
 }
+
+// =====================================================================
+// Browser bridge
+// =====================================================================
+//
+// Lets crates that can't depend on jfn_cef (input, macos) forward events
+// to whichever CEF layer is currently active. jfn_cef installs the impl
+// at boot; the trait methods resolve the active layer internally so
+// callers never see a JfnCefLayer pointer.
+
+pub trait BrowserBridge: Send + Sync {
+    fn send_key_event(
+        &self,
+        type_: c_int,
+        modifiers: u32,
+        windows_key_code: c_int,
+        native_key_code: c_int,
+        is_system_key: bool,
+        character: u16,
+        unmodified_character: u16,
+    );
+    fn send_mouse_click(
+        &self,
+        x: c_int,
+        y: c_int,
+        modifiers: u32,
+        button: c_int,
+        mouse_up: bool,
+        click_count: c_int,
+    );
+    fn send_mouse_move(&self, x: i32, y: i32, modifiers: u32, leave: bool);
+    fn send_mouse_wheel(&self, x: c_int, y: c_int, modifiers: u32, delta_x: c_int, delta_y: c_int);
+    fn set_focus(&self, focus: bool);
+    fn navigate_history(&self, forward: bool);
+    fn undo(&self);
+    fn redo(&self);
+    fn cut(&self);
+    fn copy(&self);
+    fn paste(&self);
+    fn select_all(&self);
+    /// True if a layer is currently active. Cheap check used by callers
+    /// that want to early-out before building an event payload.
+    fn has_active(&self) -> bool;
+}
+
+static BROWSER_BRIDGE: OnceLock<&'static dyn BrowserBridge> = OnceLock::new();
+
+pub fn install_browser_bridge(b: Box<dyn BrowserBridge>) {
+    let leaked: &'static dyn BrowserBridge = Box::leak(b);
+    BROWSER_BRIDGE
+        .set(leaked)
+        .map_err(|_| ())
+        .expect("install_browser_bridge called twice");
+}
+
+pub fn browser_bridge() -> Option<&'static dyn BrowserBridge> {
+    BROWSER_BRIDGE.get().copied()
+}

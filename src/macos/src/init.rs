@@ -23,12 +23,12 @@ unsafe extern "C" {
     fn jfn_input_macos_create_view() -> *mut AnyObject;
 }
 
+use jfn_playback::shutdown::{jfn_shutdown_initiate, jfn_shutting_down};
+
 // jfn-cef Rust APIs we need.
 unsafe extern "C" {
     fn jfn_browsers_send_external_begin_frame_all();
     fn jfn_about_open();
-    fn jfn_shutdown_initiate();
-    fn jfn_shutting_down() -> bool;
     fn jfn_mpv_set_force_window_position(v: bool);
 }
 
@@ -201,7 +201,7 @@ define_class!(
 
         #[unsafe(method(terminate:))]
         unsafe fn terminate(&self, _sender: *mut AnyObject) {
-            unsafe { jfn_shutdown_initiate() };
+            jfn_shutdown_initiate();
         }
 
         #[unsafe(method(handleReopenEvent:withReplyEvent:))]
@@ -277,7 +277,7 @@ define_class!(
     impl JellyfinDisplayLinkTarget {
         #[unsafe(method(tick:))]
         unsafe fn tick(&self, _link: *mut AnyObject) {
-            if unsafe { jfn_shutting_down() } {
+            if jfn_shutting_down() {
                 return;
             }
             unsafe { jfn_browsers_send_external_begin_frame_all() };
@@ -438,7 +438,7 @@ pub extern "C" fn macos_init(_mpv: *mut c_void) -> bool {
                 _self_: *mut AnyObject,
                 _win: *mut AnyObject,
             ) -> Bool {
-                unsafe { jfn_shutdown_initiate() };
+                jfn_shutdown_initiate();
                 Bool::NO
             }
             // Hand-rolled "global" block — flags = BLOCK_IS_GLOBAL (1<<28),
