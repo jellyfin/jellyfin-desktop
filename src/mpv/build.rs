@@ -1,12 +1,13 @@
 //! Generate libmpv bindings (`mpv/client.h`) and configure linkage.
 //!
 //! Header source order:
-//!   1. `JFN_MPV_INCLUDE_DIR` env override (set by CMake during in-tree build).
-//!   2. `EXTERNAL_MPV_DIR` env override (mirrors `CMakeLists.txt:457`).
+//!   1. `JFN_MPV_INCLUDE_DIR` env override (set by xtask during in-tree build).
+//!   2. `EXTERNAL_MPV_DIR` env override.
 //!   3. pkg-config `mpv` (system install / `/opt/jellyfin-desktop/libmpv`).
 //!   4. Vendored `third_party/mpv/include`.
 //!
-//! Linkage: pkg-config when available; otherwise `EXTERNAL_MPV_DIR/lib`.
+//! Linkage: `JFN_MPV_LIB_DIR` (in-tree meson build dir) or `EXTERNAL_MPV_DIR/lib`
+//! emit a `rustc-link-search`; otherwise pkg-config supplies it.
 //! `cargo:rustc-link-lib=mpv` always emitted.
 
 use std::env;
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=JFN_MPV_INCLUDE_DIR");
+    println!("cargo:rerun-if-env-changed=JFN_MPV_LIB_DIR");
     println!("cargo:rerun-if-env-changed=EXTERNAL_MPV_DIR");
 
     let (include_dirs, linked_via_pkgconfig) = resolve_paths();
@@ -163,6 +165,10 @@ fn resolve_paths() -> (Vec<PathBuf>, bool) {
 
     if let Ok(dir) = env::var("JFN_MPV_INCLUDE_DIR") {
         includes.push(PathBuf::from(dir));
+    }
+
+    if let Ok(dir) = env::var("JFN_MPV_LIB_DIR") {
+        println!("cargo:rustc-link-search=native={dir}");
     }
 
     if let Ok(dir) = env::var("EXTERNAL_MPV_DIR") {

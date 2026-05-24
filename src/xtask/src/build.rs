@@ -32,8 +32,12 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     cmd.env("CARGO_TARGET_DIR", &target_dir);
     if let Some(dir) = &args.external_mpv {
         cmd.env("EXTERNAL_MPV_DIR", dir);
+        cmd.env_remove("JFN_MPV_INCLUDE_DIR");
+        cmd.env_remove("JFN_MPV_LIB_DIR");
     } else {
         cmd.env_remove("EXTERNAL_MPV_DIR");
+        cmd.env("JFN_MPV_INCLUDE_DIR", paths::mpv_source_dir().join("include"));
+        cmd.env("JFN_MPV_LIB_DIR", &mpv_info.build_dir);
     }
 
     println!("Building jellyfin-desktop (Rust binary)...");
