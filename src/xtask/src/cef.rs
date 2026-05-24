@@ -16,8 +16,8 @@ pub fn discover(external: &Option<PathBuf>, system: bool) -> Result<Cef> {
         let v = read_cef_version(&header)?;
         version::check_cef_version(&v)?;
         return Ok(Cef {
-            resource_dir: dir.join("lib"),
-            release_dir: dir.join("lib"),
+            resource_dir: dir.join("Resources"),
+            release_dir: dir.join("Release"),
             system: false,
             version: v,
         });
