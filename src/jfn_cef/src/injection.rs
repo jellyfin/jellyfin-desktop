@@ -102,14 +102,13 @@ pub fn build_for_kind(kind: &str, add_ctx_menu: bool) -> Option<DictionaryValue>
     match kind {
         "web" => {
             let dict = fill_list(WEB_FUNCTIONS, WEB_SCRIPTS, add_ctx_menu)?;
-            if let Some(json) = DEVICE_PROFILE_JSON.get() {
-                if !json.is_empty() {
+            if let Some(json) = DEVICE_PROFILE_JSON.get()
+                && !json.is_empty() {
                     dict.set_string(
                         Some(&CefString::from("device_profile_json")),
                         Some(&CefString::from(json.as_str())),
                     );
                 }
-            }
             Some(dict)
         }
         "overlay" => fill_list(OVERLAY_FUNCTIONS, &[], add_ctx_menu),

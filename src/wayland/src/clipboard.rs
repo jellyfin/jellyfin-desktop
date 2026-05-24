@@ -198,11 +198,10 @@ impl Dispatch<ExtDataControlOfferV1, ()> for State {
             let key = offer.id().protocol_id();
             if let Some(mimes) = state.pending_offer_mimes.get_mut(&key) {
                 mimes.observe(&mime_type);
-            } else if let Some((cur, mimes)) = state.current_offer.as_mut() {
-                if cur.id().protocol_id() == key {
+            } else if let Some((cur, mimes)) = state.current_offer.as_mut()
+                && cur.id().protocol_id() == key {
                     mimes.observe(&mime_type);
                 }
-            }
         }
     }
 }
@@ -311,8 +310,8 @@ fn worker_loop(
         }
 
         // Active receive.
-        if let Some((fd, _, buf)) = active.as_mut() {
-            if pfds.len() > 2 {
+        if let Some((fd, _, buf)) = active.as_mut()
+            && pfds.len() > 2 {
                 let revents = pfds[2].revents;
                 let mut done = false;
                 if revents & libc::POLLIN != 0 {
@@ -344,7 +343,6 @@ fn worker_loop(
                     fire(cb, &buf);
                 }
             }
-        }
 
         // Promote the next queued request if the active slot is free.
         if active.is_none() {

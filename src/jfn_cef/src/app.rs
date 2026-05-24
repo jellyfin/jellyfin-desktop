@@ -383,20 +383,18 @@ fn collect_popup_options(frame: &Frame) -> (Vec<String>, i32) {
         let mut s = String::new();
         if opt.is_object() == 1 {
             let text_key = CefString::from("text");
-            if let Some(t) = opt.value_bykey(Some(&text_key)) {
-                if t.is_string() == 1 {
+            if let Some(t) = opt.value_bykey(Some(&text_key))
+                && t.is_string() == 1 {
                     s = userfree_to_string(&t.string_value());
                 }
-            }
         }
         options.push(s);
     }
     let sel_key = CefString::from("selectedIndex");
-    if let Some(sel) = el.value_bykey(Some(&sel_key)) {
-        if sel.is_int() == 1 {
+    if let Some(sel) = el.value_bykey(Some(&sel_key))
+        && sel.is_int() == 1 {
             selected = sel.int_value();
         }
-    }
     (options, selected)
 }
 

@@ -157,20 +157,17 @@ impl Platform for X11Platform {
         let s = unsafe { jfn_playback_display_scale() };
         if s > 0.0 {
             let f = s as f32;
-            if let Ok(mut g) = crate::x11_state::MUT.lock() {
-                if let Some(m) = g.as_mut() {
+            if let Ok(mut g) = crate::x11_state::MUT.lock()
+                && let Some(m) = g.as_mut() {
                     m.cached_scale = f;
                 }
-            }
             return f;
         }
-        if let Ok(g) = crate::x11_state::MUT.lock() {
-            if let Some(m) = g.as_ref() {
-                if m.cached_scale > 0.0 {
+        if let Ok(g) = crate::x11_state::MUT.lock()
+            && let Some(m) = g.as_ref()
+                && m.cached_scale > 0.0 {
                     return m.cached_scale;
                 }
-            }
-        }
         1.0
     }
 

@@ -127,7 +127,7 @@ wrap_scheme_handler_factory! {
                 .map(|p| &url[p + 3..])
                 .unwrap_or(&url);
             let url_path = after_scheme
-                .split(|c: char| c == '?' || c == '#')
+                .split(['?', '#'])
                 .next()
                 .unwrap_or("")
                 .to_string();
@@ -152,8 +152,7 @@ wrap_scheme_handler_factory! {
                     bytes: Arc::new(bytes),
                     mime,
                     offset: Arc::new(Mutex::new(0)),
-                })
-                .into(),
+                }),
             )
         }
     }

@@ -745,13 +745,11 @@ where
         mut w: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        if self.trace_mode {
-            if let Ok(now) = OffsetDateTime::now_local() {
-                if let Ok(s) = now.format(&CONSOLE_TRACE_FMT) {
+        if self.trace_mode
+            && let Ok(now) = OffsetDateTime::now_local()
+                && let Ok(s) = now.format(&CONSOLE_TRACE_FMT) {
                     write!(w, "{s} ")?;
                 }
-            }
-        }
         let meta = event.metadata();
         let target = meta.target();
         if self.color {
@@ -779,11 +777,10 @@ where
         mut w: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        if let Ok(now) = OffsetDateTime::now_local() {
-            if let Ok(s) = now.format(&ISO_FILE_FMT) {
+        if let Ok(now) = OffsetDateTime::now_local()
+            && let Ok(s) = now.format(&ISO_FILE_FMT) {
                 write!(w, "{s} ")?;
             }
-        }
         let meta = event.metadata();
         let label = level_to_local_level(meta.level()).label();
         write!(w, "{label}")?;

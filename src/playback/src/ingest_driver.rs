@@ -103,7 +103,7 @@ pub extern "C" fn jfn_playback_set_display_scale_handler(cb: DisplayScaleCb) {
 /// (geometry seed) and runtime resize.
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_playback_set_window_pixels(pw: c_int, ph: c_int) {
-    state().set_window_pixels(pw as i32, ph as i32);
+    state().set_window_pixels(pw, ph);
 }
 
 #[unsafe(no_mangle)]
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn jfn_playback_ingest_mpv_event(
     let ctx = CallerCtx {
         scale,
         mac: if has_macos_logical {
-            Some((mac_lw as i32, mac_lh as i32))
+            Some((mac_lw, mac_lh))
         } else {
             None
         },
@@ -172,7 +172,7 @@ pub extern "C" fn jfn_playback_post_osd_pixels(
     let ctx = CallerCtx {
         scale,
         mac: if has_macos_logical {
-            Some((mac_lw as i32, mac_lh as i32))
+            Some((mac_lw, mac_lh))
         } else {
             None
         },
@@ -465,11 +465,10 @@ fn event_loop(handle_addr: usize, stop: std::sync::Arc<AtomicBool>) {
                 continue;
             }
             Event::PropertyChange { id, ref value, .. } => {
-                if id == crate::ingest::observe_id::FULLSCREEN {
-                    if let PropertyValue::Flag(f) = value {
+                if id == crate::ingest::observe_id::FULLSCREEN
+                    && let PropertyValue::Flag(f) = value {
                         invoke_fullscreen_handler(*f);
                     }
-                }
             }
             _ => {}
         }

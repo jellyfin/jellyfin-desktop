@@ -37,11 +37,10 @@ pub unsafe extern "C" fn jfn_wl_core_init(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_core_set_was_fullscreen(fs: bool) {
-    if let Some(m) = crate::wl_state::try_state() {
-        if let Ok(mut st) = m.lock() {
+    if let Some(m) = crate::wl_state::try_state()
+        && let Ok(mut st) = m.lock() {
             st.was_fullscreen = fs;
         }
-    }
 }
 
 // =====================================================================

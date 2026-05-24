@@ -277,11 +277,10 @@ pub(crate) fn popup_show(ptr: *mut PlatformSurface, x: i32, y: i32, lw: i32, lh:
         return;
     };
     sub.set_position(x, y);
-    if let Some(vp) = s.popup_viewport.as_ref() {
-        if lw > 0 && lh > 0 {
+    if let Some(vp) = s.popup_viewport.as_ref()
+        && lw > 0 && lh > 0 {
             vp.set_destination(lw, lh);
         }
-    }
     st.flush();
 }
 
@@ -520,8 +519,8 @@ fn attach_and_commit_locked(s: &mut PlatformSurface, buf: wayland_client::protoc
     s.buffer_h = h;
     s.placeholder = false;
     s.null_attached = false;
-    if let Some(viewport) = s.viewport.as_ref() {
-        if s.pw > 0 && s.lw > 0 {
+    if let Some(viewport) = s.viewport.as_ref()
+        && s.pw > 0 && s.lw > 0 {
             let src_w = w.min(s.pw);
             let src_h = h.min(s.ph);
             let dst_w = src_w * s.lw / s.pw;
@@ -529,7 +528,6 @@ fn attach_and_commit_locked(s: &mut PlatformSurface, buf: wayland_client::protoc
             viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
             viewport.set_destination(dst_w, dst_h);
         }
-    }
     let surface = s.surface.as_ref().expect("attach without surface");
     surface.attach(Some(&buf), 0, 0);
     surface.damage_buffer(0, 0, w, h);
@@ -603,12 +601,10 @@ fn end_transition_locked(st: &mut WlState) {
         let s = unsafe { surface_mut(p) };
         if let (Some(viewport), pw, ph, lw, lh) =
             (s.viewport.as_ref(), s.pw, s.ph, s.lw, s.lh)
-        {
-            if pw > 0 && lw > 0 {
+            && pw > 0 && lw > 0 {
                 viewport.set_source(0.0, 0.0, pw as f64, ph as f64);
                 viewport.set_destination(lw, lh);
             }
-        }
         let _ = (s,);
     }
 }
@@ -652,8 +648,8 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
     // pw now NEW. Flip paint gate back to Attach (keep transitioning=true).
     if st.transitioning {
         st.present_mode = PresentMode::Attach;
-        if let Some(&p) = st.stack.first() {
-            if !p.is_null() {
+        if let Some(&p) = st.stack.first()
+            && !p.is_null() {
                 let s = unsafe { surface_mut(p) };
                 if let (Some(viewport), true) =
                     (s.viewport.as_ref(), s.pw > 0 && s.lw > 0)
@@ -662,7 +658,6 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
                     viewport.set_destination(s.lw, s.lh);
                 }
             }
-        }
     }
     st.flush();
 }

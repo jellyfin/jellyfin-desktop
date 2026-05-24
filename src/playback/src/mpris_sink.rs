@@ -446,8 +446,8 @@ fn handle_event(
         recompute_and_emit(state, conn);
     }
 
-    if emit_seeked {
-        if let Err(e) = conn.emit_signal(
+    if emit_seeked
+        && let Err(e) = conn.emit_signal(
             None::<&str>,
             MPRIS_PATH,
             "org.mpris.MediaPlayer2.Player",
@@ -456,7 +456,6 @@ fn handle_event(
         ) {
             eprintln!("mpris: emit Seeked: {}", e);
         }
-    }
 }
 
 fn recompute_and_emit(state: &Arc<Mutex<State>>, conn: &Connection) {

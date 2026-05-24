@@ -121,11 +121,10 @@ pub unsafe extern "C" fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     };
     {
         let mut g = MUT.lock().unwrap();
-        if let Some(m) = g.as_mut() {
-            if let Some(pos) = m.live.iter().position(|&p| p == s) {
+        if let Some(m) = g.as_mut()
+            && let Some(pos) = m.live.iter().position(|&p| p == s) {
                 m.live.swap_remove(pos);
             }
-        }
     }
 
     let surf = unsafe { &mut *s };

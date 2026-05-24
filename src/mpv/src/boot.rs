@@ -81,7 +81,7 @@ unsafe fn cstr_opt(p: *const c_char) -> Option<String> {
 fn set_option_or_skip(handle: &Handle, name: &str, value: &str) -> crate::error::Result<()> {
     match handle.set_option_string(name, value) {
         Ok(()) => Ok(()),
-        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 as i32 => {
+        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 => {
             tracing::warn!(target: "mpv", "option {} not supported by this libmpv build; skipping", name);
             Ok(())
         }
@@ -96,7 +96,7 @@ fn set_option_or_skip(handle: &Handle, name: &str, value: &str) -> crate::error:
 fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::error::Result<()> {
     match handle.set_option_flag(name, value) {
         Ok(()) => Ok(()),
-        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 as i32 => {
+        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 => {
             tracing::warn!(target: "mpv", "option {} not supported by this libmpv build; skipping", name);
             Ok(())
         }
@@ -206,19 +206,17 @@ fn apply_boot_options(handle: &Handle, boot: &JfnMpvBoot) -> crate::error::Resul
     if boot.window_maximized_at_boot {
         set("window-maximized", "yes")?;
     }
-    if let Some(spdif) = unsafe { cstr_opt(boot.audio_passthrough) } {
-        if !spdif.is_empty() {
+    if let Some(spdif) = unsafe { cstr_opt(boot.audio_passthrough) }
+        && !spdif.is_empty() {
             set("audio-spdif", &spdif)?;
         }
-    }
     if boot.audio_exclusive {
         set_flag("audio-exclusive", true)?;
     }
-    if let Some(ch) = unsafe { cstr_opt(boot.audio_channels) } {
-        if !ch.is_empty() {
+    if let Some(ch) = unsafe { cstr_opt(boot.audio_channels) }
+        && !ch.is_empty() {
             set("audio-channels", &ch)?;
         }
-    }
     Ok(())
 }
 
@@ -266,8 +264,8 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
 
     // mpv log subscription. Token is the same one
     // `mpv_request_log_messages` accepts directly.
-    if let Some(level) = unsafe { cstr_opt(boot.mpv_log_level) } {
-        if !level.is_empty() {
+    if let Some(level) = unsafe { cstr_opt(boot.mpv_log_level) }
+        && !level.is_empty() {
             unsafe {
                 use std::ffi::CString;
                 if let Ok(c) = CString::new(level) {
@@ -275,7 +273,6 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
                 }
             }
         }
-    }
 
     let raw = handle.raw();
     *handle_slot().lock().unwrap() = Some(handle);

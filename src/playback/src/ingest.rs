@@ -306,14 +306,13 @@ fn digest_osd_dims<C: IngestCtx>(
     };
     let mut lw = (pw as f32 / scale) as i32;
     let mut lh = (ph as f32 / scale) as i32;
-    if let Some((qlw, qlh)) = ctx.macos_logical_size() {
-        if qlw > 0 && qlh > 0 {
+    if let Some((qlw, qlh)) = ctx.macos_logical_size()
+        && qlw > 0 && qlh > 0 {
             lw = qlw;
             lh = qlh;
             pw = (qlw as f32 * scale) as i32;
             ph = (qlh as f32 * scale) as i32;
         }
-    }
     if lw <= 0 || lh <= 0 {
         return Vec::new();
     }
