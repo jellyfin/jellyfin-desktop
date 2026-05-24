@@ -230,7 +230,6 @@ fn apply_boot_options(handle: &Handle, boot: &JfnMpvBoot) -> crate::error::Resul
 /// # Safety
 /// `boot` must point to a valid `JfnMpvBoot` whose string fields are
 /// either null or NUL-terminated UTF-8 valid for the call.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_handle {
     if boot.is_null() {
         return ptr::null_mut();
@@ -288,7 +287,6 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
 /// On macOS the caller must invoke this off the main thread (mpv's VO
 /// uninit does `DispatchQueue.main.sync`); see the C++ side's
 /// existing teardown thread.
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_mpv_handle_terminate() {
     let _ = handle_slot().lock().unwrap().take();
 }
@@ -296,7 +294,6 @@ pub extern "C" fn jfn_mpv_handle_terminate() {
 /// Borrow the live raw `mpv_handle*`. Returns null before
 /// [`jfn_mpv_handle_init`] succeeds and after
 /// [`jfn_mpv_handle_terminate`].
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_mpv_handle_get() -> *mut sys::mpv_handle {
     current_raw_handle().unwrap_or(ptr::null_mut())
 }

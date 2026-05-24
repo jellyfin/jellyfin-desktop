@@ -177,7 +177,6 @@ mod imp {
 
 pub use imp::WakeEvent;
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wake_event_new() -> *mut WakeEvent {
     match WakeEvent::new() {
         Some(ev) => Box::into_raw(Box::new(ev)),
@@ -189,7 +188,6 @@ pub extern "C" fn jfn_wake_event_new() -> *mut WakeEvent {
 ///
 /// # Safety
 /// `ev` must be a pointer previously returned by `jfn_wake_event_new`, or null.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wake_event_free(ev: *mut WakeEvent) {
     if !ev.is_null() {
         unsafe { drop(Box::from_raw(ev)) };
@@ -200,7 +198,6 @@ pub unsafe extern "C" fn jfn_wake_event_free(ev: *mut WakeEvent) {
 ///
 /// # Safety
 /// `ev` must point to a live wake event or be null.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wake_event_signal(ev: *const WakeEvent) {
     if let Some(ev) = unsafe { ev.as_ref() } {
         ev.signal();
@@ -211,7 +208,6 @@ pub unsafe extern "C" fn jfn_wake_event_signal(ev: *const WakeEvent) {
 ///
 /// # Safety
 /// `ev` must point to a live wake event or be null.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wake_event_drain(ev: *const WakeEvent) {
     if let Some(ev) = unsafe { ev.as_ref() } {
         ev.drain();
@@ -223,7 +219,6 @@ pub unsafe extern "C" fn jfn_wake_event_drain(ev: *const WakeEvent) {
 ///
 /// # Safety
 /// `ev` must point to a live wake event or be null.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wake_event_fd(ev: *const WakeEvent) -> libc::c_int {
     match unsafe { ev.as_ref() } {
         Some(ev) => ev.fd(),
@@ -236,7 +231,6 @@ pub unsafe extern "C" fn jfn_wake_event_fd(ev: *const WakeEvent) -> libc::c_int 
 ///
 /// # Safety
 /// `ev` must point to a live wake event or be null.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wake_event_handle(ev: *const WakeEvent) -> *mut core::ffi::c_void {
     match unsafe { ev.as_ref() } {
         Some(ev) => ev.handle() as *mut core::ffi::c_void,
