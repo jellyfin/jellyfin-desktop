@@ -21,8 +21,7 @@ fn main() {
         .to_string();
     println!("cargo:rustc-env=JFN_APP_CEF_VERSION={cef_version}");
 
-    // VERSION_FULL = "<VERSION>+<git short hash>[-dirty]" — matches the
-    // format produced by cmake/GenerateVersion.cmake for the C++ side.
+    // VERSION_FULL = "<VERSION>+<git short hash>[-dirty]".
     let git_hash = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .current_dir(repo_root)
