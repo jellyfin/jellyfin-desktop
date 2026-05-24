@@ -86,23 +86,15 @@ impl Platform for X11Platform {
         &self,
         s: SurfaceHandle,
         fade_sec: f32,
-        on_start: Option<unsafe extern "C" fn(*mut c_void)>,
-        start_ctx: *mut c_void,
-        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        on_done: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_ctx: *mut c_void,
-        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        on_start: Option<Box<dyn FnOnce() + Send>>,
+        on_done: Option<Box<dyn FnOnce() + Send>>,
     ) {
         unsafe {
             jfn_x11_fade_surface(
                 s as *mut crate::x11_state::PlatformSurface,
                 fade_sec,
                 on_start,
-                start_ctx,
-                start_dtor,
                 on_done,
-                done_ctx,
-                done_dtor,
             )
         };
     }

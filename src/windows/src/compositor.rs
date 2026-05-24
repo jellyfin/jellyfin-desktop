@@ -695,68 +695,35 @@ unsafe extern "C" {
     fn jfn_playback_display_hz() -> f64;
 }
 
-struct CbBox {
-    fn_: Option<unsafe extern "C" fn(*mut c_void)>,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-}
-
-unsafe impl Send for CbBox {}
-
-impl CbBox {
-    fn fire(&mut self) {
-        if let Some(f) = self.fn_.take() {
-            unsafe { f(self.ctx) };
-        }
-    }
-}
-
-impl Drop for CbBox {
-    fn drop(&mut self) {
-        if let Some(d) = self.dtor.take() {
-            unsafe { d(self.ctx) };
-        }
+fn fire(cb: Option<Box<dyn FnOnce() + Send>>) {
+    if let Some(f) = cb {
+        f();
     }
 }
 
 pub fn win_fade_surface(
     s: *mut c_void,
     fade_sec: f32,
-    on_fade_start: Option<unsafe extern "C" fn(*mut c_void)>,
-    start_ctx: *mut c_void,
-    start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    on_complete: Option<unsafe extern "C" fn(*mut c_void)>,
-    done_ctx: *mut c_void,
-    done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    on_fade_start: Option<Box<dyn FnOnce() + Send>>,
+    on_complete: Option<Box<dyn FnOnce() + Send>>,
 ) {
-    let mut start_cb = CbBox {
-        fn_: on_fade_start,
-        ctx: start_ctx,
-        dtor: start_dtor,
-    };
-    let mut done_cb = CbBox {
-        fn_: on_complete,
-        ctx: done_ctx,
-        dtor: done_dtor,
-    };
-
     if s.is_null() {
-        start_cb.fire();
-        done_cb.fire();
+        fire(on_fade_start);
+        fire(on_complete);
         return;
     }
     let p = s as *mut Surface;
     unsafe {
         if (*p).visual.is_none() || (*p).effect.is_none() {
-            start_cb.fire();
-            done_cb.fire();
+            fire(on_fade_start);
+            fire(on_complete);
             return;
         }
     }
     let fps = unsafe { jfn_playback_display_hz() };
     if fps <= 0.0 {
-        start_cb.fire();
-        done_cb.fire();
+        fire(on_fade_start);
+        fire(on_complete);
         return;
     }
 
@@ -765,7 +732,7 @@ pub fn win_fade_surface(
     }
     let surface_addr = p as usize;
     std::thread::spawn(move || {
-        start_cb.fire();
+        fire(on_fade_start);
 
         let mut total_frames = (fade_sec as f64 * fps) as i32;
         if total_frames < 1 {
@@ -801,7 +768,7 @@ pub fn win_fade_surface(
                 .fading
                 .store(false, Ordering::SeqCst);
         }
-        done_cb.fire();
+        fire(on_complete);
     });
 }
 

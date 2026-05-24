@@ -382,12 +382,8 @@ pub unsafe fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
 pub unsafe fn jfn_x11_fade_surface(
     s: *mut PlatformSurface,
     _fade_sec: f32,
-    on_start: Option<unsafe extern "C" fn(*mut c_void)>,
-    start_ctx: *mut c_void,
-    start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    on_done: Option<unsafe extern "C" fn(*mut c_void)>,
-    done_ctx: *mut c_void,
-    done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    on_start: Option<Box<dyn FnOnce() + Send>>,
+    on_done: Option<Box<dyn FnOnce() + Send>>,
 ) {
     // Visually hide the overlay window immediately. The CefLayer continues
     // to exist (the JS animation/teardown still runs); the X window just
@@ -396,15 +392,9 @@ pub unsafe fn jfn_x11_fade_surface(
         unsafe { jfn_x11_surface_set_visible(s, false) };
     }
     if let Some(f) = on_start {
-        unsafe { f(start_ctx) };
-    }
-    if let Some(d) = start_dtor {
-        unsafe { d(start_ctx) };
+        f();
     }
     if let Some(f) = on_done {
-        unsafe { f(done_ctx) };
-    }
-    if let Some(d) = done_dtor {
-        unsafe { d(done_ctx) };
+        f();
     }
 }

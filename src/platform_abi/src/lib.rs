@@ -99,18 +99,19 @@ pub trait Platform: Send + Sync {
     fn surface_resize(&self, _s: SurfaceHandle, _lw: c_int, _lh: c_int, _pw: c_int, _ph: c_int) {}
     fn surface_set_visible(&self, _s: SurfaceHandle, _visible: bool) {}
     fn restack(&self, _ordered: *const SurfaceHandle, _n: usize) {}
-    #[allow(clippy::too_many_arguments)]
     fn fade_surface(
         &self,
         _s: SurfaceHandle,
         _sec: f32,
-        _on_start: Option<unsafe extern "C" fn(*mut c_void)>,
-        _start_ctx: *mut c_void,
-        _start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        _on_done: Option<unsafe extern "C" fn(*mut c_void)>,
-        _done_ctx: *mut c_void,
-        _done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        on_start: Option<Box<dyn FnOnce() + Send>>,
+        on_done: Option<Box<dyn FnOnce() + Send>>,
     ) {
+        if let Some(f) = on_start {
+            f();
+        }
+        if let Some(f) = on_done {
+            f();
+        }
     }
 
     // Popup

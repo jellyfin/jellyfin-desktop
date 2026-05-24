@@ -867,38 +867,23 @@ impl Inner {
     fn fade(
         &self,
         sec: f32,
-        start_fn: Option<unsafe extern "C" fn(*mut c_void)>,
-        start_ctx: *mut c_void,
-        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_fn: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_ctx: *mut c_void,
-        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+        on_start: Option<Box<dyn FnOnce() + Send>>,
+        on_done: Option<Box<dyn FnOnce() + Send>>,
     ) {
         let surface = self.surface_ptr();
         if !surface.is_null()
             && let Some(p) = platform_ops::ops()
         {
-            p.fade_surface(
-                surface, sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx, done_dtor,
-            );
+            p.fade_surface(surface, sec, on_start, on_done);
             return;
         }
-        // No platform installed (early helper-process boot) — fire callbacks
-        // synchronously so any boxed state is freed; on_complete typically
-        // closes the browser, which destroys the surface via Browsers::remove.
-        unsafe {
-            if let Some(f) = start_fn {
-                f(start_ctx);
-            }
-            if let Some(d) = start_dtor {
-                d(start_ctx);
-            }
-            if let Some(f) = done_fn {
-                f(done_ctx);
-            }
-            if let Some(d) = done_dtor {
-                d(done_ctx);
-            }
+        // No platform installed (early helper-process boot) — invoke
+        // synchronously so on_done can still close the browser.
+        if let Some(f) = on_start {
+            f();
+        }
+        if let Some(f) = on_done {
+            f();
         }
     }
 
@@ -1730,16 +1715,10 @@ pub unsafe fn jfn_cef_layer_menu_paste(h: *const JfnCefLayer) {
 pub unsafe fn jfn_cef_layer_fade(
     h: *const JfnCefLayer,
     sec: f32,
-    start_fn: Option<unsafe extern "C" fn(*mut c_void)>,
-    start_ctx: *mut c_void,
-    start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    done_fn: Option<unsafe extern "C" fn(*mut c_void)>,
-    done_ctx: *mut c_void,
-    done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    on_start: Option<Box<dyn FnOnce() + Send>>,
+    on_done: Option<Box<dyn FnOnce() + Send>>,
 ) {
-    unsafe { arc(h) }.fade(
-        sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx, done_dtor,
-    );
+    unsafe { arc(h) }.fade(sec, on_start, on_done);
 }
 
 pub unsafe fn jfn_cef_layer_on_before_popup(
