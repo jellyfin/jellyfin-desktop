@@ -33,10 +33,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 // External entry points (C ABI).
 // =====================================================================
 
-unsafe extern "C" {
-    // jellyfin-desktop runtime hooks
-    fn jfn_shutdown_initiate();
+use jfn_playback::shutdown::jfn_shutdown_initiate;
 
+unsafe extern "C" {
     // mpv handle + property/window helpers (src/mpv/jfn_mpv_api.h)
     fn jfn_mpv_handle_get() -> *mut c_void;
     fn jfn_mpv_get_property_int(name: *const std::ffi::c_char, out: *mut i64) -> i32;
@@ -292,7 +291,7 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                     crate::compositor::jfn_win_update_surface_size(lw, lh, pw, ph);
                 }
             } else if msg.message == WM_CLOSE {
-                unsafe { jfn_shutdown_initiate() };
+                jfn_shutdown_initiate();
             }
         }
     }

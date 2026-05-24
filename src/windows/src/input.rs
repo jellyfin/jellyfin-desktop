@@ -97,32 +97,11 @@ const MOUSE_BTN_LEFT: u32 = 0x110;
 const MOUSE_BTN_RIGHT: u32 = 0x111;
 const MOUSE_BTN_MIDDLE: u32 = 0x112;
 
-// =====================================================================
-// Dispatch entry points implemented in src/input/src/lib.rs.
-// =====================================================================
-
-unsafe extern "C" {
-    fn jfn_input_dispatch_mouse_move(x: i32, y: i32, mods: u32, leave: c_int);
-    fn jfn_input_dispatch_mouse_button(button_code: u32, pressed: c_int, x: i32, y: i32, mods: u32);
-    fn jfn_input_dispatch_scroll(x: i32, y: i32, dx: i32, dy: i32, mods: u32);
-    fn jfn_input_dispatch_history_nav(forward: c_int);
-    fn jfn_input_dispatch_keyboard_focus(gained: c_int);
-    fn jfn_input_dispatch_char_sys(
-        codepoint: u32,
-        mods: u32,
-        native_code: u32,
-        is_system_key: c_int,
-    );
-    fn jfn_input_dispatch_key_full(
-        pressed: c_int,
-        windows_key_code: i32,
-        native_key_code: i32,
-        modifiers: u32,
-        character: u16,
-        unmodified_character: u16,
-        is_system_key: c_int,
-    );
-}
+use jfn_input::{
+    jfn_input_dispatch_char_sys, jfn_input_dispatch_history_nav, jfn_input_dispatch_key_full,
+    jfn_input_dispatch_keyboard_focus, jfn_input_dispatch_mouse_button,
+    jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
+};
 
 // =====================================================================
 // Shared state. `set_cursor` is invoked from the CEF UI thread; the
@@ -405,7 +384,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             let btn = get_xbutton_wparam(wp);
             if msg == WM_XBUTTONDOWN {
                 let fwd = if btn == XBUTTON2 { 1 } else { 0 };
-                unsafe { jfn_input_dispatch_history_nav(fwd) };
+                jfn_input_dispatch_history_nav(fwd);
             }
             return LRESULT(1); // TRUE per MSDN
         }
@@ -413,11 +392,11 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
         WM_APPCOMMAND => {
             let cmd = get_appcommand_lparam(lp) as u32;
             if cmd == APPCOMMAND_BROWSER_BACKWARD.0 {
-                unsafe { jfn_input_dispatch_history_nav(0) };
+                jfn_input_dispatch_history_nav(0);
                 return LRESULT(1);
             }
             if cmd == APPCOMMAND_BROWSER_FORWARD.0 {
-                unsafe { jfn_input_dispatch_history_nav(1) };
+                jfn_input_dispatch_history_nav(1);
                 return LRESULT(1);
             }
             // bubble unhandled commands to parent via DefWindowProc.
@@ -468,7 +447,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             if vk == VK_BROWSER_BACK.0 || vk == VK_BROWSER_FORWARD.0 {
                 if msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN {
                     let fwd = if vk == VK_BROWSER_FORWARD.0 { 1 } else { 0 };
-                    unsafe { jfn_input_dispatch_history_nav(fwd) };
+                    jfn_input_dispatch_history_nav(fwd);
                 }
                 return LRESULT(0);
             }
@@ -501,11 +480,11 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
         }
 
         WM_SETFOCUS => {
-            unsafe { jfn_input_dispatch_keyboard_focus(1) };
+            jfn_input_dispatch_keyboard_focus(1);
             return LRESULT(0);
         }
         WM_KILLFOCUS => {
-            unsafe { jfn_input_dispatch_keyboard_focus(0) };
+            jfn_input_dispatch_keyboard_focus(0);
             return LRESULT(0);
         }
 

@@ -1234,7 +1234,9 @@ name = "jfn-windows"
 version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
+ "jfn-input",
  "jfn-platform-abi",
+ "jfn-playback",
  "tracing",
  "windows",
  "windows-core",
