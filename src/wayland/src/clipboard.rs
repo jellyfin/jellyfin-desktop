@@ -162,11 +162,9 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for State {
                     dev.destroy();
                 }
             }
-            dc_device::Event::PrimarySelection { id } => {
-                if let Some(offer) = id {
-                    state.pending_offer_mimes.remove(&offer.id().protocol_id());
-                    offer.destroy();
-                }
+            dc_device::Event::PrimarySelection { id: Some(offer) } => {
+                state.pending_offer_mimes.remove(&offer.id().protocol_id());
+                offer.destroy();
             }
             _ => {}
         }
