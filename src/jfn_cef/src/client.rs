@@ -1343,23 +1343,20 @@ unsafe fn arc(h: *const JfnCefLayer) -> Arc<Inner> {
     Arc::clone(unsafe { &(*h).inner })
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_layer_new() -> *mut JfnCefLayer {
+pub fn jfn_cef_layer_new() -> *mut JfnCefLayer {
     Box::into_raw(Box::new(JfnCefLayer {
         inner: Inner::new(),
     }))
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_free(h: *mut JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_free(h: *mut JfnCefLayer) {
     if h.is_null() {
         return;
     }
     drop(unsafe { Box::from_raw(h) });
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_char) {
+pub unsafe fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_char) {
     let inner = unsafe { arc(h) };
     let new = if s.is_null() {
         String::new()
@@ -1369,34 +1366,29 @@ pub unsafe extern "C" fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const
     *inner.name.lock().unwrap() = new;
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool {
+pub unsafe fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool {
     unsafe { arc(h) }.closed.load(Ordering::Acquire)
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_is_loaded(h: *const JfnCefLayer) -> bool {
+pub unsafe fn jfn_cef_layer_is_loaded(h: *const JfnCefLayer) -> bool {
     unsafe { arc(h) }.loaded.load(Ordering::Acquire)
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_closed(h: *const JfnCefLayer, v: bool) {
+pub unsafe fn jfn_cef_layer_set_closed(h: *const JfnCefLayer, v: bool) {
     let l = unsafe { arc(h) };
     let _g = l.close_mtx.lock().unwrap();
     l.closed.store(v, Ordering::Release);
     l.close_cv.notify_all();
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_loaded(h: *const JfnCefLayer, v: bool) {
+pub unsafe fn jfn_cef_layer_set_loaded(h: *const JfnCefLayer, v: bool) {
     let l = unsafe { arc(h) };
     let _g = l.load_mtx.lock().unwrap();
     l.loaded.store(v, Ordering::Release);
     l.load_cv.notify_all();
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
     let l = unsafe { arc(h) };
     let mut g = l.close_mtx.lock().unwrap();
     while !l.closed.load(Ordering::Acquire) {
@@ -1404,8 +1396,7 @@ pub unsafe extern "C" fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_wait_for_load(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_wait_for_load(h: *const JfnCefLayer) {
     let l = unsafe { arc(h) };
     let mut g = l.load_mtx.lock().unwrap();
     while !l.loaded.load(Ordering::Acquire) {
@@ -1416,22 +1407,19 @@ pub unsafe extern "C" fn jfn_cef_layer_wait_for_load(h: *const JfnCefLayer) {
 /// Process-wide default frame rate (set once at startup from C++ via the
 /// Browsers ctor). Consumed by Inner::cef_create_browser when building
 /// CefBrowserSettings.windowless_frame_rate. Zero values are ignored.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_set_default_frame_rate(hz: c_int) {
+pub fn jfn_cef_set_default_frame_rate(hz: c_int) {
     if hz > 0 {
         DEFAULT_FRAME_RATE.store(hz, Ordering::Release);
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_set_use_shared_textures(enable: bool) {
+pub fn jfn_cef_set_use_shared_textures(enable: bool) {
     USE_SHARED_TEXTURES.store(enable, Ordering::Release);
 }
 
 /// Set the injection-profile kind for this layer ("web" / "overlay" /
 /// "about"). The DictionaryValue is built lazily at browser-create time.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_injection_profile_kind(
+pub unsafe fn jfn_cef_layer_set_injection_profile_kind(
     h: *const JfnCefLayer,
     kind_utf8: *const c_char,
     len: usize,
@@ -1443,8 +1431,7 @@ pub unsafe extern "C" fn jfn_cef_layer_set_injection_profile_kind(
 
 /// Browser-identity for active-input target comparison and similar. Returns
 /// CEF's browser identifier (positive integer) or 0 if no browser is alive.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_browser_id(h: *const JfnCefLayer) -> c_int {
+pub unsafe fn jfn_cef_layer_browser_id(h: *const JfnCefLayer) -> c_int {
     let inner = unsafe { arc(h) };
     let g = inner.browser.lock().unwrap();
     g.as_ref().map(|b| b.identifier()).unwrap_or(0)
@@ -1452,8 +1439,7 @@ pub unsafe extern "C" fn jfn_cef_layer_browser_id(h: *const JfnCefLayer) -> c_in
 
 /// Force-close this layer's CefBrowser. Called from Browsers::closeAll on
 /// shutdown. No-op when no browser is alive.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_close_browser_force(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_close_browser_force(h: *const JfnCefLayer) {
     let inner = unsafe { arc(h) };
     if let Some(host) = inner.host() {
         host.close_browser(1);
@@ -1570,18 +1556,15 @@ pub unsafe fn jfn_cef_layer_send_mouse_wheel(
     host.send_mouse_wheel_event(Some(&me), dx, dy);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_surface(h: *const JfnCefLayer, s: *mut c_void) {
+pub unsafe fn jfn_cef_layer_set_surface(h: *const JfnCefLayer, s: *mut c_void) {
     *unsafe { arc(h) }.surface.lock().unwrap() = s;
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_get_surface(h: *const JfnCefLayer) -> *mut c_void {
+pub unsafe fn jfn_cef_layer_get_surface(h: *const JfnCefLayer) -> *mut c_void {
     unsafe { arc(h) }.surface_ptr()
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_resize(
+pub unsafe fn jfn_cef_layer_resize(
     h: *const JfnCefLayer,
     w: c_int,
     height: c_int,
@@ -1591,23 +1574,19 @@ pub unsafe extern "C" fn jfn_cef_layer_resize(
     unsafe { arc(h) }.resize(w, height, pw, ph);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f64) {
+pub unsafe fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f64) {
     unsafe { arc(h) }.set_refresh_rate(hz);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_kick_invalidate_loop(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_kick_invalidate_loop(h: *const JfnCefLayer) {
     unsafe { arc(h) }.kick_invalidate_loop();
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_should_present_paint(h: *const JfnCefLayer) -> bool {
+pub unsafe fn jfn_cef_layer_should_present_paint(h: *const JfnCefLayer) -> bool {
     unsafe { arc(h) }.should_present_paint()
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_get_view_rect(
+pub unsafe fn jfn_cef_layer_get_view_rect(
     h: *const JfnCefLayer,
     out_w: *mut c_int,
     out_h: *mut c_int,
@@ -1619,8 +1598,7 @@ pub unsafe extern "C" fn jfn_cef_layer_get_view_rect(
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_get_screen_info(
+pub unsafe fn jfn_cef_layer_get_screen_info(
     h: *const JfnCefLayer,
     out_scale: *mut f32,
     out_w: *mut c_int,
@@ -1641,8 +1619,7 @@ pub unsafe extern "C" fn jfn_cef_layer_get_screen_info(
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_create(
+pub unsafe fn jfn_cef_layer_create(
     h: *const JfnCefLayer,
     url_utf8: *const c_char,
     len: usize,
@@ -1651,13 +1628,11 @@ pub unsafe extern "C" fn jfn_cef_layer_create(
     unsafe { arc(h) }.create(&url);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_reset(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_reset(h: *const JfnCefLayer) {
     unsafe { arc(h) }.reset();
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_load_url(
+pub unsafe fn jfn_cef_layer_load_url(
     h: *const JfnCefLayer,
     url_utf8: *const c_char,
     len: usize,
@@ -1666,8 +1641,7 @@ pub unsafe extern "C" fn jfn_cef_layer_load_url(
     unsafe { arc(h) }.load_url(&url);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_exec_js(
+pub unsafe fn jfn_cef_layer_exec_js(
     h: *const JfnCefLayer,
     js_utf8: *const c_char,
     len: usize,
@@ -1677,8 +1651,7 @@ pub unsafe extern "C" fn jfn_cef_layer_exec_js(
 }
 
 #[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCefLayer) {
     unsafe { arc(h) }.send_external_begin_frame();
 }
 
@@ -1701,20 +1674,17 @@ pub unsafe fn jfn_cef_layer_select_all(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_select_all();
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_after_created(h: *const JfnCefLayer) -> c_int {
+pub unsafe fn jfn_cef_layer_on_after_created(h: *const JfnCefLayer) -> c_int {
     unsafe { arc(h) }.on_after_created()
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_before_close_hook(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_on_before_close_hook(h: *const JfnCefLayer) {
     unsafe { arc(h) }.on_before_close();
 }
 
 /// Returns a heap-allocated C string of the buffered URL (or NULL if none).
 /// Caller frees with jfn_cef_layer_free_string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_take_pending_url(h: *const JfnCefLayer) -> *mut c_char {
+pub unsafe fn jfn_cef_layer_take_pending_url(h: *const JfnCefLayer) -> *mut c_char {
     match unsafe { arc(h) }.take_pending_url() {
         None => std::ptr::null_mut(),
         Some(s) => std::ffi::CString::new(s)
@@ -1723,21 +1693,18 @@ pub unsafe extern "C" fn jfn_cef_layer_take_pending_url(h: *const JfnCefLayer) -
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_fullscreen_mode_change(
+pub unsafe fn jfn_cef_layer_on_fullscreen_mode_change(
     h: *const JfnCefLayer,
     fullscreen: bool,
 ) {
     unsafe { arc(h) }.on_fullscreen_mode_change(fullscreen);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_cursor_change(h: *const JfnCefLayer, cursor_type: c_int) {
+pub unsafe fn jfn_cef_layer_on_cursor_change(h: *const JfnCefLayer, cursor_type: c_int) {
     unsafe { arc(h) }.on_cursor_change(cursor_type);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_console_message(
+pub unsafe fn jfn_cef_layer_on_console_message(
     h: *const JfnCefLayer,
     level: c_int,
     msg_utf8: *const c_char,
@@ -1751,8 +1718,7 @@ pub unsafe extern "C" fn jfn_cef_layer_on_console_message(
     unsafe { arc(h) }.on_console_message(level, &msg, &src, line);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_load_end(
+pub unsafe fn jfn_cef_layer_on_load_end(
     h: *const JfnCefLayer,
     is_main: bool,
     code: c_int,
@@ -1763,8 +1729,7 @@ pub unsafe extern "C" fn jfn_cef_layer_on_load_end(
     unsafe { arc(h) }.on_load_end(is_main, code, &url);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_load_error(
+pub unsafe fn jfn_cef_layer_on_load_error(
     h: *const JfnCefLayer,
     code: c_int,
     text_utf8: *const c_char,
@@ -1777,23 +1742,19 @@ pub unsafe extern "C" fn jfn_cef_layer_on_load_error(
     unsafe { arc(h) }.on_load_error(code, &text, &url);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_try_paste(h: *const JfnCefLayer) -> bool {
+pub unsafe fn jfn_cef_layer_try_paste(h: *const JfnCefLayer) -> bool {
     unsafe { arc(h) }.try_paste()
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, visible: bool) {
+pub unsafe fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, visible: bool) {
     unsafe { arc(h) }.set_visible(visible);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_menu_paste(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_menu_paste(h: *const JfnCefLayer) {
     unsafe { arc(h) }.menu_paste();
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_fade(
+pub unsafe fn jfn_cef_layer_fade(
     h: *const JfnCefLayer,
     sec: f32,
     start_fn: Option<unsafe extern "C" fn(*mut c_void)>,
@@ -1808,8 +1769,7 @@ pub unsafe extern "C" fn jfn_cef_layer_fade(
     );
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_before_popup(
+pub unsafe fn jfn_cef_layer_on_before_popup(
     h: *const JfnCefLayer,
     url_utf8: *const c_char,
     len: usize,
@@ -1926,8 +1886,7 @@ impl JfnCefLayer {
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_message_handler(
+pub unsafe fn jfn_cef_layer_set_message_handler(
     h: *const JfnCefLayer,
     fn_ptr: *mut c_void,
     ctx: *mut c_void,
@@ -1942,8 +1901,7 @@ pub unsafe extern "C" fn jfn_cef_layer_set_message_handler(
     *inner.message_handler.lock().unwrap() = new;
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_created_callback(
+pub unsafe fn jfn_cef_layer_set_created_callback(
     h: *const JfnCefLayer,
     fn_ptr: *mut c_void,
     ctx: *mut c_void,
@@ -1958,8 +1916,7 @@ pub unsafe extern "C" fn jfn_cef_layer_set_created_callback(
     *inner.created_callback.lock().unwrap() = new;
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_before_close_callback(
+pub unsafe fn jfn_cef_layer_set_before_close_callback(
     h: *const JfnCefLayer,
     fn_ptr: *mut c_void,
     ctx: *mut c_void,
@@ -1974,8 +1931,7 @@ pub unsafe extern "C" fn jfn_cef_layer_set_before_close_callback(
     *inner.before_close_callback.lock().unwrap() = new;
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_builder(
+pub unsafe fn jfn_cef_layer_set_context_menu_builder(
     h: *const JfnCefLayer,
     fn_ptr: *mut c_void,
     ctx: *mut c_void,
@@ -1990,8 +1946,7 @@ pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_builder(
     *inner.context_menu_builder.lock().unwrap() = new;
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_dispatcher(
+pub unsafe fn jfn_cef_layer_set_context_menu_dispatcher(
     h: *const JfnCefLayer,
     fn_ptr: *mut c_void,
     ctx: *mut c_void,
@@ -2006,8 +1961,7 @@ pub unsafe extern "C" fn jfn_cef_layer_set_context_menu_dispatcher(
     *inner.context_menu_dispatcher.lock().unwrap() = new;
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_has_context_menu_builder(h: *const JfnCefLayer) -> bool {
+pub unsafe fn jfn_cef_layer_has_context_menu_builder(h: *const JfnCefLayer) -> bool {
     unsafe { arc(h) }
         .context_menu_builder
         .lock()
@@ -2015,8 +1969,7 @@ pub unsafe extern "C" fn jfn_cef_layer_has_context_menu_builder(h: *const JfnCef
         .is_some()
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_invoke_message_handler(
+pub unsafe fn jfn_cef_layer_invoke_message_handler(
     h: *const JfnCefLayer,
     name_utf8: *const c_char,
     name_len: usize,
@@ -2029,8 +1982,7 @@ pub unsafe extern "C" fn jfn_cef_layer_invoke_message_handler(
     g.as_ref().map(|f| f(&name, args, browser)).unwrap_or(false)
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_invoke_created_callback(
+pub unsafe fn jfn_cef_layer_invoke_created_callback(
     h: *const JfnCefLayer,
     browser: *mut c_void,
 ) {
@@ -2044,8 +1996,7 @@ pub unsafe extern "C" fn jfn_cef_layer_invoke_created_callback(
 /// Atomically take the before-close slot and invoke it. Matches the original
 /// "move out before invoking" semantics in OnBeforeClose so the callback can
 /// safely install a new one without destroying its own closure mid-call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_take_and_invoke_before_close(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_take_and_invoke_before_close(h: *const JfnCefLayer) {
     let slot = unsafe { arc(h) }
         .before_close_callback
         .lock()
@@ -2056,8 +2007,7 @@ pub unsafe extern "C" fn jfn_cef_layer_take_and_invoke_before_close(h: *const Jf
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_invoke_context_menu_builder(
+pub unsafe fn jfn_cef_layer_invoke_context_menu_builder(
     h: *const JfnCefLayer,
     menu_model: *mut c_void,
 ) {
@@ -2068,8 +2018,7 @@ pub unsafe extern "C" fn jfn_cef_layer_invoke_context_menu_builder(
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_invoke_context_menu_dispatcher(
+pub unsafe fn jfn_cef_layer_invoke_context_menu_dispatcher(
     h: *const JfnCefLayer,
     command_id: c_int,
 ) -> bool {
@@ -2086,13 +2035,11 @@ fn read_utf8(p: *const c_char, len: usize) -> String {
     String::from_utf8_lossy(slice).into_owned()
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_popup_show(h: *const JfnCefLayer, show: bool) {
+pub unsafe fn jfn_cef_layer_on_popup_show(h: *const JfnCefLayer, show: bool) {
     unsafe { arc(h) }.on_popup_show(show);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_popup_size(
+pub unsafe fn jfn_cef_layer_on_popup_size(
     h: *const JfnCefLayer,
     x: c_int,
     y: c_int,
@@ -2105,8 +2052,7 @@ pub unsafe extern "C" fn jfn_cef_layer_on_popup_size(
 /// Deposit popup options received over the "popupOptions" renderer IPC.
 /// `options` is an array of NUL-terminated UTF-8 strings (length `len`).
 /// Triggers try_show_popup once size + options have both arrived.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_popup_options(
+pub unsafe fn jfn_cef_layer_set_popup_options(
     h: *const JfnCefLayer,
     options: *const *const c_char,
     len: usize,
@@ -2126,13 +2072,11 @@ pub unsafe extern "C" fn jfn_cef_layer_set_popup_options(
     inner.set_popup_options(opts, selected_idx);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_deactivated(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_on_deactivated(h: *const JfnCefLayer) {
     unsafe { arc(h) }.on_deactivated();
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_paint(
+pub unsafe fn jfn_cef_layer_on_paint(
     h: *const JfnCefLayer,
     is_popup: bool,
     dirty: *const platform_ops::JfnRect,
@@ -2144,8 +2088,7 @@ pub unsafe extern "C" fn jfn_cef_layer_on_paint(
     unsafe { arc(h) }.on_paint(is_popup, dirty, n, buffer, w, height);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_on_accelerated_paint(
+pub unsafe fn jfn_cef_layer_on_accelerated_paint(
     h: *const JfnCefLayer,
     is_popup: bool,
     info: *const c_void,
@@ -2153,21 +2096,18 @@ pub unsafe extern "C" fn jfn_cef_layer_on_accelerated_paint(
     unsafe { arc(h) }.on_accelerated_paint(is_popup, info);
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_frame_rate(h: *const JfnCefLayer) -> c_int {
+pub unsafe fn jfn_cef_layer_frame_rate(h: *const JfnCefLayer) -> c_int {
     unsafe { arc(h) }.frame_rate.load(Ordering::Acquire)
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_bump_resize_gen(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_bump_resize_gen(h: *const JfnCefLayer) {
     unsafe { arc(h) }.resize_gen.fetch_add(1, Ordering::AcqRel);
 }
 
 // Marks the invalidate loop for stop on the next tick. Called from
 // OnBeforeClose on the C++ side; ensures the posted-task Arc clones drop and
 // the layer can finish destruction.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_stop_invalidate(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_stop_invalidate(h: *const JfnCefLayer) {
     unsafe { arc(h) }
         .invalidate_stop
         .store(true, Ordering::Release);
@@ -2175,8 +2115,7 @@ pub unsafe extern "C" fn jfn_cef_layer_stop_invalidate(h: *const JfnCefLayer) {
 
 // Read the layer name back as a heap-allocated C string. Caller must free
 // with jfn_cef_layer_free_string. Used by C++ for log lines after slice 9.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_name_dup(h: *const JfnCefLayer) -> *mut c_char {
+pub unsafe fn jfn_cef_layer_name_dup(h: *const JfnCefLayer) -> *mut c_char {
     let s = unsafe { arc(h) }.name_str();
     match std::ffi::CString::new(s) {
         Ok(c) => c.into_raw(),
@@ -2184,8 +2123,7 @@ pub unsafe extern "C" fn jfn_cef_layer_name_dup(h: *const JfnCefLayer) -> *mut c
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_free_string(p: *mut c_char) {
+pub unsafe fn jfn_cef_layer_free_string(p: *mut c_char) {
     if p.is_null() {
         return;
     }

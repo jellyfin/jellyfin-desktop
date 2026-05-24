@@ -633,12 +633,10 @@ pub(crate) fn drop_input_textures() {
 // Vtable-exposed compositor functions
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_set_expected_size(w: c_int, h: c_int) {
     *G_EXPECTED_SIZE.lock().unwrap() = (w, h);
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_alloc_surface() -> *mut c_void {
     // Allocate the Surface up front; the AppKit setup happens on the
     // main thread but writes into this stable heap address.
@@ -669,7 +667,6 @@ pub extern "C" fn macos_alloc_surface() -> *mut c_void {
     surf_ptr as *mut c_void
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_free_surface(s: *mut c_void) {
     if s.is_null() {
         return;
@@ -701,7 +698,6 @@ pub extern "C" fn macos_free_surface(s: *mut c_void) {
     unsafe { drop(Box::from_raw(s_ptr)) };
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     if s.is_null() || raw_info.is_null() {
         return false;
@@ -739,7 +735,6 @@ pub extern "C" fn macos_surface_present(s: *mut c_void, raw_info: *const c_void)
     true
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_surface_resize(
     s: *mut c_void,
     lw: c_int,
@@ -782,7 +777,6 @@ pub extern "C" fn macos_surface_resize(
     });
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_surface_set_visible(s: *mut c_void, visible: bool) {
     if s.is_null() {
         return;
@@ -796,7 +790,6 @@ pub extern "C" fn macos_surface_set_visible(s: *mut c_void, visible: bool) {
     });
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_restack(ordered: *const *mut c_void, n: usize) {
     // Copy the order into a Vec<usize> we can move into the closure.
     let order: Vec<usize> = if ordered.is_null() || n == 0 {
@@ -891,7 +884,6 @@ impl Drop for CallbackTriple {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_fade_surface(
     s: *mut c_void,
     fade_sec: f32,
@@ -1042,7 +1034,6 @@ unsafe extern "C" {
 // Metal, clears the stack.
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_macos_compositor_cleanup() {
     // Detach lingering subviews + release retained AppKit objects.
     let stragglers: Vec<usize> = {

@@ -24,7 +24,6 @@ pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
 // Stateless no-ops ported to native Rust. The C++ statics were deleted
 // so the link table picks these up by symbol name.
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_end_transition() {
     // Transition-end is detected inline by macos_surface_present when
     // an incoming frame matches g_expected_w/h; the explicit vtable
@@ -77,7 +76,6 @@ unsafe extern "C" fn theme_color_trampoline(ctx: *mut c_void) {
 /// resize-gap stale-texture window (which CLAUDE.md explicitly accepts
 /// over stretching) matches mpv's own background — no visible flash.
 /// Hops to the main queue when called from another thread.
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_set_theme_color(rgb: u32) {
     if is_main_thread() {
         jfn_macos_apply_theme_color_on_main(rgb);
@@ -131,7 +129,6 @@ const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 static G_IDLE_ASSERTION: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(K_IOPM_NULL_ASSERTION_ID);
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_set_idle_inhibit(level: c_int) {
     // Release any active assertion first (matches C++ behavior on every
     // call, not just level == None).
@@ -195,7 +192,6 @@ pub extern "C" fn macos_set_idle_inhibit(level: c_int) {
 /// Backing scale factor of `g_window`'s screen. Falls back to the main
 /// screen pre-window so default-geometry sizing at startup gets a real
 /// value instead of 1.0.
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_get_scale() -> f32 {
     unsafe {
         let win = jfn_macos_get_window();
@@ -216,7 +212,6 @@ pub extern "C" fn macos_get_scale() -> f32 {
 /// Query the saved window position in backing pixels, relative to the
 /// screen's visible frame (excluding menu bar / dock), Y measured from
 /// the top. Lossless round-trip with mpv's `--geometry +X+Y`.
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
     unsafe {
         let win = jfn_macos_get_window();
@@ -248,20 +243,17 @@ pub extern "C" fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> b
 
 pub(crate) static G_IN_TRANSITION: AtomicBool = AtomicBool::new(false);
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_begin_transition() {
     G_IN_TRANSITION.store(true, Ordering::SeqCst);
     compositor::drop_input_textures();
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_in_transition() -> bool {
     G_IN_TRANSITION.load(Ordering::SeqCst)
 }
 
 /// Called by C++ macos_surface_present when an incoming frame matches
 /// the expected post-transition size.
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_macos_transition_clear() {
     G_IN_TRANSITION.store(false, Ordering::SeqCst);
 }
@@ -270,7 +262,6 @@ pub extern "C" fn jfn_macos_transition_clear() {
 /// original ignored them too because a saved (x, y) in backing pixels
 /// can't be unambiguously mapped to an `NSScreen` without identity
 /// persistence.
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_get_display_scale(_x: c_int, _y: c_int) -> f32 {
     unsafe {
         let screen: *mut objc2::runtime::AnyObject =
@@ -286,7 +277,6 @@ pub extern "C" fn macos_get_display_scale(_x: c_int, _y: c_int) -> f32 {
 /// Clamp the saved (w, h, x, y) window geometry — in backing pixels,
 /// relative to the main screen's visible frame — so the window stays
 /// fully on-screen. Centers any unset axis (negative input).
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_clamp_window_geometry(
     w: *mut c_int,
     h: *mut c_int,
@@ -333,7 +323,6 @@ pub extern "C" fn macos_clamp_window_geometry(
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_surface_present_software(
     _s: *mut c_void,
     _dirty: *const JfnRect,
@@ -366,7 +355,6 @@ unsafe extern "C" {
     fn jfn_mpv_toggle_fullscreen();
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_set_fullscreen(fullscreen: bool) {
     if unsafe { jfn_mpv_handle_get() }.is_null() {
         return;
@@ -374,7 +362,6 @@ pub extern "C" fn macos_set_fullscreen(fullscreen: bool) {
     unsafe { jfn_mpv_set_fullscreen(fullscreen) };
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_toggle_fullscreen() {
     if unsafe { jfn_mpv_handle_get() }.is_null() {
         return;
@@ -411,7 +398,6 @@ const NS_EVENT_MASK_ANY: u64 = u64::MAX;
 /// CEF's wake source, GCD main-queue blocks). Used during the
 /// pre-CefInitialize wait-for-VO loop where we interleave with mpv
 /// events and during the macos_init wait-for-window loop.
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_pump() {
     unsafe {
         // @autoreleasepool — bracket allocations from sendEvent / event
@@ -448,7 +434,6 @@ pub extern "C" fn macos_pump() {
 /// NSDefaultRunLoopMode does not. CFRunLoop sources installed in
 /// CommonModes (CEF wake source, GCD main-queue blocks) all fire from
 /// inside this call without polling.
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_run_main_loop() {
     unsafe {
         let app: *mut objc2::runtime::AnyObject =
@@ -493,7 +478,6 @@ unsafe extern "C" fn wake_trampoline(_ctx: *mut c_void) {
 /// `dispatch_async_f` and from there calls `-stop:` plus a sentinel
 /// NSEvent so the loop wakes and exits on its next iteration. The
 /// trampoline carries no state — wake is fire-and-forget.
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_wake_main_loop() {
     unsafe {
         dispatch_async_f(
@@ -514,7 +498,6 @@ pub extern "C" fn macos_wake_main_loop() {
 // are synchronous so the callback fires inline on the calling thread.
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub extern "C" fn macos_clipboard_read_text_async(
     on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
     ctx: *mut c_void,

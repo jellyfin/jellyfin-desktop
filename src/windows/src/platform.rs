@@ -33,22 +33,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 // External entry points (C ABI).
 // =====================================================================
 
+use jfn_mpv::api::{
+    jfn_mpv_get_property_int, jfn_mpv_set_fullscreen, jfn_mpv_set_window_maximized,
+    jfn_mpv_set_window_minimized, jfn_mpv_toggle_fullscreen,
+};
+use jfn_mpv::boot::jfn_mpv_handle_get;
+use jfn_playback::ingest_driver::{jfn_playback_display_scale, jfn_playback_fullscreen};
 use jfn_playback::shutdown::jfn_shutdown_initiate;
-
-unsafe extern "C" {
-    // mpv handle + property/window helpers (src/mpv/jfn_mpv_api.h)
-    fn jfn_mpv_handle_get() -> *mut c_void;
-    fn jfn_mpv_get_property_int(name: *const std::ffi::c_char, out: *mut i64) -> i32;
-    fn jfn_mpv_set_fullscreen(v: bool);
-    fn jfn_mpv_toggle_fullscreen();
-    fn jfn_mpv_set_window_minimized(v: bool);
-    fn jfn_mpv_set_window_maximized(v: bool);
-
-    // playback state (src/playback/jfn_ingest.h)
-    fn jfn_playback_fullscreen() -> bool;
-    fn jfn_playback_display_scale() -> f64;
-
-}
 
 // Input thread lives in `crate::input`.
 use crate::input::{
@@ -102,7 +93,6 @@ fn hwnd_from_raw(raw: usize) -> HWND {
 
 /// `jfn_win_get_hwnd` — returns mpv's HWND; nullptr before win_init or
 /// after cleanup.
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_win_get_hwnd() -> *mut c_void {
     STATE.lock().unwrap().mpv_hwnd_raw as *mut c_void
 }
@@ -116,7 +106,6 @@ fn is_fullscreen_style(style: isize) -> bool {
 // Scale + content-size lookups.
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_get_scale() -> f32 {
     let scale = unsafe { jfn_playback_display_scale() };
     if scale > 0.0 {
@@ -135,7 +124,6 @@ pub extern "C" fn win_get_scale() -> f32 {
 
 // Per-monitor DPI (GetDpiForMonitor) lives in Shcore.dll which isn't
 // currently linked; fall back to system DPI and ignore (x, y).
-#[unsafe(no_mangle)]
 pub extern "C" fn win_get_display_scale(_x: c_int, _y: c_int) -> f32 {
     let dpi = unsafe { GetDpiForSystem() };
     if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
@@ -154,7 +142,6 @@ fn end_transition_if_settled(target_fullscreen: bool) {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_set_fullscreen(fullscreen: bool) {
     if unsafe { jfn_mpv_handle_get() }.is_null() {
         return;
@@ -195,7 +182,6 @@ pub extern "C" fn win_set_fullscreen(fullscreen: bool) {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_toggle_fullscreen() {
     if unsafe { jfn_mpv_handle_get() }.is_null() {
         return;
@@ -304,12 +290,10 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
 // Platform vtable entry points.
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_early_init() {
     // Nothing needed on Windows before mpv starts.
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_init(_mpv: *mut c_void) -> bool {
     let mut wid: i64 = 0;
     let name = c"window-id";
@@ -367,7 +351,6 @@ pub extern "C" fn win_init(_mpv: *mut c_void) -> bool {
     true
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_cleanup() {
     unsafe { jfn_input_windows_stop_input_thread() };
     let join = STATE.lock().unwrap().input_thread.take();
@@ -396,7 +379,6 @@ pub extern "C" fn win_cleanup() {
 /// taskbar), in physical pixels. Matches mpv's `--geometry +X+Y`
 /// coordinate system on Windows (`vo_calc_window_geometry` uses the
 /// working area).
-#[unsafe(no_mangle)]
 pub extern "C" fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
     let hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
     if hwnd_raw == 0 {
@@ -425,7 +407,6 @@ pub extern "C" fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> boo
 /// Resolve saved geometry against the primary monitor's working area so the
 /// window never opens larger than the screen or off-screen, and center any
 /// unset axis.
-#[unsafe(no_mangle)]
 pub extern "C" fn win_clamp_window_geometry(
     w: *mut c_int,
     h: *mut c_int,

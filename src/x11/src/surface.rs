@@ -68,7 +68,6 @@ fn create_overlay_window(
     win
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     let s = Box::into_raw(Box::new(PlatformSurface::new()));
     let Some(conn) = crate::x11_state::conn() else {
@@ -109,7 +108,6 @@ pub extern "C" fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     s
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     if s.is_null() {
         return;
@@ -150,12 +148,10 @@ pub unsafe extern "C" fn jfn_x11_free_surface(s: *mut PlatformSurface) {
 }
 
 /// Accelerated present is not supported on the X11 backend.
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_x11_surface_present(_s: *mut PlatformSurface, _info: *const c_void) -> bool {
     false
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_x11_surface_present_software(
     s: *mut PlatformSurface,
     dirty: *const JfnRect,
@@ -247,7 +243,6 @@ pub unsafe extern "C" fn jfn_x11_surface_present_software(
     true
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_x11_surface_resize(
     s: *mut PlatformSurface,
     _lw: c_int,
@@ -292,7 +287,6 @@ pub unsafe extern "C" fn jfn_x11_surface_resize(
     let _ = conn.flush();
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool) {
     if s.is_null() {
         return;
@@ -349,7 +343,6 @@ pub unsafe extern "C" fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, vi
 }
 
 /// Stack `ordered[0..n]` above the mpv parent, bottom to top.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
     if n == 0 || ordered.is_null() {
         return;
@@ -387,7 +380,6 @@ pub unsafe extern "C" fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n
 /// per-window opacity that survives across compositors, so we hard-unmap
 /// the X window as the visual side of the fade and fire the callback
 /// contract synchronously.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_x11_fade_surface(
     s: *mut PlatformSurface,
     _fade_sec: f32,
