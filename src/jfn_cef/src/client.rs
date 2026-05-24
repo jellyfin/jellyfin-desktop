@@ -1380,6 +1380,7 @@ pub(crate) unsafe fn jfn_cef_layer_set_focus(h: *const JfnCefLayer, focus: bool)
     }
 }
 
+#[allow(clippy::too_many_arguments)] // mirrors CEF's KeyEvent layout 1:1
 pub(crate) unsafe fn jfn_cef_layer_send_key_event(
     h: *const JfnCefLayer,
     type_: c_int,

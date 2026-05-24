@@ -122,15 +122,23 @@ const BTN_EXTRA: u32 = 0x114;
 const BTN_FORWARD: u32 = 0x115;
 const BTN_BACK: u32 = 0x116;
 
+pub type MouseMoveFn = fn(x: i32, y: i32, mods: u32, leave: c_int);
+pub type MouseButtonFn = fn(button: u32, pressed: c_int, x: i32, y: i32, mods: u32);
+pub type ScrollFn = fn(x: i32, y: i32, dx: i32, dy: i32, mods: u32);
+pub type HistoryNavFn = fn(forward: c_int);
+pub type KbFocusFn = fn(gained: c_int);
+pub type KeyFn = fn(keysym: u32, native_code: u32, mods: u32, pressed: c_int);
+pub type CharFn = fn(codepoint: u32, mods: u32, native_code: u32);
+
 #[derive(Clone, Copy)]
 pub struct Callbacks {
-    pub mouse_move: Option<fn(x: i32, y: i32, mods: u32, leave: c_int)>,
-    pub mouse_button: Option<fn(button: u32, pressed: c_int, x: i32, y: i32, mods: u32)>,
-    pub scroll: Option<fn(x: i32, y: i32, dx: i32, dy: i32, mods: u32)>,
-    pub history_nav: Option<fn(forward: c_int)>,
-    pub kb_focus: Option<fn(gained: c_int)>,
-    pub key: Option<fn(keysym: u32, native_code: u32, mods: u32, pressed: c_int)>,
-    pub char_: Option<fn(codepoint: u32, mods: u32, native_code: u32)>,
+    pub mouse_move: Option<MouseMoveFn>,
+    pub mouse_button: Option<MouseButtonFn>,
+    pub scroll: Option<ScrollFn>,
+    pub history_nav: Option<HistoryNavFn>,
+    pub kb_focus: Option<KbFocusFn>,
+    pub key: Option<KeyFn>,
+    pub char_: Option<CharFn>,
 }
 
 unsafe impl Send for Callbacks {}
