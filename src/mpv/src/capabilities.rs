@@ -16,7 +16,7 @@ use crate::handle::Handle;
 use crate::node::Node;
 use crate::sys;
 use std::collections::HashSet;
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::CStr;
 
 #[allow(
     non_camel_case_types,
@@ -86,116 +86,6 @@ pub unsafe fn query_raw(raw: *mut sys::mpv_handle) -> Capabilities {
     unsafe { sys::mpv_free_node_contents(&mut node) };
     caps.demuxers = parse_string_list(&owned);
     caps
-}
-
-// ---------------------------------------------------------------------------
-// C FFI — replaces the legacy `mpv_capabilities::Query` (src/mpv/capabilities.cpp).
-// ---------------------------------------------------------------------------
-
-/// Opaque handle to a query result owned by Rust. C++ borrows via the
-/// accessor functions below and frees with `jfn_mpv_capabilities_free`.
-/// Stores NUL-terminated copies of decoder/demuxer names so the accessor
-/// pointers can be handed directly to C string consumers.
-pub struct JfnMpvCapabilities {
-    decoder_names: Vec<CString>,
-    decoder_kinds: Vec<u8>,
-    demuxer_names: Vec<CString>,
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_query(
-    raw: *mut sys::mpv_handle,
-) -> *mut JfnMpvCapabilities {
-    let caps = unsafe { query_raw(raw) };
-    let mut out = JfnMpvCapabilities {
-        decoder_names: Vec::with_capacity(caps.decoders.len()),
-        decoder_kinds: Vec::with_capacity(caps.decoders.len()),
-        demuxer_names: Vec::with_capacity(caps.demuxers.len()),
-    };
-    for c in caps.decoders {
-        // Decoder names come from avcodec_get_name → bare ASCII; never
-        // contain NUL bytes, so unwrap is safe.
-        out.decoder_names
-            .push(CString::new(c.name).expect("avcodec name without NUL"));
-        out.decoder_kinds.push(match c.kind {
-            MediaKind::Video => 0,
-            MediaKind::Audio => 1,
-            MediaKind::Subtitle => 2,
-        });
-    }
-    for d in caps.demuxers {
-        out.demuxer_names
-            .push(CString::new(d).expect("demuxer name without NUL"));
-    }
-    Box::into_raw(Box::new(out))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_free(p: *mut JfnMpvCapabilities) {
-    if !p.is_null() {
-        drop(unsafe { Box::from_raw(p) });
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_decoder_count(p: *const JfnMpvCapabilities) -> usize {
-    let Some(r) = (unsafe { p.as_ref() }) else {
-        return 0;
-    };
-    r.decoder_names.len()
-}
-
-/// Returns a pointer to the i-th decoder's NUL-terminated name. The
-/// pointer is valid until `jfn_mpv_capabilities_free`. Returns NULL when
-/// `i` is out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_decoder_name(
-    p: *const JfnMpvCapabilities,
-    i: usize,
-) -> *const c_char {
-    let Some(r) = (unsafe { p.as_ref() }) else {
-        return std::ptr::null();
-    };
-    r.decoder_names
-        .get(i)
-        .map(|s| s.as_ptr())
-        .unwrap_or(std::ptr::null())
-}
-
-/// Returns 0=Video, 1=Audio, 2=Subtitle. Mirrors the kind discriminants
-/// expected by `JfnCodec.kind` (src/jellyfin/jfn_jellyfin.h). Returns
-/// 0xFF for out-of-range indices.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_decoder_kind(
-    p: *const JfnMpvCapabilities,
-    i: usize,
-) -> u8 {
-    let Some(r) = (unsafe { p.as_ref() }) else {
-        return 0xFF;
-    };
-    r.decoder_kinds.get(i).copied().unwrap_or(0xFF)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_demuxer_count(p: *const JfnMpvCapabilities) -> usize {
-    let Some(r) = (unsafe { p.as_ref() }) else {
-        return 0;
-    };
-    r.demuxer_names.len()
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_capabilities_demuxer_name(
-    p: *const JfnMpvCapabilities,
-    i: usize,
-) -> *const c_char {
-    let Some(r) = (unsafe { p.as_ref() }) else {
-        return std::ptr::null();
-    };
-    r.demuxer_names
-        .get(i)
-        .map(|s| s.as_ptr())
-        .unwrap_or(std::ptr::null())
 }
 
 fn enumerate_decoders() -> Vec<Codec> {
