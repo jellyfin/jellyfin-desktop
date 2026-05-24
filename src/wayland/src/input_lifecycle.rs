@@ -6,22 +6,16 @@
 //!
 //! Replaces the former `src/input/input_wayland.cpp` glue file.
 
-use std::ffi::{c_int, c_void};
+use std::ffi::c_void;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::input::{Callbacks, JfnInputWayland};
 
-unsafe extern "C" {
-    fn jfn_input_dispatch_mouse_move(x: i32, y: i32, mods: u32, leave: c_int);
-    fn jfn_input_dispatch_mouse_button(
-        button: u32, pressed: c_int, x: i32, y: i32, mods: u32,
-    );
-    fn jfn_input_dispatch_scroll(x: i32, y: i32, dx: i32, dy: i32, mods: u32);
-    fn jfn_input_dispatch_history_nav(forward: c_int);
-    fn jfn_input_dispatch_keyboard_focus(gained: c_int);
-    fn jfn_input_dispatch_key_raw(keysym: u32, native_code: u32, mods: u32, pressed: c_int);
-    fn jfn_input_dispatch_char(codepoint: u32, mods: u32, native_code: u32);
-}
+use jfn_input::{
+    jfn_input_dispatch_char, jfn_input_dispatch_history_nav, jfn_input_dispatch_key_raw,
+    jfn_input_dispatch_keyboard_focus, jfn_input_dispatch_mouse_button,
+    jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
+};
 
 const CALLBACKS: Callbacks = Callbacks {
     mouse_move:   Some(jfn_input_dispatch_mouse_move),

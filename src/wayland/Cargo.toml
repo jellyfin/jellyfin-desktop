@@ -14,8 +14,11 @@ kde-palette = []
 
 [dependencies]
 jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
+jfn-input = { path = "../input" }
 jfn-open-url-linux = { path = "../open_url_linux" }
 jfn-platform-abi = { path = "../platform_abi" }
+jfn-playback = { path = "../playback" }
+jfn-wlproxy = { path = "../wlproxy" }
 cef-dll-sys.workspace = true
 libc.workspace = true
 libloading = "0.9"

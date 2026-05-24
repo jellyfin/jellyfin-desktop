@@ -15,24 +15,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::wl_ops;
 
-type JfnConfigureCb = extern "C" fn(c_int, c_int, c_int);
-type JfnScaleCb = extern "C" fn(c_int);
-
-// Declared in jfn-wlproxy (src/wlproxy/wlproxy.h) and jfn-playback
-// (src/playback/jfn_ingest.h); brought in here as extern decls to avoid
-// a workspace cycle.
-unsafe extern "C" {
-    fn jfn_wlproxy_set_configure_callback(cb: JfnConfigureCb);
-    fn jfn_wlproxy_set_scale_callback(cb: JfnScaleCb);
-    fn jfn_playback_post_osd_pixels(
-        pw: c_int,
-        ph: c_int,
-        scale: f32,
-        has_macos_logical: bool,
-        mac_lw: c_int,
-        mac_lh: c_int,
-    );
-}
+use jfn_playback::ingest_driver::jfn_playback_post_osd_pixels;
+use jfn_wlproxy::{jfn_wlproxy_set_configure_callback, jfn_wlproxy_set_scale_callback};
 
 static CACHED_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
 
