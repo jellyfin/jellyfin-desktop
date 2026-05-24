@@ -22,7 +22,8 @@ use cef::{
 };
 use std::os::raw::{c_int, c_void};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use parking_lot::{Condvar, Mutex};
 use std::time::Instant;
 
 use crate::platform_ops;
@@ -199,15 +200,15 @@ impl Inner {
     }
 
     fn name_str(&self) -> String {
-        self.name.lock().unwrap().clone()
+        self.name.lock().clone()
     }
 
     fn surface_ptr(&self) -> *mut c_void {
-        *self.surface.lock().unwrap()
+        *self.surface.lock()
     }
 
     fn browser_clone(&self) -> Option<Browser> {
-        self.browser.lock().unwrap().clone()
+        self.browser.lock().clone()
     }
 
     fn host(&self) -> Option<BrowserHost> {
@@ -291,8 +292,8 @@ impl Inner {
             ..BrowserSettings::default()
         };
 
-        let kind = self.injection_kind.lock().unwrap().clone();
-        let add_ctx_menu = self.context_menu_builder.lock().unwrap().is_some();
+        let kind = self.injection_kind.lock().clone();
+        let add_ctx_menu = self.context_menu_builder.lock().is_some();
         let extra = crate::injection::build_for_kind(&kind, add_ctx_menu);
 
         let mut client = crate::client_impl::make_client(Arc::clone(self));
@@ -387,7 +388,7 @@ impl Inner {
     }
 
     fn browser_alive(&self) -> bool {
-        self.browser.lock().unwrap().is_some() && !self.closed.load(Ordering::Acquire)
+        self.browser.lock().is_some() && !self.closed.load(Ordering::Acquire)
     }
 
     fn set_frame_rate(&self, hz: i32) {
@@ -561,7 +562,7 @@ impl Inner {
 
     pub(crate) fn on_popup_show(&self, show: bool) {
         {
-            let mut p = self.popup.lock().unwrap();
+            let mut p = self.popup.lock();
             p.visible = show;
             Self::reset_popup_state(&mut p);
         }
@@ -582,7 +583,7 @@ impl Inner {
 
     pub(crate) fn on_popup_size(self: &Arc<Self>, x: i32, y: i32, w: i32, h: i32) {
         {
-            let mut p = self.popup.lock().unwrap();
+            let mut p = self.popup.lock();
             p.x = x;
             p.y = y;
             p.w = w;
@@ -594,7 +595,7 @@ impl Inner {
 
     pub(crate) fn set_popup_options(self: &Arc<Self>, opts: Vec<String>, selected: i32) {
         {
-            let mut p = self.popup.lock().unwrap();
+            let mut p = self.popup.lock();
             p.options = opts;
             p.selected_idx = selected;
             p.options_received = true;
@@ -604,7 +605,7 @@ impl Inner {
 
     fn try_show_popup(self: &Arc<Self>) {
         let (x, y, w, h, opts, selected) = {
-            let p = self.popup.lock().unwrap();
+            let p = self.popup.lock();
             if !p.visible || !p.size_received || !p.options_received {
                 return;
             }
@@ -638,7 +639,7 @@ impl Inner {
 
     fn on_deactivated(&self) {
         let was_visible = {
-            let mut p = self.popup.lock().unwrap();
+            let mut p = self.popup.lock();
             let was = p.visible;
             if was {
                 p.visible = false;
@@ -659,7 +660,7 @@ impl Inner {
     }
 
     fn popup_rect(&self) -> (i32, i32) {
-        let p = self.popup.lock().unwrap();
+        let p = self.popup.lock();
         (p.w, p.h)
     }
 
@@ -724,14 +725,14 @@ impl Inner {
         if self.state.load(Ordering::Acquire) != STATE_NORMAL
             || !self.has_browser.load(Ordering::Acquire)
         {
-            *self.pending_url.lock().unwrap() = url.to_string();
+            *self.pending_url.lock() = url.to_string();
             return;
         }
         self.cef_load_url(url);
     }
 
     fn take_pending_url(&self) -> Option<String> {
-        let mut g = self.pending_url.lock().unwrap();
+        let mut g = self.pending_url.lock();
         if g.is_empty() {
             None
         } else {
@@ -787,7 +788,7 @@ impl Inner {
             &formatted,
         );
         if is_main {
-            let _g = self.load_mtx.lock().unwrap();
+            let _g = self.load_mtx.lock();
             self.loaded.store(true, Ordering::Release);
             self.load_cv.notify_all();
         }
@@ -890,14 +891,14 @@ impl Inner {
             jfn_logging::LEVEL_DEBUG,
             &formatted,
         );
-        *self.browser.lock().unwrap() = Some(browser.clone());
+        *self.browser.lock() = Some(browser.clone());
         {
-            let _g = self.close_mtx.lock().unwrap();
+            let _g = self.close_mtx.lock();
             self.closed.store(false, Ordering::Release);
             self.close_cv.notify_all();
         }
         {
-            let _g = self.load_mtx.lock().unwrap();
+            let _g = self.load_mtx.lock();
             self.loaded.store(false, Ordering::Release);
             self.load_cv.notify_all();
         }
@@ -929,7 +930,7 @@ impl Inner {
 
         // Invoke user-installed created callback with a raw, add-refed
         // CefBrowser pointer.
-        let g = self.created_callback.lock().unwrap();
+        let g = self.created_callback.lock();
         if let Some(f) = g.as_ref() {
             unsafe {
                 browser.add_ref();
@@ -948,24 +949,24 @@ impl Inner {
     }
 
     pub(crate) fn handle_on_before_close(self: &Arc<Self>) {
-        *self.browser.lock().unwrap() = None;
+        *self.browser.lock() = None;
         // Signal the nudge loop to exit so the posted-task Arc clones keeping
         // Rust state alive can drop and the layer can finish destruction.
         self.invalidate_stop.store(true, Ordering::Release);
         {
-            let _g = self.close_mtx.lock().unwrap();
+            let _g = self.close_mtx.lock();
             self.closed.store(true, Ordering::Release);
             self.close_cv.notify_all();
         }
         {
-            let _g = self.load_mtx.lock().unwrap();
+            let _g = self.load_mtx.lock();
             self.loaded.store(true, Ordering::Release);
             self.load_cv.notify_all();
         }
         self.on_before_close();
         // Take-and-invoke so the callback can install a new slot without
         // destroying its own closure mid-call.
-        let slot = self.before_close_callback.lock().unwrap().take();
+        let slot = self.before_close_callback.lock().take();
         if let Some(f) = slot {
             f();
         }
@@ -973,7 +974,7 @@ impl Inner {
 
     pub(crate) fn handle_menu_item_selected(&self, cmd: c_int, browser: Option<&mut Browser>) {
         {
-            let mut g = self.pending_menu_callback.lock().unwrap();
+            let mut g = self.pending_menu_callback.lock();
             if let Some(cb) = g.take() {
                 cb.cancel();
             }
@@ -1031,14 +1032,14 @@ impl Inner {
     }
 
     pub(crate) fn handle_menu_dismissed(&self) {
-        let mut g = self.pending_menu_callback.lock().unwrap();
+        let mut g = self.pending_menu_callback.lock();
         if let Some(cb) = g.take() {
             cb.cancel();
         }
     }
 
     pub(crate) fn store_pending_menu_callback(&self, cb: RunContextMenuCallback) {
-        let mut g = self.pending_menu_callback.lock().unwrap();
+        let mut g = self.pending_menu_callback.lock();
         if let Some(prev) = g.take() {
             prev.cancel();
         }
@@ -1051,23 +1052,23 @@ impl Inner {
         args: *mut c_void,
         browser: *mut c_void,
     ) -> bool {
-        let g = self.message_handler.lock().unwrap();
+        let g = self.message_handler.lock();
         g.as_ref().map(|f| f(name, args, browser)).unwrap_or(false)
     }
 
     pub(crate) fn has_context_menu_builder(&self) -> bool {
-        self.context_menu_builder.lock().unwrap().is_some()
+        self.context_menu_builder.lock().is_some()
     }
 
     pub(crate) fn invoke_context_menu_builder(&self, menu_model_raw: *mut c_void) {
-        let g = self.context_menu_builder.lock().unwrap();
+        let g = self.context_menu_builder.lock();
         if let Some(f) = g.as_ref() {
             f(menu_model_raw);
         }
     }
 
     fn invoke_context_menu_dispatcher(&self, command_id: c_int) -> bool {
-        let g = self.context_menu_dispatcher.lock().unwrap();
+        let g = self.context_menu_dispatcher.lock();
         g.as_ref().map(|f| f(command_id)).unwrap_or(false)
     }
 
@@ -1269,18 +1270,18 @@ wrap_task! {
 // ---------------------------------------------------------------------------
 impl JfnCefLayer {
     pub fn set_message_handler_rust(&self, f: Option<Box<MessageFn>>) {
-        *self.inner.message_handler.lock().unwrap() = f;
+        *self.inner.message_handler.lock() = f;
     }
     pub fn set_created_callback_rust(&self, f: Option<Box<CreatedFn>>) {
-        *self.inner.created_callback.lock().unwrap() = f;
+        *self.inner.created_callback.lock() = f;
     }
     pub fn set_before_close_callback_rust(&self, f: Option<Box<BeforeCloseFn>>) {
-        *self.inner.before_close_callback.lock().unwrap() = f;
+        *self.inner.before_close_callback.lock() = f;
     }
     pub fn set_context_menu_builder_rust(&self, f: Option<Box<ContextBuilderFn>>) {
-        *self.inner.context_menu_builder.lock().unwrap() = f;
+        *self.inner.context_menu_builder.lock() = f;
     }
     pub fn set_context_menu_dispatcher_rust(&self, f: Option<Box<ContextDispatcherFn>>) {
-        *self.inner.context_menu_dispatcher.lock().unwrap() = f;
+        *self.inner.context_menu_dispatcher.lock() = f;
     }
 }

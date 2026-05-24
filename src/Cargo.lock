@@ -1035,6 +1035,7 @@ dependencies = [
  "jfn-platform-abi",
  "jfn-playback",
  "libc",
+ "parking_lot",
  "serde_json",
 ]
 
@@ -1048,11 +1049,15 @@ dependencies = [
 [[package]]
 name = "jfn-color"
 version = "0.1.0"
+dependencies = [
+ "parking_lot",
+]
 
 [[package]]
 name = "jfn-config"
 version = "0.1.0"
 dependencies = [
+ "parking_lot",
  "serde_json",
 ]
 
@@ -1060,6 +1065,7 @@ dependencies = [
 name = "jfn-idle-inhibit-linux"
 version = "0.1.0"
 dependencies = [
+ "parking_lot",
  "tracing",
  "zbus",
 ]
@@ -1070,6 +1076,7 @@ version = "0.1.0"
 dependencies = [
  "jfn-platform-abi",
  "jfn-playback",
+ "parking_lot",
 ]
 
 [[package]]
@@ -1084,6 +1091,7 @@ name = "jfn-logging"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "parking_lot",
  "time",
  "tracing",
  "tracing-appender",
@@ -1101,6 +1109,7 @@ dependencies = [
  "jfn-playback",
  "objc2",
  "objc2-foundation",
+ "parking_lot",
  "tracing",
 ]
 
@@ -1117,6 +1126,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-media-player",
+ "parking_lot",
  "tracing",
 ]
 
@@ -1127,6 +1137,7 @@ dependencies = [
  "bindgen",
  "jfn-color",
  "libc",
+ "parking_lot",
  "pkg-config",
  "tracing",
 ]
@@ -1152,6 +1163,7 @@ version = "0.1.0"
 dependencies = [
  "jfn-mpv",
  "libc",
+ "parking_lot",
  "serde_json",
  "windows-sys 0.61.2",
  "zbus",
@@ -1191,6 +1203,7 @@ name = "jfn-single-instance"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "parking_lot",
  "windows-sys 0.61.2",
 ]
 
@@ -1209,6 +1222,7 @@ dependencies = [
  "libc",
  "libloading 0.9.0",
  "memmap2",
+ "parking_lot",
  "smithay-client-toolkit",
  "tracing",
  "wayland-backend",
@@ -1227,6 +1241,7 @@ dependencies = [
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
+ "parking_lot",
  "tracing",
  "windows",
  "windows-core",
@@ -1239,6 +1254,7 @@ dependencies = [
  "jfn-cef",
  "jfn-mpv",
  "jfn-playback",
+ "parking_lot",
  "tracing",
  "windows",
  "windows-core",
@@ -1250,6 +1266,7 @@ name = "jfn-wlproxy"
 version = "0.1.0"
 dependencies = [
  "error_reporter",
+ "parking_lot",
  "wl-proxy",
 ]
 
@@ -1264,6 +1281,7 @@ dependencies = [
  "jfn-platform-abi",
  "jfn-playback",
  "libc",
+ "parking_lot",
  "xcb",
  "xcb-util-cursor-sys",
  "xkbcommon",

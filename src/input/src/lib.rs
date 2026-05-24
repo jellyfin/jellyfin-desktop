@@ -6,7 +6,7 @@ use jfn_platform_abi::{BrowserBridge, browser_bridge};
 use jfn_playback::hotkey::jfn_hotkey_classify_keydown;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use std::os::raw::c_int;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 #[cfg(target_os = "linux")]
 mod keysym;
@@ -58,7 +58,7 @@ pub fn jfn_input_last_mouse_pos(
     out_y: &mut i32,
     out_modifiers: &mut u32,
 ) -> c_int {
-    let p = *LAST_POS.lock().unwrap();
+    let p = *LAST_POS.lock();
     *out_x = p.x;
     *out_y = p.y;
     *out_modifiers = p.modifiers;
@@ -67,7 +67,7 @@ pub fn jfn_input_last_mouse_pos(
 
 pub fn jfn_input_dispatch_mouse_move(x: i32, y: i32, mods: u32, leave: c_int) {
     {
-        let mut p = LAST_POS.lock().unwrap();
+        let mut p = LAST_POS.lock();
         if leave != 0 {
             p.valid = false;
         } else {

@@ -6,3 +6,6 @@ publish.workspace = true
 
 [lib]
 name = "jfn_color"
+
+[dependencies]
+parking_lot.workspace = true

@@ -6,7 +6,7 @@
 //! callback.
 
 use std::ffi::{c_int, c_void};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -31,7 +31,7 @@ impl PopupCb {
     }
 
     fn fire(&self, idx: c_int) {
-        if let Some(cb) = self.fired.lock().unwrap().take() {
+        if let Some(cb) = self.fired.lock().take() {
             cb(idx);
         }
     }

@@ -24,7 +24,8 @@ use std::ffi::CString;
 use std::os::fd::OwnedFd;
 use std::os::raw::{c_char, c_int};
 use std::rc::Rc;
-use std::sync::{Mutex, mpsc};
+use std::sync::{mpsc};
+use parking_lot::Mutex;
 use std::thread;
 use std::time::Duration;
 
@@ -102,7 +103,7 @@ static PENDING: Mutex<PendingConfigure> = Mutex::new(PendingConfigure {
 });
 
 fn fire_configure() {
-    let p = PENDING.lock().unwrap();
+    let p = PENDING.lock();
     if !p.have_configure {
         return;
     }
@@ -111,7 +112,7 @@ fn fire_configure() {
     let ph = ((p.logical_h as i64 * p.scale_120 as i64 + 60) / 120) as c_int;
     let fs = p.fullscreen;
     drop(p);
-    if let Some(cb) = *CONFIGURE_CB.lock().unwrap() {
+    if let Some(cb) = *CONFIGURE_CB.lock() {
         cb(pw, ph, fs);
     }
 }
@@ -195,7 +196,7 @@ pub unsafe fn jfn_wlproxy_stop(p: *mut Proxy) {
 ///
 /// The event still forwards to mpv after the callback runs.
 pub fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
-    *CONFIGURE_CB.lock().unwrap() = Some(cb);
+    *CONFIGURE_CB.lock() = Some(cb);
 }
 
 /// Register the wp_fractional_scale_v1.preferred_scale callback.
@@ -204,7 +205,7 @@ pub fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
 /// 1.0x, 180 = 1.5x, 240 = 2.0x). Fires once whenever the compositor sends a
 /// new preferred scale for the toplevel's surface.
 pub fn jfn_wlproxy_set_scale_callback(cb: ScaleCb) {
-    *SCALE_CB.lock().unwrap() = Some(cb);
+    *SCALE_CB.lock() = Some(cb);
 }
 
 /// Queue an xdg_toplevel.set_fullscreen / unset_fullscreen request. Applied
@@ -212,7 +213,6 @@ pub fn jfn_wlproxy_set_scale_callback(cb: ScaleCb) {
 pub extern "C" fn jfn_wlproxy_set_fullscreen(enable: c_int) {
     COMMANDS
         .lock()
-        .unwrap()
         .push_back(HostCommand::SetFullscreen(enable != 0));
 }
 
@@ -221,7 +221,6 @@ pub extern "C" fn jfn_wlproxy_set_fullscreen(enable: c_int) {
 pub fn jfn_wlproxy_set_maximized(enable: c_int) {
     COMMANDS
         .lock()
-        .unwrap()
         .push_back(HostCommand::SetMaximized(enable != 0));
 }
 
@@ -305,7 +304,7 @@ fn run_client(socket: OwnedFd, upstream: Option<String>) {
 }
 
 fn drain_host_commands() {
-    let cmds: Vec<HostCommand> = COMMANDS.lock().unwrap().drain(..).collect();
+    let cmds: Vec<HostCommand> = COMMANDS.lock().drain(..).collect();
     if cmds.is_empty() {
         return;
     }
@@ -379,8 +378,8 @@ impl WpFractionalScaleManagerV1Handler for FracScaleMgrH {
 struct FracScaleH;
 impl WpFractionalScaleV1Handler for FracScaleH {
     fn handle_preferred_scale(&mut self, slf: &Rc<WpFractionalScaleV1>, scale: u32) {
-        PENDING.lock().unwrap().scale_120 = scale;
-        if let Some(cb) = *SCALE_CB.lock().unwrap() {
+        PENDING.lock().scale_120 = scale;
+        if let Some(cb) = *SCALE_CB.lock() {
             cb(scale as c_int);
         }
         fire_configure();
@@ -450,7 +449,7 @@ impl XdgToplevelHandler for ToplevelH {
             }
         }
         {
-            let mut p = PENDING.lock().unwrap();
+            let mut p = PENDING.lock();
             p.have_configure = true;
             p.logical_w = width;
             p.logical_h = height;

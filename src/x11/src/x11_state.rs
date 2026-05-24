@@ -4,7 +4,8 @@
 //! reference independent of the global mutex. The mutex protects every
 //! mutable field including the `live` surface list.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use parking_lot::Mutex;
 
 use xcb::{Xid, XidNew, x};
 

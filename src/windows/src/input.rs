@@ -9,7 +9,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::c_int;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
@@ -332,7 +332,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
         WM_SETCURSOR => {
             // HTCLIENT = 1
             if loword_u32(lp.0 as u32) == 1 {
-                let ct = STATE.lock().unwrap().cursor_type;
+                let ct = STATE.lock().cursor_type;
                 if ct == CT_NONE {
                     unsafe { SetCursor(None) };
                 } else {
@@ -436,7 +436,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             let vk = wp.0 as u16;
             // Alt+F4: mpv-hosted child HWND never gets WM_CLOSE from DefWindowProc, so synthesize.
             if vk == VK_F4.0 && msg == WM_SYSKEYDOWN && is_key_down(VK_MENU.0) {
-                let mpv_hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
+                let mpv_hwnd_raw = STATE.lock().mpv_hwnd_raw;
                 if mpv_hwnd_raw != 0 {
                     let mpv = HWND(mpv_hwnd_raw as *mut _);
                     let _ = unsafe { PostMessageW(Some(mpv), WM_CLOSE, WPARAM(0), LPARAM(0)) };
@@ -506,7 +506,7 @@ pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
     let tid = unsafe { GetCurrentThreadId() };
 
     {
-        let mut s = STATE.lock().unwrap();
+        let mut s = STATE.lock();
         s.mpv_hwnd_raw = mpv_hwnd as usize;
         s.thread_id = tid;
     }
@@ -554,11 +554,11 @@ pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
         Ok(h) => h,
         Err(e) => {
             tracing::error!("CreateWindowExW(JellyfinCefInput) failed: {e:?}");
-            STATE.lock().unwrap().thread_id = 0;
+            STATE.lock().thread_id = 0;
             return;
         }
     };
-    STATE.lock().unwrap().input_hwnd_raw = input_hwnd.0 as usize;
+    STATE.lock().input_hwnd_raw = input_hwnd.0 as usize;
 
     // Share input queue with mpv so SetFocus across windows works.
     let mpv_tid = unsafe { GetWindowThreadProcessId(mpv, None) };
@@ -574,23 +574,23 @@ pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
         }
     }
 
-    if STATE.lock().unwrap().input_hwnd_raw != 0 {
+    if STATE.lock().input_hwnd_raw != 0 {
         let _ = unsafe { DestroyWindow(input_hwnd) };
-        STATE.lock().unwrap().input_hwnd_raw = 0;
+        STATE.lock().input_hwnd_raw = 0;
     }
     let _ = unsafe { UnregisterClassW(CLASS_NAME, Some(hinst.into())) };
-    STATE.lock().unwrap().thread_id = 0;
+    STATE.lock().thread_id = 0;
 }
 
 pub fn jfn_input_windows_stop_input_thread() {
-    let tid = STATE.lock().unwrap().thread_id;
+    let tid = STATE.lock().thread_id;
     if tid != 0 {
         let _ = unsafe { PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)) };
     }
 }
 
 pub fn jfn_input_windows_resize_to_parent(pw: c_int, ph: c_int) {
-    let hwnd_raw = STATE.lock().unwrap().input_hwnd_raw;
+    let hwnd_raw = STATE.lock().input_hwnd_raw;
     if hwnd_raw == 0 {
         return;
     }
@@ -605,7 +605,7 @@ pub fn jfn_input_windows_resize_to_parent(pw: c_int, ph: c_int) {
 /// thread applies it via SetCursor (which is thread-affine).
 pub fn jfn_input_windows_set_cursor(t: c_int) {
     let hwnd_raw = {
-        let mut s = STATE.lock().unwrap();
+        let mut s = STATE.lock();
         s.cursor_type = t;
         s.input_hwnd_raw
     };

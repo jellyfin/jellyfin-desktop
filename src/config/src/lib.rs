@@ -10,7 +10,8 @@ use serde_json::{Map, Value, json};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::{OnceLock};
+use parking_lot::{Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 const DEVICE_NAME_MAX: usize = 64;
@@ -314,9 +315,9 @@ fn save_worker() -> &'static SaveWorker {
 fn save_worker_loop(w: &'static SaveWorker) {
     loop {
         let (data, path) = {
-            let mut p = w.pending.lock().unwrap();
+            let mut p = w.pending.lock();
             while p.data.is_none() && !p.stop {
-                p = w.cv.wait(p).unwrap();
+                w.cv.wait(&mut p);
             }
             match p.data.take() {
                 Some(d) => (d, p.path.clone()),
@@ -349,7 +350,7 @@ fn save_data(path: &Path, data: &SettingsData) -> bool {
         return false;
     };
     text.push('\n');
-    let _guard = SAVE_LOCK.lock().unwrap();
+    let _guard = SAVE_LOCK.lock();
     write_atomic(path, text.as_bytes()).is_ok()
 }
 
@@ -360,7 +361,7 @@ fn save_data(path: &Path, data: &SettingsData) -> bool {
 /// Initialize the settings store with the on-disk path. Idempotent: only the
 /// first call sets the path; subsequent calls are ignored.
 pub fn settings_init(path: &Path) {
-    let mut st = state().lock().unwrap();
+    let mut st = state().lock();
     if st.path.as_os_str().is_empty() {
         st.path = path.to_path_buf();
     }
@@ -369,7 +370,7 @@ pub fn settings_init(path: &Path) {
 /// Load settings from the configured path. Missing keys keep their defaults.
 /// Returns false if the file is missing or contains invalid JSON.
 pub fn settings_load() -> bool {
-    let mut st = state().lock().unwrap();
+    let mut st = state().lock();
     let path = st.path.clone();
     let Ok(contents) = fs::read_to_string(&path) else {
         return false;
@@ -387,7 +388,7 @@ pub fn settings_load() -> bool {
 /// Serialize current state and atomically write to the configured path.
 pub fn settings_save() -> bool {
     let (path, snap) = {
-        let st = state().lock().unwrap();
+        let st = state().lock();
         (st.path.clone(), st.data.clone())
     };
     save_data(&path, &snap)
@@ -399,12 +400,12 @@ pub fn settings_save() -> bool {
 /// this becomes a no-op.
 pub fn settings_save_async() {
     let (path, snap) = {
-        let st = state().lock().unwrap();
+        let st = state().lock();
         (st.path.clone(), st.data.clone())
     };
     let w = save_worker();
     let need_spawn = {
-        let mut p = w.pending.lock().unwrap();
+        let mut p = w.pending.lock();
         if p.stop {
             return;
         }
@@ -419,7 +420,7 @@ pub fn settings_save_async() {
     };
     w.cv.notify_one();
     if need_spawn {
-        *w.handle.lock().unwrap() = Some(thread::spawn(|| save_worker_loop(save_worker())));
+        *w.handle.lock() = Some(thread::spawn(|| save_worker_loop(save_worker())));
     }
 }
 
@@ -430,14 +431,14 @@ pub fn settings_shutdown_save_worker() {
         return;
     };
     {
-        let mut p = w.pending.lock().unwrap();
+        let mut p = w.pending.lock();
         if p.stop {
             return;
         }
         p.stop = true;
     }
     w.cv.notify_one();
-    let handle = w.handle.lock().unwrap().take();
+    let handle = w.handle.lock().take();
     if let Some(h) = handle {
         let _ = h.join();
     }
@@ -446,10 +447,10 @@ pub fn settings_shutdown_save_worker() {
 macro_rules! string_accessors {
     ($getter:ident, $setter:ident, $field:ident) => {
         pub fn $getter() -> String {
-            state().lock().unwrap().data.$field.clone()
+            state().lock().data.$field.clone()
         }
         pub fn $setter(v: &str) {
-            state().lock().unwrap().data.$field = v.to_string();
+            state().lock().data.$field = v.to_string();
         }
     };
 }
@@ -457,10 +458,10 @@ macro_rules! string_accessors {
 macro_rules! bool_accessors {
     ($getter:ident, $setter:ident, $field:ident) => {
         pub fn $getter() -> bool {
-            state().lock().unwrap().data.$field
+            state().lock().data.$field
         }
         pub fn $setter(v: bool) {
-            state().lock().unwrap().data.$field = v;
+            state().lock().data.$field = v;
         }
     };
 }
@@ -472,7 +473,7 @@ string_accessors!(audio_channels, set_audio_channels, audio_channels);
 string_accessors!(log_level, set_log_level, log_level);
 
 pub fn device_name() -> String {
-    state().lock().unwrap().data.device_name.clone()
+    state().lock().data.device_name.clone()
 }
 
 /// Setter for device_name. Trims and collapses whitespace, truncates to the
@@ -481,7 +482,7 @@ pub fn device_name() -> String {
 /// automatically on the next launch).
 pub fn set_device_name(raw: &str, platform_default: &str) {
     let cleaned = normalize_device_name(raw, platform_default);
-    state().lock().unwrap().data.device_name = cleaned;
+    state().lock().data.device_name = cleaned;
 }
 
 bool_accessors!(audio_exclusive, set_audio_exclusive, audio_exclusive);
@@ -503,15 +504,15 @@ bool_accessors!(
 bool_accessors!(force_transcoding, set_force_transcoding, force_transcoding);
 
 pub fn window_geometry() -> JfnWindowGeometry {
-    state().lock().unwrap().data.window
+    state().lock().data.window
 }
 
 pub fn set_window_geometry(g: JfnWindowGeometry) {
-    state().lock().unwrap().data.window = g;
+    state().lock().data.window = g;
 }
 
 pub fn cli_json(platform_default: &str, hwdec_opts: &[&str]) -> String {
-    let snap = state().lock().unwrap().data.clone();
+    let snap = state().lock().data.clone();
     let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
     snap.cli_json(platform_default, &opts)
 }

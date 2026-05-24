@@ -33,3 +33,6 @@ windows = { workspace = true, features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core.workspace = true
+
+[dependencies]
+parking_lot.workspace = true

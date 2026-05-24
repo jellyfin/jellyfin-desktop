@@ -14,7 +14,8 @@
 use std::collections::VecDeque;
 use std::ffi::c_char;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use parking_lot::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use jfn_playback::{MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
@@ -114,7 +115,7 @@ fn on_event(ev: &PlaybackEvent) {
     let owned = owned_event(ev);
     let inner = inner();
     {
-        let mut q = inner.queue.lock().expect("queue poisoned");
+        let mut q = inner.queue.lock();
         if q.len() >= EVENT_QUEUE_CAP {
             return;
         }
@@ -130,7 +131,7 @@ pub fn jfn_windows_sink_start_for(hwnd_raw: isize) {
     if inner.running.swap(true, Ordering::AcqRel) {
         return;
     }
-    *inner.hwnd.lock().expect("hwnd poisoned") = hwnd_raw;
+    *inner.hwnd.lock() = hwnd_raw;
 
     jfn_playback::ffi::register_event_sink(Box::new(on_event));
 
@@ -273,20 +274,16 @@ fn teardown_smtc(s: Smtc) {
 }
 
 fn consumer_thread(inner: Arc<Inner>) {
-    let hwnd_raw = *inner.hwnd.lock().expect("hwnd poisoned");
+    let hwnd_raw = *inner.hwnd.lock();
     let mut smtc = init_smtc(hwnd_raw);
 
     let mut state = ConsumerState::default();
 
     while inner.running.load(Ordering::Acquire) {
         let drained: Vec<OwnedEvent> = {
-            let mut q = inner.queue.lock().expect("queue poisoned");
+            let mut q = inner.queue.lock();
             while q.is_empty() && inner.running.load(Ordering::Acquire) {
-                q = inner
-                    .cv
-                    .wait_timeout(q, Duration::from_millis(100))
-                    .expect("cv poisoned")
-                    .0;
+                inner.cv.wait_for(&mut q, Duration::from_millis(100));
             }
             q.drain(..).collect()
         };

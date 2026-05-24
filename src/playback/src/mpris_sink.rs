@@ -10,7 +10,8 @@
 use std::collections::HashMap;
 use std::ffi::c_char;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use parking_lot::Mutex;
 use std::thread::{self, JoinHandle};
 
 use zbus::blocking::Connection;
@@ -291,7 +292,7 @@ impl Player {
         call_exec_js("if(window._nativeHostInput) window._nativeHostInput(['previous']);");
     }
     fn seek(&self, offset: i64) {
-        let cur = self.state.lock().unwrap().snapshot.position_us;
+        let cur = self.state.lock().snapshot.position_us;
         let new_pos = (cur + offset).max(0);
         let ms = new_pos / 1000;
         call_exec_js(&format!(
@@ -309,11 +310,11 @@ impl Player {
 
     #[zbus(property)]
     fn playback_status(&self) -> String {
-        self.state.lock().unwrap().view.playback_status.to_string()
+        self.state.lock().view.playback_status.to_string()
     }
     #[zbus(property)]
     fn rate(&self) -> f64 {
-        self.state.lock().unwrap().view.rate
+        self.state.lock().view.rate
     }
     #[zbus(property)]
     fn set_rate(&self, value: f64) {
@@ -330,40 +331,40 @@ impl Player {
     }
     #[zbus(property)]
     fn metadata(&self) -> HashMap<String, OwnedValue> {
-        let s = self.state.lock().unwrap();
+        let s = self.state.lock();
         metadata_to_dict(&s.view.metadata)
     }
     #[zbus(property)]
     fn volume(&self) -> f64 {
-        self.state.lock().unwrap().view.volume
+        self.state.lock().view.volume
     }
     #[zbus(property)]
     fn position(&self) -> i64 {
-        self.state.lock().unwrap().snapshot.position_us
+        self.state.lock().snapshot.position_us
     }
     #[zbus(property)]
     fn can_go_next(&self) -> bool {
-        self.state.lock().unwrap().view.can_go_next
+        self.state.lock().view.can_go_next
     }
     #[zbus(property)]
     fn can_go_previous(&self) -> bool {
-        self.state.lock().unwrap().view.can_go_previous
+        self.state.lock().view.can_go_previous
     }
     #[zbus(property)]
     fn can_play(&self) -> bool {
-        self.state.lock().unwrap().view.can_play
+        self.state.lock().view.can_play
     }
     #[zbus(property)]
     fn can_pause(&self) -> bool {
-        self.state.lock().unwrap().view.can_pause
+        self.state.lock().view.can_pause
     }
     #[zbus(property)]
     fn can_seek(&self) -> bool {
-        self.state.lock().unwrap().view.can_seek
+        self.state.lock().view.can_seek
     }
     #[zbus(property)]
     fn can_control(&self) -> bool {
-        self.state.lock().unwrap().view.can_control
+        self.state.lock().view.can_control
     }
 }
 
@@ -389,7 +390,7 @@ fn sink_slot() -> &'static Mutex<Option<Sink>> {
 /// Push a PlaybackEvent into the running MPRIS sink. No-op if not started.
 /// Called by the playback coordinator's builtin event-sink closure.
 pub(crate) fn deliver(ev: PlaybackEvent) {
-    if let Some(s) = sink_slot().lock().unwrap().as_ref() {
+    if let Some(s) = sink_slot().lock().as_ref() {
         let _ = s.tx.send(Msg::Event(Box::new(ev)));
     }
 }
@@ -439,12 +440,12 @@ fn handle_event(ev: PlaybackEvent, state: &Arc<Mutex<State>>, conn: &Connection)
     let snap = ev.snapshot.clone();
 
     // last_snap_ tracks every snapshot so getPosition() reads the latest.
-    state.lock().unwrap().snapshot = snap.clone();
+    state.lock().snapshot = snap.clone();
 
     let mut do_recompute = false;
     let mut emit_seeked = false;
     {
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock();
         match ev.kind {
             PlaybackEventKind::MetadataChanged => {
                 // Same-Id dedup: same-Id setMetadata is a semantic no-op
@@ -515,7 +516,7 @@ fn handle_event(ev: PlaybackEvent, state: &Arc<Mutex<State>>, conn: &Connection)
 
 fn recompute_and_emit(state: &Arc<Mutex<State>>, conn: &Connection) {
     let (changed, new_view) = {
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock();
         let next = project_view(&s.snapshot, &s.content);
         let names = diff_view(&s.view, &next);
         s.view = next.clone();
@@ -580,7 +581,7 @@ fn emit_properties_changed(conn: &Connection, names: &[&str], view: &View) {
 /// # Safety
 /// `service_suffix` must be NUL-terminated or null.
 pub unsafe fn jfn_mpris_sink_start(service_suffix: *const c_char) {
-    let mut slot = sink_slot().lock().unwrap();
+    let mut slot = sink_slot().lock();
     if slot.is_some() {
         return;
     }
@@ -603,7 +604,7 @@ pub unsafe fn jfn_mpris_sink_start(service_suffix: *const c_char) {
 }
 
 pub fn jfn_mpris_sink_stop() {
-    let mut slot = sink_slot().lock().unwrap();
+    let mut slot = sink_slot().lock();
     let Some(mut s) = slot.take() else {
         return;
     };

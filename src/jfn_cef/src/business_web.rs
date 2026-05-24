@@ -13,7 +13,7 @@ use cef::*;
 use serde_json::Value;
 use std::ffi::{CString, c_char};
 use std::os::raw::c_void;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::client::JfnCefLayer;
 
@@ -72,7 +72,7 @@ pub fn jfn_web_init(layer: *mut JfnCefLayer) {
 
     install_handlers(layer);
 
-    *INSTANCE.lock().unwrap() = Some(WebState {
+    *INSTANCE.lock() = Some(WebState {
         layer,
         was_fullscreen_before_osd: false,
     });
@@ -86,7 +86,7 @@ pub unsafe fn jfn_web_exec_js(js_utf8: *const c_char) {
     if js_utf8.is_null() {
         return;
     }
-    let layer = match INSTANCE.lock().unwrap().as_ref() {
+    let layer = match INSTANCE.lock().as_ref() {
         Some(s) => s.layer,
         None => return,
     };
@@ -415,7 +415,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "playerOsdActive" => {
             if let Some(args) = args {
                 let active = args.bool(0) != 0;
-                let mut g = INSTANCE.lock().unwrap();
+                let mut g = INSTANCE.lock();
                 let Some(st) = g.as_mut() else { return true };
                 if active {
                     st.was_fullscreen_before_osd = jfn_playback_fullscreen();

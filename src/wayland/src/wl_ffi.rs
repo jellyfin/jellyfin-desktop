@@ -41,10 +41,8 @@ pub unsafe fn jfn_wl_core_init(
 }
 
 pub fn jfn_wl_core_set_was_fullscreen(fs: bool) {
-    if let Some(m) = crate::wl_state::try_state()
-        && let Ok(mut st) = m.lock()
-    {
-        st.was_fullscreen = fs;
+    if let Some(m) = crate::wl_state::try_state() {
+        m.lock().was_fullscreen = fs;
     }
 }
 

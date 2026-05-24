@@ -9,6 +9,7 @@ name = "jfn_playback"
 crate-type = ["rlib"]
 
 [dependencies]
+parking_lot.workspace = true
 jfn-mpv = { path = "../mpv" }
 serde_json.workspace = true
 

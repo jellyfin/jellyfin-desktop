@@ -12,7 +12,8 @@
 use std::collections::VecDeque;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use parking_lot::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use jfn_playback::{MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
@@ -125,7 +126,7 @@ fn on_event(ev: &PlaybackEvent) {
     let owned = owned_event(ev);
     let inner = inner();
     {
-        let mut q = inner.queue.lock().expect("queue poisoned");
+        let mut q = inner.queue.lock();
         if q.len() >= EVENT_QUEUE_CAP {
             return;
         }
@@ -174,13 +175,9 @@ fn consumer_thread(inner: Arc<Inner>) {
 
     while inner.running.load(Ordering::Acquire) {
         let drained: Vec<OwnedEvent> = {
-            let mut q = inner.queue.lock().expect("queue poisoned");
+            let mut q = inner.queue.lock();
             while q.is_empty() && inner.running.load(Ordering::Acquire) {
-                q = inner
-                    .cv
-                    .wait_timeout(q, Duration::from_millis(100))
-                    .expect("cv poisoned")
-                    .0;
+                inner.cv.wait_for(&mut q, Duration::from_millis(100));
             }
             q.drain(..).collect()
         };

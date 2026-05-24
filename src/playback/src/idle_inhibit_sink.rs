@@ -2,7 +2,8 @@
 //! the platform idle-inhibit level via the registered callback wired to
 //! `g_platform.set_idle_inhibit`.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{OnceLock};
+use parking_lot::Mutex;
 
 use crate::types::{MediaType, PlaybackEvent, PlaybackEventKind, PlaybackPhase, PlaybackSnapshot};
 
@@ -20,11 +21,11 @@ fn cb_slot() -> &'static Mutex<Option<SetCb>> {
 
 /// Install the platform idle-inhibit setter. `cb == None` disables the sink.
 pub fn jfn_playback_set_idle_inhibit_handler(cb: Option<SetCb>) {
-    *cb_slot().lock().unwrap() = cb;
+    *cb_slot().lock() = cb;
 }
 
 fn apply(snap: &PlaybackSnapshot) {
-    let Some(cb) = *cb_slot().lock().unwrap() else {
+    let Some(cb) = *cb_slot().lock() else {
         return;
     };
     let level = if snap.phase != PlaybackPhase::Playing {

@@ -8,7 +8,8 @@
 use std::ffi::{CString, c_int};
 use std::os::fd::AsRawFd;
 use std::os::raw::c_uchar;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use parking_lot::Mutex;
 
 use xcb::{Xid, XidNew, x};
 use xcb_util_cursor_sys as cursor_ffi;
@@ -63,11 +64,11 @@ impl CursorMailbox {
         }
     }
     fn push(&self, req: CursorReq) {
-        self.queue.lock().unwrap().push(req);
+        self.queue.lock().push(req);
         unsafe { jfn_wake_event_signal(self.wake) };
     }
     fn drain(&self) -> Vec<CursorReq> {
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock();
         std::mem::take(&mut *q)
     }
 }
@@ -563,7 +564,7 @@ fn input_thread_body(mut st: State) {
         if fds[1].revents & libc::POLLIN != 0 {
             // Shutdown — hide overlays from this thread before exit.
             if let Some(conn) = crate::x11_state::conn() {
-                let g = MUT.lock().unwrap();
+                let g = MUT.lock();
                 if let Some(m) = g.as_ref() {
                     crate::lifecycle::hide_all_live_locked(&conn, m);
                 }
@@ -572,7 +573,7 @@ fn input_thread_body(mut st: State) {
         }
         if fds[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
             if let Some(conn) = crate::x11_state::conn() {
-                let g = MUT.lock().unwrap();
+                let g = MUT.lock();
                 if let Some(m) = g.as_ref() {
                     crate::lifecycle::hide_all_live_locked(&conn, m);
                 }
@@ -617,7 +618,7 @@ fn handle_event(st: &mut State, ev: xcb::Event) {
         Event::X(x::Event::LeaveNotify(e)) => handle_leave(st, &e),
         Event::X(x::Event::ConfigureNotify(_)) => {
             if let Some(conn) = crate::x11_state::conn() {
-                let mut g = MUT.lock().unwrap();
+                let mut g = MUT.lock();
                 if let Some(m) = g.as_mut() {
                     crate::lifecycle::sync_overlay_positions_locked(&conn, m);
                 }

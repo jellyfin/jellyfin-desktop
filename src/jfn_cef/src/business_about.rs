@@ -10,7 +10,7 @@ use cef::rc::ConvertReturnValue;
 use cef::{Browser, CefString, ImplBrowser, ImplBrowserHost, ImplListValue, ListValue, sys};
 use std::ffi::CString;
 use std::os::raw::c_void;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::client::JfnCefLayer;
 use crate::platform_ops;
@@ -32,14 +32,14 @@ unsafe impl Send for AboutState {}
 static INSTANCE: Mutex<Option<AboutState>> = Mutex::new(None);
 
 pub fn jfn_about_is_open() -> bool {
-    INSTANCE.lock().unwrap().is_some()
+    INSTANCE.lock().is_some()
 }
 
 /// Entry point. Creates the about layer and installs all Rust handler
 /// closures. Subsequent calls while the layer is alive are no-ops.
 pub fn jfn_about_open() {
     {
-        let g = INSTANCE.lock().unwrap();
+        let g = INSTANCE.lock();
         if g.is_some() {
             return;
         }
@@ -63,7 +63,7 @@ pub fn jfn_about_open() {
         jfn_cef_layer_create(layer, url.as_ptr() as *const _, url.len());
     }
 
-    *INSTANCE.lock().unwrap() = Some(AboutState { prev_active });
+    *INSTANCE.lock() = Some(AboutState { prev_active });
 }
 
 fn install_handlers(layer: *mut JfnCefLayer, _prev_active: *mut JfnCefLayer) {
@@ -93,7 +93,7 @@ fn install_handlers(layer: *mut JfnCefLayer, _prev_active: *mut JfnCefLayer) {
     let layer_for_close = LayerPtr(layer);
     l.set_before_close_callback_rust(Some(Box::new(move || {
         let lp = &layer_for_close;
-        let prev = INSTANCE.lock().unwrap().take().map(|s| s.prev_active);
+        let prev = INSTANCE.lock().take().map(|s| s.prev_active);
         if let Some(p) = prev {
             // Restore the previously active layer if the user dismissed via
             // close-without-aboutDismiss (e.g. ctx menu → Exit → re-open).
@@ -112,7 +112,6 @@ fn handle_message(
     if name == "aboutDismiss" {
         let prev = INSTANCE
             .lock()
-            .unwrap()
             .as_ref()
             .map(|s| s.prev_active)
             .unwrap_or(std::ptr::null_mut());

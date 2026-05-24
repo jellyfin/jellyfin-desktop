@@ -9,7 +9,7 @@
 //! lookup, hotkey classification, CEF forwarding).
 
 use std::ffi::{c_int, c_void};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use objc2::rc::Retained;
@@ -322,7 +322,7 @@ unsafe extern "C" fn scroll_flush_trampoline(_ctx: *mut c_void) {
 
 fn flush_scroll_accumulator() {
     let (dx, dy, x, y, mods, precise) = {
-        let mut s = SCROLL.lock().unwrap();
+        let mut s = SCROLL.lock();
         s.flush_scheduled = false;
         if !s.pending {
             return;
@@ -393,7 +393,7 @@ define_class!(
         fn update_tracking_areas(&self) {
             unsafe {
                 let _: () = msg_send![super(self), updateTrackingAreas];
-                let mut slot = self.ivars().tracking_area.lock().unwrap();
+                let mut slot = self.ivars().tracking_area.lock();
                 if let Some(old) = slot.take() {
                     let _: () = msg_send![self, removeTrackingArea: &*old];
                 }
@@ -495,7 +495,7 @@ define_class!(
             let mods_raw: u64 = unsafe { msg_send![event, modifierFlags] };
             let mut sched = false;
             {
-                let mut s = SCROLL.lock().unwrap();
+                let mut s = SCROLL.lock();
                 s.x = loc.x as i32;
                 s.y = loc.y as i32;
                 s.mods = ns_to_cef_modifiers(mods_raw);

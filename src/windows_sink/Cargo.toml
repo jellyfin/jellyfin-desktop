@@ -27,3 +27,6 @@ windows = { workspace = true, features = [
 ] }
 windows-core.workspace = true
 windows-future = "0.3"
+
+[dependencies]
+parking_lot.workspace = true

@@ -9,7 +9,7 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::OnceLock;
 
 use crate::handle::Handle;
@@ -273,7 +273,7 @@ pub unsafe fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_hand
     }
 
     let raw = handle.raw();
-    *handle_slot().lock().unwrap() = Some(handle);
+    *handle_slot().lock() = Some(handle);
     raw
 }
 
@@ -283,7 +283,7 @@ pub unsafe fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_hand
 /// On macOS the caller must invoke this off the main thread (mpv's VO
 /// uninit does `DispatchQueue.main.sync`).
 pub fn jfn_mpv_handle_terminate() {
-    let _ = handle_slot().lock().unwrap().take();
+    let _ = handle_slot().lock().take();
 }
 
 /// Borrow the live raw `mpv_handle*`. Returns null before
@@ -296,7 +296,7 @@ pub fn jfn_mpv_handle_get() -> *mut sys::mpv_handle {
 /// Returns the live mpv handle. `None` until [`jfn_mpv_handle_init`]
 /// has succeeded.
 pub fn current_raw_handle() -> Option<*mut sys::mpv_handle> {
-    handle_slot().lock().unwrap().as_ref().map(|h| h.raw())
+    handle_slot().lock().as_ref().map(|h| h.raw())
 }
 
 /// Wake the live handle's `mpv_wait_event` from any thread. No-op if

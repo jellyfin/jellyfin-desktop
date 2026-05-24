@@ -81,7 +81,7 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     let Some(conn) = crate::x11_state::conn() else {
         return s;
     };
-    let mut g = MUT.lock().unwrap();
+    let mut g = MUT.lock();
     let Some(m) = g.as_mut() else {
         return s;
     };
@@ -126,7 +126,7 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
         return;
     };
     {
-        let mut g = MUT.lock().unwrap();
+        let mut g = MUT.lock();
         if let Some(m) = g.as_mut()
             && let Some(pos) = m.live.iter().position(|&p| p == s)
         {
@@ -174,7 +174,7 @@ pub unsafe fn jfn_x11_surface_present_software(
     let Some(conn) = crate::x11_state::conn() else {
         return false;
     };
-    let mut g = MUT.lock().unwrap();
+    let mut g = MUT.lock();
     let Some(m) = g.as_mut() else {
         return false;
     };
@@ -264,7 +264,7 @@ pub unsafe fn jfn_x11_surface_resize(
     let Some(conn) = crate::x11_state::conn() else {
         return;
     };
-    let mut g = MUT.lock().unwrap();
+    let mut g = MUT.lock();
     let Some(m) = g.as_mut() else { return };
 
     m.pw = pw;
@@ -302,7 +302,7 @@ pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool
     let Some(conn) = crate::x11_state::conn() else {
         return;
     };
-    let mut g = MUT.lock().unwrap();
+    let mut g = MUT.lock();
     let Some(m) = g.as_mut() else { return };
 
     let surf = unsafe { &mut *s };
@@ -358,7 +358,7 @@ pub unsafe fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
     let Some(conn) = crate::x11_state::conn() else {
         return;
     };
-    let g = MUT.lock().unwrap();
+    let g = MUT.lock();
     let Some(m) = g.as_ref() else { return };
 
     let slice = unsafe { std::slice::from_raw_parts(ordered, n) };

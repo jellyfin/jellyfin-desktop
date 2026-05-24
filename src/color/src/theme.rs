@@ -12,7 +12,7 @@
 //!     background matches the chrome during resize.
 
 use std::ffi::c_char;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 const DEFAULT_BG_RGB: u32 = 0x101010; // kBgColor
 
@@ -88,11 +88,11 @@ pub unsafe fn jfn_theme_color_init(
         last_applied: None,
     };
     tc.apply();
-    *INSTANCE.lock().unwrap() = Some(tc);
+    *INSTANCE.lock() = Some(tc);
 }
 
 pub fn jfn_theme_color_set_video_bg(rgb: u32) {
-    let mut g = INSTANCE.lock().unwrap();
+    let mut g = INSTANCE.lock();
     if let Some(t) = g.as_mut() {
         t.video_bg_rgb = rgb;
         if t.video_active && t.unlocked {
@@ -102,7 +102,7 @@ pub fn jfn_theme_color_set_video_bg(rgb: u32) {
 }
 
 pub fn jfn_theme_color_on_color(rgb: u32) {
-    let mut g = INSTANCE.lock().unwrap();
+    let mut g = INSTANCE.lock();
     if let Some(t) = g.as_mut() {
         t.current_rgb = rgb;
         if t.unlocked {
@@ -112,7 +112,7 @@ pub fn jfn_theme_color_on_color(rgb: u32) {
 }
 
 pub fn jfn_theme_color_on_overlay_dismissed() {
-    let mut g = INSTANCE.lock().unwrap();
+    let mut g = INSTANCE.lock();
     if let Some(t) = g.as_mut() {
         t.unlocked = true;
         t.apply();
@@ -120,7 +120,7 @@ pub fn jfn_theme_color_on_overlay_dismissed() {
 }
 
 pub fn jfn_theme_color_set_video_mode(active: bool) {
-    let mut g = INSTANCE.lock().unwrap();
+    let mut g = INSTANCE.lock();
     if let Some(t) = g.as_mut() {
         if t.video_active == active {
             return;
@@ -133,7 +133,7 @@ pub fn jfn_theme_color_set_video_mode(active: bool) {
 }
 
 pub fn jfn_theme_color_shutdown() {
-    *INSTANCE.lock().unwrap() = None;
+    *INSTANCE.lock() = None;
 }
 
 #[cfg(test)]

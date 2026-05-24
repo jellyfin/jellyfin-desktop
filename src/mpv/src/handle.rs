@@ -14,7 +14,7 @@ use crate::sys;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 /// Type alias for the user-supplied wakeup callback. libmpv invokes this
 /// on an arbitrary thread when new events are queued.
@@ -65,7 +65,7 @@ impl Handle {
             unsafe { sys::mpv_terminate_destroy(self.raw) };
             self.raw = ptr::null_mut();
             // Drop the callback box; libmpv guarantees no further wakeups.
-            self.wakeup.lock().unwrap().take();
+            self.wakeup.lock().take();
         }
     }
 
@@ -294,7 +294,7 @@ impl Handle {
         let cb: WakeupCallback = Box::new(cb);
         // Store first, then arm libmpv — otherwise a wakeup racing in
         // between would see a dangling pointer.
-        let mut slot = self.wakeup.lock().unwrap();
+        let mut slot = self.wakeup.lock();
         *slot = Some(cb);
         let ptr = slot.as_ref().unwrap() as *const WakeupCallback as *mut c_void;
         unsafe { sys::mpv_set_wakeup_callback(self.raw, Some(wakeup_trampoline), ptr) };

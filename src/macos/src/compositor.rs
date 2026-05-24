@@ -14,7 +14,7 @@
 
 use std::ffi::{c_int, c_void};
 use std::ptr;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use objc2::encode::{Encode, Encoding};
 use objc2::runtime::AnyObject;
@@ -263,7 +263,7 @@ unsafe fn nsstring_from_str(s: &str) -> *mut AnyObject {
 /// Lazy-init Metal device, command queue and the straight→premultiplied
 /// alpha render pipeline. Returns None on driver failure (logged once).
 fn ensure_metal() -> bool {
-    let mut guard = G_METAL.lock().unwrap();
+    let mut guard = G_METAL.lock();
     if guard.is_some() {
         return true;
     }
@@ -408,7 +408,7 @@ unsafe fn create_content_layer(
     scale: f64,
 ) -> (*mut AnyObject, *mut AnyObject) {
     unsafe {
-        let device = G_METAL.lock().unwrap().as_ref().unwrap().device;
+        let device = G_METAL.lock().as_ref().unwrap().device;
 
         // NSView alloc/initWithFrame:
         let view_cls = objc2::class!(NSView);
@@ -482,7 +482,7 @@ unsafe fn wrap_input_surface(s: &mut Surface, surface: IOSurfaceRef, w: u64, h: 
         return true;
     }
     unsafe {
-        let device = match G_METAL.lock().unwrap().as_ref() {
+        let device = match G_METAL.lock().as_ref() {
             Some(m) => m.device,
             None => return false,
         };
@@ -539,14 +539,14 @@ unsafe fn present_iosurface(s: &mut Surface, info: &cef_dll_sys::_cef_accelerate
         tracing::warn!("[METAL] present skipped: layer null");
         return;
     }
-    let metal_q = match G_METAL.lock().unwrap().as_ref() {
+    let metal_q = match G_METAL.lock().as_ref() {
         Some(m) => m.queue,
         None => {
             tracing::warn!("[METAL] present skipped: metal not initialized");
             return;
         }
     };
-    let metal_pipe = G_METAL.lock().unwrap().as_ref().unwrap().pipeline;
+    let metal_pipe = G_METAL.lock().as_ref().unwrap().pipeline;
 
     let surface = info.shared_texture_io_surface as IOSurfaceRef;
     if surface.is_null() {
@@ -618,7 +618,7 @@ unsafe fn present_iosurface(s: &mut Surface, info: &cef_dll_sys::_cef_accelerate
 // =====================================================================
 
 pub(crate) fn drop_input_textures() {
-    let stack = G_SURFACE_STACK.lock().unwrap();
+    let stack = G_SURFACE_STACK.lock();
     for entry in stack.iter() {
         if entry.0.is_null() {
             continue;
@@ -632,7 +632,7 @@ pub(crate) fn drop_input_textures() {
 // =====================================================================
 
 pub fn macos_set_expected_size(w: c_int, h: c_int) {
-    *G_EXPECTED_SIZE.lock().unwrap() = (w, h);
+    *G_EXPECTED_SIZE.lock() = (w, h);
 }
 
 pub fn macos_alloc_surface() -> *mut c_void {
@@ -675,7 +675,7 @@ pub fn macos_free_surface(s: *mut c_void) {
     // we're tearing down. Browsers normally restacks to a smaller order
     // right after this, but the defensive remove matches the C++ path.
     {
-        let mut stack = G_SURFACE_STACK.lock().unwrap();
+        let mut stack = G_SURFACE_STACK.lock();
         stack.retain(|e| e.0 != s_ptr);
     }
 
@@ -705,7 +705,7 @@ pub fn macos_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
 
     // is-cef-main = bottom-of-stack check.
     let is_main = {
-        let stack = G_SURFACE_STACK.lock().unwrap();
+        let stack = G_SURFACE_STACK.lock();
         stack.first().map(|e| e.0) == Some(s_ptr)
     };
 
@@ -715,7 +715,7 @@ pub fn macos_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
         }
         unsafe { present_iosurface(&mut *s_ptr, info) };
         // Clear the expected-size gate when the incoming frame matches.
-        let mut exp = G_EXPECTED_SIZE.lock().unwrap();
+        let mut exp = G_EXPECTED_SIZE.lock();
         if exp.0 > 0 {
             let surface = info.shared_texture_io_surface as IOSurfaceRef;
             if !surface.is_null() {
@@ -801,7 +801,7 @@ pub fn macos_restack(ordered: *const *mut c_void, n: usize) {
 
     let apply = move || unsafe {
         {
-            let mut stack = G_SURFACE_STACK.lock().unwrap();
+            let mut stack = G_SURFACE_STACK.lock();
             stack.clear();
             stack.extend(order.iter().map(|p| StackEntry(*p as *mut Surface)));
         }
@@ -998,7 +998,7 @@ unsafe extern "C" {
 pub fn jfn_macos_compositor_cleanup() {
     // Detach lingering subviews + release retained AppKit objects.
     let stragglers: Vec<usize> = {
-        let mut stack = G_SURFACE_STACK.lock().unwrap();
+        let mut stack = G_SURFACE_STACK.lock();
         let out = stack.iter().map(|e| e.0 as usize).collect();
         stack.clear();
         out
@@ -1022,9 +1022,9 @@ pub fn jfn_macos_compositor_cleanup() {
         }
     }
 
-    *G_EXPECTED_SIZE.lock().unwrap() = (0, 0);
+    *G_EXPECTED_SIZE.lock() = (0, 0);
 
-    let mut metal = G_METAL.lock().unwrap();
+    let mut metal = G_METAL.lock();
     if let Some(m) = metal.take() {
         unsafe {
             let _: () = objc2::msg_send![m.pipeline, release];

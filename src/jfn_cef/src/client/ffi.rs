@@ -44,7 +44,7 @@ pub(crate) unsafe fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_c
     } else {
         unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned()
     };
-    *inner.name.lock().unwrap() = new;
+    *inner.name.lock() = new;
 }
 
 pub(crate) unsafe fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool {
@@ -53,9 +53,9 @@ pub(crate) unsafe fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool {
 
 pub(crate) unsafe fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
     let l = unsafe { arc(h) };
-    let mut g = l.close_mtx.lock().unwrap();
+    let mut g = l.close_mtx.lock();
     while !l.closed.load(Ordering::Acquire) {
-        g = l.close_cv.wait(g).unwrap();
+        l.close_cv.wait(&mut g);
     }
 }
 
@@ -63,9 +63,9 @@ pub(crate) unsafe fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
 /// `h` must be a live `JfnCefLayer` handle returned by `jfn_cef_layer_new`.
 pub unsafe fn jfn_cef_layer_wait_for_load(h: *const JfnCefLayer) {
     let l = unsafe { arc(h) };
-    let mut g = l.load_mtx.lock().unwrap();
+    let mut g = l.load_mtx.lock();
     while !l.loaded.load(Ordering::Acquire) {
-        g = l.load_cv.wait(g).unwrap();
+        l.load_cv.wait(&mut g);
     }
 }
 
@@ -91,7 +91,7 @@ pub(crate) unsafe fn jfn_cef_layer_set_injection_profile_kind(
 ) {
     let inner = unsafe { arc(h) };
     let s = read_utf8(kind_utf8, len);
-    *inner.injection_kind.lock().unwrap() = s;
+    *inner.injection_kind.lock() = s;
 }
 
 /// Force-close this layer's CefBrowser. Called from `Browsers::closeAll` on
@@ -217,7 +217,7 @@ pub(crate) unsafe fn jfn_cef_layer_send_mouse_wheel(
 }
 
 pub(crate) unsafe fn jfn_cef_layer_set_surface(h: *const JfnCefLayer, s: *mut c_void) {
-    *unsafe { arc(h) }.surface.lock().unwrap() = s;
+    *unsafe { arc(h) }.surface.lock() = s;
 }
 
 pub(crate) unsafe fn jfn_cef_layer_get_surface(h: *const JfnCefLayer) -> *mut c_void {

@@ -9,7 +9,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_int, c_void};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::thread::JoinHandle;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -87,7 +87,7 @@ fn hwnd_from_raw(raw: usize) -> HWND {
 /// `jfn_win_get_hwnd` — returns mpv's HWND; nullptr before win_init or
 /// after cleanup.
 pub fn jfn_win_get_hwnd() -> *mut c_void {
-    STATE.lock().unwrap().mpv_hwnd_raw as *mut c_void
+    STATE.lock().mpv_hwnd_raw as *mut c_void
 }
 
 fn is_fullscreen_style(style: isize) -> bool {
@@ -103,10 +103,10 @@ pub fn win_get_scale() -> f32 {
     let scale = unsafe { jfn_playback_display_scale() };
     if scale > 0.0 {
         let s = scale as f32;
-        STATE.lock().unwrap().cached_scale = s;
+        STATE.lock().cached_scale = s;
         return s;
     }
-    let cached = STATE.lock().unwrap().cached_scale;
+    let cached = STATE.lock().cached_scale;
     if cached > 0.0 {
         return cached;
     }
@@ -128,7 +128,7 @@ pub fn win_get_display_scale(_x: c_int, _y: c_int) -> f32 {
 
 fn end_transition_if_settled(target_fullscreen: bool) {
     if crate::win_in_transition() {
-        let was_fs = STATE.lock().unwrap().was_fullscreen;
+        let was_fs = STATE.lock().was_fullscreen;
         if target_fullscreen == was_fs {
             crate::compositor::jfn_win_wndproc_end_transition_locked();
         }
@@ -144,17 +144,17 @@ pub fn win_set_fullscreen(fullscreen: bool) {
         return;
     }
 
-    let hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
+    let hwnd_raw = STATE.lock().mpv_hwnd_raw;
     let hwnd = hwnd_from_raw(hwnd_raw);
 
     if fullscreen {
-        STATE.lock().unwrap().restore_maximized_on_unfullscreen =
+        STATE.lock().restore_maximized_on_unfullscreen =
             unsafe { IsZoomed(hwnd) }.as_bool();
     }
 
     let mut should_restore_maximized = false;
     if !fullscreen {
-        let mut st = STATE.lock().unwrap();
+        let mut st = STATE.lock();
         should_restore_maximized = st.restore_maximized_on_unfullscreen;
         st.restore_maximized_on_unfullscreen = false;
     }
@@ -181,17 +181,17 @@ pub fn win_toggle_fullscreen() {
     }
     let target_fullscreen = !unsafe { jfn_playback_fullscreen() };
 
-    let hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
+    let hwnd_raw = STATE.lock().mpv_hwnd_raw;
     let hwnd = hwnd_from_raw(hwnd_raw);
 
     if target_fullscreen {
-        STATE.lock().unwrap().restore_maximized_on_unfullscreen =
+        STATE.lock().restore_maximized_on_unfullscreen =
             unsafe { IsZoomed(hwnd) }.as_bool();
     }
 
     let mut should_restore_maximized = false;
     if !target_fullscreen {
-        let mut st = STATE.lock().unwrap();
+        let mut st = STATE.lock();
         should_restore_maximized = st.restore_maximized_on_unfullscreen;
         st.restore_maximized_on_unfullscreen = false;
     }
@@ -219,12 +219,12 @@ pub fn win_toggle_fullscreen() {
 unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if n_code >= 0 {
         let msg = unsafe { &*(lp.0 as *const CWPRETSTRUCT) };
-        let target_hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
+        let target_hwnd_raw = STATE.lock().mpv_hwnd_raw;
         if (msg.hwnd.0 as usize) == target_hwnd_raw {
             if msg.message == WM_SIZE {
                 if msg.wParam.0 == SIZE_MINIMIZED as usize {
-                    STATE.lock().unwrap().was_minimized = true;
-                    let hook_raw = STATE.lock().unwrap().wndproc_hook_raw;
+                    STATE.lock().was_minimized = true;
+                    let hook_raw = STATE.lock().wndproc_hook_raw;
                     let hook = HHOOK(hook_raw as *mut c_void);
                     return unsafe { CallNextHookEx(Some(hook), n_code, wp, lp) };
                 }
@@ -235,7 +235,7 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                 if pw > 0 && ph > 0 {
                     unsafe { jfn_input_windows_resize_to_parent(pw, ph) };
 
-                    let cached = STATE.lock().unwrap().cached_scale;
+                    let cached = STATE.lock().cached_scale;
                     let scale = if cached > 0.0 { cached } else { 1.0 };
                     let lw = (pw as f32 / scale) as c_int;
                     let lh = (ph as f32 / scale) as c_int;
@@ -244,10 +244,10 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                         unsafe { GetWindowLongPtrW(hwnd_from_raw(target_hwnd_raw), GWL_STYLE) };
                     let fs = is_fullscreen_style(style);
 
-                    let recovering_from_minimize = STATE.lock().unwrap().was_minimized;
+                    let recovering_from_minimize = STATE.lock().was_minimized;
                     if recovering_from_minimize {
                         {
-                            let mut st = STATE.lock().unwrap();
+                            let mut st = STATE.lock();
                             st.was_minimized = false;
                             st.was_fullscreen = fs;
                         }
@@ -255,14 +255,14 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                             crate::compositor::jfn_win_wndproc_end_transition_locked();
                         }
                     } else {
-                        let was_fs = STATE.lock().unwrap().was_fullscreen;
+                        let was_fs = STATE.lock().was_fullscreen;
                         if fs != was_fs {
                             if !crate::win_in_transition() {
                                 crate::compositor::jfn_win_wndproc_begin_transition_locked();
                             } else {
                                 crate::compositor::jfn_win_wndproc_end_transition_locked();
                             }
-                            STATE.lock().unwrap().was_fullscreen = fs;
+                            STATE.lock().was_fullscreen = fs;
                         } else if crate::win_in_transition() {
                             crate::compositor::jfn_win_wndproc_end_transition_locked();
                         }
@@ -274,7 +274,7 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
             }
         }
     }
-    let hook_raw = STATE.lock().unwrap().wndproc_hook_raw;
+    let hook_raw = STATE.lock().wndproc_hook_raw;
     let hook = HHOOK(hook_raw as *mut c_void);
     unsafe { CallNextHookEx(Some(hook), n_code, wp, lp) }
 }
@@ -296,7 +296,7 @@ pub fn win_init(_mpv: *mut c_void) -> bool {
         return false;
     }
     let hwnd_raw = wid as usize;
-    STATE.lock().unwrap().mpv_hwnd_raw = hwnd_raw;
+    STATE.lock().mpv_hwnd_raw = hwnd_raw;
 
     // Seed cached_scale.
     win_get_scale();
@@ -320,14 +320,14 @@ pub fn win_init(_mpv: *mut c_void) -> bool {
     // doesn't start a spurious transition if already fullscreen.
     {
         let style = unsafe { GetWindowLongPtrW(hwnd_from_raw(hwnd_raw), GWL_STYLE) };
-        STATE.lock().unwrap().was_fullscreen = is_fullscreen_style(style);
+        STATE.lock().was_fullscreen = is_fullscreen_style(style);
     }
 
     let mpv_tid = unsafe { GetWindowThreadProcessId(hwnd_from_raw(hwnd_raw), None) };
     let hook =
         unsafe { SetWindowsHookExW(WH_CALLWNDPROCRET, Some(mpv_wndproc_hook), None, mpv_tid) };
     match hook {
-        Ok(h) => STATE.lock().unwrap().wndproc_hook_raw = h.0 as usize,
+        Ok(h) => STATE.lock().wndproc_hook_raw = h.0 as usize,
         Err(e) => {
             tracing::error!("SetWindowsHookExW(WH_CALLWNDPROCRET) failed: {e:?}");
             return false;
@@ -338,7 +338,7 @@ pub fn win_init(_mpv: *mut c_void) -> bool {
     let join = std::thread::spawn(move || {
         unsafe { jfn_input_windows_run_input_thread(mpv_hwnd_for_thread as *mut c_void) };
     });
-    STATE.lock().unwrap().input_thread = Some(join);
+    STATE.lock().input_thread = Some(join);
 
     tracing::info!("Windows DirectComposition compositor initialized");
     true
@@ -346,22 +346,22 @@ pub fn win_init(_mpv: *mut c_void) -> bool {
 
 pub fn win_cleanup() {
     unsafe { jfn_input_windows_stop_input_thread() };
-    let join = STATE.lock().unwrap().input_thread.take();
+    let join = STATE.lock().input_thread.take();
     if let Some(j) = join {
         let _ = j.join();
     }
-    let hook_raw = STATE.lock().unwrap().wndproc_hook_raw;
+    let hook_raw = STATE.lock().wndproc_hook_raw;
     if hook_raw != 0 {
         let hook = HHOOK(hook_raw as *mut c_void);
         unsafe {
             let _ = UnhookWindowsHookEx(hook);
         }
-        STATE.lock().unwrap().wndproc_hook_raw = 0;
+        STATE.lock().wndproc_hook_raw = 0;
     }
 
     crate::compositor::jfn_win_cleanup_compositor();
 
-    STATE.lock().unwrap().mpv_hwnd_raw = 0;
+    STATE.lock().mpv_hwnd_raw = 0;
 }
 
 // =====================================================================
@@ -373,7 +373,7 @@ pub fn win_cleanup() {
 /// coordinate system on Windows (`vo_calc_window_geometry` uses the
 /// working area).
 pub fn win_query_window_position(x: &mut c_int, y: &mut c_int) -> bool {
-    let hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
+    let hwnd_raw = STATE.lock().mpv_hwnd_raw;
     if hwnd_raw == 0 {
         return false;
     }
