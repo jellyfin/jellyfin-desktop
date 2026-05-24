@@ -40,10 +40,6 @@ unsafe extern "C" {
     fn jfn_cef_set_default_frame_rate(hz: i32);
     fn jfn_cef_set_use_shared_textures(enable: bool);
 
-    fn jfn_platform_alloc_surface() -> *mut c_void;
-    fn jfn_platform_free_surface(s: *mut c_void);
-    fn jfn_platform_restack(ordered: *const *mut c_void, n: usize);
-
     // Last-known mouse position for setActive's leave+move trick.
     fn jfn_input_last_mouse_pos(
         out_x: *mut i32,
@@ -102,7 +98,7 @@ pub extern "C" fn jfn_browsers_shutdown() {
     for layer in &b.layers {
         let s = unsafe { jfn_cef_layer_get_surface(*layer) };
         if !s.is_null() {
-            unsafe { jfn_platform_free_surface(s) };
+            jfn_platform_abi::get().free_surface(s);
         }
         unsafe { jfn_cef_layer_free(*layer) };
     }
@@ -113,11 +109,11 @@ pub unsafe extern "C" fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCef
     let mut g = INSTANCE.lock().unwrap();
     let Some(b) = g.as_mut() else { return std::ptr::null_mut() };
 
-    let surface = unsafe { jfn_platform_alloc_surface() };
+    let surface = jfn_platform_abi::get().alloc_surface();
     let layer = unsafe { jfn_cef_layer_new() };
     if layer.is_null() {
         if !surface.is_null() {
-            unsafe { jfn_platform_free_surface(surface) };
+            jfn_platform_abi::get().free_surface(surface);
         }
         return std::ptr::null_mut();
     }
@@ -158,7 +154,7 @@ pub extern "C" fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
     let surface = unsafe { jfn_cef_layer_get_surface(layer) };
     b.layers.remove(idx);
     if !surface.is_null() {
-        unsafe { jfn_platform_free_surface(surface) };
+        jfn_platform_abi::get().free_surface(surface);
     }
     unsafe { jfn_cef_layer_free(layer) };
     restack(&b.layers);
@@ -311,6 +307,6 @@ fn restack(layers: &[*mut JfnCefLayer]) {
             ordered.push(s);
         }
     }
-    unsafe { jfn_platform_restack(ordered.as_ptr(), ordered.len()) };
+    jfn_platform_abi::get().restack(ordered.as_ptr(), ordered.len());
 }
 

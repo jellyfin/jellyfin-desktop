@@ -7,3 +7,6 @@ publish.workspace = true
 [lib]
 name = "jfn_input"
 path = "src/lib.rs"
+
+[dependencies]
+jfn-platform-abi = { path = "../platform_abi" }

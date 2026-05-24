@@ -24,11 +24,6 @@ unsafe extern "C" {
     // Shutdown trampoline target for the wayland-close-cb-ptr property.
     fn jfn_shutdown_initiate();
 
-    // Platform field accessors (defined in src/platform/platform_ops.cpp).
-    fn jfn_platform_cef_ozone_platform() -> *const c_char;
-    fn jfn_platform_set_shared_texture_unsupported();
-    fn jfn_platform_clear_clipboard_handler();
-
     // Wayland-side subsystems already living in this crate's FFI surface.
     fn jfn_wl_dmabuf_probe(ozone_platform: *const c_char, egl_dpy: *mut c_void) -> bool;
 }
@@ -118,10 +113,10 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
         Err(_) => std::ptr::null_mut(),
     };
 
-    let ozone = unsafe { jfn_platform_cef_ozone_platform() };
+    let ozone = jfn_platform_abi::get().cef_ozone_platform();
     if !unsafe { jfn_wl_dmabuf_probe(ozone, egl_dpy) } {
         log::warn!("Shared textures not supported; using software CEF rendering");
-        unsafe { jfn_platform_set_shared_texture_unsupported() };
+        jfn_platform_abi::get().set_shared_texture_unsupported();
     }
 
     #[cfg(feature = "kde-palette")]
@@ -131,7 +126,7 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
 
     crate::clipboard::clipboard_init();
     if !crate::clipboard::clipboard_available() {
-        unsafe { jfn_platform_clear_clipboard_handler() };
+        jfn_platform_abi::get().clear_clipboard_handler();
     }
 
     true
