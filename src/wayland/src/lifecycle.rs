@@ -31,7 +31,6 @@ unsafe extern "C" {
 
     // Wayland-side subsystems already living in this crate's FFI surface.
     fn jfn_wl_dmabuf_probe(ozone_platform: *const c_char, egl_dpy: *mut c_void) -> bool;
-    fn jfn_idle_inhibit_cleanup();
 }
 
 // =====================================================================
@@ -151,7 +150,7 @@ pub extern "C" fn jfn_wl_lifecycle_cleanup() {
     // window. The scheme file is unlinked separately via
     // jfn_wl_kde_palette_post_window_cleanup after mpv tears down the
     // surface.
-    unsafe { jfn_idle_inhibit_cleanup() };
+    jfn_idle_inhibit_linux::cleanup();
     crate::clipboard::clipboard_cleanup();
     crate::input_lifecycle::lifecycle_cleanup();
     // Rust-side WlState lives until process exit (mirrors C++ globals).

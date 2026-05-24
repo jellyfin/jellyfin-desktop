@@ -15,7 +15,6 @@ pub use jfn_platform_abi::{
 };
 
 unsafe extern "C" {
-    fn jfn_idle_inhibit_set(level: u32);
     fn jfn_open_url(url: *const c_char);
     fn jfn_mpv_handle_get() -> *mut c_void;
     fn jfn_mpv_set_fullscreen(v: bool);
@@ -222,7 +221,7 @@ impl Platform for X11Platform {
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
-        unsafe { jfn_idle_inhibit_set(level as u32) };
+        jfn_idle_inhibit_linux::set(level as u32);
     }
 
     fn shared_texture_supported(&self) -> bool {

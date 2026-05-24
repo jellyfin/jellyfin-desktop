@@ -11,7 +11,6 @@ use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
 
 unsafe extern "C" {
     fn jfn_mpv_get_property_int(name: *const c_char, out: *mut i64) -> i32;
-    fn jfn_idle_inhibit_cleanup();
 }
 
 /// Find a 32-bit TrueColor visual.
@@ -221,7 +220,7 @@ pub fn cleanup() {
         }
     }
 
-    unsafe { jfn_idle_inhibit_cleanup() };
+    jfn_idle_inhibit_linux::cleanup();
     crate::input_lifecycle::cleanup();
 
     // Free any surface that outlived Browsers (defensive).

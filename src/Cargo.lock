@@ -1200,6 +1200,7 @@ name = "jfn-wayland"
 version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
+ "jfn-idle-inhibit-linux",
  "jfn-platform-abi",
  "libc",
  "libloading 0.9.0",
@@ -1249,6 +1250,7 @@ dependencies = [
 name = "jfn-x11"
 version = "0.1.0"
 dependencies = [
+ "jfn-idle-inhibit-linux",
  "jfn-platform-abi",
  "libc",
  "xcb",

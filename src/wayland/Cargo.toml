@@ -13,6 +13,7 @@ default = ["kde-palette"]
 kde-palette = []
 
 [dependencies]
+jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
 jfn-platform-abi = { path = "../platform_abi" }
 cef-dll-sys.workspace = true
 libc.workspace = true

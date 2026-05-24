@@ -29,7 +29,6 @@ unsafe extern "C" {
     fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_char);
     fn jfn_wl_get_cached_scale() -> f32;
     fn jfn_wayland_scale_probe(x: c_int, y: c_int) -> f64;
-    fn jfn_idle_inhibit_set(level: u32);
     fn jfn_open_url(url: *const c_char);
     fn jfn_playback_display_hz() -> f64;
     fn jfn_wl_fade_start(
@@ -345,7 +344,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
-        unsafe { jfn_idle_inhibit_set(level as u32) };
+        jfn_idle_inhibit_linux::set(level as u32);
     }
 
     fn set_theme_color(&self, _rgb: u32) {

@@ -31,8 +31,7 @@ fn what_for(level: u32) -> Option<&'static str> {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_idle_inhibit_set(level: u32) {
+pub fn set(level: u32) {
     let mut state = STATE.lock().unwrap();
     state.fd = None;
     let Some(what) = what_for(level) else {
@@ -66,8 +65,7 @@ pub extern "C" fn jfn_idle_inhibit_set(level: u32) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_idle_inhibit_cleanup() {
+pub fn cleanup() {
     let mut state = STATE.lock().unwrap();
     state.fd = None;
     state.bus = None;
