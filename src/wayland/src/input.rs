@@ -32,48 +32,19 @@ const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
 const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
 const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
 
-// CEF cef_cursor_type_t values (order from cef_types.h).
-const CT_POINTER: u32 = 0;
-const CT_CROSS: u32 = 1;
-const CT_HAND: u32 = 2;
-const CT_IBEAM: u32 = 3;
-const CT_WAIT: u32 = 4;
-const CT_HELP: u32 = 5;
-const CT_EASTRESIZE: u32 = 6;
-const CT_NORTHRESIZE: u32 = 7;
-const CT_NORTHEASTRESIZE: u32 = 8;
-const CT_NORTHWESTRESIZE: u32 = 9;
-const CT_SOUTHRESIZE: u32 = 10;
-const CT_SOUTHEASTRESIZE: u32 = 11;
-const CT_SOUTHWESTRESIZE: u32 = 12;
-const CT_WESTRESIZE: u32 = 13;
-const CT_NORTHSOUTHRESIZE: u32 = 14;
-const CT_EASTWESTRESIZE: u32 = 15;
-const CT_NORTHEASTSOUTHWESTRESIZE: u32 = 16;
-const CT_NORTHWESTSOUTHEASTRESIZE: u32 = 17;
-const CT_COLUMNRESIZE: u32 = 18;
-const CT_ROWRESIZE: u32 = 19;
-const CT_MIDDLEPANNING: u32 = 20;
-const CT_MOVE: u32 = 29;
-const CT_VERTICALTEXT: u32 = 30;
-const CT_CELL: u32 = 31;
-const CT_CONTEXTMENU: u32 = 32;
-const CT_ALIAS: u32 = 33;
-const CT_PROGRESS: u32 = 34;
-const CT_NODROP: u32 = 35;
-const CT_COPY: u32 = 36;
-const CT_NONE: u32 = 37;
-const CT_NOTALLOWED: u32 = 38;
-const CT_ZOOMIN: u32 = 39;
-const CT_ZOOMOUT: u32 = 40;
-const CT_GRAB: u32 = 41;
-const CT_GRABBING: u32 = 42;
-const CT_MIDDLE_PANNING_VERTICAL: u32 = 43;
-const CT_MIDDLE_PANNING_HORIZONTAL: u32 = 44;
+use jfn_platform_abi::cursor::{
+    CT_ALIAS, CT_CELL, CT_COLUMNRESIZE, CT_CONTEXTMENU, CT_COPY, CT_CROSS, CT_EASTRESIZE,
+    CT_EASTWESTRESIZE, CT_GRAB, CT_GRABBING, CT_HAND, CT_HELP, CT_IBEAM, CT_MIDDLE_PANNING_HORIZONTAL,
+    CT_MIDDLE_PANNING_VERTICAL, CT_MIDDLEPANNING, CT_MOVE, CT_NODROP, CT_NONE,
+    CT_NORTHEASTRESIZE, CT_NORTHEASTSOUTHWESTRESIZE, CT_NORTHRESIZE, CT_NORTHSOUTHRESIZE,
+    CT_NORTHWESTRESIZE, CT_NORTHWESTSOUTHEASTRESIZE, CT_NOTALLOWED, CT_POINTER, CT_PROGRESS,
+    CT_ROWRESIZE, CT_SOUTHEASTRESIZE, CT_SOUTHRESIZE, CT_SOUTHWESTRESIZE, CT_VERTICALTEXT, CT_WAIT,
+    CT_WESTRESIZE, CT_ZOOMIN, CT_ZOOMOUT,
+};
 
 fn cef_to_wl_shape(cef: u32) -> u32 {
     use wp_cursor_shape_device_v1::Shape;
-    let s = match cef {
+    let s = match cef as c_int {
         CT_CROSS => Shape::Crosshair,
         CT_HAND => Shape::Pointer,
         CT_IBEAM => Shape::Text,
@@ -212,7 +183,7 @@ impl State {
         if self.pointer_serial == 0 {
             return;
         }
-        if cef == CT_NONE {
+        if cef as c_int == CT_NONE {
             pointer.set_cursor(self.pointer_serial, None, 0, 0);
             return;
         }
@@ -657,7 +628,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=8, ()).ok()?;
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
 
-    let cursor_type = Arc::new(AtomicU32::new(CT_POINTER));
+    let cursor_type = Arc::new(AtomicU32::new(CT_POINTER as u32));
     let set_cursor_inbox = Arc::new(AtomicBool::new(false));
 
     let state = State {

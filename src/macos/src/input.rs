@@ -48,8 +48,7 @@ const MOUSE_BTN_LEFT: u32 = 0x110;
 const MOUSE_BTN_RIGHT: u32 = 0x111;
 const MOUSE_BTN_MIDDLE: u32 = 0x112;
 
-// cef_cursor_type_t ordinals.
-const CT_NONE: i32 = 37;
+use jfn_platform_abi::cursor::*;
 
 // NSEventModifierFlags (NSEvent.h).
 const NSEVENT_MOD_SHIFT: u64 = 1 << 17;
@@ -229,22 +228,22 @@ static G_MOUSE_BUTTON_MODIFIERS: AtomicU32 = AtomicU32::new(0);
 unsafe fn ns_cursor_for(ct: i32) -> *mut AnyObject {
     let cls = objc2::class!(NSCursor);
     let sel: Sel = match ct {
-        1 => sel!(crosshairCursor),                 // CT_CROSS
-        2 => sel!(pointingHandCursor),              // CT_HAND
-        3 => sel!(IBeamCursor),                     // CT_IBEAM
-        30 => sel!(IBeamCursorForVerticalLayout),   // CT_VERTICALTEXT
-        6 => sel!(resizeRightCursor),               // CT_EASTRESIZE
-        13 => sel!(resizeLeftCursor),               // CT_WESTRESIZE
-        7 => sel!(resizeUpCursor),                  // CT_NORTHRESIZE
-        10 => sel!(resizeDownCursor),               // CT_SOUTHRESIZE
-        14 | 19 => sel!(resizeUpDownCursor),        // CT_NORTHSOUTHRESIZE / CT_ROWRESIZE
-        15 | 18 => sel!(resizeLeftRightCursor),     // CT_EASTWESTRESIZE / CT_COLUMNRESIZE
-        29 | 41 => sel!(openHandCursor),            // CT_MOVE / CT_GRAB
-        42 => sel!(closedHandCursor),               // CT_GRABBING
-        35 | 38 => sel!(operationNotAllowedCursor), // CT_NODROP / CT_NOTALLOWED
-        36 => sel!(dragCopyCursor),                 // CT_COPY
-        33 => sel!(dragLinkCursor),                 // CT_ALIAS
-        32 => sel!(contextualMenuCursor),           // CT_CONTEXTMENU
+        CT_CROSS => sel!(crosshairCursor),
+        CT_HAND => sel!(pointingHandCursor),
+        CT_IBEAM => sel!(IBeamCursor),
+        CT_VERTICALTEXT => sel!(IBeamCursorForVerticalLayout),
+        CT_EASTRESIZE => sel!(resizeRightCursor),
+        CT_WESTRESIZE => sel!(resizeLeftCursor),
+        CT_NORTHRESIZE => sel!(resizeUpCursor),
+        CT_SOUTHRESIZE => sel!(resizeDownCursor),
+        CT_NORTHSOUTHRESIZE | CT_ROWRESIZE => sel!(resizeUpDownCursor),
+        CT_EASTWESTRESIZE | CT_COLUMNRESIZE => sel!(resizeLeftRightCursor),
+        CT_MOVE | CT_GRAB => sel!(openHandCursor),
+        CT_GRABBING => sel!(closedHandCursor),
+        CT_NODROP | CT_NOTALLOWED => sel!(operationNotAllowedCursor),
+        CT_COPY => sel!(dragCopyCursor),
+        CT_ALIAS => sel!(dragLinkCursor),
+        CT_CONTEXTMENU => sel!(contextualMenuCursor),
         _ => sel!(arrowCursor),
     };
     unsafe { msg_send![cls, performSelector: sel] }

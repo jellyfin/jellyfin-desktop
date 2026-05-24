@@ -7,3 +7,6 @@ publish.workspace = true
 [lib]
 name = "jfn_platform_abi"
 crate-type = ["rlib"]
+
+[dependencies]
+cef-dll-sys.workspace = true
