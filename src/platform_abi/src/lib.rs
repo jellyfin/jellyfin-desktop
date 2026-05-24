@@ -275,6 +275,7 @@ pub fn try_get() -> Option<&'static dyn Platform> {
 // callers never see a JfnCefLayer pointer.
 
 pub trait BrowserBridge: Send + Sync {
+    #[allow(clippy::too_many_arguments)] // mirrors CEF's KeyEvent layout 1:1
     fn send_key_event(
         &self,
         type_: c_int,
