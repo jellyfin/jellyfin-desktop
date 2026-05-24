@@ -1,13 +1,4 @@
 //! CEF process bootstrap + App handlers.
-//!
-//! Ports `src/cef/cef_app.cpp` to Rust. C ABI in [`ffi`] mirrors the
-//! `CefRuntime::` namespace declared in `src/cef/cef_app.h` so the C++ side
-//! is a thin shim during the transition.
-//!
-//! NOTE: this is the initial slice — bootstrap + App skeleton + scheme
-//! registration + context-initialized callback hand-off. Render-process V8
-//! injection, popup DOM walk, and macOS message pump are deferred to
-//! follow-up commits.
 
 mod app;
 pub mod app_menu;

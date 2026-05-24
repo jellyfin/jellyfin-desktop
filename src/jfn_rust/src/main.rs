@@ -1,7 +1,7 @@
 //! Process entry point. Forwards into [`jfn_rust::app::jfn_app_main`],
 //! which owns the full boot/run/shutdown sequence (CEF subprocess
 //! dispatch, settings load, platform install, mpv boot, browser run
-//! loop, teardown). Replaces the historical `src/main.cpp` shim.
+//! loop, teardown).
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};

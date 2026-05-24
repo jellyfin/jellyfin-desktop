@@ -1,5 +1,4 @@
-//! C ABI surface. Mirrors `namespace CefRuntime` in `src/cef/cef_app.h` so
-//! the C++ shim can be a thin call-through during the transition.
+//! C ABI surface for CEF process bootstrap.
 
 use cef::*;
 #[cfg(target_os = "linux")]

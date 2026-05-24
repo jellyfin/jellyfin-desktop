@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 //! Embedded JS shim sources, included at compile time from `src/web/*.js`.
-//! Mirrors the CMake-generated `embedded_js` map in `build/generated/embedded_js.h`.
 
 pub fn get(name: &str) -> Option<&'static str> {
     Some(match name {
