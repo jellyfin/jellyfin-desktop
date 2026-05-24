@@ -990,7 +990,6 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
                 .into_owned();
             tracing::info!(target: "Main", "Device profile: {profile}");
             unsafe {
-                jfn_jellyfin::jfn_jellyfin_set_cached_profile(raw);
                 jfn_cef::injection::jfn_cef_set_device_profile_json(
                     profile.as_ptr() as *const _,
                     profile.len(),

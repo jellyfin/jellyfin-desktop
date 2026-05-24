@@ -28,10 +28,7 @@ use jfn_config::{
     jfn_settings_set_audio_passthrough, jfn_settings_set_device_name, jfn_settings_set_hwdec,
     jfn_settings_set_log_level, jfn_settings_set_server_url, jfn_settings_set_titlebar_theme_color,
 };
-use jfn_jellyfin::{
-    jfn_jellyfin_extract_base_url, jfn_jellyfin_free_string, jfn_jellyfin_is_valid_public_info,
-    jfn_jellyfin_normalize_input,
-};
+use jfn_jellyfin::{extract_base_url, is_valid_public_info, normalize_input};
 
 struct OverlayState {
     layer: *mut JfnCefLayer,
@@ -104,15 +101,6 @@ fn take_cstring_into_rust(p: *mut c_char) -> String {
     }
     let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
     unsafe { jfn_settings_free_string(p) };
-    s
-}
-
-fn take_jellyfin_string(p: *mut c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
-    unsafe { jfn_jellyfin_free_string(p) };
     s
 }
 
@@ -248,11 +236,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             let Some(b) = browser else { return true };
             let url = list_string(&args, 0);
             cancel_active_probe();
-            let normalized = {
-                let cinput = CString::new(url.clone()).unwrap_or_default();
-                let raw = unsafe { jfn_jellyfin_normalize_input(cinput.as_ptr()) };
-                take_jellyfin_string(raw)
-            };
+            let normalized = normalize_input(&url);
             start_probe(b, url, normalized);
             true
         }
@@ -407,9 +391,7 @@ impl ProbeInner {
                         resolved = s;
                     }
                 }
-                let cresolved = CString::new(resolved).unwrap_or_default();
-                let base_raw = unsafe { jfn_jellyfin_extract_base_url(cresolved.as_ptr()) };
-                st.base = take_jellyfin_string(base_raw);
+                st.base = extract_base_url(&resolved);
                 st.phase = Phase::Get;
                 let next_url = format!("{}/System/Info/Public", st.base);
                 let req = make_request(
@@ -437,9 +419,7 @@ impl ProbeInner {
                 && let Some(resp) = request.response()
                 && resp.status() == 200
             {
-                let body_ptr = st.body.as_ptr() as *const c_char;
-                let valid = unsafe { jfn_jellyfin_is_valid_public_info(body_ptr, st.body.len()) };
-                ok = valid;
+                ok = is_valid_public_info(&st.body);
             }
             (ok, st.base.clone())
         };

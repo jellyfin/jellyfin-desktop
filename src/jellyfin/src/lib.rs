@@ -19,7 +19,6 @@
 use serde_json::{Map, Value, json};
 use std::ffi::{CStr, CString, c_char};
 use std::os::raw::c_uchar;
-use std::sync::Mutex;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -404,74 +403,6 @@ pub fn is_valid_public_info(body: &[u8]) -> bool {
         .and_then(Value::as_str)
         .map(|s| !s.is_empty())
         .unwrap_or(false)
-}
-
-fn cstring_or_null(s: String) -> *mut c_char {
-    match CString::new(s) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
-}
-
-/// # Safety
-/// `input` must be a valid NUL-terminated C string (or NULL → empty).
-/// Returns a malloc'd, NUL-terminated UTF-8 string; free with
-/// `jfn_jellyfin_free_string`. Returns NULL only on interior-NUL serialization
-/// failure.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_normalize_input(input: *const c_char) -> *mut c_char {
-    let s = unsafe { cstr_to_string(input) };
-    cstring_or_null(normalize_input(&s))
-}
-
-/// # Safety
-/// `url` must be a valid NUL-terminated C string (or NULL → empty).
-/// Returns a malloc'd, NUL-terminated UTF-8 string; free with
-/// `jfn_jellyfin_free_string`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_extract_base_url(url: *const c_char) -> *mut c_char {
-    let s = unsafe { cstr_to_string(url) };
-    cstring_or_null(extract_base_url(&s))
-}
-
-/// # Safety
-/// `body` must point to at least `len` bytes of readable memory (need not be
-/// NUL-terminated). Passing a null pointer or zero length returns false.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_is_valid_public_info(
-    body: *const c_char,
-    len: usize,
-) -> bool {
-    if body.is_null() || len == 0 {
-        return false;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(body as *const u8, len) };
-    is_valid_public_info(slice)
-}
-
-// ---- Cached device-profile JSON ----
-//
-// Set once at startup in the browser process; read by WebBrowser when
-// building extra_info for the renderer. Empty string until set.
-
-static CACHED_PROFILE: Mutex<String> = Mutex::new(String::new());
-
-/// # Safety
-/// `json` must be a valid NUL-terminated C string, or NULL to clear.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_set_cached_profile(json: *const c_char) {
-    let s = unsafe { cstr_to_string(json) };
-    if let Ok(mut guard) = CACHED_PROFILE.lock() {
-        *guard = s;
-    }
-}
-
-/// Returns a malloc'd copy of the cached profile JSON (possibly empty).
-/// Free with `jfn_jellyfin_free_string`.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_jellyfin_cached_profile() -> *mut c_char {
-    let s = CACHED_PROFILE.lock().map(|g| g.clone()).unwrap_or_default();
-    cstring_or_null(s)
 }
 
 // ---- tests ----
