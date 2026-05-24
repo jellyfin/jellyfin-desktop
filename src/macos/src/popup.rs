@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{DefinedClass, define_class, msg_send};
+use objc2::{AnyThread, DefinedClass, define_class, msg_send};
 use objc2_foundation::{NSObject, NSPoint, NSString};
 
 use jfn_platform_abi::JfnPopupRequest;

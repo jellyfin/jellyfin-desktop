@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, Sel};
-use objc2::{DefinedClass, define_class, extern_class, msg_send, sel};
+use objc2::{AnyThread, DefinedClass, define_class, extern_class, msg_send, sel};
 use objc2_foundation::{NSObject, NSPoint, NSRect, NSSize};
 
 // =====================================================================

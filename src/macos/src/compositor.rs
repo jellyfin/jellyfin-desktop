@@ -17,6 +17,7 @@ use std::ffi::{c_int, c_void};
 use std::ptr;
 use std::sync::Mutex;
 
+use objc2::encode::{Encode, Encoding};
 use objc2::runtime::AnyObject;
 
 use crate::G_IN_TRANSITION;
@@ -96,6 +97,11 @@ struct CGSize {
     height: f64,
 }
 
+unsafe impl Encode for CGSize {
+    const ENCODING: Encoding =
+        Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+}
+
 // =====================================================================
 // MTLPixelFormatBGRA8Unorm = 80. MTLLoadActionClear=2, MTLStoreActionStore=1.
 // MTLPrimitiveTypeTriangle = 3. MTLTextureUsageShaderRead = 1.
@@ -116,6 +122,13 @@ struct MTLClearColor {
     green: f64,
     blue: f64,
     alpha: f64,
+}
+
+unsafe impl Encode for MTLClearColor {
+    const ENCODING: Encoding = Encoding::Struct(
+        "",
+        &[f64::ENCODING, f64::ENCODING, f64::ENCODING, f64::ENCODING],
+    );
 }
 
 // =====================================================================
