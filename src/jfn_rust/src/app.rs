@@ -123,7 +123,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
 
     // 1. CEF subprocess dispatch: returns >= 0 in renderer/GPU/utility
     //    subprocesses (subprocess exit code), -1 in the browser process.
-    let rc = jfn_cef::ffi::jfn_cef_start(argc, argv);
+    let rc = jfn_cef::ffi::jfn_cef_start();
     if rc >= 0 {
         return rc;
     }
@@ -962,7 +962,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     #[cfg(target_os = "linux")]
     {
         if !ozone_platform.is_empty() {
-            unsafe { jfn_cef::ffi::jfn_cef_set_ozone_platform(ozone_c.as_ptr()) };
+            jfn_cef::ffi::jfn_cef_set_ozone_platform(&ozone_platform);
         }
     }
     tracing::info!(target: "Main", "[FLOW] calling CefInitialize...");

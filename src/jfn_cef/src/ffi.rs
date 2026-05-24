@@ -1,11 +1,11 @@
-//! C ABI surface for CEF process bootstrap.
+//! CEF process bootstrap.
 
 use cef::*;
-#[cfg(target_os = "linux")]
-use std::ffi::CStr;
 #[cfg(not(target_os = "windows"))]
 use std::ffi::CString;
-use std::os::raw::{c_char, c_int};
+#[cfg(not(target_os = "windows"))]
+use std::os::raw::c_char;
+use std::os::raw::c_int;
 #[cfg(not(target_os = "windows"))]
 use std::sync::OnceLock;
 
@@ -36,8 +36,7 @@ use crate::state;
 /// Subprocess dispatch + browser-process App construction.
 /// Returns -1 in the browser process (continue startup); returns the
 /// subprocess exit code otherwise.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_start(_argc: c_int, _argv: *const *const c_char) -> c_int {
+pub fn jfn_cef_start() -> c_int {
     // macOS distributes CEF as a framework loaded at runtime via a thunk table
     // in libcef_dll_wrapper (`cef_load_library` populates it). Without this,
     // every CEF call dispatches through a NULL pointer.
@@ -61,18 +60,15 @@ pub extern "C" fn jfn_cef_start(_argc: c_int, _argv: *const *const c_char) -> c_
     )
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_set_log_severity(severity: c_int) {
+pub fn jfn_cef_set_log_severity(severity: c_int) {
     state::with_config(|c| c.log_severity = severity);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_set_remote_debugging_port(port: c_int) {
+pub fn jfn_cef_set_remote_debugging_port(port: c_int) {
     state::with_config(|c| c.remote_debugging_port = port);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_set_disable_gpu_compositing(disable: bool) {
+pub fn jfn_cef_set_disable_gpu_compositing(disable: bool) {
     if disable {
         state::with_config(|c| {
             c.pending_switches.push(state::PendingSwitch {
@@ -83,27 +79,20 @@ pub extern "C" fn jfn_cef_set_disable_gpu_compositing(disable: bool) {
     }
 }
 
-/// Linux only — Ozone platform selection. `platform_utf8` may be null or
-/// empty (no-op). When set to "wayland", also disables the fractional-scale
-/// protocol so OSR's GetScreenInfo device_scale_factor is honored.
+/// Linux only — Ozone platform selection. Empty string is a no-op.
+/// When set to "wayland", also disables the fractional-scale protocol so
+/// OSR's GetScreenInfo device_scale_factor is honored.
 #[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_set_ozone_platform(platform_utf8: *const c_char) {
-    if platform_utf8.is_null() {
-        return;
-    }
-    let s = unsafe { CStr::from_ptr(platform_utf8) }
-        .to_string_lossy()
-        .into_owned();
-    if s.is_empty() {
+pub fn jfn_cef_set_ozone_platform(platform: &str) {
+    if platform.is_empty() {
         return;
     }
     state::with_config(|c| {
         c.pending_switches.push(state::PendingSwitch {
             name: "ozone-platform".to_string(),
-            value: Some(s.clone()),
+            value: Some(platform.to_string()),
         });
-        if s == "wayland" {
+        if platform == "wayland" {
             c.pending_switches.push(state::PendingSwitch {
                 name: "disable-features".to_string(),
                 value: Some("WaylandFractionalScaleV1".to_string()),
@@ -114,14 +103,12 @@ pub unsafe extern "C" fn jfn_cef_set_ozone_platform(platform_utf8: *const c_char
 
 /// Register the callback invoked from `BrowserProcessHandler::OnContextInitialized`.
 /// MUST be called before `jfn_cef_initialize`.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_set_context_initialized_callback(cb: Option<extern "C" fn()>) {
+pub fn jfn_cef_set_context_initialized_callback(cb: Option<extern "C" fn()>) {
     state::with_config(|c| c.on_context_initialized = cb);
 }
 
 /// Builds CefSettings and calls `CefInitialize`. Returns true on success.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_initialize() -> bool {
+pub fn jfn_cef_initialize() -> bool {
     let cfg_severity = state::with_config(|c| c.log_severity);
     let cfg_port = state::with_config(|c| c.remote_debugging_port);
 
@@ -217,8 +204,7 @@ fn browser_main_args() -> MainArgs {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_cef_shutdown() {
+pub fn jfn_cef_shutdown() {
     // Gate further external-pump dispatches before tearing down CEF state.
     #[cfg(target_os = "macos")]
     crate::pump::shutdown();
