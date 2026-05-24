@@ -112,18 +112,18 @@ impl Platform for X11Platform {
     }
 
     fn set_fullscreen(&self, fullscreen: bool) {
-        if unsafe { jfn_mpv_handle_get() }.is_null() {
+        if jfn_mpv_handle_get().is_null() {
             return;
         }
         if jfn_playback_fullscreen() == fullscreen {
             return;
         }
-        unsafe { jfn_mpv_set_fullscreen(fullscreen) };
+        jfn_mpv_set_fullscreen(fullscreen);
     }
 
     fn toggle_fullscreen(&self) {
-        if !unsafe { jfn_mpv_handle_get() }.is_null() {
-            unsafe { jfn_mpv_toggle_fullscreen() };
+        if !jfn_mpv_handle_get().is_null() {
+            jfn_mpv_toggle_fullscreen();
         }
     }
 

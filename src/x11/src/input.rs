@@ -56,7 +56,7 @@ unsafe impl Sync for CursorMailbox {}
 
 impl CursorMailbox {
     fn new() -> Self {
-        let wake = unsafe { jfn_wake_event_new() };
+        let wake = jfn_wake_event_new();
         Self {
             queue: Mutex::new(Vec::new()),
             wake,
@@ -316,7 +316,7 @@ fn handle_key(st: &mut State, detail: u8, pressed: bool) {
     if pressed {
         let cp = xst.key_get_utf32(kc);
         if cp > 0 {
-            unsafe { jfn_input_dispatch_char(cp, st.modifiers, native as u32) };
+            jfn_input_dispatch_char(cp, st.modifiers, native as u32);
         }
     }
 
@@ -347,13 +347,13 @@ fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed
             7 => (-120, 0),
             _ => (0, 0),
         };
-        unsafe { jfn_input_dispatch_scroll(x, y, dx, dy, cef_modifiers(st)) };
+        jfn_input_dispatch_scroll(x, y, dx, dy, cef_modifiers(st));
         return;
     }
 
     if button == 8 || button == 9 {
         if pressed {
-            unsafe { jfn_input_dispatch_history_nav((button == 9) as c_int) };
+            jfn_input_dispatch_history_nav((button == 9) as c_int);
         }
         return;
     }

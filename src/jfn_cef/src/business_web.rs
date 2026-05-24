@@ -98,8 +98,8 @@ fn install_handlers(layer: *mut JfnCefLayer) {
         let lp = &lp_created;
         // Main browser takes input only if no other layer has already
         // claimed it (e.g. the server-selection overlay).
-        if unsafe { jfn_browsers_active() }.is_null() {
-            unsafe { jfn_browsers_set_active(lp.0) };
+        if jfn_browsers_active().is_null() {
+            jfn_browsers_set_active(lp.0);
         }
     })));
 
@@ -211,23 +211,23 @@ fn apply_setting_value(_section: &str, key: &str, value: &str) {
 }
 
 fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
-    if unsafe { jfn_mpv_handle_get() }.is_null() {
+    if jfn_mpv_handle_get().is_null() {
         // Adopt and drop refs so we don't leak.
         if !args_raw.is_null() {
-            let _: ListValue = unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
+            let _: ListValue = (args_raw as *mut sys::_cef_list_value_t).wrap_result();
         }
         if !browser_raw.is_null() {
-            let _: Browser = unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
+            let _: Browser = (browser_raw as *mut sys::_cef_browser_t).wrap_result();
         }
         return false;
     }
 
     let args = (!args_raw.is_null()).then(|| -> ListValue {
-        unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() }
+        (args_raw as *mut sys::_cef_list_value_t).wrap_result()
     });
     if !browser_raw.is_null() {
         // Browser ref isn't needed by any web handler; just drop it.
-        let _: Browser = unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
+        let _: Browser = (browser_raw as *mut sys::_cef_browser_t).wrap_result();
     }
 
     match name {
@@ -307,39 +307,39 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             true
         }
         "playerStop" => {
-            unsafe { jfn_mpv_stop() };
+            jfn_mpv_stop();
             true
         }
         "playerPause" => {
-            unsafe { jfn_mpv_pause() };
+            jfn_mpv_pause();
             true
         }
         "playerPlay" => {
-            unsafe { jfn_mpv_play() };
+            jfn_mpv_play();
             true
         }
         "playerSeek" => {
             if let Some(args) = args {
                 let pos = list_int(&args, 0) as f64 / 1000.0;
-                unsafe { jfn_mpv_seek_absolute(pos) };
+                jfn_mpv_seek_absolute(pos);
             }
             true
         }
         "playerSetVolume" => {
             if let Some(args) = args {
-                unsafe { jfn_mpv_set_volume(list_int(&args, 0) as f64) };
+                jfn_mpv_set_volume(list_int(&args, 0) as f64);
             }
             true
         }
         "playerSetMuted" => {
             if let Some(args) = args {
-                unsafe { jfn_mpv_set_muted(args.bool(0) != 0) };
+                jfn_mpv_set_muted(args.bool(0) != 0);
             }
             true
         }
         "playerSetSpeed" => {
             if let Some(args) = args {
-                unsafe { jfn_mpv_set_speed(list_int(&args, 0) as f64 / 1000.0) };
+                jfn_mpv_set_speed(list_int(&args, 0) as f64 / 1000.0);
             }
             true
         }
@@ -351,7 +351,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                     jfn_logging::LEVEL_INFO,
                     &format!("playerSetSubtitle: {id}"),
                 );
-                unsafe { jfn_mpv_set_subtitle_track(id) };
+                jfn_mpv_set_subtitle_track(id);
             }
             true
         }
@@ -370,7 +370,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         }
         "playerSetAudio" => {
             if let Some(args) = args {
-                unsafe { jfn_mpv_set_audio_track(list_int(&args, 0) as i64) };
+                jfn_mpv_set_audio_track(list_int(&args, 0) as i64);
             }
             true
         }
@@ -389,13 +389,13 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         }
         "playerSetAudioDelay" => {
             if let Some(args) = args {
-                unsafe { jfn_mpv_set_audio_delay(args.double(0)) };
+                jfn_mpv_set_audio_delay(args.double(0));
             }
             true
         }
         "playerSetSubtitleDelay" => {
             if let Some(args) = args {
-                unsafe { jfn_mpv_set_subtitle_delay(args.double(0)) };
+                jfn_mpv_set_subtitle_delay(args.double(0));
             }
             true
         }
@@ -413,7 +413,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 let mut g = INSTANCE.lock().unwrap();
                 let Some(st) = g.as_mut() else { return true };
                 if active {
-                    st.was_fullscreen_before_osd = unsafe { jfn_playback_fullscreen() };
+                    st.was_fullscreen_before_osd = jfn_playback_fullscreen();
                 } else if !st.was_fullscreen_before_osd {
                     jfn_platform_abi::get().set_fullscreen(false);
                 }
@@ -451,7 +451,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 );
                 let c = CString::new(color).unwrap_or_default();
                 let rgb = unsafe { jfn_cef_parse_color(c.as_ptr()) };
-                unsafe { jfn_theme_color_on_color(rgb) };
+                jfn_theme_color_on_color(rgb);
             }
             true
         }
@@ -459,7 +459,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             if let Some(args) = args {
                 let json = list_string(&args, 0);
                 let meta = parse_metadata_json(&json);
-                unsafe { jfn_theme_color_set_video_mode(meta.media_type == MT_VIDEO) };
+                jfn_theme_color_set_video_mode(meta.media_type == MT_VIDEO);
                 post_metadata(&meta);
             }
             true

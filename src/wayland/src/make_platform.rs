@@ -91,11 +91,11 @@ impl Platform for WaylandPlatform {
     }
 
     fn init(&self, _mpv: *mut c_void) -> bool {
-        unsafe { jfn_wl_lifecycle_init() }
+        jfn_wl_lifecycle_init()
     }
 
     fn cleanup(&self) {
-        unsafe { jfn_wl_lifecycle_cleanup() };
+        jfn_wl_lifecycle_cleanup();
     }
 
     fn post_window_cleanup(&self) {
@@ -267,31 +267,31 @@ impl Platform for WaylandPlatform {
     }
 
     fn set_fullscreen(&self, v: bool) {
-        unsafe { crate::wl_ffi::jfn_wl_set_fullscreen(v) };
+        crate::wl_ffi::jfn_wl_set_fullscreen(v);
     }
 
     fn toggle_fullscreen(&self) {
-        unsafe { crate::wl_ffi::jfn_wl_toggle_fullscreen() };
+        crate::wl_ffi::jfn_wl_toggle_fullscreen();
     }
 
     fn begin_transition(&self) {
-        unsafe { crate::wl_ffi::jfn_wl_begin_transition() };
+        crate::wl_ffi::jfn_wl_begin_transition();
     }
 
     fn end_transition(&self) {
-        unsafe { crate::wl_ffi::jfn_wl_end_transition() };
+        crate::wl_ffi::jfn_wl_end_transition();
     }
 
     fn in_transition(&self) -> bool {
-        unsafe { crate::wl_ffi::jfn_wl_in_transition() }
+        crate::wl_ffi::jfn_wl_in_transition()
     }
 
     fn get_scale(&self) -> f32 {
-        unsafe { jfn_wl_get_cached_scale() }
+        jfn_wl_get_cached_scale()
     }
 
     fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
-        let s = unsafe { jfn_wayland_scale_probe(x, y) };
+        let s = jfn_wayland_scale_probe(x, y);
         if s > 0.0 { s as f32 } else { 1.0 }
     }
 

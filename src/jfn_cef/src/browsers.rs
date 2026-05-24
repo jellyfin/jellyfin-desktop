@@ -86,7 +86,7 @@ pub unsafe fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
     };
 
     let surface = jfn_platform_abi::get().alloc_surface();
-    let layer = unsafe { jfn_cef_layer_new() };
+    let layer = jfn_cef_layer_new();
     if layer.is_null() {
         if !surface.is_null() {
             jfn_platform_abi::get().free_surface(surface);
@@ -216,7 +216,7 @@ pub fn jfn_browsers_set_refresh_rate(hz: f64) {
         let mut g = INSTANCE.lock().unwrap();
         let Some(b) = g.as_mut() else { return };
         b.frame_rate = target;
-        unsafe { jfn_cef_set_default_frame_rate(target) };
+        jfn_cef_set_default_frame_rate(target);
         b.layers.clone()
     };
     for l in layers {

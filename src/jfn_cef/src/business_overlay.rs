@@ -74,7 +74,7 @@ fn install_handlers(layer: *mut JfnCefLayer, _main_layer: *mut JfnCefLayer) {
     let lp_created = LayerPtr(layer);
     l.set_created_callback_rust(Some(Box::new(move |_b: *mut c_void| {
         let lp = &lp_created;
-        unsafe { jfn_browsers_set_active(lp.0) };
+        jfn_browsers_set_active(lp.0);
     })));
 
     // Message dispatch.
@@ -120,10 +120,10 @@ fn apply_setting_value(_section: &str, key: &str, value: &str) {
 fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
     // Adopt the refs CEF added before invoke; release on function exit.
     let args = (!args_raw.is_null()).then(|| -> ListValue {
-        unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() }
+        (args_raw as *mut sys::_cef_list_value_t).wrap_result()
     });
     let browser = (!browser_raw.is_null())
-        .then(|| -> Browser { unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() } });
+        .then(|| -> Browser { (browser_raw as *mut sys::_cef_browser_t).wrap_result() });
 
     match name {
         "getSavedServerUrl" => {
@@ -163,7 +163,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 Some(s) => (s.layer, s.main_layer),
                 None => return true,
             };
-            unsafe { jfn_browsers_set_active(main_layer) };
+            jfn_browsers_set_active(main_layer);
             let browser_for_close = browser.clone();
             let start_box: Box<FadeFn> = Box::new(|| unsafe {
                 jfn_theme_color_on_overlay_dismissed();

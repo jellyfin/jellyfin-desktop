@@ -26,7 +26,7 @@ pub fn build_closure() -> Box<crate::client::ContextBuilderFn> {
         if raw.is_null() {
             return;
         }
-        let m: MenuModel = unsafe { (raw as *mut sys::_cef_menu_model_t).wrap_result() };
+        let m: MenuModel = (raw as *mut sys::_cef_menu_model_t).wrap_result();
         m.add_item(
             MENU_ID_TOGGLE_FULLSCREEN,
             Some(&cef::CefString::from("Toggle Fullscreen")),
