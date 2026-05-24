@@ -548,14 +548,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
 // =====================================================================
 
 #[cfg(unix)]
-static SIGNAL_GUARD: OnceLock<SignalGuardSlot> = OnceLock::new();
-
-#[cfg(unix)]
-struct SignalGuardSlot(*mut jfn_signal_guard::SignalGuard);
-#[cfg(unix)]
-unsafe impl Send for SignalGuardSlot {}
-#[cfg(unix)]
-unsafe impl Sync for SignalGuardSlot {}
+static SIGNAL_GUARD: OnceLock<jfn_signal_guard::SignalGuard> = OnceLock::new();
 
 #[cfg(unix)]
 unsafe extern "C" fn on_shutdown_signal(_sig: c_int) {
@@ -571,8 +564,8 @@ unsafe extern "system" fn console_ctrl_handler(_t: u32) -> i32 {
 fn install_signal_handler() {
     #[cfg(unix)]
     {
-        let g = unsafe { jfn_signal_guard::jfn_signal_guard_install(Some(on_shutdown_signal)) };
-        let _ = SIGNAL_GUARD.set(SignalGuardSlot(g));
+        let g = unsafe { jfn_signal_guard::install(on_shutdown_signal) };
+        let _ = SIGNAL_GUARD.set(g);
     }
     #[cfg(windows)]
     {
