@@ -103,7 +103,7 @@ fn print_version() {
 ///
 /// # Safety
 /// `argv` must point to `argc` valid NUL-terminated C strings.
-pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
+pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     // Windows/macOS use a fixed display backend so the Platform must be
     // installed before CefExecuteProcess (subprocesses bail out of the
     // browser-process flow but may still query the platform).
@@ -799,7 +799,7 @@ fn store_vo_size(w: i32, h: i32) {
 }
 
 /// C accessor for the post-wait VO surface size.
-pub extern "C" fn jfn_app_vo_size(w: *mut c_int, h: *mut c_int) {
+pub fn jfn_app_vo_size(w: *mut c_int, h: *mut c_int) {
     if let Some((ww, hh)) = VO_SIZE.get() {
         if !w.is_null() {
             unsafe { *w = *ww };
@@ -1233,7 +1233,7 @@ fn save_window_geometry_on_exit() {
 
 /// Tear down boot-owned resources at process exit (wlproxy, single-instance
 /// listener). Called from main.cpp's tail until that path is ported too.
-pub extern "C" fn jfn_app_teardown() {
+pub fn jfn_app_teardown() {
     #[cfg(target_os = "linux")]
     {
         if let Some(slot) = WLPROXY.get() {

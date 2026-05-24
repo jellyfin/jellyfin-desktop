@@ -71,7 +71,7 @@ static INSTANCE: Mutex<Option<ThemeColor>> = Mutex::new(None);
 ///
 /// # Safety
 /// Callbacks must be valid for the lifetime of the process.
-pub unsafe extern "C" fn jfn_theme_color_init(
+pub unsafe fn jfn_theme_color_init(
     on_set_theme_color: Option<unsafe extern "C" fn(u32)>,
     on_set_bg_hex: Option<unsafe extern "C" fn(*const c_char)>,
 ) {
@@ -91,7 +91,7 @@ pub unsafe extern "C" fn jfn_theme_color_init(
     *INSTANCE.lock().unwrap() = Some(tc);
 }
 
-pub extern "C" fn jfn_theme_color_set_video_bg(rgb: u32) {
+pub fn jfn_theme_color_set_video_bg(rgb: u32) {
     let mut g = INSTANCE.lock().unwrap();
     if let Some(t) = g.as_mut() {
         t.video_bg_rgb = rgb;
@@ -101,7 +101,7 @@ pub extern "C" fn jfn_theme_color_set_video_bg(rgb: u32) {
     }
 }
 
-pub extern "C" fn jfn_theme_color_on_color(rgb: u32) {
+pub fn jfn_theme_color_on_color(rgb: u32) {
     let mut g = INSTANCE.lock().unwrap();
     if let Some(t) = g.as_mut() {
         t.current_rgb = rgb;
@@ -111,7 +111,7 @@ pub extern "C" fn jfn_theme_color_on_color(rgb: u32) {
     }
 }
 
-pub extern "C" fn jfn_theme_color_on_overlay_dismissed() {
+pub fn jfn_theme_color_on_overlay_dismissed() {
     let mut g = INSTANCE.lock().unwrap();
     if let Some(t) = g.as_mut() {
         t.unlocked = true;
@@ -119,7 +119,7 @@ pub extern "C" fn jfn_theme_color_on_overlay_dismissed() {
     }
 }
 
-pub extern "C" fn jfn_theme_color_set_video_mode(active: bool) {
+pub fn jfn_theme_color_set_video_mode(active: bool) {
     let mut g = INSTANCE.lock().unwrap();
     if let Some(t) = g.as_mut() {
         if t.video_active == active {
@@ -132,7 +132,7 @@ pub extern "C" fn jfn_theme_color_set_video_mode(active: bool) {
     }
 }
 
-pub extern "C" fn jfn_theme_color_shutdown() {
+pub fn jfn_theme_color_shutdown() {
     *INSTANCE.lock().unwrap() = None;
 }
 

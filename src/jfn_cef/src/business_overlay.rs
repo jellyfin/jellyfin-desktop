@@ -41,7 +41,7 @@ unsafe impl Sync for LayerPtr {}
 
 /// Create the overlay layer over `main_layer`, install handlers, load the
 /// overlay URL. Called by main.cpp after the main browser is created.
-pub extern "C" fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
+pub fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
     let kind = CString::new("overlay").unwrap();
     let layer = unsafe { jfn_browsers_create(kind.as_ptr()) };
     if layer.is_null() {
