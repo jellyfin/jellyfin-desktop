@@ -379,7 +379,7 @@ struct Sink {
 }
 
 enum Msg {
-    Event(PlaybackEvent),
+    Event(Box<PlaybackEvent>),
     Stop,
 }
 
@@ -392,7 +392,7 @@ fn sink_slot() -> &'static Mutex<Option<Sink>> {
 /// Called by the playback coordinator's builtin event-sink closure.
 pub(crate) fn deliver(ev: PlaybackEvent) {
     if let Some(s) = sink_slot().lock().unwrap().as_ref() {
-        let _ = s.tx.send(Msg::Event(ev));
+        let _ = s.tx.send(Msg::Event(Box::new(ev)));
     }
 }
 
@@ -430,7 +430,7 @@ fn worker(rx: Receiver<Msg>, service_suffix: String) {
     while let Ok(msg) = rx.recv() {
         match msg {
             Msg::Stop => break,
-            Msg::Event(ev) => handle_event(ev, &state, &conn),
+            Msg::Event(ev) => handle_event(*ev, &state, &conn),
         }
     }
 

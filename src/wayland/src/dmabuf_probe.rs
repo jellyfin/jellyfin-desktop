@@ -81,10 +81,9 @@ pub unsafe fn jfn_wl_dmabuf_probe(
     let ozone = if ozone_platform.is_null() {
         ""
     } else {
-        match unsafe { CStr::from_ptr(ozone_platform) }.to_str() {
-            Ok(s) => s,
-            Err(_) => "",
-        }
+        unsafe { CStr::from_ptr(ozone_platform) }
+            .to_str()
+            .unwrap_or_default()
     };
     match probe(ozone, wayland_egl_dpy) {
         Ok(b) => b,

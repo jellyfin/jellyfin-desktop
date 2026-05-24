@@ -280,12 +280,14 @@ impl Inner {
             wi.external_begin_frame_enabled = 0;
         }
 
-        let mut bs = BrowserSettings::default();
-        bs.background_color = 0;
         let fr_layer = self.frame_rate.load(Ordering::Acquire);
         let fr_default = DEFAULT_FRAME_RATE.load(Ordering::Acquire);
         let fr = if fr_layer > 0 { fr_layer } else { fr_default };
-        bs.windowless_frame_rate = if fr > 0 { fr } else { 60 };
+        let bs = BrowserSettings {
+            background_color: 0,
+            windowless_frame_rate: if fr > 0 { fr } else { 60 },
+            ..BrowserSettings::default()
+        };
 
         let kind = self.injection_kind.lock().unwrap().clone();
         let add_ctx_menu = self.context_menu_builder.lock().unwrap().is_some();
@@ -1392,14 +1394,16 @@ pub(crate) unsafe fn jfn_cef_layer_send_key_event(
         return;
     };
     let raw_type: sys::cef_key_event_type_t = unsafe { std::mem::transmute(type_ as u32) };
-    let mut ev = KeyEvent::default();
-    ev.type_ = raw_type.into();
-    ev.modifiers = modifiers;
-    ev.windows_key_code = windows_key_code;
-    ev.native_key_code = native_key_code;
-    ev.is_system_key = if is_system_key { 1 } else { 0 };
-    ev.character = character;
-    ev.unmodified_character = unmodified_character;
+    let ev = KeyEvent {
+        type_: raw_type.into(),
+        modifiers,
+        windows_key_code,
+        native_key_code,
+        is_system_key: if is_system_key { 1 } else { 0 },
+        character,
+        unmodified_character,
+        ..KeyEvent::default()
+    };
     host.send_key_event(Some(&ev));
 }
 
