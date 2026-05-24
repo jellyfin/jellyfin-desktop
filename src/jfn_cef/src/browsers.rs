@@ -36,8 +36,7 @@ unsafe impl Send for Browsers {}
 
 static INSTANCE: Mutex<Option<Browsers>> = Mutex::new(None);
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_init(
+pub fn jfn_browsers_init(
     lw: i32,
     lh: i32,
     pw: i32,
@@ -67,8 +66,7 @@ pub extern "C" fn jfn_browsers_init(
 }
 
 /// Tear down all remaining layers. Called once at the end of run_with_cef.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_shutdown() {
+pub fn jfn_browsers_shutdown() {
     let Some(b) = INSTANCE.lock().unwrap().take() else {
         return;
     };
@@ -81,8 +79,7 @@ pub extern "C" fn jfn_browsers_shutdown() {
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
+pub unsafe fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
     let mut g = INSTANCE.lock().unwrap();
     let Some(b) = g.as_mut() else {
         return std::ptr::null_mut();
@@ -117,8 +114,7 @@ pub unsafe extern "C" fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCef
     layer
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
+pub fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
     if layer.is_null() {
         return;
     }
@@ -139,8 +135,7 @@ pub extern "C" fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
     restack(&b.layers);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
+pub fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
     let mut g = INSTANCE.lock().unwrap();
     let Some(b) = g.as_mut() else { return };
     if b.active == layer {
@@ -180,8 +175,7 @@ pub fn jfn_browsers_active() -> *mut JfnCefLayer {
         .unwrap_or(std::ptr::null_mut())
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
+pub fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
     let layers: Vec<*mut JfnCefLayer> = {
         let mut g = INSTANCE.lock().unwrap();
         let Some(b) = g.as_mut() else { return };
@@ -196,8 +190,7 @@ pub extern "C" fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_set_scale(scale: f64) {
+pub fn jfn_browsers_set_scale(scale: f64) {
     let (new_lw, new_lh, pw, ph) = {
         let g = INSTANCE.lock().unwrap();
         let Some(b) = g.as_ref() else { return };
@@ -214,8 +207,7 @@ pub extern "C" fn jfn_browsers_set_scale(scale: f64) {
     jfn_browsers_set_size(new_lw, new_lh, pw, ph);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_set_refresh_rate(hz: f64) {
+pub fn jfn_browsers_set_refresh_rate(hz: f64) {
     if hz <= 0.0 {
         return;
     }
@@ -232,8 +224,7 @@ pub extern "C" fn jfn_browsers_set_refresh_rate(hz: f64) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_all_closed() -> bool {
+pub fn jfn_browsers_all_closed() -> bool {
     let g = INSTANCE.lock().unwrap();
     let Some(b) = g.as_ref() else { return true };
     for l in &b.layers {
@@ -244,8 +235,7 @@ pub extern "C" fn jfn_browsers_all_closed() -> bool {
     true
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_close_all() {
+pub fn jfn_browsers_close_all() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
         .lock()
         .unwrap()
@@ -261,8 +251,7 @@ pub extern "C" fn jfn_browsers_close_all() {
 /// CADisplayLink tick at the display's real refresh rate so CEF produces
 /// frames only when its compositor has invalidation.
 #[cfg(target_os = "macos")]
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_send_external_begin_frame_all() {
+pub fn jfn_browsers_send_external_begin_frame_all() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
         .lock()
         .unwrap()
@@ -274,8 +263,7 @@ pub extern "C" fn jfn_browsers_send_external_begin_frame_all() {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_wait_all_closed() {
+pub fn jfn_browsers_wait_all_closed() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
         .lock()
         .unwrap()

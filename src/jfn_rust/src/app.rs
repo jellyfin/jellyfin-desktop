@@ -605,18 +605,15 @@ fn install_listener_guard() {
 }
 
 #[cfg(target_os = "linux")]
-unsafe extern "C" {
-    fn jfn_wlproxy_start() -> *mut std::ffi::c_void;
-    fn jfn_wlproxy_display_name(p: *const std::ffi::c_void) -> *const c_char;
-    fn jfn_wlproxy_stop(p: *mut std::ffi::c_void);
-    fn jfn_wl_register_proxy_callbacks();
-}
+use jfn_wayland::proxy::jfn_wl_register_proxy_callbacks;
+#[cfg(target_os = "linux")]
+use jfn_wlproxy::{jfn_wlproxy_display_name, jfn_wlproxy_start, jfn_wlproxy_stop};
 
 #[cfg(target_os = "linux")]
 static WLPROXY: OnceLock<WlproxySlot> = OnceLock::new();
 
 #[cfg(target_os = "linux")]
-struct WlproxySlot(*mut std::ffi::c_void);
+struct WlproxySlot(*mut jfn_wlproxy::Proxy);
 #[cfg(target_os = "linux")]
 unsafe impl Send for WlproxySlot {}
 #[cfg(target_os = "linux")]
@@ -789,12 +786,7 @@ fn consume_vo_event(
     }
     #[cfg(target_os = "linux")]
     let scale_ready = !wait_for_scale
-        || unsafe {
-            unsafe extern "C" {
-                fn jfn_wl_scale_known() -> bool;
-            }
-            jfn_wl_scale_known()
-        };
+        || jfn_wayland::proxy::jfn_wl_scale_known();
     #[cfg(not(target_os = "linux"))]
     let scale_ready = {
         let _ = wait_for_scale;

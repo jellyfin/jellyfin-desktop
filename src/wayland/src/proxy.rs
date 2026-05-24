@@ -34,12 +34,10 @@ extern "C" fn on_scale(scale_120: c_int) {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_scale_known() -> bool {
     load_scale() > 0.0
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_get_cached_scale() -> f32 {
     let s = load_scale();
     if s > 0.0 { s } else { 1.0 }
@@ -66,7 +64,6 @@ extern "C" fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_i
     jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_register_proxy_callbacks() {
     unsafe {
         jfn_wlproxy_set_configure_callback(on_configure);

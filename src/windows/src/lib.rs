@@ -36,7 +36,6 @@ pub use platform::{
     win_toggle_fullscreen,
 };
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_pump() {
     // Input handled by dedicated input-thread message loop.
 }
@@ -137,7 +136,6 @@ const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
 
 /// Tint the DWM titlebar so it matches the current theme color.
 /// rgb is 0x00RRGGBB; DWMWA_CAPTION_COLOR wants 0x00BBGGRR (COLORREF).
-#[unsafe(no_mangle)]
 pub extern "C" fn win_set_theme_color(rgb: u32) {
     let hwnd = unsafe { jfn_win_get_hwnd() };
     if hwnd.is_null() {
@@ -159,7 +157,6 @@ pub extern "C" fn win_set_theme_color(rgb: u32) {
 
 /// Map IdleInhibitLevel (None=0, System=1, Display=2) to execution-state
 /// flags and post the call onto TID_UI so it lives on a stable thread.
-#[unsafe(no_mangle)]
 pub extern "C" fn win_set_idle_inhibit(level: c_int) {
     let mut flags = ES_CONTINUOUS;
     match level {
@@ -180,12 +177,10 @@ pub extern "C" fn win_set_idle_inhibit(level: c_int) {
 
 pub(crate) static G_TRANSITIONING: AtomicBool = AtomicBool::new(false);
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_begin_transition() {
     jfn_win_begin_transition_locked();
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_in_transition() -> bool {
     G_TRANSITIONING.load(Ordering::SeqCst)
 }
@@ -234,7 +229,6 @@ unsafe extern "C" {
     ) -> *mut c_void;
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn win_clipboard_read_text_async(
     on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
     ctx: *mut c_void,

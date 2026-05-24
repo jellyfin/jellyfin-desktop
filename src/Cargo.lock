@@ -1213,6 +1213,7 @@ dependencies = [
  "cef-dll-sys",
  "jfn-idle-inhibit-linux",
  "jfn-input",
+ "jfn-mpv",
  "jfn-open-url-linux",
  "jfn-platform-abi",
  "jfn-playback",
@@ -1235,6 +1236,7 @@ version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
  "jfn-input",
+ "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
  "tracing",

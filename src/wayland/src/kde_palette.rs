@@ -146,7 +146,6 @@ fn make_colors_dir() -> Option<PathBuf> {
 ///
 /// SAFETY: `display` must be a live `*mut wl_display`; `parent_surface`
 /// must be a live `*mut wl_proxy` referring to a `wl_surface` on it.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_kde_palette_attach(
     display: *mut c_void,
     parent_surface: *mut c_void,
@@ -224,7 +223,6 @@ pub unsafe extern "C" fn jfn_wl_kde_palette_attach(
 /// `"#RRGGBB"` used only for the filename.
 ///
 /// SAFETY: `hex` must be a valid NUL-terminated UTF-8 pointer.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_char) {
     if hex.is_null() {
         return;
@@ -267,7 +265,6 @@ pub unsafe extern "C" fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: 
     state.current_path = Some(new_path_c);
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_kde_palette_post_window_cleanup() {
     let mut guard = STATE.lock().unwrap();
     let state = match guard.as_mut() {

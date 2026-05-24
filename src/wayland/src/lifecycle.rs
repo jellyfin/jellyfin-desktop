@@ -10,7 +10,7 @@
 //! The C++ side keeps the `Platform` vtable construction — only the
 //! orchestration body moves here.
 
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, c_void};
 
 use crate::egl_dyn as egl;
 
@@ -18,15 +18,9 @@ use crate::egl_dyn as egl;
 // FFI declarations consumed during init/cleanup.
 // =====================================================================
 
+use crate::dmabuf_probe::jfn_wl_dmabuf_probe;
+use jfn_mpv::api::jfn_mpv_get_property_int;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
-
-unsafe extern "C" {
-    // mpv property reads
-    fn jfn_mpv_get_property_int(name: *const c_char, out: *mut i64) -> i32;
-
-    // Wayland-side subsystems already living in this crate's FFI surface.
-    fn jfn_wl_dmabuf_probe(ozone_platform: *const c_char, egl_dpy: *mut c_void) -> bool;
-}
 
 // =====================================================================
 // Helpers
@@ -64,7 +58,6 @@ unsafe extern "C" fn close_cb_trampoline(_: *mut c_void) {
 // init / cleanup
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
     let display = match mpv_prop_intptr(c"wayland-display") {
         Some(p) => p as *mut c_void,
@@ -140,7 +133,6 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
     true
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_lifecycle_cleanup() {
     crate::fade::jfn_wl_fade_stop_all();
 

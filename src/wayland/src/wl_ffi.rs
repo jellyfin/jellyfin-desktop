@@ -19,7 +19,6 @@ fn cast(handle: *mut c_void) -> *mut PlatformSurface {
 // Lifecycle
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_core_init(
     display: *mut c_void,
     parent_surface: *mut c_void,
@@ -33,7 +32,6 @@ pub unsafe extern "C" fn jfn_wl_core_init(
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_core_set_was_fullscreen(fs: bool) {
     if let Some(m) = crate::wl_state::try_state()
         && let Ok(mut st) = m.lock()
@@ -46,17 +44,14 @@ pub extern "C" fn jfn_wl_core_set_was_fullscreen(fs: bool) {
 // Surface lifecycle
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_alloc_surface() -> *mut c_void {
     wl_ops::alloc_surface() as *mut c_void
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_free_surface(handle: *mut c_void) {
     wl_ops::free_surface(cast(handle));
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_restack(handles: *const *mut c_void, n: usize) {
     if handles.is_null() || n == 0 {
         wl_ops::restack(&[]);
@@ -66,7 +61,6 @@ pub unsafe extern "C" fn jfn_wl_restack(handles: *const *mut c_void, n: usize) {
     wl_ops::restack(slice);
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_surface_resize(
     handle: *mut c_void,
     lw: i32,
@@ -77,7 +71,6 @@ pub unsafe extern "C" fn jfn_wl_surface_resize(
     wl_ops::surface_resize(cast(handle), lw, lh, pw, ph);
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_surface_set_visible(
     handle: *mut c_void,
     visible: bool,
@@ -92,7 +85,6 @@ pub unsafe extern "C" fn jfn_wl_surface_set_visible(
 // Paint
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_surface_present(
     handle: *mut c_void,
     frame: *const JfnDmabufFrame,
@@ -104,7 +96,6 @@ pub unsafe extern "C" fn jfn_wl_surface_present(
     wl_ops::surface_present(cast(handle), frame)
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_surface_present_software(
     handle: *mut c_void,
     pixels: *const u8,
@@ -122,17 +113,14 @@ pub unsafe extern "C" fn jfn_wl_surface_present_software(
     wl_ops::surface_present_software(cast(handle), pixels, w, h)
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_popup_show(handle: *mut c_void, x: i32, y: i32, lw: i32, lh: i32) {
     wl_ops::popup_show(cast(handle), x, y, lw, lh);
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_popup_hide(handle: *mut c_void) {
     wl_ops::popup_hide(cast(handle));
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_popup_present(
     handle: *mut c_void,
     frame: *const JfnDmabufFrame,
@@ -146,7 +134,6 @@ pub unsafe extern "C" fn jfn_wl_popup_present(
     wl_ops::popup_present(cast(handle), frame, lw, lh);
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_popup_present_software(
     handle: *mut c_void,
     pixels: *const u8,
@@ -170,39 +157,32 @@ pub unsafe extern "C" fn jfn_wl_popup_present_software(
 // Fullscreen / transition
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_begin_transition() {
     wl_ops::begin_transition();
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_end_transition() {
     wl_ops::end_transition();
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_in_transition() -> bool {
     wl_ops::in_transition()
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_was_fullscreen() -> bool {
     wl_ops::was_fullscreen()
 }
 
 use jfn_wlproxy::jfn_wlproxy_set_fullscreen;
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_set_fullscreen(fullscreen: bool) {
     wl_ops::set_fullscreen_via(fullscreen, jfn_wlproxy_set_fullscreen);
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_toggle_fullscreen() {
     wl_ops::toggle_fullscreen_via(jfn_wlproxy_set_fullscreen);
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_on_configure(width: i32, height: i32, fullscreen: i32) {
     // Fires from wlproxy thread before wl_init may have run — first
     // xdg_toplevel.configure precedes our mpv_create-time bootstrap.
@@ -217,7 +197,6 @@ pub extern "C" fn jfn_wl_on_configure(width: i32, height: i32, fullscreen: i32) 
 // Fade — per-frame callback wired into jfn-fade by the C++ wrapper.
 // =====================================================================
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_wl_fade_apply_frame(handle: *mut c_void, alpha: u32) -> bool {
     wl_ops::fade_apply_frame(cast(handle), alpha)
 }
