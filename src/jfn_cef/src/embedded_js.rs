@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Embedded JS shim sources, included at compile time from `src/web/*.js`.
 
 pub fn get(name: &str) -> Option<&'static str> {

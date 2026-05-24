@@ -75,8 +75,6 @@ const NS_TRACKING_IN_VISIBLE_RECT: u64 = 0x200;
 // NSAutoresizingMask.
 const NS_VIEW_WIDTH_SIZABLE: u64 = 2;
 const NS_VIEW_HEIGHT_SIZABLE: u64 = 16;
-#[allow(dead_code)]
-pub(crate) const NS_VIEW_AUTORESIZE_FLEXIBLE: u64 = NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE;
 
 // =====================================================================
 // extern "C" dispatch entry points (src/input/src/lib.rs)

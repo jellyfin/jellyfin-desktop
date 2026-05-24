@@ -5,7 +5,7 @@
 //! lives on this thread only; cursor changes from other threads are
 //! queued onto a `Mutex` and signalled via an eventfd.
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_int, c_void};
 use std::os::fd::AsRawFd;
 use std::os::raw::c_uchar;
 use std::sync::{Arc, Mutex};
@@ -703,11 +703,3 @@ pub fn set_cursor(handle: &Handle, t: u32) {
     handle.mailbox.push(CursorReq::Set(t));
 }
 
-/// Unused helper kept for symmetry with the C++ API. Cursor names are
-/// only ever resolved through `cef_cursor_to_name`, but exposing the
-/// pointer through a CString avoids a constant warning about the
-/// `cef_cursor_to_name` return being unused outside of debug paths.
-#[allow(dead_code)]
-fn _name_ptr(s: &str) -> *const c_char {
-    s.as_ptr() as *const c_char
-}
