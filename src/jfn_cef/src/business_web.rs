@@ -1,3 +1,7 @@
+// Sets the layer name through a layer handle obtained from the registry —
+// see browsers.rs for the matching allow rationale.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 //! WebBrowser business logic. Ports `src/browser/web_browser.{cpp,h}`.
 //!
 //! Routes the ~20 jellyfin-web IPC names to mpv, settings, theme color,
