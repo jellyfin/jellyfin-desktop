@@ -446,7 +446,7 @@
 
         // macOS: offset UI elements so traffic lights don't overlap content
         if (navigator.platform.startsWith('Mac') && jmpInfo.settings.advanced.transparentTitlebar) {
-            css += '\n:root { --mac-titlebar-height: 28px; }';
+            css += '\n:root { --mac-titlebar-height: 22px; }';
             css += '\n.skinHeader { padding-top: var(--mac-titlebar-height) !important; }';
             css += '\n.mainAnimatedPage { top: var(--mac-titlebar-height) !important; }';
             css += '\n.touch-menu-la { padding-top: var(--mac-titlebar-height); }';
