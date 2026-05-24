@@ -55,6 +55,12 @@ pub struct PlatformSurface {
 
 unsafe impl Send for PlatformSurface {}
 
+impl Default for PlatformSurface {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlatformSurface {
     pub fn new() -> Self {
         Self {

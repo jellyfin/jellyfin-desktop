@@ -148,11 +148,10 @@ unsafe impl Sync for RawHolder {}
 
 impl Drop for RawHolder {
     fn drop(&mut self) {
-        if let Some(d) = self.dtor {
-            if !self.ctx.is_null() {
+        if let Some(d) = self.dtor
+            && !self.ctx.is_null() {
                 unsafe { d(self.ctx) };
             }
-        }
     }
 }
 
@@ -344,8 +343,8 @@ impl Inner {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
-        if let Some(f) = self.focused_or_main() {
-            if let Some(mut msg) =
+        if let Some(f) = self.focused_or_main()
+            && let Some(mut msg) =
                 process_message_create(Some(&CefString::from("applyPopupSelection")))
             {
                 if let Some(args) = msg.argument_list() {
@@ -356,7 +355,6 @@ impl Inner {
                     Some(&mut msg),
                 );
             }
-        }
         // Only public path to CancelWidget on a CEF OSR popup is a mouse-wheel
         // event outside popup_position_ — render_widget_host_view_osr.cc:1337-1343.
         if let Some(h) = self.host() {
@@ -493,11 +491,10 @@ impl Inner {
         // Wayland viewport must update on every configure to avoid stale
         // src/dst — runs immediately.
         let surface = self.surface_ptr();
-        if !surface.is_null() {
-            if let Some(p) = platform_ops::ops() {
+        if !surface.is_null()
+            && let Some(p) = platform_ops::ops() {
                 p.surface_resize(surface, w, h, pw, ph);
             }
-        }
 
         // Defer kick until the browser exists; OnAfterCreated will fire it.
         if !self.browser_alive() {
@@ -576,11 +573,10 @@ impl Inner {
         }
         if !show {
             let surface = self.surface_ptr();
-            if !surface.is_null() {
-                if let Some(p) = platform_ops::ops() {
+            if !surface.is_null()
+                && let Some(p) = platform_ops::ops() {
                     p.popup_hide(surface);
                 }
-            }
             return;
         }
         // Ask the renderer to walk the focused <select> and ship the option
@@ -861,15 +857,14 @@ impl Inner {
         done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
     ) {
         let surface = self.surface_ptr();
-        if !surface.is_null() {
-            if let Some(p) = platform_ops::ops() {
+        if !surface.is_null()
+            && let Some(p) = platform_ops::ops() {
                 p.fade_surface(
                     surface, sec, start_fn, start_ctx, start_dtor, done_fn, done_ctx,
                     done_dtor,
                 );
                 return;
             }
-        }
         // No platform installed (early helper-process boot) — fire callbacks
         // synchronously so any boxed state is freed; on_complete typically
         // closes the browser, which destroys the surface via Browsers::remove.
@@ -966,11 +961,10 @@ impl Inner {
         drop(g);
 
         // Flush any URL buffered while the browser wasn't ready.
-        if let Some(url) = self.take_pending_url() {
-            if let Some(f) = browser.main_frame() {
+        if let Some(url) = self.take_pending_url()
+            && let Some(f) = browser.main_frame() {
                 f.load_url(Some(&CefString::from(url.as_str())));
             }
-        }
     }
 
     pub(crate) fn handle_on_before_close(self: &Arc<Self>) {

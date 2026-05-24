@@ -201,11 +201,10 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 jfn_theme_color_on_overlay_dismissed();
             });
             let done_box: Box<FadeFn> = Box::new(move || {
-                if let Some(b) = browser_for_close.as_ref() {
-                    if let Some(host) = b.host() {
+                if let Some(b) = browser_for_close.as_ref()
+                    && let Some(host) = b.host() {
                         host.close_browser(0);
                     }
-                }
             });
             unsafe {
                 jfn_cef_layer_fade(
@@ -423,16 +422,14 @@ impl ProbeInner {
             let st = self.state.lock().unwrap();
             let mut ok = false;
             let status = request.request_status();
-            if status.as_ref() == &sys::cef_urlrequest_status_t::UR_SUCCESS {
-                if let Some(resp) = request.response() {
-                    if resp.status() == 200 {
+            if status.as_ref() == &sys::cef_urlrequest_status_t::UR_SUCCESS
+                && let Some(resp) = request.response()
+                    && resp.status() == 200 {
                         let body_ptr = st.body.as_ptr() as *const c_char;
                         let valid =
                             unsafe { jfn_jellyfin_is_valid_public_info(body_ptr, st.body.len()) };
                         ok = valid;
                     }
-                }
-            }
             (ok, st.base.clone())
         };
         let cb = self.callback.lock().unwrap().take();

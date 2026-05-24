@@ -151,13 +151,11 @@ fn parse_metadata_json(json: &str) -> MediaMetadata {
     out.id = get_str("Id");
     out.title = get_str("Name");
     out.artist = get_str("SeriesName");
-    if out.artist.is_empty() {
-        if let Some(arr) = d.get("Artists").and_then(Value::as_array) {
-            if let Some(first) = arr.first().and_then(Value::as_str) {
+    if out.artist.is_empty()
+        && let Some(arr) = d.get("Artists").and_then(Value::as_array)
+            && let Some(first) = arr.first().and_then(Value::as_str) {
                 out.artist = first.to_string();
             }
-        }
-    }
     out.album = get_str("SeasonName");
     if out.album.is_empty() {
         out.album = get_str("Album");

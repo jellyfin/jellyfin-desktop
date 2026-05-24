@@ -201,7 +201,7 @@ fn setup_xkb(conn: &xcb::Connection, st: &mut State) -> bool {
     let mut base_event = 0u8;
     let mut base_error = 0u8;
     if !xkb_x11::setup_xkb_extension(
-        conn.as_ref(),
+        conn,
         xkb_x11::MIN_MAJOR_XKB_VERSION,
         xkb_x11::MIN_MINOR_XKB_VERSION,
         xkb_x11::SetupXkbExtensionFlags::NoFlags,
@@ -214,7 +214,7 @@ fn setup_xkb(conn: &xcb::Connection, st: &mut State) -> bool {
     }
     st.xkb_base_event = base_event;
 
-    let device_id = xkb_x11::get_core_keyboard_device_id(conn.as_ref());
+    let device_id = xkb_x11::get_core_keyboard_device_id(conn);
     if device_id < 0 {
         return false;
     }
@@ -222,14 +222,14 @@ fn setup_xkb(conn: &xcb::Connection, st: &mut State) -> bool {
 
     let kmap = xkb_x11::keymap_new_from_device(
         &st.xkb_ctx,
-        conn.as_ref(),
+        conn,
         device_id,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     );
     if kmap.get_raw_ptr().is_null() {
         return false;
     }
-    let state = xkb_x11::state_new_from_device(&kmap, conn.as_ref(), device_id);
+    let state = xkb_x11::state_new_from_device(&kmap, conn, device_id);
     if state.get_raw_ptr().is_null() {
         return false;
     }
@@ -262,14 +262,14 @@ fn setup_xkb(conn: &xcb::Connection, st: &mut State) -> bool {
 fn update_keymap(conn: &xcb::Connection, st: &mut State) {
     let kmap = xkb_x11::keymap_new_from_device(
         &st.xkb_ctx,
-        conn.as_ref(),
+        conn,
         st.xkb_device_id,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     );
     if kmap.get_raw_ptr().is_null() {
         return;
     }
-    let new_state = xkb_x11::state_new_from_device(&kmap, conn.as_ref(), st.xkb_device_id);
+    let new_state = xkb_x11::state_new_from_device(&kmap, conn, st.xkb_device_id);
     if new_state.get_raw_ptr().is_null() {
         return;
     }
@@ -410,9 +410,9 @@ fn handle_leave(st: &State, _ev: &xcb::x::LeaveNotifyEvent) {
 fn handle_xkb_state_notify(st: &mut State, ev: &xcb::xkb::StateNotifyEvent) {
     if let Some(xst) = st.xkb_st.as_mut() {
         xst.update_mask(
-            ev.base_mods().bits() as u32,
-            ev.latched_mods().bits() as u32,
-            ev.locked_mods().bits() as u32,
+            ev.base_mods().bits(),
+            ev.latched_mods().bits(),
+            ev.locked_mods().bits(),
             ev.base_group() as u32,
             ev.latched_group() as u32,
             ev.locked_group() as u32,

@@ -212,11 +212,10 @@ impl State {
             pointer.set_cursor(self.pointer_serial, None, 0, 0);
             return;
         }
-        if self.cursor_dev.is_none() {
-            if let Some(mgr) = &self.cursor_mgr {
+        if self.cursor_dev.is_none()
+            && let Some(mgr) = &self.cursor_mgr {
                 self.cursor_dev = Some(mgr.get_pointer(pointer, qh, ()));
             }
-        }
         if let Some(dev) = &self.cursor_dev {
             let shape: wp_cursor_shape_device_v1::Shape = unsafe {
                 std::mem::transmute::<u32, wp_cursor_shape_device_v1::Shape>(cef_to_wl_shape(cef))
@@ -462,11 +461,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 }
                 if pressed {
                     let cp = st.key_get_utf32(kc);
-                    if cp > 0 {
-                        if let Some(f) = state.cb.char_ {
+                    if cp > 0
+                        && let Some(f) = state.cb.char_ {
                             unsafe { f(cp, state.modifiers, key) };
                         }
-                    }
                 }
             }
             Event::Modifiers {

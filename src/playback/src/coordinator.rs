@@ -73,6 +73,12 @@ pub struct PlaybackCoordinator {
     join: Option<JoinHandle<()>>,
 }
 
+impl Default for PlaybackCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlaybackCoordinator {
     pub fn new() -> Self {
         Self {

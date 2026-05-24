@@ -21,8 +21,8 @@ wrap_v8_handler! {
             let Some(msg_name) = name else { return 0 };
             let Some(mut msg) = process_message_create(Some(msg_name)) else { return 0 };
 
-            if let Some(args_list) = msg.argument_list() {
-                if let Some(args) = arguments {
+            if let Some(args_list) = msg.argument_list()
+                && let Some(args) = arguments {
                     for (i, v) in args.iter().enumerate() {
                         let Some(v) = v else { continue };
                         if v.is_bool() == 1 {
@@ -38,7 +38,6 @@ wrap_v8_handler! {
                         }
                     }
                 }
-            }
 
             // Use current V8 context's frame so the message is associated
             // with the frame that executed the JS call.

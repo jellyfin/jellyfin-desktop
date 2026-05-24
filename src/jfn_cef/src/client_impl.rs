@@ -47,8 +47,8 @@ fn strip_accelerator(s: &str) -> String {
 #[cfg(target_os = "macos")]
 const ACTION_MODIFIER: u32 = sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0 as u32;
 #[cfg(not(target_os = "macos"))]
-const ACTION_MODIFIER: u32 = sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0 as u32;
-const ALT_FLAG: u32 = sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0 as u32;
+const ACTION_MODIFIER: u32 = sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0;
+const ALT_FLAG: u32 = sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0;
 
 fn is_paste_shortcut(e: &KeyEvent) -> bool {
     let kt: sys::cef_key_event_type_t = e.type_.into();
