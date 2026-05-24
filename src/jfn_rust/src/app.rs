@@ -36,17 +36,8 @@ fn video_bg_get() -> u32 {
 const LOG_MAIN: u8 = 0;
 const DEFAULT_LOG_FILTER: &str = "info";
 
-/// Parsed CLI args + settings overrides, threaded through the rest of
-/// `jfn_app_main`. After slice 1f the C++ side no longer reads these;
-/// they stay as a plain owned Rust struct.
 struct BootArgs {
-    hwdec: String,
-    audio_passthrough: String,
-    audio_channels: String,
-    log_level: String,
     ozone_platform: String,
-    platform_override: String,
-    audio_exclusive: bool,
     disable_gpu_compositing: bool,
     remote_debugging_port: c_int,
 }
@@ -506,13 +497,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     //     fully owns the rest of the process lifetime — main.cpp doesn't
     //     touch the post-VO path anymore.
     let boot_args = BootArgs {
-        hwdec,
-        audio_passthrough,
-        audio_channels,
-        log_level,
         ozone_platform,
-        platform_override,
-        audio_exclusive,
         disable_gpu_compositing,
         remote_debugging_port,
     };

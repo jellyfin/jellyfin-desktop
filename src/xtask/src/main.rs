@@ -11,6 +11,7 @@ mod install;
 mod mpv;
 mod package;
 mod paths;
+#[cfg(target_os = "macos")]
 mod template;
 mod version;
 

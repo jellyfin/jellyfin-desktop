@@ -150,10 +150,6 @@ fn list_string(args: &ListValue, idx: usize) -> String {
     cs.to_string()
 }
 
-fn list_bool(args: &ListValue, idx: usize) -> bool {
-    args.bool(idx) != 0
-}
-
 fn apply_setting_value(_section: &str, key: &str, value: &str) {
     let cval = CString::new(value).unwrap_or_default();
     unsafe {

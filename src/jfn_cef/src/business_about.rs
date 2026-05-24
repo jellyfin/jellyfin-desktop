@@ -34,7 +34,6 @@ unsafe extern "C" {
 // Safe to send across threads because the C++ owner is stable for the
 // lifetime of the singleton (clear happens in BeforeClose).
 struct AboutState {
-    layer: *mut JfnCefLayer,
     prev_active: *mut JfnCefLayer,
 }
 
@@ -76,7 +75,7 @@ pub extern "C" fn jfn_about_open() {
         jfn_cef_layer_create(layer, url.as_ptr() as *const _, url.len());
     }
 
-    *INSTANCE.lock().unwrap() = Some(AboutState { layer, prev_active });
+    *INSTANCE.lock().unwrap() = Some(AboutState { prev_active });
 }
 
 fn install_handlers(layer: *mut JfnCefLayer, _prev_active: *mut JfnCefLayer) {
