@@ -101,11 +101,11 @@ pub fn jfn_playback_set_window_pixels(pw: i32, ph: i32) {
 }
 
 pub fn jfn_playback_window_pw() -> i32 {
-    state().window_pw() as i32
+    state().window_pw()
 }
 
 pub fn jfn_playback_window_ph() -> i32 {
-    state().window_ph() as i32
+    state().window_ph()
 }
 
 /// Decode one raw `mpv_event*` (returned by `mpv_wait_event`) into
@@ -191,11 +191,11 @@ pub fn jfn_playback_window_maximized() -> bool {
 }
 
 pub fn jfn_playback_osd_pw() -> i32 {
-    state().osd_pw() as i32
+    state().osd_pw()
 }
 
 pub fn jfn_playback_osd_ph() -> i32 {
-    state().osd_ph() as i32
+    state().osd_ph()
 }
 
 pub fn jfn_playback_display_scale() -> f64 {
