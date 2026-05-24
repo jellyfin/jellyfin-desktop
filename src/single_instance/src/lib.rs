@@ -28,9 +28,13 @@ unsafe impl Sync for Callback {}
 mod imp {
     use super::Callback;
     use libc::{
-        AF_UNIX, ECONNREFUSED, ENOENT, POLLIN, SOCK_STREAM, c_char, c_int, c_void, close, getuid,
-        pipe, poll, pollfd, sockaddr_un,
+        AF_UNIX, ECONNREFUSED, ENOENT, POLLIN, SOCK_STREAM, c_char, c_int, c_void, close, pipe,
+        poll, pollfd, sockaddr_un,
     };
+    // Only the non-macOS socket path derives the filename from the uid; macOS
+    // uses TMPDIR instead.
+    #[cfg(not(target_os = "macos"))]
+    use libc::getuid;
     use parking_lot::Mutex;
     use std::ffi::{CStr, CString};
     use std::path::PathBuf;
