@@ -16,9 +16,7 @@ pub const MENU_ID_TOGGLE_FULLSCREEN: c_int = MENU_ID_USER_FIRST;
 pub const MENU_ID_ABOUT: c_int = MENU_ID_USER_FIRST + 1;
 pub const MENU_ID_EXIT: c_int = MENU_ID_USER_FIRST + 2;
 
-unsafe extern "C" {
-    fn jfn_shutdown_initiate();
-}
+use jfn_playback::shutdown::jfn_shutdown_initiate;
 
 /// Build closure for [`JfnCefLayer::set_context_menu_builder_rust`].
 /// The slot invocation adds one ref to the menu model before calling this,

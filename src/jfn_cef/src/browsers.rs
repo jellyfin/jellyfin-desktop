@@ -12,41 +12,15 @@ use std::sync::Mutex;
 
 use crate::client::JfnCefLayer;
 
-unsafe extern "C" {
-    fn jfn_cef_layer_new() -> *mut JfnCefLayer;
-    fn jfn_cef_layer_free(h: *mut JfnCefLayer);
-    fn jfn_cef_layer_set_surface(h: *const JfnCefLayer, s: *mut c_void);
-    fn jfn_cef_layer_get_surface(h: *const JfnCefLayer) -> *mut c_void;
-    fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f64);
-    fn jfn_cef_layer_resize(h: *const JfnCefLayer, w: i32, height: i32, pw: i32, ph: i32);
-    fn jfn_cef_layer_set_injection_profile_kind(
-        h: *const JfnCefLayer,
-        kind: *const c_char,
-        len: usize,
-    );
-    fn jfn_cef_layer_on_deactivated(h: *const JfnCefLayer);
-    fn jfn_cef_layer_set_focus(h: *const JfnCefLayer, focus: bool);
-    fn jfn_cef_layer_send_mouse_move(
-        h: *const JfnCefLayer,
-        x: i32,
-        y: i32,
-        modifiers: u32,
-        leave: bool,
-    );
-    fn jfn_cef_layer_close_browser_force(h: *const JfnCefLayer);
-    fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer);
-    fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool;
-
-    fn jfn_cef_set_default_frame_rate(hz: i32);
-    fn jfn_cef_set_use_shared_textures(enable: bool);
-
-    // Last-known mouse position for setActive's leave+move trick.
-    fn jfn_input_last_mouse_pos(
-        out_x: *mut i32,
-        out_y: *mut i32,
-        out_modifiers: *mut u32,
-    ) -> bool;
-}
+use crate::client::{
+    jfn_cef_layer_close_browser_force, jfn_cef_layer_free, jfn_cef_layer_get_surface,
+    jfn_cef_layer_is_closed, jfn_cef_layer_new, jfn_cef_layer_on_deactivated,
+    jfn_cef_layer_resize, jfn_cef_layer_send_mouse_move, jfn_cef_layer_set_focus,
+    jfn_cef_layer_set_injection_profile_kind, jfn_cef_layer_set_refresh_rate,
+    jfn_cef_layer_set_surface, jfn_cef_layer_wait_for_close, jfn_cef_set_default_frame_rate,
+    jfn_cef_set_use_shared_textures,
+};
+use jfn_input::jfn_input_last_mouse_pos;
 
 struct Browsers {
     layers: Vec<*mut JfnCefLayer>,
@@ -182,8 +156,8 @@ pub extern "C" fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
         let mut x = 0;
         let mut y = 0;
         let mut mods: u32 = 0;
-        let valid = unsafe { jfn_input_last_mouse_pos(&mut x, &mut y, &mut mods) };
-        if valid {
+        let valid = jfn_input_last_mouse_pos(&mut x, &mut y, &mut mods);
+        if valid != 0 {
             unsafe {
                 jfn_cef_layer_send_mouse_move(layer, x, y, mods, true);
                 jfn_cef_layer_send_mouse_move(layer, x, y, mods, false);

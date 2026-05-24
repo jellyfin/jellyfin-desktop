@@ -15,20 +15,10 @@ use std::sync::Mutex;
 use crate::client::JfnCefLayer;
 use crate::platform_ops;
 
-unsafe extern "C" {
-    fn jfn_browsers_create(kind: *const std::os::raw::c_char) -> *mut JfnCefLayer;
-    fn jfn_browsers_remove(layer: *mut JfnCefLayer);
-    fn jfn_browsers_set_active(layer: *mut JfnCefLayer);
-    fn jfn_browsers_active() -> *mut JfnCefLayer;
-
-    fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const std::os::raw::c_char);
-    fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, v: bool);
-    fn jfn_cef_layer_create(
-        h: *const JfnCefLayer,
-        url_utf8: *const std::os::raw::c_char,
-        len: usize,
-    );
-}
+use crate::browsers::{
+    jfn_browsers_active, jfn_browsers_create, jfn_browsers_remove, jfn_browsers_set_active,
+};
+use crate::client::{jfn_cef_layer_create, jfn_cef_layer_set_name, jfn_cef_layer_set_visible};
 
 // Pointers in this struct refer to layers owned by the C++ Browsers vector.
 // Safe to send across threads because the C++ owner is stable for the
