@@ -7,6 +7,24 @@ use std::process::Command;
 const CEF_FRAMEWORK_NAME: &str = "Chromium Embedded Framework";
 const SYSTEM_PREFIXES: &[&str] = &["/usr/lib/", "/System/", "/Library/"];
 
+// Homebrew installs dylibs as read-only and `std::fs::copy` preserves source
+// permissions. The bundled copy must be writable so `install_name_tool` (and a
+// re-run of this bundling step) can modify it.
+fn copy_writable(src: &Path, dst: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if dst.exists() {
+        std::fs::remove_file(dst)
+            .with_context(|| format!("remove_file {}", dst.display()))?;
+    }
+    std::fs::copy(src, dst)
+        .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
+    let mut perms = std::fs::metadata(dst)?.permissions();
+    perms.set_mode(0o644);
+    std::fs::set_permissions(dst, perms)
+        .with_context(|| format!("chmod {}", dst.display()))?;
+    Ok(())
+}
+
 pub fn complete(app: &Path) -> Result<()> {
     let macos_dir = app.join("Contents").join("MacOS");
     let fw_dir = app.join("Contents").join("Frameworks");
@@ -148,7 +166,7 @@ fn fix_lib_deps(
             let real = std::fs::canonicalize(&resolved)?;
             println!("Bundling: {dep_name}");
             let dst = fw_dir.join(&dep_name);
-            std::fs::copy(&real, &dst)?;
+            copy_writable(&real, &dst)?;
             install_name_tool(&["-id", &target, &dst.to_string_lossy()])?;
             framework_libs.insert(dep_name.clone());
             queue.push(dst);
@@ -238,7 +256,7 @@ fn bundle_moltenvk(fw_dir: &Path, brew_prefix: &Path) -> Result<()> {
         let real = std::fs::canonicalize(&src)?;
         println!("Bundling MoltenVK: {}", real.display());
         let dst = fw_dir.join("libMoltenVK.dylib");
-        std::fs::copy(&real, &dst)?;
+        copy_writable(&real, &dst)?;
         install_name_tool(&[
             "-id",
             "@executable_path/../Frameworks/libMoltenVK.dylib",
