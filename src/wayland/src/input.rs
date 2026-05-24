@@ -699,7 +699,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     })
 }
 
-pub unsafe extern "C" fn jfn_input_wayland_init(
+pub unsafe fn jfn_input_wayland_init(
     display: *mut c_void,
     callbacks: *const Callbacks,
 ) -> *mut JfnInputWayland {
@@ -713,12 +713,12 @@ pub unsafe extern "C" fn jfn_input_wayland_init(
     }
 }
 
-pub unsafe extern "C" fn jfn_input_wayland_start(_ctx: *mut JfnInputWayland) {
+pub unsafe fn jfn_input_wayland_start(_ctx: *mut JfnInputWayland) {
     // Thread starts in init; this is kept for ABI compatibility with the
     // C++ API which had an explicit start step.
 }
 
-pub unsafe extern "C" fn jfn_input_wayland_set_cursor(
+pub unsafe fn jfn_input_wayland_set_cursor(
     ctx: *mut JfnInputWayland,
     cef_cursor_type: u32,
 ) {
@@ -734,7 +734,7 @@ pub unsafe extern "C" fn jfn_input_wayland_set_cursor(
     }
 }
 
-pub unsafe extern "C" fn jfn_input_wayland_cleanup(ctx: *mut JfnInputWayland) {
+pub unsafe fn jfn_input_wayland_cleanup(ctx: *mut JfnInputWayland) {
     if ctx.is_null() {
         return;
     }

@@ -93,7 +93,7 @@ fn hwnd_from_raw(raw: usize) -> HWND {
 
 /// `jfn_win_get_hwnd` — returns mpv's HWND; nullptr before win_init or
 /// after cleanup.
-pub extern "C" fn jfn_win_get_hwnd() -> *mut c_void {
+pub fn jfn_win_get_hwnd() -> *mut c_void {
     STATE.lock().unwrap().mpv_hwnd_raw as *mut c_void
 }
 
@@ -106,7 +106,7 @@ fn is_fullscreen_style(style: isize) -> bool {
 // Scale + content-size lookups.
 // =====================================================================
 
-pub extern "C" fn win_get_scale() -> f32 {
+pub fn win_get_scale() -> f32 {
     let scale = unsafe { jfn_playback_display_scale() };
     if scale > 0.0 {
         let s = scale as f32;
@@ -124,7 +124,7 @@ pub extern "C" fn win_get_scale() -> f32 {
 
 // Per-monitor DPI (GetDpiForMonitor) lives in Shcore.dll which isn't
 // currently linked; fall back to system DPI and ignore (x, y).
-pub extern "C" fn win_get_display_scale(_x: c_int, _y: c_int) -> f32 {
+pub fn win_get_display_scale(_x: c_int, _y: c_int) -> f32 {
     let dpi = unsafe { GetDpiForSystem() };
     if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
 }
@@ -142,7 +142,7 @@ fn end_transition_if_settled(target_fullscreen: bool) {
     }
 }
 
-pub extern "C" fn win_set_fullscreen(fullscreen: bool) {
+pub fn win_set_fullscreen(fullscreen: bool) {
     if unsafe { jfn_mpv_handle_get() }.is_null() {
         return;
     }
@@ -182,7 +182,7 @@ pub extern "C" fn win_set_fullscreen(fullscreen: bool) {
     }
 }
 
-pub extern "C" fn win_toggle_fullscreen() {
+pub fn win_toggle_fullscreen() {
     if unsafe { jfn_mpv_handle_get() }.is_null() {
         return;
     }
@@ -290,11 +290,11 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
 // Platform vtable entry points.
 // =====================================================================
 
-pub extern "C" fn win_early_init() {
+pub fn win_early_init() {
     // Nothing needed on Windows before mpv starts.
 }
 
-pub extern "C" fn win_init(_mpv: *mut c_void) -> bool {
+pub fn win_init(_mpv: *mut c_void) -> bool {
     let mut wid: i64 = 0;
     let name = c"window-id";
     let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
@@ -351,7 +351,7 @@ pub extern "C" fn win_init(_mpv: *mut c_void) -> bool {
     true
 }
 
-pub extern "C" fn win_cleanup() {
+pub fn win_cleanup() {
     unsafe { jfn_input_windows_stop_input_thread() };
     let join = STATE.lock().unwrap().input_thread.take();
     if let Some(j) = join {
@@ -379,7 +379,7 @@ pub extern "C" fn win_cleanup() {
 /// taskbar), in physical pixels. Matches mpv's `--geometry +X+Y`
 /// coordinate system on Windows (`vo_calc_window_geometry` uses the
 /// working area).
-pub extern "C" fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
+pub fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
     let hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
     if hwnd_raw == 0 {
         return false;
@@ -407,7 +407,7 @@ pub extern "C" fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> boo
 /// Resolve saved geometry against the primary monitor's working area so the
 /// window never opens larger than the screen or off-screen, and center any
 /// unset axis.
-pub extern "C" fn win_clamp_window_geometry(
+pub fn win_clamp_window_geometry(
     w: *mut c_int,
     h: *mut c_int,
     x: *mut c_int,

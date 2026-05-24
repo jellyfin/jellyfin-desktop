@@ -68,7 +68,7 @@ fn create_overlay_window(
     win
 }
 
-pub extern "C" fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
+pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     let s = Box::into_raw(Box::new(PlatformSurface::new()));
     let Some(conn) = crate::x11_state::conn() else {
         return s;
@@ -108,7 +108,7 @@ pub extern "C" fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     s
 }
 
-pub unsafe extern "C" fn jfn_x11_free_surface(s: *mut PlatformSurface) {
+pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     if s.is_null() {
         return;
     }
@@ -148,11 +148,11 @@ pub unsafe extern "C" fn jfn_x11_free_surface(s: *mut PlatformSurface) {
 }
 
 /// Accelerated present is not supported on the X11 backend.
-pub extern "C" fn jfn_x11_surface_present(_s: *mut PlatformSurface, _info: *const c_void) -> bool {
+pub fn jfn_x11_surface_present(_s: *mut PlatformSurface, _info: *const c_void) -> bool {
     false
 }
 
-pub unsafe extern "C" fn jfn_x11_surface_present_software(
+pub unsafe fn jfn_x11_surface_present_software(
     s: *mut PlatformSurface,
     dirty: *const JfnRect,
     dirty_len: usize,
@@ -243,7 +243,7 @@ pub unsafe extern "C" fn jfn_x11_surface_present_software(
     true
 }
 
-pub unsafe extern "C" fn jfn_x11_surface_resize(
+pub unsafe fn jfn_x11_surface_resize(
     s: *mut PlatformSurface,
     _lw: c_int,
     _lh: c_int,
@@ -287,7 +287,7 @@ pub unsafe extern "C" fn jfn_x11_surface_resize(
     let _ = conn.flush();
 }
 
-pub unsafe extern "C" fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool) {
+pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool) {
     if s.is_null() {
         return;
     }
@@ -343,7 +343,7 @@ pub unsafe extern "C" fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, vi
 }
 
 /// Stack `ordered[0..n]` above the mpv parent, bottom to top.
-pub unsafe extern "C" fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
+pub unsafe fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
     if n == 0 || ordered.is_null() {
         return;
     }
@@ -380,7 +380,7 @@ pub unsafe extern "C" fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n
 /// per-window opacity that survives across compositors, so we hard-unmap
 /// the X window as the visual side of the fade and fire the callback
 /// contract synchronously.
-pub unsafe extern "C" fn jfn_x11_fade_surface(
+pub unsafe fn jfn_x11_fade_surface(
     s: *mut PlatformSurface,
     _fade_sec: f32,
     on_start: Option<unsafe extern "C" fn(*mut c_void)>,
