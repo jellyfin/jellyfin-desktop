@@ -1187,21 +1187,21 @@ fn save_window_geometry_on_exit() {
             ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
         }
         if pw > 0 && ph > 0 {
-            let mut g = jfn_config::JfnWindowGeometry::default();
-            g.width = pw;
-            g.height = ph;
             let scale_raw = plat().get_scale();
             let win_scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
-            g.scale = win_scale;
-            g.logical_width = (pw as f32 / win_scale).round() as i32;
-            g.logical_height = (ph as f32 / win_scale).round() as i32;
-            g.maximized = false;
             let mut wx: c_int = -1;
             let mut wy: c_int = -1;
-            if plat().query_window_position(&mut wx, &mut wy) {
-                g.x = wx;
-                g.y = wy;
-            }
+            plat().query_window_position(&mut wx, &mut wy);
+            let g = jfn_config::JfnWindowGeometry {
+                width: pw,
+                height: ph,
+                scale: win_scale,
+                logical_width: (pw as f32 / win_scale).round() as i32,
+                logical_height: (ph as f32 / win_scale).round() as i32,
+                maximized: false,
+                x: wx,
+                y: wy,
+            };
             jfn_config::set_window_geometry(g);
         }
     }
