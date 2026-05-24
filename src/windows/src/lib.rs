@@ -407,8 +407,9 @@ impl Platform for WindowsPlatform {
         );
     }
 
-    fn popup_show(&self, s: SurfaceHandle, req: *const JfnPopupRequest) {
-        win_popup_show(s, req);
+    fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
+        win_popup_show(s, req.x, req.y);
+        // CEF dispatches selection itself on Windows; drop the closure.
     }
 
     fn popup_hide(&self, s: SurfaceHandle) {

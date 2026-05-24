@@ -5,8 +5,8 @@
 //! cancel) is reported back via the JfnPopupRequest::on_selected
 //! callback.
 
-use std::ffi::{CStr, c_int, c_void};
-use std::sync::{Arc, Mutex};
+use std::ffi::{c_int, c_void};
+use std::sync::Mutex;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -15,50 +15,35 @@ use objc2_foundation::{NSObject, NSPoint, NSString};
 
 use jfn_platform_abi::JfnPopupRequest;
 
-/// Owns the on_selected (fn, ctx, dtor) triple. The dtor fires once when
-/// the last Arc reference is dropped.
+/// Owns the `on_selected` `FnOnce`. Fires at most once; dropping without
+/// firing reports nothing (which matches the cancel path from the
+/// caller's point of view — the closure's dtor releases its captured
+/// Arc, just like the old explicit dtor did).
 struct PopupCb {
-    fn_: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-}
-
-// PopupCb owns a `*mut c_void` ctx + raw fn pointers. We hand it off to
-// the AppKit main queue across thread boundaries; the underlying C
-// callback contract is responsible for its own thread-safety.
-unsafe impl Send for PopupCb {}
-unsafe impl Sync for PopupCb {}
-
-impl Drop for PopupCb {
-    fn drop(&mut self) {
-        if let Some(d) = self.dtor {
-            unsafe { d(self.ctx) };
-        }
-    }
+    fired: Mutex<Option<Box<dyn FnOnce(c_int) + Send>>>,
 }
 
 impl PopupCb {
+    fn new(cb: Option<Box<dyn FnOnce(c_int) + Send>>) -> Self {
+        Self {
+            fired: Mutex::new(cb),
+        }
+    }
+
     fn fire(&self, idx: c_int) {
-        if let Some(f) = self.fn_ {
-            unsafe { f(self.ctx, idx) };
+        if let Some(cb) = self.fired.lock().unwrap().take() {
+            cb(idx);
         }
     }
 }
 
-/// Ivar storage for the NSMenu target — holds the callback Arc plus a
-/// "fired" flag so we report cancel only when nothing was picked.
+/// Ivar storage for the NSMenu target.
 struct TargetIvars {
-    cb: Arc<PopupCb>,
-    fired: Mutex<bool>,
+    cb: std::sync::Arc<PopupCb>,
 }
 
 impl TargetIvars {
     fn fire_if_first(&self, idx: c_int) {
-        let mut g = self.fired.lock().unwrap();
-        if *g {
-            return;
-        }
-        *g = true;
         self.cb.fire(idx);
     }
 }
@@ -99,7 +84,7 @@ fn dispatch_get_main_queue() -> *mut c_void {
 /// option titles (so they outlive the caller's req buffer) and the
 /// callback Arc.
 struct PopupRun {
-    cb: Arc<PopupCb>,
+    cb: std::sync::Arc<PopupCb>,
     options: Vec<String>,
     initial_highlight: c_int,
     x: c_int,
@@ -129,7 +114,6 @@ unsafe fn show_menu_on_main(run: PopupRun) {
 
     let ivars = TargetIvars {
         cb: run.cb.clone(),
-        fired: Mutex::new(false),
     };
     let target = PopupTarget::alloc().set_ivars(ivars);
     let target: Retained<PopupTarget> = unsafe { msg_send![super(target), init] };
@@ -190,43 +174,16 @@ unsafe fn show_menu_on_main(run: PopupRun) {
 /// `macos_popup_show` — anchored in the input NSView (isFlipped == YES)
 /// so (x, y) are layout coordinates that map directly to AppKit menu
 /// placement. Schedules the actual NSMenu work onto the main queue.
-#[unsafe(no_mangle)]
-pub extern "C" fn macos_popup_show(_s: *mut c_void, req: *const JfnPopupRequest) {
-    if req.is_null() {
+pub fn macos_popup_show(_s: *mut c_void, req: JfnPopupRequest) {
+    let cb = std::sync::Arc::new(PopupCb::new(req.on_selected));
+    if req.options.is_empty() {
+        // Drop cb → never fires on_selected (cancel path).
         return;
-    }
-    let req = unsafe { &*req };
-    let cb = Arc::new(PopupCb {
-        fn_: req.on_selected,
-        ctx: req.on_selected_ctx,
-        dtor: req.on_selected_dtor,
-    });
-    if req.options_len == 0 {
-        // Drop cb → fires the dtor; we never call on_selected. Matches
-        // the C++ early-return.
-        return;
-    }
-
-    // Copy option strings out of the caller's buffer before scheduling —
-    // the caller's req buffer is gone by the time the main queue runs.
-    let mut opts: Vec<String> = Vec::with_capacity(req.options_len);
-    for i in 0..req.options_len {
-        let p = if req.options.is_null() {
-            std::ptr::null()
-        } else {
-            unsafe { *req.options.add(i) }
-        };
-        let s = if p.is_null() {
-            String::new()
-        } else {
-            unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
-        };
-        opts.push(s);
     }
 
     let run = Box::new(PopupRun {
         cb,
-        options: opts,
+        options: req.options,
         initial_highlight: req.initial_highlight,
         x: req.x,
         y: req.y,
