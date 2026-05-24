@@ -3,9 +3,10 @@
 ## Quick Start
 
 ```bash
-dev/macos/setup.sh   # First time: install dependencies
-dev/macos/build.sh   # Build
-dev/macos/run.sh     # Run
+dev/macos/setup.sh    # First time: install dependencies
+just build            # Build app bundle (build/output/Jellyfin Desktop.app)
+just run              # Run the built bundle
+just dmg              # Build distributable DMG (dist/)
 ```
 
 ## Prerequisites
@@ -14,7 +15,7 @@ dev/macos/run.sh     # Run
 - **Homebrew**: https://brew.sh
 
 `setup.sh` installs everything else:
-- CMake, Ninja, Meson
+- CMake (needed by cef-dll-sys), Ninja, Meson, Rust
 - FFmpeg, libplacebo, libass, LuaJIT
 - Vulkan (vulkan-loader, vulkan-headers, MoltenVK)
 - lcms2, libunibreak, zimg
@@ -22,25 +23,28 @@ dev/macos/run.sh     # Run
 
 ## Directory Structure
 
-- `third_party/cef/` - CEF binary distribution (downloaded by build.sh)
-- `third_party/mpv/` - mpv source (git submodule, built by cmake)
+- `third_party/cef/` - CEF binary distribution (downloaded on first build)
+- `third_party/mpv/` - mpv source (git submodule, built via meson by `cargo xtask`)
 - `build/` - Build output (safe to delete)
-- `build/jellyfin-desktop` - Dev executable
-- `build/output/Jellyfin Desktop.app` - App bundle (from bundle.sh)
+- `build/jellyfin-desktop` - Staged binary tree (build step)
+- `build/output/Jellyfin Desktop.app` - App bundle (install step)
+- `dist/` - Distributable DMG output
 
-## Scripts
+## Build commands
 
-- `setup.sh` - Install all dependencies
-- `build.sh` - Configure and build
-- `bundle.sh` - Create app bundle and DMG for distribution
-- `run.sh` - Run the built executable (passes arguments through)
-- `common.sh` - Shared variables (sourced by other scripts)
+All driven by `cargo xtask` via `just`:
+
+- `just build` → `cargo xtask install --mpv-cli --prefix build/output`
+- `just dmg`   → builds the bundle then runs `dev/macos/build_dmg.sh`
+
+`cargo xtask build` alone produces `build/jellyfin-desktop` + staged runtime
+resources without assembling an .app bundle.
 
 ## Clean Build
 
 ```bash
-rm -rf build
-dev/macos/build.sh
+just clean
+just build
 ```
 
 ## Troubleshooting
@@ -63,7 +67,7 @@ python3 dev/tools/download_cef.py
 
 To get browser devtools:
 ```bash
-dev/macos/run.sh --remote-debugging-port=9222
+just run -- --remote-debugging-port=9222
 ```
 Then open Chrome and navigate to `chrome://inspect/#devices`.
 

@@ -29,6 +29,8 @@ lint:
     cargo clippy --manifest-path src/paths/Cargo.toml --all-targets -- -D warnings
     cargo fmt --manifest-path src/single_instance/Cargo.toml -- --check
     cargo clippy --manifest-path src/single_instance/Cargo.toml --all-targets -- -D warnings
+    cargo fmt --manifest-path src/xtask/Cargo.toml -- --check
+    cargo clippy --manifest-path src/xtask/Cargo.toml --all-targets -- -D warnings
     if [ "$(uname)" != "MINGW64_NT" ] && [ "$(uname)" != "MSYS_NT" ]; then
         cargo fmt --manifest-path src/signal_guard/Cargo.toml -- --check
         cargo clippy --manifest-path src/signal_guard/Cargo.toml --all-targets -- -D warnings

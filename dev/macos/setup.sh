@@ -3,9 +3,6 @@
 # Run once to install all build dependencies
 set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${0}")" && pwd)"
-. "${SCRIPT_DIR}/common.sh"
-
 echo "Checking Xcode Command Line Tools..."
 if ! xcode-select -p > /dev/null 2>&1; then
     echo "Installing Xcode Command Line Tools..."
