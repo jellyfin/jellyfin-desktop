@@ -10,7 +10,6 @@
 use cef::*;
 use std::sync::{Arc, Mutex};
 
-use crate::bridge;
 
 // ---- embedded resources ----------------------------------------------------
 
@@ -63,11 +62,14 @@ fn theme_css() -> Vec<u8> {
 fn about_js_payload() -> Vec<u8> {
     use serde_json::json;
 
-    let log_path = bridge::log_active_path();
+    let log_path = jfn_logging::active_path();
     let mut data = serde_json::Map::new();
     data.insert("app".into(), json!(crate::APP_VERSION_FULL));
     data.insert("cef".into(), json!(crate::APP_CEF_VERSION));
-    data.insert("configDir".into(), json!(abs_path(&bridge::paths_config_dir())));
+    data.insert(
+        "configDir".into(),
+        json!(abs_path(&jfn_paths::config_dir().to_string_lossy())),
+    );
     if !log_path.is_empty() {
         data.insert("logFile".into(), json!(abs_path(&log_path)));
     }
@@ -137,9 +139,9 @@ wrap_scheme_handler_factory! {
             } else if let Some(r) = lookup(&url_path) {
                 (r.bytes.to_vec(), r.mime)
             } else {
-                bridge::log(
-                    bridge::LOG_RESOURCE,
-                    bridge::LEVEL_WARN,
+                jfn_logging::log(
+                    jfn_logging::CATEGORY_RESOURCE,
+                    jfn_logging::LEVEL_WARN,
                     &format!("EmbeddedScheme not found: {url_path}"),
                 );
                 return None;

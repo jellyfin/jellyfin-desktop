@@ -368,27 +368,21 @@ fn string_to_cstr(s: &str) -> *mut c_char {
 }
 
 // =====================================================================
-// FFI — settings singleton
+// Settings singleton — pub Rust API + FFI bridge
 // =====================================================================
 
 /// Initialize the settings store with the on-disk path. Idempotent: only the
 /// first call sets the path; subsequent calls are ignored.
-///
-/// # Safety
-/// `path` must be a valid NUL-terminated C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_init(path: *const c_char) {
-    let s = cstr_to_string(path);
+pub fn settings_init(path: &Path) {
     let mut st = state().lock().unwrap();
     if st.path.as_os_str().is_empty() {
-        st.path = PathBuf::from(s);
+        st.path = path.to_path_buf();
     }
 }
 
 /// Load settings from the configured path. Missing keys keep their defaults.
 /// Returns false if the file is missing or contains invalid JSON.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_settings_load() -> bool {
+pub fn settings_load() -> bool {
     let mut st = state().lock().unwrap();
     let path = st.path.clone();
     let Ok(contents) = fs::read_to_string(&path) else {
@@ -402,6 +396,29 @@ pub extern "C" fn jfn_settings_load() -> bool {
     }
     st.data.overlay_json(&v);
     true
+}
+
+pub fn server_url() -> String {
+    state().lock().unwrap().data.server_url.clone()
+}
+
+pub fn cli_json(platform_default: &str, hwdec_opts: &[&str]) -> String {
+    let snap = state().lock().unwrap().data.clone();
+    let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
+    snap.cli_json(platform_default, &opts)
+}
+
+/// # Safety
+/// `path` must be a valid NUL-terminated C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jfn_settings_init(path: *const c_char) {
+    let s = cstr_to_string(path);
+    settings_init(Path::new(&s));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_settings_load() -> bool {
+    settings_load()
 }
 
 /// Serialize current state and atomically write to the configured path.
@@ -633,15 +650,15 @@ pub unsafe extern "C" fn jfn_settings_cli_json(
     n_opts: usize,
 ) -> *mut c_char {
     let platform_default = cstr_to_string(platform_default);
-    let mut opts: Vec<String> = Vec::with_capacity(n_opts);
-    if !hwdec_opts.is_null() {
-        for i in 0..n_opts {
-            let p = unsafe { *hwdec_opts.add(i) };
-            opts.push(cstr_to_string(p));
-        }
-    }
-    let snap = state().lock().unwrap().data.clone();
-    let s = snap.cli_json(&platform_default, &opts);
+    let owned: Vec<String> = if hwdec_opts.is_null() {
+        Vec::new()
+    } else {
+        (0..n_opts)
+            .map(|i| cstr_to_string(unsafe { *hwdec_opts.add(i) }))
+            .collect()
+    };
+    let opts: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let s = cli_json(&platform_default, &opts);
     CString::new(s)
         .map(|c| c.into_raw())
         .unwrap_or(ptr::null_mut())

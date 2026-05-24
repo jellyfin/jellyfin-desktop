@@ -30,11 +30,19 @@ use tracing_core::{
 };
 use tracing_subscriber::{EnvFilter, Registry, fmt, layer::SubscriberExt};
 
-// Keep enum values aligned with src/logging.h (LogCategory enum).
 const CATEGORY_NAMES: &[&str] = &[
     "Main", "mpv", "CEF", "Media", "Platform", "JS", "Resource",
 ];
-const CATEGORY_CEF: u8 = 2;
+
+// Public category/level constants. Indices into CATEGORY_NAMES, and the u8
+// values accepted by `log` / `log_enabled` / `jfn_log` / `jfn_log_enabled`.
+pub const CATEGORY_CEF: u8 = 2;
+pub const CATEGORY_JS: u8 = 5;
+pub const CATEGORY_RESOURCE: u8 = 6;
+pub const LEVEL_DEBUG: u8 = 1;
+pub const LEVEL_INFO: u8 = 2;
+pub const LEVEL_WARN: u8 = 3;
+pub const LEVEL_ERROR: u8 = 4;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -619,12 +627,28 @@ pub extern "C" fn jfn_log_shutdown() {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_log_enabled(category: u8, level: u8) -> bool {
+pub fn log_enabled(category: u8, level: u8) -> bool {
     if (category as usize) >= CATEGORY_NAMES.len() || (level as usize) >= N_LEVELS {
         return false;
     }
     ENABLED[enabled_slot(category, level)].load(Ordering::Relaxed)
+}
+
+pub fn log(category: u8, level: u8, msg: &str) {
+    emit(category, Level::from_u8(level), msg);
+}
+
+pub fn active_path() -> String {
+    let guard = state().lock().unwrap();
+    guard
+        .as_ref()
+        .map(|st| st.active_log_path.clone())
+        .unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jfn_log_enabled(category: u8, level: u8) -> bool {
+    log_enabled(category, level)
 }
 
 /// # Safety
@@ -637,17 +661,12 @@ pub unsafe extern "C" fn jfn_log(category: u8, level: u8, msg: *const c_char, le
     }
     let slice = unsafe { std::slice::from_raw_parts(msg as *const u8, len) };
     let text = String::from_utf8_lossy(slice);
-    emit(category, Level::from_u8(level), &text);
+    log(category, level, &text);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_log_active_path() -> *mut c_char {
-    let guard = state().lock().unwrap();
-    let s = guard
-        .as_ref()
-        .map(|st| st.active_log_path.clone())
-        .unwrap_or_default();
-    CString::new(s)
+    CString::new(active_path())
         .map(|c| c.into_raw())
         .unwrap_or(std::ptr::null_mut())
 }

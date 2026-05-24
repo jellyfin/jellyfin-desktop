@@ -10,7 +10,6 @@ use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
 
 use crate::app::{JfnApp, JfnAppBuilder};
-use crate::bridge;
 use crate::state;
 
 // jfn constructs Chromium's `MainArgs` itself. Two entry points:
@@ -124,8 +123,8 @@ pub extern "C" fn jfn_cef_initialize() -> bool {
 
     // Settings.json singleton must be initialized before the renderer
     // process reads it during OnContextCreated.
-    let settings_path = format!("{}/settings.json", bridge::paths_config_dir());
-    bridge::settings_init(&settings_path);
+    let settings_path = jfn_paths::config_dir().join("settings.json");
+    jfn_config::settings_init(&settings_path);
 
     let mut settings = Settings {
         no_sandbox: 1,
@@ -137,7 +136,7 @@ pub extern "C" fn jfn_cef_initialize() -> bool {
         user_agent: CefString::from(
             concat!("Mozilla/5.0 jellyfin-desktop/", env!("JFN_APP_VERSION")),
         ),
-        root_cache_path: CefString::from(bridge::paths_cache_dir().as_str()),
+        root_cache_path: CefString::from(jfn_paths::cache_dir().to_string_lossy().as_ref()),
         ..Settings::default()
     };
     #[cfg(target_os = "macos")]

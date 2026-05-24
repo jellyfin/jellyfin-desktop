@@ -43,12 +43,12 @@ fn xdg_or_home(xdg_var: &str, home_subdir: &str) -> PathBuf {
 }
 
 #[cfg(target_os = "linux")]
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     ensure(xdg_or_home("XDG_CONFIG_HOME", "/.config").join(APP_DIR_NAME))
 }
 
 #[cfg(target_os = "linux")]
-fn cache_dir() -> PathBuf {
+pub fn cache_dir() -> PathBuf {
     ensure(xdg_or_home("XDG_CACHE_HOME", "/.cache").join(APP_DIR_NAME))
 }
 
@@ -58,13 +58,13 @@ fn log_dir() -> PathBuf {
 }
 
 #[cfg(target_os = "macos")]
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     let base = env_or("XDG_CONFIG_HOME", &format!("{}/.config", home()));
     ensure(PathBuf::from(base).join(APP_DIR_NAME))
 }
 
 #[cfg(target_os = "macos")]
-fn cache_dir() -> PathBuf {
+pub fn cache_dir() -> PathBuf {
     ensure(
         PathBuf::from(home())
             .join("Library/Caches")
@@ -82,7 +82,7 @@ fn log_dir() -> PathBuf {
 }
 
 #[cfg(windows)]
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     ensure(PathBuf::from(env_or("APPDATA", "C:")).join(APP_DIR_NAME))
 }
 
@@ -92,7 +92,7 @@ fn local_appdata() -> String {
 }
 
 #[cfg(windows)]
-fn cache_dir() -> PathBuf {
+pub fn cache_dir() -> PathBuf {
     ensure(PathBuf::from(local_appdata()).join(APP_DIR_NAME))
 }
 
