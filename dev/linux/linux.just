@@ -8,11 +8,6 @@ mod linux_common 'linux_common.just'
 build: linux_common::deps
     cargo xtask build --mpv-cli
 
-# Run tests (cargo workspace)
-[linux]
-test: build
-    cargo test --manifest-path src/Cargo.toml --workspace
-
 # Run the app
 [linux]
 run *args: build

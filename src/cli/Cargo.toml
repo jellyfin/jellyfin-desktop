@@ -10,3 +10,6 @@ crate-type = ["rlib"]
 
 [dependencies]
 clap = { version = "4", default-features = false, features = ["std", "derive", "error-context"] }
+
+[lints]
+workspace = true

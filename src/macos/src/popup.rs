@@ -5,8 +5,8 @@
 //! cancel) is reported back via the JfnPopupRequest::on_selected
 //! callback.
 
-use std::ffi::{c_int, c_void};
 use parking_lot::Mutex;
+use std::ffi::{c_int, c_void};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -112,9 +112,7 @@ unsafe fn show_menu_on_main(run: PopupRun) {
     let menu: *mut AnyObject = unsafe { msg_send![menu, initWithTitle: &*empty] };
     let _: () = unsafe { msg_send![menu, setAutoenablesItems: false] };
 
-    let ivars = TargetIvars {
-        cb: run.cb.clone(),
-    };
+    let ivars = TargetIvars { cb: run.cb.clone() };
     let target = PopupTarget::alloc().set_ivars(ivars);
     let target: Retained<PopupTarget> = unsafe { msg_send![super(target), init] };
 

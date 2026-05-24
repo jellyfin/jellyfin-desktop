@@ -6,10 +6,10 @@
 //! [`Handle`], and `jfn_mpv_handle_terminate` drops it, calling
 //! `mpv_terminate_destroy` via [`Handle::Drop`].
 
+use parking_lot::Mutex;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr;
-use parking_lot::Mutex;
 use std::sync::OnceLock;
 
 use crate::handle::Handle;

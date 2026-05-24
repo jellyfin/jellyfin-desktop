@@ -7,13 +7,13 @@
 //! managers. Mirrors mpv's clipboard-wayland.c: dedicated wl_display_connect,
 //! dedicated worker thread, no shared globals with the main display.
 
+use parking_lot::Mutex;
 use std::ffi::c_void;
 use std::io::{ErrorKind, Read};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::raw::c_int;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc};
-use parking_lot::Mutex;
 use std::thread::{self, JoinHandle};
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};

@@ -30,3 +30,6 @@ windows-future = "0.3"
 
 [dependencies]
 parking_lot.workspace = true
+
+[lints]
+workspace = true

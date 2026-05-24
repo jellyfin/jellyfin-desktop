@@ -15,10 +15,6 @@ build: deps
     cargo xtask install --mpv-cli --prefix build/output
 
 [macos]
-test: build
-    cargo test --manifest-path src/Cargo.toml --workspace --exclude jfn-wlproxy
-
-[macos]
 run *args: build
     "build/output/Jellyfin Desktop.app/Contents/MacOS/jellyfin-desktop" --log-level=debug --log-file=build/run.log {{args}}
 

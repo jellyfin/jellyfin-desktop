@@ -15,10 +15,6 @@ build: deps
     & 'dev/windows/build.ps1'
 
 [windows]
-test: build
-    cargo test --manifest-path src/Cargo.toml --workspace --exclude jfn-wlproxy --exclude jfn-signal-guard
-
-[windows]
 run *args: build
     $env:RUST_BACKTRACE = 'full'; & 'build/jellyfin-desktop.exe' --log-level=debug --log-file=build/run.log {{args}} 2>&1 | Tee-Object -FilePath build/stderr.log
 

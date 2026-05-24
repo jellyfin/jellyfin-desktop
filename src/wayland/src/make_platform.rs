@@ -103,8 +103,7 @@ impl Platform for WaylandPlatform {
 
     fn post_window_cleanup(&self) {
         #[cfg(feature = "kde-palette")]
-                jfn_wl_kde_palette_post_window_cleanup()
-    ;
+        jfn_wl_kde_palette_post_window_cleanup();
     }
 
     fn alloc_surface(&self) -> SurfaceHandle {

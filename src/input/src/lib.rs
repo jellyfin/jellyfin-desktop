@@ -5,8 +5,8 @@
 use jfn_platform_abi::{BrowserBridge, browser_bridge};
 use jfn_playback::hotkey::jfn_hotkey_classify_keydown;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
-use std::os::raw::c_int;
 use parking_lot::Mutex;
+use std::os::raw::c_int;
 
 #[cfg(target_os = "linux")]
 mod keysym;

@@ -23,3 +23,6 @@ windows-sys = { workspace = true, features = [
 
 [dependencies]
 parking_lot.workspace = true
+
+[lints]
+workspace = true

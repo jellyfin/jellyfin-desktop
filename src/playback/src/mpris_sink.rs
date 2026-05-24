@@ -7,11 +7,11 @@
 //! Previous/Seek/SetPosition route to the JS UI via the registered exec_js
 //! callback.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::ffi::c_char;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, OnceLock};
-use parking_lot::Mutex;
 use std::thread::{self, JoinHandle};
 
 use zbus::blocking::Connection;

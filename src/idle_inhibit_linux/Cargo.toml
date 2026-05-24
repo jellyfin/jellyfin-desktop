@@ -12,3 +12,6 @@ crate-type = ["rlib"]
 parking_lot.workspace = true
 tracing.workspace = true
 zbus.workspace = true
+
+[lints]
+workspace = true

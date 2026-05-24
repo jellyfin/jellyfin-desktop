@@ -27,10 +27,7 @@ fn cast(handle: *mut c_void) -> *mut PlatformSurface {
 // Lifecycle
 // =====================================================================
 
-pub unsafe fn jfn_wl_core_init(
-    display: *mut c_void,
-    parent_surface: *mut c_void,
-) -> bool {
+pub unsafe fn jfn_wl_core_init(display: *mut c_void, parent_surface: *mut c_void) -> bool {
     match unsafe { crate::wl_state::init(display, parent_surface) } {
         Ok(()) => true,
         Err(e) => {
@@ -67,13 +64,7 @@ pub unsafe fn jfn_wl_restack(handles: *const *mut c_void, n: usize) {
     wl_ops::restack(slice);
 }
 
-pub unsafe fn jfn_wl_surface_resize(
-    handle: *mut c_void,
-    lw: i32,
-    lh: i32,
-    pw: i32,
-    ph: i32,
-) {
+pub unsafe fn jfn_wl_surface_resize(handle: *mut c_void, lw: i32, lh: i32, pw: i32, ph: i32) {
     wl_ops::surface_resize(cast(handle), lw, lh, pw, ph);
 }
 
@@ -91,10 +82,7 @@ pub unsafe fn jfn_wl_surface_set_visible(
 // Paint
 // =====================================================================
 
-pub unsafe fn jfn_wl_surface_present(
-    handle: *mut c_void,
-    frame: *const JfnDmabufFrame,
-) -> bool {
+pub unsafe fn jfn_wl_surface_present(handle: *mut c_void, frame: *const JfnDmabufFrame) -> bool {
     if frame.is_null() {
         return false;
     }

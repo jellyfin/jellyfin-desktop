@@ -2,9 +2,7 @@
 //! from a raw `JfnCefLayer*` and forwards to the corresponding `Inner`
 //! method. Caller-visible state lives in `Inner`; this layer holds no logic.
 
-use cef::{
-    ImplBrowser, ImplBrowserHost, KeyEvent, MouseButtonType, MouseEvent, sys,
-};
+use cef::{ImplBrowser, ImplBrowserHost, KeyEvent, MouseButtonType, MouseEvent, sys};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::Arc;
@@ -241,11 +239,7 @@ pub(crate) unsafe fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f
 /// # Safety
 /// `h` must be a live `JfnCefLayer` handle; `url_utf8` must reference
 /// `len` valid UTF-8 bytes (not necessarily NUL-terminated).
-pub unsafe fn jfn_cef_layer_create(
-    h: *const JfnCefLayer,
-    url_utf8: *const c_char,
-    len: usize,
-) {
+pub unsafe fn jfn_cef_layer_create(h: *const JfnCefLayer, url_utf8: *const c_char, len: usize) {
     let url = read_utf8(url_utf8, len);
     unsafe { arc(h) }.create(&url);
 }

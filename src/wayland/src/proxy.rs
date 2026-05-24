@@ -64,6 +64,6 @@ extern "C" fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_i
 }
 
 pub fn jfn_wl_register_proxy_callbacks() {
-        jfn_wlproxy_set_configure_callback(on_configure);
+    jfn_wlproxy_set_configure_callback(on_configure);
     jfn_wlproxy_set_scale_callback(on_scale);
 }

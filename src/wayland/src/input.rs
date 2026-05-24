@@ -6,11 +6,11 @@
 //! fd. Input events come back to C++ as primitives via JfnInputCallbacks so
 //! no CEF-typed structs cross the FFI boundary.
 
+use parking_lot::Mutex;
 use std::ffi::{c_int, c_void};
 use std::os::fd::{AsFd, AsRawFd};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc};
-use parking_lot::Mutex;
 use std::thread::{self, JoinHandle};
 
 use memmap2::MmapOptions;
@@ -34,9 +34,9 @@ const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
 
 use jfn_platform_abi::cursor::{
     CT_ALIAS, CT_CELL, CT_COLUMNRESIZE, CT_CONTEXTMENU, CT_COPY, CT_CROSS, CT_EASTRESIZE,
-    CT_EASTWESTRESIZE, CT_GRAB, CT_GRABBING, CT_HAND, CT_HELP, CT_IBEAM, CT_MIDDLE_PANNING_HORIZONTAL,
-    CT_MIDDLE_PANNING_VERTICAL, CT_MIDDLEPANNING, CT_MOVE, CT_NODROP, CT_NONE,
-    CT_NORTHEASTRESIZE, CT_NORTHEASTSOUTHWESTRESIZE, CT_NORTHRESIZE, CT_NORTHSOUTHRESIZE,
+    CT_EASTWESTRESIZE, CT_GRAB, CT_GRABBING, CT_HAND, CT_HELP, CT_IBEAM,
+    CT_MIDDLE_PANNING_HORIZONTAL, CT_MIDDLE_PANNING_VERTICAL, CT_MIDDLEPANNING, CT_MOVE, CT_NODROP,
+    CT_NONE, CT_NORTHEASTRESIZE, CT_NORTHEASTSOUTHWESTRESIZE, CT_NORTHRESIZE, CT_NORTHSOUTHRESIZE,
     CT_NORTHWESTRESIZE, CT_NORTHWESTSOUTHEASTRESIZE, CT_NOTALLOWED, CT_POINTER, CT_PROGRESS,
     CT_ROWRESIZE, CT_SOUTHEASTRESIZE, CT_SOUTHRESIZE, CT_SOUTHWESTRESIZE, CT_VERTICALTEXT, CT_WAIT,
     CT_WESTRESIZE, CT_ZOOMIN, CT_ZOOMOUT,
@@ -259,24 +259,22 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
                 if let Some(f) = state.cb.mouse_move {
-                                        f(
+                    f(
                         state.ptr_x as i32,
                         state.ptr_y as i32,
                         state.cef_modifiers(),
                         0,
                     );
-                
                 }
             }
             Event::Leave { .. } => {
                 if let Some(f) = state.cb.mouse_move {
-                                        f(
+                    f(
                         state.ptr_x as i32,
                         state.ptr_y as i32,
                         state.cef_modifiers(),
                         1,
                     );
-                
                 }
             }
             Event::Motion {
@@ -287,13 +285,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
                 if let Some(f) = state.cb.mouse_move {
-                                        f(
+                    f(
                         state.ptr_x as i32,
                         state.ptr_y as i32,
                         state.cef_modifiers(),
                         0,
                     );
-                
                 }
             }
             Event::Button {
@@ -325,14 +322,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     state.mouse_button_modifiers &= !flag;
                 }
                 if let Some(f) = state.cb.mouse_button {
-                                        f(
+                    f(
                         button,
                         if pressed { 1 } else { 0 },
                         state.ptr_x as i32,
                         state.ptr_y as i32,
                         state.cef_modifiers(),
                     );
-                
                 }
             }
             Event::Axis { axis, value, .. } => {
@@ -382,14 +378,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     return;
                 }
                 if let Some(f) = state.cb.scroll {
-                                        f(
+                    f(
                         state.ptr_x as i32,
                         state.ptr_y as i32,
                         dx,
                         dy,
                         state.cef_modifiers(),
                     );
-                
                 }
             }
             _ => {}
@@ -450,13 +445,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 let sym = st.key_get_one_sym(kc);
                 let pressed = matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
                 if let Some(f) = state.cb.key {
-                                        f(
+                    f(
                         sym.into(),
                         key,
                         state.modifiers,
                         if pressed { 1 } else { 0 },
                     );
-                
                 }
                 if pressed {
                     let cp = st.key_get_utf32(kc);
@@ -706,10 +700,7 @@ pub unsafe fn jfn_input_wayland_start(_ctx: *mut JfnInputWayland) {
 
 /// # Safety
 /// `ctx` must be a pointer returned by [`jfn_input_wayland_init`] (or null).
-pub unsafe fn jfn_input_wayland_set_cursor(
-    ctx: *mut JfnInputWayland,
-    cef_cursor_type: u32,
-) {
+pub unsafe fn jfn_input_wayland_set_cursor(ctx: *mut JfnInputWayland, cef_cursor_type: u32) {
     let Some(c) = (unsafe { ctx.as_ref() }) else {
         return;
     };

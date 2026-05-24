@@ -3,8 +3,8 @@
 //! on metadata arrival; that's not mpv-derived and stays out of the
 //! playback event stream.
 
-use std::sync::{OnceLock};
 use parking_lot::Mutex;
+use std::sync::OnceLock;
 
 use crate::types::{PlaybackEvent, PlaybackEventKind};
 

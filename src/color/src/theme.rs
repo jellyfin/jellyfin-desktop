@@ -11,8 +11,8 @@
 //!   * `on_set_bg_hex(c_str)` — required; passes `#RRGGBB` to mpv so its
 //!     background matches the chrome during resize.
 
-use std::ffi::c_char;
 use parking_lot::Mutex;
+use std::ffi::c_char;
 
 const DEFAULT_BG_RGB: u32 = 0x101010; // kBgColor
 

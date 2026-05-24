@@ -18,10 +18,10 @@
 //! path holds the lock during commit/flush, and finer-grained locking
 //! would risk null-attach vs. commit ordering races.
 
+use parking_lot::{Mutex, MutexGuard};
 use std::ffi::c_void;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
-use std::sync::{OnceLock};
-use parking_lot::{Mutex, MutexGuard};
+use std::sync::OnceLock;
 
 use memmap2::MmapOptions;
 use wayland_backend::client::{Backend, ObjectId};
@@ -174,10 +174,7 @@ pub(crate) fn try_state() -> Option<&'static Mutex<WlState>> {
 }
 
 pub(crate) fn lock() -> MutexGuard<'static, WlState> {
-    STATE
-        .get()
-        .expect("wl_state used before init")
-        .lock()
+    STATE.get().expect("wl_state used before init").lock()
 }
 
 // =====================================================================

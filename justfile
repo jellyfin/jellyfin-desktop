@@ -14,28 +14,13 @@ update-deps *args:
 clean:
     rm -rf build dist
 
-# Lint Rust crates (rustfmt --check + clippy -D warnings).
-# jfn-wlproxy is Linux-only and skipped on other platforms.
+# Run the workspace test suite (depends on the per-platform `build`).
+test: build
+    cargo test --manifest-path src/Cargo.toml --workspace
+
+# Lint the whole workspace (rustfmt --check + clippy). Lint levels are denied
+# centrally via [workspace.lints] in src/Cargo.toml, so no -D flag is needed.
 lint:
-    #!/bin/sh
-    set -eu
-    cargo fmt --manifest-path src/config/Cargo.toml -- --check
-    cargo clippy --manifest-path src/config/Cargo.toml --all-targets -- -D warnings
-    cargo fmt --manifest-path src/cli/Cargo.toml -- --check
-    cargo clippy --manifest-path src/cli/Cargo.toml --all-targets -- -D warnings
-    cargo fmt --manifest-path src/jellyfin/Cargo.toml -- --check
-    cargo clippy --manifest-path src/jellyfin/Cargo.toml --all-targets -- -D warnings
-    cargo fmt --manifest-path src/paths/Cargo.toml -- --check
-    cargo clippy --manifest-path src/paths/Cargo.toml --all-targets -- -D warnings
-    cargo fmt --manifest-path src/single_instance/Cargo.toml -- --check
-    cargo clippy --manifest-path src/single_instance/Cargo.toml --all-targets -- -D warnings
-    cargo fmt --manifest-path src/xtask/Cargo.toml -- --check
-    cargo clippy --manifest-path src/xtask/Cargo.toml --all-targets -- -D warnings
-    if [ "$(uname)" != "MINGW64_NT" ] && [ "$(uname)" != "MSYS_NT" ]; then
-        cargo fmt --manifest-path src/signal_guard/Cargo.toml -- --check
-        cargo clippy --manifest-path src/signal_guard/Cargo.toml --all-targets -- -D warnings
-    fi
-    if [ "$(uname)" = "Linux" ]; then
-        cargo fmt --manifest-path src/wlproxy/Cargo.toml -- --check
-        cargo clippy --manifest-path src/wlproxy/Cargo.toml --all-targets -- -D warnings
-    fi
+    cargo fmt --manifest-path src/Cargo.toml --all -- --check
+    JFN_MPV_INCLUDE_DIR=third_party/mpv/include \
+        cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets

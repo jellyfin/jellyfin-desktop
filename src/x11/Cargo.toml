@@ -20,3 +20,6 @@ libc.workspace = true
 xcb = { version = "1.7", features = ["shm", "shape", "xkb", "as-raw-xcb-connection"] }
 xcb-util-cursor-sys = "0.2"
 xkbcommon = { version = "0.9", default-features = false, features = ["x11"] }
+
+[lints]
+workspace = true

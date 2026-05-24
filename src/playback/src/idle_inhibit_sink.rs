@@ -2,8 +2,8 @@
 //! the platform idle-inhibit level via the registered callback wired to
 //! `g_platform.set_idle_inhibit`.
 
-use std::sync::{OnceLock};
 use parking_lot::Mutex;
+use std::sync::OnceLock;
 
 use crate::types::{MediaType, PlaybackEvent, PlaybackEventKind, PlaybackPhase, PlaybackSnapshot};
 

@@ -6,12 +6,12 @@
 //! suppresses fields that are at their default (empty strings, sentinel
 //! values, zero geometry) so existing config files round-trip unchanged.
 
+use parking_lot::{Condvar, Mutex};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock};
-use parking_lot::{Condvar, Mutex};
+use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
 
 const DEVICE_NAME_MAX: usize = 64;

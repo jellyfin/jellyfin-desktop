@@ -8,8 +8,8 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_int, c_void};
 use parking_lot::Mutex;
+use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::{HANDLE, HWND};
@@ -906,12 +906,7 @@ pub fn win_popup_hide(s: *mut c_void) {
     }
 }
 
-pub fn win_popup_present(
-    s: *mut c_void,
-    raw_info: *const c_void,
-    _lw: c_int,
-    _lh: c_int,
-) {
+pub fn win_popup_present(s: *mut c_void, raw_info: *const c_void, _lw: c_int, _lh: c_int) {
     if s.is_null() || raw_info.is_null() {
         return;
     }

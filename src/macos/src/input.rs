@@ -8,8 +8,8 @@
 //! entry points implemented in `src/input/src/lib.rs` (active-browser
 //! lookup, hotkey classification, CEF forwarding).
 
-use std::ffi::{c_int, c_void};
 use parking_lot::Mutex;
+use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use objc2::rc::Retained;

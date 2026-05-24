@@ -8,8 +8,8 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::c_int;
 use parking_lot::Mutex;
+use std::ffi::c_int;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;

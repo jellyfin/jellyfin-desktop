@@ -24,9 +24,9 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+use parking_lot::Mutex;
 use std::ffi::{CStr, CString, c_char};
 use std::os::raw::c_void;
-use parking_lot::Mutex;
 
 use crate::sys;
 
@@ -112,10 +112,7 @@ pub unsafe fn jfn_mpv_set_property_int_async(name: *const c_char, value: i64) {
     }
 }
 
-pub unsafe fn jfn_mpv_set_property_string_async(
-    name: *const c_char,
-    value: *const c_char,
-) {
+pub unsafe fn jfn_mpv_set_property_string_async(name: *const c_char, value: *const c_char) {
     let h = raw();
     if h.is_null() {
         return;

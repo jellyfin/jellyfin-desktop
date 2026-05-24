@@ -11,11 +11,11 @@
 
 #![cfg(target_os = "windows")]
 
+use parking_lot::{Condvar, Mutex};
 use std::collections::VecDeque;
 use std::ffi::c_char;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use parking_lot::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use jfn_playback::{MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
@@ -319,9 +319,9 @@ fn map_kind_to_phase(kind: PlaybackEventKind) -> Phase {
     match kind {
         PlaybackEventKind::Started => Phase::Playing,
         PlaybackEventKind::Paused | PlaybackEventKind::TrackLoaded => Phase::Paused,
-        PlaybackEventKind::Finished
-        | PlaybackEventKind::Canceled
-        | PlaybackEventKind::Error => Phase::Stopped,
+        PlaybackEventKind::Finished | PlaybackEventKind::Canceled | PlaybackEventKind::Error => {
+            Phase::Stopped
+        }
         _ => Phase::Stopped,
     }
 }

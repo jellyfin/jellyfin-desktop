@@ -7,8 +7,8 @@
 //! a dedicated thread, gates each iteration on the stop flag, and fires
 //! the caller-supplied start/complete closures.
 
-use std::ffi::c_void;
 use parking_lot::Mutex;
+use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;

@@ -22,3 +22,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 tracing-appender = "0.2"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 libc.workspace = true
+
+[lints]
+workspace = true

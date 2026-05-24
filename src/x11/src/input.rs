@@ -5,11 +5,11 @@
 //! lives on this thread only; cursor changes from other threads are
 //! queued onto a `Mutex` and signalled via an eventfd.
 
+use parking_lot::Mutex;
 use std::ffi::{CString, c_int};
 use std::os::fd::AsRawFd;
 use std::os::raw::c_uchar;
-use std::sync::{Arc};
-use parking_lot::Mutex;
+use std::sync::Arc;
 
 use xcb::{Xid, XidNew, x};
 use xcb_util_cursor_sys as cursor_ffi;
@@ -176,7 +176,9 @@ fn cef_cursor_to_name(t: u32) -> &'static str {
         CT_NORTHWESTSOUTHEASTRESIZE => "nwse-resize",
         CT_COLUMNRESIZE => "col-resize",
         CT_ROWRESIZE => "row-resize",
-        CT_MIDDLEPANNING | CT_MIDDLE_PANNING_VERTICAL | CT_MIDDLE_PANNING_HORIZONTAL => "all-scroll",
+        CT_MIDDLEPANNING | CT_MIDDLE_PANNING_VERTICAL | CT_MIDDLE_PANNING_HORIZONTAL => {
+            "all-scroll"
+        }
         CT_MOVE => "move",
         CT_VERTICALTEXT => "vertical-text",
         CT_CELL => "cell",
@@ -291,8 +293,7 @@ fn handle_key(st: &mut State, detail: u8, pressed: bool) {
 
     if sym == XKB_KEY_XF86BACK || sym == XKB_KEY_XF86FORWARD {
         if pressed {
-                        jfn_input_dispatch_history_nav((sym == XKB_KEY_XF86FORWARD) as c_int);
-        
+            jfn_input_dispatch_history_nav((sym == XKB_KEY_XF86FORWARD) as c_int);
         }
         xst.update_key(
             kc,
@@ -306,7 +307,7 @@ fn handle_key(st: &mut State, detail: u8, pressed: bool) {
     }
 
     let native = (kc_raw as i32) - 8; // X keycode → linux input code
-        jfn_input_dispatch_key_raw(sym, native as u32, st.modifiers, pressed as c_int);
+    jfn_input_dispatch_key_raw(sym, native as u32, st.modifiers, pressed as c_int);
 
     if pressed {
         let cp = xst.key_get_utf32(kc);
@@ -372,24 +373,24 @@ fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed
         3 => 0x111, // BTN_RIGHT
         _ => return,
     };
-        jfn_input_dispatch_mouse_button(code, pressed as c_int, x, y, cef_modifiers(st));
+    jfn_input_dispatch_mouse_button(code, pressed as c_int, x, y, cef_modifiers(st));
 }
 
 fn handle_motion(st: &mut State, ev: &xcb::x::MotionNotifyEvent) {
     st.ptr_x = to_logical(ev.event_x() as i32);
     st.ptr_y = to_logical(ev.event_y() as i32);
-        jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 0);
+    jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 0);
 }
 
 fn handle_enter(st: &mut State, ev: &xcb::x::EnterNotifyEvent) {
     st.ptr_x = to_logical(ev.event_x() as i32);
     st.ptr_y = to_logical(ev.event_y() as i32);
     apply_cursor(st, st.cursor_type);
-        jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 0);
+    jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 0);
 }
 
 fn handle_leave(st: &State, _ev: &xcb::x::LeaveNotifyEvent) {
-        jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 1);
+    jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 1);
 }
 
 fn handle_xkb_state_notify(st: &mut State, ev: &xcb::xkb::StateNotifyEvent) {

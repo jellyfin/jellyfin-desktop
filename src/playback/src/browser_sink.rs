@@ -2,9 +2,9 @@
 //! web view via the exec_js callback installed at boot. Reads only
 //! from the event snapshot.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{OnceLock};
 use parking_lot::Mutex;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::json;
 

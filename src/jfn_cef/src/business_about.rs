@@ -8,9 +8,9 @@
 
 use cef::rc::ConvertReturnValue;
 use cef::{Browser, CefString, ImplBrowser, ImplBrowserHost, ImplListValue, ListValue, sys};
+use parking_lot::Mutex;
 use std::ffi::CString;
 use std::os::raw::c_void;
-use parking_lot::Mutex;
 
 use crate::client::JfnCefLayer;
 use crate::platform_ops;
@@ -117,8 +117,7 @@ fn handle_message(
             .unwrap_or(std::ptr::null_mut());
         jfn_browsers_set_active(prev);
         if !browser_raw.is_null() {
-            let browser: Browser =
-                (browser_raw as *mut sys::_cef_browser_t).wrap_result();
+            let browser: Browser = (browser_raw as *mut sys::_cef_browser_t).wrap_result();
             if let Some(host) = browser.host() {
                 host.close_browser(0);
             }
@@ -134,8 +133,7 @@ fn handle_message(
     if name == "aboutOpenPath" {
         let mut path = String::new();
         if !args_raw.is_null() {
-            let args: ListValue =
-                (args_raw as *mut sys::_cef_list_value_t).wrap_result();
+            let args: ListValue = (args_raw as *mut sys::_cef_list_value_t).wrap_result();
             let userfree = args.string(0);
             let cs: CefString = (&userfree).into();
             path = cs.to_string();
