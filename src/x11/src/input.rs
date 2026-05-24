@@ -278,7 +278,7 @@ fn cef_modifiers(st: &State) -> u32 {
 }
 
 fn to_logical(physical: i32) -> i32 {
-    let scale = unsafe { jfn_playback_display_scale() };
+    let scale = jfn_playback_display_scale();
     let s = if scale > 0.0 { scale } else { 1.0 };
     (physical as f64 / s) as i32
 }

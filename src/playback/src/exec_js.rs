@@ -23,7 +23,6 @@ pub(crate) fn call(js: &str) {
 }
 
 /// Install / clear the exec_js callback. `cb == None` clears.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_web_exec_js_handler(cb: Option<ExecJsCb>) {
+pub fn jfn_playback_set_web_exec_js_handler(cb: Option<ExecJsCb>) {
     *slot().lock().unwrap() = cb;
 }

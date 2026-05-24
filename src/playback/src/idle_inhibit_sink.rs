@@ -21,8 +21,7 @@ fn cb_slot() -> &'static Mutex<Option<SetCb>> {
 }
 
 /// Install the platform idle-inhibit setter. `cb == None` disables the sink.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_idle_inhibit_handler(cb: Option<SetCb>) {
+pub fn jfn_playback_set_idle_inhibit_handler(cb: Option<SetCb>) {
     *cb_slot().lock().unwrap() = cb;
 }
 

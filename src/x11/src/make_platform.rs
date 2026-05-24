@@ -115,7 +115,7 @@ impl Platform for X11Platform {
         if unsafe { jfn_mpv_handle_get() }.is_null() {
             return;
         }
-        if unsafe { jfn_playback_fullscreen() } == fullscreen {
+        if jfn_playback_fullscreen() == fullscreen {
             return;
         }
         unsafe { jfn_mpv_set_fullscreen(fullscreen) };
@@ -128,7 +128,7 @@ impl Platform for X11Platform {
     }
 
     fn get_scale(&self) -> f32 {
-        let s = unsafe { jfn_playback_display_scale() };
+        let s = jfn_playback_display_scale();
         if s > 0.0 {
             let f = s as f32;
             if let Ok(mut g) = crate::x11_state::MUT.lock()
