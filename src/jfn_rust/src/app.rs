@@ -955,47 +955,33 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     // 4. Build device profile. Must run after VO-init wait — sync mpv API
     //    calls would deadlock against core_thread on macOS.
     {
-        let caps = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_query(mpv_raw) };
-        let name = cs("Jellyfin Desktop");
-        let ver = cs(APP_VERSION_FULL);
+        let caps = unsafe { jfn_mpv::capabilities::query_raw(mpv_raw) };
+        let decoders: Vec<jfn_jellyfin::Codec> = caps
+            .decoders
+            .into_iter()
+            .map(|c| jfn_jellyfin::Codec {
+                name: c.name,
+                kind: match c.kind {
+                    jfn_mpv::capabilities::MediaKind::Video => jfn_jellyfin::MediaKind::Video,
+                    jfn_mpv::capabilities::MediaKind::Audio => jfn_jellyfin::MediaKind::Audio,
+                    jfn_mpv::capabilities::MediaKind::Subtitle => jfn_jellyfin::MediaKind::Subtitle,
+                },
+            })
+            .collect();
         let force = jfn_config::jfn_settings_get_force_transcoding();
-        let n_dec = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_decoder_count(caps) };
-        let mut codec_arr: Vec<jfn_jellyfin::JfnCodec> = Vec::with_capacity(n_dec);
-        for i in 0..n_dec {
-            let name = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_decoder_name(caps, i) };
-            let kind = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_decoder_kind(caps, i) };
-            codec_arr.push(jfn_jellyfin::JfnCodec { name, kind });
-        }
-        let n_dem = unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_demuxer_count(caps) };
-        let mut demuxer_ptrs: Vec<*const c_char> = Vec::with_capacity(n_dem);
-        for i in 0..n_dem {
-            demuxer_ptrs
-                .push(unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_demuxer_name(caps, i) });
-        }
-        let raw = unsafe {
-            jfn_jellyfin::jfn_jellyfin_build_device_profile(
-                codec_arr.as_ptr(),
-                codec_arr.len(),
-                demuxer_ptrs.as_ptr(),
-                demuxer_ptrs.len(),
-                name.as_ptr(),
-                ver.as_ptr(),
-                force,
-            )
-        };
-        unsafe { jfn_mpv::capabilities::jfn_mpv_capabilities_free(caps) };
-        if !raw.is_null() {
-            let profile = unsafe { CStr::from_ptr(raw) }
-                .to_string_lossy()
-                .into_owned();
-            tracing::info!(target: "Main", "Device profile: {profile}");
-            unsafe {
-                jfn_cef::injection::jfn_cef_set_device_profile_json(
-                    profile.as_ptr() as *const _,
-                    profile.len(),
-                );
-                jfn_jellyfin::jfn_jellyfin_free_string(raw);
-            }
+        let profile = jfn_jellyfin::build_device_profile(
+            &decoders,
+            &caps.demuxers,
+            "Jellyfin Desktop",
+            APP_VERSION_FULL,
+            force,
+        );
+        tracing::info!(target: "Main", "Device profile: {profile}");
+        unsafe {
+            jfn_cef::injection::jfn_cef_set_device_profile_json(
+                profile.as_ptr() as *const _,
+                profile.len(),
+            );
         }
     }
 
