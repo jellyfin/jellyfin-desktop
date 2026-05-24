@@ -79,7 +79,7 @@ pub extern "C" fn jfn_wl_lifecycle_init() -> bool {
 
     // Seed Rust state with mpv's current fullscreen — first configure
     // after this point won't start a spurious transition.
-    crate::wl_ffi::jfn_wl_core_set_was_fullscreen(unsafe { jfn_playback_fullscreen() });
+    crate::wl_ffi::jfn_wl_core_set_was_fullscreen(jfn_playback::ingest_driver::jfn_playback_fullscreen());
 
     // Prepare the input layer first so its xkb context is ready before
     // any seat_caps wires up keyboard listeners that need xkb.
@@ -151,7 +151,3 @@ pub extern "C" fn jfn_wl_lifecycle_cleanup() {
     // Rust-side WlState lives until process exit (mirrors C++ globals).
 }
 
-// Borrowed from jfn_playback — declared here to avoid a workspace dep.
-unsafe extern "C" {
-    fn jfn_playback_fullscreen() -> bool;
-}

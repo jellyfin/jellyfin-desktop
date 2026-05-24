@@ -20,29 +20,16 @@ pub use jfn_platform_abi::{
 // External symbols
 // =====================================================================
 
+use crate::fade::jfn_wl_fade_start;
+#[cfg(feature = "kde-palette")]
+use crate::kde_palette::{jfn_wl_kde_palette_post_window_cleanup, jfn_wl_kde_palette_set_color};
+use crate::lifecycle::{jfn_wl_lifecycle_cleanup, jfn_wl_lifecycle_init};
+use crate::proxy::jfn_wl_get_cached_scale;
+use crate::scale_probe::jfn_wayland_scale_probe;
+use crate::wl_ffi::jfn_wl_fade_apply_frame;
+
 unsafe extern "C" {
-    fn jfn_wl_lifecycle_init() -> bool;
-    fn jfn_wl_lifecycle_cleanup();
-    #[cfg(feature = "kde-palette")]
-    fn jfn_wl_kde_palette_post_window_cleanup();
-    #[cfg(feature = "kde-palette")]
-    fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_char);
-    fn jfn_wl_get_cached_scale() -> f32;
-    fn jfn_wayland_scale_probe(x: c_int, y: c_int) -> f64;
     fn jfn_playback_display_hz() -> f64;
-    fn jfn_wl_fade_start(
-        surface: *mut c_void,
-        fade_sec: f32,
-        fps: f64,
-        apply: unsafe extern "C" fn(*mut c_void, u32) -> bool,
-        on_start: Option<unsafe extern "C" fn(*mut c_void)>,
-        start_ctx: *mut c_void,
-        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        on_done: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_ctx: *mut c_void,
-        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    );
-    fn jfn_wl_fade_apply_frame(surface: *mut c_void, alpha: u32) -> bool;
 }
 
 // =====================================================================

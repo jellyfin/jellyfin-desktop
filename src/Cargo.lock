@@ -1204,8 +1204,11 @@ version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
  "jfn-idle-inhibit-linux",
+ "jfn-input",
  "jfn-open-url-linux",
  "jfn-platform-abi",
+ "jfn-playback",
+ "jfn-wlproxy",
  "libc",
  "libloading 0.9.0",
  "log",

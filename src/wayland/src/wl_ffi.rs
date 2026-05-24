@@ -198,9 +198,7 @@ pub extern "C" fn jfn_wl_was_fullscreen() -> bool {
     wl_ops::was_fullscreen()
 }
 
-unsafe extern "C" {
-    fn jfn_wlproxy_set_fullscreen(fs: i32);
-}
+use jfn_wlproxy::jfn_wlproxy_set_fullscreen;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn jfn_wl_set_fullscreen(fullscreen: bool) {
