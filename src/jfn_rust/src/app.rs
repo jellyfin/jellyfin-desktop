@@ -254,9 +254,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     } else {
         log_level.clone()
     };
-    let log_path_c = cs(&log_path);
-    let filter_c = cs(&filter);
-    unsafe { jfn_logging::jfn_log_init(log_path_c.as_ptr(), filter_c.as_ptr()) };
+    jfn_logging::jfn_log_init(&log_path, &filter);
 
     tracing::info!(target: "Main", "jellyfin-desktop {APP_VERSION_FULL}");
     tracing::info!(target: "Main", "CEF {APP_CEF_VERSION}");
@@ -693,7 +691,7 @@ const LEVEL_WARN: u8 = 3;
 const LEVEL_ERROR: u8 = 4;
 
 fn mpv_log_level_from_filter() -> &'static str {
-    let e = jfn_logging::jfn_log_enabled;
+    let e = jfn_logging::log_enabled;
     if e(LOG_MPV, LEVEL_TRACE) {
         "debug"
     } else if e(LOG_MPV, LEVEL_DEBUG) {
@@ -827,7 +825,7 @@ const LOG_SEVERITY_ERROR: c_int = 2;
 fn cef_severity_for_cef_filter() -> c_int {
     // Match toCefSeverity(effectiveLogLevel(LOG_CEF)) from C++ logging.h:
     //   Trace/Debug -> VERBOSE, Info -> INFO, Warn -> WARNING, Error -> ERROR.
-    let e = jfn_logging::jfn_log_enabled;
+    let e = jfn_logging::log_enabled;
     if e(LOG_CEF, LEVEL_TRACE) || e(LOG_CEF, LEVEL_DEBUG) {
         LOG_SEVERITY_VERBOSE
     } else if e(LOG_CEF, LEVEL_INFO) {
