@@ -157,7 +157,7 @@ pub unsafe extern "C" fn jfn_web_exec_js(js_utf8: *const c_char) {
         Some(s) => s.layer,
         None => return,
     };
-    let len = unsafe { libc::strlen(js_utf8) };
+    let len = unsafe { std::ffi::CStr::from_ptr(js_utf8) }.to_bytes().len();
     unsafe { jfn_cef_layer_exec_js(layer, js_utf8, len) };
 }
 

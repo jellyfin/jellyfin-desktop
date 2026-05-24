@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod build;
+#[cfg(target_os = "macos")]
 mod bundle_macos;
 mod cef;
 mod fs;

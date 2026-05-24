@@ -175,8 +175,8 @@ fn init_devices(hwnd: HWND) -> windows_core::Result<CompositorDevices> {
             None,
             Some(&mut context),
         )?;
-        let base_device = base_device.ok_or(windows_core::Error::from_win32())?;
-        let context = context.ok_or(windows_core::Error::from_win32())?;
+        let base_device = base_device.ok_or(windows_core::Error::from_thread())?;
+        let context = context.ok_or(windows_core::Error::from_thread())?;
         let d3d_device: ID3D11Device1 = base_device.cast()?;
 
         // DXGI factory via the device's adapter.

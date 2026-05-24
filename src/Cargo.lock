@@ -1253,6 +1253,7 @@ dependencies = [
  "tracing",
  "windows",
  "windows-core",
+ "windows-future",
 ]
 
 [[package]]

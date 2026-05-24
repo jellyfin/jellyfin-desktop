@@ -1,7 +1,12 @@
-use crate::{InstallArgs, bundle_macos, fs as xfs, paths, template, version};
-use anyhow::{Context, Result, bail};
-use std::collections::HashMap;
+use crate::{InstallArgs, fs as xfs, paths};
+use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use crate::{bundle_macos, template, version};
+#[cfg(target_os = "macos")]
+use anyhow::Context;
+#[cfg(target_os = "macos")]
+use std::collections::HashMap;
 
 pub const MACOS_APP_NAME: &str = "Jellyfin Desktop.app";
 
@@ -18,18 +23,24 @@ pub fn run(args: &InstallArgs) -> Result<PathBuf> {
     let prefix = std::path::absolute(&args.prefix)?;
     std::fs::create_dir_all(&prefix)?;
 
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         install_macos(&built_out, &prefix)?;
-        Ok(prefix.join(MACOS_APP_NAME))
-    } else if cfg!(target_os = "windows") {
+        return Ok(prefix.join(MACOS_APP_NAME));
+    }
+    #[cfg(target_os = "windows")]
+    {
         install_windows(&built_out, &prefix, &args.build)?;
-        Ok(prefix)
-    } else {
+        return Ok(prefix);
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
         install_linux(&built_out, &prefix, &args.build)?;
         Ok(prefix)
     }
 }
 
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 fn install_linux(build_dir: &Path, prefix: &Path, args: &crate::BuildArgs) -> Result<()> {
     let bin_src = build_dir.join("jellyfin-desktop");
     let bin_dst = prefix.join("jellyfin-desktop");
@@ -52,6 +63,7 @@ fn install_linux(build_dir: &Path, prefix: &Path, args: &crate::BuildArgs) -> Re
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
 fn install_windows(build_dir: &Path, prefix: &Path, args: &crate::BuildArgs) -> Result<()> {
     copy_executable(
         &build_dir.join("jellyfin-desktop.exe"),
@@ -67,6 +79,7 @@ fn install_windows(build_dir: &Path, prefix: &Path, args: &crate::BuildArgs) -> 
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn install_macos(build_dir: &Path, prefix: &Path) -> Result<()> {
     let app = prefix.join(MACOS_APP_NAME);
     let macos_dir = app.join("Contents").join("MacOS");
