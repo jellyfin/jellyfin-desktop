@@ -550,7 +550,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for State {
 
 pub struct JfnInputWayland {
     cursor_type: Arc<AtomicU32>,
-    set_cursor_inbox: Arc<Mutex<Option<u32>>>,
+    set_cursor_inbox: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     wake_fd: c_int,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -563,14 +563,13 @@ fn worker_loop(
     wake_fd: c_int,
     stop: Arc<AtomicBool>,
     cursor_type: Arc<AtomicU32>,
-    set_cursor_inbox: Arc<Mutex<Option<u32>>>,
+    set_cursor_inbox: Arc<AtomicBool>,
 ) {
     let display_fd = conn.as_fd().as_raw_fd();
     let qh = queue.handle();
     loop {
         // Apply any pending cursor change before we block.
-        let pending = set_cursor_inbox.lock().unwrap().take();
-        if pending.is_some() {
+        if set_cursor_inbox.swap(false, Ordering::Acquire) {
             // cursor_type already reflects the desired value (writer updates
             // it before signalling); this just ensures we re-issue the
             // Wayland request on the current pointer/serial.
@@ -658,7 +657,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
 
     let cursor_type = Arc::new(AtomicU32::new(CT_POINTER));
-    let set_cursor_inbox = Arc::new(Mutex::new(None));
+    let set_cursor_inbox = Arc::new(AtomicBool::new(false));
 
     let state = State {
         cb,
@@ -743,7 +742,7 @@ pub unsafe fn jfn_input_wayland_set_cursor(
         return;
     };
     c.cursor_type.store(cef_cursor_type, Ordering::Relaxed);
-    *c.set_cursor_inbox.lock().unwrap() = Some(cef_cursor_type);
+    c.set_cursor_inbox.store(true, Ordering::Release);
     // Wake the input thread so it picks up the cursor change.
     let v: u64 = 1;
     unsafe {
