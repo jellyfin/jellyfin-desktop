@@ -79,7 +79,7 @@ define_class!(
 );
 
 unsafe extern "C" {
-    fn dispatch_get_main_queue() -> *mut c_void;
+    static _dispatch_main_q: c_void;
     fn dispatch_async_f(
         queue: *mut c_void,
         ctx: *mut c_void,
@@ -88,6 +88,11 @@ unsafe extern "C" {
 
     fn jfn_macos_get_window() -> *mut AnyObject;
     fn jfn_macos_get_input_view() -> *mut AnyObject;
+}
+
+#[inline]
+fn dispatch_get_main_queue() -> *mut c_void {
+    unsafe { std::ptr::addr_of!(_dispatch_main_q) as *mut c_void }
 }
 
 /// Heap-allocated state delivered to the main-queue trampoline. Owns the

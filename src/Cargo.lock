@@ -1195,6 +1195,7 @@ dependencies = [
  "jfn-windows-sink",
  "jfn-wlproxy",
  "jfn-x11",
+ "libc",
  "tracing",
 ]
 

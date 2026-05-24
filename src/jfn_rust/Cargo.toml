@@ -37,6 +37,7 @@ jfn-signal-guard = { path = "../signal_guard" }
 [target.'cfg(target_os = "macos")'.dependencies]
 jfn-macos = { path = "../macos" }
 jfn-macos-sink = { path = "../macos_sink" }
+libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 jfn-windows = { path = "../windows" }

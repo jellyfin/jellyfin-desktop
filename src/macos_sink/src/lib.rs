@@ -16,11 +16,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use std::ptr::NonNull;
+use objc2::rc::{Allocated, Retained};
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{ClassType, DefinedClass, define_class, msg_send, MainThreadOnly};
 use objc2_foundation::{
-    NSData, NSDictionary, NSMutableDictionary, NSNumber, NSObject, NSString,
+    NSCopying, NSData, NSDataBase64DecodingOptions, NSDictionary, NSMutableDictionary, NSNumber,
+    NSObject, NSSize, NSString,
 };
 use objc2_app_kit::NSImage;
 use objc2_media_player::{
@@ -28,6 +30,10 @@ use objc2_media_player::{
     MPNowPlayingInfoMediaType, MPNowPlayingPlaybackState, MPRemoteCommand,
     MPRemoteCommandCenter, MPRemoteCommandEvent, MPRemoteCommandHandlerStatus,
 };
+
+fn ns_key(s: &NSString) -> &ProtocolObject<dyn NSCopying> {
+    ProtocolObject::from_ref(s)
+}
 
 // =====================================================================
 // Mirror of jfn-playback's C ABI event shape — needed because the sink
@@ -371,8 +377,8 @@ define_class!(
                     let info = NSMutableDictionary::dictionaryWithDictionary(&existing);
                     let elapsed_key = mp_const("MPNowPlayingInfoPropertyElapsedPlaybackTime");
                     let rate_key = mp_const("MPNowPlayingInfoPropertyPlaybackRate");
-                    info.setObject_forKey(&NSNumber::new_f64(pos), &elapsed_key);
-                    info.setObject_forKey(&NSNumber::new_f64(0.0), &rate_key);
+                    info.setObject_forKey(&*NSNumber::new_f64(pos) as &AnyObject, ns_key(&*elapsed_key));
+                    info.setObject_forKey(&*NSNumber::new_f64(0.0) as &AnyObject, ns_key(&*rate_key));
                     center.setNowPlayingInfo(Some(&info));
                 }
             }
@@ -465,7 +471,7 @@ fn mp_const(name: &str) -> Retained<NSString> {
         // The symbol is `NSString * const`, i.e. a pointer to a pointer.
         let pp = sym as *const *const NSString;
         let p = *pp;
-        (&*p).retain()
+        Retained::retain(p as *mut NSString).expect("non-null framework string")
     }
 }
 
@@ -582,27 +588,25 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
             let base64 = &ev.artwork_uri[comma + 1..];
             unsafe {
                 let ns_b64 = NSString::from_str(base64);
-                let data: Option<Retained<NSData>> =
-                    msg_send![NSData::class(), alloc];
-                let Some(data) = data else { return };
+                let data: Allocated<NSData> = msg_send![NSData::class(), alloc];
                 let data: Option<Retained<NSData>> = msg_send![
-                    &data, initWithBase64EncodedString: &*ns_b64, options: 0u64
+                    data, initWithBase64EncodedString: &*ns_b64,
+                    options: NSDataBase64DecodingOptions(0)
                 ];
                 let Some(data) = data else { return };
-                let image: Option<Retained<NSImage>> = msg_send![NSImage::class(), alloc];
-                let Some(image) = image else { return };
-                let image: Option<Retained<NSImage>> = msg_send![&image, initWithData: &*data];
+                let image: Allocated<NSImage> = msg_send![NSImage::class(), alloc];
+                let image: Option<Retained<NSImage>> = msg_send![image, initWithData: &*data];
                 let Some(image) = image else { return };
                 let size = image.size();
                 let image_clone = image.clone();
-                let handler = block2::RcBlock::new(move |_size: objc2_foundation::NSSize| {
-                    image_clone.clone()
+                let handler = block2::RcBlock::new(move |_size: NSSize| -> NonNull<NSImage> {
+                    let img: Retained<NSImage> = image_clone.clone();
+                    unsafe { NonNull::new_unchecked(Retained::autorelease_return(img)) }
                 });
-                let artwork: Option<Retained<MPMediaItemArtwork>> =
+                let artwork: Allocated<MPMediaItemArtwork> =
                     msg_send![MPMediaItemArtwork::class(), alloc];
-                let Some(artwork) = artwork else { return };
                 let artwork: Retained<MPMediaItemArtwork> = msg_send![
-                    &artwork,
+                    artwork,
                     initWithBoundsSize: size,
                     requestHandler: &*handler
                 ];
@@ -610,7 +614,7 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
                 if let Some(existing) = center.nowPlayingInfo() {
                     let info = NSMutableDictionary::dictionaryWithDictionary(&existing);
                     let key = mp_const("MPMediaItemPropertyArtwork");
-                    info.setObject_forKey(&*artwork, &key);
+                    info.setObject_forKey(&*artwork as &AnyObject, ns_key(&*key));
                     center.setNowPlayingInfo(Some(&info));
                 }
             }
@@ -660,7 +664,7 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
             if let Some(existing) = center.nowPlayingInfo() {
                 let info = NSMutableDictionary::dictionaryWithDictionary(&existing);
                 let key = mp_const("MPNowPlayingInfoPropertyPlaybackRate");
-                info.setObject_forKey(&NSNumber::new_f64(state.rate), &key);
+                info.setObject_forKey(&*NSNumber::new_f64(state.rate) as &AnyObject, ns_key(&*key));
                 center.setNowPlayingInfo(Some(&info));
             }
         },
@@ -671,8 +675,8 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
                 let info = NSMutableDictionary::dictionaryWithDictionary(&existing);
                 let key = mp_const("MPNowPlayingInfoPropertyElapsedPlaybackTime");
                 info.setObject_forKey(
-                    &NSNumber::new_f64(state.position_us as f64 / 1_000_000.0),
-                    &key,
+                    &*NSNumber::new_f64(state.position_us as f64 / 1_000_000.0) as &AnyObject,
+                    ns_key(&*key),
                 );
                 center.setNowPlayingInfo(Some(&info));
             }
@@ -699,8 +703,8 @@ fn update_timeline_throttled(state: &mut ConsumerState, position_us: i64, force:
         let info = NSMutableDictionary::dictionaryWithDictionary(&existing);
         let key = mp_const("MPNowPlayingInfoPropertyElapsedPlaybackTime");
         info.setObject_forKey(
-            &NSNumber::new_f64(position_us as f64 / 1_000_000.0),
-            &key,
+            &*NSNumber::new_f64(position_us as f64 / 1_000_000.0) as &AnyObject,
+            ns_key(&*key),
         );
         center.setNowPlayingInfo(Some(&info));
     }
@@ -713,34 +717,34 @@ fn update_now_playing_info(state: &mut ConsumerState) {
         if !state.metadata.title.is_empty() {
             let k = mp_const("MPMediaItemPropertyTitle");
             let v = NSString::from_str(&state.metadata.title);
-            info.setObject_forKey(&*v as &AnyObject, &k);
+            info.setObject_forKey(&*v as &AnyObject, ns_key(&*k));
         }
         if !state.metadata.artist.is_empty() {
             let k = mp_const("MPMediaItemPropertyArtist");
             let v = NSString::from_str(&state.metadata.artist);
-            info.setObject_forKey(&*v as &AnyObject, &k);
+            info.setObject_forKey(&*v as &AnyObject, ns_key(&*k));
         }
         if !state.metadata.album.is_empty() {
             let k = mp_const("MPMediaItemPropertyAlbumTitle");
             let v = NSString::from_str(&state.metadata.album);
-            info.setObject_forKey(&*v as &AnyObject, &k);
+            info.setObject_forKey(&*v as &AnyObject, ns_key(&*k));
         }
         if state.metadata.duration_us > 0 {
             let k = mp_const("MPMediaItemPropertyPlaybackDuration");
             let v = NSNumber::new_f64(state.metadata.duration_us as f64 / 1_000_000.0);
-            info.setObject_forKey(&*v as &AnyObject, &k);
+            info.setObject_forKey(&*v as &AnyObject, ns_key(&*k));
         }
         if state.metadata.track_number > 0 {
             let k = mp_const("MPMediaItemPropertyAlbumTrackNumber");
             let v = NSNumber::new_i32(state.metadata.track_number);
-            info.setObject_forKey(&*v as &AnyObject, &k);
+            info.setObject_forKey(&*v as &AnyObject, ns_key(&*k));
         }
         let elapsed_key = mp_const("MPNowPlayingInfoPropertyElapsedPlaybackTime");
         let elapsed_v = NSNumber::new_f64(state.position_us as f64 / 1_000_000.0);
-        info.setObject_forKey(&*elapsed_v as &AnyObject, &elapsed_key);
+        info.setObject_forKey(&*elapsed_v as &AnyObject, ns_key(&*elapsed_key));
         let rate_key = mp_const("MPNowPlayingInfoPropertyPlaybackRate");
         let rate_v = NSNumber::new_f64(state.rate);
-        info.setObject_forKey(&*rate_v as &AnyObject, &rate_key);
+        info.setObject_forKey(&*rate_v as &AnyObject, ns_key(&*rate_key));
         let media_type_key = mp_const("MPNowPlayingInfoPropertyMediaType");
         let media_type_v: MPNowPlayingInfoMediaType = if state.metadata.media_type == media_type::AUDIO {
             MPNowPlayingInfoMediaType::Audio
@@ -748,7 +752,7 @@ fn update_now_playing_info(state: &mut ConsumerState) {
             MPNowPlayingInfoMediaType::Video
         };
         let media_type_num = NSNumber::new_u64(media_type_v.0 as u64);
-        info.setObject_forKey(&*media_type_num as &AnyObject, &media_type_key);
+        info.setObject_forKey(&*media_type_num as &AnyObject, ns_key(&*media_type_key));
 
         let center = MPNowPlayingInfoCenter::defaultCenter();
         let cast: &NSDictionary<NSString, AnyObject> = &info;
