@@ -13,7 +13,7 @@ mod redact;
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 #[cfg(unix)]
@@ -134,7 +134,7 @@ fn rotate_backups(path: &PathBuf) -> io::Result<()> {
     Ok(())
 }
 
-fn backup_path(path: &PathBuf, n: usize) -> PathBuf {
+fn backup_path(path: &Path, n: usize) -> PathBuf {
     let mut s = path.as_os_str().to_owned();
     s.push(format!(".{}", n));
     PathBuf::from(s)
@@ -876,7 +876,7 @@ mod tests {
         let filter = EnvFilter::new(directive);
         let subscriber = Registry::default().with(filter);
         let dispatch = tracing::Dispatch::new(subscriber);
-        tracing::dispatcher::with_default(&dispatch, || prime_enabled_table());
+        tracing::dispatcher::with_default(&dispatch, prime_enabled_table);
         ENABLED[enabled_slot(cat_idx as u8, lvl)].load(Ordering::Relaxed)
     }
 
