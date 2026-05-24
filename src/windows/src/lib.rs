@@ -114,7 +114,9 @@ fn post_execution_state(flags: u32) {
     let boxed = Box::new(ExecutionStateTask {
         task: cef_task_t {
             base: cef_base_ref_counted_t {
-                size: std::mem::size_of::<ExecutionStateTask>(),
+                // CEF validates base.size == sizeof(cef_task_t) on Wrap;
+                // ExecutionStateTask is a larger wrapper, not the CEF struct.
+                size: std::mem::size_of::<cef_task_t>(),
                 add_ref: Some(task_add_ref),
                 release: Some(task_release),
                 has_one_ref: Some(task_has_one_ref),

@@ -25,7 +25,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_MULTIPLY, VK_NEXT, VK_NUMLOCK,
     VK_NUMPAD0, VK_NUMPAD1, VK_NUMPAD2, VK_NUMPAD3, VK_NUMPAD4, VK_NUMPAD5, VK_NUMPAD6, VK_NUMPAD7,
     VK_NUMPAD8, VK_NUMPAD9, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
-    VK_SHIFT, VK_SUBTRACT, VK_UP,
+    VK_RWIN, VK_SHIFT, VK_SUBTRACT, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
@@ -36,11 +36,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowPos, TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE,
     WM_APPCOMMAND, WM_CHAR, WM_CLOSE, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
-    WM_MOUSELEAVE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
     WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP,
     WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW, WS_CHILD, WS_VISIBLE, XBUTTON2,
 };
 use windows::core::{PCWSTR, w};
+
+// Not re-exported by windows-rs 0.62's WindowsAndMessaging metadata.
+const WM_MOUSELEAVE: u32 = 0x02A3;
 
 // =====================================================================
 // CEF cursor-type ordinals + event flags (mirrors cef_types.h)
@@ -420,11 +423,11 @@ unsafe extern "system" fn input_wndproc(
 
         WM_APPCOMMAND => {
             let cmd = get_appcommand_lparam(lp) as u32;
-            if cmd == APPCOMMAND_BROWSER_BACKWARD {
+            if cmd == APPCOMMAND_BROWSER_BACKWARD.0 {
                 unsafe { jfn_input_dispatch_history_nav(0) };
                 return LRESULT(1);
             }
-            if cmd == APPCOMMAND_BROWSER_FORWARD {
+            if cmd == APPCOMMAND_BROWSER_FORWARD.0 {
                 unsafe { jfn_input_dispatch_history_nav(1) };
                 return LRESULT(1);
             }

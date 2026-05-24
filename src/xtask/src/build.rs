@@ -83,7 +83,8 @@ fn stage_cef(out: &std::path::Path, cef: &cef::Cef) -> Result<()> {
     if cef.system {
         return Ok(());
     }
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         let fw_name = "Chromium Embedded Framework";
         let fw_src = cef.release_dir.join(format!("{fw_name}.framework"));
         let fw_dst = out.join("Frameworks").join(format!("{fw_name}.framework"));
@@ -114,7 +115,9 @@ fn stage_cef(out: &std::path::Path, cef: &cef::Cef) -> Result<()> {
             std::os::unix::fs::symlink(&target, &dst)
                 .with_context(|| format!("symlink {} -> {}", dst.display(), target))?;
         }
-    } else {
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
         xfs::copy_dir_recursive(&cef.resource_dir, out)?;
         xfs::copy_dir_recursive(&cef.release_dir, out)?;
     }

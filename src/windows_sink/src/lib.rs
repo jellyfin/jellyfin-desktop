@@ -263,8 +263,8 @@ pub extern "C" fn jfn_windows_sink_start_for(hwnd_raw: isize) {
 pub extern "C" fn jfn_windows_sink_start() {
     let mut wid: i64 = 0;
     let name = std::ffi::CString::new("window-id").expect("nul");
-    let ok = unsafe { jfn_mpv::api::jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
-    if !ok || wid == 0 {
+    let rc = unsafe { jfn_mpv::api::jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
+    if rc < 0 || wid == 0 {
         tracing::error!(target: "Media", "[SMTC] mpv window-id lookup failed");
         return;
     }
@@ -290,8 +290,8 @@ pub extern "C" fn jfn_windows_sink_stop() {
 struct Smtc {
     smtc: SystemMediaTransportControls,
     updater: windows::Media::SystemMediaTransportControlsDisplayUpdater,
-    button_token: windows::Foundation::EventRegistrationToken,
-    seek_token: windows::Foundation::EventRegistrationToken,
+    button_token: i64,
+    seek_token: i64,
     cached_thumbnail: Option<RandomAccessStreamReference>,
 }
 
@@ -314,11 +314,9 @@ fn init_smtc(hwnd_raw: isize) -> Option<Smtc> {
         )
         .ok()?;
         let hwnd = HWND(hwnd_raw as *mut _);
-        let mut out: Option<SystemMediaTransportControls> = None;
         interop
-            .GetForWindow::<_, SystemMediaTransportControls>(hwnd, &mut out)
-            .ok()?;
-        out
+            .GetForWindow::<SystemMediaTransportControls>(hwnd)
+            .ok()
     } {
         Some(s) => s,
         None => {
@@ -517,7 +515,6 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
             match p {
                 Phase::Playing => {
                     let _ = s.smtc.SetPlaybackStatus(MediaPlaybackStatus::Playing);
-                    update_display_properties(state, &mut Some(std::mem::take(s)).map(|x| x)); // dummy
                     update_display_properties_inner(state, s);
                 }
                 Phase::Paused => {
@@ -656,7 +653,7 @@ fn make_thumbnail_stream(bytes: &[u8]) -> Option<RandomAccessStreamReference> {
     let writer = DataWriter::CreateDataWriter(&stream).ok()?;
     writer.WriteBytes(bytes).ok()?;
     // Safe to .get() because we're on the MTA sink thread.
-    let _ = writer.StoreAsync().ok()?.get().ok()?;
+    let _ = writer.StoreAsync().ok()?.join().ok()?;
     let _ = writer.DetachStream();
     stream.Seek(0).ok()?;
     RandomAccessStreamReference::CreateFromStream(&stream).ok()
