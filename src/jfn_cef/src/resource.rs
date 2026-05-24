@@ -8,7 +8,8 @@
 //!   prepended to the static about.js body.
 
 use cef::*;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ---- embedded resources ----------------------------------------------------
 
@@ -153,7 +154,7 @@ wrap_scheme_handler_factory! {
                 JfnResourceHandlerBuilder::new(JfnResourceHandler {
                     bytes: Arc::new(bytes),
                     mime,
-                    offset: Arc::new(Mutex::new(0)),
+                    offset: Arc::new(AtomicUsize::new(0)),
                 }),
             )
         }
@@ -166,7 +167,7 @@ wrap_scheme_handler_factory! {
 pub(crate) struct JfnResourceHandler {
     bytes: Arc<Vec<u8>>,
     mime: &'static str,
-    offset: Arc<Mutex<usize>>,
+    offset: Arc<AtomicUsize>,
 }
 
 wrap_resource_handler! {
@@ -205,22 +206,22 @@ wrap_resource_handler! {
             bytes_read: Option<&mut ::std::os::raw::c_int>,
             _callback: Option<&mut ResourceReadCallback>,
         ) -> ::std::os::raw::c_int {
-            let mut offset = self.inner.offset.lock().unwrap();
+            let offset = self.inner.offset.load(Ordering::Relaxed);
             let total = self.inner.bytes.len();
-            if *offset >= total {
+            if offset >= total {
                 if let Some(br) = bytes_read { *br = 0; }
                 return 0;
             }
-            let remaining = total - *offset;
+            let remaining = total - offset;
             let n = remaining.min(bytes_to_read as usize);
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    self.inner.bytes.as_ptr().add(*offset),
+                    self.inner.bytes.as_ptr().add(offset),
                     data_out,
                     n,
                 );
             }
-            *offset += n;
+            self.inner.offset.store(offset + n, Ordering::Relaxed);
             if let Some(br) = bytes_read { *br = n as i32; }
             1
         }
