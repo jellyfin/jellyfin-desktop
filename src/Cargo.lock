@@ -1179,7 +1179,6 @@ dependencies = [
  "jfn-paths",
  "jfn-platform-abi",
  "jfn-playback",
- "jfn-signal-guard",
  "jfn-single-instance",
  "jfn-wayland",
  "jfn-windows",
@@ -1188,13 +1187,6 @@ dependencies = [
  "jfn-x11",
  "libc",
  "tracing",
-]
-
-[[package]]
-name = "jfn-signal-guard"
-version = "0.1.0"
-dependencies = [
- "libc",
 ]
 
 [[package]]

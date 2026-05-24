@@ -32,12 +32,11 @@ jfn-playback = { path = "../playback" }
 jfn-single-instance = { path = "../single_instance" }
 
 [target.'cfg(unix)'.dependencies]
-jfn-signal-guard = { path = "../signal_guard" }
+libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 jfn-macos = { path = "../macos" }
 jfn-macos-sink = { path = "../macos_sink" }
-libc.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 jfn-windows = { path = "../windows" }
