@@ -1,5 +1,4 @@
 //! `NativeV8Handler`: generic IPC relay from page JS to the browser process.
-//! Mirrors `NativeV8Handler::Execute` in `src/cef/cef_app.cpp`.
 
 use cef::*;
 

@@ -5,10 +5,7 @@
 //! `make_*_platform()` factory. The binary installs the chosen backend into
 //! the [`OnceLock`] below via [`install`] / [`get`].
 //!
-//! The previous C-ABI `Platform` struct (a vtable of `Option<extern "C"
-//! fn(...)>`) is gone — backends now author native Rust methods on a
-//! concrete impl rather than populating a fn-pointer table. `JfnRect`
-//! stays `#[repr(C)]` because CEF's `OnAcceleratedPaint` accel-paint
+//! `JfnRect` stays `#[repr(C)]` because CEF's `OnAcceleratedPaint` accel-paint
 //! info hands it across the C ABI surface; the popup request and other
 //! payloads are plain Rust.
 
@@ -59,8 +56,7 @@ pub enum IdleInhibitLevel {
 /// in-crate; callers only ever hold the raw pointer.
 pub type SurfaceHandle = *mut c_void;
 
-/// Process-wide platform handle. Each method maps 1:1 to the previous
-/// vtable slot; `Option`-able vtable slots become default no-op methods so
+/// Process-wide platform handle. Optional methods have no-op defaults so
 /// backends only override what they care about.
 ///
 /// All methods take `&self` — backends keep their own interior mutability

@@ -11,7 +11,7 @@
 //! `protocols/server-decoration-palette.xml` via `build.rs`; there is no
 //! upstream Rust crate for this KDE-specific protocol.
 //!
-//! Lifecycle (driven from C++ wayland.cpp):
+//! Lifecycle:
 //!   1. `jfn_wl_kde_palette_attach(display, parent)` — opens a short-lived
 //!      Wayland registry pass on the supplied (mpv-owned) display, binds
 //!      the palette manager, creates the per-window palette object, and

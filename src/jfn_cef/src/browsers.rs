@@ -3,7 +3,7 @@
 // without adding type safety, so the lint is suppressed module-wide.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-//! Process-wide layer registry. Ports `src/browser/browsers.{cpp,h}`.
+//! Process-wide layer registry.
 //!
 //! Owns the Vec<*mut JfnCefLayer> (each layer is jfn_cef_layer_new'd at
 //! create time and jfn_cef_layer_free'd at remove), the active-input

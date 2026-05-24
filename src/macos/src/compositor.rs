@@ -1,5 +1,4 @@
-//! CAMetalLayer-based per-surface compositor — native Rust port of the
-//! C++ originals in `src/platform/macos.mm`.
+//! CAMetalLayer-based per-surface compositor.
 //!
 //! All AppKit operations must run on the main thread; if Browsers calls
 //! alloc/free/restack/resize/set_visible off-main we `dispatch_sync` (or
@@ -23,7 +22,7 @@ use objc2::runtime::AnyObject;
 use crate::G_IN_TRANSITION;
 
 unsafe extern "C" {
-    /// Accessors implemented in src/platform/macos.mm.
+    /// Accessors implemented in init.rs.
     fn jfn_macos_get_window() -> *mut AnyObject;
     fn jfn_macos_get_input_view() -> *mut AnyObject;
 
@@ -137,8 +136,7 @@ unsafe impl Encode for MTLClearColor {
 
 // =====================================================================
 // Per-surface state. One per CefLayer (allocated by macos_alloc_surface,
-// destroyed by macos_free_surface). Mirrors the C++ PlatformSurface in
-// src/platform/macos.mm prior to this port.
+// destroyed by macos_free_surface).
 // =====================================================================
 
 struct Surface {

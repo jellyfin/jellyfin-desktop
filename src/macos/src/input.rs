@@ -1,7 +1,7 @@
 //! macOS input — NSEvent translation + JellyfinInputView NSView subclass.
 //!
-//! Ported from `src/input/input_macos.mm`. The NSView is created by C++
-//! `macos_init` via the `jfn_input_macos_create_view` extern "C" thunk;
+//! The NSView is created by `macos_init` via the
+//! `jfn_input_macos_create_view` extern "C" thunk;
 //! `jfn_input_macos_set_cursor` is wired into the Platform vtable.
 //!
 //! Event dispatch goes through the `jfn_input_dispatch_*` extern "C"
@@ -121,7 +121,7 @@ fn ns_to_cef_modifiers(flags: u64) -> u32 {
     m
 }
 
-/// Windows VK code for CefKeyEvent.windows_key_code. Mirrors the C++ table.
+/// Windows VK code for CefKeyEvent.windows_key_code.
 fn ns_keycode_to_vkey(kc: u16) -> i32 {
     match kc {
         // Letters (VK_A = 0x41 .. VK_Z = 0x5A)

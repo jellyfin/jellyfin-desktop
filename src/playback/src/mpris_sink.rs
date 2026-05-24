@@ -4,10 +4,8 @@
 //!
 //! Method/property handlers run inline on zbus's reactor thread; outbound
 //! transport (Play/Pause/Stop/etc.) calls jfn_mpv_* directly. Next/
-//! Previous/Seek/SetPosition route to the JS UI via a reverse-FFI exec_js
-//! callback the C++ side registers at startup.
-//!
-//! Replaces `src/playback/sinks/mpris/{mpris_sink,mpris_projection}.cpp`.
+//! Previous/Seek/SetPosition route to the JS UI via the registered exec_js
+//! callback.
 
 use std::collections::HashMap;
 use std::ffi::c_char;
@@ -27,7 +25,7 @@ const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
 const BASE_SERVICE_NAME: &str = "org.mpris.MediaPlayer2.JellyfinDesktop";
 
 // ============================================================================
-// Content + projected view (parallels mpris_projection.cpp)
+// Content + projected view
 // ============================================================================
 
 #[derive(Clone, Debug, Default)]

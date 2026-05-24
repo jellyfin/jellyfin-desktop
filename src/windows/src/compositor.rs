@@ -1,11 +1,10 @@
-//! D3D11 + DirectComposition per-surface compositor — native Rust port of
-//! the C++ originals in `src/platform/windows.cpp`.
+//! D3D11 + DirectComposition per-surface compositor.
 //!
-//! Owns all D3D / DComp / per-surface state. The C++ side keeps only HWND,
-//! cached scale, fullscreen bookkeeping, the WndProc hook, and the input
-//! thread; it calls into this module via the narrow `jfn_win_*` accessors
-//! at the bottom of the file to initialize, tear down, and drive the
-//! transition-locked routines.
+//! Owns all D3D / DComp / per-surface state. The platform module keeps only
+//! HWND, cached scale, fullscreen bookkeeping, the WndProc hook, and the
+//! input thread; it calls into this module via the narrow `jfn_win_*`
+//! accessors at the bottom of the file to initialize, tear down, and drive
+//! the transition-locked routines.
 
 #![allow(non_snake_case)]
 

@@ -1,9 +1,8 @@
 //! Test whether the GPU stack can import a GBM-allocated dmabuf as an EGL
 //! image and bind it to a GL texture. Run once during Wayland init to decide
-//! whether CEF's shared-texture path will work; if not, the C++ side falls
-//! back to software CEF rendering.
+//! whether CEF's shared-texture path will work; if not, we fall back to
+//! software CEF rendering.
 //!
-//! Mirrors `probe_shared_texture_support` from the original wayland.cpp.
 //! libEGL, libX11, and libgbm are all dlopened so the binary keeps no link
 //! dependency on them (the X11 case only fires when CEF runs under
 //! `--ozone-platform=x11` over XWayland).

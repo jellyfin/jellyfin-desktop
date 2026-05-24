@@ -1,9 +1,7 @@
 //! Theme-color sink. Resets ThemeColor video mode on terminal playback
-//! events. Active-true setVideoMode fires from the C++ web_browser path
+//! events. Active-true setVideoMode fires from the web_browser path
 //! on metadata arrival; that's not mpv-derived and stays out of the
 //! playback event stream.
-//!
-//! Replaces `src/playback/sinks/theme_color_sink.cpp`.
 
 use std::sync::{Mutex, OnceLock};
 

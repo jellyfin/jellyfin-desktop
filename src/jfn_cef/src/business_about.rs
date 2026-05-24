@@ -1,7 +1,7 @@
-//! AboutBrowser business logic. Ports `src/browser/about_browser.{cpp,h}`.
+//! AboutBrowser business logic.
 //!
 //! Self-managing singleton: `jfn_about_open` creates the layer via the
-//! C++ Browsers registry (FFI), installs handler closures via the Rust
+//! Browsers registry, installs handler closures via the
 //! JfnCefLayer setters, and stores layer + prev-active in INSTANCE. On
 //! BeforeClose the singleton clears itself and removes the layer from
 //! Browsers.

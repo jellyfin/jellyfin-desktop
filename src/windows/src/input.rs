@@ -282,7 +282,7 @@ fn keyboard_modifiers(wp: WPARAM, lp: LPARAM) -> u32 {
 }
 
 // =====================================================================
-// Cursor mapping. Match input_windows.cpp's cef_cursor_to_win table.
+// Cursor mapping.
 // =====================================================================
 
 fn cef_cursor_to_win(ct: i32) -> PCWSTR {

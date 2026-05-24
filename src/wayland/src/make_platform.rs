@@ -36,8 +36,8 @@ use jfn_playback::ingest_driver::jfn_playback_display_hz;
 // Helpers
 // =====================================================================
 
-// Background color matches kBgColor (0x101010) on the C++ side. Hard-coded
-// here so the surface_set_visible path doesn't need to carry the color.
+// Background color matches kBgColor (0x101010). Hard-coded here so the
+// surface_set_visible path doesn't need to carry the color.
 const BG_R: u8 = 0x10;
 const BG_G: u8 = 0x10;
 const BG_B: u8 = 0x10;

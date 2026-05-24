@@ -1,14 +1,12 @@
 //! Idle-inhibit sink. Watches phase + media_type transitions and drives
-//! the platform idle-inhibit level via a reverse-FFI callback the C++
-//! side installs at startup (wired to `g_platform.set_idle_inhibit`).
-//!
-//! Replaces `src/playback/sinks/idle_inhibit_sink.cpp`.
+//! the platform idle-inhibit level via the registered callback wired to
+//! `g_platform.set_idle_inhibit`.
 
 use std::sync::{Mutex, OnceLock};
 
 use crate::types::{MediaType, PlaybackEvent, PlaybackEventKind, PlaybackPhase, PlaybackSnapshot};
 
-// Mirrors C++ `enum class IdleInhibitLevel { None, System, Display }`.
+// IdleInhibitLevel: None, System, Display.
 const LEVEL_NONE: u32 = 0;
 const LEVEL_SYSTEM: u32 = 1;
 const LEVEL_DISPLAY: u32 = 2;

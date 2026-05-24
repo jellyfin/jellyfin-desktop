@@ -1,14 +1,13 @@
-//! CefLayer state (Rust side).
+//! CefLayer state.
 //!
-//! Slice 1 introduced this module with the small bits of CefLayer state that
-//! have no CEF dependency: name, closed/loaded flags, condvars. Slice 3 adds
-//! the resize-debounce + invalidate-loop state machine and the per-layer
-//! CEF browser ops vtable that lets Rust schedule `WasResized`,
-//! `NotifyScreenInfoChanged`, `Invalidate`, `SetWindowlessFrameRate`,
-//! `SendExternalBeginFrame`, and `ExecuteJavaScript` calls on TID_UI.
+//! Holds the small bits of CefLayer state plus the resize-debounce +
+//! invalidate-loop state machine and the per-layer CEF browser ops dispatch
+//! that schedules `WasResized`, `NotifyScreenInfoChanged`, `Invalidate`,
+//! `SetWindowlessFrameRate`, `SendExternalBeginFrame`, and
+//! `ExecuteJavaScript` calls on TID_UI.
 //!
-//! Lifetime model: the FFI handle is `Box<JfnCefLayer>` (raw pointer owned by
-//! the C++ side). Internal state lives in an `Arc<Inner>` so posted CEF
+//! Lifetime model: the FFI handle is `Box<JfnCefLayer>` (raw pointer owned
+//! by the caller). Internal state lives in an `Arc<Inner>` so posted CEF
 //! tasks can keep a clone alive past `jfn_cef_layer_free`. CefLayer
 //! destructor clears `cef_ops` first, so any in-flight task that does
 //! eventually run sees `None` and exits.
@@ -574,7 +573,7 @@ impl Inner {
         }
         // Ask the renderer to walk the focused <select> and ship the option
         // list back via the "popupOptions" IPC. Reply lands in OnProcessMessage
-        // (C++ side, slice 6) which calls jfn_cef_layer_set_popup_options.
+        // which calls jfn_cef_layer_set_popup_options.
         self.send_process_message_named("getPopupOptions");
     }
 
@@ -663,12 +662,12 @@ impl Inner {
 
     // ---- lifecycle / reset (slice 5) -------------------------------------
 
-    /// Called from C++ OnAfterCreated after browser_ has been assigned and
+    /// Called by the CEF client impl after browser_ has been assigned and
     /// the CEF-side WasResized + Invalidate kick has fired. Returns 1 when
-    /// the C++ side should close the freshly created browser (PendingReset
-    /// path); 0 otherwise. C++ then invokes its on_after_created_ user
-    /// callback (slice 6 ports it) and asks for any buffered URL via
-    /// jfn_cef_layer_take_pending_url.
+    /// the caller should close the freshly created browser (PendingReset
+    /// path); 0 otherwise. The caller then fires the on_after_created
+    /// callback and drains any buffered URL via
+    /// `jfn_cef_layer_take_pending_url`.
     fn on_after_created(&self) -> i32 {
         self.has_browser.store(true, Ordering::Release);
         match self.state.load(Ordering::Acquire) {
@@ -806,7 +805,7 @@ impl Inner {
         );
     }
 
-    /// OnPreKeyEvent paste intercept. C++ side has already matched the
+    /// OnPreKeyEvent paste intercept. Caller has already matched the
     /// platform paste shortcut. Returns true if a platform clipboard read
     /// was triggered (CEF should swallow the key); false otherwise.
     fn set_visible(&self, visible: bool) {
@@ -926,7 +925,7 @@ impl Inner {
         }
 
         // Invoke user-installed created callback with a raw, add-refed
-        // CefBrowser pointer (C++ side wraps in CefRefPtr).
+        // CefBrowser pointer.
         let g = self.created_callback.lock().unwrap();
         if let Some(f) = g.as_ref() {
             unsafe {
@@ -1591,7 +1590,7 @@ pub(crate) unsafe fn jfn_cef_layer_on_deactivated(h: *const JfnCefLayer) {
 }
 
 // Marks the invalidate loop for stop on the next tick. Called from
-// OnBeforeClose on the C++ side; ensures the posted-task Arc clones drop and
+// OnBeforeClose; ensures the posted-task Arc clones drop and
 // the layer can finish destruction.
 // Read the layer name back as a heap-allocated C string. Caller must free
-// with jfn_cef_layer_free_string. Used by C++ for log lines after slice 9.
+// with jfn_cef_layer_free_string.

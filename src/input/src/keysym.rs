@@ -1,7 +1,4 @@
-//! xkb keysym → Windows VK code. Ports the lookup in
-//! `src/input/keysym_map.h` (only `keysym_to_vkey`; the `keysym_to_keycode`
-//! mapping to `input::KeyCode` was unused outside the hotkey path that now
-//! works directly off the VK code).
+//! xkb keysym → Windows VK code.
 
 // Letters: XKB_KEY_a..z = 0x61..0x7A, A..Z = 0x41..0x5A.
 const XKB_KEY_A: u32 = 0x0041;

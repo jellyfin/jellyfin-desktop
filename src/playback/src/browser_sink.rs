@@ -1,8 +1,6 @@
 //! Browser playback sink. Forwards UI-affecting events to the embedded
-//! web view via the exec_js callback the C++ side installs. Reads only
+//! web view via the exec_js callback installed at boot. Reads only
 //! from the event snapshot.
-//!
-//! Replaces `src/playback/sinks/browser_sink.cpp`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};

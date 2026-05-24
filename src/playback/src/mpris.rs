@@ -12,7 +12,7 @@
 //! Pass-through fields (volume, can_go_next, can_go_previous, metadata
 //! itself) are NOT computed here — they live in the caller's MprisContent
 //! and copy straight into the view. The diff over those is trivial bool /
-//! double / struct equality which the C++ side handles directly.
+//! double / struct equality and is handled by the caller.
 
 use crate::types::PlaybackPhase;
 
