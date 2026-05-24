@@ -63,6 +63,7 @@ pub extern "C" fn jfn_browsers_init(
         ph,
         frame_rate: fr,
     });
+    crate::bridge::install();
 }
 
 /// Tear down all remaining layers. Called once at the end of run_with_cef.
@@ -170,8 +171,7 @@ pub extern "C" fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_browsers_active() -> *mut JfnCefLayer {
+pub fn jfn_browsers_active() -> *mut JfnCefLayer {
     INSTANCE
         .lock()
         .unwrap()

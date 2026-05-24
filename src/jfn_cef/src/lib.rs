@@ -2,6 +2,7 @@
 
 mod app;
 pub mod app_menu;
+pub mod bridge;
 pub mod browsers;
 pub mod business_about;
 pub mod business_overlay;

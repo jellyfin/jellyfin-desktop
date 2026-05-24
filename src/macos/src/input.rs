@@ -77,47 +77,16 @@ const NS_VIEW_WIDTH_SIZABLE: u64 = 2;
 const NS_VIEW_HEIGHT_SIZABLE: u64 = 16;
 
 // =====================================================================
-// extern "C" dispatch entry points (src/input/src/lib.rs)
+// Cross-crate entry points
 // =====================================================================
 
+use jfn_input::{
+    jfn_input_dispatch_char_sys, jfn_input_dispatch_history_nav, jfn_input_dispatch_key_full,
+    jfn_input_dispatch_keyboard_focus, jfn_input_dispatch_mouse_button,
+    jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll_precise,
+};
+
 unsafe extern "C" {
-    fn jfn_input_dispatch_mouse_move(x: i32, y: i32, mods: u32, leave: c_int);
-    fn jfn_input_dispatch_mouse_button(button_code: u32, pressed: c_int, x: i32, y: i32, mods: u32);
-    fn jfn_input_dispatch_scroll_precise(
-        x: i32,
-        y: i32,
-        dx: i32,
-        dy: i32,
-        mods: u32,
-        precise: c_int,
-    );
-    fn jfn_input_dispatch_history_nav(forward: c_int);
-    fn jfn_input_dispatch_keyboard_focus(gained: c_int);
-    fn jfn_input_dispatch_char_sys(
-        codepoint: u32,
-        mods: u32,
-        native_code: u32,
-        is_system_key: c_int,
-    );
-    fn jfn_input_dispatch_key_full(
-        pressed: c_int,
-        windows_key_code: i32,
-        native_key_code: i32,
-        modifiers: u32,
-        character: u16,
-        unmodified_character: u16,
-        is_system_key: c_int,
-    );
-
-    // jfn-cef layer ops for the Edit menu items (cut/copy/paste/...).
-    fn jfn_browsers_active() -> *const c_void;
-    fn jfn_cef_layer_undo(h: *const c_void);
-    fn jfn_cef_layer_redo(h: *const c_void);
-    fn jfn_cef_layer_cut(h: *const c_void);
-    fn jfn_cef_layer_copy(h: *const c_void);
-    fn jfn_cef_layer_paste(h: *const c_void);
-    fn jfn_cef_layer_select_all(h: *const c_void);
-
     static _dispatch_main_q: c_void;
     fn dispatch_async_f(
         queue: *mut c_void,
@@ -628,33 +597,39 @@ define_class!(
         // these. Forward each to the active CEF browser's focused frame.
         #[unsafe(method(undo:))]
         fn undo_action(&self, _sender: *mut AnyObject) {
-            let l = unsafe { jfn_browsers_active() };
-            if !l.is_null() { unsafe { jfn_cef_layer_undo(l) } }
+            if let Some(b) = jfn_platform_abi::browser_bridge() {
+                b.undo();
+            }
         }
         #[unsafe(method(redo:))]
         fn redo_action(&self, _sender: *mut AnyObject) {
-            let l = unsafe { jfn_browsers_active() };
-            if !l.is_null() { unsafe { jfn_cef_layer_redo(l) } }
+            if let Some(b) = jfn_platform_abi::browser_bridge() {
+                b.redo();
+            }
         }
         #[unsafe(method(cut:))]
         fn cut_action(&self, _sender: *mut AnyObject) {
-            let l = unsafe { jfn_browsers_active() };
-            if !l.is_null() { unsafe { jfn_cef_layer_cut(l) } }
+            if let Some(b) = jfn_platform_abi::browser_bridge() {
+                b.cut();
+            }
         }
         #[unsafe(method(copy:))]
         fn copy_action(&self, _sender: *mut AnyObject) {
-            let l = unsafe { jfn_browsers_active() };
-            if !l.is_null() { unsafe { jfn_cef_layer_copy(l) } }
+            if let Some(b) = jfn_platform_abi::browser_bridge() {
+                b.copy();
+            }
         }
         #[unsafe(method(paste:))]
         fn paste_action(&self, _sender: *mut AnyObject) {
-            let l = unsafe { jfn_browsers_active() };
-            if !l.is_null() { unsafe { jfn_cef_layer_paste(l) } }
+            if let Some(b) = jfn_platform_abi::browser_bridge() {
+                b.paste();
+            }
         }
         #[unsafe(method(selectAll:))]
         fn select_all_action(&self, _sender: *mut AnyObject) {
-            let l = unsafe { jfn_browsers_active() };
-            if !l.is_null() { unsafe { jfn_cef_layer_select_all(l) } }
+            if let Some(b) = jfn_platform_abi::browser_bridge() {
+                b.select_all();
+            }
         }
     }
 );

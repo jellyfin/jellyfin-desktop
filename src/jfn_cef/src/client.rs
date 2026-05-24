@@ -1491,8 +1491,7 @@ pub unsafe extern "C" fn jfn_cef_layer_close_browser_force(h: *const JfnCefLayer
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_can_go_back(h: *const JfnCefLayer) -> bool {
+pub unsafe fn jfn_cef_layer_can_go_back(h: *const JfnCefLayer) -> bool {
     let inner = unsafe { arc(h) };
     inner
         .browser_clone()
@@ -1500,8 +1499,7 @@ pub unsafe extern "C" fn jfn_cef_layer_can_go_back(h: *const JfnCefLayer) -> boo
         .unwrap_or(false)
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_can_go_forward(h: *const JfnCefLayer) -> bool {
+pub unsafe fn jfn_cef_layer_can_go_forward(h: *const JfnCefLayer) -> bool {
     let inner = unsafe { arc(h) };
     inner
         .browser_clone()
@@ -1509,29 +1507,25 @@ pub unsafe extern "C" fn jfn_cef_layer_can_go_forward(h: *const JfnCefLayer) -> 
         .unwrap_or(false)
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_go_back(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_go_back(h: *const JfnCefLayer) {
     if let Some(b) = unsafe { arc(h) }.browser_clone() {
         b.go_back();
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_go_forward(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_go_forward(h: *const JfnCefLayer) {
     if let Some(b) = unsafe { arc(h) }.browser_clone() {
         b.go_forward();
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_set_focus(h: *const JfnCefLayer, focus: bool) {
+pub unsafe fn jfn_cef_layer_set_focus(h: *const JfnCefLayer, focus: bool) {
     if let Some(host) = unsafe { arc(h) }.host() {
         host.set_focus(if focus { 1 } else { 0 });
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_send_key_event(
+pub unsafe fn jfn_cef_layer_send_key_event(
     h: *const JfnCefLayer,
     type_: c_int,
     modifiers: u32,
@@ -1556,8 +1550,7 @@ pub unsafe extern "C" fn jfn_cef_layer_send_key_event(
     host.send_key_event(Some(&ev));
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_send_mouse_click(
+pub unsafe fn jfn_cef_layer_send_mouse_click(
     h: *const JfnCefLayer,
     x: c_int,
     y: c_int,
@@ -1579,8 +1572,7 @@ pub unsafe extern "C" fn jfn_cef_layer_send_mouse_click(
     );
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_send_mouse_move(
+pub unsafe fn jfn_cef_layer_send_mouse_move(
     h: *const JfnCefLayer,
     x: c_int,
     y: c_int,
@@ -1594,8 +1586,7 @@ pub unsafe extern "C" fn jfn_cef_layer_send_mouse_move(
     host.send_mouse_move_event(Some(&me), if leave { 1 } else { 0 });
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_send_mouse_wheel(
+pub unsafe fn jfn_cef_layer_send_mouse_wheel(
     h: *const JfnCefLayer,
     x: c_int,
     y: c_int,
@@ -1722,28 +1713,22 @@ pub unsafe extern "C" fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCe
     unsafe { arc(h) }.send_external_begin_frame();
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_undo(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_undo(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_undo();
 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_redo(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_redo(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_redo();
 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_cut(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_cut(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_cut();
 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_copy(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_copy(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_copy();
 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_paste(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_paste(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_paste();
 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_cef_layer_select_all(h: *const JfnCefLayer) {
+pub unsafe fn jfn_cef_layer_select_all(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_select_all();
 }
 
