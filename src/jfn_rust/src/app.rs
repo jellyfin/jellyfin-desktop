@@ -866,8 +866,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
             };
         }
     }
-    let ozone_c = cs(&ozone_platform);
-    plat().set_cef_ozone_platform(ozone_c.as_ptr());
+    plat().set_cef_ozone_platform(&ozone_platform);
 
     // 2. Platform init (PlatformScope). Cleanup happens in jfn_app_teardown.
     let mpv_raw = jfn_mpv::boot::jfn_mpv_handle_get();

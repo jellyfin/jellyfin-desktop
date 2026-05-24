@@ -16,7 +16,6 @@
 
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicPtr, Ordering};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DisplayBackend {
@@ -181,8 +180,8 @@ pub trait Platform: Send + Sync {
     fn cef_ozone_platform(&self) -> *const c_char {
         ozone_platform_get()
     }
-    fn set_cef_ozone_platform(&self, utf8: *const c_char) {
-        ozone_platform_set(utf8);
+    fn set_cef_ozone_platform(&self, name: &str) {
+        ozone_platform_set(name);
     }
 
     /// Whether [`clipboard_read_text_async`] will actually invoke the
@@ -225,29 +224,20 @@ pub fn install(p: Box<dyn Platform>) {
 }
 
 // CEF ozone platform name (NUL-terminated). Set once by jfn_app_main
-// before `Platform::init`; read by the Wayland dmabuf probe. Kept in
-// `Mutex` for the (very rare) set, but stable for read.
-static OZONE_PLATFORM: AtomicPtr<c_char> = AtomicPtr::new(std::ptr::null_mut());
+// before `Platform::init`; read by the Wayland dmabuf probe.
+static OZONE_PLATFORM: OnceLock<CString> = OnceLock::new();
 
 fn ozone_platform_get() -> *const c_char {
-    let p = OZONE_PLATFORM.load(Ordering::Acquire);
-    if p.is_null() {
-        c"".as_ptr()
-    } else {
-        p as *const c_char
+    match OZONE_PLATFORM.get() {
+        Some(cs) => cs.as_ptr(),
+        None => c"".as_ptr(),
     }
 }
 
-fn ozone_platform_set(utf8: *const c_char) {
-    let cs = if utf8.is_null() {
-        CString::default()
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(utf8).to_owned() }
-    };
-    // Leak: process-static string, one assignment per boot. Previous value
-    // (if any) is leaked too; cheap on a 32-byte string.
-    let leaked = cs.into_raw();
-    OZONE_PLATFORM.store(leaked, Ordering::Release);
+fn ozone_platform_set(name: &str) {
+    let cs = CString::new(name).unwrap_or_default();
+    // Best-effort: silently ignore a second set so callers can stay simple.
+    let _ = OZONE_PLATFORM.set(cs);
 }
 
 /// Returns the installed platform backend. Panics if [`install`] hasn't
