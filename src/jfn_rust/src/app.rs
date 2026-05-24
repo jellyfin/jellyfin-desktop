@@ -618,7 +618,7 @@ unsafe impl Sync for WlproxySlot {}
 
 #[cfg(target_os = "linux")]
 unsafe fn start_wlproxy() {
-    let p = unsafe { jfn_wlproxy_start() };
+    let p = jfn_wlproxy_start();
     if p.is_null() {
         tracing::error!(target: "Main", "wlproxy start failed; continuing without proxy");
         return;
@@ -642,7 +642,7 @@ unsafe fn start_wlproxy() {
     // Register the configure intercept BEFORE mpv_create so the first
     // compositor configure (which arrives shortly after mpv_initialize) is
     // captured.
-    unsafe { jfn_wl_register_proxy_callbacks() };
+    jfn_wl_register_proxy_callbacks();
     let _ = WLPROXY.set(WlproxySlot(p));
 }
 

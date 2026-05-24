@@ -331,7 +331,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     if pressed {
                         let forward = button == BTN_EXTRA || button == BTN_FORWARD;
                         if let Some(f) = state.cb.history_nav {
-                            unsafe { f(if forward { 1 } else { 0 }) };
+                            f(if forward { 1 } else { 0 });
                         }
                     }
                     return;
@@ -461,12 +461,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             }
             Event::Enter { .. } => {
                 if let Some(f) = state.cb.kb_focus {
-                    unsafe { f(1) };
+                    f(1);
                 }
             }
             Event::Leave { .. } => {
                 if let Some(f) = state.cb.kb_focus {
-                    unsafe { f(0) };
+                    f(0);
                 }
             }
             Event::Key { key, state: ks, .. } => {
@@ -489,7 +489,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                     if cp > 0
                         && let Some(f) = state.cb.char_
                     {
-                        unsafe { f(cp, state.modifiers, key) };
+                        f(cp, state.modifiers, key);
                     }
                 }
             }

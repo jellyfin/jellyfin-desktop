@@ -50,7 +50,7 @@ pub extern "C" fn jfn_about_open() {
     if layer.is_null() {
         return;
     }
-    let prev_active = unsafe { jfn_browsers_active() };
+    let prev_active = jfn_browsers_active();
 
     let name = CString::new("about").unwrap();
     unsafe { jfn_cef_layer_set_name(layer, name.as_ptr()) };
@@ -73,7 +73,7 @@ fn install_handlers(layer: *mut JfnCefLayer, _prev_active: *mut JfnCefLayer) {
     let layer_for_created = LayerPtr(layer);
     l.set_created_callback_rust(Some(Box::new(move |_browser_raw: *mut c_void| {
         let lp = &layer_for_created;
-        unsafe { jfn_browsers_set_active(lp.0) };
+        jfn_browsers_set_active(lp.0);
     })));
 
     // setMessageHandler — aboutDismiss / aboutOpenPath.
@@ -97,9 +97,9 @@ fn install_handlers(layer: *mut JfnCefLayer, _prev_active: *mut JfnCefLayer) {
         if let Some(p) = prev {
             // Restore the previously active layer if the user dismissed via
             // close-without-aboutDismiss (e.g. ctx menu → Exit → re-open).
-            unsafe { jfn_browsers_set_active(p) };
+            jfn_browsers_set_active(p);
         }
-        unsafe { jfn_browsers_remove(lp.0) };
+        jfn_browsers_remove(lp.0);
     })));
 }
 
@@ -116,10 +116,10 @@ fn handle_message(
             .as_ref()
             .map(|s| s.prev_active)
             .unwrap_or(std::ptr::null_mut());
-        unsafe { jfn_browsers_set_active(prev) };
+        jfn_browsers_set_active(prev);
         if !browser_raw.is_null() {
             let browser: Browser =
-                unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
+                (browser_raw as *mut sys::_cef_browser_t).wrap_result();
             if let Some(host) = browser.host() {
                 host.close_browser(0);
             }
@@ -128,7 +128,7 @@ fn handle_message(
         }
         // Adopt and drop the args ref so we don't leak it.
         if !args_raw.is_null() {
-            let _: ListValue = unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
+            let _: ListValue = (args_raw as *mut sys::_cef_list_value_t).wrap_result();
         }
         return true;
     }
@@ -136,13 +136,13 @@ fn handle_message(
         let mut path = String::new();
         if !args_raw.is_null() {
             let args: ListValue =
-                unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
+                (args_raw as *mut sys::_cef_list_value_t).wrap_result();
             let userfree = args.string(0);
             let cs: CefString = (&userfree).into();
             path = cs.to_string();
         }
         if !browser_raw.is_null() {
-            let _: Browser = unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
+            let _: Browser = (browser_raw as *mut sys::_cef_browser_t).wrap_result();
         }
         if path.is_empty() {
             return true;
@@ -154,10 +154,10 @@ fn handle_message(
     }
     // Unhandled — still adopt-and-drop refs so we don't leak.
     if !args_raw.is_null() {
-        let _: ListValue = unsafe { (args_raw as *mut sys::_cef_list_value_t).wrap_result() };
+        let _: ListValue = (args_raw as *mut sys::_cef_list_value_t).wrap_result();
     }
     if !browser_raw.is_null() {
-        let _: Browser = unsafe { (browser_raw as *mut sys::_cef_browser_t).wrap_result() };
+        let _: Browser = (browser_raw as *mut sys::_cef_browser_t).wrap_result();
     }
     false
 }
