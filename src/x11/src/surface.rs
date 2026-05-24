@@ -13,9 +13,7 @@ use crate::x11_state::{MUT, Mutable, PlatformSurface, is_none_gc, is_none_window
 
 pub use jfn_platform_abi::JfnRect;
 
-unsafe extern "C" {
-    fn jfn_shutting_down() -> bool;
-}
+use jfn_playback::shutdown::jfn_shutting_down;
 
 /// Create an ARGB override-redirect overlay window at (x, y, w, h).
 /// Caller holds `MUT` and provides the mutable state borrow.

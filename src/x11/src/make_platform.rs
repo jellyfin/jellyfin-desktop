@@ -14,13 +14,9 @@ pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
 };
 
-unsafe extern "C" {
-    fn jfn_mpv_handle_get() -> *mut c_void;
-    fn jfn_mpv_set_fullscreen(v: bool);
-    fn jfn_mpv_toggle_fullscreen();
-    fn jfn_playback_fullscreen() -> bool;
-    fn jfn_playback_display_scale() -> f64;
-}
+use jfn_mpv::api::{jfn_mpv_set_fullscreen, jfn_mpv_toggle_fullscreen};
+use jfn_mpv::boot::jfn_mpv_handle_get;
+use jfn_playback::ingest_driver::{jfn_playback_display_scale, jfn_playback_fullscreen};
 
 pub struct X11Platform;
 
