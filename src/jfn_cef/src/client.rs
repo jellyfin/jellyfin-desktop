@@ -948,7 +948,7 @@ impl Inner {
             self.loaded.store(false, Ordering::Release);
             self.load_cv.notify_all();
         }
-        if unsafe { jfn_shutting_down() } {
+        if jfn_shutting_down() {
             if let Some(h) = browser.host() {
                 h.close_browser(1);
             }
@@ -1293,7 +1293,7 @@ wrap_task! {
         fn execute(&self) {
             // CefShutdown drains pending tasks; creating a browser here would
             // race with the shutdown teardown and cause a hang.
-            if unsafe { jfn_shutting_down() } {
+            if jfn_shutting_down() {
                 return;
             }
             self.inner.create("");

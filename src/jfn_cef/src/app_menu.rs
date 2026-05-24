@@ -48,7 +48,7 @@ pub fn dispatch_closure() -> Box<crate::client::ContextDispatcherFn> {
             crate::business_about::jfn_about_open();
             true
         } else if cmd == MENU_ID_EXIT {
-            unsafe { jfn_shutdown_initiate() };
+            jfn_shutdown_initiate();
             true
         } else {
             false

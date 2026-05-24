@@ -9,7 +9,7 @@ pub mod browser_sink;
 mod coordinator;
 pub mod exec_js;
 pub mod ffi;
-mod hotkey;
+pub mod hotkey;
 pub mod idle_inhibit_sink;
 mod ingest;
 pub mod ingest_driver;

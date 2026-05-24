@@ -5,6 +5,8 @@
 //! extern "C" entry points. We resolve the active CEF layer via
 //! `jfn_browsers_active()` and forward via the layer C ABI.
 
+use jfn_playback::hotkey::jfn_hotkey_classify_keydown;
+use jfn_playback::shutdown::jfn_shutdown_initiate;
 use std::os::raw::c_int;
 use std::sync::Mutex;
 
@@ -59,12 +61,6 @@ unsafe extern "C" {
         delta_x: c_int,
         delta_y: c_int,
     );
-
-    // Hotkey classifier lives in jfn-playback.
-    fn jfn_hotkey_classify_keydown(windows_key_code: i32, modifiers: u32) -> u8;
-
-    // Shutdown bridge.
-    fn jfn_shutdown_initiate();
 }
 
 // CEF event-type constants (from include/internal/cef_types.h).
@@ -276,9 +272,9 @@ pub extern "C" fn jfn_input_dispatch_key_full(
     is_system_key: c_int,
 ) {
     if pressed != 0 {
-        match unsafe { jfn_hotkey_classify_keydown(windows_key_code, modifiers) } {
+        match jfn_hotkey_classify_keydown(windows_key_code, modifiers) {
             1 => {
-                unsafe { jfn_shutdown_initiate() };
+                jfn_shutdown_initiate();
                 return;
             }
             2 => {

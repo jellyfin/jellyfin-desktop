@@ -538,7 +538,7 @@ fn input_thread_body(mut st: State) {
     let _ = st.conn.flush();
 
     let xcb_fd = st.conn.as_raw_fd();
-    let shutdown_ev = unsafe { jfn_shutdown_event() };
+    let shutdown_ev = jfn_shutdown_event();
     let shutdown_fd = unsafe { jfn_wake_event_fd(shutdown_ev) };
     let cursor_fd = unsafe { jfn_wake_event_fd(st.mailbox.wake) };
 
@@ -634,8 +634,8 @@ fn handle_event(st: &mut State, ev: xcb::Event) {
                 }
             }
         }
-        Event::X(x::Event::DestroyNotify(_)) => unsafe { jfn_shutdown_initiate() },
-        Event::X(x::Event::ClientMessage(_)) => unsafe { jfn_shutdown_initiate() },
+        Event::X(x::Event::DestroyNotify(_)) => jfn_shutdown_initiate(),
+        Event::X(x::Event::ClientMessage(_)) => jfn_shutdown_initiate(),
         Event::Xkb(xkb_ev) => {
             use xcb::xkb;
             match xkb_ev {

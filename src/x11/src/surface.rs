@@ -164,7 +164,7 @@ pub unsafe extern "C" fn jfn_x11_surface_present_software(
     w: c_int,
     h: c_int,
 ) -> bool {
-    if unsafe { jfn_shutting_down() } || s.is_null() || buffer.is_null() || w <= 0 || h <= 0 {
+    if jfn_shutting_down() || s.is_null() || buffer.is_null() || w <= 0 || h <= 0 {
         return false;
     }
     let Some(conn) = crate::x11_state::conn() else {

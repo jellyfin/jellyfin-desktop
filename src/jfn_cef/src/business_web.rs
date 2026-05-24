@@ -519,7 +519,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             true
         }
         "appExit" => {
-            unsafe { jfn_shutdown_initiate() };
+            jfn_shutdown_initiate();
             true
         }
         "openConfigDir" => {
