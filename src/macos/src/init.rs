@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
-use objc2::{class, define_class, msg_send, sel, DefinedClass};
+use objc2::{class, define_class, extern_class, msg_send, sel, DefinedClass};
 use objc2_foundation::{NSObject, NSObjectProtocol, NSRect};
 
 // Reach the input view created by the Rust input crate. We adopt the
@@ -164,8 +164,14 @@ struct JellyfinAppIvars {
 unsafe impl Send for JellyfinAppIvars {}
 unsafe impl Sync for JellyfinAppIvars {}
 
+extern_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "NSApplication"]
+    pub struct NSApplication;
+);
+
 define_class!(
-    #[unsafe(super(class!(NSApplication)))]
+    #[unsafe(super(NSApplication))]
     #[name = "JellyfinApplication"]
     #[ivars = JellyfinAppIvars]
     pub struct JellyfinApplication;
