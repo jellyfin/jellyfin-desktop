@@ -130,28 +130,6 @@ pub type BeforeCloseFn = dyn Fn() + Send + Sync;
 pub type ContextBuilderFn = dyn Fn(*mut c_void) + Send + Sync;
 pub type ContextDispatcherFn = dyn Fn(c_int) -> bool + Send + Sync;
 
-// Owns the lifetime of a C-side handler triple. Drop runs dtor exactly once.
-struct RawHolder {
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-}
-
-// SAFETY: the C++ side guarantees the holder is thread-safe to invoke; ctx
-// ownership is transferred to this struct, dtor runs once on drop.
-unsafe impl Send for RawHolder {}
-unsafe impl Sync for RawHolder {}
-
-impl Drop for RawHolder {
-    fn drop(&mut self) {
-        if let Some(d) = self.dtor
-            && !self.ctx.is_null()
-        {
-            unsafe { d(self.ctx) };
-        }
-    }
-}
-
 #[derive(Default)]
 struct PopupState {
     x: i32,
@@ -839,13 +817,6 @@ impl Inner {
         }
     }
 
-    fn menu_paste(self: &Arc<Self>) {
-        if self.try_paste() {
-            return;
-        }
-        self.frame_paste();
-    }
-
     pub(crate) fn try_paste(self: &Arc<Self>) -> bool {
         let Some(p) = platform_ops::ops() else {
             return false;
@@ -1043,11 +1014,6 @@ impl Inner {
                 f.copy()
             }
         } else if cmd == menu_paste {
-            // menu_paste needs Arc to schedule the clipboard read; route via
-            // a self-Arc fetched from the FFI surface. We can't easily get an
-            // Arc here from `&self`, so the caller (on_process_message_received)
-            // re-routes via the layer FFI helper. Inline frame.paste() is fine
-            // as the platform-clipboard async path is the same shape.
             if let Some(f) = frame {
                 f.paste()
             }
@@ -1301,20 +1267,20 @@ unsafe fn arc(h: *const JfnCefLayer) -> Arc<Inner> {
     Arc::clone(unsafe { &(*h).inner })
 }
 
-pub fn jfn_cef_layer_new() -> *mut JfnCefLayer {
+pub(crate) fn jfn_cef_layer_new() -> *mut JfnCefLayer {
     Box::into_raw(Box::new(JfnCefLayer {
         inner: Inner::new(),
     }))
 }
 
-pub unsafe fn jfn_cef_layer_free(h: *mut JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_free(h: *mut JfnCefLayer) {
     if h.is_null() {
         return;
     }
     drop(unsafe { Box::from_raw(h) });
 }
 
-pub unsafe fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_char) {
+pub(crate) unsafe fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_char) {
     let inner = unsafe { arc(h) };
     let new = if s.is_null() {
         String::new()
@@ -1324,29 +1290,11 @@ pub unsafe fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_char) {
     *inner.name.lock().unwrap() = new;
 }
 
-pub unsafe fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool {
+pub(crate) unsafe fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool {
     unsafe { arc(h) }.closed.load(Ordering::Acquire)
 }
 
-pub unsafe fn jfn_cef_layer_is_loaded(h: *const JfnCefLayer) -> bool {
-    unsafe { arc(h) }.loaded.load(Ordering::Acquire)
-}
-
-pub unsafe fn jfn_cef_layer_set_closed(h: *const JfnCefLayer, v: bool) {
-    let l = unsafe { arc(h) };
-    let _g = l.close_mtx.lock().unwrap();
-    l.closed.store(v, Ordering::Release);
-    l.close_cv.notify_all();
-}
-
-pub unsafe fn jfn_cef_layer_set_loaded(h: *const JfnCefLayer, v: bool) {
-    let l = unsafe { arc(h) };
-    let _g = l.load_mtx.lock().unwrap();
-    l.loaded.store(v, Ordering::Release);
-    l.load_cv.notify_all();
-}
-
-pub unsafe fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
     let l = unsafe { arc(h) };
     let mut g = l.close_mtx.lock().unwrap();
     while !l.closed.load(Ordering::Acquire) {
@@ -1365,19 +1313,19 @@ pub unsafe fn jfn_cef_layer_wait_for_load(h: *const JfnCefLayer) {
 /// Process-wide default frame rate (set once at startup from C++ via the
 /// Browsers ctor). Consumed by Inner::cef_create_browser when building
 /// CefBrowserSettings.windowless_frame_rate. Zero values are ignored.
-pub fn jfn_cef_set_default_frame_rate(hz: c_int) {
+pub(crate) fn jfn_cef_set_default_frame_rate(hz: c_int) {
     if hz > 0 {
         DEFAULT_FRAME_RATE.store(hz, Ordering::Release);
     }
 }
 
-pub fn jfn_cef_set_use_shared_textures(enable: bool) {
+pub(crate) fn jfn_cef_set_use_shared_textures(enable: bool) {
     USE_SHARED_TEXTURES.store(enable, Ordering::Release);
 }
 
 /// Set the injection-profile kind for this layer ("web" / "overlay" /
 /// "about"). The DictionaryValue is built lazily at browser-create time.
-pub unsafe fn jfn_cef_layer_set_injection_profile_kind(
+pub(crate) unsafe fn jfn_cef_layer_set_injection_profile_kind(
     h: *const JfnCefLayer,
     kind_utf8: *const c_char,
     len: usize,
@@ -1387,24 +1335,16 @@ pub unsafe fn jfn_cef_layer_set_injection_profile_kind(
     *inner.injection_kind.lock().unwrap() = s;
 }
 
-/// Browser-identity for active-input target comparison and similar. Returns
-/// CEF's browser identifier (positive integer) or 0 if no browser is alive.
-pub unsafe fn jfn_cef_layer_browser_id(h: *const JfnCefLayer) -> c_int {
-    let inner = unsafe { arc(h) };
-    let g = inner.browser.lock().unwrap();
-    g.as_ref().map(|b| b.identifier()).unwrap_or(0)
-}
-
 /// Force-close this layer's CefBrowser. Called from Browsers::closeAll on
 /// shutdown. No-op when no browser is alive.
-pub unsafe fn jfn_cef_layer_close_browser_force(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_close_browser_force(h: *const JfnCefLayer) {
     let inner = unsafe { arc(h) };
     if let Some(host) = inner.host() {
         host.close_browser(1);
     }
 }
 
-pub unsafe fn jfn_cef_layer_can_go_back(h: *const JfnCefLayer) -> bool {
+pub(crate) unsafe fn jfn_cef_layer_can_go_back(h: *const JfnCefLayer) -> bool {
     let inner = unsafe { arc(h) };
     inner
         .browser_clone()
@@ -1412,7 +1352,7 @@ pub unsafe fn jfn_cef_layer_can_go_back(h: *const JfnCefLayer) -> bool {
         .unwrap_or(false)
 }
 
-pub unsafe fn jfn_cef_layer_can_go_forward(h: *const JfnCefLayer) -> bool {
+pub(crate) unsafe fn jfn_cef_layer_can_go_forward(h: *const JfnCefLayer) -> bool {
     let inner = unsafe { arc(h) };
     inner
         .browser_clone()
@@ -1420,25 +1360,25 @@ pub unsafe fn jfn_cef_layer_can_go_forward(h: *const JfnCefLayer) -> bool {
         .unwrap_or(false)
 }
 
-pub unsafe fn jfn_cef_layer_go_back(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_go_back(h: *const JfnCefLayer) {
     if let Some(b) = unsafe { arc(h) }.browser_clone() {
         b.go_back();
     }
 }
 
-pub unsafe fn jfn_cef_layer_go_forward(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_go_forward(h: *const JfnCefLayer) {
     if let Some(b) = unsafe { arc(h) }.browser_clone() {
         b.go_forward();
     }
 }
 
-pub unsafe fn jfn_cef_layer_set_focus(h: *const JfnCefLayer, focus: bool) {
+pub(crate) unsafe fn jfn_cef_layer_set_focus(h: *const JfnCefLayer, focus: bool) {
     if let Some(host) = unsafe { arc(h) }.host() {
         host.set_focus(if focus { 1 } else { 0 });
     }
 }
 
-pub unsafe fn jfn_cef_layer_send_key_event(
+pub(crate) unsafe fn jfn_cef_layer_send_key_event(
     h: *const JfnCefLayer,
     type_: c_int,
     modifiers: u32,
@@ -1463,7 +1403,7 @@ pub unsafe fn jfn_cef_layer_send_key_event(
     host.send_key_event(Some(&ev));
 }
 
-pub unsafe fn jfn_cef_layer_send_mouse_click(
+pub(crate) unsafe fn jfn_cef_layer_send_mouse_click(
     h: *const JfnCefLayer,
     x: c_int,
     y: c_int,
@@ -1485,7 +1425,7 @@ pub unsafe fn jfn_cef_layer_send_mouse_click(
     );
 }
 
-pub unsafe fn jfn_cef_layer_send_mouse_move(
+pub(crate) unsafe fn jfn_cef_layer_send_mouse_move(
     h: *const JfnCefLayer,
     x: c_int,
     y: c_int,
@@ -1499,7 +1439,7 @@ pub unsafe fn jfn_cef_layer_send_mouse_move(
     host.send_mouse_move_event(Some(&me), if leave { 1 } else { 0 });
 }
 
-pub unsafe fn jfn_cef_layer_send_mouse_wheel(
+pub(crate) unsafe fn jfn_cef_layer_send_mouse_wheel(
     h: *const JfnCefLayer,
     x: c_int,
     y: c_int,
@@ -1514,15 +1454,15 @@ pub unsafe fn jfn_cef_layer_send_mouse_wheel(
     host.send_mouse_wheel_event(Some(&me), dx, dy);
 }
 
-pub unsafe fn jfn_cef_layer_set_surface(h: *const JfnCefLayer, s: *mut c_void) {
+pub(crate) unsafe fn jfn_cef_layer_set_surface(h: *const JfnCefLayer, s: *mut c_void) {
     *unsafe { arc(h) }.surface.lock().unwrap() = s;
 }
 
-pub unsafe fn jfn_cef_layer_get_surface(h: *const JfnCefLayer) -> *mut c_void {
+pub(crate) unsafe fn jfn_cef_layer_get_surface(h: *const JfnCefLayer) -> *mut c_void {
     unsafe { arc(h) }.surface_ptr()
 }
 
-pub unsafe fn jfn_cef_layer_resize(
+pub(crate) unsafe fn jfn_cef_layer_resize(
     h: *const JfnCefLayer,
     w: c_int,
     height: c_int,
@@ -1532,49 +1472,8 @@ pub unsafe fn jfn_cef_layer_resize(
     unsafe { arc(h) }.resize(w, height, pw, ph);
 }
 
-pub unsafe fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f64) {
+pub(crate) unsafe fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f64) {
     unsafe { arc(h) }.set_refresh_rate(hz);
-}
-
-pub unsafe fn jfn_cef_layer_kick_invalidate_loop(h: *const JfnCefLayer) {
-    unsafe { arc(h) }.kick_invalidate_loop();
-}
-
-pub unsafe fn jfn_cef_layer_should_present_paint(h: *const JfnCefLayer) -> bool {
-    unsafe { arc(h) }.should_present_paint()
-}
-
-pub unsafe fn jfn_cef_layer_get_view_rect(
-    h: *const JfnCefLayer,
-    out_w: *mut c_int,
-    out_h: *mut c_int,
-) {
-    let l = unsafe { arc(h) };
-    unsafe {
-        *out_w = l.width.load(Ordering::Acquire);
-        *out_h = l.height.load(Ordering::Acquire);
-    }
-}
-
-pub unsafe fn jfn_cef_layer_get_screen_info(
-    h: *const JfnCefLayer,
-    out_scale: *mut f32,
-    out_w: *mut c_int,
-    out_h: *mut c_int,
-) {
-    let l = unsafe { arc(h) };
-    let w = l.width.load(Ordering::Acquire);
-    let pw = l.physical_w.load(Ordering::Acquire);
-    let scale = if pw > 0 && w > 0 {
-        pw as f32 / w as f32
-    } else {
-        1.0
-    };
-    unsafe {
-        *out_scale = scale;
-        *out_w = w;
-        *out_h = l.height.load(Ordering::Acquire);
-    }
 }
 
 pub unsafe fn jfn_cef_layer_create(
@@ -1586,11 +1485,11 @@ pub unsafe fn jfn_cef_layer_create(
     unsafe { arc(h) }.create(&url);
 }
 
-pub unsafe fn jfn_cef_layer_reset(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_reset(h: *const JfnCefLayer) {
     unsafe { arc(h) }.reset();
 }
 
-pub unsafe fn jfn_cef_layer_load_url(
+pub(crate) unsafe fn jfn_cef_layer_load_url(
     h: *const JfnCefLayer,
     url_utf8: *const c_char,
     len: usize,
@@ -1599,7 +1498,7 @@ pub unsafe fn jfn_cef_layer_load_url(
     unsafe { arc(h) }.load_url(&url);
 }
 
-pub unsafe fn jfn_cef_layer_exec_js(
+pub(crate) unsafe fn jfn_cef_layer_exec_js(
     h: *const JfnCefLayer,
     js_utf8: *const c_char,
     len: usize,
@@ -1609,110 +1508,34 @@ pub unsafe fn jfn_cef_layer_exec_js(
 }
 
 #[cfg(target_os = "macos")]
-pub unsafe fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCefLayer) {
     unsafe { arc(h) }.send_external_begin_frame();
 }
 
-pub unsafe fn jfn_cef_layer_undo(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_undo(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_undo();
 }
-pub unsafe fn jfn_cef_layer_redo(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_redo(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_redo();
 }
-pub unsafe fn jfn_cef_layer_cut(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_cut(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_cut();
 }
-pub unsafe fn jfn_cef_layer_copy(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_copy(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_copy();
 }
-pub unsafe fn jfn_cef_layer_paste(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_paste(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_paste();
 }
-pub unsafe fn jfn_cef_layer_select_all(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_select_all(h: *const JfnCefLayer) {
     unsafe { arc(h) }.frame_select_all();
 }
 
-pub unsafe fn jfn_cef_layer_on_after_created(h: *const JfnCefLayer) -> c_int {
-    unsafe { arc(h) }.on_after_created()
-}
-
-pub unsafe fn jfn_cef_layer_on_before_close_hook(h: *const JfnCefLayer) {
-    unsafe { arc(h) }.on_before_close();
-}
-
-/// Returns a heap-allocated C string of the buffered URL (or NULL if none).
-/// Caller frees with jfn_cef_layer_free_string.
-pub unsafe fn jfn_cef_layer_take_pending_url(h: *const JfnCefLayer) -> *mut c_char {
-    match unsafe { arc(h) }.take_pending_url() {
-        None => std::ptr::null_mut(),
-        Some(s) => std::ffi::CString::new(s)
-            .map(|c| c.into_raw())
-            .unwrap_or(std::ptr::null_mut()),
-    }
-}
-
-pub unsafe fn jfn_cef_layer_on_fullscreen_mode_change(
-    h: *const JfnCefLayer,
-    fullscreen: bool,
-) {
-    unsafe { arc(h) }.on_fullscreen_mode_change(fullscreen);
-}
-
-pub unsafe fn jfn_cef_layer_on_cursor_change(h: *const JfnCefLayer, cursor_type: c_int) {
-    unsafe { arc(h) }.on_cursor_change(cursor_type);
-}
-
-pub unsafe fn jfn_cef_layer_on_console_message(
-    h: *const JfnCefLayer,
-    level: c_int,
-    msg_utf8: *const c_char,
-    msg_len: usize,
-    src_utf8: *const c_char,
-    src_len: usize,
-    line: c_int,
-) {
-    let msg = read_utf8(msg_utf8, msg_len);
-    let src = read_utf8(src_utf8, src_len);
-    unsafe { arc(h) }.on_console_message(level, &msg, &src, line);
-}
-
-pub unsafe fn jfn_cef_layer_on_load_end(
-    h: *const JfnCefLayer,
-    is_main: bool,
-    code: c_int,
-    url_utf8: *const c_char,
-    url_len: usize,
-) {
-    let url = read_utf8(url_utf8, url_len);
-    unsafe { arc(h) }.on_load_end(is_main, code, &url);
-}
-
-pub unsafe fn jfn_cef_layer_on_load_error(
-    h: *const JfnCefLayer,
-    code: c_int,
-    text_utf8: *const c_char,
-    text_len: usize,
-    url_utf8: *const c_char,
-    url_len: usize,
-) {
-    let text = read_utf8(text_utf8, text_len);
-    let url = read_utf8(url_utf8, url_len);
-    unsafe { arc(h) }.on_load_error(code, &text, &url);
-}
-
-pub unsafe fn jfn_cef_layer_try_paste(h: *const JfnCefLayer) -> bool {
-    unsafe { arc(h) }.try_paste()
-}
-
-pub unsafe fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, visible: bool) {
+pub(crate) unsafe fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, visible: bool) {
     unsafe { arc(h) }.set_visible(visible);
 }
 
-pub unsafe fn jfn_cef_layer_menu_paste(h: *const JfnCefLayer) {
-    unsafe { arc(h) }.menu_paste();
-}
-
-pub unsafe fn jfn_cef_layer_fade(
+pub(crate) unsafe fn jfn_cef_layer_fade(
     h: *const JfnCefLayer,
     sec: f32,
     on_start: Option<Box<dyn FnOnce() + Send>>,
@@ -1721,101 +1544,8 @@ pub unsafe fn jfn_cef_layer_fade(
     unsafe { arc(h) }.fade(sec, on_start, on_done);
 }
 
-pub unsafe fn jfn_cef_layer_on_before_popup(
-    h: *const JfnCefLayer,
-    url_utf8: *const c_char,
-    len: usize,
-) -> bool {
-    let url = read_utf8(url_utf8, len);
-    unsafe { arc(h) }.on_before_popup(&url)
-}
-
 // Per-slot raw-triple → Box<dyn Fn> wrappers. Each closure moves a RawHolder
 // so the slot's Drop releases the C-side dtor exactly once.
-
-fn box_raw_message(
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) -> Box<MessageFn> {
-    let h = RawHolder { fn_ptr, ctx, dtor };
-    Box::new(move |name, args, browser| {
-        let h = &h; // force whole-struct capture (Send+Sync via RawHolder)
-        type F = unsafe extern "C" fn(
-            *mut c_void,
-            *const c_char,
-            usize,
-            *mut c_void,
-            *mut c_void,
-        ) -> bool;
-        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
-        unsafe {
-            f(
-                h.ctx,
-                name.as_ptr() as *const c_char,
-                name.len(),
-                args,
-                browser,
-            )
-        }
-    })
-}
-
-fn box_raw_created(
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) -> Box<CreatedFn> {
-    let h = RawHolder { fn_ptr, ctx, dtor };
-    Box::new(move |browser| {
-        let h = &h;
-        type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
-        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
-        unsafe { f(h.ctx, browser) };
-    })
-}
-
-fn box_raw_before_close(
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) -> Box<BeforeCloseFn> {
-    let h = RawHolder { fn_ptr, ctx, dtor };
-    Box::new(move || {
-        let h = &h;
-        type F = unsafe extern "C" fn(*mut c_void);
-        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
-        unsafe { f(h.ctx) };
-    })
-}
-
-fn box_raw_ctx_builder(
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) -> Box<ContextBuilderFn> {
-    let h = RawHolder { fn_ptr, ctx, dtor };
-    Box::new(move |menu_model| {
-        let h = &h;
-        type F = unsafe extern "C" fn(*mut c_void, *mut c_void);
-        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
-        unsafe { f(h.ctx, menu_model) };
-    })
-}
-
-fn box_raw_ctx_dispatcher(
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) -> Box<ContextDispatcherFn> {
-    let h = RawHolder { fn_ptr, ctx, dtor };
-    Box::new(move |cmd| {
-        let h = &h;
-        type F = unsafe extern "C" fn(*mut c_void, c_int) -> bool;
-        let f: F = unsafe { std::mem::transmute(h.fn_ptr) };
-        unsafe { f(h.ctx, cmd) }
-    })
-}
 
 // Pub Rust API: in-process callers (e.g. future jfn-browsers crate) install
 // closures directly. Pass `None` to clear; the previously installed closure
@@ -1838,147 +1568,6 @@ impl JfnCefLayer {
     }
 }
 
-pub unsafe fn jfn_cef_layer_set_message_handler(
-    h: *const JfnCefLayer,
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) {
-    let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() {
-        None
-    } else {
-        Some(box_raw_message(fn_ptr, ctx, dtor))
-    };
-    *inner.message_handler.lock().unwrap() = new;
-}
-
-pub unsafe fn jfn_cef_layer_set_created_callback(
-    h: *const JfnCefLayer,
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) {
-    let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() {
-        None
-    } else {
-        Some(box_raw_created(fn_ptr, ctx, dtor))
-    };
-    *inner.created_callback.lock().unwrap() = new;
-}
-
-pub unsafe fn jfn_cef_layer_set_before_close_callback(
-    h: *const JfnCefLayer,
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) {
-    let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() {
-        None
-    } else {
-        Some(box_raw_before_close(fn_ptr, ctx, dtor))
-    };
-    *inner.before_close_callback.lock().unwrap() = new;
-}
-
-pub unsafe fn jfn_cef_layer_set_context_menu_builder(
-    h: *const JfnCefLayer,
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) {
-    let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() {
-        None
-    } else {
-        Some(box_raw_ctx_builder(fn_ptr, ctx, dtor))
-    };
-    *inner.context_menu_builder.lock().unwrap() = new;
-}
-
-pub unsafe fn jfn_cef_layer_set_context_menu_dispatcher(
-    h: *const JfnCefLayer,
-    fn_ptr: *mut c_void,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) {
-    let inner = unsafe { arc(h) };
-    let new = if fn_ptr.is_null() {
-        None
-    } else {
-        Some(box_raw_ctx_dispatcher(fn_ptr, ctx, dtor))
-    };
-    *inner.context_menu_dispatcher.lock().unwrap() = new;
-}
-
-pub unsafe fn jfn_cef_layer_has_context_menu_builder(h: *const JfnCefLayer) -> bool {
-    unsafe { arc(h) }
-        .context_menu_builder
-        .lock()
-        .unwrap()
-        .is_some()
-}
-
-pub unsafe fn jfn_cef_layer_invoke_message_handler(
-    h: *const JfnCefLayer,
-    name_utf8: *const c_char,
-    name_len: usize,
-    args: *mut c_void,
-    browser: *mut c_void,
-) -> bool {
-    let inner = unsafe { arc(h) };
-    let name = read_utf8(name_utf8, name_len);
-    let g = inner.message_handler.lock().unwrap();
-    g.as_ref().map(|f| f(&name, args, browser)).unwrap_or(false)
-}
-
-pub unsafe fn jfn_cef_layer_invoke_created_callback(
-    h: *const JfnCefLayer,
-    browser: *mut c_void,
-) {
-    let inner = unsafe { arc(h) };
-    let g = inner.created_callback.lock().unwrap();
-    if let Some(f) = g.as_ref() {
-        f(browser);
-    }
-}
-
-/// Atomically take the before-close slot and invoke it. Matches the original
-/// "move out before invoking" semantics in OnBeforeClose so the callback can
-/// safely install a new one without destroying its own closure mid-call.
-pub unsafe fn jfn_cef_layer_take_and_invoke_before_close(h: *const JfnCefLayer) {
-    let slot = unsafe { arc(h) }
-        .before_close_callback
-        .lock()
-        .unwrap()
-        .take();
-    if let Some(f) = slot {
-        f();
-    }
-}
-
-pub unsafe fn jfn_cef_layer_invoke_context_menu_builder(
-    h: *const JfnCefLayer,
-    menu_model: *mut c_void,
-) {
-    let inner = unsafe { arc(h) };
-    let g = inner.context_menu_builder.lock().unwrap();
-    if let Some(f) = g.as_ref() {
-        f(menu_model);
-    }
-}
-
-pub unsafe fn jfn_cef_layer_invoke_context_menu_dispatcher(
-    h: *const JfnCefLayer,
-    command_id: c_int,
-) -> bool {
-    let inner = unsafe { arc(h) };
-    let g = inner.context_menu_dispatcher.lock().unwrap();
-    g.as_ref().map(|f| f(command_id)).unwrap_or(false)
-}
-
 fn read_utf8(p: *const c_char, len: usize) -> String {
     if p.is_null() || len == 0 {
         return String::new();
@@ -1987,97 +1576,12 @@ fn read_utf8(p: *const c_char, len: usize) -> String {
     String::from_utf8_lossy(slice).into_owned()
 }
 
-pub unsafe fn jfn_cef_layer_on_popup_show(h: *const JfnCefLayer, show: bool) {
-    unsafe { arc(h) }.on_popup_show(show);
-}
-
-pub unsafe fn jfn_cef_layer_on_popup_size(
-    h: *const JfnCefLayer,
-    x: c_int,
-    y: c_int,
-    w: c_int,
-    height: c_int,
-) {
-    unsafe { arc(h) }.on_popup_size(x, y, w, height);
-}
-
-/// Deposit popup options received over the "popupOptions" renderer IPC.
-/// `options` is an array of NUL-terminated UTF-8 strings (length `len`).
-/// Triggers try_show_popup once size + options have both arrived.
-pub unsafe fn jfn_cef_layer_set_popup_options(
-    h: *const JfnCefLayer,
-    options: *const *const c_char,
-    len: usize,
-    selected_idx: c_int,
-) {
-    let inner = unsafe { arc(h) };
-    let mut opts = Vec::with_capacity(len);
-    for i in 0..len {
-        let p = unsafe { *options.add(i) };
-        let s = if p.is_null() {
-            String::new()
-        } else {
-            unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
-        };
-        opts.push(s);
-    }
-    inner.set_popup_options(opts, selected_idx);
-}
-
-pub unsafe fn jfn_cef_layer_on_deactivated(h: *const JfnCefLayer) {
+pub(crate) unsafe fn jfn_cef_layer_on_deactivated(h: *const JfnCefLayer) {
     unsafe { arc(h) }.on_deactivated();
-}
-
-pub unsafe fn jfn_cef_layer_on_paint(
-    h: *const JfnCefLayer,
-    is_popup: bool,
-    dirty: *const platform_ops::JfnRect,
-    n: usize,
-    buffer: *const c_void,
-    w: c_int,
-    height: c_int,
-) {
-    unsafe { arc(h) }.on_paint(is_popup, dirty, n, buffer, w, height);
-}
-
-pub unsafe fn jfn_cef_layer_on_accelerated_paint(
-    h: *const JfnCefLayer,
-    is_popup: bool,
-    info: *const c_void,
-) {
-    unsafe { arc(h) }.on_accelerated_paint(is_popup, info);
-}
-
-pub unsafe fn jfn_cef_layer_frame_rate(h: *const JfnCefLayer) -> c_int {
-    unsafe { arc(h) }.frame_rate.load(Ordering::Acquire)
-}
-
-pub unsafe fn jfn_cef_layer_bump_resize_gen(h: *const JfnCefLayer) {
-    unsafe { arc(h) }.resize_gen.fetch_add(1, Ordering::AcqRel);
 }
 
 // Marks the invalidate loop for stop on the next tick. Called from
 // OnBeforeClose on the C++ side; ensures the posted-task Arc clones drop and
 // the layer can finish destruction.
-pub unsafe fn jfn_cef_layer_stop_invalidate(h: *const JfnCefLayer) {
-    unsafe { arc(h) }
-        .invalidate_stop
-        .store(true, Ordering::Release);
-}
-
 // Read the layer name back as a heap-allocated C string. Caller must free
 // with jfn_cef_layer_free_string. Used by C++ for log lines after slice 9.
-pub unsafe fn jfn_cef_layer_name_dup(h: *const JfnCefLayer) -> *mut c_char {
-    let s = unsafe { arc(h) }.name_str();
-    match std::ffi::CString::new(s) {
-        Ok(c) => c.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
-}
-
-pub unsafe fn jfn_cef_layer_free_string(p: *mut c_char) {
-    if p.is_null() {
-        return;
-    }
-    drop(unsafe { std::ffi::CString::from_raw(p) });
-}
