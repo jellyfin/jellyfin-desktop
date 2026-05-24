@@ -788,18 +788,6 @@ fn store_vo_size(w: i32, h: i32) {
     let _ = VO_SIZE.set((w, h));
 }
 
-/// C accessor for the post-wait VO surface size.
-pub fn jfn_app_vo_size(w: *mut c_int, h: *mut c_int) {
-    if let Some((ww, hh)) = VO_SIZE.get() {
-        if !w.is_null() {
-            unsafe { *w = *ww };
-        }
-        if !h.is_null() {
-            unsafe { *h = *hh };
-        }
-    }
-}
-
 // =====================================================================
 // run_with_cef body — Rust port
 // =====================================================================

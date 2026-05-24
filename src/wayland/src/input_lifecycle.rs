@@ -1,3 +1,8 @@
+// lifecycle_init forwards a wl_display* the app already owns to the
+// unsafe input thread init; the function exists for callers that don't
+// want to mark themselves unsafe just to pass a pointer through.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 //! Lifecycle wrapper around the Rust Wayland input thread.
 //!
 //! Owns the static `JfnInputWayland` handle, builds the input thread's

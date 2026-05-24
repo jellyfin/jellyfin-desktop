@@ -1,3 +1,8 @@
+// JfnCefLayer is an opaque internal handle; callers within this crate
+// pass it back unchanged. Marking each consumer unsafe would cascade
+// without adding type safety, so the lint is suppressed module-wide.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 //! Process-wide layer registry. Ports `src/browser/browsers.{cpp,h}`.
 //!
 //! Owns the Vec<*mut JfnCefLayer> (each layer is jfn_cef_layer_new'd at

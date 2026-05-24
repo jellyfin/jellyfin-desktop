@@ -6,6 +6,9 @@
 //! handing it to `jfn_platform_abi::install`.
 
 #![allow(non_snake_case)]
+// Platform trait carries raw-pointer args (dmabuf info, accel-paint info)
+// from CEF; trait impls forward them unchanged to unsafe FFI fns.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};

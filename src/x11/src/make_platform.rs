@@ -1,6 +1,9 @@
 //! X11 backend impl of [`jfn_platform_abi::Platform`].
 
 #![allow(non_snake_case)]
+// Platform trait carries raw-pointer args (dirty rects, accel-paint info)
+// from CEF; trait impls forward them unchanged to unsafe FFI fns.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::{c_int, c_void};
 
