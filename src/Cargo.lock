@@ -1025,10 +1025,15 @@ name = "jfn-cef"
 version = "0.1.0"
 dependencies = [
  "cef",
+ "jfn-color",
  "jfn-config",
+ "jfn-input",
+ "jfn-jellyfin",
  "jfn-logging",
+ "jfn-mpv",
  "jfn-paths",
  "jfn-platform-abi",
+ "jfn-playback",
  "libc",
  "serde_json",
 ]

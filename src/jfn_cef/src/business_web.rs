@@ -14,92 +14,36 @@ use std::sync::Mutex;
 
 use crate::client::JfnCefLayer;
 
-unsafe extern "C" {
-    fn jfn_browsers_set_active(layer: *mut JfnCefLayer);
-    fn jfn_browsers_active() -> *mut JfnCefLayer;
-
-    fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_char);
-    fn jfn_cef_layer_exec_js(h: *const JfnCefLayer, js: *const c_char, len: usize);
-
-    // mpv
-    fn jfn_mpv_handle_get() -> *mut c_void;
-    fn jfn_mpv_load_file(path: *const c_char, opts: *const JfnMpvLoadOptions);
-    fn jfn_mpv_stop();
-    fn jfn_mpv_pause();
-    fn jfn_mpv_play();
-    fn jfn_mpv_seek_absolute(secs: f64);
-    fn jfn_mpv_set_volume(v: f64);
-    fn jfn_mpv_set_muted(m: bool);
-    fn jfn_mpv_set_speed(v: f64);
-    fn jfn_mpv_set_subtitle_track(id: i64);
-    fn jfn_mpv_sub_add(url: *const c_char);
-    fn jfn_mpv_set_audio_track(id: i64);
-    fn jfn_mpv_audio_add(url: *const c_char);
-    fn jfn_mpv_set_audio_delay(secs: f64);
-    fn jfn_mpv_set_subtitle_delay(secs: f64);
-    fn jfn_mpv_set_aspect_mode(mode: *const c_char);
-
-    // settings
-    fn jfn_settings_set_server_url(v: *const c_char);
-    fn jfn_settings_save_async();
-    fn jfn_settings_set_hwdec(v: *const c_char);
-    fn jfn_settings_set_audio_passthrough(v: *const c_char);
-    fn jfn_settings_set_audio_exclusive(v: bool);
-    fn jfn_settings_set_audio_channels(v: *const c_char);
-    fn jfn_settings_set_titlebar_theme_color(v: bool);
-    fn jfn_settings_set_log_level(v: *const c_char);
-    fn jfn_settings_set_force_transcoding(v: bool);
-    fn jfn_settings_set_device_name(v: *const c_char, platform_default: *const c_char);
-
-    // theme + platform + shutdown
-    fn jfn_theme_color_on_color(rgb: u32);
-    fn jfn_theme_color_set_video_mode(active: bool);
-    fn jfn_cef_parse_color(s: *const c_char) -> u32;
-    fn jfn_shutdown_initiate();
-    fn jfn_playback_fullscreen() -> bool;
-
-    // playback posts
-    fn jfn_playback_post_load_starting(item_id: *const c_char);
-    fn jfn_playback_post_position(position_us: i64);
-    fn jfn_playback_post_metadata(m: *const JfnMediaMetadataC);
-    fn jfn_playback_post_artwork(data_uri: *const c_char);
-    fn jfn_playback_post_queue_caps(can_go_next: bool, can_go_prev: bool);
-    fn jfn_playback_post_seeked(position_us: i64);
-}
+use crate::browsers::{jfn_browsers_active, jfn_browsers_set_active};
+use crate::client::{jfn_cef_layer_exec_js, jfn_cef_layer_set_name};
+use jfn_color::jfn_cef_parse_color;
+use jfn_color::theme::{jfn_theme_color_on_color, jfn_theme_color_set_video_mode};
+use jfn_config::{
+    jfn_settings_save_async, jfn_settings_set_audio_channels, jfn_settings_set_audio_exclusive,
+    jfn_settings_set_audio_passthrough, jfn_settings_set_device_name,
+    jfn_settings_set_force_transcoding, jfn_settings_set_hwdec, jfn_settings_set_log_level,
+    jfn_settings_set_server_url, jfn_settings_set_titlebar_theme_color,
+};
+use jfn_mpv::api::{
+    jfn_mpv_audio_add, jfn_mpv_load_file, jfn_mpv_pause, jfn_mpv_play, jfn_mpv_seek_absolute,
+    jfn_mpv_set_aspect_mode, jfn_mpv_set_audio_delay, jfn_mpv_set_audio_track, jfn_mpv_set_muted,
+    jfn_mpv_set_speed, jfn_mpv_set_subtitle_delay, jfn_mpv_set_subtitle_track, jfn_mpv_set_volume,
+    jfn_mpv_stop, jfn_mpv_sub_add,
+};
+use jfn_mpv::boot::jfn_mpv_handle_get;
+use jfn_playback::ffi::{
+    jfn_playback_post_artwork, jfn_playback_post_load_starting, jfn_playback_post_metadata,
+    jfn_playback_post_position, jfn_playback_post_queue_caps, jfn_playback_post_seeked,
+};
+use jfn_playback::ingest_driver::jfn_playback_fullscreen;
+use jfn_playback::shutdown::jfn_shutdown_initiate;
 
 // Cursor types must match cef_cursor_type_t.
 const CT_POINTER: i32 = 1;
 const CT_NONE: i32 = 22;
 
-#[repr(C)]
-struct JfnMpvLoadOptions {
-    start_secs: f64,
-    video_track: i64,
-    audio_track: i64,
-    sub_track: i64,
-    external_audio_url: *const c_char,
-    external_sub_url: *const c_char,
-    is_infinite_stream: bool,
-}
-
-#[repr(C)]
-struct JfnMediaMetadataC {
-    id: *const c_char,
-    id_len: usize,
-    title: *const c_char,
-    title_len: usize,
-    artist: *const c_char,
-    artist_len: usize,
-    album: *const c_char,
-    album_len: usize,
-    track_number: i32,
-    duration_us: i64,
-    art_url: *const c_char,
-    art_url_len: usize,
-    art_data_uri: *const c_char,
-    art_data_uri_len: usize,
-    media_type: u8,
-}
+use jfn_mpv::api::JfnMpvLoadOptions;
+use jfn_playback::JfnMediaMetadataC;
 
 // MediaType matching jfn-playback's enum: Unknown=0, Audio=1, Video=2.
 const MT_UNKNOWN: u8 = 0;

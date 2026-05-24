@@ -29,10 +29,8 @@ use std::time::Instant;
 
 use crate::platform_ops;
 
-unsafe extern "C" {
-    fn jfn_playback_display_hz() -> f64;
-    fn jfn_shutting_down() -> bool;
-}
+use jfn_playback::ingest_driver::jfn_playback_display_hz;
+use jfn_playback::shutdown::jfn_shutting_down;
 
 const STATE_NORMAL: i32 = 0;
 const STATE_PENDING_RESET: i32 = 1;

@@ -16,46 +16,23 @@ use crate::client::JfnCefLayer;
 
 const OVERLAY_FADE_DURATION_SEC: f32 = 0.25;
 
-unsafe extern "C" {
-    fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer;
-    fn jfn_browsers_set_active(layer: *mut JfnCefLayer);
-
-    fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_char);
-    fn jfn_cef_layer_set_visible(h: *const JfnCefLayer, v: bool);
-    fn jfn_cef_layer_create(h: *const JfnCefLayer, url: *const c_char, len: usize);
-    fn jfn_cef_layer_load_url(h: *const JfnCefLayer, url: *const c_char, len: usize);
-    fn jfn_cef_layer_reset(h: *const JfnCefLayer);
-    fn jfn_cef_layer_fade(
-        h: *const JfnCefLayer,
-        sec: f32,
-        start_fn: Option<unsafe extern "C" fn(*mut c_void)>,
-        start_ctx: *mut c_void,
-        start_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_fn: Option<unsafe extern "C" fn(*mut c_void)>,
-        done_ctx: *mut c_void,
-        done_dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    );
-
-    fn jfn_settings_get_server_url() -> *mut c_char;
-    fn jfn_settings_set_server_url(v: *const c_char);
-    fn jfn_settings_save_async();
-    fn jfn_settings_free_string(s: *mut c_char);
-
-    fn jfn_settings_set_hwdec(v: *const c_char);
-    fn jfn_settings_set_audio_passthrough(v: *const c_char);
-    fn jfn_settings_set_audio_exclusive(v: bool);
-    fn jfn_settings_set_audio_channels(v: *const c_char);
-    fn jfn_settings_set_titlebar_theme_color(v: bool);
-    fn jfn_settings_set_log_level(v: *const c_char);
-    fn jfn_settings_set_device_name(v: *const c_char, platform_default: *const c_char);
-
-    fn jfn_theme_color_on_overlay_dismissed();
-
-    fn jfn_jellyfin_normalize_input(input: *const c_char) -> *mut c_char;
-    fn jfn_jellyfin_extract_base_url(url: *const c_char) -> *mut c_char;
-    fn jfn_jellyfin_is_valid_public_info(body: *const c_char, len: usize) -> bool;
-    fn jfn_jellyfin_free_string(p: *mut c_char);
-}
+use crate::browsers::{jfn_browsers_create, jfn_browsers_set_active};
+use crate::client::{
+    jfn_cef_layer_create, jfn_cef_layer_fade, jfn_cef_layer_load_url, jfn_cef_layer_reset,
+    jfn_cef_layer_set_name, jfn_cef_layer_set_visible,
+};
+use jfn_color::theme::jfn_theme_color_on_overlay_dismissed;
+use jfn_config::{
+    jfn_settings_free_string, jfn_settings_get_server_url, jfn_settings_save_async,
+    jfn_settings_set_audio_channels, jfn_settings_set_audio_exclusive,
+    jfn_settings_set_audio_passthrough, jfn_settings_set_device_name, jfn_settings_set_hwdec,
+    jfn_settings_set_log_level, jfn_settings_set_server_url,
+    jfn_settings_set_titlebar_theme_color,
+};
+use jfn_jellyfin::{
+    jfn_jellyfin_extract_base_url, jfn_jellyfin_free_string, jfn_jellyfin_is_valid_public_info,
+    jfn_jellyfin_normalize_input,
+};
 
 struct OverlayState {
     layer: *mut JfnCefLayer,
