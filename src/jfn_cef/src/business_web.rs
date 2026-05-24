@@ -284,9 +284,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             pb_post(PbInput::Position(start_ms as i64 * 1000));
 
             if !metadata_json.is_empty() {
-                unsafe {
-                    jfn_theme_color_set_video_mode(meta.media_type == MT_VIDEO);
-                }
+                                jfn_theme_color_set_video_mode(meta.media_type == MT_VIDEO);
+            
                 post_metadata(&meta);
             }
 

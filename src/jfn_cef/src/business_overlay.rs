@@ -165,9 +165,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             };
             jfn_browsers_set_active(main_layer);
             let browser_for_close = browser.clone();
-            let start_box: Box<FadeFn> = Box::new(|| unsafe {
-                jfn_theme_color_on_overlay_dismissed();
-            });
+            let start_box: Box<FadeFn> = Box::new(|| jfn_theme_color_on_overlay_dismissed());
             let done_box: Box<FadeFn> = Box::new(move || {
                 if let Some(b) = browser_for_close.as_ref()
                     && let Some(host) = b.host()

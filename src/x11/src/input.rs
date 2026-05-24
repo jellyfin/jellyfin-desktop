@@ -293,9 +293,8 @@ fn handle_key(st: &mut State, detail: u8, pressed: bool) {
 
     if sym == XKB_KEY_XF86BACK || sym == XKB_KEY_XF86FORWARD {
         if pressed {
-            unsafe {
-                jfn_input_dispatch_history_nav((sym == XKB_KEY_XF86FORWARD) as c_int);
-            }
+                        jfn_input_dispatch_history_nav((sym == XKB_KEY_XF86FORWARD) as c_int);
+        
         }
         xst.update_key(
             kc,
@@ -309,9 +308,7 @@ fn handle_key(st: &mut State, detail: u8, pressed: bool) {
     }
 
     let native = (kc_raw as i32) - 8; // X keycode → linux input code
-    unsafe {
         jfn_input_dispatch_key_raw(sym, native as u32, st.modifiers, pressed as c_int);
-    }
 
     if pressed {
         let cp = xst.key_get_utf32(kc);
@@ -377,32 +374,24 @@ fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed
         3 => 0x111, // BTN_RIGHT
         _ => return,
     };
-    unsafe {
         jfn_input_dispatch_mouse_button(code, pressed as c_int, x, y, cef_modifiers(st));
-    }
 }
 
 fn handle_motion(st: &mut State, ev: &xcb::x::MotionNotifyEvent) {
     st.ptr_x = to_logical(ev.event_x() as i32);
     st.ptr_y = to_logical(ev.event_y() as i32);
-    unsafe {
         jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 0);
-    }
 }
 
 fn handle_enter(st: &mut State, ev: &xcb::x::EnterNotifyEvent) {
     st.ptr_x = to_logical(ev.event_x() as i32);
     st.ptr_y = to_logical(ev.event_y() as i32);
     apply_cursor(st, st.cursor_type);
-    unsafe {
         jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 0);
-    }
 }
 
 fn handle_leave(st: &State, _ev: &xcb::x::LeaveNotifyEvent) {
-    unsafe {
         jfn_input_dispatch_mouse_move(st.ptr_x, st.ptr_y, cef_modifiers(st), 1);
-    }
 }
 
 fn handle_xkb_state_notify(st: &mut State, ev: &xcb::xkb::StateNotifyEvent) {

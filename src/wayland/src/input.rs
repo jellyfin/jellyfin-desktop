@@ -279,26 +279,24 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
                 if let Some(f) = state.cb.mouse_move {
-                    unsafe {
-                        f(
-                            state.ptr_x as i32,
-                            state.ptr_y as i32,
-                            state.cef_modifiers(),
-                            0,
-                        );
-                    }
+                                        f(
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        state.cef_modifiers(),
+                        0,
+                    );
+                
                 }
             }
             Event::Leave { .. } => {
                 if let Some(f) = state.cb.mouse_move {
-                    unsafe {
-                        f(
-                            state.ptr_x as i32,
-                            state.ptr_y as i32,
-                            state.cef_modifiers(),
-                            1,
-                        );
-                    }
+                                        f(
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        state.cef_modifiers(),
+                        1,
+                    );
+                
                 }
             }
             Event::Motion {
@@ -309,14 +307,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
                 if let Some(f) = state.cb.mouse_move {
-                    unsafe {
-                        f(
-                            state.ptr_x as i32,
-                            state.ptr_y as i32,
-                            state.cef_modifiers(),
-                            0,
-                        );
-                    }
+                                        f(
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        state.cef_modifiers(),
+                        0,
+                    );
+                
                 }
             }
             Event::Button {
@@ -348,15 +345,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     state.mouse_button_modifiers &= !flag;
                 }
                 if let Some(f) = state.cb.mouse_button {
-                    unsafe {
-                        f(
-                            button,
-                            if pressed { 1 } else { 0 },
-                            state.ptr_x as i32,
-                            state.ptr_y as i32,
-                            state.cef_modifiers(),
-                        );
-                    }
+                                        f(
+                        button,
+                        if pressed { 1 } else { 0 },
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        state.cef_modifiers(),
+                    );
+                
                 }
             }
             Event::Axis { axis, value, .. } => {
@@ -406,15 +402,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     return;
                 }
                 if let Some(f) = state.cb.scroll {
-                    unsafe {
-                        f(
-                            state.ptr_x as i32,
-                            state.ptr_y as i32,
-                            dx,
-                            dy,
-                            state.cef_modifiers(),
-                        );
-                    }
+                                        f(
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        dx,
+                        dy,
+                        state.cef_modifiers(),
+                    );
+                
                 }
             }
             _ => {}
@@ -475,14 +470,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 let sym = st.key_get_one_sym(kc);
                 let pressed = matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
                 if let Some(f) = state.cb.key {
-                    unsafe {
-                        f(
-                            sym.into(),
-                            key,
-                            state.modifiers,
-                            if pressed { 1 } else { 0 },
-                        );
-                    }
+                                        f(
+                        sym.into(),
+                        key,
+                        state.modifiers,
+                        if pressed { 1 } else { 0 },
+                    );
+                
                 }
                 if pressed {
                     let cp = st.key_get_utf32(kc);
