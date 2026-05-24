@@ -9,11 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
 // =====================================================================
-// External C symbols (src/platform/macos.mm + src/input/input_macos.mm)
+// Backend no-op entry points.
 // =====================================================================
 
-// Stateless no-ops ported to native Rust. The C++ statics were deleted
-// so the link table picks these up by symbol name.
 pub fn macos_end_transition() {
     // Transition-end is detected inline by macos_surface_present when
     // an incoming frame matches g_expected_w/h; the explicit vtable
@@ -77,7 +75,7 @@ pub fn macos_set_theme_color(rgb: u32) {
 
 // =====================================================================
 // IOPMLib idle inhibit. Keeps an assertion alive across calls; level==0
-// releases it. Mirrors the C++ enum: 0=None, 1=System, 2=Display.
+// releases it. Levels: 0=None, 1=System, 2=Display.
 // =====================================================================
 
 #[allow(non_camel_case_types)]
@@ -127,7 +125,7 @@ pub fn macos_set_idle_inhibit(level: c_int) {
         unsafe { IOPMAssertionRelease(prev) };
     }
 
-    // C++ enum: None=0, System=1, Display=2.
+    // Levels: None=0, System=1, Display=2.
     // kIOPMAssertionTypePrevent* are CFSTR() macros — no linker symbols;
     // build equivalent CFStrings via NoCopy using static byte strings.
     let type_cstr: &std::ffi::CStr = match level {
@@ -360,12 +358,7 @@ pub fn macos_toggle_fullscreen() {
 }
 
 // =====================================================================
-// Message pump / NSApplication run loop / wake. The C++ originals
-// lived in src/platform/macos.mm; ported here so the C++ side no
-// longer owns any AppKit lifecycle primitives. Symbol names are kept
-// (`macos_pump`, etc.) because src/platform/macos.mm still calls
-// `macos_pump()` directly during `macos_init`'s wait-for-window loop;
-// the link table picks up this Rust definition.
+// Message pump / NSApplication run loop / wake.
 // =====================================================================
 
 type CFRunLoopRef = *const c_void;

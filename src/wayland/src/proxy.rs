@@ -1,13 +1,12 @@
 //! Cached preferred-scale value + proxy-callback wiring.
 //!
-//! Owns the `cached_scale` that used to live in WlState on the C++ side and
-//! the scale-callback registered against jfn-wlproxy. Also owns the
-//! xdg_toplevel.configure intercept that forwards into the runtime resize
-//! path (`wl_ops::on_configure`) and pushes synthetic OSD-dim pixels into
-//! the playback coordinator.
+//! Owns the `cached_scale` and the scale-callback registered against
+//! jfn-wlproxy. Also owns the xdg_toplevel.configure intercept that
+//! forwards into the runtime resize path (`wl_ops::on_configure`) and
+//! pushes synthetic OSD-dim pixels into the playback coordinator.
 //!
-//! Storage: `AtomicU32` holding the f32 bits, so reads from C++ getter
-//! callbacks (any thread) don't need a mutex. Zero bits sentinel for
+//! Storage: `AtomicU32` holding the f32 bits, so reads from any thread
+//! don't need a mutex. Zero bits sentinel for
 //! "scale unknown" — same semantics as the C++ `cached_scale = 0.0f` flag.
 
 use std::ffi::c_int;

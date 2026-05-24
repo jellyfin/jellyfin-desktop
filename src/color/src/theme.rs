@@ -1,4 +1,4 @@
-//! Window-scoped theme color tracker. Ports `src/theme_color.h`.
+//! Window-scoped theme color tracker.
 //!
 //! Owns the current theme-color (`<meta name="theme-color">` updates),
 //! buffers it until the loading overlay dismisses, and switches to the

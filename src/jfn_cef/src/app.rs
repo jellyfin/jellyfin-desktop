@@ -2,8 +2,6 @@
 //! handlers — CEF re-execs the same binary for child processes, so the same
 //! App is constructed in every process and CEF dispatches based on the
 //! `--type=` switch.
-//!
-//! Ports `App` and `NativeV8Handler` in `src/cef/cef_app.cpp`.
 
 use cef::*;
 use std::collections::HashMap;
@@ -60,7 +58,7 @@ wrap_app! {
         ) {
             let Some(cl) = command_line else { return };
 
-            // Disable all Google services. Mirrors cef_app.cpp:300-322.
+            // Disable all Google services.
             for sw in [
                 "disable-background-networking",
                 "disable-client-side-phishing-detection",
@@ -452,7 +450,7 @@ fn inject_jmp_native(browser: &mut Browser, profile: &DictionaryValue, context: 
 }
 
 // After each window resize, keep producing compositor frames until
-// `CefLayer::noteStableSize` (C++ side) calls `window.__cefStopRaf`.
+// `CefLayer::noteStableSize` calls `window.__cefStopRaf`.
 const RAF_NUDGE: &str = r#"
 (function () {
     var running = false;
@@ -494,7 +492,7 @@ fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
     }
 
     // Renderer is a separate process; load settings here for placeholder
-    // substitution. Mirrors `Settings::instance().load()` in cef_app.cpp:443.
+    // substitution.
     ensure_renderer_settings_loaded();
 
     let mut code = String::new();

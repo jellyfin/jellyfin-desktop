@@ -1,16 +1,14 @@
 //! App-level CEF context-menu items appended to every browser's menu.
 //!
-//! Ports `src/browser/app_menu.h`. The build/dispatch closures returned
-//! here are installed via `JfnCefLayer::set_context_menu_builder_rust` /
+//! The build/dispatch closures returned here are installed via
+//! `JfnCefLayer::set_context_menu_builder_rust` /
 //! `set_context_menu_dispatcher_rust` by each business wrapper.
 
 use cef::rc::ConvertReturnValue;
 use cef::{ImplMenuModel, MenuModel, sys};
 use std::os::raw::{c_int, c_void};
 
-// Lifted from cef_menu_id_t::MENU_ID_USER_FIRST. The C++ side defined the
-// triple as enum entries starting at MENU_ID_USER_FIRST; Rust mirrors that
-// numbering so command-id dispatch is identical on both sides.
+// Command IDs numbered from cef_menu_id_t::MENU_ID_USER_FIRST.
 const MENU_ID_USER_FIRST: c_int = sys::cef_menu_id_t::MENU_ID_USER_FIRST as c_int;
 pub const MENU_ID_TOGGLE_FULLSCREEN: c_int = MENU_ID_USER_FIRST;
 pub const MENU_ID_ABOUT: c_int = MENU_ID_USER_FIRST + 1;

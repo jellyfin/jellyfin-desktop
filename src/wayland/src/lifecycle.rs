@@ -1,14 +1,10 @@
 //! Wayland-backend `Platform::init` / `Platform::cleanup` body.
 //!
-//! Drives the per-process Wayland subsystems in the order required by the
-//! original `src/platform/wayland.cpp::wl_init`: read mpv's wayland-display
-//! and -surface handles, prime the cached fullscreen, wire input, bring up
-//! the core state, install mpv's close-cb trampoline, init EGL, probe
-//! dmabuf support, attach the KDE palette manager, start the input thread,
-//! and bring up the clipboard reader.
-//!
-//! The C++ side keeps the `Platform` vtable construction — only the
-//! orchestration body moves here.
+//! Drives the per-process Wayland subsystems in order: read mpv's
+//! wayland-display and -surface handles, prime the cached fullscreen,
+//! wire input, bring up the core state, install mpv's close-cb
+//! trampoline, init EGL, probe dmabuf support, attach the KDE palette
+//! manager, start the input thread, and bring up the clipboard reader.
 
 use std::ffi::{CStr, c_void};
 

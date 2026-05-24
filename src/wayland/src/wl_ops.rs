@@ -334,7 +334,7 @@ fn popup_destroy_locked(s: &mut PlatformSurface) {
 // Present (dmabuf / software)
 // =====================================================================
 
-/// POD frame info — what the C++ side unpacks from CefAcceleratedPaintInfo.
+/// POD frame info — what the caller unpacks from CefAcceleratedPaintInfo.
 #[repr(C)]
 pub struct JfnDmabufFrame {
     pub fd: i32,

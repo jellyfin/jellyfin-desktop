@@ -1,4 +1,4 @@
-//! OverlayBrowser business logic. Ports `src/browser/overlay_browser.{cpp,h}`.
+//! OverlayBrowser business logic.
 //!
 //! The server-selection overlay loads `app://resources/overlay.html` over the
 //! main browser, drives a two-phase HEAD→GET probe of user-entered server
@@ -40,7 +40,7 @@ unsafe impl Send for LayerPtr {}
 unsafe impl Sync for LayerPtr {}
 
 /// Create the overlay layer over `main_layer`, install handlers, load the
-/// overlay URL. Called by main.cpp after the main browser is created.
+/// overlay URL. Called once after the main browser is created.
 pub fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
     let kind = CString::new("overlay").unwrap();
     let layer = unsafe { jfn_browsers_create(kind.as_ptr()) };

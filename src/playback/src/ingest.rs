@@ -1,13 +1,12 @@
-//! Pure-Rust port of `src/mpv/event.cpp:digest_property` (and the
-//! end-file / file-loaded / shutdown decoding in `mpv_digest_thread`).
+//! Digests mpv events into coordinator inputs.
 //!
 //! Consumes [`mpv::Event`] values from the Rust event loop and produces
 //! coordinator [`Input`]s plus a couple of side outputs that don't fit
 //! the [`Input`] vocabulary (display-scale callback fanout, raw OSD
 //! pixel-dim mirror for the geometry-save cache).
 //!
-//! State that mirrored the C++ `s_*` atomics (fullscreen, window_max,
-//! display_scale, display_hz) lives in [`IngestState`] so multiple
+//! Per-process state (fullscreen, window_max, display_scale, display_hz)
+//! lives in [`IngestState`] so multiple
 //! ingest calls observe the same change-suppression behavior.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -17,9 +16,7 @@ use jfn_mpv::{Event, ObserveId, PropertyValue};
 use crate::coordinator::Input;
 use crate::types::{EndReason, PlaybackBufferedRange};
 
-/// Property observe-IDs passed to `mpv_observe_property`. Mirrors
-/// `enum MpvObserveId` in `src/mpv/event.h` so the C++ side and the Rust
-/// digest agree on which ID maps to which property.
+/// Property observe-IDs passed to `mpv_observe_property`.
 pub mod observe_id {
     pub const OSD_DIMS: u64 = 2;
     pub const FULLSCREEN: u64 = 3;
@@ -131,9 +128,7 @@ impl IngestState {
     }
 }
 
-/// Decode one [`Event`] into zero or more [`IngestOut`]s. Mirrors
-/// `mpv_digest_thread` in `src/main.cpp` plus `digest_property` in
-/// `src/mpv/event.cpp`.
+/// Decode one [`Event`] into zero or more [`IngestOut`]s.
 /// Re-exported under stable FFI-facing name for [`crate::ingest_driver`].
 pub(crate) fn ingest_event_for_ffi<C: IngestCtx>(
     event: &Event,

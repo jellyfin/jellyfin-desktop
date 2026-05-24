@@ -214,11 +214,10 @@ pub fn jfn_playback_set_display_hz(hz: f64) {
 }
 
 // ---------------------------------------------------------------------
-// Property observation + sync seed (replaces legacy
-// observe_properties() / mpv::seed_display_hz_sync() in src/mpv/event.cpp)
+// Property observation + sync seed
 // ---------------------------------------------------------------------
 
-/// Display-backend discriminant mirroring C++ `enum class DisplayBackend`.
+/// Display-backend discriminant.
 ///   0 = Wayland, 1 = X11, 2 = Other (macOS/Windows)
 pub const BACKEND_WAYLAND: u8 = 0;
 

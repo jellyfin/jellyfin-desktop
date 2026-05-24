@@ -1,4 +1,4 @@
-//! `app://` scheme handler. Ports `src/cef/resource_handler.cpp`.
+//! `app://` scheme handler.
 //!
 //! Embedded resources are included at compile time from `src/web/*`. Two
 //! URLs need dynamic generation:
@@ -92,7 +92,7 @@ fn about_js_payload() -> Vec<u8> {
 }
 
 // Absolute-but-not-resolved: prepend CWD if relative, leave symlinks/../.
-// alone. Fall back to input on error. Mirrors absPath() in resource_handler.cpp.
+// alone. Fall back to input on error.
 fn abs_path(p: &str) -> String {
     let pb = std::path::Path::new(p);
     if pb.is_absolute() {

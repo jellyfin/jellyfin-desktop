@@ -1,9 +1,7 @@
 //! Wayland surface / present / transition state.
 //!
-//! Ported from `src/platform/wayland.cpp` as one cohesive slice — the
-//! C++ shim keeps the Platform vtable and unpacks CEF-typed structs
-//! into plain integers, then dispatches into the FFI entry points
-//! exposed by [`crate::wl_ffi`].
+//! Dispatches CEF-typed structs unpacked to plain integers into the
+//! FFI entry points exposed by [`crate::wl_ffi`].
 //!
 //! Owns:
 //!   * A dedicated `EventQueue` over an mpv-owned `wl_display`

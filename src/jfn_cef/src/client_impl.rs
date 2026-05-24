@@ -136,9 +136,9 @@ wrap_client! {
                     1
                 }
                 _ => {
-                    // C++ side calls CefBrowserCToCpp::Wrap / CefListValueCToCpp::Wrap which
-                    // adopt one owning reference. Rust still holds its own ref via the
-                    // Browser/ListValue wrappers, so add_ref before transferring ownership.
+                    // The callback adopts one owning reference for each ptr (CToCpp Wrap).
+                    // Rust still holds its own ref via the Browser/ListValue wrappers,
+                    // so add_ref before transferring ownership.
                     let browser_raw = browser
                         .map(|b| {
                             unsafe { Rc::add_ref(b) };

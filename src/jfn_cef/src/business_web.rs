@@ -2,12 +2,11 @@
 // see browsers.rs for the matching allow rationale.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-//! WebBrowser business logic. Ports `src/browser/web_browser.{cpp,h}`.
+//! WebBrowser business logic.
 //!
 //! Routes the ~20 jellyfin-web IPC names to mpv, settings, theme color,
 //! and the playback coordinator. The web layer's exec_js sink for the
-//! playback coordinator is exposed as [`jfn_web_exec_js`] so main.cpp
-//! can wire it up unchanged.
+//! playback coordinator is exposed as [`jfn_web_exec_js`] for boot wiring.
 
 use cef::rc::ConvertReturnValue;
 use cef::*;

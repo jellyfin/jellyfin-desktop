@@ -1,11 +1,9 @@
 //! macOS NSApplication lifecycle + window/display-link/menu init.
 //!
-//! Ports the remaining bodies of `src/platform/macos.mm` (`macos_early_init`,
-//! `macos_init`, `macos_cleanup`) plus their helpers — JellyfinApplication
-//! NSApplication subclass conforming to CefAppProtocol, the application
-//! menu bar (App + Edit), the CADisplayLink target that drives external
-//! BeginFrame per browser, and the NSWindow.windowShouldClose: swizzle
-//! that routes the WM close button into `jfn_shutdown_initiate`.
+//! JellyfinApplication NSApplication subclass conforming to CefAppProtocol,
+//! the application menu bar (App + Edit), the CADisplayLink target that
+//! drives external BeginFrame per browser, and the NSWindow.windowShouldClose:
+//! swizzle that routes the WM close button into `jfn_shutdown_initiate`.
 
 use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_void};

@@ -5,9 +5,8 @@
 //! immediate work; a `CFRunLoopTimer` services delayed work; both are
 //! installed in the main runloop's common modes.
 //!
-//! Ported from `src/cef/macos_pump.cpp` — the wedge-recovery heuristic is
-//! preserved verbatim because it's tied to a specific CEF version's
-//! `WorkDeduplicator` internals and was validated in the C++ revision.
+//! The wedge-recovery heuristic is preserved verbatim because it's tied to
+//! a specific CEF version's `WorkDeduplicator` internals.
 
 #![cfg(target_os = "macos")]
 

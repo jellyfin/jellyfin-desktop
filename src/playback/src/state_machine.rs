@@ -1,6 +1,4 @@
-//! Pure deterministic state machine. No threads, globals, or I/O. Mirrors
-//! the former C++ `PlaybackStateMachine` 1:1; see `state_machine.cpp` in
-//! prior history for the original implementation.
+//! Pure deterministic state machine. No threads, globals, or I/O.
 
 use crate::types::*;
 
