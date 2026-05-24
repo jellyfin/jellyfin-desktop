@@ -222,11 +222,7 @@ unsafe extern "C" {
     ) -> *mut c_void;
 }
 
-pub fn win_clipboard_read_text_async(
-    on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) {
+pub fn win_clipboard_read_text_async(on_done: Box<dyn FnOnce(&str) + Send>) {
     let mut result: Vec<u8> = Vec::new();
     unsafe {
         if OpenClipboard(std::ptr::null_mut()) != 0 {
@@ -264,12 +260,7 @@ pub fn win_clipboard_read_text_async(
             CloseClipboard();
         }
     }
-    if let Some(cb) = on_done {
-        unsafe { cb(ctx, result.as_ptr() as *const c_char, result.len()) };
-    }
-    if let Some(d) = dtor {
-        unsafe { d(ctx) };
-    }
+    on_done(std::str::from_utf8(&result).unwrap_or(""));
 }
 
 /// Open an external URL via `ShellExecuteW(open)`.
@@ -475,13 +466,8 @@ impl Platform for WindowsPlatform {
         win_set_theme_color(rgb);
     }
 
-    fn clipboard_read_text_async(
-        &self,
-        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-        ctx: *mut c_void,
-        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    ) {
-        win_clipboard_read_text_async(on_done, ctx, dtor);
+    fn clipboard_read_text_async(&self, on_done: Box<dyn FnOnce(&str) + Send>) {
+        win_clipboard_read_text_async(on_done);
     }
 
     fn open_external_url(&self, url: &str) {

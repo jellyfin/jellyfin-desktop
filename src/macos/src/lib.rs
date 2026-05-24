@@ -488,11 +488,7 @@ pub fn macos_wake_main_loop() {
 // are synchronous so the callback fires inline on the calling thread.
 // =====================================================================
 
-pub fn macos_clipboard_read_text_async(
-    on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-    ctx: *mut c_void,
-    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-) {
+pub fn macos_clipboard_read_text_async(on_done: Box<dyn FnOnce(&str) + Send>) {
     // NSPasteboardTypeString is the canonical string UTI ("public.utf8-plain-text").
     let utf8_bytes = unsafe {
         let pb: *mut objc2::runtime::AnyObject =
@@ -524,16 +520,11 @@ pub fn macos_clipboard_read_text_async(
         }
     };
 
-    if let Some(cb) = on_done {
-        let (ptr, len) = match &utf8_bytes {
-            Some(v) => (v.as_ptr() as *const c_char, v.len()),
-            None => (c"".as_ptr(), 0),
-        };
-        unsafe { cb(ctx, ptr, len) };
-    }
-    if let Some(d) = dtor {
-        unsafe { d(ctx) };
-    }
+    let text = match &utf8_bytes {
+        Some(v) => std::str::from_utf8(v).unwrap_or(""),
+        None => "",
+    };
+    on_done(text);
 }
 
 /// Open an external URL via NSWorkspace.
@@ -742,13 +733,8 @@ impl Platform for MacosPlatform {
         macos_set_theme_color(rgb);
     }
 
-    fn clipboard_read_text_async(
-        &self,
-        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-        ctx: *mut c_void,
-        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    ) {
-        macos_clipboard_read_text_async(on_done, ctx, dtor);
+    fn clipboard_read_text_async(&self, on_done: Box<dyn FnOnce(&str) + Send>) {
+        macos_clipboard_read_text_async(on_done);
     }
 
     fn open_external_url(&self, url: &str) {

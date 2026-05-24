@@ -192,21 +192,9 @@ pub trait Platform: Send + Sync {
         true
     }
 
-    fn clipboard_read_text_async(
-        &self,
-        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-        ctx: *mut c_void,
-        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    ) {
-        // No backend support — fire empty callback and dtor synchronously.
-        unsafe {
-            if let Some(cb) = on_done {
-                cb(ctx, c"".as_ptr(), 0);
-            }
-            if let Some(d) = dtor {
-                d(ctx);
-            }
-        }
+    fn clipboard_read_text_async(&self, on_done: Box<dyn FnOnce(&str) + Send>) {
+        // No backend support — invoke with empty text synchronously.
+        on_done("");
     }
     /// Disable subsequent clipboard reads (set by Wayland when no data
     /// device manager is available).

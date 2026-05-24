@@ -341,24 +341,12 @@ impl Platform for WaylandPlatform {
         self.clipboard.store(false, Ordering::Release);
     }
 
-    fn clipboard_read_text_async(
-        &self,
-        on_done: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>,
-        ctx: *mut c_void,
-        dtor: Option<unsafe extern "C" fn(*mut c_void)>,
-    ) {
+    fn clipboard_read_text_async(&self, on_done: Box<dyn FnOnce(&str) + Send>) {
         if !self.clipboard.load(Ordering::Acquire) {
-            unsafe {
-                if let Some(cb) = on_done {
-                    cb(ctx, c"".as_ptr(), 0);
-                }
-                if let Some(d) = dtor {
-                    d(ctx);
-                }
-            }
+            on_done("");
             return;
         }
-        crate::clipboard::clipboard_read_text_async(on_done, ctx, dtor);
+        crate::clipboard::clipboard_read_text_async(on_done);
     }
 
     fn open_external_url(&self, url: &str) {

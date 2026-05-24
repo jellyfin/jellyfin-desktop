@@ -853,8 +853,14 @@ impl Inner {
         if !p.clipboard_text_supported() {
             return false;
         }
-        let ctx = Arc::into_raw(Arc::clone(self)) as *mut c_void;
-        p.clipboard_read_text_async(Some(paste_clipboard_cb), ctx, Some(paste_clipboard_dtor));
+        let inner = Arc::clone(self);
+        p.clipboard_read_text_async(Box::new(move |text| {
+            if text.is_empty() {
+                return;
+            }
+            let mut task = PasteJsTask::new(inner, text.to_string());
+            let _ = post_task(ThreadId::UI, Some(&mut task));
+        }));
         true
     }
 
@@ -1299,35 +1305,6 @@ wrap_task! {
             let js = format!("document.execCommand('insertText',false,{});", escaped);
             self.inner.exec_js_focused(&js);
         }
-    }
-}
-
-// Clipboard read callback — fires on any thread. Posts to TID_UI before
-// touching CEF.
-unsafe extern "C" fn paste_clipboard_cb(ctx: *mut c_void, utf8: *const c_char, len: usize) {
-    let raw = ctx as *const Inner;
-    if raw.is_null() {
-        return;
-    }
-    let inner = unsafe { Arc::from_raw(raw) };
-    let cloned = Arc::clone(&inner);
-    std::mem::forget(inner); // dtor will Arc::from_raw to release this ref.
-    if len == 0 || utf8.is_null() {
-        return;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(utf8 as *const u8, len) };
-    let text = String::from_utf8_lossy(slice).into_owned();
-    if text.is_empty() {
-        return;
-    }
-    let mut task = PasteJsTask::new(cloned, text);
-    let _ = post_task(ThreadId::UI, Some(&mut task));
-}
-
-unsafe extern "C" fn paste_clipboard_dtor(ctx: *mut c_void) {
-    let raw = ctx as *const Inner;
-    if !raw.is_null() {
-        drop(unsafe { Arc::from_raw(raw) });
     }
 }
 
