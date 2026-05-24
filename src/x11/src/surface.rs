@@ -1,5 +1,14 @@
 //! Per-surface ops: alloc/free, software present, resize, visibility,
 //! restack, fade.
+//!
+//! # Safety
+//!
+//! `pub unsafe fn jfn_x11_*` entries take a `*mut PlatformSurface`
+//! returned by [`jfn_x11_alloc_surface`]; callers must pass either that
+//! handle or null, plus valid `JfnRect` / pixel-buffer pointers matching
+//! the declared dimensions.
+
+#![allow(clippy::missing_safety_doc)]
 
 use std::ffi::{c_int, c_void};
 use std::ptr;

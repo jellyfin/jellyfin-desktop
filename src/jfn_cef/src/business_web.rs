@@ -80,6 +80,9 @@ pub fn jfn_web_init(layer: *mut JfnCefLayer) {
 }
 
 /// Execute JS in the main web layer. Called by the playback browser sink.
+///
+/// # Safety
+/// `js_utf8` must be a NUL-terminated UTF-8 pointer, or null.
 pub unsafe fn jfn_web_exec_js(js_utf8: *const c_char) {
     if js_utf8.is_null() {
         return;

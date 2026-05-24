@@ -707,6 +707,10 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     })
 }
 
+/// # Safety
+/// `display` must be a valid `wl_display*` and `callbacks` must point to
+/// a `Callbacks` live for the duration of the call (the value is copied
+/// in).
 pub unsafe fn jfn_input_wayland_init(
     display: *mut c_void,
     callbacks: *const Callbacks,
@@ -721,11 +725,16 @@ pub unsafe fn jfn_input_wayland_init(
     }
 }
 
+/// # Safety
+/// `_ctx` is unused; the function is kept unsafe for symmetry with the
+/// rest of the FFI surface.
 pub unsafe fn jfn_input_wayland_start(_ctx: *mut JfnInputWayland) {
     // Thread starts in init; this is kept for ABI compatibility with the
     // C++ API which had an explicit start step.
 }
 
+/// # Safety
+/// `ctx` must be a pointer returned by [`jfn_input_wayland_init`] (or null).
 pub unsafe fn jfn_input_wayland_set_cursor(
     ctx: *mut JfnInputWayland,
     cef_cursor_type: u32,
@@ -742,6 +751,9 @@ pub unsafe fn jfn_input_wayland_set_cursor(
     }
 }
 
+/// # Safety
+/// `ctx` must be the pointer returned by [`jfn_input_wayland_init`] (or
+/// null). Calling twice with the same non-null `ctx` causes use-after-free.
 pub unsafe fn jfn_input_wayland_cleanup(ctx: *mut JfnInputWayland) {
     if ctx.is_null() {
         return;

@@ -2,6 +2,15 @@
 //!
 //! Opaque surface handles travel as `*mut c_void` aliasing a
 //! `PlatformSurface*` allocated by [`jfn_wl_alloc_surface`].
+//!
+//! # Safety
+//!
+//! Every `pub unsafe fn` here accepts raw handles preserved from the
+//! original FFI surface. Callers must pass either null or a handle
+//! returned by `jfn_wl_alloc_surface`, along with valid frame/pixels
+//! buffers for the documented dimensions.
+
+#![allow(clippy::missing_safety_doc)]
 
 use std::ffi::c_void;
 use std::slice;

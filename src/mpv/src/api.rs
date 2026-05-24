@@ -13,6 +13,16 @@
 //! / `SetAspectMode` — live here too. The pending-track state is
 //! single-threaded by usage but guarded by a Mutex so callers from any
 //! thread stay safe.
+//!
+//! # Safety
+//!
+//! Every `pub unsafe fn` in this module accepts raw C-string / raw struct
+//! pointers preserved from the original FFI surface. Callers must ensure
+//! all `*const c_char` arguments point to NUL-terminated UTF-8 (or are
+//! null where the function documents tolerance), and that struct
+//! pointers reference live values for the duration of the call.
+
+#![allow(clippy::missing_safety_doc)]
 
 use std::ffi::{CStr, CString, c_char};
 use std::os::raw::c_void;

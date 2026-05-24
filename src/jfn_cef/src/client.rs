@@ -1304,6 +1304,8 @@ pub(crate) unsafe fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
     }
 }
 
+/// # Safety
+/// `h` must be a live `JfnCefLayer` handle returned by `jfn_cef_layer_new`.
 pub unsafe fn jfn_cef_layer_wait_for_load(h: *const JfnCefLayer) {
     let l = unsafe { arc(h) };
     let mut g = l.load_mtx.lock().unwrap();
@@ -1481,6 +1483,9 @@ pub(crate) unsafe fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f
     unsafe { arc(h) }.set_refresh_rate(hz);
 }
 
+/// # Safety
+/// `h` must be a live `JfnCefLayer` handle; `url_utf8` must reference
+/// `len` valid UTF-8 bytes (not necessarily NUL-terminated).
 pub unsafe fn jfn_cef_layer_create(
     h: *const JfnCefLayer,
     url_utf8: *const c_char,
