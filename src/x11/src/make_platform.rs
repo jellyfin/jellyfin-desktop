@@ -15,7 +15,6 @@ pub use jfn_platform_abi::{
 };
 
 unsafe extern "C" {
-    fn jfn_open_url(url: *const c_char);
     fn jfn_mpv_handle_get() -> *mut c_void;
     fn jfn_mpv_set_fullscreen(v: bool);
     fn jfn_mpv_toggle_fullscreen();
@@ -250,10 +249,8 @@ impl Platform for X11Platform {
         }
     }
 
-    fn open_external_url(&self, utf8: *const c_char, _len: usize) {
-        if !utf8.is_null() {
-            unsafe { jfn_open_url(utf8) };
-        }
+    fn open_external_url(&self, url: &str) {
+        jfn_open_url_linux::open(url);
     }
 }
 

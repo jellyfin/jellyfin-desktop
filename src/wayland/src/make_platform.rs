@@ -29,7 +29,6 @@ unsafe extern "C" {
     fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_char);
     fn jfn_wl_get_cached_scale() -> f32;
     fn jfn_wayland_scale_probe(x: c_int, y: c_int) -> f64;
-    fn jfn_open_url(url: *const c_char);
     fn jfn_playback_display_hz() -> f64;
     fn jfn_wl_fade_start(
         surface: *mut c_void,
@@ -406,10 +405,8 @@ impl Platform for WaylandPlatform {
         crate::clipboard::clipboard_read_text_async(on_done, ctx, dtor);
     }
 
-    fn open_external_url(&self, utf8: *const c_char, _len: usize) {
-        if !utf8.is_null() {
-            unsafe { jfn_open_url(utf8) };
-        }
+    fn open_external_url(&self, url: &str) {
+        jfn_open_url_linux::open(url);
     }
 }
 

@@ -1098,7 +1098,7 @@ impl Inner {
             return true;
         }
         if let Some(p) = platform_ops::ops() {
-            p.open_external_url(url.as_ptr() as *const c_char, url.len());
+            p.open_external_url(url);
         }
         true
     }

@@ -562,16 +562,14 @@ pub extern "C" fn macos_clipboard_read_text_async(
     }
 }
 
-/// Open an external URL via NSWorkspace. utf8/len is borrowed for the
-/// duration of the call.
-#[unsafe(no_mangle)]
-pub extern "C" fn macos_open_external_url(utf8: *const c_char, len: usize) {
-    if utf8.is_null() || len == 0 {
+/// Open an external URL via NSWorkspace.
+pub fn macos_open_external_url(url: &str) {
+    if url.is_empty() {
         return;
     }
     unsafe {
         // Build an NSString from the borrowed UTF-8 bytes (NSString copies).
-        let bytes = std::slice::from_raw_parts(utf8 as *const u8, len);
+        let bytes = url.as_bytes();
         let ns_str: *mut objc2::runtime::AnyObject = objc2::msg_send![
             objc2::class!(NSString),
             alloc
@@ -579,7 +577,7 @@ pub extern "C" fn macos_open_external_url(utf8: *const c_char, len: usize) {
         let ns_str: *mut objc2::runtime::AnyObject = objc2::msg_send![
             ns_str,
             initWithBytes: bytes.as_ptr() as *const c_void,
-            length: len,
+            length: bytes.len(),
             encoding: 4u64 // NSUTF8StringEncoding
         ];
         if ns_str.is_null() {
@@ -796,8 +794,8 @@ impl Platform for MacosPlatform {
         macos_clipboard_read_text_async(on_done, ctx, dtor);
     }
 
-    fn open_external_url(&self, utf8: *const c_char, len: usize) {
-        macos_open_external_url(utf8, len);
+    fn open_external_url(&self, url: &str) {
+        macos_open_external_url(url);
     }
 }
 
