@@ -1,5 +1,4 @@
-//! Per-user filesystem locations. Mirrors the layout previously produced by
-//! `src/paths/{linux,macos,windows}.cpp`:
+//! Per-user filesystem locations.
 //!
 //! - Linux: XDG Base Directory (config/cache/state) with `$HOME` fallback.
 //! - macOS: `~/.config` for config (matches existing installs), `~/Library`
@@ -7,15 +6,12 @@
 //! - Windows: `%APPDATA%` for config, `%LOCALAPPDATA%` for cache/logs.
 //!
 //! Each directory getter creates the directory (and parents) if missing
-//! before returning. Strings are heap-allocated C strings owned by Rust and
-//! freed via `jfn_paths_free`.
+//! before returning.
 
 use std::env;
-use std::ffi::{CString, c_char};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::ptr;
 
 const APP_DIR_NAME: &str = "jellyfin-desktop";
 const LOG_FILE_NAME: &str = "jellyfin-desktop.log";
@@ -53,7 +49,7 @@ pub fn cache_dir() -> PathBuf {
 }
 
 #[cfg(target_os = "linux")]
-fn log_dir() -> PathBuf {
+pub fn log_dir() -> PathBuf {
     ensure(xdg_or_home("XDG_STATE_HOME", "/.local/state").join(APP_DIR_NAME))
 }
 
@@ -73,7 +69,7 @@ pub fn cache_dir() -> PathBuf {
 }
 
 #[cfg(target_os = "macos")]
-fn log_dir() -> PathBuf {
+pub fn log_dir() -> PathBuf {
     ensure(
         PathBuf::from(home())
             .join("Library/Logs")
@@ -97,7 +93,7 @@ pub fn cache_dir() -> PathBuf {
 }
 
 #[cfg(windows)]
-fn log_dir() -> PathBuf {
+pub fn log_dir() -> PathBuf {
     ensure(
         PathBuf::from(local_appdata())
             .join(APP_DIR_NAME)
@@ -105,48 +101,15 @@ fn log_dir() -> PathBuf {
     )
 }
 
-fn mpv_home() -> PathBuf {
+pub fn mpv_home() -> PathBuf {
     ensure(config_dir().join("mpv"))
 }
 
-fn log_path() -> PathBuf {
+pub fn log_path() -> PathBuf {
     log_dir().join(LOG_FILE_NAME)
 }
 
-fn to_c(path: PathBuf) -> *mut c_char {
-    let s = path.to_string_lossy().into_owned();
-    CString::new(s)
-        .map(|c| c.into_raw())
-        .unwrap_or(ptr::null_mut())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_paths_config_dir() -> *mut c_char {
-    to_c(config_dir())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_paths_cache_dir() -> *mut c_char {
-    to_c(cache_dir())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_paths_log_dir() -> *mut c_char {
-    to_c(log_dir())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_paths_log_path() -> *mut c_char {
-    to_c(log_path())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_paths_mpv_home() -> *mut c_char {
-    to_c(mpv_home())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_paths_open_mpv_home() {
+pub fn open_mpv_home() {
     let path = mpv_home();
     #[cfg(target_os = "linux")]
     {
@@ -158,25 +121,12 @@ pub extern "C" fn jfn_paths_open_mpv_home() {
     }
     #[cfg(windows)]
     {
-        // Match the legacy C++ behavior: native backslash-separated path
-        // handed to Explorer (ShellExecuteA "explore"). `explorer.exe`
-        // accepts the same and opens the folder in a new window.
+        // explorer.exe wants native backslash-separated paths.
         let native: String = path
             .to_string_lossy()
             .chars()
             .map(|c| if c == '/' { '\\' } else { c })
             .collect();
         let _ = Command::new("explorer").arg(native).spawn();
-    }
-}
-
-/// Free a string previously returned by one of the path getters.
-///
-/// # Safety
-/// `s` must have been obtained from a `jfn_paths_*` function and not yet freed.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_paths_free(s: *mut c_char) {
-    if !s.is_null() {
-        unsafe { drop(CString::from_raw(s)) };
     }
 }

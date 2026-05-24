@@ -53,17 +53,6 @@ unsafe fn take_owned_cstring(p: *mut c_char) -> String {
     s
 }
 
-unsafe fn take_owned_paths_string(p: *mut c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    let s = unsafe { CStr::from_ptr(p) }
-        .to_string_lossy()
-        .into_owned();
-    unsafe { jfn_paths::jfn_paths_free(p) };
-    s
-}
-
 unsafe fn cstr_to_string(p: *const c_char) -> String {
     if p.is_null() {
         String::new()
@@ -146,8 +135,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     }
 
     // 2. Settings init + load.
-    let config_dir = unsafe { take_owned_paths_string(jfn_paths::jfn_paths_config_dir()) };
-    let settings_path = cs(&format!("{config_dir}/settings.json"));
+    let settings_path = cs(&jfn_paths::config_dir().join("settings.json").to_string_lossy());
     unsafe { jfn_config::jfn_settings_init(settings_path.as_ptr()) };
     jfn_config::jfn_settings_load();
 
@@ -258,7 +246,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
             if cfg!(target_os = "linux") {
                 String::new()
             } else {
-                unsafe { take_owned_paths_string(jfn_paths::jfn_paths_log_path()) }
+                jfn_paths::log_path().to_string_lossy().into_owned()
             }
         }
     };
@@ -344,12 +332,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
 
     // 12. Export MPV_HOME so libmpv reads our packaged config dir.
     {
-        let mpv_home = unsafe { take_owned_paths_string(jfn_paths::jfn_paths_mpv_home()) };
-        #[cfg(unix)]
-        unsafe {
-            std::env::set_var("MPV_HOME", &mpv_home);
-        }
-        #[cfg(windows)]
+        let mpv_home = jfn_paths::mpv_home();
         unsafe {
             std::env::set_var("MPV_HOME", &mpv_home);
         }
