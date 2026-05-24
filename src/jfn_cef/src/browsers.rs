@@ -82,6 +82,9 @@ pub fn jfn_browsers_shutdown() {
     }
 }
 
+/// # Safety
+/// `kind` must be a NUL-terminated UTF-8 pointer naming a registered
+/// injection kind, or null.
 pub unsafe fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
     let mut g = INSTANCE.lock().unwrap();
     let Some(b) = g.as_mut() else {

@@ -53,7 +53,8 @@ pub fn query(handle: Option<&Handle>) -> Capabilities {
 /// Same as [`query`], but takes a raw `mpv_handle*` (non-owning). Used by
 /// the C FFI. `raw` may be NULL — in that case the demuxer list is empty.
 ///
-/// SAFETY: `raw`, if non-NULL, must point to a live `mpv_handle` for the
+/// # Safety
+/// `raw`, if non-NULL, must point to a live `mpv_handle` for the
 /// duration of the call. Reads `demuxer-lavf-list` via `mpv_get_property`.
 pub unsafe fn query_raw(raw: *mut sys::mpv_handle) -> Capabilities {
     let mut caps = Capabilities {

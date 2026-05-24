@@ -144,8 +144,9 @@ fn make_colors_dir() -> Option<PathBuf> {
 /// the protocol is not advertised (non-KWin compositor) or any wire step
 /// fails. Safe to call once during wl_init.
 ///
-/// SAFETY: `display` must be a live `*mut wl_display`; `parent_surface`
-/// must be a live `*mut wl_proxy` referring to a `wl_surface` on it.
+/// # Safety
+/// `display` must be a live `*mut wl_display`; `parent_surface` must be
+/// a live `*mut wl_proxy` referring to a `wl_surface` on it.
 pub unsafe fn jfn_wl_kde_palette_attach(
     display: *mut c_void,
     parent_surface: *mut c_void,
@@ -222,7 +223,8 @@ pub unsafe fn jfn_wl_kde_palette_attach(
 /// pointing at it. `hex` is `Color::hex` — a 7-byte NUL-terminated
 /// `"#RRGGBB"` used only for the filename.
 ///
-/// SAFETY: `hex` must be a valid NUL-terminated UTF-8 pointer.
+/// # Safety
+/// `hex` must be a valid NUL-terminated UTF-8 pointer.
 pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_char) {
     if hex.is_null() {
         return;

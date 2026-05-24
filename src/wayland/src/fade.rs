@@ -39,7 +39,8 @@ fn join_existing() {
 ///      preempts via `jfn_wl_fade_stop_all`
 ///   3. fire `on_done` once on natural completion (skipped on abort)
 ///
-/// Safety: `surface` must remain valid until the fade ends or
+/// # Safety
+/// `surface` must remain valid until the fade ends or
 /// `jfn_wl_fade_stop_all` is called.
 pub unsafe fn jfn_wl_fade_start(
     surface: *mut c_void,

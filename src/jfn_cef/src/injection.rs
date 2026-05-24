@@ -73,6 +73,9 @@ static DEVICE_PROFILE_JSON: OnceLock<String> = OnceLock::new();
 
 /// Set the cached Jellyfin device-profile JSON. Called once at startup
 /// after mpv capabilities are queried. Returns silently if already set.
+///
+/// # Safety
+/// `json_utf8` must reference `len` valid UTF-8 bytes, or be null.
 pub unsafe fn jfn_cef_set_device_profile_json(json_utf8: *const c_char, len: usize) {
     if json_utf8.is_null() || len == 0 {
         return;
