@@ -1,7 +1,6 @@
 //! X11 init/cleanup/clamp and helpers for atom interning, ARGB visual
 //! discovery, parent geometry queries, and overlay repositioning.
 
-use std::ffi::c_char;
 use std::sync::Arc;
 
 use xcb::{Xid, XidNew, x};
@@ -9,9 +8,7 @@ use xcb::{Xid, XidNew, x};
 use crate::shm::shm_free;
 use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
 
-unsafe extern "C" {
-    fn jfn_mpv_get_property_int(name: *const c_char, out: *mut i64) -> i32;
-}
+use jfn_mpv::api::jfn_mpv_get_property_int;
 
 /// Find a 32-bit TrueColor visual.
 fn find_argb_visual(screen: &x::Screen, depth_out: &mut u8) -> Option<x::Visualid> {

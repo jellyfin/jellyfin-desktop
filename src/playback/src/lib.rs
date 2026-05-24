@@ -16,11 +16,11 @@ pub mod ingest_driver;
 mod mpris;
 #[cfg(target_os = "linux")]
 pub mod mpris_sink;
-mod shutdown;
+pub mod shutdown;
 mod state_machine;
 pub mod theme_color_sink;
 mod types;
-mod wake_event;
+pub mod wake_event;
 
 pub use coordinator::PlaybackCoordinator;
 pub use ffi::*;

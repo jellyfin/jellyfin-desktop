@@ -5,7 +5,7 @@
 //! lives on this thread only; cursor changes from other threads are
 //! queued onto a `Mutex` and signalled via an eventfd.
 
-use std::ffi::{CString, c_int, c_void};
+use std::ffi::{CString, c_int};
 use std::os::fd::AsRawFd;
 use std::os::raw::c_uchar;
 use std::sync::{Arc, Mutex};
@@ -16,28 +16,16 @@ use xkbcommon::xkb::{self, x11 as xkb_x11};
 
 use crate::x11_state::MUT;
 
-unsafe extern "C" {
-    fn jfn_input_dispatch_mouse_move(x: i32, y: i32, mods: u32, leave: c_int);
-    fn jfn_input_dispatch_mouse_button(
-        button: u32,
-        pressed: c_int,
-        x: i32,
-        y: i32,
-        mods: u32,
-    );
-    fn jfn_input_dispatch_scroll(x: i32, y: i32, dx: i32, dy: i32, mods: u32);
-    fn jfn_input_dispatch_history_nav(forward: c_int);
-    fn jfn_input_dispatch_key_raw(keysym: u32, native_code: u32, mods: u32, pressed: c_int);
-    fn jfn_input_dispatch_char(codepoint: u32, mods: u32, native_code: u32);
-    fn jfn_playback_display_scale() -> f64;
-    fn jfn_shutdown_event() -> *const c_void;
-    fn jfn_wake_event_fd(ev: *const c_void) -> c_int;
-    fn jfn_wake_event_new() -> *mut c_void;
-    fn jfn_wake_event_free(ev: *mut c_void);
-    fn jfn_wake_event_signal(ev: *const c_void);
-    fn jfn_wake_event_drain(ev: *const c_void);
-    fn jfn_shutdown_initiate();
-}
+use jfn_input::{
+    jfn_input_dispatch_char, jfn_input_dispatch_history_nav, jfn_input_dispatch_key_raw,
+    jfn_input_dispatch_mouse_button, jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
+};
+use jfn_playback::ingest_driver::jfn_playback_display_scale;
+use jfn_playback::shutdown::{jfn_shutdown_event, jfn_shutdown_initiate};
+use jfn_playback::wake_event::{
+    jfn_wake_event_drain, jfn_wake_event_fd, jfn_wake_event_free, jfn_wake_event_new,
+    jfn_wake_event_signal,
+};
 
 // CEF event flag bits (cef_event_flags_t).
 const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
@@ -60,7 +48,7 @@ enum CursorReq {
 
 pub struct CursorMailbox {
     queue: Mutex<Vec<CursorReq>>,
-    wake: *mut c_void, // jfn_wake_event handle
+    wake: *mut jfn_playback::WakeEvent,
 }
 
 unsafe impl Send for CursorMailbox {}
