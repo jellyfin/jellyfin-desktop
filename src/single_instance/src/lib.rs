@@ -432,7 +432,6 @@ mod imp {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_single_instance_try_signal_existing() -> i32 {
     imp::try_signal_existing() as i32
 }
@@ -441,7 +440,6 @@ pub extern "C" fn jfn_single_instance_try_signal_existing() -> i32 {
 /// `cb` must remain callable for the lifetime of the listener thread (i.e.
 /// until `jfn_single_instance_stop_listener` returns). `userdata` is opaque
 /// to Rust and passed back to `cb` unchanged.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn jfn_single_instance_start_listener(
     cb: Option<unsafe extern "C" fn(*const c_char, *mut c_void)>,
     userdata: *mut c_void,
@@ -450,7 +448,6 @@ pub unsafe extern "C" fn jfn_single_instance_start_listener(
     imp::start_listener(Callback { cb, userdata }) as i32
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn jfn_single_instance_stop_listener() {
     imp::stop_listener();
 }
