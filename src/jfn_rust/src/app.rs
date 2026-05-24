@@ -874,23 +874,6 @@ extern "C" fn h_browsers_set_refresh_rate(hz: f64) {
     tracing::info!(target: "Main", "Display refresh rate changed: {hz} Hz");
     jfn_cef::browsers::jfn_browsers_set_refresh_rate(hz);
 }
-extern "C" fn h_display_scale(s: f64) {
-    if s > 0.0 {
-        jfn_cef::browsers::jfn_browsers_set_scale(s);
-    }
-}
-extern "C" fn h_scale_provider() -> f32 {
-    let s = plat().get_scale();
-    if s > 0.0 { s } else { 1.0 }
-}
-extern "C" fn h_fullscreen(fs: bool) {
-    plat().set_fullscreen(fs);
-}
-extern "C" fn h_shutdown() {
-    tracing::info!(target: "Main", "MPV_EVENT_SHUTDOWN received");
-    jfn_playback::jfn_shutdown_initiate();
-}
-
 extern "C" fn h_theme_set_titlebar(rgb: u32) {
     plat().set_theme_color(rgb);
 }
@@ -1127,10 +1110,20 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     }
 
     // 12. Remaining handlers.
-    jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(h_display_scale);
-    jfn_playback::ingest_driver::jfn_playback_set_scale_provider(h_scale_provider);
-    jfn_playback::ingest_driver::jfn_playback_set_fullscreen_handler(h_fullscreen);
-    jfn_playback::ingest_driver::jfn_playback_set_shutdown_handler(h_shutdown);
+    jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(|s| {
+        if s > 0.0 {
+            jfn_cef::browsers::jfn_browsers_set_scale(s);
+        }
+    });
+    jfn_playback::ingest_driver::jfn_playback_set_scale_provider(|| {
+        let s = plat().get_scale();
+        if s > 0.0 { s } else { 1.0 }
+    });
+    jfn_playback::ingest_driver::jfn_playback_set_fullscreen_handler(|fs| plat().set_fullscreen(fs));
+    jfn_playback::ingest_driver::jfn_playback_set_shutdown_handler(|| {
+        tracing::info!(target: "Main", "MPV_EVENT_SHUTDOWN received");
+        jfn_playback::jfn_shutdown_initiate();
+    });
 
     // 13. Start mpv event thread.
     tracing::info!(target: "Main", "[FLOW] starting Rust-owned mpv event thread");

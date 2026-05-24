@@ -52,7 +52,7 @@ impl IngestCtx for CallerCtx {
 // Side-channel callbacks (display scale, window pixels)
 // ---------------------------------------------------------------------
 
-type DisplayScaleCb = extern "C" fn(f64);
+type DisplayScaleCb = Box<dyn Fn(f64) + Send + Sync + 'static>;
 
 fn display_scale_slot() -> &'static std::sync::Mutex<Option<DisplayScaleCb>> {
     static SLOT: OnceLock<std::sync::Mutex<Option<DisplayScaleCb>>> = OnceLock::new();
@@ -74,7 +74,7 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
         match o {
             IngestOut::Input(i) => post_input(i),
             IngestOut::DisplayScaleChanged(d) => {
-                if let Some(cb) = *display_scale_slot().lock().unwrap() {
+                if let Some(cb) = display_scale_slot().lock().unwrap().as_ref() {
                     cb(d);
                 }
             }
@@ -93,9 +93,8 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
 
 /// Install the browser-side `setScale` thunk used to resolve
 /// `DISPLAY_SCALE` property changes. Replaces any prior callback.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_display_scale_handler(cb: DisplayScaleCb) {
-    *display_scale_slot().lock().unwrap() = Some(cb);
+pub fn jfn_playback_set_display_scale_handler<F: Fn(f64) + Send + Sync + 'static>(cb: F) {
+    *display_scale_slot().lock().unwrap() = Some(Box::new(cb));
 }
 
 /// Push a device-pixel window size into the geometry-save cache.
@@ -329,10 +328,10 @@ pub extern "C" fn jfn_playback_seed_display_hz_sync() {
 // Rust-owned mpv event thread
 // ---------------------------------------------------------------------
 
-type ScaleProvider = extern "C" fn() -> f32;
-type MacosLogicalProvider = extern "C" fn(*mut c_int, *mut c_int) -> bool;
-type FullscreenHandler = extern "C" fn(bool);
-type ShutdownHandler = extern "C" fn();
+type ScaleProvider = Box<dyn Fn() -> f32 + Send + Sync + 'static>;
+type MacosLogicalProvider = Box<dyn Fn() -> Option<(i32, i32)> + Send + Sync + 'static>;
+type FullscreenHandler = Box<dyn Fn(bool) + Send + Sync + 'static>;
+type ShutdownHandler = Box<dyn Fn() + Send + Sync + 'static>;
 
 fn scale_slot() -> &'static std::sync::Mutex<Option<ScaleProvider>> {
     static SLOT: OnceLock<std::sync::Mutex<Option<ScaleProvider>>> = OnceLock::new();
@@ -365,62 +364,53 @@ fn event_thread_slot() -> &'static std::sync::Mutex<Option<EventThread>> {
 }
 
 /// Install the platform fullscreen-state thunk. Invoked from the Rust
-/// event thread when the `fullscreen` property changes — the C++
-/// platform vtable is not bridged into Rust, so the call must run
-/// through this handler.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_fullscreen_handler(cb: FullscreenHandler) {
-    *fullscreen_handler_slot().lock().unwrap() = Some(cb);
+/// event thread when the `fullscreen` property changes.
+pub fn jfn_playback_set_fullscreen_handler<F: Fn(bool) + Send + Sync + 'static>(cb: F) {
+    *fullscreen_handler_slot().lock().unwrap() = Some(Box::new(cb));
 }
 
 /// Install the per-event scale provider used when normalizing OSD
 /// dimensions. Must return the device pixel scale (> 0); zero or
 /// negative is substituted with 1.0.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_scale_provider(cb: ScaleProvider) {
-    *scale_slot().lock().unwrap() = Some(cb);
+pub fn jfn_playback_set_scale_provider<F: Fn() -> f32 + Send + Sync + 'static>(cb: F) {
+    *scale_slot().lock().unwrap() = Some(Box::new(cb));
 }
 
-/// Install the macOS logical-content-size override provider. The
-/// callback fills `*lw` / `*lh` and returns `true` when an override
-/// applies. Non-macOS callers should leave this unset.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_macos_logical_provider(cb: MacosLogicalProvider) {
-    *macos_logical_slot().lock().unwrap() = Some(cb);
+/// Install the macOS logical-content-size override provider. Returns
+/// `Some((lw, lh))` when an override applies. Non-macOS callers should
+/// leave this unset.
+pub fn jfn_playback_set_macos_logical_provider<
+    F: Fn() -> Option<(i32, i32)> + Send + Sync + 'static,
+>(
+    cb: F,
+) {
+    *macos_logical_slot().lock().unwrap() = Some(Box::new(cb));
 }
 
-/// Install the `MPV_EVENT_SHUTDOWN` handler. The C++ side wires this
-/// to `initiate_shutdown()`.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_shutdown_handler(cb: ShutdownHandler) {
-    *shutdown_handler_slot().lock().unwrap() = Some(cb);
+/// Install the `MPV_EVENT_SHUTDOWN` handler.
+pub fn jfn_playback_set_shutdown_handler<F: Fn() + Send + Sync + 'static>(cb: F) {
+    *shutdown_handler_slot().lock().unwrap() = Some(Box::new(cb));
 }
 
 fn snapshot_scale() -> f32 {
-    let cb = *scale_slot().lock().unwrap();
-    let s = cb.map(|f| f()).unwrap_or(1.0);
+    let guard = scale_slot().lock().unwrap();
+    let s = guard.as_ref().map(|f| f()).unwrap_or(1.0);
     if s > 0.0 { s } else { 1.0 }
 }
 
 fn snapshot_macos_logical() -> Option<(i32, i32)> {
-    let cb = (*macos_logical_slot().lock().unwrap())?;
-    let mut lw: c_int = 0;
-    let mut lh: c_int = 0;
-    if cb(&mut lw, &mut lh) {
-        Some((lw as i32, lh as i32))
-    } else {
-        None
-    }
+    let guard = macos_logical_slot().lock().unwrap();
+    guard.as_ref().and_then(|cb| cb())
 }
 
 fn invoke_fullscreen_handler(f: bool) {
-    if let Some(cb) = *fullscreen_handler_slot().lock().unwrap() {
+    if let Some(cb) = fullscreen_handler_slot().lock().unwrap().as_ref() {
         cb(f);
     }
 }
 
 fn invoke_shutdown_handler() {
-    if let Some(cb) = *shutdown_handler_slot().lock().unwrap() {
+    if let Some(cb) = shutdown_handler_slot().lock().unwrap().as_ref() {
         cb();
     }
 }
