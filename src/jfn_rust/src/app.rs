@@ -42,15 +42,6 @@ struct BootArgs {
     remote_debugging_port: c_int,
 }
 
-unsafe fn take_owned_cstring(p: *mut c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
-    unsafe { jfn_config::jfn_settings_free_string(p) };
-    s
-}
-
 unsafe fn cstr_to_string(p: *const c_char) -> String {
     if p.is_null() {
         String::new()
@@ -138,19 +129,16 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     }
 
     // 2. Settings init + load.
-    let settings_path = cs(&jfn_paths::config_dir()
-        .join("settings.json")
-        .to_string_lossy());
-    unsafe { jfn_config::jfn_settings_init(settings_path.as_ptr()) };
-    jfn_config::jfn_settings_load();
+    let settings_path = jfn_paths::config_dir().join("settings.json");
+    jfn_config::settings_init(&settings_path);
+    jfn_config::settings_load();
 
     // 3. Seed CLI defaults from saved settings.
-    let saved_hwdec = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_hwdec()) };
-    let saved_pass =
-        unsafe { take_owned_cstring(jfn_config::jfn_settings_get_audio_passthrough()) };
-    let saved_chans = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_audio_channels()) };
-    let saved_log_level = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_log_level()) };
-    let saved_audio_exclusive = jfn_config::jfn_settings_get_audio_exclusive();
+    let saved_hwdec = jfn_config::hwdec();
+    let saved_pass = jfn_config::audio_passthrough();
+    let saved_chans = jfn_config::audio_channels();
+    let saved_log_level = jfn_config::log_level();
+    let saved_audio_exclusive = jfn_config::audio_exclusive();
 
     let mpv_hwdec_default = jfn_mpv::HWDEC_DEFAULT.to_string();
 
@@ -451,8 +439,7 @@ pub unsafe extern "C" fn jfn_app_main(argc: c_int, argv: *const *const c_char) -
     //     layer; stops once OSD pixels are non-zero, the maximize gate
     //     (if requested) flipped, and the Wayland scale is known.
     let want_max = {
-        let mut g = jfn_config::JfnWindowGeometry::default();
-        unsafe { jfn_config::jfn_settings_get_window_geometry(&mut g) };
+        let g = jfn_config::window_geometry();
         g.maximized
     };
     let wait_for_scale = cfg!(target_os = "linux") && plat().display() == DisplayBackend::Wayland;
@@ -673,8 +660,7 @@ const DEFAULT_LOGICAL_WIDTH: i32 = 1600;
 const DEFAULT_LOGICAL_HEIGHT: i32 = 900;
 
 fn compute_boot_geometry() -> (String, bool, bool) {
-    let mut g = jfn_config::JfnWindowGeometry::default();
-    unsafe { jfn_config::jfn_settings_get_window_geometry(&mut g) };
+    let g = jfn_config::window_geometry();
     let mut x = g.x;
     let mut y = g.y;
     let scale = plat().get_display_scale(x, y);
@@ -948,7 +934,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
 
     // 3. Apply titlebar theme color before CefInitialize so the window doesn't
     //    sit with the system default palette during init.
-    if jfn_config::jfn_settings_get_titlebar_theme_color() {
+    if jfn_config::titlebar_theme_color() {
         plat().set_theme_color(0x101010);
     }
 
@@ -968,7 +954,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
                 },
             })
             .collect();
-        let force = jfn_config::jfn_settings_get_force_transcoding();
+        let force = jfn_config::force_transcoding();
         let profile = jfn_jellyfin::build_device_profile(
             &decoders,
             &caps.demuxers,
@@ -1033,8 +1019,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     // 7. Scale-correct the window size when live display scale differs from
     //    saved. Skip while the compositor has the surface locked.
     {
-        let mut saved = jfn_config::JfnWindowGeometry::default();
-        unsafe { jfn_config::jfn_settings_get_window_geometry(&mut saved) };
+        let saved = jfn_config::window_geometry();
         let locked = fs_flag != 0 || jfn_playback::ingest_driver::jfn_playback_window_maximized();
         if !locked
             && display_hidpi_scale > 0.0
@@ -1067,7 +1052,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
 
     // 8. Theme color init — must exist before main browser create (the
     //    pre-loaded page fires its initial theme-color IPC at DOMContentLoaded).
-    let titlebar_themed = jfn_config::jfn_settings_get_titlebar_theme_color();
+    let titlebar_themed = jfn_config::titlebar_theme_color();
     unsafe {
         jfn_color::theme::jfn_theme_color_init(
             if titlebar_themed {
@@ -1088,7 +1073,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     let main_layer = unsafe { jfn_cef::browsers::jfn_browsers_create(web_kind.as_ptr()) };
     jfn_cef::business_web::jfn_web_init(main_layer);
 
-    let server_url = unsafe { take_owned_cstring(jfn_config::jfn_settings_get_server_url()) };
+    let server_url = jfn_config::server_url();
     tracing::info!(target: "Main",
         "[FLOW] CreateBrowser(main) url={server_url} lw={lw} lh={lh} pw={mw} ph={mh}");
     unsafe {
@@ -1209,8 +1194,8 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
 
     // 17. Save window geometry.
     save_window_geometry_on_exit();
-    jfn_config::jfn_settings_save();
-    jfn_config::jfn_settings_shutdown_save_worker();
+    jfn_config::settings_save();
+    jfn_config::settings_shutdown_save_worker();
 
     // 18. Browsers shutdown.
     jfn_cef::browsers::jfn_browsers_shutdown();
@@ -1239,17 +1224,16 @@ fn save_window_geometry_on_exit() {
     let fs = jfn_playback::ingest_driver::jfn_playback_fullscreen();
     let max = jfn_playback::ingest_driver::jfn_playback_window_maximized();
 
-    let mut saved = jfn_config::JfnWindowGeometry::default();
-    unsafe { jfn_config::jfn_settings_get_window_geometry(&mut saved) };
+    let saved = jfn_config::window_geometry();
 
     if fs {
         let mut g = saved;
         g.maximized = jfn_playback::browser_sink::jfn_playback_was_maximized_before_fullscreen();
-        unsafe { jfn_config::jfn_settings_set_window_geometry(&g) };
+        jfn_config::set_window_geometry(g);
     } else if max {
         let mut g = saved;
         g.maximized = true;
-        unsafe { jfn_config::jfn_settings_set_window_geometry(&g) };
+        jfn_config::set_window_geometry(g);
     } else {
         let mut pw = jfn_playback::ingest_driver::jfn_playback_window_pw();
         let mut ph = jfn_playback::ingest_driver::jfn_playback_window_ph();
@@ -1273,7 +1257,7 @@ fn save_window_geometry_on_exit() {
                 g.x = wx;
                 g.y = wy;
             }
-            unsafe { jfn_config::jfn_settings_set_window_geometry(&g) };
+            jfn_config::set_window_geometry(g);
         }
     }
 }
