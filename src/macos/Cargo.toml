@@ -13,3 +13,5 @@ jfn-platform-abi = { path = "../platform_abi" }
 cef-dll-sys = { version = "=148.1.0" }
 objc2 = "0.6"
 objc2-foundation = "0.3"
+log = "0.4"
+tracing = "0.1"

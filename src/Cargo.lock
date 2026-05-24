@@ -1109,8 +1109,10 @@ version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
  "jfn-platform-abi",
+ "log",
  "objc2",
  "objc2-foundation",
+ "tracing",
 ]
 
 [[package]]
