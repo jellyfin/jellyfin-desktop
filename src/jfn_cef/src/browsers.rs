@@ -13,7 +13,7 @@
 
 use std::ffi::c_char;
 use std::os::raw::c_void;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::client::JfnCefLayer;
 
@@ -56,7 +56,7 @@ pub fn jfn_browsers_init(
     };
         jfn_cef_set_default_frame_rate(fr);
     jfn_cef_set_use_shared_textures(use_shared_textures);
-    *INSTANCE.lock().unwrap() = Some(Browsers {
+    *INSTANCE.lock() = Some(Browsers {
         layers: Vec::new(),
         active: std::ptr::null_mut(),
         lw,
@@ -70,7 +70,7 @@ pub fn jfn_browsers_init(
 
 /// Tear down all remaining layers. Called once at the end of run_with_cef.
 pub fn jfn_browsers_shutdown() {
-    let Some(b) = INSTANCE.lock().unwrap().take() else {
+    let Some(b) = INSTANCE.lock().take() else {
         return;
     };
     for layer in &b.layers {
@@ -86,7 +86,7 @@ pub fn jfn_browsers_shutdown() {
 /// `kind` must be a NUL-terminated UTF-8 pointer naming a registered
 /// injection kind, or null.
 pub unsafe fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
-    let mut g = INSTANCE.lock().unwrap();
+    let mut g = INSTANCE.lock();
     let Some(b) = g.as_mut() else {
         return std::ptr::null_mut();
     };
@@ -124,7 +124,7 @@ pub fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
     if layer.is_null() {
         return;
     }
-    let mut g = INSTANCE.lock().unwrap();
+    let mut g = INSTANCE.lock();
     let Some(b) = g.as_mut() else { return };
     unsafe { jfn_cef_layer_on_deactivated(layer) };
     if b.active == layer {
@@ -142,7 +142,7 @@ pub fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
 }
 
 pub fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
-    let mut g = INSTANCE.lock().unwrap();
+    let mut g = INSTANCE.lock();
     let Some(b) = g.as_mut() else { return };
     if b.active == layer {
         return;
@@ -175,7 +175,6 @@ pub fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
 pub fn jfn_browsers_active() -> *mut JfnCefLayer {
     INSTANCE
         .lock()
-        .unwrap()
         .as_ref()
         .map(|b| b.active)
         .unwrap_or(std::ptr::null_mut())
@@ -183,7 +182,7 @@ pub fn jfn_browsers_active() -> *mut JfnCefLayer {
 
 pub fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
     let layers: Vec<*mut JfnCefLayer> = {
-        let mut g = INSTANCE.lock().unwrap();
+        let mut g = INSTANCE.lock();
         let Some(b) = g.as_mut() else { return };
         b.lw = lw;
         b.lh = lh;
@@ -198,7 +197,7 @@ pub fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
 
 pub fn jfn_browsers_set_scale(scale: f64) {
     let (new_lw, new_lh, pw, ph) = {
-        let g = INSTANCE.lock().unwrap();
+        let g = INSTANCE.lock();
         let Some(b) = g.as_ref() else { return };
         if scale <= 0.0 || b.pw <= 0 || b.ph <= 0 {
             return;
@@ -219,7 +218,7 @@ pub fn jfn_browsers_set_refresh_rate(hz: f64) {
     }
     let target = (hz + 0.5) as i32;
     let layers: Vec<*mut JfnCefLayer> = {
-        let mut g = INSTANCE.lock().unwrap();
+        let mut g = INSTANCE.lock();
         let Some(b) = g.as_mut() else { return };
         b.frame_rate = target;
         jfn_cef_set_default_frame_rate(target);
@@ -231,7 +230,7 @@ pub fn jfn_browsers_set_refresh_rate(hz: f64) {
 }
 
 pub fn jfn_browsers_all_closed() -> bool {
-    let g = INSTANCE.lock().unwrap();
+    let g = INSTANCE.lock();
     let Some(b) = g.as_ref() else { return true };
     for l in &b.layers {
         if !unsafe { jfn_cef_layer_is_closed(*l) } {
@@ -244,7 +243,6 @@ pub fn jfn_browsers_all_closed() -> bool {
 pub fn jfn_browsers_close_all() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
         .lock()
-        .unwrap()
         .as_ref()
         .map(|b| b.layers.clone())
         .unwrap_or_default();
@@ -260,7 +258,6 @@ pub fn jfn_browsers_close_all() {
 pub fn jfn_browsers_send_external_begin_frame_all() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
         .lock()
-        .unwrap()
         .as_ref()
         .map(|b| b.layers.clone())
         .unwrap_or_default();
@@ -272,7 +269,6 @@ pub fn jfn_browsers_send_external_begin_frame_all() {
 pub fn jfn_browsers_wait_all_closed() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
         .lock()
-        .unwrap()
         .as_ref()
         .map(|b| b.layers.clone())
         .unwrap_or_default();

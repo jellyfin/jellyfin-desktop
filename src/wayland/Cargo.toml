@@ -13,6 +13,7 @@ default = ["kde-palette"]
 kde-palette = []
 
 [dependencies]
+parking_lot.workspace = true
 jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
 jfn-input = { path = "../input" }
 jfn-open-url-linux = { path = "../open_url_linux" }

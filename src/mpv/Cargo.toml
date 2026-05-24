@@ -10,6 +10,7 @@ crate-type = ["rlib"]
 path = "src/lib.rs"
 
 [dependencies]
+parking_lot.workspace = true
 jfn-color = { path = "../color" }
 libc.workspace = true
 tracing.workspace = true

@@ -33,7 +33,7 @@ mod imp {
     };
     use std::ffi::{CStr, CString};
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
     use std::thread::{self, JoinHandle};
 
@@ -228,7 +228,7 @@ mod imp {
         RUNNING.store(true, Ordering::Release);
 
         let handle = thread::spawn(move || listener_loop(cb));
-        *THREAD.lock().unwrap() = Some(handle);
+        *THREAD.lock() = Some(handle);
         true
     }
 
@@ -243,7 +243,7 @@ mod imp {
                 libc::write(wake_write, buf.as_ptr() as *const c_void, 1);
             }
         }
-        if let Some(h) = THREAD.lock().unwrap().take() {
+        if let Some(h) = THREAD.lock().take() {
             let _ = h.join();
         }
         let path = socket_path();
@@ -268,7 +268,7 @@ mod imp {
 mod imp {
     use super::Callback;
     use std::ffi::CString;
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread::{self, JoinHandle};
     use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};
@@ -396,7 +396,7 @@ mod imp {
         SHUTDOWN_EVENT.store(event as usize, Ordering::Release);
         RUNNING.store(true, Ordering::Release);
         let handle = thread::spawn(move || listener_loop(cb));
-        *THREAD.lock().unwrap() = Some(handle);
+        *THREAD.lock() = Some(handle);
         true
     }
 
@@ -423,7 +423,7 @@ mod imp {
         if pipe != INVALID_HANDLE_VALUE {
             unsafe { CloseHandle(pipe) };
         }
-        if let Some(h) = THREAD.lock().unwrap().take() {
+        if let Some(h) = THREAD.lock().take() {
             let _ = h.join();
         }
         if !event.is_null() {

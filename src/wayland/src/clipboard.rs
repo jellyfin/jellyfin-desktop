@@ -12,7 +12,8 @@ use std::io::{ErrorKind, Read};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use parking_lot::Mutex;
 use std::thread::{self, JoinHandle};
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
@@ -348,7 +349,7 @@ fn worker_loop(
         // Promote the next queued request if the active slot is free.
         if active.is_none() {
             let next = {
-                let mut q = shared.queued.lock().unwrap();
+                let mut q = shared.queued.lock();
                 if q.is_empty() {
                     None
                 } else {
@@ -363,7 +364,7 @@ fn worker_loop(
                         // Anything else queued has the same problem (no offer,
                         // no text mime, pipe failure) — drain with empty results.
                         let drained: Vec<PendingCb> = {
-                            let mut q = shared.queued.lock().unwrap();
+                            let mut q = shared.queued.lock();
                             std::mem::take(&mut *q)
                         };
                         for cb in drained {
@@ -381,7 +382,7 @@ fn worker_loop(
         fire(cb, &[]);
     }
     let drained: Vec<PendingCb> = {
-        let mut q = shared.queued.lock().unwrap();
+        let mut q = shared.queued.lock();
         std::mem::take(&mut *q)
     };
     for cb in drained {
@@ -427,7 +428,7 @@ fn init_impl() -> Option<JfnClipboardWayland> {
 static INSTANCE: Mutex<Option<Box<JfnClipboardWayland>>> = Mutex::new(None);
 
 pub fn clipboard_init() {
-    let mut g = INSTANCE.lock().unwrap();
+    let mut g = INSTANCE.lock();
     if g.is_some() {
         return;
     }
@@ -437,25 +438,25 @@ pub fn clipboard_init() {
 }
 
 pub fn clipboard_available() -> bool {
-    INSTANCE.lock().unwrap().is_some()
+    INSTANCE.lock().is_some()
 }
 
 pub fn clipboard_read_text_async(cb: Box<dyn FnOnce(&str) + Send>) {
-    let g = INSTANCE.lock().unwrap();
+    let g = INSTANCE.lock();
     let Some(c) = g.as_ref() else {
         // No clipboard: deliver an empty read so the caller's promise resolves.
         cb("");
         return;
     };
     {
-        let mut q = c.shared.queued.lock().unwrap();
+        let mut q = c.shared.queued.lock();
         q.push(PendingCb { cb });
     }
     signal_wake(c.shared.wake_fd);
 }
 
 pub fn clipboard_cleanup() {
-    let Some(mut boxed) = INSTANCE.lock().unwrap().take() else {
+    let Some(mut boxed) = INSTANCE.lock().take() else {
         return;
     };
     boxed.shared.stop.store(true, Ordering::Relaxed);

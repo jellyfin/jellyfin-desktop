@@ -4,7 +4,8 @@
 //! Sync>`); the coordinator worker fans events out by invoking them
 //! directly. Producers call [`post`] with a typed [`Input`].
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{OnceLock};
+use parking_lot::Mutex;
 
 pub use crate::coordinator::Input;
 use crate::coordinator::PlaybackCoordinator;
@@ -28,14 +29,14 @@ pub(crate) fn coord_slot() -> &'static Mutex<Option<PlaybackCoordinator>> {
 }
 
 fn with_coord<F: FnOnce(&PlaybackCoordinator)>(f: F) {
-    let guard = coord_slot().lock().unwrap();
+    let guard = coord_slot().lock();
     if let Some(c) = guard.as_ref() {
         f(c);
     }
 }
 
 pub fn jfn_playback_init() {
-    let mut guard = coord_slot().lock().unwrap();
+    let mut guard = coord_slot().lock();
     if guard.is_none() {
         let mut c = PlaybackCoordinator::new();
         register_builtin_sinks(&c);
@@ -70,7 +71,7 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
 }
 
 pub fn jfn_playback_shutdown() {
-    let mut guard = coord_slot().lock().unwrap();
+    let mut guard = coord_slot().lock();
     if let Some(mut c) = guard.take() {
         c.stop();
     }
@@ -85,7 +86,7 @@ pub fn register_action_sink(sink: ActionSink) {
 }
 
 pub fn jfn_playback_snapshot() -> PlaybackSnapshot {
-    let mut guard = coord_slot().lock().unwrap();
+    let mut guard = coord_slot().lock();
     match guard.as_mut() {
         Some(c) => c.snapshot(),
         None => PlaybackSnapshot::fresh(),

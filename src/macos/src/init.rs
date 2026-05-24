@@ -8,7 +8,7 @@
 use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
@@ -78,20 +78,20 @@ static INIT_STATE: Mutex<InitState> = Mutex::new(InitState {
 /// Returns the `NSWindow*` (non-retaining) for use by other modules.
 /// Null before macos_init or after macos_cleanup.
 pub fn jfn_macos_get_window() -> *mut AnyObject {
-    INIT_STATE.lock().unwrap().window
+    INIT_STATE.lock().window
 }
 
 /// Returns the `JellyfinInputView*` (non-retaining) so `macos_restack`
 /// can re-anchor it on top of the CefLayer subviews after a reorder.
 pub fn jfn_macos_get_input_view() -> *mut AnyObject {
-    INIT_STATE.lock().unwrap().input_view
+    INIT_STATE.lock().input_view
 }
 
 /// Logical content view size in points. Backs `JfnIngest`'s macOS-only
 /// "use the OS's logical size, not osd-dimensions" branch.
 pub fn jfn_macos_query_logical_content_size(w: *mut c_int, h: *mut c_int) -> bool {
     unsafe {
-        let win = INIT_STATE.lock().unwrap().window;
+        let win = INIT_STATE.lock().window;
         if win.is_null() {
             return false;
         }
@@ -112,7 +112,7 @@ pub fn jfn_macos_query_logical_content_size(w: *mut c_int, h: *mut c_int) -> boo
 // =====================================================================
 
 pub fn jfn_macos_apply_theme_color_on_main(rgb: u32) {
-    let win = INIT_STATE.lock().unwrap().window;
+    let win = INIT_STATE.lock().window;
     unsafe { apply_theme_color_to_window(win, rgb) };
 }
 
@@ -376,7 +376,7 @@ unsafe extern "C" {
 pub fn macos_init(_mpv: *mut c_void) -> bool {
     tracing::info!(target: LOG_TARGET, "[INIT] macos_init: waiting for mpv window");
 
-    let mut state = INIT_STATE.lock().unwrap();
+    let mut state = INIT_STATE.lock();
     unsafe {
         // Spin until mpv creates its NSWindow.
         for _ in 0..500 {
@@ -564,7 +564,7 @@ unsafe extern "C" {
 }
 
 pub fn macos_cleanup() {
-    let mut state = INIT_STATE.lock().unwrap();
+    let mut state = INIT_STATE.lock();
     unsafe {
         stop_display_link(&mut state);
 
@@ -637,7 +637,7 @@ pub fn macos_early_init() {
         // via INIT_STATE).
         let mt: Retained<JellyfinAppMenuTarget> = msg_send![JellyfinAppMenuTarget::class(), new];
         let mt_obj: *mut AnyObject = Retained::into_raw(mt) as *mut AnyObject;
-        INIT_STATE.lock().unwrap().app_menu_target = mt_obj;
+        INIT_STATE.lock().app_menu_target = mt_obj;
 
         // Build the menu bar.
         let menubar: *mut AnyObject = msg_send![class!(NSMenu), alloc];

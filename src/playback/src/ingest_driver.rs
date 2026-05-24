@@ -50,9 +50,9 @@ impl IngestCtx for CallerCtx {
 
 type DisplayScaleCb = Box<dyn Fn(f64) + Send + Sync + 'static>;
 
-fn display_scale_slot() -> &'static std::sync::Mutex<Option<DisplayScaleCb>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<DisplayScaleCb>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn display_scale_slot() -> &'static parking_lot::Mutex<Option<DisplayScaleCb>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<DisplayScaleCb>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
 fn shutdown_flag() -> &'static AtomicBool {
@@ -70,7 +70,7 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
         match o {
             IngestOut::Input(i) => post_input(i),
             IngestOut::DisplayScaleChanged(d) => {
-                if let Some(cb) = display_scale_slot().lock().unwrap().as_ref() {
+                if let Some(cb) = display_scale_slot().lock().as_ref() {
                     cb(d);
                 }
             }
@@ -90,7 +90,7 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
 /// Install the browser-side `setScale` thunk used to resolve
 /// `DISPLAY_SCALE` property changes. Replaces any prior callback.
 pub fn jfn_playback_set_display_scale_handler<F: Fn(f64) + Send + Sync + 'static>(cb: F) {
-    *display_scale_slot().lock().unwrap() = Some(Box::new(cb));
+    *display_scale_slot().lock() = Some(Box::new(cb));
 }
 
 /// Push a device-pixel window size into the geometry-save cache.
@@ -314,24 +314,24 @@ type MacosLogicalProvider = Box<dyn Fn() -> Option<(i32, i32)> + Send + Sync + '
 type FullscreenHandler = Box<dyn Fn(bool) + Send + Sync + 'static>;
 type ShutdownHandler = Box<dyn Fn() + Send + Sync + 'static>;
 
-fn scale_slot() -> &'static std::sync::Mutex<Option<ScaleProvider>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<ScaleProvider>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn scale_slot() -> &'static parking_lot::Mutex<Option<ScaleProvider>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<ScaleProvider>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
-fn macos_logical_slot() -> &'static std::sync::Mutex<Option<MacosLogicalProvider>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<MacosLogicalProvider>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn macos_logical_slot() -> &'static parking_lot::Mutex<Option<MacosLogicalProvider>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<MacosLogicalProvider>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
-fn fullscreen_handler_slot() -> &'static std::sync::Mutex<Option<FullscreenHandler>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<FullscreenHandler>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn fullscreen_handler_slot() -> &'static parking_lot::Mutex<Option<FullscreenHandler>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<FullscreenHandler>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
-fn shutdown_handler_slot() -> &'static std::sync::Mutex<Option<ShutdownHandler>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<ShutdownHandler>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn shutdown_handler_slot() -> &'static parking_lot::Mutex<Option<ShutdownHandler>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<ShutdownHandler>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
 struct EventThread {
@@ -339,22 +339,22 @@ struct EventThread {
     join: Option<JoinHandle<()>>,
 }
 
-fn event_thread_slot() -> &'static std::sync::Mutex<Option<EventThread>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<EventThread>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn event_thread_slot() -> &'static parking_lot::Mutex<Option<EventThread>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<EventThread>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
 /// Install the platform fullscreen-state thunk. Invoked from the Rust
 /// event thread when the `fullscreen` property changes.
 pub fn jfn_playback_set_fullscreen_handler<F: Fn(bool) + Send + Sync + 'static>(cb: F) {
-    *fullscreen_handler_slot().lock().unwrap() = Some(Box::new(cb));
+    *fullscreen_handler_slot().lock() = Some(Box::new(cb));
 }
 
 /// Install the per-event scale provider used when normalizing OSD
 /// dimensions. Must return the device pixel scale (> 0); zero or
 /// negative is substituted with 1.0.
 pub fn jfn_playback_set_scale_provider<F: Fn() -> f32 + Send + Sync + 'static>(cb: F) {
-    *scale_slot().lock().unwrap() = Some(Box::new(cb));
+    *scale_slot().lock() = Some(Box::new(cb));
 }
 
 /// Install the macOS logical-content-size override provider. Returns
@@ -365,33 +365,33 @@ pub fn jfn_playback_set_macos_logical_provider<
 >(
     cb: F,
 ) {
-    *macos_logical_slot().lock().unwrap() = Some(Box::new(cb));
+    *macos_logical_slot().lock() = Some(Box::new(cb));
 }
 
 /// Install the `MPV_EVENT_SHUTDOWN` handler.
 pub fn jfn_playback_set_shutdown_handler<F: Fn() + Send + Sync + 'static>(cb: F) {
-    *shutdown_handler_slot().lock().unwrap() = Some(Box::new(cb));
+    *shutdown_handler_slot().lock() = Some(Box::new(cb));
 }
 
 fn snapshot_scale() -> f32 {
-    let guard = scale_slot().lock().unwrap();
+    let guard = scale_slot().lock();
     let s = guard.as_ref().map(|f| f()).unwrap_or(1.0);
     if s > 0.0 { s } else { 1.0 }
 }
 
 fn snapshot_macos_logical() -> Option<(i32, i32)> {
-    let guard = macos_logical_slot().lock().unwrap();
+    let guard = macos_logical_slot().lock();
     guard.as_ref().and_then(|cb| cb())
 }
 
 fn invoke_fullscreen_handler(f: bool) {
-    if let Some(cb) = fullscreen_handler_slot().lock().unwrap().as_ref() {
+    if let Some(cb) = fullscreen_handler_slot().lock().as_ref() {
         cb(f);
     }
 }
 
 fn invoke_shutdown_handler() {
-    if let Some(cb) = shutdown_handler_slot().lock().unwrap().as_ref() {
+    if let Some(cb) = shutdown_handler_slot().lock().as_ref() {
         cb();
     }
 }
@@ -403,7 +403,7 @@ fn invoke_shutdown_handler() {
 /// [`jfn_playback_ingest_mpv_event`] uses. Returns `false` if the
 /// handle is not yet initialized or the thread is already running.
 pub fn jfn_playback_start_mpv_event_thread() -> bool {
-    let mut guard = event_thread_slot().lock().unwrap();
+    let mut guard = event_thread_slot().lock();
     if guard.is_some() {
         return false;
     }
@@ -428,7 +428,7 @@ pub fn jfn_playback_start_mpv_event_thread() -> bool {
 /// `mpv_wakeup` is called on the live handle so the in-flight
 /// `mpv_wait_event` returns immediately.
 pub fn jfn_playback_stop_mpv_event_thread() {
-    let entry = event_thread_slot().lock().unwrap().take();
+    let entry = event_thread_slot().lock().take();
     let Some(mut t) = entry else { return };
     t.stop.store(true, Ordering::Release);
     jfn_mpv::boot::wakeup_current();

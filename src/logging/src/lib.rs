@@ -15,7 +15,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{OnceLock};
+use parking_lot::Mutex;
 #[cfg(unix)]
 use std::thread::{self, JoinHandle};
 
@@ -519,7 +520,7 @@ pub fn jfn_log_init(path: &str, filter: &str) {
     // Bail early on second init: dispatcher is already installed and the
     // capture pipe / guards live in STATE. Mirrors prior behavior.
     {
-        let guard = state().lock().unwrap();
+        let guard = state().lock();
         if guard.is_some() {
             return;
         }
@@ -580,7 +581,7 @@ pub fn jfn_log_init(path: &str, filter: &str) {
 
     let stderr_capture = StderrCapture::start();
 
-    let mut guard = state().lock().unwrap();
+    let mut guard = state().lock();
     *guard = Some(State {
         active_log_path: path_str,
         _console_guard: console_guard,
@@ -590,7 +591,7 @@ pub fn jfn_log_init(path: &str, filter: &str) {
 }
 
 pub fn jfn_log_shutdown() {
-    let mut guard = state().lock().unwrap();
+    let mut guard = state().lock();
     if let Some(mut s) = guard.take() {
         if let Some(mut cap) = s.stderr_capture.take() {
             cap.stop();
@@ -615,7 +616,7 @@ pub fn log(category: u8, level: u8, msg: &str) {
 }
 
 pub fn active_path() -> String {
-    let guard = state().lock().unwrap();
+    let guard = state().lock();
     guard
         .as_ref()
         .map(|st| st.active_log_path.clone())
@@ -790,13 +791,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex as StdMutex};
+    use parking_lot::Mutex as StdMutex;
+    use std::sync::Arc;
 
     #[derive(Clone)]
     struct VecSink(Arc<StdMutex<Vec<u8>>>);
     impl Write for VecSink {
         fn write(&mut self, b: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(b);
+            self.0.lock().extend_from_slice(b);
             Ok(b.len())
         }
         fn flush(&mut self) -> io::Result<()> {
@@ -813,7 +815,7 @@ mod tests {
             w.write_all(b"GET /Items?api_key=abc123secret&x=1\n")
                 .unwrap();
         }
-        let bytes = sink.0.lock().unwrap().clone();
+        let bytes = sink.0.lock().clone();
         let text = String::from_utf8(bytes).unwrap();
         assert!(
             !text.contains("abc123secret"),
@@ -833,7 +835,7 @@ mod tests {
             let mut w = make.make_writer();
             w.write_all(b"[mpv] hello\n").unwrap();
         }
-        assert_eq!(&*sink.0.lock().unwrap(), b"[mpv] hello\n");
+        assert_eq!(&*sink.0.lock(), b"[mpv] hello\n");
     }
 
     #[test]
@@ -929,7 +931,7 @@ mod tests {
         tracing::dispatcher::with_default(&dispatch, || {
             tracing::event!(target: "mpv", tracing::Level::ERROR, "boom");
         });
-        let bytes = sink.0.lock().unwrap().clone();
+        let bytes = sink.0.lock().clone();
         String::from_utf8(bytes).unwrap()
     }
 

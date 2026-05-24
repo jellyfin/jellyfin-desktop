@@ -9,7 +9,8 @@
 use std::ffi::{c_int, c_void};
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use parking_lot::Mutex;
 use std::thread::{self, JoinHandle};
 
 use memmap2::MmapOptions;
@@ -763,7 +764,7 @@ pub unsafe fn jfn_input_wayland_cleanup(ctx: *mut JfnInputWayland) {
     unsafe {
         libc::write(boxed.wake_fd, &v as *const u64 as *const c_void, 8);
     }
-    if let Some(w) = boxed.worker.get_mut().unwrap().take() {
+    if let Some(w) = boxed.worker.get_mut().take() {
         let _ = w.join();
     }
     unsafe { libc::close(boxed.wake_fd) };

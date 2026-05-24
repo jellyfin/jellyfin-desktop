@@ -28,7 +28,7 @@ const VK_F11: i32 = 0x7A;
 const EVENTFLAG_ALT_DOWN: u32 = 1 << 3;
 
 fn video_player_active() -> bool {
-    let guard = coord_slot().lock().unwrap();
+    let guard = coord_slot().lock();
     let Some(c) = guard.as_ref() else {
         return false;
     };

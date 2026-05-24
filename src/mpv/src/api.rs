@@ -26,7 +26,7 @@
 
 use std::ffi::{CStr, CString, c_char};
 use std::os::raw::c_void;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::sys;
 
@@ -384,7 +384,7 @@ pub unsafe fn jfn_mpv_load_file(path: *const c_char, opts: *const JfnMpvLoadOpti
     // FIFO-ordered on mpv's core thread, so playback only begins after
     // track-switch reinits land.
     {
-        let mut s = pending_slot().lock().unwrap();
+        let mut s = pending_slot().lock();
         s.vid = o.video_track;
         s.aid = o.audio_track;
         s.sid = o.sub_track;
@@ -407,7 +407,7 @@ pub unsafe fn jfn_mpv_load_file(path: *const c_char, opts: *const JfnMpvLoadOpti
 
 pub fn jfn_mpv_apply_pending_track_selection_and_play() {
     let snapshot = {
-        let mut s = pending_slot().lock().unwrap();
+        let mut s = pending_slot().lock();
         if !s.valid {
             return;
         }

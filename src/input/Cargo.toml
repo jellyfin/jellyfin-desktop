@@ -9,5 +9,6 @@ name = "jfn_input"
 path = "src/lib.rs"
 
 [dependencies]
+parking_lot.workspace = true
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }

@@ -4,7 +4,8 @@
 
 use std::ffi::CString;
 use std::os::raw::c_char;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{OnceLock};
+use parking_lot::Mutex;
 
 type ExecJsCb = extern "C" fn(*const c_char);
 
@@ -14,7 +15,7 @@ fn slot() -> &'static Mutex<Option<ExecJsCb>> {
 }
 
 pub(crate) fn call(js: &str) {
-    let Some(cb) = *slot().lock().unwrap() else {
+    let Some(cb) = *slot().lock() else {
         return;
     };
     if let Ok(c) = CString::new(js) {
@@ -24,5 +25,5 @@ pub(crate) fn call(js: &str) {
 
 /// Install / clear the exec_js callback. `cb == None` clears.
 pub fn jfn_playback_set_web_exec_js_handler(cb: Option<ExecJsCb>) {
-    *slot().lock().unwrap() = cb;
+    *slot().lock() = cb;
 }

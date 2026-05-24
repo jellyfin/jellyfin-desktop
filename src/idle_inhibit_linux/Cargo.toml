@@ -9,5 +9,6 @@ name = "jfn_idle_inhibit_linux"
 crate-type = ["rlib"]
 
 [dependencies]
+parking_lot.workspace = true
 tracing.workspace = true
 zbus.workspace = true

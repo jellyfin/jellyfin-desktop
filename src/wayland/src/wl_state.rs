@@ -20,7 +20,8 @@
 
 use std::ffi::c_void;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{OnceLock};
+use parking_lot::{Mutex, MutexGuard};
 
 use memmap2::MmapOptions;
 use wayland_backend::client::{Backend, ObjectId};
@@ -177,7 +178,6 @@ pub(crate) fn lock() -> MutexGuard<'static, WlState> {
         .get()
         .expect("wl_state used before init")
         .lock()
-        .expect("wl_state mutex poisoned")
 }
 
 // =====================================================================

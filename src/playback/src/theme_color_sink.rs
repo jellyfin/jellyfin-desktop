@@ -3,7 +3,8 @@
 //! on metadata arrival; that's not mpv-derived and stays out of the
 //! playback event stream.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{OnceLock};
+use parking_lot::Mutex;
 
 use crate::types::{PlaybackEvent, PlaybackEventKind};
 
@@ -16,13 +17,13 @@ fn cb_slot() -> &'static Mutex<Option<SetCb>> {
 
 /// Install the ThemeColor::setVideoMode setter. `cb == None` disables.
 pub fn jfn_playback_set_theme_video_mode_handler(cb: Option<SetCb>) {
-    *cb_slot().lock().unwrap() = cb;
+    *cb_slot().lock() = cb;
 }
 
 pub(crate) fn deliver(ev: &PlaybackEvent) {
     match ev.kind {
         PlaybackEventKind::Finished | PlaybackEventKind::Canceled | PlaybackEventKind::Error => {
-            if let Some(cb) = *cb_slot().lock().unwrap() {
+            if let Some(cb) = *cb_slot().lock() {
                 cb(false);
             }
         }

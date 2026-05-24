@@ -3,7 +3,8 @@
 //! from the event snapshot.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{OnceLock};
+use parking_lot::Mutex;
 
 use serde_json::json;
 
@@ -30,12 +31,12 @@ fn slot() -> &'static Mutex<Handlers> {
 
 /// Install / clear the browsers.setSize handler.
 pub fn jfn_playback_set_browsers_size_handler(cb: Option<SetSizeCb>) {
-    slot().lock().unwrap().set_size = cb;
+    slot().lock().set_size = cb;
 }
 
 /// Install / clear the browsers.setRefreshRate handler.
 pub fn jfn_playback_set_browsers_refresh_rate_handler(cb: Option<SetHzCb>) {
-    slot().lock().unwrap().set_hz = cb;
+    slot().lock().set_hz = cb;
 }
 
 // Mirrors maximized-before-fullscreen state so the geometry-save tail in
@@ -97,12 +98,12 @@ pub(crate) fn deliver(ev: &PlaybackEvent) {
             ));
         }
         PlaybackEventKind::OsdDimsChanged => {
-            if let Some(cb) = slot().lock().unwrap().set_size {
+            if let Some(cb) = slot().lock().set_size {
                 cb(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
             }
         }
         PlaybackEventKind::DisplayHzChanged => {
-            if let Some(cb) = slot().lock().unwrap().set_hz {
+            if let Some(cb) = slot().lock().set_hz {
                 cb(snap.display_hz);
             }
         }

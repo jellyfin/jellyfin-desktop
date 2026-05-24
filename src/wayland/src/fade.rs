@@ -8,7 +8,7 @@
 //! the caller-supplied start/complete closures.
 
 use std::ffi::c_void;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -21,7 +21,7 @@ static STOP: AtomicBool = AtomicBool::new(false);
 static HANDLE: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 fn join_existing() {
-    let handle = HANDLE.lock().unwrap().take();
+    let handle = HANDLE.lock().take();
     if let Some(h) = handle {
         STOP.store(true, Ordering::Release);
         let _ = h.join();
@@ -95,7 +95,7 @@ pub unsafe fn jfn_wl_fade_start(
         }
     });
 
-    *HANDLE.lock().unwrap() = Some(handle);
+    *HANDLE.lock() = Some(handle);
     true
 }
 

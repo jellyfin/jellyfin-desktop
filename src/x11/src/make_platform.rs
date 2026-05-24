@@ -126,15 +126,12 @@ impl Platform for X11Platform {
         let s = jfn_playback_display_scale();
         if s > 0.0 {
             let f = s as f32;
-            if let Ok(mut g) = crate::x11_state::MUT.lock()
-                && let Some(m) = g.as_mut()
-            {
+            if let Some(m) = crate::x11_state::MUT.lock().as_mut() {
                 m.cached_scale = f;
             }
             return f;
         }
-        if let Ok(g) = crate::x11_state::MUT.lock()
-            && let Some(m) = g.as_ref()
+        if let Some(m) = crate::x11_state::MUT.lock().as_ref()
             && m.cached_scale > 0.0
         {
             return m.cached_scale;
@@ -146,7 +143,7 @@ impl Platform for X11Platform {
         let Some(conn) = crate::x11_state::conn() else {
             return false;
         };
-        let g = crate::x11_state::MUT.lock().unwrap();
+        let g = crate::x11_state::MUT.lock();
         let Some(m) = g.as_ref() else { return false };
         let Some((px, py, _, _)) = crate::lifecycle::query_parent_geometry(&conn, m.parent, m.root)
         else {

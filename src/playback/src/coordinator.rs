@@ -5,7 +5,8 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use parking_lot::Mutex;
 use std::thread::{self, JoinHandle};
 
 use crate::wake_event::WakeEvent;
@@ -111,30 +112,30 @@ impl PlaybackCoordinator {
 
     pub fn enqueue(&self, in_: Input) {
         {
-            let mut q = self.shared.queue.lock().unwrap();
+            let mut q = self.shared.queue.lock();
             q.push_back(in_);
         }
         self.shared.wake.signal();
     }
 
     pub fn snapshot(&self) -> PlaybackSnapshot {
-        self.shared.snapshot.lock().unwrap().clone()
+        self.shared.snapshot.lock().clone()
     }
 
     pub fn add_event_sink(&self, sink: EventSink) {
-        self.shared.event_sinks.lock().unwrap().push(sink);
+        self.shared.event_sinks.lock().push(sink);
     }
 
     pub fn add_action_sink(&self, sink: ActionSink) {
-        self.shared.action_sinks.lock().unwrap().push(sink);
+        self.shared.action_sinks.lock().push(sink);
     }
 
     pub fn add_builtin_event_sink(&self, sink: EventSink) {
-        self.shared.builtin_event_sinks.lock().unwrap().push(sink);
+        self.shared.builtin_event_sinks.lock().push(sink);
     }
 
     pub fn add_builtin_action_sink(&self, sink: ActionSink) {
-        self.shared.builtin_action_sinks.lock().unwrap().push(sink);
+        self.shared.builtin_action_sinks.lock().push(sink);
     }
 }
 
@@ -148,7 +149,7 @@ fn worker(shared: Arc<Shared>) {
     let mut sm = PlaybackStateMachine::new();
     while shared.running.load(Ordering::Relaxed) {
         let work: VecDeque<Input> = {
-            let mut q = shared.queue.lock().unwrap();
+            let mut q = shared.queue.lock();
             std::mem::take(&mut *q)
         };
 
@@ -170,31 +171,31 @@ fn worker(shared: Arc<Shared>) {
             e.snapshot = snap.clone();
         }
         {
-            let mut s = shared.snapshot.lock().unwrap();
+            let mut s = shared.snapshot.lock();
             *s = snap;
         }
 
         // Sinks: dispatched in registration order. Each closure must
         // not block; sinks own their own queue + consumer thread.
-        let event_sinks = shared.event_sinks.lock().unwrap();
+        let event_sinks = shared.event_sinks.lock();
         for sink in event_sinks.iter() {
             for e in &events {
                 sink(e);
             }
         }
-        let action_sinks = shared.action_sinks.lock().unwrap();
+        let action_sinks = shared.action_sinks.lock();
         for sink in action_sinks.iter() {
             for a in &actions {
                 sink(a);
             }
         }
-        let builtin_event_sinks = shared.builtin_event_sinks.lock().unwrap();
+        let builtin_event_sinks = shared.builtin_event_sinks.lock();
         for sink in builtin_event_sinks.iter() {
             for e in &events {
                 sink(e);
             }
         }
-        let builtin_action_sinks = shared.builtin_action_sinks.lock().unwrap();
+        let builtin_action_sinks = shared.builtin_action_sinks.lock();
         for sink in builtin_action_sinks.iter() {
             for a in &actions {
                 sink(a);

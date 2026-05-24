@@ -9,7 +9,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_int, c_void};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::{HANDLE, HWND};
@@ -140,7 +140,7 @@ static STATE: Mutex<State> = Mutex::new(State {
 /// on failure with the partial state torn down.
 pub fn jfn_win_init_compositor(hwnd: *mut c_void) -> bool {
     let hwnd = HWND(hwnd);
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     if st.devices.is_some() {
         return true;
     }
@@ -203,7 +203,7 @@ fn init_devices(hwnd: HWND) -> windows_core::Result<CompositorDevices> {
 /// Release all surfaces + devices. Called from win_cleanup (C++) after the
 /// WndProc hook is unhooked and the input thread is joined.
 pub fn jfn_win_cleanup_compositor() {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     // Free any remaining surfaces. Browsers should normally free them
     // first, but be defensive.
     let live: Vec<*mut Surface> = std::mem::take(&mut st.live);
@@ -353,7 +353,7 @@ fn present_to_swap_chain(devices: &CompositorDevices, sc: &IDXGISwapChain1, src:
 // =====================================================================
 
 pub fn win_alloc_surface() -> *mut c_void {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     if st.devices.is_none() {
         return std::ptr::null_mut();
     }
@@ -423,7 +423,7 @@ pub fn win_free_surface(s: *mut c_void) {
         }
     }
 
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     if let Some(idx) = st.live.iter().position(|&q| q == p) {
         st.live.remove(idx);
     }
@@ -455,7 +455,7 @@ pub fn win_free_surface(s: *mut c_void) {
 /// (bottom -> top). Popup visuals stay nested under their owning surface,
 /// so they're not in this list.
 pub fn win_restack(ordered: *const *mut c_void, n: usize) {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     if st.devices.is_none() {
         return;
     }
@@ -533,7 +533,7 @@ pub fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
         return false;
     }
 
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     if st.devices.is_none() {
         return false;
     }
@@ -620,7 +620,7 @@ pub fn win_surface_resize(s: *mut c_void, _lw: c_int, _lh: c_int, pw: c_int, ph:
     if s.is_null() || pw <= 0 || ph <= 0 {
         return;
     }
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     let devices = match st.devices.as_ref() {
         Some(d) => d,
         None => return,
@@ -655,7 +655,7 @@ pub fn win_surface_set_visible(s: *mut c_void, visible: bool) {
     if s.is_null() {
         return;
     }
-    let st = STATE.lock().unwrap();
+    let st = STATE.lock();
     let devices = match st.devices.as_ref() {
         Some(d) => d,
         None => return,
@@ -743,7 +743,7 @@ pub fn win_fade_surface(
             let t = i as f32 / total_frames as f32;
             let opacity = 1.0_f32 - t;
             {
-                let st = STATE.lock().unwrap();
+                let st = STATE.lock();
                 let surf = unsafe { &*(surface_addr as *mut Surface) };
                 if !surf.visible || surf.visual.is_none() || surf.effect.is_none() {
                     break;
@@ -815,17 +815,17 @@ fn end_transition_locked(st: &mut State) {
 /// `win_begin_transition_impl` C++ helper. Takes STATE lock then runs
 /// the locked routine.
 pub fn jfn_win_begin_transition_locked() {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     begin_transition_locked(&mut st);
 }
 
 pub fn win_end_transition() {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     end_transition_locked(&mut st);
 }
 
 pub fn win_set_expected_size(w: c_int, h: c_int) {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     if G_TRANSITIONING.load(Ordering::SeqCst) && w == st.transition_pw && h == st.transition_ph {
         return;
     }
@@ -841,7 +841,7 @@ pub fn win_set_expected_size(w: c_int, h: c_int) {
 /// size (used by oversized-buffer rejection) and optionally records the
 /// logical size if a transition is in progress.
 pub fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     if G_TRANSITIONING.load(Ordering::SeqCst) {
         st.pending_lw = lw;
         st.pending_lh = lh;
@@ -853,12 +853,12 @@ pub fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
 /// Called from C++ WndProc on WM_SIZE to run begin_transition under the
 /// state lock (matches the old win_begin_transition_locked behavior).
 pub fn jfn_win_wndproc_begin_transition_locked() {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     begin_transition_locked(&mut st);
 }
 
 pub fn jfn_win_wndproc_end_transition_locked() {
-    let mut st = STATE.lock().unwrap();
+    let mut st = STATE.lock();
     end_transition_locked(&mut st);
 }
 
@@ -870,7 +870,7 @@ pub fn win_popup_show(s: *mut c_void, x: c_int, y: c_int) {
     if s.is_null() {
         return;
     }
-    let _st = STATE.lock().unwrap();
+    let _st = STATE.lock();
     let surf = unsafe { &mut *(s as *mut Surface) };
     surf.popup_visible = true;
     if let Some(pv) = surf.popup_visual.as_ref() {
@@ -886,7 +886,7 @@ pub fn win_popup_hide(s: *mut c_void) {
     if s.is_null() {
         return;
     }
-    let st = STATE.lock().unwrap();
+    let st = STATE.lock();
     let surf = unsafe { &mut *(s as *mut Surface) };
     surf.popup_visible = false;
     let pv = match surf.popup_visual.as_ref() {
@@ -920,7 +920,7 @@ pub fn win_popup_present(
     if handle.is_null() {
         return;
     }
-    let st = STATE.lock().unwrap();
+    let st = STATE.lock();
     let devices = match st.devices.as_ref() {
         Some(d) => d,
         None => return,
@@ -976,7 +976,7 @@ pub fn win_popup_present_software(
     if s.is_null() || buffer.is_null() || pw <= 0 || ph <= 0 {
         return;
     }
-    let st = STATE.lock().unwrap();
+    let st = STATE.lock();
     let devices = match st.devices.as_ref() {
         Some(d) => d,
         None => return,

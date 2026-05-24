@@ -2,7 +2,7 @@
 //! setters (log_severity, ozone_platform, etc.) write here between
 //! `Start()` and `Initialize()`; the App handlers read here.
 
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 pub struct PendingSwitch {
     pub name: String,
@@ -25,7 +25,7 @@ static CONFIG: Mutex<Config> = Mutex::new(Config {
 });
 
 pub fn with_config<R>(f: impl FnOnce(&mut Config) -> R) -> R {
-    let mut g = CONFIG.lock().expect("config mutex poisoned");
+    let mut g = CONFIG.lock();
     f(&mut g)
 }
 

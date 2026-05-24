@@ -5,7 +5,7 @@
 //! previous fd, which atomically releases the prior inhibitor.
 
 use std::os::fd::OwnedFd;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use zbus::blocking::Connection;
 use zbus::zvariant::OwnedFd as ZOwnedFd;
@@ -32,7 +32,7 @@ fn what_for(level: u32) -> Option<&'static str> {
 }
 
 pub fn set(level: u32) {
-    let mut state = STATE.lock().unwrap();
+    let mut state = STATE.lock();
     state.fd = None;
     let Some(what) = what_for(level) else {
         return;
@@ -66,7 +66,7 @@ pub fn set(level: u32) {
 }
 
 pub fn cleanup() {
-    let mut state = STATE.lock().unwrap();
+    let mut state = STATE.lock();
     state.fd = None;
     state.bus = None;
 }

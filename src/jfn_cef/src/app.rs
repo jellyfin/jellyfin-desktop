@@ -5,7 +5,7 @@
 
 use cef::*;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::embedded_js;
 use crate::state;
@@ -197,14 +197,13 @@ wrap_render_process_handler! {
             self.inner
                 .profiles
                 .lock()
-                .unwrap()
                 .insert(id, extra.clone());
         }
 
         fn on_browser_destroyed(&self, browser: Option<&mut Browser>) {
             let Some(browser) = browser else { return };
             let id = browser.identifier();
-            self.inner.profiles.lock().unwrap().remove(&id);
+            self.inner.profiles.lock().remove(&id);
         }
 
         fn on_context_created(
@@ -223,7 +222,7 @@ wrap_render_process_handler! {
 
             let profile = {
                 let id = browser.identifier();
-                self.inner.profiles.lock().unwrap().get(&id).cloned()
+                self.inner.profiles.lock().get(&id).cloned()
             };
             let Some(profile) = profile else { return };
 

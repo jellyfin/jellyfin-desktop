@@ -30,7 +30,7 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use wayland_backend::client::{Backend, ObjectId};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
@@ -154,7 +154,7 @@ pub unsafe fn jfn_wl_kde_palette_attach(
     if display.is_null() || parent_surface.is_null() {
         return false;
     }
-    if STATE.lock().unwrap().is_some() {
+    if STATE.lock().is_some() {
         tracing::warn!("kde_palette: attach called twice");
         return false;
     }
@@ -207,7 +207,7 @@ pub unsafe fn jfn_wl_kde_palette_attach(
         None => return false,
     };
 
-    *STATE.lock().unwrap() = Some(PaletteState {
+    *STATE.lock() = Some(PaletteState {
         conn,
         palette,
         colors_dir,
@@ -234,7 +234,7 @@ pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_ch
         _ => return,
     };
 
-    let mut guard = STATE.lock().unwrap();
+    let mut guard = STATE.lock();
     let state = match guard.as_mut() {
         Some(s) => s,
         None => return,
@@ -268,7 +268,7 @@ pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_ch
 }
 
 pub fn jfn_wl_kde_palette_post_window_cleanup() {
-    let mut guard = STATE.lock().unwrap();
+    let mut guard = STATE.lock();
     let state = match guard.as_mut() {
         Some(s) => s,
         None => return,

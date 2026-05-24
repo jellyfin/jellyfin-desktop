@@ -20,3 +20,6 @@ windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
 ] }
+
+[dependencies]
+parking_lot.workspace = true

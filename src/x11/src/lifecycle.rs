@@ -176,7 +176,7 @@ pub fn init() -> bool {
 
     // Populate the global mutable state.
     {
-        let mut g = MUT.lock().unwrap();
+        let mut g = MUT.lock();
         *g = Some(Mutable {
             screen_num,
             root,
@@ -214,7 +214,7 @@ pub fn init() -> bool {
 pub fn cleanup() {
     // Defensively unmap any straggler surface windows.
     if let Some(conn) = crate::x11_state::conn() {
-        let g = MUT.lock().unwrap();
+        let g = MUT.lock();
         if let Some(m) = g.as_ref() {
             hide_all_live_locked(&conn, m);
         }
@@ -225,7 +225,7 @@ pub fn cleanup() {
 
     // Free any surface that outlived Browsers (defensive).
     if let Some(conn) = crate::x11_state::conn() {
-        let mut g = MUT.lock().unwrap();
+        let mut g = MUT.lock();
         if let Some(m) = g.as_mut() {
             for &s_ptr in &m.live {
                 if s_ptr.is_null() {
