@@ -54,7 +54,7 @@ unsafe extern "C" {
     fn jfn_jellyfin_normalize_input(input: *const c_char) -> *mut c_char;
     fn jfn_jellyfin_extract_base_url(url: *const c_char) -> *mut c_char;
     fn jfn_jellyfin_is_valid_public_info(body: *const c_char, len: usize) -> bool;
-    fn jfn_paths_free(p: *mut c_char);
+    fn jfn_jellyfin_free_string(p: *mut c_char);
 }
 
 struct OverlayState {
@@ -140,7 +140,7 @@ fn take_jellyfin_string(p: *mut c_char) -> String {
     let s = unsafe { CStr::from_ptr(p) }
         .to_string_lossy()
         .into_owned();
-    unsafe { jfn_paths_free(p) };
+    unsafe { jfn_jellyfin_free_string(p) };
     s
 }
 

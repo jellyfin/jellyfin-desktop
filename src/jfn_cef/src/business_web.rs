@@ -59,7 +59,6 @@ unsafe extern "C" {
     fn jfn_platform_set_fullscreen(v: bool);
     fn jfn_platform_set_cursor(t: i32);
     fn jfn_shutdown_initiate();
-    fn jfn_paths_open_mpv_home();
     fn jfn_playback_fullscreen() -> bool;
 
     // playback posts
@@ -537,7 +536,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         }
         "openConfigDir" => {
             jfn_logging::log(jfn_logging::CATEGORY_CEF, jfn_logging::LEVEL_INFO, "Opening mpv home directory");
-            unsafe { jfn_paths_open_mpv_home() };
+            jfn_paths::open_mpv_home();
             true
         }
         _ => false,
