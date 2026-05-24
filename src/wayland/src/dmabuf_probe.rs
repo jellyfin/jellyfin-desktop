@@ -211,9 +211,9 @@ fn acquire_display(
 
     let display: egl::EGLDisplay = if let Some(fp) = egl.get_proc("eglGetPlatformDisplayEXT") {
         let f: FnEglGetPlatformDisplayExt = unsafe { std::mem::transmute(fp) };
-        unsafe { f(EGL_PLATFORM_X11_KHR, dpy as *mut c_void, ptr::null()) }
+        unsafe { f(EGL_PLATFORM_X11_KHR, dpy, ptr::null()) }
     } else {
-        unsafe { (egl.get_display)(dpy as *mut c_void) }
+        unsafe { (egl.get_display)(dpy) }
     };
     if display.is_null() {
         return Err("no EGL display for X11".into());
