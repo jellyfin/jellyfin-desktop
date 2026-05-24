@@ -40,6 +40,25 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         cmd.env("JFN_MPV_LIB_DIR", &mpv_info.build_dir);
     }
 
+    // Linux: rpath system / out-of-tree lib dirs into the binary so it
+    // resolves DT_NEEDED entries that aren't shipped alongside it.
+    // In-tree builds (third_party/cef + meson mpv) stay relocatable —
+    // libs are staged next to the binary and $ORIGIN handles them.
+    if cfg!(target_os = "linux") {
+        let mut rpaths: Vec<String> = Vec::new();
+        if cef_info.system {
+            rpaths.push(cef_info.release_dir.to_string_lossy().into_owned());
+        }
+        if let Some(dir) = &args.external_mpv {
+            rpaths.push(dir.join("lib").to_string_lossy().into_owned());
+        }
+        if rpaths.is_empty() {
+            cmd.env_remove("JFN_EXTRA_RPATH");
+        } else {
+            cmd.env("JFN_EXTRA_RPATH", rpaths.join(":"));
+        }
+    }
+
     println!("Building jellyfin-desktop (Rust binary)...");
     let status = cmd.status().context("spawn cargo build")?;
     if !status.success() {

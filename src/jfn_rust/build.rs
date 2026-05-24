@@ -24,6 +24,19 @@ fn main() {
         // Permit later DT_NEEDED libraries (libcef.so) to resolve symbols
         // they don't list explicitly — matches the prior C++ ld defaults.
         println!("cargo:rustc-link-arg-bins=-Wl,--disable-new-dtags");
+
+        // Additional rpath entries for system / out-of-tree library
+        // installs (e.g. Arch's `cef` package puts libcef.so in
+        // /usr/lib/cef, jellyfin-desktop-libmpv-git in
+        // /opt/jellyfin-desktop/libmpv/lib). xtask sets this when
+        // --system-cef or --external-mpv resolves outside $ORIGIN.
+        // Colon-separated; $ORIGIN entries still take precedence.
+        println!("cargo:rerun-if-env-changed=JFN_EXTRA_RPATH");
+        if let Ok(extra) = std::env::var("JFN_EXTRA_RPATH") {
+            for entry in extra.split(':').filter(|s| !s.is_empty()) {
+                println!("cargo:rustc-link-arg-bins=-Wl,-rpath,{entry}");
+            }
+        }
     }
 
     #[cfg(target_os = "windows")]
