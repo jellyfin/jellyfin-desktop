@@ -139,7 +139,7 @@ impl Platform for X11Platform {
         1.0
     }
 
-    fn query_window_position(&self, x: *mut c_int, y: *mut c_int) -> bool {
+    fn query_window_position(&self, x: &mut c_int, y: &mut c_int) -> bool {
         let Some(conn) = crate::x11_state::conn() else {
             return false;
         };
@@ -149,24 +149,13 @@ impl Platform for X11Platform {
         else {
             return false;
         };
-        unsafe {
-            *x = px;
-            *y = py;
-        }
+        *x = px;
+        *y = py;
         true
     }
 
-    fn clamp_window_geometry(&self, w: *mut c_int, h: *mut c_int, _x: *mut c_int, _y: *mut c_int) {
-        if w.is_null() || h.is_null() {
-            return;
-        }
-        let mut iw = unsafe { *w };
-        let mut ih = unsafe { *h };
-        crate::lifecycle::clamp_window_geometry(&mut iw, &mut ih);
-        unsafe {
-            *w = iw;
-            *h = ih;
-        }
+    fn clamp_window_geometry(&self, w: &mut c_int, h: &mut c_int, _x: &mut c_int, _y: &mut c_int) {
+        crate::lifecycle::clamp_window_geometry(w, h);
     }
 
     fn set_cursor(&self, t: c_int) {

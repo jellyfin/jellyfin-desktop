@@ -202,7 +202,7 @@ pub fn macos_get_scale() -> f32 {
 /// Query the saved window position in backing pixels, relative to the
 /// screen's visible frame (excluding menu bar / dock), Y measured from
 /// the top. Lossless round-trip with mpv's `--geometry +X+Y`.
-pub fn macos_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
+pub fn macos_query_window_position(x: &mut c_int, y: &mut c_int) -> bool {
     unsafe {
         let win = jfn_macos_get_window();
         if win.is_null() {
@@ -268,10 +268,10 @@ pub fn macos_get_display_scale(_x: c_int, _y: c_int) -> f32 {
 /// relative to the main screen's visible frame — so the window stays
 /// fully on-screen. Centers any unset axis (negative input).
 pub fn macos_clamp_window_geometry(
-    w: *mut c_int,
-    h: *mut c_int,
-    x: *mut c_int,
-    y: *mut c_int,
+    w: &mut c_int,
+    h: &mut c_int,
+    x: &mut c_int,
+    y: &mut c_int,
 ) {
     unsafe {
         let screen: *mut objc2::runtime::AnyObject =
@@ -695,11 +695,11 @@ impl Platform for MacosPlatform {
         macos_get_display_scale(x, y)
     }
 
-    fn query_window_position(&self, x: *mut c_int, y: *mut c_int) -> bool {
+    fn query_window_position(&self, x: &mut c_int, y: &mut c_int) -> bool {
         macos_query_window_position(x, y)
     }
 
-    fn clamp_window_geometry(&self, w: *mut c_int, h: *mut c_int, x: *mut c_int, y: *mut c_int) {
+    fn clamp_window_geometry(&self, w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
         macos_clamp_window_geometry(w, h, x, y);
     }
 

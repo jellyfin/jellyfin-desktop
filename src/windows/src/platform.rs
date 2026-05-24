@@ -372,7 +372,7 @@ pub fn win_cleanup() {
 /// taskbar), in physical pixels. Matches mpv's `--geometry +X+Y`
 /// coordinate system on Windows (`vo_calc_window_geometry` uses the
 /// working area).
-pub fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
+pub fn win_query_window_position(x: &mut c_int, y: &mut c_int) -> bool {
     let hwnd_raw = STATE.lock().unwrap().mpv_hwnd_raw;
     if hwnd_raw == 0 {
         return false;
@@ -390,10 +390,8 @@ pub fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
     if !unsafe { GetMonitorInfoW(mon, &mut mi) }.as_bool() {
         return false;
     }
-    unsafe {
-        *x = wr.left - mi.rcWork.left;
-        *y = wr.top - mi.rcWork.top;
-    }
+    *x = wr.left - mi.rcWork.left;
+    *y = wr.top - mi.rcWork.top;
     true
 }
 
@@ -401,10 +399,10 @@ pub fn win_query_window_position(x: *mut c_int, y: *mut c_int) -> bool {
 /// window never opens larger than the screen or off-screen, and center any
 /// unset axis.
 pub fn win_clamp_window_geometry(
-    w: *mut c_int,
-    h: *mut c_int,
-    x: *mut c_int,
-    y: *mut c_int,
+    w: &mut c_int,
+    h: &mut c_int,
+    x: &mut c_int,
+    y: &mut c_int,
 ) {
     let mut work = RECT::default();
     let ok = unsafe {
@@ -420,30 +418,28 @@ pub fn win_clamp_window_geometry(
     }
     let vw = work.right - work.left;
     let vh = work.bottom - work.top;
-    unsafe {
-        if *w > vw {
-            *w = vw;
-        }
-        if *h > vh {
-            *h = vh;
-        }
-        if *x < 0 {
-            *x = (vw - *w) / 2;
-        }
-        if *y < 0 {
-            *y = (vh - *h) / 2;
-        }
-        if *x + *w > vw {
-            *x = vw - *w;
-        }
-        if *y + *h > vh {
-            *y = vh - *h;
-        }
-        if *x < 0 {
-            *x = 0;
-        }
-        if *y < 0 {
-            *y = 0;
-        }
+    if *w > vw {
+        *w = vw;
+    }
+    if *h > vh {
+        *h = vh;
+    }
+    if *x < 0 {
+        *x = (vw - *w) / 2;
+    }
+    if *y < 0 {
+        *y = (vh - *h) / 2;
+    }
+    if *x + *w > vw {
+        *x = vw - *w;
+    }
+    if *y + *h > vh {
+        *y = vh - *h;
+    }
+    if *x < 0 {
+        *x = 0;
+    }
+    if *y < 0 {
+        *y = 0;
     }
 }

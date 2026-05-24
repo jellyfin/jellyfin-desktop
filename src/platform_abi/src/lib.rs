@@ -148,15 +148,15 @@ pub trait Platform: Send + Sync {
         1.0
     }
 
-    fn query_window_position(&self, _x: *mut c_int, _y: *mut c_int) -> bool {
+    fn query_window_position(&self, _x: &mut c_int, _y: &mut c_int) -> bool {
         false
     }
     fn clamp_window_geometry(
         &self,
-        _w: *mut c_int,
-        _h: *mut c_int,
-        _x: *mut c_int,
-        _y: *mut c_int,
+        _w: &mut c_int,
+        _h: &mut c_int,
+        _x: &mut c_int,
+        _y: &mut c_int,
     ) {
     }
 

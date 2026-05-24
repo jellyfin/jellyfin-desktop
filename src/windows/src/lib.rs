@@ -436,11 +436,11 @@ impl Platform for WindowsPlatform {
         win_get_display_scale(x, y)
     }
 
-    fn query_window_position(&self, x: *mut c_int, y: *mut c_int) -> bool {
+    fn query_window_position(&self, x: &mut c_int, y: &mut c_int) -> bool {
         win_query_window_position(x, y)
     }
 
-    fn clamp_window_geometry(&self, w: *mut c_int, h: *mut c_int, x: *mut c_int, y: *mut c_int) {
+    fn clamp_window_geometry(&self, w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
         win_clamp_window_geometry(w, h, x, y);
     }
 
