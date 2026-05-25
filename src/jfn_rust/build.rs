@@ -75,19 +75,26 @@ fn main() {
         } else {
             "0x0L"
         };
-        let git_hash = std::process::Command::new("git")
-            .args(["describe", "--always", "--dirty"])
-            .current_dir(repo_root)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
+        // Format A: "<VERSION>+<short hash>[-dirty]" for pre-release VERSIONs;
+        // a clean release stays bare. xtask injects JFN_GIT_HASH/JFN_GIT_DIRTY
+        // as the authoritative source; fall back to git for bare `cargo build`.
+        println!("cargo:rerun-if-env-changed=JFN_GIT_HASH");
+        println!("cargo:rerun-if-env-changed=JFN_GIT_DIRTY");
+        let (git_hash, dirty) = match std::env::var("JFN_GIT_HASH") {
+            Ok(h) if !h.is_empty() => {
+                let dirty = std::env::var("JFN_GIT_DIRTY").as_deref() == Ok("1");
+                (h, dirty)
+            }
+            _ => git_info_from_cli(repo_root),
+        };
         let version_full = if !version.contains('-') || git_hash.is_empty() {
             version.clone()
+        } else if dirty {
+            format!("{version}+{git_hash}-dirty")
         } else {
             format!("{version}+{git_hash}")
         };
+        track_git_refs(repo_root);
 
         let cmake_source_dir = repo_root.to_string_lossy().replace('\\', "/");
         let expanded = template
@@ -110,5 +117,68 @@ fn main() {
         // pairs with a `main`-style entrypoint via mainCRTStartup.
         println!("cargo:rustc-link-arg-bins=/SUBSYSTEM:WINDOWS");
         println!("cargo:rustc-link-arg-bins=/ENTRY:mainCRTStartup");
+    }
+}
+
+/// Fallback for bare `cargo build` (no xtask): short hash + dirty flag.
+#[cfg(target_os = "windows")]
+fn git_info_from_cli(repo_root: &std::path::Path) -> (String, bool) {
+    let hash = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let dirty = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repo_root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false);
+    (hash, dirty)
+}
+
+/// Tell cargo to re-run when HEAD moves. Resolving paths via
+/// `git rev-parse --git-path` keeps this correct for worktrees,
+/// `.git`-as-gitfile, and packed-refs — unlike a hardcoded `.git/HEAD`,
+/// which never changes when you commit on a branch.
+#[cfg(target_os = "windows")]
+fn track_git_refs(repo_root: &std::path::Path) {
+    use std::path::{Path, PathBuf};
+    let git_path = |spec: &str| -> Option<PathBuf> {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "--git-path", spec])
+            .current_dir(repo_root)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())?;
+        let rel = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rel.is_empty() {
+            return None;
+        }
+        let p = Path::new(&rel);
+        Some(if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            repo_root.join(p)
+        })
+    };
+
+    let head = git_path("HEAD");
+    if let Some(ref head) = head {
+        println!("cargo:rerun-if-changed={}", head.display());
+        if let Ok(contents) = std::fs::read_to_string(head)
+            && let Some(refname) = contents.strip_prefix("ref: ")
+            && let Some(ref_path) = git_path(refname.trim())
+        {
+            println!("cargo:rerun-if-changed={}", ref_path.display());
+        }
+    }
+    if let Some(packed) = git_path("packed-refs") {
+        println!("cargo:rerun-if-changed={}", packed.display());
     }
 }
