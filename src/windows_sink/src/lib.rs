@@ -31,7 +31,7 @@ use windows::Storage::Streams::{
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Security::Cryptography::{CRYPT_STRING_BASE64, CryptStringToBinaryA};
 use windows::Win32::System::WinRT::{ISystemMediaTransportControlsInterop, RoGetActivationFactory};
-use windows::core::{HSTRING, Interface, h};
+use windows::core::HSTRING;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {

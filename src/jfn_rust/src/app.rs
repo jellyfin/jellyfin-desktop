@@ -1125,12 +1125,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     #[cfg(target_os = "macos")]
     jfn_macos_sink::jfn_macos_sink_stop();
     #[cfg(target_os = "windows")]
-    unsafe {
-        unsafe extern "C" {
-            fn jfn_windows_sink_stop();
-        }
-        jfn_windows_sink_stop();
-    }
+    jfn_windows_sink::jfn_windows_sink_stop();
     #[cfg(target_os = "linux")]
     jfn_playback::mpris_sink::jfn_mpris_sink_stop();
 

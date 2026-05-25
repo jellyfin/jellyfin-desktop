@@ -90,6 +90,9 @@ struct CompositorDevices {
     d3d_context: ID3D11DeviceContext,
     dxgi_factory: IDXGIFactory2,
     dcomp_device: IDCompositionDevice,
+    // Held only to keep the composition target (and its bound root) alive for
+    // the lifetime of the compositor; never read after construction.
+    #[allow(dead_code)]
     dcomp_target: IDCompositionTarget,
     dcomp_root: IDCompositionVisual,
 }
@@ -620,7 +623,7 @@ pub fn win_surface_resize(s: *mut c_void, _lw: c_int, _lh: c_int, pw: c_int, ph:
     if s.is_null() || pw <= 0 || ph <= 0 {
         return;
     }
-    let mut st = STATE.lock();
+    let st = STATE.lock();
     let devices = match st.devices.as_ref() {
         Some(d) => d,
         None => return,
@@ -689,10 +692,7 @@ pub fn win_surface_set_visible(s: *mut c_void, visible: bool) {
 // Fade. Frame-paced on a detached thread; bounded total work.
 // =====================================================================
 
-unsafe extern "C" {
-    /// Rust-exported in src/playback/src/ingest_driver.rs.
-    fn jfn_playback_display_hz() -> f64;
-}
+use jfn_playback::ingest_driver::jfn_playback_display_hz;
 
 fn fire(cb: Option<Box<dyn FnOnce() + Send>>) {
     if let Some(f) = cb {
@@ -719,7 +719,7 @@ pub fn win_fade_surface(
             return;
         }
     }
-    let fps = unsafe { jfn_playback_display_hz() };
+    let fps = jfn_playback_display_hz();
     if fps <= 0.0 {
         fire(on_fade_start);
         fire(on_complete);
@@ -837,14 +837,24 @@ pub fn win_set_expected_size(w: c_int, h: c_int) {
 // Accessors used by C++ WndProc / fullscreen helpers.
 // =====================================================================
 
-/// Called from C++ WndProc on WM_SIZE: stores mpv's current physical
-/// size (used by oversized-buffer rejection) and optionally records the
-/// logical size if a transition is in progress.
-pub fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
+/// Called from the WndProc on WM_SIZE: stores mpv's current physical size
+/// (used by oversized-buffer rejection), records the logical size while a
+/// transition is in progress, and ends that transition once the window has
+/// settled at its new size. `force_end` ends it even if the physical size is
+/// unchanged (a fullscreen-style edge that didn't alter the client size).
+pub fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, ph: c_int, force_end: bool) {
     let mut st = STATE.lock();
     if G_TRANSITIONING.load(Ordering::SeqCst) {
         st.pending_lw = lw;
         st.pending_lh = lh;
+        // The size captured at begin_transition is the pre-resize size, so a
+        // differing physical size means the resize we were holding frames for
+        // has landed — end the transition and let the OSD present again. This
+        // deterministic size signal replaces the prior begin/end style toggle,
+        // which could leave the flag stuck across multiple WM_SIZE events.
+        if force_end || pw != st.transition_pw || ph != st.transition_ph {
+            end_transition_locked(&mut st);
+        }
     }
     st.mpv_pw = pw;
     st.mpv_ph = ph;

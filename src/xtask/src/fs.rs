@@ -21,12 +21,14 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         if ty.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else if ty.is_symlink() {
-            let target = std::fs::read_link(&src_path)?;
             let _ = std::fs::remove_file(&dst_path);
             #[cfg(unix)]
-            std::os::unix::fs::symlink(&target, &dst_path).with_context(|| {
-                format!("symlink {} -> {}", dst_path.display(), target.display())
-            })?;
+            {
+                let target = std::fs::read_link(&src_path)?;
+                std::os::unix::fs::symlink(&target, &dst_path).with_context(|| {
+                    format!("symlink {} -> {}", dst_path.display(), target.display())
+                })?;
+            }
             #[cfg(not(unix))]
             {
                 // No symlinks expected in our staged trees on non-unix; fall back

@@ -100,7 +100,7 @@ fn is_fullscreen_style(style: isize) -> bool {
 // =====================================================================
 
 pub fn win_get_scale() -> f32 {
-    let scale = unsafe { jfn_playback_display_scale() };
+    let scale = jfn_playback_display_scale();
     if scale > 0.0 {
         let s = scale as f32;
         STATE.lock().cached_scale = s;
@@ -136,10 +136,10 @@ fn end_transition_if_settled(target_fullscreen: bool) {
 }
 
 pub fn win_set_fullscreen(fullscreen: bool) {
-    if unsafe { jfn_mpv_handle_get() }.is_null() {
+    if jfn_mpv_handle_get().is_null() {
         return;
     }
-    if unsafe { jfn_playback_fullscreen() } == fullscreen {
+    if jfn_playback_fullscreen() == fullscreen {
         end_transition_if_settled(fullscreen);
         return;
     }
@@ -164,21 +164,21 @@ pub fn win_set_fullscreen(fullscreen: bool) {
     }
 
     if fullscreen {
-        unsafe { jfn_mpv_set_window_minimized(false) };
+        jfn_mpv_set_window_minimized(false);
     }
 
-    unsafe { jfn_mpv_set_fullscreen(fullscreen) };
+    jfn_mpv_set_fullscreen(fullscreen);
 
     if !fullscreen && should_restore_maximized {
-        unsafe { jfn_mpv_set_window_maximized(true) };
+        jfn_mpv_set_window_maximized(true);
     }
 }
 
 pub fn win_toggle_fullscreen() {
-    if unsafe { jfn_mpv_handle_get() }.is_null() {
+    if jfn_mpv_handle_get().is_null() {
         return;
     }
-    let target_fullscreen = !unsafe { jfn_playback_fullscreen() };
+    let target_fullscreen = !jfn_playback_fullscreen();
 
     let hwnd_raw = STATE.lock().mpv_hwnd_raw;
     let hwnd = hwnd_from_raw(hwnd_raw);
@@ -200,13 +200,13 @@ pub fn win_toggle_fullscreen() {
     }
 
     if target_fullscreen {
-        unsafe { jfn_mpv_set_window_minimized(false) };
+        jfn_mpv_set_window_minimized(false);
     }
 
-    unsafe { jfn_mpv_toggle_fullscreen() };
+    jfn_mpv_toggle_fullscreen();
 
     if !target_fullscreen && should_restore_maximized {
-        unsafe { jfn_mpv_set_window_maximized(true) };
+        jfn_mpv_set_window_maximized(true);
     }
 }
 
@@ -231,7 +231,7 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                 let pw = (lparam & 0xFFFF) as c_int;
                 let ph = ((lparam >> 16) & 0xFFFF) as c_int;
                 if pw > 0 && ph > 0 {
-                    unsafe { jfn_input_windows_resize_to_parent(pw, ph) };
+                    jfn_input_windows_resize_to_parent(pw, ph);
 
                     let cached = STATE.lock().cached_scale;
                     let scale = if cached > 0.0 { cached } else { 1.0 };
@@ -242,30 +242,44 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                         unsafe { GetWindowLongPtrW(hwnd_from_raw(target_hwnd_raw), GWL_STYLE) };
                     let fs = is_fullscreen_style(style);
 
+                    // Fullscreen-style edge, computed before mutating stored
+                    // state so we can both decide whether to *begin* a
+                    // transition and tell the compositor when to *end* one.
+                    let was_fs = STATE.lock().was_fullscreen;
+                    let fs_changed = fs != was_fs;
                     let recovering_from_minimize = STATE.lock().was_minimized;
+
                     if recovering_from_minimize {
-                        {
-                            let mut st = STATE.lock();
-                            st.was_minimized = false;
-                            st.was_fullscreen = fs;
-                        }
-                        if crate::win_in_transition() {
-                            crate::compositor::jfn_win_wndproc_end_transition_locked();
-                        }
-                    } else {
-                        let was_fs = STATE.lock().was_fullscreen;
-                        if fs != was_fs {
-                            if !crate::win_in_transition() {
-                                crate::compositor::jfn_win_wndproc_begin_transition_locked();
-                            } else {
-                                crate::compositor::jfn_win_wndproc_end_transition_locked();
-                            }
-                            STATE.lock().was_fullscreen = fs;
-                        } else if crate::win_in_transition() {
-                            crate::compositor::jfn_win_wndproc_end_transition_locked();
+                        let mut st = STATE.lock();
+                        st.was_minimized = false;
+                        st.was_fullscreen = fs;
+                    } else if fs_changed {
+                        STATE.lock().was_fullscreen = fs;
+                        // A fullscreen change we didn't drive through the
+                        // toggle helpers (e.g. an mpv-initiated one) needs a
+                        // transition begun here so the stale-size OSD is
+                        // detached until the window settles. Helper-initiated
+                        // changes already began one; never start a second.
+                        // Starting a second is what previously left
+                        // G_TRANSITIONING stuck across multiple WM_SIZE events
+                        // and blanked the OSD on exit from fullscreen.
+                        if !crate::win_in_transition() {
+                            crate::compositor::jfn_win_wndproc_begin_transition_locked();
                         }
                     }
-                    crate::compositor::jfn_win_update_surface_size(lw, lh, pw, ph);
+
+                    // End any in-progress transition once the window has
+                    // actually reached its new physical size (handled inside
+                    // the compositor, where the size captured at begin lives).
+                    // The force-end flag covers a settled fullscreen edge whose
+                    // physical size happens to be unchanged.
+                    crate::compositor::jfn_win_update_surface_size(
+                        lw,
+                        lh,
+                        pw,
+                        ph,
+                        fs_changed || recovering_from_minimize,
+                    );
                 }
             } else if msg.message == WM_CLOSE {
                 jfn_shutdown_initiate();
@@ -334,7 +348,7 @@ pub fn win_init(_mpv: *mut c_void) -> bool {
 
     let mpv_hwnd_for_thread = hwnd_raw;
     let join = std::thread::spawn(move || {
-        unsafe { jfn_input_windows_run_input_thread(mpv_hwnd_for_thread as *mut c_void) };
+        jfn_input_windows_run_input_thread(mpv_hwnd_for_thread as *mut c_void);
     });
     STATE.lock().input_thread = Some(join);
 
@@ -343,7 +357,7 @@ pub fn win_init(_mpv: *mut c_void) -> bool {
 }
 
 pub fn win_cleanup() {
-    unsafe { jfn_input_windows_stop_input_thread() };
+    jfn_input_windows_stop_input_thread();
     let join = STATE.lock().input_thread.take();
     if let Some(j) = join {
         let _ = j.join();
