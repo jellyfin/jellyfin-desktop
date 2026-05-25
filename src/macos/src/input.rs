@@ -71,10 +71,6 @@ const NS_TRACKING_MOUSE_ENTERED_AND_EXITED: u64 = 0x01;
 const NS_TRACKING_ACTIVE_IN_KEY_WINDOW: u64 = 0x20;
 const NS_TRACKING_IN_VISIBLE_RECT: u64 = 0x200;
 
-// NSAutoresizingMask.
-const NS_VIEW_WIDTH_SIZABLE: u64 = 2;
-const NS_VIEW_HEIGHT_SIZABLE: u64 = 16;
-
 // =====================================================================
 // Cross-crate entry points
 // =====================================================================
@@ -96,7 +92,7 @@ unsafe extern "C" {
 
 #[inline]
 fn dispatch_get_main_queue() -> *mut c_void {
-    unsafe { std::ptr::addr_of!(_dispatch_main_q) as *mut c_void }
+    std::ptr::addr_of!(_dispatch_main_q) as *mut c_void
 }
 
 // =====================================================================
@@ -358,9 +354,7 @@ fn flush_scroll_accumulator() {
     if dx == 0 && dy == 0 {
         return;
     }
-    unsafe {
-        jfn_input_dispatch_scroll_precise(x, y, dx, dy, mods, if precise { 1 } else { 0 });
-    }
+    jfn_input_dispatch_scroll_precise(x, y, dx, dy, mods, if precise { 1 } else { 0 });
 }
 
 // =====================================================================
@@ -438,7 +432,7 @@ define_class!(
         fn other_mouse_down(&self, event: &AnyObject) {
             let n: isize = unsafe { msg_send![event, buttonNumber] };
             if n == NS_MOUSE_BUTTON_BACK || n == NS_MOUSE_BUTTON_FORWARD {
-                unsafe { jfn_input_dispatch_history_nav(if n == NS_MOUSE_BUTTON_FORWARD { 1 } else { 0 }) };
+                jfn_input_dispatch_history_nav(if n == NS_MOUSE_BUTTON_FORWARD { 1 } else { 0 });
                 return;
             }
             dispatch_mouse_button(self, event, MOUSE_BTN_MIDDLE, true);
@@ -530,9 +524,7 @@ define_class!(
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &AnyObject) {
             let (vkey, mods, kc, ch, ch_nomod) = key_event_fields(event);
-            unsafe {
-                jfn_input_dispatch_key_full(1, vkey, kc as i32, mods, ch, ch_nomod, 0);
-            }
+            jfn_input_dispatch_key_full(1, vkey, kc as i32, mods, ch, ch_nomod, 0);
             // Forward typed characters for text input — paired CHAR event only
             // for printable chars + Return.
             if ch != 0 {
@@ -540,9 +532,7 @@ define_class!(
                 let forward = c == 0x0d
                     || (c >= 0x20 && c != 0x7f && !((0xF700..=0xF7FF).contains(&c)));
                 if forward {
-                    unsafe {
-                        jfn_input_dispatch_char_sys(c as u32, mods, kc as u32, 0);
-                    }
+                    jfn_input_dispatch_char_sys(c as u32, mods, kc as u32, 0);
                 }
             }
         }
@@ -550,9 +540,7 @@ define_class!(
         #[unsafe(method(keyUp:))]
         fn key_up(&self, event: &AnyObject) {
             let (vkey, mods, kc, ch, ch_nomod) = key_event_fields(event);
-            unsafe {
-                jfn_input_dispatch_key_full(0, vkey, kc as i32, mods, ch, ch_nomod, 0);
-            }
+            jfn_input_dispatch_key_full(0, vkey, kc as i32, mods, ch, ch_nomod, 0);
         }
 
         #[unsafe(method(flagsChanged:))]
@@ -573,20 +561,18 @@ define_class!(
             let pressed = if flag != 0 { (raw_flags & flag) != 0 } else { false };
             let vkey = ns_keycode_to_vkey(kc);
             let mods = ns_to_cef_modifiers(raw_flags);
-            unsafe {
-                jfn_input_dispatch_key_full(if pressed { 1 } else { 0 }, vkey, kc as i32, mods, 0, 0, 0);
-            }
+            jfn_input_dispatch_key_full(if pressed { 1 } else { 0 }, vkey, kc as i32, mods, 0, 0, 0);
         }
 
         // ---- Focus ----
         #[unsafe(method(becomeFirstResponder))]
         fn become_first_responder(&self) -> Bool {
-            unsafe { jfn_input_dispatch_keyboard_focus(1) };
+            jfn_input_dispatch_keyboard_focus(1);
             unsafe { msg_send![super(self), becomeFirstResponder] }
         }
         #[unsafe(method(resignFirstResponder))]
         fn resign_first_responder(&self) -> Bool {
-            unsafe { jfn_input_dispatch_keyboard_focus(0) };
+            jfn_input_dispatch_keyboard_focus(0);
             unsafe { msg_send![super(self), resignFirstResponder] }
         }
 
@@ -654,24 +640,20 @@ fn dispatch_mouse_button(view: &InputView, event: &AnyObject, button_code: u32, 
     let raw_flags: u64 = unsafe { msg_send![event, modifierFlags] };
     let _click: isize = unsafe { msg_send![event, clickCount] };
     let mods = ns_to_cef_modifiers(raw_flags) | next;
-    unsafe {
-        jfn_input_dispatch_mouse_button(
-            button_code,
-            if pressed { 1 } else { 0 },
-            loc.x as i32,
-            loc.y as i32,
-            mods,
-        );
-    }
+    jfn_input_dispatch_mouse_button(
+        button_code,
+        if pressed { 1 } else { 0 },
+        loc.x as i32,
+        loc.y as i32,
+        mods,
+    );
 }
 
 fn dispatch_mouse_move(view: &InputView, event: &AnyObject, leave: bool) {
     let loc = mouse_loc_in_view(view, event);
     let raw_flags: u64 = unsafe { msg_send![event, modifierFlags] };
     let mods = ns_to_cef_modifiers(raw_flags) | G_MOUSE_BUTTON_MODIFIERS.load(Ordering::SeqCst);
-    unsafe {
-        jfn_input_dispatch_mouse_move(loc.x as i32, loc.y as i32, mods, if leave { 1 } else { 0 });
-    }
+    jfn_input_dispatch_mouse_move(loc.x as i32, loc.y as i32, mods, if leave { 1 } else { 0 });
 }
 
 /// Returns (windows_key_code, modifiers, native_keycode, character, unmodified_character).

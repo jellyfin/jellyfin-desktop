@@ -15,6 +15,8 @@ use objc2_foundation::{NSObject, NSPoint, NSString};
 
 use jfn_platform_abi::JfnPopupRequest;
 
+use crate::init::{jfn_macos_get_input_view, jfn_macos_get_window};
+
 /// Owns the `on_selected` `FnOnce`. Fires at most once; dropping without
 /// firing reports nothing (which matches the cancel path from the
 /// caller's point of view — the closure's dtor releases its captured
@@ -70,14 +72,11 @@ unsafe extern "C" {
         ctx: *mut c_void,
         work: unsafe extern "C" fn(*mut c_void),
     );
-
-    fn jfn_macos_get_window() -> *mut AnyObject;
-    fn jfn_macos_get_input_view() -> *mut AnyObject;
 }
 
 #[inline]
 fn dispatch_get_main_queue() -> *mut c_void {
-    unsafe { std::ptr::addr_of!(_dispatch_main_q) as *mut c_void }
+    std::ptr::addr_of!(_dispatch_main_q) as *mut c_void
 }
 
 /// Heap-allocated state delivered to the main-queue trampoline. Owns the
@@ -98,8 +97,8 @@ unsafe extern "C" fn run_trampoline(ctx: *mut c_void) {
 }
 
 unsafe fn show_menu_on_main(run: PopupRun) {
-    let window = unsafe { jfn_macos_get_window() };
-    let input_view = unsafe { jfn_macos_get_input_view() };
+    let window = jfn_macos_get_window();
+    let input_view = jfn_macos_get_input_view();
     if window.is_null() || input_view.is_null() {
         // Drop fires the on_selected_dtor automatically; no fire() so the
         // JS side gets no spurious selection. Matches the C++ guard.

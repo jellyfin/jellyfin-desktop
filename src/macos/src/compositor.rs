@@ -20,12 +20,9 @@ use objc2::encode::{Encode, Encoding};
 use objc2::runtime::AnyObject;
 
 use crate::G_IN_TRANSITION;
+use crate::init::{jfn_macos_get_input_view, jfn_macos_get_window};
 
 unsafe extern "C" {
-    /// Accessors implemented in init.rs.
-    fn jfn_macos_get_window() -> *mut AnyObject;
-    fn jfn_macos_get_input_view() -> *mut AnyObject;
-
     static _dispatch_main_q: c_void;
     fn dispatch_async_f(
         queue: *mut c_void,
@@ -36,7 +33,7 @@ unsafe extern "C" {
 
 #[inline]
 fn dispatch_get_main_queue() -> *mut c_void {
-    unsafe { std::ptr::addr_of!(_dispatch_main_q) as *mut c_void }
+    std::ptr::addr_of!(_dispatch_main_q) as *mut c_void
 }
 
 fn is_main_thread() -> bool {
@@ -966,10 +963,8 @@ pub fn macos_fade_surface(
         }
         // dispatch_time(DISPATCH_TIME_NOW, fade_sec * NSEC_PER_SEC).
         let nsec = (fade_dur * 1_000_000_000.0) as i64;
-        let when = unsafe { dispatch_time(0, nsec) };
-        unsafe {
-            dispatch_after_f(when, dispatch_get_main_queue(), ctx_ptr, after_trampoline);
-        }
+        let when = dispatch_time(0, nsec);
+        dispatch_after_f(when, dispatch_get_main_queue(), ctx_ptr, after_trampoline);
     });
 }
 
