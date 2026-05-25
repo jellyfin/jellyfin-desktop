@@ -370,9 +370,7 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
         return false;
     }
 
-    let buf = {
-        create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h)
-    };
+    let buf = { create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h) };
     let Some(buf) = buf else {
         return false;
     };
@@ -443,9 +441,7 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
     } else {
         h
     };
-    let buf = {
-        create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h)
-    };
+    let buf = { create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h) };
     let Some(buf) = buf else {
         return;
     };

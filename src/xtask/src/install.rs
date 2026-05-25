@@ -27,12 +27,12 @@ pub fn run(args: &InstallArgs) -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         install_macos(&built_out, &prefix)?;
-        return Ok(prefix.join(MACOS_APP_NAME));
+        Ok(prefix.join(MACOS_APP_NAME))
     }
     #[cfg(target_os = "windows")]
     {
         install_windows(&built_out, &prefix, &args.build)?;
-        return Ok(prefix);
+        Ok(prefix)
     }
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
