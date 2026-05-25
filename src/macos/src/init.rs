@@ -5,6 +5,10 @@
 //! drives external BeginFrame per browser, and the NSWindow.windowShouldClose:
 //! swizzle that routes the WM close button into `jfn_shutdown_initiate`.
 
+// Platform entry points take raw pointers from the C/Obj-C boundary; the
+// safety contract is the boundary's, matching the wayland/x11 backends.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use parking_lot::Mutex;
 use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_void};
@@ -454,7 +458,7 @@ pub fn macos_init(_mpv: *mut c_void) -> bool {
                 size: std::mem::size_of::<GlobalBlock>(),
             };
             static BLOCK: GlobalBlock = GlobalBlock {
-                isa: unsafe { &_NSConcreteGlobalBlock as *const _ as *const c_void },
+                isa: unsafe { &_NSConcreteGlobalBlock as *const c_void },
                 flags: 1 << 28, // BLOCK_IS_GLOBAL
                 reserved: 0,
                 invoke: close_block_invoke,

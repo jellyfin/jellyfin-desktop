@@ -17,16 +17,19 @@ use jfn_platform_abi::JfnPopupRequest;
 
 use crate::init::{jfn_macos_get_input_view, jfn_macos_get_window};
 
+/// The `on_selected` callback: receives the chosen index (or -1 on cancel).
+type SelectedCb = Box<dyn FnOnce(c_int) + Send>;
+
 /// Owns the `on_selected` `FnOnce`. Fires at most once; dropping without
 /// firing reports nothing (which matches the cancel path from the
 /// caller's point of view — the closure's dtor releases its captured
 /// Arc, just like the old explicit dtor did).
 struct PopupCb {
-    fired: Mutex<Option<Box<dyn FnOnce(c_int) + Send>>>,
+    fired: Mutex<Option<SelectedCb>>,
 }
 
 impl PopupCb {
-    fn new(cb: Option<Box<dyn FnOnce(c_int) + Send>>) -> Self {
+    fn new(cb: Option<SelectedCb>) -> Self {
         Self {
             fired: Mutex::new(cb),
         }

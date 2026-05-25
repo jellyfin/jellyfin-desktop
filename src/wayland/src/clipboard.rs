@@ -148,7 +148,9 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for State {
         match event {
             dc_device::Event::DataOffer { id } => {
                 let key = id.id().protocol_id();
-                state.pending_offers.insert(key, (id, OfferMimes::default()));
+                state
+                    .pending_offers
+                    .insert(key, (id, OfferMimes::default()));
             }
             dc_device::Event::Selection { id } => {
                 if let Some((prev, _)) = state.current_offer.take() {
