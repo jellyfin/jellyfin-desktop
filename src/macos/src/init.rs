@@ -61,6 +61,9 @@ struct InitState {
     display_link: *mut AnyObject,
     /// `JellyfinAppMenuTarget*` retained for process lifetime.
     app_menu_target: *mut AnyObject,
+    /// `JellyfinWakeTarget*` retained for process lifetime — the
+    /// NSWorkspace/screen-change observer that restarts the display link.
+    wake_target: *mut AnyObject,
 }
 
 unsafe impl Send for InitState {}
@@ -71,6 +74,7 @@ static INIT_STATE: Mutex<InitState> = Mutex::new(InitState {
     display_link_target: ptr::null_mut(),
     display_link: ptr::null_mut(),
     app_menu_target: ptr::null_mut(),
+    wake_target: ptr::null_mut(),
 });
 
 /// Returns the `NSWindow*` (non-retaining) for use by other modules.
@@ -283,17 +287,23 @@ define_class!(
 // Display link lifecycle.
 // =====================================================================
 
-unsafe fn start_display_link(state: &mut InitState) -> bool {
+/// Build a CADisplayLink bound to `window`'s current screen and add it to
+/// the main run loop. Returns `(target, link)` (both +1-retained) on
+/// success, or `None` if the window has no screen / the factory failed.
+/// Does NOT touch `InitState` — callers decide how to install the result,
+/// which lets `restart_display_link` build the replacement before tearing
+/// down the old one.
+unsafe fn build_display_link(window: *mut AnyObject) -> Option<(*mut AnyObject, *mut AnyObject)> {
     unsafe {
         let target: Retained<JellyfinDisplayLinkTarget> =
             msg_send![JellyfinDisplayLinkTarget::class(), new];
         let target_obj: *mut AnyObject = Retained::into_raw(target) as *mut AnyObject;
 
-        let screen: *mut AnyObject = msg_send![state.window, screen];
+        let screen: *mut AnyObject = msg_send![window, screen];
         if screen.is_null() {
             tracing::error!(target: LOG_TARGET, "[CVDL] window has no screen");
             let _: () = msg_send![target_obj, release];
-            return false;
+            return None;
         }
         let sel_tick = sel!(tick:);
         let link: *mut AnyObject = msg_send![
@@ -304,7 +314,7 @@ unsafe fn start_display_link(state: &mut InitState) -> bool {
         if link.is_null() {
             tracing::error!(target: LOG_TARGET, "[CVDL] displayLinkWithTarget failed");
             let _: () = msg_send![target_obj, release];
-            return false;
+            return None;
         }
         // Retain — the result of `-displayLinkWithTarget:selector:` is
         // autoreleased.
@@ -332,10 +342,53 @@ unsafe fn start_display_link(state: &mut InitState) -> bool {
         ];
         let _: () = msg_send![link, addToRunLoop: main_runloop, forMode: default_ns];
 
+        Some((target_obj, link))
+    }
+}
+
+unsafe fn start_display_link(state: &mut InitState) -> bool {
+    unsafe {
+        match build_display_link(state.window) {
+            Some((target_obj, link)) => {
+                state.display_link_target = target_obj;
+                state.display_link = link;
+                tracing::info!(target: LOG_TARGET, "[CVDL] started");
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Rebuild the display link against the window's current screen. The
+/// CADisplayLink returned by `-[NSScreen displayLinkWithTarget:selector:]`
+/// is bound to one specific display; after display sleep or a screen
+/// reconfiguration that display goes away under it and the link stops
+/// ticking, so external BeginFrame stalls and CEF paints nothing new — the
+/// UI looks frozen and unresponsive. Build the replacement first, and only
+/// swap + invalidate the old link if the new one came up, so a transiently
+/// screen-less window on wake never leaves us with no link at all.
+unsafe fn restart_display_link(state: &mut InitState) {
+    unsafe {
+        let Some((target_obj, link)) = build_display_link(state.window) else {
+            tracing::error!(
+                target: LOG_TARGET,
+                "[CVDL] restart failed to build link; keeping existing link"
+            );
+            return;
+        };
+        let old_target = state.display_link_target;
+        let old_link = state.display_link;
         state.display_link_target = target_obj;
         state.display_link = link;
-        tracing::info!(target: LOG_TARGET, "[CVDL] started");
-        true
+        if !old_link.is_null() {
+            let _: () = msg_send![old_link, invalidate];
+            let _: () = msg_send![old_link, release];
+        }
+        if !old_target.is_null() {
+            let _: () = msg_send![old_target, release];
+        }
+        tracing::info!(target: LOG_TARGET, "[CVDL] restarted");
     }
 }
 
@@ -352,6 +405,101 @@ unsafe fn stop_display_link(state: &mut InitState) {
             state.display_link_target = ptr::null_mut();
         }
         tracing::info!(target: LOG_TARGET, "[CVDL] stopped");
+    }
+}
+
+/// Lock `INIT_STATE` and rebuild the display link. Skips while shutting
+/// down (the link is being torn down) and when no window is held yet.
+fn restart_display_link_locked() {
+    if jfn_shutting_down() {
+        return;
+    }
+    let mut state = INIT_STATE.lock();
+    if state.window.is_null() {
+        return;
+    }
+    unsafe { restart_display_link(&mut state) };
+}
+
+// =====================================================================
+// JellyfinWakeTarget — observer for NSWorkspaceDidWakeNotification and
+// NSApplicationDidChangeScreenParametersNotification. Both leave the
+// screen-bound CADisplayLink stale (the display it was attached to slept
+// or was reconfigured); restarting the link against the window's current
+// screen resumes BeginFrame and restores a responsive UI.
+// =====================================================================
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "JellyfinWakeTarget"]
+    pub struct JellyfinWakeTarget;
+
+    impl JellyfinWakeTarget {
+        #[unsafe(method(displayLinkNeedsRestart:))]
+        unsafe fn display_link_needs_restart(&self, _note: *mut AnyObject) {
+            tracing::info!(
+                target: LOG_TARGET,
+                "[WAKE] wake/screen-change; restarting display link"
+            );
+            restart_display_link_locked();
+        }
+    }
+
+    unsafe impl NSObjectProtocol for JellyfinWakeTarget {}
+);
+
+/// Subscribe to the system wake and screen-reconfiguration notifications
+/// that strand the CADisplayLink on a defunct display. Installed once from
+/// `macos_init`; the target is retained for the process lifetime.
+unsafe fn start_wake_observer(state: &mut InitState) {
+    unsafe {
+        let target: Retained<JellyfinWakeTarget> = msg_send![JellyfinWakeTarget::class(), new];
+        let target_obj: *mut AnyObject = Retained::into_raw(target) as *mut AnyObject;
+        state.wake_target = target_obj;
+
+        let sel_restart = sel!(displayLinkNeedsRestart:);
+
+        // Wake notifications post on NSWorkspace's own notification center.
+        // System sleep (Apple menu, lid, full idle sleep) posts DidWake;
+        // display-only sleep (screen off, machine awake) posts
+        // ScreensDidWake instead. Either can strand the link, so observe
+        // both — restarting is idempotent.
+        let ws: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let ws_nc: *mut AnyObject = msg_send![ws, notificationCenter];
+        for name in [
+            c"NSWorkspaceDidWakeNotification",
+            c"NSWorkspaceScreensDidWakeNotification",
+        ] {
+            let name_ns: *mut AnyObject =
+                msg_send![class!(NSString), stringWithUTF8String: name.as_ptr()];
+            let _: () = msg_send![
+                ws_nc,
+                addObserver: target_obj,
+                selector: sel_restart,
+                name: name_ns,
+                object: ptr::null_mut::<AnyObject>(),
+            ];
+        }
+
+        // Screen reconfiguration (display added/removed/rearranged) posts
+        // on the default center.
+        let nc: *mut AnyObject = msg_send![class!(NSNotificationCenter), defaultCenter];
+        let screen_name: *mut AnyObject = msg_send![
+            class!(NSString),
+            stringWithUTF8String: c"NSApplicationDidChangeScreenParametersNotification".as_ptr()
+        ];
+        let _: () = msg_send![
+            nc,
+            addObserver: target_obj,
+            selector: sel_restart,
+            name: screen_name,
+            object: ptr::null_mut::<AnyObject>(),
+        ];
+
+        tracing::info!(
+            target: LOG_TARGET,
+            "[WAKE] subscribed to wake + screen-change notifications"
+        );
     }
 }
 
@@ -543,6 +691,10 @@ pub fn macos_init(_mpv: *mut c_void) -> bool {
             tracing::error!(target: LOG_TARGET, "[INIT] failed to start CADisplayLink");
             return false;
         }
+
+        // Restart the link on wake / screen reconfiguration — otherwise it
+        // stays bound to a display that slept and stops ticking.
+        start_wake_observer(&mut state);
 
         tracing::info!(
             target: LOG_TARGET,
