@@ -10,7 +10,9 @@
 // from CEF; trait impls forward them unchanged to unsafe FFI fns.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use std::ffi::{c_char, c_int, c_void};
+#[cfg(feature = "kde-palette")]
+use std::ffi::c_char;
+use std::ffi::{c_int, c_void};
 use std::os::fd::FromRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 
