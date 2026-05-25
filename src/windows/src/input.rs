@@ -315,21 +315,17 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
         }
 
         WM_MOUSEMOVE => {
-            unsafe {
-                jfn_input_dispatch_mouse_move(
-                    get_x_lparam(lp),
-                    get_y_lparam(lp),
-                    mouse_modifiers(wp),
-                    0,
-                );
-            }
+            jfn_input_dispatch_mouse_move(
+                get_x_lparam(lp),
+                get_y_lparam(lp),
+                mouse_modifiers(wp),
+                0,
+            );
             return LRESULT(0);
         }
 
         WM_MOUSELEAVE => {
-            unsafe {
-                jfn_input_dispatch_mouse_move(-1, -1, mouse_modifiers(wp), 1);
-            }
+            jfn_input_dispatch_mouse_move(-1, -1, mouse_modifiers(wp), 1);
             return LRESULT(0);
         }
 
@@ -339,15 +335,13 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             if down {
                 let _ = unsafe { SetFocus(Some(hwnd)) };
             }
-            unsafe {
-                jfn_input_dispatch_mouse_button(
-                    msg_to_button_code(msg),
-                    if down { 1 } else { 0 },
-                    get_x_lparam(lp),
-                    get_y_lparam(lp),
-                    mouse_modifiers(wp),
-                );
-            }
+            jfn_input_dispatch_mouse_button(
+                msg_to_button_code(msg),
+                if down { 1 } else { 0 },
+                get_x_lparam(lp),
+                get_y_lparam(lp),
+                mouse_modifiers(wp),
+            );
             return LRESULT(0);
         }
 
@@ -382,9 +376,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
             let delta = hiword_i16(wp.0 as u32) as i32;
-            unsafe {
-                jfn_input_dispatch_scroll(pt.x, pt.y, 0, delta, mouse_modifiers(wp));
-            }
+            jfn_input_dispatch_scroll(pt.x, pt.y, 0, delta, mouse_modifiers(wp));
             return LRESULT(0);
         }
 
@@ -397,9 +389,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
             let delta = hiword_i16(wp.0 as u32) as i32;
-            unsafe {
-                jfn_input_dispatch_scroll(pt.x, pt.y, delta, 0, mouse_modifiers(wp));
-            }
+            jfn_input_dispatch_scroll(pt.x, pt.y, delta, 0, mouse_modifiers(wp));
             return LRESULT(0);
         }
 
@@ -424,29 +414,25 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             }
             let pressed = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
             let is_sys = msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP;
-            unsafe {
-                jfn_input_dispatch_key_full(
-                    if pressed { 1 } else { 0 },
-                    vk as i32,
-                    lp.0 as i32,
-                    keyboard_modifiers(wp, lp),
-                    0,
-                    0,
-                    if is_sys { 1 } else { 0 },
-                );
-            }
+            jfn_input_dispatch_key_full(
+                if pressed { 1 } else { 0 },
+                vk as i32,
+                lp.0 as i32,
+                keyboard_modifiers(wp, lp),
+                0,
+                0,
+                if is_sys { 1 } else { 0 },
+            );
             return LRESULT(0);
         }
 
         WM_CHAR | WM_SYSCHAR => {
-            unsafe {
-                jfn_input_dispatch_char_sys(
-                    wp.0 as u32,
-                    keyboard_modifiers(wp, lp),
-                    lp.0 as u32,
-                    if msg == WM_SYSCHAR { 1 } else { 0 },
-                );
-            }
+            jfn_input_dispatch_char_sys(
+                wp.0 as u32,
+                keyboard_modifiers(wp, lp),
+                lp.0 as u32,
+                if msg == WM_SYSCHAR { 1 } else { 0 },
+            );
             return LRESULT(0);
         }
 

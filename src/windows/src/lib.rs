@@ -3,7 +3,7 @@
 #![cfg(target_os = "windows")]
 #![allow(non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
@@ -130,7 +130,7 @@ const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
 /// Tint the DWM titlebar so it matches the current theme color.
 /// rgb is 0x00RRGGBB; DWMWA_CAPTION_COLOR wants 0x00BBGGRR (COLORREF).
 pub fn win_set_theme_color(rgb: u32) {
-    let hwnd = unsafe { jfn_win_get_hwnd() };
+    let hwnd = jfn_win_get_hwnd();
     if hwnd.is_null() {
         return;
     }

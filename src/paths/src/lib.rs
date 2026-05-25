@@ -23,6 +23,7 @@ fn env_or(var: &str, fallback: &str) -> String {
     }
 }
 
+#[cfg(not(windows))]
 fn home() -> String {
     env_or("HOME", "/tmp")
 }
