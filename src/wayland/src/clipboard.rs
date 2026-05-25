@@ -85,9 +85,12 @@ struct State {
     #[allow(dead_code)]
     mgr: Option<ExtDataControlManagerV1>,
     device: Option<ExtDataControlDeviceV1>,
-    // Pending mimes keyed by offer object id (an offer's mime set is built
-    // up between data_offer and the selection event that takes it).
-    pending_offer_mimes: std::collections::HashMap<u32, OfferMimes>,
+    // Pending offers keyed by offer object id: the proxy plus its mime set,
+    // built up between data_offer and the selection event that takes it.
+    // The proxy is held so unclaimed offers can be destroyed — dropping a
+    // wayland-client handle does not send the wire `destroy`, so without
+    // this the compositor-side offer objects leak.
+    pending_offers: std::collections::HashMap<u32, (ExtDataControlOfferV1, OfferMimes)>,
     // Currently active selection offer + its mime set.
     current_offer: Option<(ExtDataControlOfferV1, OfferMimes)>,
 }
@@ -144,28 +147,57 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for State {
     ) {
         match event {
             dc_device::Event::DataOffer { id } => {
-                state
-                    .pending_offer_mimes
-                    .insert(id.id().protocol_id(), OfferMimes::default());
+                let key = id.id().protocol_id();
+                state.pending_offers.insert(key, (id, OfferMimes::default()));
             }
             dc_device::Event::Selection { id } => {
                 if let Some((prev, _)) = state.current_offer.take() {
                     prev.destroy();
                 }
+                let claimed = id.as_ref().map(|o| o.id().protocol_id());
+                // Destroy every pending offer except the one being claimed.
+                state.pending_offers.retain(|&k, (proxy, _)| {
+                    if Some(k) == claimed {
+                        true
+                    } else {
+                        proxy.destroy();
+                        false
+                    }
+                });
                 if let Some(offer) = id {
                     let key = offer.id().protocol_id();
-                    let mimes = state.pending_offer_mimes.remove(&key).unwrap_or_default();
-                    state.current_offer = Some((offer, mimes));
+                    match state.pending_offers.remove(&key) {
+                        // Keep the stored proxy; the event's handle is a
+                        // duplicate reference to the same object — drop it.
+                        Some((proxy, mimes)) => {
+                            drop(offer);
+                            state.current_offer = Some((proxy, mimes));
+                        }
+                        None => state.current_offer = Some((offer, OfferMimes::default())),
+                    }
                 }
             }
             dc_device::Event::Finished => {
+                for (_, (proxy, _)) in state.pending_offers.drain() {
+                    proxy.destroy();
+                }
+                if let Some((cur, _)) = state.current_offer.take() {
+                    cur.destroy();
+                }
                 if let Some(dev) = state.device.take() {
                     dev.destroy();
                 }
             }
             dc_device::Event::PrimarySelection { id: Some(offer) } => {
-                state.pending_offer_mimes.remove(&offer.id().protocol_id());
-                offer.destroy();
+                // Primary selection unused — destroy the offer. Use the
+                // stored proxy if present so we don't leave a stale handle.
+                match state.pending_offers.remove(&offer.id().protocol_id()) {
+                    Some((proxy, _)) => {
+                        drop(offer);
+                        proxy.destroy();
+                    }
+                    None => offer.destroy(),
+                }
             }
             _ => {}
         }
@@ -188,7 +220,7 @@ impl Dispatch<ExtDataControlOfferV1, ()> for State {
     ) {
         if let dc_offer::Event::Offer { mime_type } = event {
             let key = offer.id().protocol_id();
-            if let Some(mimes) = state.pending_offer_mimes.get_mut(&key) {
+            if let Some((_, mimes)) = state.pending_offers.get_mut(&key) {
                 mimes.observe(&mime_type);
             } else if let Some((cur, mimes)) = state.current_offer.as_mut()
                 && cur.id().protocol_id() == key
@@ -403,7 +435,7 @@ fn init_impl() -> Option<JfnClipboardWayland> {
         seat: Some(seat),
         mgr: Some(mgr),
         device: Some(device),
-        pending_offer_mimes: Default::default(),
+        pending_offers: Default::default(),
         current_offer: None,
     };
     queue.roundtrip(&mut state).ok()?;
