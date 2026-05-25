@@ -1104,7 +1104,9 @@ name = "jfn-macos"
 version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
+ "jfn-cef",
  "jfn-input",
+ "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
  "objc2",

@@ -12,29 +12,23 @@ use std::ptr;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
-use objc2::{AnyThread, ClassType, DefinedClass, class, define_class, extern_class, msg_send, sel};
+use objc2::{ClassType, DefinedClass, class, define_class, extern_class, msg_send, sel};
 use objc2_foundation::{NSObject, NSObjectProtocol, NSRect};
 
-// Reach the input view created by the Rust input crate. We adopt the
+// The input NSView is created by the input module; we adopt the
 // +1-retained NSView returned here; ownership moves into INPUT_VIEW.
-unsafe extern "C" {
-    fn jfn_input_macos_create_view() -> *mut AnyObject;
-}
+use crate::input::jfn_input_macos_create_view;
 
 use jfn_playback::shutdown::{jfn_shutdown_initiate, jfn_shutting_down};
 
-// jfn-cef Rust APIs we need.
-unsafe extern "C" {
-    fn jfn_browsers_send_external_begin_frame_all();
-    fn jfn_about_open();
-    fn jfn_mpv_set_force_window_position(v: bool);
-}
+use jfn_cef::browsers::jfn_browsers_send_external_begin_frame_all;
+use jfn_cef::business_about::jfn_about_open;
+use jfn_mpv::api::jfn_mpv_set_force_window_position;
 
 // libdispatch / NSAutoreleasePool primitives — shared with the rest of the
 // crate but re-declared here to keep this file self-contained.
 unsafe extern "C" {
     fn objc_getProtocol(name: *const c_char) -> *mut AnyObject;
-    fn protocol_getName(p: *mut AnyObject) -> *const c_char;
     fn class_addProtocol(cls: *const AnyClass, p: *mut AnyObject) -> Bool;
     fn class_getInstanceMethod(cls: *const AnyClass, sel: Sel) -> *mut c_void;
     fn method_setImplementation(method: *mut c_void, imp: *const c_void) -> *const c_void;
@@ -250,7 +244,7 @@ define_class!(
     impl JellyfinAppMenuTarget {
         #[unsafe(method(showAbout:))]
         unsafe fn show_about(&self, _sender: *mut AnyObject) {
-            unsafe { jfn_about_open() };
+            jfn_about_open();
         }
     }
 
@@ -274,7 +268,7 @@ define_class!(
             if jfn_shutting_down() {
                 return;
             }
-            unsafe { jfn_browsers_send_external_begin_frame_all() };
+            jfn_browsers_send_external_begin_frame_all();
         }
     }
 
@@ -362,8 +356,9 @@ unsafe fn stop_display_link(state: &mut InitState) {
 // wait-for-window loop in macos_init).
 // =====================================================================
 
+use crate::macos_pump;
+
 unsafe extern "C" {
-    fn macos_pump();
     fn usleep(usec: u32) -> i32;
 }
 
@@ -526,8 +521,8 @@ pub fn macos_init(_mpv: *mut c_void) -> bool {
         // helper since we already hold INIT_STATE.
         apply_theme_color_to_window(state.window, K_BG_COLOR);
 
-        // Adopt the +1-retained NSView returned by the Rust input crate.
-        state.input_view = jfn_input_macos_create_view();
+        // Adopt the +1-retained NSView returned by the input module.
+        state.input_view = jfn_input_macos_create_view() as *mut AnyObject;
         if !state.input_view.is_null() && !content_view.is_null() {
             let bounds: NSRect = msg_send![content_view, bounds];
             let _: () = msg_send![state.input_view, setFrame: bounds];
@@ -559,9 +554,7 @@ pub fn macos_init(_mpv: *mut c_void) -> bool {
 // retained AppKit handles, tear down the Rust-side compositor.
 // =====================================================================
 
-unsafe extern "C" {
-    fn jfn_macos_compositor_cleanup();
-}
+use crate::compositor::jfn_macos_compositor_cleanup;
 
 pub fn macos_cleanup() {
     let mut state = INIT_STATE.lock();

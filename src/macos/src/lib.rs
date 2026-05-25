@@ -41,7 +41,7 @@ unsafe extern "C" {
 
 #[inline]
 fn dispatch_get_main_queue() -> *mut c_void {
-    unsafe { std::ptr::addr_of!(_dispatch_main_q) as *mut c_void }
+    std::ptr::addr_of!(_dispatch_main_q) as *mut c_void
 }
 
 /// Returns true if the current thread is the AppKit main thread. Avoids
@@ -321,7 +321,8 @@ pub fn macos_surface_present_software(
 
 // macos_early_init / macos_init / macos_cleanup + jfn_macos_get_input_view
 // now live in src/macos/src/init.rs.
-use crate::init::{jfn_macos_get_input_view, macos_cleanup, macos_early_init, macos_init};
+pub use crate::init::jfn_macos_query_logical_content_size;
+use crate::init::{macos_cleanup, macos_early_init, macos_init};
 
 // jfn_input_macos_set_cursor lives in src/macos/src/input.rs (Rust).
 use input::jfn_input_macos_set_cursor;
@@ -332,24 +333,21 @@ use input::jfn_input_macos_set_cursor;
 // guard to match the original behavior.
 // =====================================================================
 
-unsafe extern "C" {
-    fn jfn_mpv_handle_get() -> *mut c_void;
-    fn jfn_mpv_set_fullscreen(v: bool);
-    fn jfn_mpv_toggle_fullscreen();
-}
+use jfn_mpv::api::{jfn_mpv_set_fullscreen, jfn_mpv_toggle_fullscreen};
+use jfn_mpv::boot::jfn_mpv_handle_get;
 
 pub fn macos_set_fullscreen(fullscreen: bool) {
-    if unsafe { jfn_mpv_handle_get() }.is_null() {
+    if jfn_mpv_handle_get().is_null() {
         return;
     }
-    unsafe { jfn_mpv_set_fullscreen(fullscreen) };
+    jfn_mpv_set_fullscreen(fullscreen);
 }
 
 pub fn macos_toggle_fullscreen() {
-    if unsafe { jfn_mpv_handle_get() }.is_null() {
+    if jfn_mpv_handle_get().is_null() {
         return;
     }
-    unsafe { jfn_mpv_toggle_fullscreen() };
+    jfn_mpv_toggle_fullscreen();
 }
 
 // =====================================================================

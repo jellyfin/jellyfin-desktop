@@ -170,6 +170,7 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
 
     // Pull parsed values before freeing the result.
     let mut ozone_platform = String::new();
+    #[cfg(target_os = "linux")]
     let mut platform_override = String::new();
     let mut log_file: Option<String> = None;
     let mut disable_gpu_compositing = false;
@@ -194,6 +195,7 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
         if !rref.ozone_platform.is_null() {
             ozone_platform = unsafe { cstr_to_string(rref.ozone_platform) };
         }
+        #[cfg(target_os = "linux")]
         if !rref.platform_override.is_null() {
             platform_override = unsafe { cstr_to_string(rref.platform_override) };
         }
@@ -431,6 +433,7 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
         g.maximized
     };
     let wait_for_scale = cfg!(target_os = "linux") && plat().display() == DisplayBackend::Wayland;
+    #[cfg(not(target_os = "macos"))]
     let wait_timeout = if wait_for_scale { 0.1 } else { 1.0 };
     tracing::info!(target: "Main", "Waiting for mpv window...");
 
@@ -738,11 +741,9 @@ fn consume_vo_event(
         let mut mac_lw: c_int = 0;
         let mut mac_lh: c_int = 0;
         #[cfg(target_os = "macos")]
-        unsafe {
-            unsafe extern "C" {
-                fn jfn_macos_query_logical_content_size(lw: *mut c_int, lh: *mut c_int) -> bool;
-            }
-            has_macos_logical = jfn_macos_query_logical_content_size(&mut mac_lw, &mut mac_lh);
+        {
+            has_macos_logical =
+                jfn_macos::jfn_macos_query_logical_content_size(&mut mac_lw, &mut mac_lh);
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -854,17 +855,20 @@ fn h_shutdown_close_browsers() {
 /// Owns the run_with_cef body — invoked once by `jfn_app_main`.
 unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     // 1. Resolve final ozone_platform + write into g_platform.cef_ozone_platform.
-    let mut ozone_platform = ba.ozone_platform.clone();
     #[cfg(target_os = "linux")]
-    {
-        if ozone_platform.is_empty() {
-            ozone_platform = if plat().display() == DisplayBackend::Wayland {
+    let ozone_platform = {
+        let mut p = ba.ozone_platform.clone();
+        if p.is_empty() {
+            p = if plat().display() == DisplayBackend::Wayland {
                 "wayland".to_string()
             } else {
                 "x11".to_string()
             };
         }
-    }
+        p
+    };
+    #[cfg(not(target_os = "linux"))]
+    let ozone_platform = ba.ozone_platform.clone();
     plat().set_cef_ozone_platform(&ozone_platform);
 
     // 2. Platform init (PlatformScope). Cleanup happens in jfn_app_teardown.
@@ -1119,12 +1123,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     // 16. Shutdown drain.
     jfn_color::theme::jfn_theme_color_shutdown();
     #[cfg(target_os = "macos")]
-    unsafe {
-        unsafe extern "C" {
-            fn jfn_macos_sink_stop();
-        }
-        jfn_macos_sink_stop();
-    }
+    jfn_macos_sink::jfn_macos_sink_stop();
     #[cfg(target_os = "windows")]
     unsafe {
         unsafe extern "C" {

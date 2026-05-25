@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use jfn_playback::{MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2::{ClassType, define_class, msg_send};
 use objc2_app_kit::NSImage;
 use objc2_foundation::{
     NSCopying, NSData, NSDataBase64DecodingOptions, NSDictionary, NSMutableDictionary, NSNumber,
@@ -476,7 +476,7 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
                 let image_clone = image.clone();
                 let handler = block2::RcBlock::new(move |_size: NSSize| -> NonNull<NSImage> {
                     let img: Retained<NSImage> = image_clone.clone();
-                    unsafe { NonNull::new_unchecked(Retained::autorelease_return(img)) }
+                    NonNull::new_unchecked(Retained::autorelease_return(img))
                 });
                 let artwork: Allocated<MPMediaItemArtwork> =
                     msg_send![MPMediaItemArtwork::class(), alloc];
