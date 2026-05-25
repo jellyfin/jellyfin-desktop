@@ -11,6 +11,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::{c_char, c_int, c_void};
+use std::os::fd::FromRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::wl_ops::{self, JfnDmabufFrame};
@@ -53,8 +54,10 @@ unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFrame> {
     if dup_fd < 0 {
         return None;
     }
+    // OwnedFd closes the dup on drop once the frame is presented.
+    let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
     Some(JfnDmabufFrame {
-        fd: dup_fd,
+        fd,
         stride: plane0.stride,
         modifier: info.modifier,
         coded_w: info.extra.coded_size.width,

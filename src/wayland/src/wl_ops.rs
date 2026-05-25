@@ -5,7 +5,7 @@
 //! before returning so commits land in compositor order matching the
 //! C++ original.
 
-use std::os::fd::BorrowedFd;
+use std::os::fd::{AsFd, OwnedFd};
 
 use wayland_client::protocol::wl_subsurface::WlSubsurface;
 
@@ -334,10 +334,11 @@ fn popup_destroy_locked(s: &mut PlatformSurface) {
 // Present (dmabuf / software)
 // =====================================================================
 
-/// POD frame info — what the caller unpacks from CefAcceleratedPaintInfo.
-#[repr(C)]
+/// Frame info the caller unpacks from CefAcceleratedPaintInfo. Owns its
+/// dup'd dmabuf fd so it's closed on drop after the buffer is built —
+/// the compositor dups its own copy over the wire in `create_params.add`.
 pub struct JfnDmabufFrame {
-    pub fd: i32,
+    pub fd: OwnedFd,
     pub stride: u32,
     pub modifier: u64,
     pub coded_w: i32,
@@ -370,8 +371,7 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
     }
 
     let buf = {
-        let fd = unsafe { BorrowedFd::borrow_raw(frame.fd) };
-        create_dmabuf_buffer(&st, fd, frame.stride, frame.modifier, w, h)
+        create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h)
     };
     let Some(buf) = buf else {
         return false;
@@ -444,8 +444,7 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
         h
     };
     let buf = {
-        let fd = unsafe { BorrowedFd::borrow_raw(frame.fd) };
-        create_dmabuf_buffer(&st, fd, frame.stride, frame.modifier, w, h)
+        create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h)
     };
     let Some(buf) = buf else {
         return;
