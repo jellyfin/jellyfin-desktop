@@ -1,4 +1,4 @@
-use crate::{BuildArgs, cef, fs as xfs, mpv, paths};
+use crate::{BuildArgs, cef, fs as xfs, mpv, paths, version};
 use anyhow::{Context, Result, bail};
 use std::process::Command;
 
@@ -30,6 +30,14 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         cmd.arg("--no-default-features");
     }
     cmd.env("CARGO_TARGET_DIR", &target_dir);
+
+    // Single source of truth for the embedded commit hash. xtask always runs
+    // (never cargo-cached), so it recomputes every build; the build scripts
+    // read these via cargo:rerun-if-env-changed for exact invalidation.
+    let (git_hash, git_dirty) = version::git_info();
+    cmd.env("JFN_GIT_HASH", git_hash.unwrap_or_default());
+    cmd.env("JFN_GIT_DIRTY", if git_dirty { "1" } else { "0" });
+
     if let Some(dir) = &args.external_mpv {
         cmd.env("EXTERNAL_MPV_DIR", dir);
         cmd.env_remove("JFN_MPV_INCLUDE_DIR");

@@ -4,8 +4,31 @@ use regex::Regex;
 use std::process::Command;
 
 pub struct Version {
-    /// "<raw>[+<git-describe>]" — adds git suffix iff raw has a "-suffix".
+    /// "<raw>[+<short-hash>[-dirty]]" — adds git suffix iff raw is a
+    /// pre-release (has a "-suffix").
     pub full: String,
+}
+
+/// Resolve the current commit's short hash and whether the working tree is
+/// dirty. Returns `(None, _)` when git is unavailable (e.g. no `.git`).
+pub fn git_info() -> (Option<String>, bool) {
+    let hash = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(paths::repo_root())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    let dirty = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(paths::repo_root())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false);
+    (hash, dirty)
 }
 
 pub fn read() -> Result<Version> {
@@ -20,22 +43,14 @@ pub fn read() -> Result<Version> {
             "VERSION must be MAJOR.MINOR.PATCH[-suffix]; got '{raw}'"
         ));
     }
-    let full = if raw.contains('-') {
-        let hash = Command::new("git")
-            .args(["describe", "--always", "--dirty"])
-            .current_dir(paths::repo_root())
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
-        if hash.is_empty() {
-            raw
-        } else {
-            format!("{raw}+{hash}")
+    // Only pre-release builds carry the commit suffix; a clean release
+    // VERSION stays bare.
+    let full = match (raw.contains('-'), git_info()) {
+        (true, (Some(hash), dirty)) => {
+            let suffix = if dirty { "-dirty" } else { "" };
+            format!("{raw}+{hash}{suffix}")
         }
-    } else {
-        raw
+        _ => raw,
     };
     Ok(Version { full })
 }
