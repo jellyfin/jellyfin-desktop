@@ -1,6 +1,8 @@
 //! Spawn `xdg-open <url>` detached. Caller ensures the URL is non-empty and
 //! doesn't start with '-'.
 
+#![cfg(target_os = "linux")]
+
 use std::process::{Command, Stdio};
 use std::thread;
 

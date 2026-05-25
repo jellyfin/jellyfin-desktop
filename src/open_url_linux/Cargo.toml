@@ -8,7 +8,9 @@ publish.workspace = true
 name = "jfn_open_url_linux"
 crate-type = ["rlib"]
 
-[dependencies]
+# The whole crate is `#![cfg(target_os = "linux")]`, so it's an empty rlib
+# elsewhere and the workspace builds uniformly on every platform.
+[target.'cfg(target_os = "linux")'.dependencies]
 tracing.workspace = true
 
 [lints]

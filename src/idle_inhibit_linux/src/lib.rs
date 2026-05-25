@@ -4,6 +4,8 @@
 //! inhibit lasts as long as the fd is open. Replacing the inhibit closes the
 //! previous fd, which atomically releases the prior inhibitor.
 
+#![cfg(target_os = "linux")]
+
 use parking_lot::Mutex;
 use std::os::fd::OwnedFd;
 

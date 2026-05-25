@@ -1,5 +1,7 @@
 //! Wayland subsystem: clipboard, input, KDE decoration palette, output-scale probe.
 
+#![cfg(target_os = "linux")]
+
 pub mod clipboard;
 pub mod dmabuf_probe;
 pub mod egl_dyn;
