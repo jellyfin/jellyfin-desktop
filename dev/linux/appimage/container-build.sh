@@ -52,7 +52,7 @@ cp -a /usr/lib64 "$APPDIR/usr/lib"
 # mpv lib (xtask build copies it next to jellyfin-desktop)
 cp "$BUILD"/libmpv.so.2 "$APPDIR/usr/lib/"
 
-# Fedora's ffmpeg-free links GnuTLS; GnuTLS needs a system priority file from
+# Fedora's ffmpeg links GnuTLS; GnuTLS needs a system priority file from
 # crypto-policies. Bundle the DEFAULT one; AppRun points GNUTLS_SYSTEM_PRIORITY_FILE at it.
 mkdir -p "$APPDIR/usr/share/crypto-policies/DEFAULT"
 cp /usr/share/crypto-policies/DEFAULT/gnutls.txt \
