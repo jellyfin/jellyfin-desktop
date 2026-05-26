@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "color",
+    "compositor_core",
     "config",
     "input",
     "jellyfin",

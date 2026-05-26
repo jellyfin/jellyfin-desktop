@@ -1047,6 +1047,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "jfn-compositor-core"
+version = "0.1.0"
+
+[[package]]
 name = "jfn-config"
 version = "0.1.0"
 dependencies = [
