@@ -312,7 +312,7 @@ pub fn win_open_external_url(url: &str) {
 // Backend impl
 // =====================================================================
 
-use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle};
+use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle, SurfaceSize, WindowGeometry, WindowPos};
 
 pub struct WindowsPlatform;
 
@@ -356,8 +356,14 @@ impl Platform for WindowsPlatform {
         win_surface_present_software(s, dirty.as_ptr(), dirty.len(), buffer, w, h)
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
-        win_surface_resize(s, lw, lh, pw, ph);
+    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
+        win_surface_resize(
+            s,
+            size.logical_w,
+            size.logical_h,
+            size.physical_w,
+            size.physical_h,
+        );
     }
 
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
@@ -425,12 +431,19 @@ impl Platform for WindowsPlatform {
         win_get_display_scale(x, y)
     }
 
-    fn query_window_position(&self, x: &mut c_int, y: &mut c_int) -> bool {
-        win_query_window_position(x, y)
+    fn query_window_position(&self) -> Option<WindowPos> {
+        let (mut x, mut y) = (0, 0);
+        if win_query_window_position(&mut x, &mut y) {
+            Some(WindowPos { x, y })
+        } else {
+            None
+        }
     }
 
-    fn clamp_window_geometry(&self, w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
-        win_clamp_window_geometry(w, h, x, y);
+    fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
+        let (mut w, mut h, mut x, mut y) = (g.w, g.h, g.x, g.y);
+        win_clamp_window_geometry(&mut w, &mut h, &mut x, &mut y);
+        WindowGeometry { w, h, x, y }
     }
 
     fn pump(&self) {

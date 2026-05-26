@@ -14,6 +14,7 @@ use crate::surface::{
 
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
+    SurfaceSize, WindowGeometry, WindowPos,
 };
 
 use jfn_mpv::api::{jfn_mpv_set_fullscreen, jfn_mpv_toggle_fullscreen};
@@ -67,9 +68,15 @@ impl Platform for X11Platform {
         }
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
+    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
         unsafe {
-            jfn_x11_surface_resize(s as *mut crate::x11_state::PlatformSurface, lw, lh, pw, ph)
+            jfn_x11_surface_resize(
+                s as *mut crate::x11_state::PlatformSurface,
+                size.logical_w,
+                size.logical_h,
+                size.physical_w,
+                size.physical_h,
+            )
         };
     }
 
@@ -125,23 +132,24 @@ impl Platform for X11Platform {
         1.0
     }
 
-    fn query_window_position(&self, x: &mut c_int, y: &mut c_int) -> bool {
-        let Some(conn) = crate::x11_state::conn() else {
-            return false;
-        };
+    fn query_window_position(&self) -> Option<WindowPos> {
+        let conn = crate::x11_state::conn()?;
         let g = crate::x11_state::MUT.lock();
-        let Some(m) = g.as_ref() else { return false };
-        let Some((px, py, _, _)) = crate::lifecycle::query_parent_geometry(&conn, m.parent, m.root)
-        else {
-            return false;
-        };
-        *x = px;
-        *y = py;
-        true
+        let m = g.as_ref()?;
+        let (x, y, _, _) = crate::lifecycle::query_parent_geometry(&conn, m.parent, m.root)?;
+        Some(WindowPos { x, y })
     }
 
-    fn clamp_window_geometry(&self, w: &mut c_int, h: &mut c_int, _x: &mut c_int, _y: &mut c_int) {
-        crate::lifecycle::clamp_window_geometry(w, h);
+    fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
+        // X11 constrains only the size; position is left to the WM.
+        let (mut w, mut h) = (g.w, g.h);
+        crate::lifecycle::clamp_window_geometry(&mut w, &mut h);
+        WindowGeometry {
+            w,
+            h,
+            x: g.x,
+            y: g.y,
+        }
     }
 
     fn set_cursor(&self, t: c_int) {

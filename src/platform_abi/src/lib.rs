@@ -16,6 +16,8 @@ use std::sync::OnceLock;
 
 pub mod geometry;
 
+pub use geometry::{SurfaceSize, WindowGeometry, WindowPos};
+
 /// Canonical `cef_cursor_type_t` ordinals, the single source of truth for the
 /// cursor codes that flow through [`Platform::set_cursor`]. Values are derived
 /// from the generated CEF bindings so backends can never hand-copy (and drift
@@ -150,7 +152,7 @@ pub trait Platform: Send + Sync {
     ) -> bool {
         false
     }
-    fn surface_resize(&self, _s: SurfaceHandle, _lw: c_int, _lh: c_int, _pw: c_int, _ph: c_int) {}
+    fn surface_resize(&self, _s: SurfaceHandle, _size: SurfaceSize) {}
     fn surface_set_visible(&self, _s: SurfaceHandle, _visible: bool) {}
     fn restack(&self, _ordered: &[SurfaceHandle]) {}
 
@@ -188,16 +190,14 @@ pub trait Platform: Send + Sync {
         1.0
     }
 
-    fn query_window_position(&self, _x: &mut c_int, _y: &mut c_int) -> bool {
-        false
+    /// Current window position, or `None` if it can't be determined.
+    fn query_window_position(&self) -> Option<WindowPos> {
+        None
     }
-    fn clamp_window_geometry(
-        &self,
-        _w: &mut c_int,
-        _h: &mut c_int,
-        _x: &mut c_int,
-        _y: &mut c_int,
-    ) {
+    /// Clamp saved geometry to stay on-screen. Backends that don't constrain
+    /// geometry return `g` unchanged (the default).
+    fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
+        g
     }
 
     fn pump(&self) {}

@@ -6,7 +6,7 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
-use jfn_platform_abi::{DisplayBackend, IdleInhibitLevel, Platform};
+use jfn_platform_abi::{DisplayBackend, IdleInhibitLevel, Platform, WindowGeometry};
 
 use crate::cli;
 
@@ -660,7 +660,11 @@ fn compute_boot_geometry() -> (String, bool, bool) {
         )
     };
     tracing::debug!(target: "Main", "initial scale: {scale_f} -> {w}x{h}");
-    plat().clamp_window_geometry(&mut w, &mut h, &mut x, &mut y);
+    let clamped = plat().clamp_window_geometry(WindowGeometry { w, h, x, y });
+    w = clamped.w;
+    h = clamped.h;
+    x = clamped.x;
+    y = clamped.y;
     let mut s = format!("{w}x{h}");
     let force_position = x >= 0 && y >= 0;
     if force_position {
@@ -969,11 +973,16 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
             && saved.scale > 0.0
             && (display_hidpi_scale - saved.scale as f64).abs() >= 0.01
         {
-            let mut new_pw = (saved.logical_width as f64 * display_hidpi_scale).round() as c_int;
-            let mut new_ph = (saved.logical_height as f64 * display_hidpi_scale).round() as c_int;
-            let mut dummy_x: c_int = -1;
-            let mut dummy_y: c_int = -1;
-            plat().clamp_window_geometry(&mut new_pw, &mut new_ph, &mut dummy_x, &mut dummy_y);
+            let new_pw = (saved.logical_width as f64 * display_hidpi_scale).round() as c_int;
+            let new_ph = (saved.logical_height as f64 * display_hidpi_scale).round() as c_int;
+            // Only the size matters here; x/y are unused on the return.
+            let clamped = plat().clamp_window_geometry(WindowGeometry {
+                w: new_pw,
+                h: new_ph,
+                x: -1,
+                y: -1,
+            });
+            let (new_pw, new_ph) = (clamped.w, clamped.h);
             let geom_str = format!("{new_pw}x{new_ph}");
             tracing::info!(target: "Main",
                 "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
@@ -1181,9 +1190,9 @@ fn save_window_geometry_on_exit() {
         if pw > 0 && ph > 0 {
             let scale_raw = plat().get_scale();
             let win_scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
-            let mut wx: c_int = -1;
-            let mut wy: c_int = -1;
-            plat().query_window_position(&mut wx, &mut wy);
+            let pos = plat().query_window_position();
+            let wx = pos.map_or(-1, |p| p.x);
+            let wy = pos.map_or(-1, |p| p.y);
             let g = jfn_config::JfnWindowGeometry {
                 width: pw,
                 height: ph,

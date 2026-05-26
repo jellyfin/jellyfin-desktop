@@ -20,6 +20,7 @@ use crate::wl_ops::{self, JfnDmabufFrame};
 
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
+    SurfaceSize,
 };
 
 // =====================================================================
@@ -142,8 +143,14 @@ impl Platform for WaylandPlatform {
         wl_ops::surface_present_software(s as *mut crate::wl_state::PlatformSurface, pixels, w, h)
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
-        wl_ops::surface_resize(s as *mut crate::wl_state::PlatformSurface, lw, lh, pw, ph);
+    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
+        wl_ops::surface_resize(
+            s as *mut crate::wl_state::PlatformSurface,
+            size.logical_w,
+            size.logical_h,
+            size.physical_w,
+            size.physical_h,
+        );
     }
 
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
