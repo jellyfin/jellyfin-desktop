@@ -1,6 +1,5 @@
 * {
     box-sizing: border-box;
-    opacity: inherit;
 }
 body {
     background: var(--bg-color);
