@@ -488,7 +488,15 @@ impl Inner {
         if !surface.is_null()
             && let Some(p) = platform_ops::ops()
         {
-            p.surface_resize(surface, w, h, pw, ph);
+            p.surface_resize(
+                surface,
+                platform_ops::SurfaceSize {
+                    logical_w: w,
+                    logical_h: h,
+                    physical_w: pw,
+                    physical_h: ph,
+                },
+            );
         }
 
         // Defer kick until the browser exists; OnAfterCreated will fire it.

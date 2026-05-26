@@ -27,6 +27,27 @@ pub struct WindowGeometry {
     pub y: c_int,
 }
 
+/// A window's top-left position, in the coordinate space the backend
+/// reports (backing pixels relative to the working area). Returned by
+/// `Platform::query_window_position`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct WindowPos {
+    pub x: c_int,
+    pub y: c_int,
+}
+
+/// A surface resize request: logical (DIP) and physical (pixel) dimensions.
+/// Carried as one struct through `Platform::surface_resize` so adding a
+/// field later doesn't change the method's arity (and so doesn't churn
+/// every backend + call site).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SurfaceSize {
+    pub logical_w: c_int,
+    pub logical_h: c_int,
+    pub physical_w: c_int,
+    pub physical_h: c_int,
+}
+
 /// Clamp `g` so the window stays fully within `bounds`: shrink oversized
 /// dimensions, center any unset (negative) axis, pull a past-the-edge window
 /// back in-bounds, then floor at the origin. Byte-for-byte the former
