@@ -1040,13 +1040,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jfn-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
-]
-
-[[package]]
 name = "jfn-color"
 version = "0.1.0"
 dependencies = [
@@ -1172,9 +1165,9 @@ dependencies = [
 name = "jfn-rust"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "embed-resource",
  "jfn-cef",
- "jfn-cli",
  "jfn-color",
  "jfn-config",
  "jfn-jellyfin",
@@ -1185,22 +1178,14 @@ dependencies = [
  "jfn-paths",
  "jfn-platform-abi",
  "jfn-playback",
- "jfn-single-instance",
  "jfn-wayland",
  "jfn-windows",
  "jfn-windows-sink",
  "jfn-wlproxy",
  "jfn-x11",
  "libc",
- "tracing",
-]
-
-[[package]]
-name = "jfn-single-instance"
-version = "0.1.0"
-dependencies = [
- "libc",
  "parking_lot",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 

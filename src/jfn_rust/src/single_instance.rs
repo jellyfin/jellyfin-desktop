@@ -3,40 +3,30 @@
 //! Lets a second invocation of the app raise the existing window instead
 //! of starting a fresh process. Implementation per platform:
 //!
-//! - Linux/macOS: AF_UNIX SOCK_STREAM socket under `$XDG_RUNTIME_DIR` or
-//!   `$TMPDIR`. The new process writes `raise [token]\n` and the running
-//!   process's listener thread invokes a callback with the activation
-//!   token (used by xdg-activation-v1 to focus the window).
+//! - Linux: AF_UNIX SOCK_STREAM socket under `$XDG_RUNTIME_DIR` or `/tmp`.
+//!   The new process writes `raise [token]\n` and the running process's
+//!   listener thread invokes the callback with the activation token (used
+//!   by xdg-activation-v1 to focus the window).
 //! - Windows: named pipe `\\.\pipe\jellyfin-desktop`. The new process
 //!   writes `raise\n` (no activation token concept on Windows).
+//!
+//! macOS uses the NSApp delegate for activation, so this module is not
+//! compiled there.
 
-use std::ffi::c_void;
-use std::os::raw::c_char;
-
-#[derive(Clone, Copy)]
-struct Callback {
-    cb: unsafe extern "C" fn(*const c_char, *mut c_void),
-    userdata: *mut c_void,
-}
-
-// Pointer is opaque to Rust; C caller guarantees it stays valid until
-// stop_listener returns.
-unsafe impl Send for Callback {}
-unsafe impl Sync for Callback {}
+/// Listener callback: invoked on the listener thread when another instance
+/// signals us, with the activation token (empty on Windows / when none).
+type Callback = Box<dyn Fn(&str) + Send>;
 
 #[cfg(unix)]
 mod imp {
     use super::Callback;
+    use libc::getuid;
     use libc::{
         AF_UNIX, ECONNREFUSED, ENOENT, POLLIN, SOCK_STREAM, c_char, c_int, c_void, close, pipe,
         poll, pollfd, sockaddr_un,
     };
-    // Only the non-macOS socket path derives the filename from the uid; macOS
-    // uses TMPDIR instead.
-    #[cfg(not(target_os = "macos"))]
-    use libc::getuid;
     use parking_lot::Mutex;
-    use std::ffi::{CStr, CString};
+    use std::ffi::CString;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
     use std::thread::{self, JoinHandle};
@@ -48,32 +38,18 @@ mod imp {
     static THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
     fn socket_path() -> PathBuf {
-        #[cfg(target_os = "macos")]
+        if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR")
+            && !dir.is_empty()
         {
-            if let Ok(tmpdir) = std::env::var("TMPDIR")
-                && !tmpdir.is_empty()
-            {
-                let mut p = PathBuf::from(tmpdir);
-                p.push("jellyfin-desktop.sock");
-                return p;
-            }
-            PathBuf::from("/tmp/jellyfin-desktop.sock")
+            let mut p = PathBuf::from(dir);
+            p.push("jellyfin-desktop.sock");
+            return p;
         }
-        #[cfg(not(target_os = "macos"))]
-        {
-            if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR")
-                && !dir.is_empty()
-            {
-                let mut p = PathBuf::from(dir);
-                p.push("jellyfin-desktop.sock");
-                return p;
-            }
-            let uid = unsafe { getuid() };
-            PathBuf::from(format!("/tmp/jellyfin-desktop-{uid}.sock"))
-        }
+        let uid = unsafe { getuid() };
+        PathBuf::from(format!("/tmp/jellyfin-desktop-{uid}.sock"))
     }
 
-    fn fill_sockaddr(path: &CStr) -> Option<sockaddr_un> {
+    fn fill_sockaddr(path: &std::ffi::CStr) -> Option<sockaddr_un> {
         let mut addr: sockaddr_un = unsafe { std::mem::zeroed() };
         addr.sun_family = AF_UNIX as _;
         let bytes = path.to_bytes_with_nul();
@@ -178,11 +154,11 @@ mod imp {
                 while end > 0 && (rest[end - 1] == b'\n' || rest[end - 1] == b'\r') {
                     end -= 1;
                 }
-                CString::new(&rest[..end]).unwrap_or_default()
+                String::from_utf8_lossy(&rest[..end]).into_owned()
             } else {
-                CString::default()
+                String::new()
             };
-            unsafe { (cb.cb)(token.as_ptr(), cb.userdata) };
+            cb(&token);
         }
     }
 
@@ -272,7 +248,6 @@ mod imp {
 mod imp {
     use super::Callback;
     use parking_lot::Mutex;
-    use std::ffi::CString;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread::{self, JoinHandle};
     use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};
@@ -378,8 +353,7 @@ mod imp {
             if ok != 0 && read > 0 {
                 let line = &buf[..read as usize];
                 if line.windows(5).any(|w| w == b"raise") {
-                    let empty = CString::default();
-                    unsafe { (cb.cb)(empty.as_ptr(), cb.userdata) };
+                    cb("");
                 }
             }
             unsafe {
@@ -436,22 +410,19 @@ mod imp {
     }
 }
 
-pub fn jfn_single_instance_try_signal_existing() -> i32 {
-    imp::try_signal_existing() as i32
+/// Try to signal an already-running instance. Returns `true` if one was
+/// reached (this process should then exit).
+pub fn try_signal_existing() -> bool {
+    imp::try_signal_existing()
 }
 
-/// # Safety
-/// `cb` must remain callable for the lifetime of the listener thread (i.e.
-/// until `jfn_single_instance_stop_listener` returns). `userdata` is opaque
-/// to Rust and passed back to `cb` unchanged.
-pub unsafe fn jfn_single_instance_start_listener(
-    cb: Option<unsafe extern "C" fn(*const c_char, *mut c_void)>,
-    userdata: *mut c_void,
-) -> i32 {
-    let Some(cb) = cb else { return 0 };
-    imp::start_listener(Callback { cb, userdata }) as i32
+/// Start the listener thread that answers future `try_signal_existing`
+/// calls. `cb` runs on the listener thread with the activation token.
+pub fn start_listener<F: Fn(&str) + Send + 'static>(cb: F) -> bool {
+    imp::start_listener(Box::new(cb))
 }
 
-pub fn jfn_single_instance_stop_listener() {
+/// Stop the listener thread and release the socket / pipe.
+pub fn stop_listener() {
     imp::stop_listener();
 }
