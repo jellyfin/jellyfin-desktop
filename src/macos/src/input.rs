@@ -30,25 +30,13 @@ extern_class!(
     pub struct NSView;
 );
 
-// =====================================================================
-// CEF constants (cef_types.h)
-// =====================================================================
-
-const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
-const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
-const EVENTFLAG_ALT_DOWN: u32 = 1 << 3;
-const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
-const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
-const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
-const EVENTFLAG_COMMAND_DOWN: u32 = 1 << 7;
-
-// CEF mouse button codes (matching dispatch.h's encoding for the
-// jfn_input_dispatch_mouse_button entry point).
-const MOUSE_BTN_LEFT: u32 = 0x110;
-const MOUSE_BTN_RIGHT: u32 = 0x111;
-const MOUSE_BTN_MIDDLE: u32 = 0x112;
-
+use jfn_input::buttons::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use jfn_platform_abi::cursor::*;
+use jfn_platform_abi::event_flags::{
+    EVENTFLAG_ALT_DOWN, EVENTFLAG_COMMAND_DOWN, EVENTFLAG_CONTROL_DOWN,
+    EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
+    EVENTFLAG_SHIFT_DOWN,
+};
 
 // NSEventModifierFlags (NSEvent.h).
 const NSEVENT_MOD_SHIFT: u64 = 1 << 17;
@@ -414,19 +402,19 @@ define_class!(
         // ---- Mouse buttons ----
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &AnyObject) {
-            dispatch_mouse_button(self, event, MOUSE_BTN_LEFT, true);
+            dispatch_mouse_button(self, event, BTN_LEFT, true);
         }
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &AnyObject) {
-            dispatch_mouse_button(self, event, MOUSE_BTN_LEFT, false);
+            dispatch_mouse_button(self, event, BTN_LEFT, false);
         }
         #[unsafe(method(rightMouseDown:))]
         fn right_mouse_down(&self, event: &AnyObject) {
-            dispatch_mouse_button(self, event, MOUSE_BTN_RIGHT, true);
+            dispatch_mouse_button(self, event, BTN_RIGHT, true);
         }
         #[unsafe(method(rightMouseUp:))]
         fn right_mouse_up(&self, event: &AnyObject) {
-            dispatch_mouse_button(self, event, MOUSE_BTN_RIGHT, false);
+            dispatch_mouse_button(self, event, BTN_RIGHT, false);
         }
         #[unsafe(method(otherMouseDown:))]
         fn other_mouse_down(&self, event: &AnyObject) {
@@ -435,7 +423,7 @@ define_class!(
                 jfn_input_dispatch_history_nav(if n == NS_MOUSE_BUTTON_FORWARD { 1 } else { 0 });
                 return;
             }
-            dispatch_mouse_button(self, event, MOUSE_BTN_MIDDLE, true);
+            dispatch_mouse_button(self, event, BTN_MIDDLE, true);
         }
         #[unsafe(method(otherMouseUp:))]
         fn other_mouse_up(&self, event: &AnyObject) {
@@ -443,7 +431,7 @@ define_class!(
             if n == NS_MOUSE_BUTTON_BACK || n == NS_MOUSE_BUTTON_FORWARD {
                 return;
             }
-            dispatch_mouse_button(self, event, MOUSE_BTN_MIDDLE, false);
+            dispatch_mouse_button(self, event, BTN_MIDDLE, false);
         }
 
         // ---- Mouse move ----
@@ -627,9 +615,9 @@ fn mouse_loc_in_view(view: &InputView, event: &AnyObject) -> NSPoint {
 
 fn dispatch_mouse_button(view: &InputView, event: &AnyObject, button_code: u32, pressed: bool) {
     let flag = match button_code {
-        MOUSE_BTN_LEFT => EVENTFLAG_LEFT_MOUSE_BUTTON,
-        MOUSE_BTN_RIGHT => EVENTFLAG_RIGHT_MOUSE_BUTTON,
-        MOUSE_BTN_MIDDLE => EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+        BTN_LEFT => EVENTFLAG_LEFT_MOUSE_BUTTON,
+        BTN_RIGHT => EVENTFLAG_RIGHT_MOUSE_BUTTON,
+        BTN_MIDDLE => EVENTFLAG_MIDDLE_MOUSE_BUTTON,
         _ => 0,
     };
     let prev = G_MOUSE_BUTTON_MODIFIERS.load(Ordering::SeqCst);

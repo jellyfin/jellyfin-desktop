@@ -28,15 +28,12 @@ use jfn_playback::wake_event::{
     jfn_wake_event_signal,
 };
 
-// CEF event flag bits (cef_event_flags_t).
-const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
-const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
-const EVENTFLAG_ALT_DOWN: u32 = 1 << 3;
-const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
-const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
-const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
-
+use jfn_input::buttons;
+use jfn_input::xkb::to_cef_mods;
 use jfn_platform_abi::cursor::*;
+use jfn_platform_abi::event_flags::{
+    EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
+};
 
 const XKB_KEY_XF86BACK: u32 = 0x1008ff26;
 const XKB_KEY_XF86FORWARD: u32 = 0x1008ff27;
@@ -119,20 +116,6 @@ struct State {
 }
 
 unsafe impl Send for State {}
-
-fn xkb_to_cef_mods(st: &xkb::State) -> u32 {
-    let mut m = 0u32;
-    if st.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE) {
-        m |= EVENTFLAG_SHIFT_DOWN;
-    }
-    if st.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE) {
-        m |= EVENTFLAG_CONTROL_DOWN;
-    }
-    if st.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE) {
-        m |= EVENTFLAG_ALT_DOWN;
-    }
-    m
-}
 
 fn build_cursor_screen(screen: &x::Screen, allowed_depths_len: u8) -> cursor_ffi::xcb_screen_t {
     cursor_ffi::xcb_screen_t {
@@ -324,7 +307,7 @@ fn handle_key(st: &mut State, detail: u8, pressed: bool) {
             xkb::KeyDirection::Up
         },
     );
-    st.modifiers = xkb_to_cef_mods(xst);
+    st.modifiers = to_cef_mods(xst);
 }
 
 fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed: bool) {
@@ -368,9 +351,9 @@ fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed
 
     // Browser bridge expects linux/input-event-codes.h button codes.
     let code: u32 = match button {
-        1 => 0x110, // BTN_LEFT
-        2 => 0x112, // BTN_MIDDLE
-        3 => 0x111, // BTN_RIGHT
+        1 => buttons::BTN_LEFT,
+        2 => buttons::BTN_MIDDLE,
+        3 => buttons::BTN_RIGHT,
         _ => return,
     };
     jfn_input_dispatch_mouse_button(code, pressed as c_int, x, y, cef_modifiers(st));
@@ -403,7 +386,7 @@ fn handle_xkb_state_notify(st: &mut State, ev: &xcb::xkb::StateNotifyEvent) {
             ev.latched_group() as u32,
             ev.locked_group() as u32,
         );
-        st.modifiers = xkb_to_cef_mods(xst);
+        st.modifiers = to_cef_mods(xst);
     }
 }
 

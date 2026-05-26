@@ -2,25 +2,28 @@
 //! events and forwards them to the active browser via
 //! [`jfn_platform_abi::browser_bridge`].
 
+use jfn_platform_abi::event_flags::EVENTFLAG_PRECISION_SCROLLING_DELTA;
 use jfn_platform_abi::{BrowserBridge, browser_bridge};
 use jfn_playback::hotkey::jfn_hotkey_classify_keydown;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use parking_lot::Mutex;
 use std::os::raw::c_int;
 
+pub mod buttons;
 #[cfg(target_os = "linux")]
 mod keysym;
+#[cfg(target_os = "linux")]
+pub mod xkb;
 
 // CEF event-type constants (from include/internal/cef_types.h).
 const KEYEVENT_RAWKEYDOWN: c_int = 0;
 const KEYEVENT_KEYUP: c_int = 2;
 const KEYEVENT_CHAR: c_int = 3;
-// CEF mouse-button constants (MBT_*).
+// CEF mouse-button-type constants (MBT_*) — the click target, distinct from
+// the evdev button-code currency in [`buttons`].
 const MBT_LEFT: c_int = 0;
 const MBT_MIDDLE: c_int = 1;
 const MBT_RIGHT: c_int = 2;
-// EVENTFLAG_PRECISION_SCROLLING_DELTA.
-const EVENTFLAG_PRECISION_SCROLLING_DELTA: u32 = 1 << 17;
 
 #[derive(Copy, Clone, Default)]
 struct LastMousePos {
@@ -39,9 +42,9 @@ static LAST_POS: Mutex<LastMousePos> = Mutex::new(LastMousePos {
 
 fn cef_button(button_code: u32) -> Option<c_int> {
     match button_code {
-        0x110 => Some(MBT_LEFT),
-        0x111 => Some(MBT_RIGHT),
-        0x112 => Some(MBT_MIDDLE),
+        buttons::BTN_LEFT => Some(MBT_LEFT),
+        buttons::BTN_RIGHT => Some(MBT_RIGHT),
+        buttons::BTN_MIDDLE => Some(MBT_MIDDLE),
         _ => None,
     }
 }

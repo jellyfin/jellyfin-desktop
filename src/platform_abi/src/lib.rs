@@ -44,6 +44,29 @@ pub mod cursor {
     }
 }
 
+/// Canonical `cef_event_flags_t` modifier bits — the single source of truth
+/// for the CEF `EVENTFLAG_*` masks that flow through key/mouse dispatch.
+/// Derived from the generated CEF bindings (a newtype with associated
+/// constants) so backends import these instead of hand-copying bit shifts
+/// that can silently drift. Typed `u32` to match the dispatch ABI.
+pub mod event_flags {
+    use cef_dll_sys::cef_event_flags_t as ef;
+
+    macro_rules! flag_consts {
+        ($($name:ident),* $(,)?) => {
+            $(pub const $name: u32 = ef::$name.0 as u32;)*
+        };
+    }
+
+    flag_consts! {
+        EVENTFLAG_CAPS_LOCK_ON, EVENTFLAG_SHIFT_DOWN, EVENTFLAG_CONTROL_DOWN,
+        EVENTFLAG_ALT_DOWN, EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+        EVENTFLAG_RIGHT_MOUSE_BUTTON, EVENTFLAG_COMMAND_DOWN, EVENTFLAG_NUM_LOCK_ON,
+        EVENTFLAG_IS_KEY_PAD, EVENTFLAG_IS_LEFT, EVENTFLAG_IS_RIGHT, EVENTFLAG_ALTGR_DOWN,
+        EVENTFLAG_IS_REPEAT, EVENTFLAG_PRECISION_SCROLLING_DELTA, EVENTFLAG_SCROLL_BY_PAGE,
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DisplayBackend {
     Wayland,

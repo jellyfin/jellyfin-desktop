@@ -24,13 +24,12 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 };
 use xkbcommon::xkb;
 
-// CEF EVENTFLAG values (kept in sync with include/internal/cef_types.h).
-const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
-const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
-const EVENTFLAG_ALT_DOWN: u32 = 1 << 3;
-const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
-const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
-const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
+use jfn_input::buttons::{
+    BTN_BACK, BTN_EXTRA, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE,
+};
+use jfn_platform_abi::event_flags::{
+    EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
+};
 
 use jfn_platform_abi::cursor::{
     CT_ALIAS, CT_CELL, CT_COLUMNRESIZE, CT_CONTEXTMENU, CT_COPY, CT_CROSS, CT_EASTRESIZE,
@@ -84,15 +83,6 @@ fn cef_to_wl_shape(cef: u32) -> u32 {
     };
     s as u32
 }
-
-// linux/input-event-codes.h. Defined here to avoid pulling libc::input.
-const BTN_LEFT: u32 = 0x110;
-const BTN_RIGHT: u32 = 0x111;
-const BTN_MIDDLE: u32 = 0x112;
-const BTN_SIDE: u32 = 0x113;
-const BTN_EXTRA: u32 = 0x114;
-const BTN_FORWARD: u32 = 0x115;
-const BTN_BACK: u32 = 0x116;
 
 pub type MouseMoveFn = fn(x: i32, y: i32, mods: u32, leave: c_int);
 pub type MouseButtonFn = fn(button: u32, pressed: c_int, x: i32, y: i32, mods: u32);
@@ -160,21 +150,10 @@ impl State {
     }
 
     fn refresh_modifiers(&mut self) {
-        let Some(st) = &self.xkb_st else {
-            self.modifiers = 0;
-            return;
+        self.modifiers = match &self.xkb_st {
+            Some(st) => jfn_input::xkb::to_cef_mods(st),
+            None => 0,
         };
-        let mut m = 0;
-        if st.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE) {
-            m |= EVENTFLAG_SHIFT_DOWN;
-        }
-        if st.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE) {
-            m |= EVENTFLAG_CONTROL_DOWN;
-        }
-        if st.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE) {
-            m |= EVENTFLAG_ALT_DOWN;
-        }
-        self.modifiers = m;
     }
 
     fn apply_cursor(&mut self, qh: &QueueHandle<Self>) {
