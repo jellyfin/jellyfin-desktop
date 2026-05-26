@@ -72,6 +72,15 @@ impl TransitionGate {
         self.expected
     }
 
+    /// The pre-resize physical size captured at [`begin_capturing`], if any.
+    /// Windows uses this to detect when a resize has actually landed.
+    ///
+    /// [`begin_capturing`]: TransitionGate::begin_capturing
+    #[must_use]
+    pub fn captured(&self) -> Option<(i32, i32)> {
+        self.captured
+    }
+
     /// macOS: enter the transition without capturing a size.
     pub fn begin(&mut self) {
         self.in_transition = true;
@@ -214,6 +223,16 @@ mod tests {
             PresentDecision::Reject
         );
         assert!(g.in_transition());
+    }
+
+    #[test]
+    fn captured_exposed_for_resize_detection() {
+        let mut g = TransitionGate::new();
+        assert_eq!(g.captured(), None);
+        g.begin_capturing((1280, 720));
+        assert_eq!(g.captured(), Some((1280, 720)));
+        g.end();
+        assert_eq!(g.captured(), None);
     }
 
     #[test]

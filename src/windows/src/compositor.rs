@@ -10,7 +10,6 @@
 
 use parking_lot::Mutex;
 use std::ffi::{c_int, c_void};
-use std::sync::atomic::Ordering;
 
 use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::Graphics::Direct3D::{
@@ -33,7 +32,8 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows_core::Interface;
 
-use crate::G_TRANSITIONING;
+use jfn_compositor_core::stack::SurfaceStack;
+use jfn_compositor_core::transition::{PresentDecision, TransitionGate};
 use jfn_platform_abi::JfnRect;
 
 // =====================================================================
@@ -100,15 +100,14 @@ unsafe impl Send for Surface {}
 
 struct State {
     devices: Option<CompositorDevices>,
-    live: Vec<*mut Surface>,
-    stack: Vec<*mut Surface>,
-    main_surface: *mut Surface,
+    // Surface registry (live + stack order + main) shared with macOS via
+    // jfn-compositor-core.
+    surfaces: SurfaceStack<*mut Surface>,
+    // Fullscreen/resize transition gate (was G_TRANSITIONING + expected_w/h +
+    // transition_pw/ph), kept inside this single STATE lock.
+    gate: TransitionGate,
     mpv_pw: i32,
     mpv_ph: i32,
-    expected_w: i32,
-    expected_h: i32,
-    transition_pw: i32,
-    transition_ph: i32,
     pending_lw: i32,
     pending_lh: i32,
 }
@@ -117,18 +116,19 @@ unsafe impl Send for State {}
 
 static STATE: Mutex<State> = Mutex::new(State {
     devices: None,
-    live: Vec::new(),
-    stack: Vec::new(),
-    main_surface: std::ptr::null_mut(),
+    surfaces: SurfaceStack::new(),
+    gate: TransitionGate::new(),
     mpv_pw: 0,
     mpv_ph: 0,
-    expected_w: 0,
-    expected_h: 0,
-    transition_pw: 0,
-    transition_ph: 0,
     pending_lw: 0,
     pending_lh: 0,
 });
+
+/// Whether the main surface is currently gated. Takes the STATE lock, so
+/// callers must not already hold it (none do).
+pub(crate) fn gate_in_transition() -> bool {
+    STATE.lock().gate.in_transition()
+}
 
 // =====================================================================
 // Compositor init/cleanup — called from win_init/win_cleanup (C++).
@@ -204,9 +204,7 @@ pub fn jfn_win_cleanup_compositor() {
     let mut st = STATE.lock();
     // Free any remaining surfaces. Browsers should normally free them
     // first, but be defensive.
-    let live: Vec<*mut Surface> = std::mem::take(&mut st.live);
-    st.stack.clear();
-    st.main_surface = std::ptr::null_mut();
+    let live: Vec<*mut Surface> = st.surfaces.take_live();
     for ptr in live {
         if !ptr.is_null() {
             // SAFETY: we own these pointers via Box::into_raw.
@@ -390,10 +388,7 @@ pub fn win_alloc_surface() -> *mut c_void {
     }
 
     let ptr = Box::into_raw(s);
-    st.live.push(ptr);
-    if st.main_surface.is_null() {
-        st.main_surface = ptr;
-    }
+    st.surfaces.add_live(ptr);
     ptr as *mut c_void
 }
 
@@ -404,21 +399,7 @@ pub fn win_free_surface(s: *mut c_void) {
     let p = s as *mut Surface;
 
     let mut st = STATE.lock();
-    if let Some(idx) = st.live.iter().position(|&q| q == p) {
-        st.live.remove(idx);
-    }
-    if let Some(idx) = st.stack.iter().position(|&q| q == p) {
-        st.stack.remove(idx);
-    }
-    if st.main_surface == p {
-        st.main_surface = if let Some(&first) = st.stack.first() {
-            first
-        } else if let Some(&first) = st.live.first() {
-            first
-        } else {
-            std::ptr::null_mut()
-        };
-    }
+    st.surfaces.remove(p);
 
     let devices = st.devices.as_ref();
     unsafe {
@@ -442,7 +423,7 @@ pub fn win_restack(ordered: *const *mut c_void, n: usize) {
 
     // Snapshot live pointers so we can detach without holding a borrow of
     // `st` while we mutate per-surface state.
-    let live_ptrs: Vec<*mut Surface> = st.live.clone();
+    let live_ptrs: Vec<*mut Surface> = st.surfaces.live().to_vec();
     {
         let dcomp_root = st.devices.as_ref().unwrap().dcomp_root.clone();
         unsafe {
@@ -461,7 +442,7 @@ pub fn win_restack(ordered: *const *mut c_void, n: usize) {
         }
     }
 
-    st.stack.clear();
+    st.surfaces.clear_stack();
     let mut prev_visual: Option<IDCompositionVisual> = None;
     {
         let dcomp_root = st.devices.as_ref().unwrap().dcomp_root.clone();
@@ -486,14 +467,12 @@ pub fn win_restack(ordered: *const *mut c_void, n: usize) {
                     continue;
                 }
                 s.in_tree = true;
-                st.stack.push(ptr);
+                st.surfaces.push_stack(ptr);
                 prev_visual = Some(visual);
             }
         }
     }
-    if let Some(&first) = st.stack.first() {
-        st.main_surface = first;
-    }
+    st.surfaces.set_main_to_stack_first();
     unsafe {
         let _ = st.devices.as_ref().unwrap().dcomp_device.Commit();
     }
@@ -541,15 +520,21 @@ pub fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     let h = td.Height as i32;
 
     let p = s as *mut Surface;
-    let is_main = st.main_surface == p;
+    let is_main = st.surfaces.is_main(p);
 
     // Transition logic applies only to the bottom-most ("main") surface.
-    if is_main && G_TRANSITIONING.load(Ordering::SeqCst) {
-        if st.expected_w <= 0 || (w == st.transition_pw && h == st.transition_ph) {
-            return false;
+    if is_main {
+        match st.gate.main_present_decision((w, h)) {
+            PresentDecision::Reject => return false,
+            PresentDecision::EndTransitionThenPresent => {
+                // The gate cleared the transition flags; clear the
+                // (write-only) pending logical size too, matching the rest
+                // of end_transition_locked.
+                st.pending_lw = 0;
+                st.pending_lh = 0;
+            }
+            PresentDecision::Present => {}
         }
-        // New frame matches expected size — end transition.
-        end_transition_locked(&mut st);
     }
 
     if is_main && st.mpv_pw > 0 && (w > st.mpv_pw + 2 || h > st.mpv_ph + 2) {
@@ -670,17 +655,16 @@ pub fn win_surface_set_visible(s: *mut c_void, visible: bool) {
 // =====================================================================
 
 fn begin_transition_locked(st: &mut State) {
-    G_TRANSITIONING.store(true, Ordering::SeqCst);
-    st.transition_pw = st.mpv_pw;
-    st.transition_ph = st.mpv_ph;
+    // Capture the pre-resize physical size; the present path ends the
+    // transition once a frame arrives at a different size.
+    st.gate.begin_capturing((st.mpv_pw, st.mpv_ph));
     st.pending_lw = 0;
     st.pending_lh = 0;
 
     // Detach main surface's content to avoid stale frames while resizing.
-    if st.main_surface.is_null() {
+    let Some(p) = st.surfaces.main() else {
         return;
-    }
-    let p = st.main_surface;
+    };
     let devices = match st.devices.as_ref() {
         Some(d) => d,
         None => return,
@@ -698,9 +682,7 @@ fn begin_transition_locked(st: &mut State) {
 }
 
 fn end_transition_locked(st: &mut State) {
-    G_TRANSITIONING.store(false, Ordering::SeqCst);
-    st.expected_w = 0;
-    st.expected_h = 0;
+    st.gate.end();
     st.pending_lw = 0;
     st.pending_lh = 0;
 }
@@ -719,12 +701,7 @@ pub fn win_end_transition() {
 }
 
 pub fn win_set_expected_size(w: c_int, h: c_int) {
-    let mut st = STATE.lock();
-    if G_TRANSITIONING.load(Ordering::SeqCst) && w == st.transition_pw && h == st.transition_ph {
-        return;
-    }
-    st.expected_w = w;
-    st.expected_h = h;
+    STATE.lock().gate.set_expected((w, h));
 }
 
 // =====================================================================
@@ -738,15 +715,14 @@ pub fn win_set_expected_size(w: c_int, h: c_int) {
 /// unchanged (a fullscreen-style edge that didn't alter the client size).
 pub fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, ph: c_int, force_end: bool) {
     let mut st = STATE.lock();
-    if G_TRANSITIONING.load(Ordering::SeqCst) {
+    if st.gate.in_transition() {
         st.pending_lw = lw;
         st.pending_lh = lh;
-        // The size captured at begin_transition is the pre-resize size, so a
-        // differing physical size means the resize we were holding frames for
-        // has landed — end the transition and let the OSD present again. This
-        // deterministic size signal replaces the prior begin/end style toggle,
-        // which could leave the flag stuck across multiple WM_SIZE events.
-        if force_end || pw != st.transition_pw || ph != st.transition_ph {
+        // The captured size is the pre-resize size, so a differing physical
+        // size means the resize we were holding frames for has landed — end
+        // the transition and let the OSD present again. `force_end` covers a
+        // settled fullscreen edge whose physical size didn't change.
+        if force_end || st.gate.captured() != Some((pw, ph)) {
             end_transition_locked(&mut st);
         }
     }

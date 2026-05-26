@@ -4,7 +4,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
@@ -161,21 +161,17 @@ pub fn win_set_idle_inhibit(level: c_int) {
 }
 
 // =====================================================================
-// Fullscreen-transition gating flag. Read by win_surface_present each
-// frame (under STATE lock in compositor.rs); set/cleared by the Rust
-// begin_transition_locked / end_transition_locked helpers. SeqCst
-// matches the prior plain-bool semantics with no surrounding ordering
-// requirements.
+// Fullscreen-transition gating lives in a jfn-compositor-core
+// TransitionGate held inside the compositor's STATE lock (see
+// compositor::gate_in_transition); these are thin entry points.
 // =====================================================================
-
-pub(crate) static G_TRANSITIONING: AtomicBool = AtomicBool::new(false);
 
 pub fn win_begin_transition() {
     jfn_win_begin_transition_locked();
 }
 
 pub fn win_in_transition() -> bool {
-    G_TRANSITIONING.load(Ordering::SeqCst)
+    crate::compositor::gate_in_transition()
 }
 
 // =====================================================================
