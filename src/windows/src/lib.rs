@@ -348,13 +348,12 @@ impl Platform for WindowsPlatform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        _dirty: *const JfnRect,
-        _dirty_len: usize,
-        _buffer: *const c_void,
-        _w: c_int,
-        _h: c_int,
+        dirty: &[JfnRect],
+        buffer: *const c_void,
+        w: c_int,
+        h: c_int,
     ) -> bool {
-        win_surface_present_software(s, _dirty, _dirty_len, _buffer, _w, _h)
+        win_surface_present_software(s, dirty.as_ptr(), dirty.len(), buffer, w, h)
     }
 
     fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
@@ -365,8 +364,8 @@ impl Platform for WindowsPlatform {
         win_surface_set_visible(s, visible);
     }
 
-    fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
-        win_restack(ordered, n);
+    fn restack(&self, ordered: &[SurfaceHandle]) {
+        win_restack(ordered.as_ptr(), ordered.len());
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {

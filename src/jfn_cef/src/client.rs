@@ -1084,7 +1084,14 @@ impl Inner {
         if !self.should_present_paint() {
             return;
         }
-        p.surface_present_software(surface, dirty, n, buffer, w, h);
+        // CEF hands the dirty rects as a raw `RectList` pointer; reborrow as a
+        // slice here, the single boundary point, so the platform ABI stays safe.
+        let dirty: &[platform_ops::JfnRect] = if dirty.is_null() || n == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(dirty, n) }
+        };
+        p.surface_present_software(surface, dirty, buffer, w, h);
     }
 
     pub(crate) fn on_accelerated_paint(&self, is_popup: bool, info: *const c_void) {

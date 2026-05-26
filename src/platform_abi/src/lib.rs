@@ -118,6 +118,7 @@ pub trait Platform: Send + Sync {
     fn display(&self) -> DisplayBackend;
 
     fn early_init(&self) {}
+    /// `mpv` is the opaque libmpv `mpv_handle` — a raw C handle, stays raw.
     fn init(&self, mpv: *mut c_void) -> bool {
         let _ = mpv;
         true
@@ -130,14 +131,17 @@ pub trait Platform: Send + Sync {
         std::ptr::null_mut()
     }
     fn free_surface(&self, _s: SurfaceHandle) {}
+    /// `_info` is CEF's `OnAcceleratedPaint` accel-paint info — a raw C
+    /// pointer that crosses the CEF ABI, so it stays raw.
     fn surface_present(&self, _s: SurfaceHandle, _info: *const c_void) -> bool {
         false
     }
+    /// `_buffer` is CEF's `OnPaint` software paint buffer — a raw C pointer
+    /// that crosses the CEF ABI, so it stays raw.
     fn surface_present_software(
         &self,
         _s: SurfaceHandle,
-        _dirty: *const JfnRect,
-        _dirty_len: usize,
+        _dirty: &[JfnRect],
         _buffer: *const c_void,
         _w: c_int,
         _h: c_int,
@@ -146,7 +150,7 @@ pub trait Platform: Send + Sync {
     }
     fn surface_resize(&self, _s: SurfaceHandle, _lw: c_int, _lh: c_int, _pw: c_int, _ph: c_int) {}
     fn surface_set_visible(&self, _s: SurfaceHandle, _visible: bool) {}
-    fn restack(&self, _ordered: *const SurfaceHandle, _n: usize) {}
+    fn restack(&self, _ordered: &[SurfaceHandle]) {}
 
     // Popup
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {}

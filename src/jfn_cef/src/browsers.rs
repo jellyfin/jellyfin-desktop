@@ -285,5 +285,5 @@ fn restack(layers: &[*mut JfnCefLayer]) {
             ordered.push(s);
         }
     }
-    jfn_platform_abi::get().restack(ordered.as_ptr(), ordered.len());
+    jfn_platform_abi::get().restack(&ordered);
 }
