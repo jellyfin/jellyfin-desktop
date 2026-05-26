@@ -146,7 +146,7 @@ impl Platform for X11Platform {
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
-        jfn_idle_inhibit_linux::set(level as u32);
+        jfn_linux_util::idle_inhibit::set(level as u32);
     }
 
     fn shared_texture_supported(&self) -> bool {
@@ -163,7 +163,7 @@ impl Platform for X11Platform {
     }
 
     fn open_external_url(&self, url: &str) {
-        jfn_open_url_linux::open(url);
+        jfn_linux_util::open_url::open(url);
     }
 }
 

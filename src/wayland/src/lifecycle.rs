@@ -139,7 +139,7 @@ pub fn jfn_wl_lifecycle_cleanup() {
     // window. The scheme file is unlinked separately via
     // jfn_wl_kde_palette_post_window_cleanup after mpv tears down the
     // surface.
-    jfn_idle_inhibit_linux::cleanup();
+    jfn_linux_util::idle_inhibit::cleanup();
     crate::clipboard::clipboard_cleanup();
     crate::input_lifecycle::lifecycle_cleanup();
     // Rust-side WlState lives until process exit (mirrors C++ globals).
