@@ -31,6 +31,7 @@ use jfn_mpv::api::{
     jfn_mpv_set_window_minimized, jfn_mpv_toggle_fullscreen,
 };
 use jfn_mpv::boot::jfn_mpv_handle_get;
+use jfn_platform_abi::geometry::{Bounds, WindowGeometry, clamp_to_bounds};
 use jfn_playback::ingest_driver::{jfn_playback_display_scale, jfn_playback_fullscreen};
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 
@@ -425,28 +426,15 @@ pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y:
     }
     let vw = work.right - work.left;
     let vh = work.bottom - work.top;
-    if *w > vw {
-        *w = vw;
-    }
-    if *h > vh {
-        *h = vh;
-    }
-    if *x < 0 {
-        *x = (vw - *w) / 2;
-    }
-    if *y < 0 {
-        *y = (vh - *h) / 2;
-    }
-    if *x + *w > vw {
-        *x = vw - *w;
-    }
-    if *y + *h > vh {
-        *y = vh - *h;
-    }
-    if *x < 0 {
-        *x = 0;
-    }
-    if *y < 0 {
-        *y = 0;
-    }
+    let mut g = WindowGeometry {
+        w: *w,
+        h: *h,
+        x: *x,
+        y: *y,
+    };
+    clamp_to_bounds(&mut g, Bounds { w: vw, h: vh });
+    *w = g.w;
+    *h = g.h;
+    *x = g.x;
+    *y = g.y;
 }
