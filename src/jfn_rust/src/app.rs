@@ -1117,6 +1117,10 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     }
     #[cfg(not(target_os = "macos"))]
     {
+        // Exit on the shutdown signal, not browser-close state (which flips
+        // transiently when the overlay resets the main layer). close_all
+        // already ran in h_shutdown_close_browsers; drain CEF before teardown.
+        jfn_playback::shutdown::jfn_shutdown_wait();
         jfn_cef::browsers::jfn_browsers_wait_all_closed();
     }
 

@@ -102,6 +102,29 @@ mod imp {
                 }
             }
         }
+
+        /// Block until signaled. Level-triggered, so a `signal()` that lands
+        /// before the call returns immediately. Returns on any non-`EINTR`
+        /// `poll` error rather than spinning.
+        pub fn wait(&self) {
+            let mut pfd = libc::pollfd {
+                fd: self.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            loop {
+                let r = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, -1) };
+                if r < 0 {
+                    if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                        continue;
+                    }
+                    return;
+                }
+                if pfd.revents != 0 {
+                    return;
+                }
+            }
+        }
     }
 
     impl Drop for WakeEvent {
@@ -128,7 +151,9 @@ mod imp {
 mod imp {
     use core::ptr;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent};
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForSingleObject,
+    };
 
     pub struct WakeEvent {
         handle: HANDLE,
@@ -162,6 +187,14 @@ mod imp {
         pub fn drain(&self) {
             unsafe {
                 ResetEvent(self.handle);
+            }
+        }
+
+        /// Block until signaled. Manual-reset, so a `signal()` that lands
+        /// before the call returns immediately.
+        pub fn wait(&self) {
+            unsafe {
+                WaitForSingleObject(self.handle, INFINITE);
             }
         }
     }
