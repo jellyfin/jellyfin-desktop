@@ -10,9 +10,9 @@ use parking_lot::Mutex;
 use std::os::raw::c_int;
 
 pub mod buttons;
-pub mod scroll;
 #[cfg(target_os = "linux")]
 mod keysym;
+pub mod scroll;
 #[cfg(target_os = "linux")]
 pub mod xkb;
 
