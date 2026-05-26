@@ -1,24 +1,20 @@
-//! Windows SystemMediaTransportControls (SMTC) sink. Owns its own
-//! MTA-initialised thread that drains queued PlaybackEvents on wake.
-//! SMTC ButtonPressed / PlaybackPositionChangeRequested callbacks
-//! dispatch directly into mpv (jfn_mpv) and jfn_web_exec_js.
+//! Windows SystemMediaTransportControls (SMTC) sink. The shared
+//! [`jfn_playback::sink_core`] harness owns the event queue and consumer
+//! thread (MTA-initialised); this crate supplies a [`WindowsSink`] whose
+//! `deliver` drives SMTC. ButtonPressed / PlaybackPositionChangeRequested
+//! callbacks dispatch via [`sink_core::execute`] / [`sink_core::seek_to_ms`].
 //!
 //! Public entry points:
-//!   * `jfn_windows_sink_start()` — registers the event-sink thunk with
-//!     jfn-playback and spawns the consumer thread.
-//!   * `jfn_windows_sink_stop()`  — signals the thread to exit at next
-//!     wake.
+//!   * `jfn_windows_sink_start()` / `jfn_windows_sink_start_for(hwnd)` —
+//!     start the sink (SMTC binds to the mpv window via GetForWindow).
+//!   * `jfn_windows_sink_stop()` — signal the thread to exit at next wake.
 
 #![cfg(target_os = "windows")]
 
-use parking_lot::{Condvar, Mutex};
-use std::collections::VecDeque;
-use std::ffi::c_char;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use jfn_playback::{MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
+use jfn_playback::sink_core::{self, MediaCommand, MediaSink, Phase, map_kind_to_phase};
+use jfn_playback::{MediaMetadata, MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
 use windows::Foundation::TimeSpan;
 use windows::Media::{
     MediaPlaybackStatus, MediaPlaybackType, SystemMediaTransportControls,
@@ -33,112 +29,14 @@ use windows::Win32::Security::Cryptography::{CRYPT_STRING_BASE64, CryptStringToB
 use windows::Win32::System::WinRT::{ISystemMediaTransportControlsInterop, RoGetActivationFactory};
 use windows::core::HSTRING;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Playing,
-    Paused,
-    Stopped,
-}
-
 // =====================================================================
-// Owned event copy — slim mirror of PlaybackEvent fields the consumer
-// thread actually uses, so we can fan events out without holding the
-// full event clone in memory.
+// Public start/stop entry points.
 // =====================================================================
-
-#[derive(Default, Clone)]
-struct OwnedMetadata {
-    id: String,
-    title: String,
-    artist: String,
-    album: String,
-    track_number: i32,
-    duration_us: i64,
-    media_type: PbMediaType,
-}
-
-struct OwnedEvent {
-    kind: PlaybackEventKind,
-    metadata: OwnedMetadata,
-    position_us: i64,
-    artwork_uri: String,
-    can_go_next: bool,
-    can_go_prev: bool,
-}
-
-fn owned_event(ev: &PlaybackEvent) -> OwnedEvent {
-    OwnedEvent {
-        kind: ev.kind,
-        metadata: OwnedMetadata {
-            id: ev.metadata.id.clone(),
-            title: ev.metadata.title.clone(),
-            artist: ev.metadata.artist.clone(),
-            album: ev.metadata.album.clone(),
-            track_number: ev.metadata.track_number,
-            duration_us: ev.metadata.duration_us,
-            media_type: ev.metadata.media_type,
-        },
-        position_us: ev.snapshot.position_us,
-        artwork_uri: ev.artwork_uri.clone(),
-        can_go_next: ev.can_go_next,
-        can_go_prev: ev.can_go_prev,
-    }
-}
-
-// =====================================================================
-// Sink state.
-// =====================================================================
-
-struct Inner {
-    queue: Mutex<VecDeque<OwnedEvent>>,
-    cv: Condvar,
-    running: AtomicBool,
-    hwnd: Mutex<isize>,
-}
-
-static SINK: OnceLock<Arc<Inner>> = OnceLock::new();
-const EVENT_QUEUE_CAP: usize = 256;
-
-fn inner() -> Arc<Inner> {
-    SINK.get_or_init(|| {
-        Arc::new(Inner {
-            queue: Mutex::new(VecDeque::new()),
-            cv: Condvar::new(),
-            running: AtomicBool::new(false),
-            hwnd: Mutex::new(0),
-        })
-    })
-    .clone()
-}
-
-fn on_event(ev: &PlaybackEvent) {
-    let owned = owned_event(ev);
-    let inner = inner();
-    {
-        let mut q = inner.queue.lock();
-        if q.len() >= EVENT_QUEUE_CAP {
-            return;
-        }
-        q.push_back(owned);
-    }
-    inner.cv.notify_one();
-}
 
 /// Start the sink. `hwnd_raw` is the HWND of the mpv window — required
 /// to bind SMTC via ISystemMediaTransportControlsInterop::GetForWindow.
 pub fn jfn_windows_sink_start_for(hwnd_raw: isize) {
-    let inner = inner();
-    if inner.running.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    *inner.hwnd.lock() = hwnd_raw;
-
-    jfn_playback::ffi::register_event_sink(Box::new(on_event));
-
-    std::thread::Builder::new()
-        .name("windows-sink".into())
-        .spawn(move || consumer_thread(inner))
-        .expect("spawn windows-sink");
+    sink_core::run_sink("windows-sink", move || WindowsSink::new(hwnd_raw));
 }
 
 /// Convenience entry: queries mpv for the window-id and starts the sink.
@@ -154,18 +52,56 @@ pub fn jfn_windows_sink_start() {
 }
 
 pub fn jfn_windows_sink_stop() {
-    let inner = match SINK.get() {
-        Some(i) => i.clone(),
-        None => return,
-    };
-    if !inner.running.swap(false, Ordering::AcqRel) {
-        return;
-    }
-    inner.cv.notify_all();
+    sink_core::stop();
 }
 
 // =====================================================================
-// Consumer thread + SMTC bindings.
+// Sink state — lives on the consumer thread for the sink's lifetime.
+// =====================================================================
+
+#[derive(Default)]
+struct WinState {
+    metadata: MediaMetadata,
+    phase: Option<Phase>,
+    position_us: i64,
+    last_position_update: Option<Instant>,
+    pending_update: bool,
+}
+
+struct WindowsSink {
+    hwnd_raw: isize,
+    smtc: Option<Smtc>,
+    state: WinState,
+}
+
+impl WindowsSink {
+    fn new(hwnd_raw: isize) -> Self {
+        Self {
+            hwnd_raw,
+            smtc: None,
+            state: WinState::default(),
+        }
+    }
+}
+
+impl MediaSink for WindowsSink {
+    fn init(&mut self) {
+        self.smtc = init_smtc(self.hwnd_raw);
+    }
+
+    fn deliver(&mut self, ev: &PlaybackEvent) {
+        deliver(&mut self.state, &mut self.smtc, ev);
+    }
+
+    fn teardown(&mut self) {
+        if let Some(s) = self.smtc.take() {
+            teardown_smtc(s);
+        }
+    }
+}
+
+// =====================================================================
+// SMTC bindings.
 // =====================================================================
 
 struct Smtc {
@@ -242,11 +178,7 @@ fn init_smtc(hwnd_raw: isize) -> Option<Smtc> {
                         if let Ok(span) = args.RequestedPlaybackPosition() {
                             // TimeSpan.Duration is 100-ns ticks.
                             let pos_us = span.Duration / 10;
-                            let ms = pos_us / 1000;
-                            let js = format!("if(window._nativeSeek) window._nativeSeek({ms});\0");
-                            unsafe {
-                                jfn_cef::business_web::jfn_web_exec_js(js.as_ptr() as *const c_char);
-                            }
+                            sink_core::seek_to_ms(pos_us / 1000);
                         }
                     }
                     Ok(())
@@ -273,87 +205,28 @@ fn teardown_smtc(s: Smtc) {
     let _ = s.smtc.SetIsEnabled(false);
 }
 
-fn consumer_thread(inner: Arc<Inner>) {
-    let hwnd_raw = *inner.hwnd.lock();
-    let mut smtc = init_smtc(hwnd_raw);
-
-    let mut state = ConsumerState::default();
-
-    while inner.running.load(Ordering::Acquire) {
-        let drained: Vec<OwnedEvent> = {
-            let mut q = inner.queue.lock();
-            while q.is_empty() && inner.running.load(Ordering::Acquire) {
-                inner.cv.wait_for(&mut q, Duration::from_millis(100));
-            }
-            q.drain(..).collect()
-        };
-        for ev in drained {
-            deliver(&mut state, &mut smtc, ev);
-        }
-    }
-
-    if let Some(s) = smtc.take() {
-        teardown_smtc(s);
-    }
-}
-
-trait OptionTakeExt<T> {
-    fn take(self) -> Option<T>;
-}
-impl<T> OptionTakeExt<T> for Option<T> {
-    fn take(self) -> Option<T> {
-        self
-    }
-}
-
-#[derive(Default)]
-struct ConsumerState {
-    metadata: OwnedMetadata,
-    phase: Option<Phase>,
-    position_us: i64,
-    last_position_update: Option<Instant>,
-    pending_update: bool,
-}
-
-fn map_kind_to_phase(kind: PlaybackEventKind) -> Phase {
-    match kind {
-        PlaybackEventKind::Started => Phase::Playing,
-        PlaybackEventKind::Paused | PlaybackEventKind::TrackLoaded => Phase::Paused,
-        PlaybackEventKind::Finished | PlaybackEventKind::Canceled | PlaybackEventKind::Error => {
-            Phase::Stopped
-        }
-        _ => Phase::Stopped,
-    }
-}
-
 fn on_button_pressed(button: SystemMediaTransportControlsButton) {
     use SystemMediaTransportControlsButton as B;
-    match button {
-        B::Play => jfn_mpv::api::jfn_mpv_play(),
-        B::Pause => jfn_mpv::api::jfn_mpv_pause(),
-        B::Stop => jfn_mpv::api::jfn_mpv_stop(),
-        B::Next => {
-            let js = c"if(window._nativeHostInput) window._nativeHostInput(['next']);";
-            unsafe { jfn_cef::business_web::jfn_web_exec_js(js.as_ptr()) };
-        }
-        B::Previous => {
-            let js = c"if(window._nativeHostInput) window._nativeHostInput(['previous']);";
-            unsafe { jfn_cef::business_web::jfn_web_exec_js(js.as_ptr()) };
-        }
-        _ => {}
-    }
+    let cmd = match button {
+        B::Play => MediaCommand::Play,
+        B::Pause => MediaCommand::Pause,
+        B::Stop => MediaCommand::Stop,
+        B::Next => MediaCommand::Next,
+        B::Previous => MediaCommand::Previous,
+        _ => return,
+    };
+    sink_core::execute(cmd);
 }
 
-fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
+fn deliver(state: &mut WinState, smtc: &mut Option<Smtc>, ev: &PlaybackEvent) {
     match ev.kind {
         PlaybackEventKind::MetadataChanged => {
             if !ev.metadata.id.is_empty() && ev.metadata.id == state.metadata.id {
                 return;
             }
+            // Display refresh happens on the next phase transition
+            // (Started/Paused), which reads this cached metadata.
             state.metadata = ev.metadata.clone();
-            if state.phase != Some(Phase::Stopped) {
-                update_display_properties(state, smtc);
-            }
         }
         PlaybackEventKind::ArtworkChanged => {
             let Some(smtc) = smtc.as_mut() else { return };
@@ -392,14 +265,14 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
             match p {
                 Phase::Playing => {
                     let _ = s.smtc.SetPlaybackStatus(MediaPlaybackStatus::Playing);
-                    update_display_properties_inner(state, s);
+                    update_display_properties(state, s);
                 }
                 Phase::Paused => {
                     let _ = s.smtc.SetPlaybackStatus(MediaPlaybackStatus::Paused);
                     update_timeline(state, s);
                 }
                 Phase::Stopped => {
-                    state.metadata = OwnedMetadata::default();
+                    state.metadata = MediaMetadata::default();
                     state.position_us = 0;
                     s.cached_thumbnail = None;
                     let _ = s.updater.ClearAll();
@@ -411,7 +284,7 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
             state.pending_update = true;
         }
         PlaybackEventKind::PositionChanged => {
-            state.position_us = ev.position_us;
+            state.position_us = ev.snapshot.position_us;
             let now = Instant::now();
             let elapsed = state
                 .last_position_update
@@ -426,7 +299,7 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
             }
         }
         PlaybackEventKind::Seeked => {
-            state.position_us = ev.position_us;
+            state.position_us = ev.snapshot.position_us;
             if let Some(s) = smtc.as_mut() {
                 update_timeline(state, s);
             }
@@ -437,16 +310,7 @@ fn deliver(state: &mut ConsumerState, smtc: &mut Option<Smtc>, ev: OwnedEvent) {
     }
 }
 
-// Wrapper so the recursive borrow lookups inside the Playing branch
-// compile — `update_display_properties` only mutates the updater + the
-// cached_thumbnail field of Smtc, leaving the state borrow intact.
-fn update_display_properties(state: &mut ConsumerState, _placeholder: &mut Option<Smtc>) {
-    // intentionally empty — real work happens in
-    // `update_display_properties_inner` to keep borrow chains tidy.
-    let _ = state;
-}
-
-fn update_display_properties_inner(state: &mut ConsumerState, s: &mut Smtc) {
+fn update_display_properties(state: &mut WinState, s: &mut Smtc) {
     if state.phase == Some(Phase::Stopped) {
         return;
     }
@@ -477,7 +341,7 @@ fn update_display_properties_inner(state: &mut ConsumerState, s: &mut Smtc) {
     update_timeline(state, s);
 }
 
-fn update_timeline(state: &ConsumerState, s: &Smtc) {
+fn update_timeline(state: &WinState, s: &Smtc) {
     if state.metadata.duration_us <= 0 {
         return;
     }
