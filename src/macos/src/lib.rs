@@ -4,7 +4,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_char, c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 use jfn_platform_abi::geometry::{Bounds, clamp_to_bounds};
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
@@ -223,28 +223,20 @@ pub fn macos_query_window_position(x: &mut c_int, y: &mut c_int) -> bool {
 }
 
 // =====================================================================
-// Fullscreen-transition gating flag. The C++ compositor reads this on
-// every frame (macos_surface_present) and clears it when an incoming
-// frame matches g_expected_w/h. Set by macos_begin_transition below;
-// SeqCst matches the prior plain-bool semantics with no surrounding
-// ordering requirements.
+// Fullscreen-transition gating. The transition state lives in a
+// jfn-compositor-core `TransitionGate` owned by the compositor module
+// (`compositor::G_GATE`); these thin entry points drive it. The present
+// path clears the gate when an incoming frame matches the expected
+// post-transition size.
 // =====================================================================
 
-pub(crate) static G_IN_TRANSITION: AtomicBool = AtomicBool::new(false);
-
 pub fn macos_begin_transition() {
-    G_IN_TRANSITION.store(true, Ordering::SeqCst);
+    compositor::gate_begin();
     compositor::drop_input_textures();
 }
 
 pub fn macos_in_transition() -> bool {
-    G_IN_TRANSITION.load(Ordering::SeqCst)
-}
-
-/// Called by C++ macos_surface_present when an incoming frame matches
-/// the expected post-transition size.
-pub fn jfn_macos_transition_clear() {
-    G_IN_TRANSITION.store(false, Ordering::SeqCst);
+    compositor::gate_in_transition()
 }
 
 /// Backing scale factor of the main screen. Args are unused — the C++
