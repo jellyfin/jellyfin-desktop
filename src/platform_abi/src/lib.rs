@@ -14,6 +14,8 @@
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::OnceLock;
 
+pub mod geometry;
+
 /// Canonical `cef_cursor_type_t` ordinals, the single source of truth for the
 /// cursor codes that flow through [`Platform::set_cursor`]. Values are derived
 /// from the generated CEF bindings so backends can never hand-copy (and drift
