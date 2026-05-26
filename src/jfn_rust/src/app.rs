@@ -8,6 +8,8 @@ use std::sync::OnceLock;
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
 use jfn_platform_abi::{DisplayBackend, IdleInhibitLevel, Platform};
 
+use crate::cli;
+
 // Shorthand for the installed Platform backend. `install()` happens before
 // any of the call sites here run.
 fn plat() -> &'static dyn Platform {
@@ -34,12 +36,26 @@ struct BootArgs {
     remote_debugging_port: c_int,
 }
 
-unsafe fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+/// Collect the C `argc`/`argv` into owned Rust strings. Null entries become
+/// empty strings; non-UTF-8 bytes are replaced lossily.
+///
+/// # Safety
+/// `argv` must point to `argc` valid NUL-terminated C strings (or null
+/// entries).
+unsafe fn argv_to_vec(argc: c_int, argv: *const *const c_char) -> Vec<String> {
+    if argv.is_null() || argc <= 0 {
+        return Vec::new();
     }
+    let mut args = Vec::with_capacity(argc as usize);
+    for i in 0..argc as isize {
+        let p = unsafe { *argv.offset(i) };
+        if p.is_null() {
+            args.push(String::new());
+        } else {
+            args.push(unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned());
+        }
+    }
+    args
 }
 
 fn cs(s: &str) -> CString {
@@ -142,78 +158,62 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     let mut audio_channels = saved_chans;
     let mut log_level = saved_log_level;
 
-    // 4. Parse argv via jfn_cli.
+    // 4. Parse argv.
     let have_x11 = cfg!(target_os = "linux");
-    let r = unsafe { jfn_cli::jfn_cli_parse(argc, argv, have_x11) };
-    if r.is_null() {
-        eprintln!("Error: argv parse failed");
-        return 1;
-    }
-    // Reborrow as a reference so the kind read is safe.
-    let rref = unsafe { &*r };
-    let kind_rc: Option<c_int> = match rref.kind {
-        jfn_cli::JfnCliResultKind::Help => {
-            print_help();
-            Some(0)
-        }
-        jfn_cli::JfnCliResultKind::Version => {
-            print_version();
-            Some(0)
-        }
-        jfn_cli::JfnCliResultKind::Error => {
-            let arg = unsafe { cstr_to_string(rref.unknown_arg) };
-            eprintln!("Error: unknown argument '{arg}'");
-            Some(1)
-        }
-        jfn_cli::JfnCliResultKind::Continue => None,
-    };
+    let args = unsafe { argv_to_vec(argc, argv) };
 
-    // Pull parsed values before freeing the result.
     let mut ozone_platform = String::new();
     #[cfg(target_os = "linux")]
     let mut platform_override = String::new();
-    let mut log_file: Option<String> = None;
+    // Assigned exactly once in the Continue arm; the other arms diverge.
+    let log_file: Option<String>;
     let mut disable_gpu_compositing = false;
     let mut remote_debugging_port: c_int = 0;
 
-    if kind_rc.is_none() {
-        if !rref.hwdec.is_null() {
-            hwdec = unsafe { cstr_to_string(rref.hwdec) };
+    match cli::parse(args, have_x11) {
+        cli::CliOutcome::Help => {
+            print_help();
+            return 0;
         }
-        if !rref.audio_passthrough.is_null() {
-            audio_passthrough = unsafe { cstr_to_string(rref.audio_passthrough) };
+        cli::CliOutcome::Version => {
+            print_version();
+            return 0;
         }
-        if !rref.audio_channels.is_null() {
-            audio_channels = unsafe { cstr_to_string(rref.audio_channels) };
+        cli::CliOutcome::Error(arg) => {
+            eprintln!("Error: unknown argument '{arg}'");
+            return 1;
         }
-        if !rref.log_level.is_null() {
-            log_level = unsafe { cstr_to_string(rref.log_level) };
+        cli::CliOutcome::Continue(a) => {
+            if let Some(v) = a.hwdec {
+                hwdec = v;
+            }
+            if let Some(v) = a.audio_passthrough {
+                audio_passthrough = v;
+            }
+            if let Some(v) = a.audio_channels {
+                audio_channels = v;
+            }
+            if let Some(v) = a.log_level {
+                log_level = v;
+            }
+            log_file = a.log_file;
+            if let Some(v) = a.ozone_platform {
+                ozone_platform = v;
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(v) = a.platform_override {
+                platform_override = v;
+            }
+            if a.audio_exclusive {
+                audio_exclusive = true;
+            }
+            if a.disable_gpu_compositing {
+                disable_gpu_compositing = true;
+            }
+            if let Some(p) = a.remote_debugging_port {
+                remote_debugging_port = p;
+            }
         }
-        if rref.log_file_set {
-            log_file = Some(unsafe { cstr_to_string(rref.log_file) });
-        }
-        if !rref.ozone_platform.is_null() {
-            ozone_platform = unsafe { cstr_to_string(rref.ozone_platform) };
-        }
-        #[cfg(target_os = "linux")]
-        if !rref.platform_override.is_null() {
-            platform_override = unsafe { cstr_to_string(rref.platform_override) };
-        }
-        if rref.audio_exclusive_set {
-            audio_exclusive = true;
-        }
-        if rref.disable_gpu_compositing_set {
-            disable_gpu_compositing = true;
-        }
-        if rref.remote_debugging_port != -1 {
-            remote_debugging_port = rref.remote_debugging_port;
-        }
-    }
-
-    unsafe { jfn_cli::jfn_cli_result_free(r) };
-
-    if let Some(code) = kind_rc {
-        return code;
     }
 
     // 5. Validate hwdec.
@@ -298,20 +298,14 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     //     activation).
     #[cfg(not(target_os = "macos"))]
     {
-        if jfn_single_instance::jfn_single_instance_try_signal_existing() != 0 {
+        if crate::single_instance::try_signal_existing() {
             tracing::info!(target: "Main", "Signaled existing instance, exiting");
             return 0;
         }
-        unsafe extern "C" fn on_activate(_token: *const c_char, _userdata: *mut std::ffi::c_void) {
+        let ok = crate::single_instance::start_listener(|_token: &str| {
             // TODO: raise window via xdg-activation
-        }
-        let ok = unsafe {
-            jfn_single_instance::jfn_single_instance_start_listener(
-                Some(on_activate),
-                ptr::null_mut(),
-            )
-        };
-        if ok == 0 {
+        });
+        if !ok {
             tracing::warn!(target: "Main", "Single-instance listener failed to start");
         }
         // Stop on process exit. Held in a Drop guard via static slot below.
@@ -581,7 +575,7 @@ struct ListenerGuardSlot;
 #[cfg(not(target_os = "macos"))]
 impl Drop for ListenerGuardSlot {
     fn drop(&mut self) {
-        jfn_single_instance::jfn_single_instance_stop_listener();
+        crate::single_instance::stop_listener();
     }
 }
 #[cfg(not(target_os = "macos"))]

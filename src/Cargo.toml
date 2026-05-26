@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "cli",
     "color",
     "config",
     "input",
@@ -16,7 +15,6 @@ members = [
     "paths",
     "platform_abi",
     "playback",
-    "single_instance",
     "wayland",
     "windows",
     "windows_sink",
