@@ -18,6 +18,7 @@ mod mpris;
 #[cfg(target_os = "linux")]
 pub mod mpris_sink;
 pub mod shutdown;
+pub mod sink_core;
 mod state_machine;
 pub mod theme_color_sink;
 mod types;
