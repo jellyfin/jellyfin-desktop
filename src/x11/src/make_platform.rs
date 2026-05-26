@@ -50,8 +50,7 @@ impl Platform for X11Platform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        dirty: *const JfnRect,
-        dirty_len: usize,
+        dirty: &[JfnRect],
         buffer: *const c_void,
         w: c_int,
         h: c_int,
@@ -59,8 +58,8 @@ impl Platform for X11Platform {
         unsafe {
             jfn_x11_surface_present_software(
                 s as *mut crate::x11_state::PlatformSurface,
-                dirty,
-                dirty_len,
+                dirty.as_ptr(),
+                dirty.len(),
                 buffer,
                 w,
                 h,
@@ -80,8 +79,13 @@ impl Platform for X11Platform {
         };
     }
 
-    fn restack(&self, handles: *const SurfaceHandle, n: usize) {
-        unsafe { jfn_x11_restack(handles as *const *mut crate::x11_state::PlatformSurface, n) };
+    fn restack(&self, handles: &[SurfaceHandle]) {
+        unsafe {
+            jfn_x11_restack(
+                handles.as_ptr() as *const *mut crate::x11_state::PlatformSurface,
+                handles.len(),
+            )
+        };
     }
 
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {

@@ -613,13 +613,12 @@ impl Platform for MacosPlatform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        dirty: *const JfnRect,
-        dirty_len: usize,
+        dirty: &[JfnRect],
         buffer: *const c_void,
         w: c_int,
         h: c_int,
     ) -> bool {
-        macos_surface_present_software(s, dirty, dirty_len, buffer, w, h)
+        macos_surface_present_software(s, dirty.as_ptr(), dirty.len(), buffer, w, h)
     }
 
     fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
@@ -630,8 +629,8 @@ impl Platform for MacosPlatform {
         macos_surface_set_visible(s, visible);
     }
 
-    fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
-        macos_restack(ordered, n);
+    fn restack(&self, ordered: &[SurfaceHandle]) {
+        macos_restack(ordered.as_ptr(), ordered.len());
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {

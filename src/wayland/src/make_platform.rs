@@ -126,8 +126,7 @@ impl Platform for WaylandPlatform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        _dirty: *const JfnRect,
-        _dirty_len: usize,
+        _dirty: &[JfnRect],
         buffer: *const c_void,
         w: c_int,
         h: c_int,
@@ -157,12 +156,15 @@ impl Platform for WaylandPlatform {
         );
     }
 
-    fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
-        if ordered.is_null() {
-            return;
-        }
+    fn restack(&self, ordered: &[SurfaceHandle]) {
+        // SAFETY: a `&[SurfaceHandle]` (i.e. `&[*mut c_void]`) and a
+        // `&[*mut PlatformSurface]` have identical layout; each handle was
+        // minted by this backend's `alloc_surface`.
         let typed: &[*mut crate::wl_state::PlatformSurface] = unsafe {
-            std::slice::from_raw_parts(ordered as *const *mut crate::wl_state::PlatformSurface, n)
+            std::slice::from_raw_parts(
+                ordered.as_ptr() as *const *mut crate::wl_state::PlatformSurface,
+                ordered.len(),
+            )
         };
         wl_ops::restack(typed);
     }
