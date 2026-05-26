@@ -22,6 +22,11 @@
         }
     });
 
+    window.addEventListener('copy', (e) => {
+        const text = window.getSelection().toString();
+        if (text) window.jmpNative.copyText(text);
+    });
+
     // Double-click on video area toggles fullscreen.
     // Detected in JS because Wayland doesn't provide click count natively.
     (function() {

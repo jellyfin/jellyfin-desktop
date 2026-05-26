@@ -23,6 +23,7 @@ use wayland_protocols::ext::data_control::v1::client::{
     ext_data_control_device_v1::{self as dc_device, ExtDataControlDeviceV1},
     ext_data_control_manager_v1::ExtDataControlManagerV1,
     ext_data_control_offer_v1::{self as dc_offer, ExtDataControlOfferV1},
+    ext_data_control_source_v1::ExtDataControlSourceV1
 };
 
 const MIME_TEXT_PLAIN_UTF8: &str = "text/plain;charset=utf-8";
@@ -73,7 +74,8 @@ struct PendingCb {
 }
 
 struct Shared {
-    queued: Mutex<Vec<PendingCb>>,
+    read_queued: Mutex<Vec<PendingCb>>,
+    write_queued: Mutex<Option<Vec<u8>>>,
     stop: AtomicBool,
     wake_fd: c_int,
 }
@@ -93,6 +95,8 @@ struct State {
     pending_offers: std::collections::HashMap<u32, (ExtDataControlOfferV1, OfferMimes)>,
     // Currently active selection offer + its mime set.
     current_offer: Option<(ExtDataControlOfferV1, OfferMimes)>,
+    current_source: Option<ExtDataControlSourceV1>,
+    source_content: Option<Vec<u8>>
 }
 
 pub struct JfnClipboardWayland {
@@ -209,6 +213,34 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for State {
         dc_device::EVT_DATA_OFFER_OPCODE => (ExtDataControlOfferV1, ()),
         dc_device::EVT_PRIMARY_SELECTION_OPCODE => (ExtDataControlOfferV1, ()),
     ]);
+}
+
+impl Dispatch<ExtDataControlSourceV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        source: &ExtDataControlSourceV1,
+        event: <ExtDataControlSourceV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wayland_protocols::ext::data_control::v1::client::ext_data_control_source_v1::Event::Send { mime_type: _, fd } => {
+                let buf = state.source_content.as_ref().unwrap();
+                unsafe {
+                    libc::write(fd.as_raw_fd(), buf.as_ptr() as *const c_void, buf.len());
+                    libc::close(fd.as_raw_fd());
+                }
+            }
+            wayland_protocols::ext::data_control::v1::client::ext_data_control_source_v1::Event::Cancelled => {
+                source.destroy();
+                if state.current_source.as_ref() == Some(source) {
+                    state.current_source = None;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Dispatch<ExtDataControlOfferV1, ()> for State {
@@ -383,7 +415,7 @@ fn worker_loop(
         // Promote the next queued request if the active slot is free.
         if active.is_none() {
             let next = {
-                let mut q = shared.queued.lock();
+                let mut q = shared.read_queued.lock();
                 if q.is_empty() {
                     None
                 } else {
@@ -398,7 +430,7 @@ fn worker_loop(
                         // Anything else queued has the same problem (no offer,
                         // no text mime, pipe failure) — drain with empty results.
                         let drained: Vec<PendingCb> = {
-                            let mut q = shared.queued.lock();
+                            let mut q = shared.read_queued.lock();
                             std::mem::take(&mut *q)
                         };
                         for cb in drained {
@@ -409,6 +441,30 @@ fn worker_loop(
             }
         }
 
+        // offer write
+        if let Some(mgr) = &state.mgr {
+            let content =  {
+                let mut g = shared.write_queued.lock();
+                g.take()
+            };
+            if let Some(content) = content {
+                let source = mgr.create_data_source(&queue.handle(), ());
+
+                source.offer(MIME_TEXT_PLAIN_UTF8.to_string());
+                source.offer(MIME_TEXT_PLAIN.to_string());
+                source.offer(MIME_TEXT.to_string());
+                source.offer(MIME_UTF8_STRING.to_string());
+                source.offer(MIME_STRING.to_string());
+
+                if let Some(device) = &state.device {
+                    device.set_selection(Some(&source));
+                }
+
+                state.current_source = Some(source);
+                state.source_content = Some(content);
+            }
+        }
+
         let _ = queue.dispatch_pending(&mut state);
     }
 
@@ -416,7 +472,7 @@ fn worker_loop(
         fire(cb, &[]);
     }
     let drained: Vec<PendingCb> = {
-        let mut q = shared.queued.lock();
+        let mut q = shared.read_queued.lock();
         std::mem::take(&mut *q)
     };
     for cb in drained {
@@ -439,12 +495,15 @@ fn init_impl() -> Option<JfnClipboardWayland> {
         device: Some(device),
         pending_offers: Default::default(),
         current_offer: None,
+        current_source: None,
+        source_content: None,
     };
     queue.roundtrip(&mut state).ok()?;
 
     let wake_fd = make_wake_fd()?;
     let shared = Arc::new(Shared {
-        queued: Mutex::new(Vec::new()),
+        read_queued: Mutex::new(Vec::new()),
+        write_queued: Mutex::new(None),
         stop: AtomicBool::new(false),
         wake_fd,
     });
@@ -483,10 +542,21 @@ pub fn clipboard_read_text_async(cb: Box<dyn FnOnce(&str) + Send>) {
         return;
     };
     {
-        let mut q = c.shared.queued.lock();
+        let mut q = c.shared.read_queued.lock();
         q.push(PendingCb { cb });
     }
     signal_wake(c.shared.wake_fd);
+}
+
+pub fn clipboard_write_text(text: &str) {
+    let g = INSTANCE.lock();
+    if let Some(c) = g.as_ref() {
+        {
+            let mut g = c.shared.write_queued.lock();
+            *g = Some(text.to_owned().into_bytes())
+        }
+        signal_wake(c.shared.wake_fd);
+    }
 }
 
 pub fn clipboard_cleanup() {

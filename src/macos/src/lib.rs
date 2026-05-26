@@ -707,6 +707,8 @@ impl Platform for MacosPlatform {
         macos_clipboard_read_text_async(on_done);
     }
 
+    fn clipboard_write_text(&self, _text: &str) {}
+
     fn open_external_url(&self, url: &str) {
         macos_open_external_url(url);
     }

@@ -162,6 +162,8 @@ impl Platform for X11Platform {
         on_done("");
     }
 
+    fn clipboard_write_text(&self, _text: &str) {}
+
     fn open_external_url(&self, url: &str) {
         jfn_open_url_linux::open(url);
     }

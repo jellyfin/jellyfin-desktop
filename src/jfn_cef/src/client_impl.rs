@@ -135,6 +135,13 @@ wrap_client! {
                     self.inner.handle_menu_dismissed();
                     1
                 }
+                "copyText" => {
+                    if let Some(args) = args && let Some(p) = platform_ops::ops() {
+                        let text = userfree_to_string(&args.string(0));
+                        p.clipboard_write_text(&text);
+                    }
+                    1
+                }
                 _ => {
                     // The callback adopts one owning reference for each ptr (CToCpp Wrap).
                     // Rust still holds its own ref via the Browser/ListValue wrappers,
