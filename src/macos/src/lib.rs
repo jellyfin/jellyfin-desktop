@@ -6,6 +6,7 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use jfn_platform_abi::geometry::{Bounds, clamp_to_bounds};
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
 // =====================================================================
@@ -276,33 +277,17 @@ pub fn macos_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, 
         let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
         let vw = (visible.size.width * scale) as c_int;
         let vh = (visible.size.height * scale) as c_int;
-        if *w > vw {
-            *w = vw;
-        }
-        if *h > vh {
-            *h = vh;
-        }
-        // mpv's own centering misbehaves when we override --geometry's wh
-        // but leave xy unset: it pre-centers against the video size and
-        // doesn't re-center after applying the requested wh.
-        if *x < 0 {
-            *x = (vw - *w) / 2;
-        }
-        if *y < 0 {
-            *y = (vh - *h) / 2;
-        }
-        if *x + *w > vw {
-            *x = vw - *w;
-        }
-        if *y + *h > vh {
-            *y = vh - *h;
-        }
-        if *x < 0 {
-            *x = 0;
-        }
-        if *y < 0 {
-            *y = 0;
-        }
+        let mut g = WindowGeometry {
+            w: *w,
+            h: *h,
+            x: *x,
+            y: *y,
+        };
+        clamp_to_bounds(&mut g, Bounds { w: vw, h: vh });
+        *w = g.w;
+        *h = g.h;
+        *x = g.x;
+        *y = g.y;
     }
 }
 
