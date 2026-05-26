@@ -38,6 +38,16 @@ pub fn jfn_shutdown_event() -> *const WakeEvent {
     wake_event() as *const _
 }
 
+/// Block until [`jfn_shutdown_initiate`] has run; returns immediately if it
+/// already has. The authoritative exit signal — the non-macOS main loop parks
+/// here so browser-close state never ends the process. Wake event is
+/// level-triggered; the flag re-check guards spurious wakeups.
+pub fn jfn_shutdown_wait() {
+    while !jfn_shutting_down() {
+        wake_event().wait();
+    }
+}
+
 /// Install (or clear, with `None`) the callback invoked exactly once on the
 /// first [`jfn_shutdown_initiate`] call.
 pub fn jfn_shutdown_set_handler(handler: Option<fn()>) {
