@@ -14,10 +14,10 @@ mod platform;
 pub use compositor::{
     jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
     jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
-    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition,
-    win_free_surface, win_popup_hide, win_popup_present, win_popup_present_software,
-    win_popup_show, win_restack, win_set_expected_size, win_surface_present,
-    win_surface_present_software, win_surface_resize, win_surface_set_visible,
+    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition, win_free_surface,
+    win_popup_hide, win_popup_present, win_popup_present_software, win_popup_show, win_restack,
+    win_set_expected_size, win_surface_present, win_surface_present_software, win_surface_resize,
+    win_surface_set_visible,
 };
 pub use input::{
     jfn_input_windows_resize_to_parent, jfn_input_windows_run_input_thread,

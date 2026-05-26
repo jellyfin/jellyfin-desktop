@@ -8,9 +8,8 @@
 use std::ffi::{c_int, c_void};
 
 use crate::surface::{
-    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_restack,
-    jfn_x11_surface_present, jfn_x11_surface_present_software, jfn_x11_surface_resize,
-    jfn_x11_surface_set_visible,
+    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_restack, jfn_x11_surface_present,
+    jfn_x11_surface_present_software, jfn_x11_surface_resize, jfn_x11_surface_set_visible,
 };
 
 pub use jfn_platform_abi::{
