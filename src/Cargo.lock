@@ -1103,6 +1103,7 @@ version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
  "jfn-cef",
+ "jfn-compositor-core",
  "jfn-input",
  "jfn-mpv",
  "jfn-platform-abi",

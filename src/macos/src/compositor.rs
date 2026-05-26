@@ -19,7 +19,9 @@ use std::ptr;
 use objc2::encode::{Encode, Encoding};
 use objc2::runtime::AnyObject;
 
-use crate::G_IN_TRANSITION;
+use jfn_compositor_core::stack::SurfaceStack;
+use jfn_compositor_core::transition::TransitionGate;
+
 use crate::init::{jfn_macos_get_input_view, jfn_macos_get_window};
 
 unsafe extern "C" {
@@ -185,15 +187,28 @@ impl Surface {
 // only when macos_free_surface is called.
 // =====================================================================
 
-struct StackEntry(*mut Surface);
-unsafe impl Send for StackEntry {}
+#[derive(Clone, Copy, PartialEq)]
+struct SurfacePtr(*mut Surface);
+unsafe impl Send for SurfacePtr {}
 
-static G_SURFACE_STACK: Mutex<Vec<StackEntry>> = Mutex::new(Vec::new());
+static G_SURFACE_STACK: Mutex<SurfaceStack<SurfacePtr>> = Mutex::new(SurfaceStack::new());
 
-// Expected post-transition size. set_expected_size writes it; the
-// present path clears it (and the transition flag) when an incoming
-// IOSurface matches the expected dimensions.
-static G_EXPECTED_SIZE: Mutex<(c_int, c_int)> = Mutex::new((0, 0));
+// Fullscreen/resize transition gate. set_expected_size arms the expected
+// post-transition size; the present path clears the gate when an incoming
+// IOSurface matches it. macOS never captures a pre-resize size (it gates on
+// the expected-size match, not a Windows-style begin/end size compare).
+static G_GATE: Mutex<TransitionGate> = Mutex::new(TransitionGate::new());
+
+/// Enter the transition (set by `macos_begin_transition` in lib.rs).
+pub(crate) fn gate_begin() {
+    G_GATE.lock().begin();
+}
+
+/// Whether the main surface is currently gated (read by `macos_in_transition`
+/// and the present path).
+pub(crate) fn gate_in_transition() -> bool {
+    G_GATE.lock().in_transition()
+}
 
 // =====================================================================
 // Metal device / queue / pipeline. Lazy-init on first alloc_surface so
@@ -616,7 +631,7 @@ unsafe fn present_iosurface(s: &mut Surface, info: &cef_dll_sys::_cef_accelerate
 
 pub(crate) fn drop_input_textures() {
     let stack = G_SURFACE_STACK.lock();
-    for entry in stack.iter() {
+    for entry in stack.stack() {
         if entry.0.is_null() {
             continue;
         }
@@ -629,7 +644,7 @@ pub(crate) fn drop_input_textures() {
 // =====================================================================
 
 pub fn macos_set_expected_size(w: c_int, h: c_int) {
-    *G_EXPECTED_SIZE.lock() = (w, h);
+    G_GATE.lock().set_expected((w, h));
 }
 
 pub fn macos_alloc_surface() -> *mut c_void {
@@ -671,10 +686,7 @@ pub fn macos_free_surface(s: *mut c_void) {
     // Remove from the stack first — keeps is-cef-main coherent while
     // we're tearing down. Browsers normally restacks to a smaller order
     // right after this, but the defensive remove matches the C++ path.
-    {
-        let mut stack = G_SURFACE_STACK.lock();
-        stack.retain(|e| e.0 != s_ptr);
-    }
+    G_SURFACE_STACK.lock().remove(SurfacePtr(s_ptr));
 
     let s_addr = s_ptr as usize;
     run_on_main_sync(move || unsafe {
@@ -701,28 +713,20 @@ pub fn macos_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     let info = unsafe { &*(raw_info as *const cef_dll_sys::_cef_accelerated_paint_info_t) };
 
     // is-cef-main = bottom-of-stack check.
-    let is_main = {
-        let stack = G_SURFACE_STACK.lock();
-        stack.first().map(|e| e.0) == Some(s_ptr)
-    };
+    let is_main = G_SURFACE_STACK.lock().is_main(SurfacePtr(s_ptr));
 
     if is_main {
-        if G_IN_TRANSITION.load(std::sync::atomic::Ordering::SeqCst) {
+        if G_GATE.lock().in_transition() {
             return false;
         }
         unsafe { present_iosurface(&mut *s_ptr, info) };
-        // Clear the expected-size gate when the incoming frame matches.
-        let mut exp = G_EXPECTED_SIZE.lock();
-        if exp.0 > 0 {
-            let surface = info.shared_texture_io_surface as IOSurfaceRef;
-            if !surface.is_null() {
-                let w = unsafe { IOSurfaceGetWidth(surface) } as c_int;
-                let h = unsafe { IOSurfaceGetHeight(surface) } as c_int;
-                if w == exp.0 && h == exp.1 {
-                    *exp = (0, 0);
-                    crate::jfn_macos_transition_clear();
-                }
-            }
+        // Clear the gate when the incoming frame matches the expected
+        // post-transition size.
+        let surface = info.shared_texture_io_surface as IOSurfaceRef;
+        if !surface.is_null() {
+            let w = unsafe { IOSurfaceGetWidth(surface) } as c_int;
+            let h = unsafe { IOSurfaceGetHeight(surface) } as c_int;
+            G_GATE.lock().note_present_size((w, h));
         }
         return true;
     }
@@ -792,9 +796,11 @@ pub fn macos_restack(ordered: *const *mut c_void, n: usize) {
 
     let apply = move || unsafe {
         {
-            let mut stack = G_SURFACE_STACK.lock();
-            stack.clear();
-            stack.extend(order.iter().map(|p| StackEntry(*p as *mut Surface)));
+            let ordered: Vec<SurfacePtr> = order
+                .iter()
+                .map(|p| SurfacePtr(*p as *mut Surface))
+                .collect();
+            G_SURFACE_STACK.lock().replace_stack(&ordered);
         }
         let win = jfn_macos_get_window();
         if win.is_null() {
@@ -846,12 +852,12 @@ pub fn macos_restack(ordered: *const *mut c_void, n: usize) {
 
 pub fn jfn_macos_compositor_cleanup() {
     // Detach lingering subviews + release retained AppKit objects.
-    let stragglers: Vec<usize> = {
-        let mut stack = G_SURFACE_STACK.lock();
-        let out = stack.iter().map(|e| e.0 as usize).collect();
-        stack.clear();
-        out
-    };
+    let stragglers: Vec<usize> = G_SURFACE_STACK
+        .lock()
+        .take_stack()
+        .iter()
+        .map(|e| e.0 as usize)
+        .collect();
     for raw in stragglers {
         if raw == 0 {
             continue;
@@ -871,7 +877,7 @@ pub fn jfn_macos_compositor_cleanup() {
         }
     }
 
-    *G_EXPECTED_SIZE.lock() = (0, 0);
+    G_GATE.lock().end();
 
     let mut metal = G_METAL.lock();
     if let Some(m) = metal.take() {
