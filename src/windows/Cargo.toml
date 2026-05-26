@@ -9,6 +9,7 @@ name = "jfn_windows"
 crate-type = ["rlib"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
+jfn-compositor-core = { path = "../compositor_core" }
 jfn-input = { path = "../input" }
 jfn-mpv = { path = "../mpv" }
 jfn-platform-abi = { path = "../platform_abi" }

@@ -1223,6 +1223,7 @@ name = "jfn-windows"
 version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
+ "jfn-compositor-core",
  "jfn-input",
  "jfn-mpv",
  "jfn-platform-abi",
