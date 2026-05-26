@@ -568,9 +568,8 @@ mod init;
 mod input;
 mod popup;
 use compositor::{
-    macos_alloc_surface, macos_free_surface, macos_restack,
-    macos_set_expected_size, macos_surface_present, macos_surface_resize,
-    macos_surface_set_visible,
+    macos_alloc_surface, macos_free_surface, macos_restack, macos_set_expected_size,
+    macos_surface_present, macos_surface_resize, macos_surface_set_visible,
 };
 use popup::macos_popup_show;
 

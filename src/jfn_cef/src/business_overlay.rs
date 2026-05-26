@@ -16,8 +16,8 @@ use crate::client::JfnCefLayer;
 
 use crate::browsers::{jfn_browsers_create, jfn_browsers_set_active};
 use crate::client::{
-    jfn_cef_layer_create, jfn_cef_layer_load_url, jfn_cef_layer_reset,
-    jfn_cef_layer_set_name, jfn_cef_layer_set_visible,
+    jfn_cef_layer_create, jfn_cef_layer_load_url, jfn_cef_layer_reset, jfn_cef_layer_set_name,
+    jfn_cef_layer_set_visible,
 };
 use jfn_color::theme::jfn_theme_color_on_overlay_dismissed;
 use jfn_jellyfin::{extract_base_url, is_valid_public_info, normalize_input};
