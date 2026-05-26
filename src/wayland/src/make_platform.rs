@@ -251,7 +251,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
-        jfn_idle_inhibit_linux::set(level as u32);
+        jfn_linux_util::idle_inhibit::set(level as u32);
     }
 
     fn set_theme_color(&self, _rgb: u32) {
@@ -302,7 +302,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn open_external_url(&self, url: &str) {
-        jfn_open_url_linux::open(url);
+        jfn_linux_util::open_url::open(url);
     }
 }
 

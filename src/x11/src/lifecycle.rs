@@ -220,7 +220,7 @@ pub fn cleanup() {
         }
     }
 
-    jfn_idle_inhibit_linux::cleanup();
+    jfn_linux_util::idle_inhibit::cleanup();
     crate::input_lifecycle::cleanup();
 
     // Free any surface that outlived Browsers (defensive).

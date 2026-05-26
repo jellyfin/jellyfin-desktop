@@ -1062,21 +1062,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "jfn-idle-inhibit-linux"
-version = "0.1.0"
-dependencies = [
- "parking_lot",
- "tracing",
- "zbus",
-]
-
-[[package]]
 name = "jfn-input"
 version = "0.1.0"
 dependencies = [
  "jfn-platform-abi",
  "jfn-playback",
  "parking_lot",
+ "xkbcommon",
 ]
 
 [[package]]
@@ -1084,6 +1076,15 @@ name = "jfn-jellyfin"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+]
+
+[[package]]
+name = "jfn-linux-util"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "tracing",
+ "zbus",
 ]
 
 [[package]]
@@ -1120,15 +1121,12 @@ name = "jfn-macos-sink"
 version = "0.1.0"
 dependencies = [
  "block2",
- "jfn-cef",
- "jfn-mpv",
  "jfn-playback",
  "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-media-player",
- "parking_lot",
  "tracing",
 ]
 
@@ -1145,15 +1143,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "jfn-open-url-linux"
-version = "0.1.0"
-dependencies = [
- "tracing",
-]
-
-[[package]]
 name = "jfn-paths"
 version = "0.1.0"
+dependencies = [
+ "jfn-linux-util",
+]
 
 [[package]]
 name = "jfn-platform-abi"
@@ -1183,13 +1177,11 @@ dependencies = [
  "jfn-cli",
  "jfn-color",
  "jfn-config",
- "jfn-idle-inhibit-linux",
  "jfn-jellyfin",
  "jfn-logging",
  "jfn-macos",
  "jfn-macos-sink",
  "jfn-mpv",
- "jfn-open-url-linux",
  "jfn-paths",
  "jfn-platform-abi",
  "jfn-playback",
@@ -1217,10 +1209,9 @@ name = "jfn-wayland"
 version = "0.1.0"
 dependencies = [
  "cef-dll-sys",
- "jfn-idle-inhibit-linux",
  "jfn-input",
+ "jfn-linux-util",
  "jfn-mpv",
- "jfn-open-url-linux",
  "jfn-platform-abi",
  "jfn-playback",
  "jfn-wlproxy",
@@ -1256,10 +1247,8 @@ dependencies = [
 name = "jfn-windows-sink"
 version = "0.1.0"
 dependencies = [
- "jfn-cef",
  "jfn-mpv",
  "jfn-playback",
- "parking_lot",
  "tracing",
  "windows",
  "windows-core",
@@ -1279,10 +1268,9 @@ dependencies = [
 name = "jfn-x11"
 version = "0.1.0"
 dependencies = [
- "jfn-idle-inhibit-linux",
  "jfn-input",
+ "jfn-linux-util",
  "jfn-mpv",
- "jfn-open-url-linux",
  "jfn-platform-abi",
  "jfn-playback",
  "libc",

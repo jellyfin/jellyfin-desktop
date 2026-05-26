@@ -11,6 +11,7 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+#[cfg(any(target_os = "macos", windows))]
 use std::process::Command;
 
 const APP_DIR_NAME: &str = "jellyfin-desktop";
@@ -114,7 +115,9 @@ pub fn open_mpv_home() {
     let path = mpv_home();
     #[cfg(target_os = "linux")]
     {
-        let _ = Command::new("xdg-open").arg(&path).spawn();
+        // xdg-open opens filesystem paths too; reuse the shared launcher so
+        // the spawn-and-reap logic lives in one place.
+        jfn_linux_util::open_url::open(&path.to_string_lossy());
     }
     #[cfg(target_os = "macos")]
     {
