@@ -392,8 +392,11 @@ pub unsafe fn jfn_mpv_load_file(path: *const c_char, opts: *const JfnMpvLoadOpti
         s.valid = true;
     }
 
+    #[cfg(target_os = "windows")]
+{
     let hint = if o.is_dolby_vision { c"no" } else { c"yes" };
     unsafe { set_str(c"target-colorspace-hint", hint) };
+}
     
     let mut opts_str = format!("start={},pause=yes", o.start_secs);
     if defer_audio {
