@@ -265,12 +265,18 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             } else {
                 false
             };
+            let is_dolby_vision = if args.size() > 9 {
+                args.bool(9) != 0
+            } else {
+                false
+            };
             jfn_logging::log(
                 jfn_logging::CATEGORY_CEF,
                 jfn_logging::LEVEL_INFO,
                 &format!(
                     "playerLoad: video={video_idx} audio={audio_idx} sub={sub_idx} \
                      start={start_ms}ms infinite={is_infinite_stream} \
+                     dolbyVision={is_dolby_vision} \
                      extAudio={external_audio_url} extSub={external_sub_url} url={url}"
                 ),
             );
@@ -304,6 +310,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 external_audio_url: ext_audio_c.as_ptr(),
                 external_sub_url: ext_sub_c.as_ptr(),
                 is_infinite_stream,
+                is_dolby_vision,
             };
             unsafe { jfn_mpv_load_file(url_c.as_ptr(), &opts) };
             true
