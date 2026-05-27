@@ -369,6 +369,7 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
         force_window_position: boot_force_position,
         window_maximized_at_boot: boot_window_max,
         mpv_log_level: mpv_log_level_c.as_ptr(),
+        client_side_decorations: jfn_config::client_side_decorations(),
     };
     let raw = unsafe { jfn_mpv::boot::jfn_mpv_handle_init(&boot as *const _) };
     if raw.is_null() {

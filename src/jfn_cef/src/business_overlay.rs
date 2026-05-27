@@ -98,7 +98,7 @@ fn apply_setting_value(_section: &str, key: &str, value: &str) {
         "audioPassthrough" => jfn_config::set_audio_passthrough(value),
         "audioExclusive" => jfn_config::set_audio_exclusive(value == "true"),
         "audioChannels" => jfn_config::set_audio_channels(value),
-        "titlebarThemeColor" => jfn_config::set_titlebar_theme_color(value == "true"),
+        "windowDecorations" => jfn_config::set_window_decorations(value),
         "logLevel" => jfn_config::set_log_level(value),
         // Pass empty platform_default — Rust setter clears when raw equals
         // the empty string. The overlay path doesn't have the live hostname

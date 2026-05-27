@@ -55,9 +55,24 @@ struct SettingsData {
     window: JfnWindowGeometry,
     audio_exclusive: bool,
     disable_gpu_compositing: bool,
-    titlebar_theme_color: bool,
     transparent_titlebar: bool,
     force_transcoding: bool,
+    // None = auto (detected from the desktop environment); Some = explicit.
+    // Values: "csd" (in-app), "server" (server-side), "serverThemed"
+    // (server-side, tinted via the KDE palette protocol).
+    window_decorations: Option<String>,
+    hide_scrollbar: bool,
+}
+
+/// Auto default for window decorations. KDE draws its own server-side
+/// decorations (and we can tint them), so default to themed server-side there;
+/// elsewhere (notably GNOME, which never draws decorations) default to in-app
+/// client-side. Detected from `XDG_CURRENT_DESKTOP`.
+fn default_window_decorations() -> String {
+    let kde = std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|v| v.split(':').any(|s| s.eq_ignore_ascii_case("KDE")))
+        .unwrap_or(false);
+    if kde { "serverThemed" } else { "csd" }.to_string()
 }
 
 impl Default for SettingsData {
@@ -72,9 +87,10 @@ impl Default for SettingsData {
             window: JfnWindowGeometry::default(),
             audio_exclusive: false,
             disable_gpu_compositing: false,
-            titlebar_theme_color: true,
             transparent_titlebar: true,
             force_transcoding: false,
+            window_decorations: None,
+            hide_scrollbar: true,
         }
     }
 }
@@ -136,14 +152,17 @@ impl SettingsData {
         if let Some(b) = v.get("disableGpuCompositing").and_then(Value::as_bool) {
             self.disable_gpu_compositing = b;
         }
-        if let Some(b) = v.get("titlebarThemeColor").and_then(Value::as_bool) {
-            self.titlebar_theme_color = b;
-        }
         if let Some(b) = v.get("transparentTitlebar").and_then(Value::as_bool) {
             self.transparent_titlebar = b;
         }
         if let Some(b) = v.get("forceTranscoding").and_then(Value::as_bool) {
             self.force_transcoding = b;
+        }
+        if let Some(s) = v.get("windowDecorations").and_then(Value::as_str) {
+            self.window_decorations = Some(s.to_string());
+        }
+        if let Some(b) = v.get("hideScrollbar").and_then(Value::as_bool) {
+            self.hide_scrollbar = b;
         }
     }
 
@@ -193,9 +212,6 @@ impl SettingsData {
         if self.disable_gpu_compositing {
             o.insert("disableGpuCompositing".into(), Value::Bool(true));
         }
-        if !self.titlebar_theme_color {
-            o.insert("titlebarThemeColor".into(), Value::Bool(false));
-        }
         if !self.transparent_titlebar {
             o.insert("transparentTitlebar".into(), Value::Bool(false));
         }
@@ -204,6 +220,12 @@ impl SettingsData {
         }
         if self.force_transcoding {
             o.insert("forceTranscoding".into(), Value::Bool(true));
+        }
+        if let Some(s) = &self.window_decorations {
+            o.insert("windowDecorations".into(), Value::String(s.clone()));
+        }
+        if !self.hide_scrollbar {
+            o.insert("hideScrollbar".into(), Value::Bool(false));
         }
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
@@ -234,9 +256,6 @@ impl SettingsData {
         if self.disable_gpu_compositing {
             o.insert("disableGpuCompositing".into(), Value::Bool(true));
         }
-        if !self.titlebar_theme_color {
-            o.insert("titlebarThemeColor".into(), Value::Bool(false));
-        }
         if !self.transparent_titlebar {
             o.insert("transparentTitlebar".into(), Value::Bool(false));
         }
@@ -247,6 +266,15 @@ impl SettingsData {
             "forceTranscoding".into(),
             Value::Bool(self.force_transcoding),
         );
+        o.insert(
+            "windowDecorations".into(),
+            Value::String(
+                self.window_decorations
+                    .clone()
+                    .unwrap_or_else(default_window_decorations),
+            ),
+        );
+        o.insert("hideScrollbar".into(), Value::Bool(self.hide_scrollbar));
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
         }
@@ -492,16 +520,41 @@ bool_accessors!(
     disable_gpu_compositing
 );
 bool_accessors!(
-    titlebar_theme_color,
-    set_titlebar_theme_color,
-    titlebar_theme_color
-);
-bool_accessors!(
     transparent_titlebar,
     set_transparent_titlebar,
     transparent_titlebar
 );
 bool_accessors!(force_transcoding, set_force_transcoding, force_transcoding);
+/// Effective window-decoration mode ("csd" | "server" | "serverThemed"): the
+/// user's explicit choice, or the desktop-environment auto default when unset.
+fn resolve_window_decorations() -> String {
+    state()
+        .lock()
+        .data
+        .window_decorations
+        .clone()
+        .unwrap_or_else(default_window_decorations)
+}
+
+pub fn window_decorations() -> String {
+    resolve_window_decorations()
+}
+pub fn set_window_decorations(v: &str) {
+    if matches!(v, "csd" | "server" | "serverThemed") {
+        state().lock().data.window_decorations = Some(v.to_string());
+    }
+}
+
+/// True when the app draws its own (client-side) titlebar.
+pub fn client_side_decorations() -> bool {
+    resolve_window_decorations() == "csd"
+}
+/// True when server-side decorations should be tinted to the Jellyfin theme
+/// (KDE palette protocol).
+pub fn titlebar_theme_color() -> bool {
+    resolve_window_decorations() == "serverThemed"
+}
+bool_accessors!(hide_scrollbar, set_hide_scrollbar, hide_scrollbar);
 
 pub fn window_geometry() -> JfnWindowGeometry {
     state().lock().data.window
