@@ -56,6 +56,10 @@ pub struct JfnMpvBoot {
     /// libmpv log-message subscription level (`"no"`, `"error"`,
     /// `"warn"`, `"info"`, `"v"`, `"debug"`, `"trace"`).
     pub mpv_log_level: *const c_char,
+    /// When set on Wayland, suppress mpv's server-side decoration request so
+    /// the app's own client-side decorations don't stack under a compositor
+    /// titlebar (e.g. KDE). No effect on X11 (WM draws decorations).
+    pub client_side_decorations: bool,
 }
 
 /// Owns the Handle for the rest of the process. `mpv_terminate_destroy`
@@ -104,7 +108,11 @@ fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::e
     }
 }
 
-fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Result<()> {
+fn apply_defaults(
+    handle: &Handle,
+    display: DisplayBackend,
+    client_side_decorations: bool,
+) -> crate::error::Result<()> {
     let set = |name: &str, value: &str| set_option_or_skip(handle, name, value);
 
     // OSD/OSC off — CEF overlay handles all UI.
@@ -141,7 +149,11 @@ fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Res
     set("stop-screensaver", "no")?;
     set("keepaspect-window", "no")?;
     set("auto-window-resize", "no")?;
-    set("border", "yes")?;
+    // Suppress the server-side decoration request on Wayland when the app
+    // draws its own client-side decorations; otherwise a compositor titlebar
+    // (e.g. KDE) would stack on top of ours.
+    let suppress_ssd = display == DisplayBackend::Wayland && client_side_decorations;
+    set("border", if suppress_ssd { "no" } else { "yes" })?;
     set("title", "Jellyfin Desktop")?;
     set("wayland-app-id", "org.jellyfin.JellyfinDesktop")?;
 
@@ -241,7 +253,7 @@ pub unsafe fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_hand
         }
     };
 
-    if let Err(e) = apply_defaults(&handle, display) {
+    if let Err(e) = apply_defaults(&handle, display, boot.client_side_decorations) {
         tracing::error!(target: "mpv", "apply_defaults failed: {:?}", e);
         return ptr::null_mut();
     }

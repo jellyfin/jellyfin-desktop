@@ -234,6 +234,22 @@ impl Platform for WaylandPlatform {
         crate::wl_ffi::jfn_wl_toggle_fullscreen();
     }
 
+    fn window_minimize(&self) {
+        crate::wl_ffi::jfn_wl_window_minimize();
+    }
+
+    fn window_toggle_maximize(&self) {
+        crate::wl_ffi::jfn_wl_window_toggle_maximize();
+    }
+
+    fn window_start_move(&self) {
+        crate::wl_ffi::jfn_wl_window_start_move();
+    }
+
+    fn window_start_resize(&self, edge: c_int) {
+        crate::wl_ffi::jfn_wl_window_start_resize(edge);
+    }
+
     fn begin_transition(&self) {
         crate::wl_ffi::jfn_wl_begin_transition();
     }

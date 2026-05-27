@@ -526,6 +526,15 @@ fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
             "false"
         },
     );
+    replace_first(
+        &mut code,
+        "__CSD_SUPPORTED__",
+        if cfg!(target_os = "linux") {
+            "true"
+        } else {
+            "false"
+        },
+    );
 
     let device_profile_key = CefString::from("device_profile_json");
     if profile.has_key(Some(&device_profile_key)) == 1 {

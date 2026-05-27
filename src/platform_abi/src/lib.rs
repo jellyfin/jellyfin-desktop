@@ -175,6 +175,18 @@ pub trait Platform: Send + Sync {
     fn set_fullscreen(&self, _v: bool) {}
     fn toggle_fullscreen(&self) {}
 
+    // Window controls for client-side decorations. Default no-ops cover
+    // backends without CSD (X11 WMs / macOS / Windows draw their own).
+    fn window_minimize(&self) {}
+    fn window_toggle_maximize(&self) {}
+    /// Begin an interactive, compositor-driven window move. Must be called in
+    /// response to a pointer button press on the titlebar drag region.
+    fn window_start_move(&self) {}
+    /// Begin an interactive, compositor-driven resize from the given edge.
+    /// `edge` uses xdg_toplevel resize-edge values (1=top, 2=bottom, 4=left,
+    /// 8=right, corners are the ORs, e.g. 5=top-left).
+    fn window_start_resize(&self, _edge: c_int) {}
+
     // Transition
     fn begin_transition(&self) {}
     fn end_transition(&self) {}

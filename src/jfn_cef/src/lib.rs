@@ -18,6 +18,7 @@ mod pump;
 mod resource;
 mod state;
 mod v8_handler;
+pub mod window_controls;
 
 pub use client::{
     BeforeCloseFn, ContextBuilderFn, ContextDispatcherFn, CreatedFn, JfnCefLayer, MessageFn,

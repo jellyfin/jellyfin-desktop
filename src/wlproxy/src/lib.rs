@@ -48,11 +48,13 @@ use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
 };
 use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
 use wl_proxy::protocols::wayland::wl_output::WlOutput;
+use wl_proxy::protocols::wayland::wl_pointer::{WlPointer, WlPointerButtonState, WlPointerHandler};
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
+use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatHandler};
 use wl_proxy::protocols::wayland::wl_surface::WlSurface;
 use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
 use wl_proxy::protocols::xdg_shell::xdg_toplevel::{
-    XdgToplevel, XdgToplevelHandler, XdgToplevelState,
+    XdgToplevel, XdgToplevelHandler, XdgToplevelResizeEdge, XdgToplevelState,
 };
 use wl_proxy::protocols::xdg_shell::xdg_wm_base::{XdgWmBase, XdgWmBaseHandler};
 use wl_proxy::state::State;
@@ -73,6 +75,9 @@ static SCALE_CB: Mutex<Option<ScaleCb>> = Mutex::new(None);
 enum HostCommand {
     SetFullscreen(bool),
     SetMaximized(bool),
+    SetMinimized,
+    Move,
+    Resize(u32),
 }
 
 static COMMANDS: Mutex<VecDeque<HostCommand>> = Mutex::new(VecDeque::new());
@@ -81,6 +86,12 @@ thread_local! {
     // Per-client thread stores the XdgToplevel it manages so the command
     // drain (which runs on the same thread) can issue requests on it.
     static TOPLEVEL: RefCell<Option<Rc<XdgToplevel>>> = const { RefCell::new(None) };
+    // The compositor-facing wl_seat and the most recent pointer-button serial,
+    // captured by snooping forwarded input. xdg_toplevel.move requires both,
+    // and the serial must come from THIS connection (the toplevel's), not the
+    // mpv-side input subsystem's serial namespace.
+    static SEAT: RefCell<Option<Rc<WlSeat>>> = const { RefCell::new(None) };
+    static LAST_SERIAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 // Pending state for configure synthesis. We own the scale tracking via
@@ -230,6 +241,25 @@ pub fn jfn_wlproxy_set_maximized(enable: c_int) {
         .push_back(HostCommand::SetMaximized(enable != 0));
 }
 
+/// Queue an xdg_toplevel.set_minimized request.
+pub fn jfn_wlproxy_set_minimized() {
+    COMMANDS.lock().push_back(HostCommand::SetMinimized);
+}
+
+/// Queue an interactive xdg_toplevel.move. Uses the most recent pointer-button
+/// serial seen on this connection. Must be called in response to a button press
+/// (the compositor takes over the drag grab).
+pub fn jfn_wlproxy_window_move() {
+    COMMANDS.lock().push_back(HostCommand::Move);
+}
+
+/// Queue an interactive xdg_toplevel.resize. `edge` is an xdg_toplevel
+/// resize-edge value (1=top, 2=bottom, 4=left, 8=right, and their corner ORs).
+/// Like move, uses the most recent pointer-button serial.
+pub fn jfn_wlproxy_window_resize(edge: c_int) {
+    COMMANDS.lock().push_back(HostCommand::Resize(edge as u32));
+}
+
 // =========================================================================
 // Listener / per-client thread
 // =========================================================================
@@ -310,25 +340,39 @@ fn run_client(socket: OwnedFd, upstream: Option<String>) {
 }
 
 fn drain_host_commands() {
-    let cmds: Vec<HostCommand> = COMMANDS.lock().drain(..).collect();
-    if cmds.is_empty() {
-        return;
-    }
+    // Only the client thread that owns the toplevel may consume commands.
+    // WAYLAND_DISPLAY points every client in the process (mpv AND CEF's GPU
+    // helper) at this proxy, so multiple per-client threads run this drain.
+    // Since COMMANDS is process-global but TOPLEVEL is thread-local, a thread
+    // without the toplevel must NOT drain — otherwise it pops the command and
+    // drops it, racing the owning thread.
     TOPLEVEL.with(|t| {
         let tl_ref = t.borrow();
         let Some(tl) = tl_ref.as_ref() else {
-            // No toplevel in this thread (e.g. early commands queued before
-            // mpv got to xdg_surface.get_toplevel). Drop silently — the
-            // commands aren't replayed, but for the current contract (host
-            // calls only after the window exists) that's fine.
             return;
         };
+        let cmds: Vec<HostCommand> = COMMANDS.lock().drain(..).collect();
         for cmd in cmds {
             match cmd {
                 HostCommand::SetFullscreen(true) => tl.send_set_fullscreen(None),
                 HostCommand::SetFullscreen(false) => tl.send_unset_fullscreen(),
                 HostCommand::SetMaximized(true) => tl.send_set_maximized(),
                 HostCommand::SetMaximized(false) => tl.send_unset_maximized(),
+                HostCommand::SetMinimized => tl.send_set_minimized(),
+                HostCommand::Move => SEAT.with(|s| {
+                    if let Some(seat) = s.borrow().as_ref() {
+                        tl.send_move(seat, LAST_SERIAL.with(|c| c.get()));
+                    }
+                }),
+                HostCommand::Resize(edge) => SEAT.with(|s| {
+                    if let Some(seat) = s.borrow().as_ref() {
+                        tl.send_resize(
+                            seat,
+                            LAST_SERIAL.with(|c| c.get()),
+                            XdgToplevelResizeEdge(edge),
+                        );
+                    }
+                }),
             }
         }
     });
@@ -362,6 +406,11 @@ impl WlRegistryHandler for RegistryH {
                 id.downcast::<WpFractionalScaleManagerV1>()
                     .set_handler(FracScaleMgrH);
             }
+            WlSeat::INTERFACE => {
+                let seat = id.downcast::<WlSeat>();
+                seat.set_handler(SeatH);
+                SEAT.with(|s| *s.borrow_mut() = Some(seat.clone()));
+            }
             _ => {}
         }
         slf.send_bind(name, id);
@@ -390,6 +439,35 @@ impl WpFractionalScaleV1Handler for FracScaleH {
         }
         fire_configure();
         slf.send_preferred_scale(scale);
+    }
+}
+
+// Snoop the seat→pointer chain only to cache the latest button-press serial
+// (needed by xdg_toplevel.move). Every event is forwarded unchanged; we set
+// no policy. Other seat/pointer requests/events fall through to the default
+// forwarding impls.
+struct SeatH;
+impl WlSeatHandler for SeatH {
+    fn handle_get_pointer(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlPointer>) {
+        id.set_handler(PointerH);
+        slf.send_get_pointer(id);
+    }
+}
+
+struct PointerH;
+impl WlPointerHandler for PointerH {
+    fn handle_button(
+        &mut self,
+        slf: &Rc<WlPointer>,
+        serial: u32,
+        time: u32,
+        button: u32,
+        state: WlPointerButtonState,
+    ) {
+        if state == WlPointerButtonState::PRESSED {
+            LAST_SERIAL.with(|c| c.set(serial));
+        }
+        slf.send_button(serial, time, button, state);
     }
 }
 
