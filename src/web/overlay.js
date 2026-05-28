@@ -70,9 +70,9 @@ async function tryConnect(server, spinnerStartTime = Date.now()) {
         if (!isConnecting) return false;
 
         if (window.jmpNative && window.jmpNative.dismissOverlay) {
-            document.body.classList.add('fade-out');
             window.jmpNative.dismissOverlay();
-            setTimeout(() => { window.close(); }, 500);
+            document.body.addEventListener('animationend', () => window.close(), { once: true });
+            document.body.classList.add('fade-out');
         }
         return true;
     } catch (e) {

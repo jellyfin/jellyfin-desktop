@@ -23,7 +23,6 @@ use jfn_color::theme::jfn_theme_color_on_overlay_dismissed;
 use jfn_jellyfin::{extract_base_url, is_valid_public_info, normalize_input};
 
 struct OverlayState {
-    layer: *mut JfnCefLayer,
     main_layer: *mut JfnCefLayer,
     active_probe: Option<Urlrequest>,
 }
@@ -58,7 +57,6 @@ pub fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
     }
 
     *INSTANCE.lock() = Some(OverlayState {
-        layer,
         main_layer,
         active_probe: None,
     });
@@ -155,8 +153,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 jfn_logging::LEVEL_INFO,
                 "Overlay: dismissOverlay",
             );
-            let (_, main_layer) = match INSTANCE.lock().as_ref() {
-                Some(s) => (s.layer, s.main_layer),
+            let main_layer = match INSTANCE.lock().as_ref() {
+                Some(s) => s.main_layer,
                 None => return true,
             };
             jfn_browsers_set_active(main_layer);
