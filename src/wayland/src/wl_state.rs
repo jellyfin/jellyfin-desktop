@@ -21,7 +21,10 @@
 use parking_lot::{Mutex, MutexGuard};
 use std::ffi::c_void;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
-use std::sync::OnceLock;
+use std::ptr::NonNull;
+use std::sync::{Arc, OnceLock};
+
+use jfn_gpu_paint::{GpuContext, GpuPainter};
 
 use memmap2::MmapOptions;
 use wayland_backend::client::{Backend, ObjectId};
@@ -83,6 +86,13 @@ pub(crate) struct PlatformSurface {
     pub popup_viewport: Option<WpViewport>,
     pub popup_buffer: Option<WlBuffer>,
     pub popup_visible: bool,
+
+    /// Vulkan-WSI painter, lazily created on first software present
+    /// when `WlState::use_gpu_paint` is set. Owns its own swapchain
+    /// over this surface's `wl_surface`; once created, all attaches
+    /// to `surface` go through Vulkan WSI (we stop calling
+    /// `wl_surface.attach` from this crate for this surface).
+    pub painter: Option<GpuPainter>,
 }
 
 impl PlatformSurface {
@@ -106,6 +116,7 @@ impl PlatformSurface {
             popup_viewport: None,
             popup_buffer: None,
             popup_visible: false,
+            painter: None,
         }
     }
 }
@@ -152,6 +163,19 @@ pub(crate) struct WlState {
     pub was_fullscreen: bool,
     pub transitioning: bool,
     pub present_mode: PresentMode,
+
+    /// Raw `wl_display*` — kept so `GpuPainter::new` can build
+    /// `VK_KHR_wayland_surface` handles for child surfaces.
+    pub display_ptr: NonNull<c_void>,
+    /// Shared Vulkan context. `None` outside `--wayland-paint=gpu` and
+    /// outside the EGL-fail-with-Vulkan-adapter fallback path.
+    pub gpu_ctx: Option<Arc<GpuContext>>,
+    /// When true, `surface_present_software` routes through each
+    /// surface's [`PlatformSurface::painter`] (Vulkan WSI) instead of
+    /// `wl_shm`. `set_visible` and `resize` also skip their
+    /// `wl_surface.attach`/`viewport.set_destination` work for the
+    /// gpu_paint surface.
+    pub use_gpu_paint: bool,
 }
 
 // Raw pointers in `stack` are only ever dereferenced under the Mutex
@@ -284,6 +308,11 @@ pub(crate) unsafe fn init(
         was_fullscreen: false,
         transitioning: false,
         present_mode: PresentMode::Attach,
+        // SAFETY: caller guaranteed `display_ptr` is a live
+        // `*mut wl_display`.
+        display_ptr: NonNull::new(display_ptr).expect("display_ptr is non-null"),
+        gpu_ctx: None,
+        use_gpu_paint: false,
     };
 
     STATE
@@ -300,6 +329,15 @@ impl WlState {
     pub(crate) fn flush(&self) {
         let _ = self.conn.flush();
     }
+}
+
+/// Install the shared [`GpuContext`] and flip `use_gpu_paint`. Called
+/// from `lifecycle` once the EGL probe has decided (or been bypassed
+/// by `--wayland-paint`).
+pub fn install_gpu_paint(ctx: Arc<GpuContext>) {
+    let mut st = lock();
+    st.gpu_ctx = Some(ctx);
+    st.use_gpu_paint = true;
 }
 
 pub(crate) fn size_in_tolerance(s: &PlatformSurface, vw: i32, vh: i32) -> bool {

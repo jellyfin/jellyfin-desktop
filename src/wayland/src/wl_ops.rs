@@ -6,7 +6,10 @@
 //! C++ original.
 
 use std::os::fd::{AsFd, OwnedFd};
+use std::ptr::NonNull;
 
+use jfn_gpu_paint::{DirtyRect, GpuPainter, PixelFrame, WindowTarget};
+use wayland_client::Proxy;
 use wayland_client::protocol::wl_subsurface::WlSubsurface;
 
 use crate::wl_state::{
@@ -75,6 +78,20 @@ pub(crate) fn free_surface(ptr: *mut PlatformSurface) {
     if ptr.is_null() {
         return;
     }
+
+    // Tear down the painter outside the lock — Vulkan WSI swapchain
+    // destruction calls `wl_display_roundtrip`, which would re-enter
+    // `wl_state::lock()` via the wlproxy configure handler and
+    // deadlock on the non-reentrant Mutex. Caller (CEF UI thread)
+    // owns this ptr exclusively; the painter field can be safely
+    // taken via a raw deref before grabbing the lock.
+    {
+        let s = unsafe { surface_mut(ptr) };
+        if let Some(p) = s.painter.take() {
+            p.shutdown();
+        }
+    }
+
     {
         let mut st = lock();
         // Drop from stack if still present.
@@ -137,6 +154,16 @@ pub(crate) fn surface_resize(ptr: *mut PlatformSurface, lw: i32, lh: i32, pw: i3
     s.pw = pw;
     s.ph = ph;
 
+    // Vulkan-WSI path: notify the painter so the next matching-size
+    // frame reconfigures the swapchain. No viewport math — the
+    // swapchain owns presentation sizing.
+    if st.use_gpu_paint {
+        if let Some(painter) = s.painter.as_mut() {
+            painter.resize((pw.max(1) as u32, ph.max(1) as u32));
+        }
+        return;
+    }
+
     let Some(surface) = s.surface.as_ref() else {
         return;
     };
@@ -179,6 +206,19 @@ pub(crate) fn surface_set_visible(
     let Some(surface) = s.surface.clone() else {
         return;
     };
+
+    // Vulkan-WSI owns attach/commit on this surface — skip the
+    // placeholder and the null-attach. The painter gates its own
+    // presents; until the first frame arrives the wl_surface stays
+    // unattached (compositor draws nothing for this subsurface, mpv
+    // video underneath shows through).
+    if st.use_gpu_paint {
+        if let Some(painter) = s.painter.as_mut() {
+            painter.set_visible(visible);
+        }
+        return;
+    }
+
     if visible {
         // Solid-color placeholder so the user sees the theme background
         // before CEF's first paint lands.
@@ -322,8 +362,8 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
         return false;
     }
 
-    let buf = { create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h) };
-    let Some(buf) = buf else {
+    let Some(buf) = create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h)
+    else {
         return false;
     };
 
@@ -357,18 +397,100 @@ pub(crate) fn surface_present_software(
     w: i32,
     h: i32,
 ) -> bool {
-    if ptr.is_null() {
+    if ptr.is_null() || w <= 0 || h <= 0 {
         return false;
     }
-    let st = lock();
-    let s = unsafe { surface_mut(ptr) };
-    if s.surface.is_none() || !s.visible {
-        return false;
-    }
-    let Some(buf) = create_shm_buffer(&st, pixels, w, h) else {
+    // Snapshot the gpu_paint context + display ptr under the lock,
+    // then release it before any wgpu call. wgpu's Vulkan WSI calls
+    // `wl_display_roundtrip` during swapchain configure; that
+    // dispatches incoming events, which wlproxy turns into a
+    // re-entrant `wl_state::lock()` via the xdg_toplevel.configure
+    // handler — deadlocking on this Mutex (parking_lot is not
+    // reentrant). The PlatformSurface ptr is owned by CEF for the
+    // surface's lifetime, so dereferencing it without the lock is
+    // sound: only this thread paints into a given surface, and
+    // `free_surface` cannot run concurrently with a paint for the
+    // same handle.
+    let (ctx, display_ptr) = {
+        let st = lock();
+        let s = unsafe { surface_mut(ptr) };
+        if s.surface.is_none() || !s.visible {
+            return false;
+        }
+        if !st.use_gpu_paint {
+            // wl_shm branch keeps holding the lock — its work is
+            // synchronous wayland-client, no roundtrips into wgpu.
+            let Some(buf) = create_shm_buffer(&st, pixels, w, h) else {
+                return false;
+            };
+            attach_and_commit_locked(s, buf, w, h);
+            return true;
+        }
+        (st.gpu_ctx.clone(), st.display_ptr)
+    };
+
+    let Some(ctx) = ctx else {
+        tracing::error!("use_gpu_paint set but gpu_ctx missing");
         return false;
     };
-    attach_and_commit_locked(s, buf, w, h);
+    let s = unsafe { surface_mut(ptr) };
+    gpu_paint_present(s, ctx, display_ptr, pixels, w, h)
+}
+
+/// Vulkan-WSI replacement for the wl_shm branch of
+/// `surface_present_software`. Lazily creates the per-surface
+/// [`GpuPainter`] on the first frame, then routes each frame as a
+/// full-frame `push_pixels` (CEF doesn't hand us dirty rects through
+/// this entry point). Runs without the `wl_state` lock; see the call
+/// site for the deadlock-avoidance rationale.
+fn gpu_paint_present(
+    s: &mut PlatformSurface,
+    ctx: std::sync::Arc<jfn_gpu_paint::GpuContext>,
+    display_ptr: NonNull<std::ffi::c_void>,
+    pixels: &[u8],
+    w: i32,
+    h: i32,
+) -> bool {
+    let size = (w as u32, h as u32);
+
+    if s.painter.is_none() {
+        let Some(surface) = s.surface.as_ref() else {
+            return false;
+        };
+        let raw_surface = surface.id().as_ptr() as *mut std::ffi::c_void;
+        let Some(surface_nn) = NonNull::new(raw_surface) else {
+            return false;
+        };
+        let target = WindowTarget::Wayland {
+            display: display_ptr,
+            surface: surface_nn,
+        };
+        match GpuPainter::new(ctx, target, size) {
+            Ok(p) => s.painter = Some(p),
+            Err(e) => {
+                tracing::error!("gpu_paint painter init failed: {e}");
+                return false;
+            }
+        }
+    }
+
+    let painter = s.painter.as_mut().unwrap();
+    painter.resize(size);
+
+    let stride = (w as u32) * 4;
+    let bgra = &pixels[..(h as usize) * (stride as usize)];
+    let dirty: [DirtyRect; 0] = [];
+    let frame = PixelFrame {
+        width: w as u32,
+        height: h as u32,
+        stride,
+        bgra,
+        dirty: &dirty,
+    };
+    if let Err(e) = painter.push_pixels(frame) {
+        tracing::error!("gpu_paint push_pixels failed: {e}");
+        return false;
+    }
     true
 }
 
@@ -393,8 +515,8 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
     } else {
         h
     };
-    let buf = { create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h) };
-    let Some(buf) = buf else {
+    let Some(buf) = create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h)
+    else {
         return;
     };
     if let Some(old) = s.popup_buffer.take() {
@@ -527,6 +649,7 @@ pub(crate) fn was_fullscreen() -> bool {
 fn begin_transition_locked(st: &mut WlState) {
     st.transitioning = true;
     st.present_mode = PresentMode::Drop;
+    let use_gpu_paint = st.use_gpu_paint;
     for &p in &st.stack {
         if p.is_null() {
             continue;
@@ -535,6 +658,16 @@ fn begin_transition_locked(st: &mut WlState) {
         let (Some(surface), Some(_)) = (s.surface.as_ref(), s.subsurface.as_ref()) else {
             continue;
         };
+        // Vulkan WSI owns attach/commit on this wl_surface — mutating
+        // it from here would race the swapchain. Drop presents via
+        // the painter's visibility gate instead so the next acquire
+        // blocks until the post-transition size lands.
+        if use_gpu_paint {
+            if let Some(painter) = s.painter.as_mut() {
+                painter.set_visible(false);
+            }
+            continue;
+        }
         surface.attach(None, 0, 0);
         if let Some(viewport) = s.viewport.as_ref() {
             viewport.set_destination(-1, -1);
@@ -547,19 +680,35 @@ fn begin_transition_locked(st: &mut WlState) {
 fn end_transition_locked(st: &mut WlState) {
     st.transitioning = false;
     st.present_mode = PresentMode::Attach;
-    if let Some(&p) = st.stack.first() {
-        if p.is_null() {
-            return;
+    let use_gpu_paint = st.use_gpu_paint;
+    if use_gpu_paint {
+        // Re-enable presents on every gpu_paint surface; the swapchain
+        // reconfigures itself when the next CEF frame's size differs
+        // from the current config.
+        for &p in &st.stack {
+            if p.is_null() {
+                continue;
+            }
+            let s = unsafe { surface_mut(p) };
+            if s.visible
+                && let Some(painter) = s.painter.as_mut()
+            {
+                painter.set_visible(true);
+            }
         }
+        return;
+    }
+    if let Some(&p) = st.stack.first()
+        && !p.is_null()
+    {
         let s = unsafe { surface_mut(p) };
-        if let (Some(viewport), pw, ph, lw, lh) = (s.viewport.as_ref(), s.pw, s.ph, s.lw, s.lh)
-            && pw > 0
-            && lw > 0
+        if let Some(viewport) = s.viewport.as_ref()
+            && s.pw > 0
+            && s.lw > 0
         {
-            viewport.set_source(0.0, 0.0, pw as f64, ph as f64);
-            viewport.set_destination(lw, lh);
+            viewport.set_source(0.0, 0.0, s.pw as f64, s.ph as f64);
+            viewport.set_destination(s.lw, s.lh);
         }
-        let _ = (s,);
     }
 }
 
@@ -610,7 +759,10 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
             && !p.is_null()
         {
             let s = unsafe { surface_mut(p) };
-            if let (Some(viewport), true) = (s.viewport.as_ref(), s.pw > 0 && s.lw > 0) {
+            if let Some(viewport) = s.viewport.as_ref()
+                && s.pw > 0
+                && s.lw > 0
+            {
                 viewport.set_source(0.0, 0.0, s.pw as f64, s.ph as f64);
                 viewport.set_destination(s.lw, s.lh);
             }
@@ -620,6 +772,12 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
 }
 
 fn update_surface_size_locked(st: &WlState, lw: i32, lh: i32, pw: i32, ph: i32) {
+    // Vulkan WSI owns this wl_surface — viewport/commit ops would
+    // race the swapchain. The painter learns the new size from
+    // `surface_resize` (and again from the next CEF frame's size).
+    if st.use_gpu_paint {
+        return;
+    }
     let Some(&p) = st.stack.first() else {
         return;
     };

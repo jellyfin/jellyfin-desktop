@@ -1,0 +1,25 @@
+[package]
+name = "jfn-gpu-paint"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "jfn_gpu_paint"
+crate-type = ["rlib"]
+
+[dependencies]
+parking_lot.workspace = true
+
+# The crate is `#![cfg(target_os = "linux")]`; empty rlib elsewhere so the
+# workspace builds uniformly on every platform.
+[target.'cfg(target_os = "linux")'.dependencies]
+tracing.workspace = true
+libc.workspace = true
+thiserror = "1"
+raw-window-handle = "0.6"
+wgpu = "22"
+pollster = "0.3"
+
+[lints]
+workspace = true
