@@ -278,6 +278,11 @@ impl Inner {
             h.set_windowless_frame_rate(hz);
         }
     }
+    pub(crate) fn cef_was_hidden(&self, hidden: bool) {
+        if let Some(h) = self.host() {
+            h.was_hidden(if hidden { 1 } else { 0 });
+        }
+    }
     pub(crate) fn exec_js(&self, js: &str) {
         let Some(b) = self.browser_clone() else {
             return;
@@ -1350,6 +1355,25 @@ pub(crate) fn jfn_cef_post_close_and_collect(tx: SyncSender<Vec<Arc<Inner>>>) {
         post_task(ThreadId::UI, Some(&mut task)) != 0,
         "TID_UI post during shutdown — CEF UI thread invariant broken"
     );
+}
+
+wrap_task! {
+    struct SetHiddenAllTask {
+        hidden: bool,
+    }
+    impl Task {
+        fn execute(&self) {
+            crate::browsers::jfn_browsers_apply_hidden_all(self.hidden);
+        }
+    }
+}
+
+/// Post a task onto TID_UI that calls `WasHidden(hidden)` on every live
+/// layer's BrowserHost. Caller-agnostic — any thread can request a
+/// visibility change; CEF requires the call on TID_UI.
+pub(crate) fn jfn_cef_post_set_hidden_all(hidden: bool) {
+    let mut task = SetHiddenAllTask::new(hidden);
+    let _ = post_task(ThreadId::UI, Some(&mut task));
 }
 
 // ---------------------------------------------------------------------------
