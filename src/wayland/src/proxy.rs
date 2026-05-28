@@ -68,6 +68,11 @@ extern "C" fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_i
         wl_ops::on_configure(physical_w, physical_h, fullscreen != 0, scale);
     }
     jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
+    // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait
+    // loop reads OSD pixels from the ingest layer rather than via an mpv
+    // event, so a synthetic configure that lands while main is blocked
+    // would otherwise go unobserved).
+    jfn_mpv::api::jfn_mpv_wakeup();
 }
 
 extern "C" fn on_suspended(suspended: c_int) {
