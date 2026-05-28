@@ -45,6 +45,10 @@ enum CursorReq {
 
 pub struct CursorMailbox {
     queue: Mutex<Vec<CursorReq>>,
+    // SAFETY: the underlying `WakeEvent` (kernel eventfd / pipe) is safe to
+    // signal/drain from any thread. `Drop` frees it; freeing only happens
+    // when the last `Arc<CursorMailbox>` is dropped, which by ownership
+    // discipline outlives every signaller (producers hold an `Arc` clone).
     wake: *mut jfn_playback::WakeEvent,
 }
 
@@ -86,9 +90,21 @@ pub struct Handle {
 
 impl Handle {
     pub fn join(&mut self) {
-        if let Some(j) = self.join.take() {
-            let _ = j.join();
+        if let Some(j) = self.join.take()
+            && let Err(e) = j.join()
+        {
+            eprintln!("[x11] input thread panicked: {e:?}");
         }
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        // Signal the shutdown waker so the input thread exits its `poll`,
+        // then join. Without this, dropping a Handle mid-run leaves the
+        // input thread detached and polling xcb forever.
+        unsafe { jfn_wake_event_signal(x11_shutdown_waker()) };
+        self.join();
     }
 }
 

@@ -594,11 +594,8 @@ unsafe fn start_wake_observer(state: &mut InitState) {
 // wait-for-window loop in macos_init).
 // =====================================================================
 
-use crate::macos_pump;
-
-unsafe extern "C" {
-    fn usleep(usec: u32) -> i32;
-}
+use crate::macos_pump_block;
+use std::time::Instant;
 
 // =====================================================================
 // macos_init — locates mpv's NSWindow, swizzles windowShouldClose:,
@@ -611,9 +608,14 @@ pub fn macos_init(_mpv: *mut c_void) -> bool {
 
     let mut state = INIT_STATE.lock();
     unsafe {
-        // Spin until mpv creates its NSWindow.
-        for _ in 0..500 {
-            macos_pump();
+        // Block the main run loop until mpv creates its NSWindow. mpv's
+        // window-creation work runs as a dispatch on the main queue, which
+        // fires a run-loop source — `macos_pump_block` wakes on that source
+        // without polling. The deadline caps total wait at ~5s; each
+        // iteration drains pending events, blocks until *some* source
+        // fires (typically the window dispatch), then re-checks.
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        loop {
             let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
             let windows: *mut AnyObject = msg_send![ns_app, windows];
             if !windows.is_null() {
@@ -636,7 +638,11 @@ pub fn macos_init(_mpv: *mut c_void) -> bool {
             if !state.window.is_null() {
                 break;
             }
-            usleep(10000);
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            macos_pump_block(remaining.as_secs_f64());
         }
         if state.window.is_null() {
             tracing::error!(target: LOG_TARGET, "[INIT] mpv did not create a window");
