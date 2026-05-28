@@ -621,6 +621,15 @@ fn handle_event(st: &mut State, ev: xcb::Event) {
         }
         Event::X(x::Event::DestroyNotify(_)) => jfn_shutdown_initiate(),
         Event::X(x::Event::ClientMessage(_)) => jfn_shutdown_initiate(),
+        // MapNotify / UnmapNotify are delivered for our window because the
+        // event mask includes STRUCTURE_NOTIFY. Forward to the manager FSM
+        // so CEF can drop GPU compositing resources while we're iconified.
+        Event::X(x::Event::MapNotify(_)) => {
+            jfn_playback::lifecycle::jfn_lifecycle_set_visible(true)
+        }
+        Event::X(x::Event::UnmapNotify(_)) => {
+            jfn_playback::lifecycle::jfn_lifecycle_set_visible(false)
+        }
         Event::Xkb(xkb_ev) => {
             use xcb::xkb;
             match xkb_ev {

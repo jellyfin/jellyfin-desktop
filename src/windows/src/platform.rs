@@ -222,7 +222,11 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
         if (msg.hwnd.0 as usize) == target_hwnd_raw {
             if msg.message == WM_SIZE {
                 if msg.wParam.0 == SIZE_MINIMIZED as usize {
+                    let was_minimized = STATE.lock().was_minimized;
                     STATE.lock().was_minimized = true;
+                    if !was_minimized {
+                        jfn_playback::lifecycle::jfn_lifecycle_set_visible(false);
+                    }
                     let hook_raw = STATE.lock().wndproc_hook_raw;
                     let hook = HHOOK(hook_raw as *mut c_void);
                     return unsafe { CallNextHookEx(Some(hook), n_code, wp, lp) };
@@ -254,6 +258,10 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                         let mut st = STATE.lock();
                         st.was_minimized = false;
                         st.was_fullscreen = fs;
+                        drop(st);
+                        // Restore from iconic — counterpart to the
+                        // SIZE_MINIMIZED arm above.
+                        jfn_playback::lifecycle::jfn_lifecycle_set_visible(true);
                     } else if fs_changed {
                         STATE.lock().was_fullscreen = fs;
                         // A fullscreen change we didn't drive through the
