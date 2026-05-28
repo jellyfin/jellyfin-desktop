@@ -223,8 +223,10 @@ mod imp {
                 libc::write(wake_write, buf.as_ptr() as *const c_void, 1);
             }
         }
-        if let Some(h) = THREAD.lock().take() {
-            let _ = h.join();
+        if let Some(h) = THREAD.lock().take()
+            && let Err(e) = h.join()
+        {
+            eprintln!("[single-instance] listener thread panicked: {e:?}");
         }
         let path = socket_path();
         if let Ok(cpath) = CString::new(path.as_os_str().as_encoded_bytes()) {
@@ -401,8 +403,10 @@ mod imp {
         if pipe != INVALID_HANDLE_VALUE {
             unsafe { CloseHandle(pipe) };
         }
-        if let Some(h) = THREAD.lock().take() {
-            let _ = h.join();
+        if let Some(h) = THREAD.lock().take()
+            && let Err(e) = h.join()
+        {
+            eprintln!("[single-instance] listener thread panicked: {e:?}");
         }
         if !event.is_null() {
             unsafe { CloseHandle(event) };

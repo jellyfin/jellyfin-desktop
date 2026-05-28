@@ -432,6 +432,10 @@ pub fn settings_save_async() {
         (st.path.clone(), st.data.clone())
     };
     let w = save_worker();
+    // Hold `handle` across the spawn so a second caller racing in between
+    // `started = true` and the JoinHandle store can't observe a "started"
+    // worker before the thread actually exists.
+    let mut handle_guard = w.handle.lock();
     let need_spawn = {
         let mut p = w.pending.lock();
         if p.stop {
@@ -446,10 +450,11 @@ pub fn settings_save_async() {
             true
         }
     };
-    w.cv.notify_one();
     if need_spawn {
-        *w.handle.lock() = Some(thread::spawn(|| save_worker_loop(save_worker())));
+        *handle_guard = Some(thread::spawn(|| save_worker_loop(save_worker())));
     }
+    drop(handle_guard);
+    w.cv.notify_one();
 }
 
 /// Stop the background save worker after draining any pending write. Safe to
@@ -467,8 +472,10 @@ pub fn settings_shutdown_save_worker() {
     }
     w.cv.notify_one();
     let handle = w.handle.lock().take();
-    if let Some(h) = handle {
-        let _ = h.join();
+    if let Some(h) = handle
+        && let Err(e) = h.join()
+    {
+        eprintln!("[config] save worker panicked: {e:?}");
     }
 }
 

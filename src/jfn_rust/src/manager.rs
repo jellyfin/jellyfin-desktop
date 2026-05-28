@@ -20,8 +20,9 @@
 //! bridge, and the manager — a normal-context thread — translates that wake into
 //! a queued `Shutdown`.
 
+use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
 
 use jfn_playback::WakeEvent;
@@ -108,7 +109,7 @@ pub fn jfn_manager_notify_shutdown() {
 /// Route work to the manager thread. Non-blocking, thread-agnostic. (No
 /// callers yet — the hub seam for future control-plane work.)
 pub fn jfn_manager_send(msg: ManagerMsg) {
-    manager().queue.lock().unwrap().push_back(msg);
+    manager().queue.lock().push_back(msg);
     manager().wake.signal();
 }
 
@@ -125,7 +126,7 @@ fn manager_loop() {
         // ManagerMsg handled in one place. Loop returns as soon as `handle`
         // observes the ShuttingDown terminal state.
         let work: VecDeque<ManagerMsg> = {
-            let mut q = m.queue.lock().unwrap();
+            let mut q = m.queue.lock();
             if jfn_shutting_down() && state != LifecycleState::ShuttingDown {
                 q.push_back(ManagerMsg::Shutdown);
             }
