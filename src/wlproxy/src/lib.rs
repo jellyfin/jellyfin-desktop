@@ -91,6 +91,11 @@ thread_local! {
     // Per-client thread stores the XdgToplevel it manages so the command
     // drain (which runs on the same thread) can issue requests on it.
     static TOPLEVEL: RefCell<Option<Rc<XdgToplevel>>> = const { RefCell::new(None) };
+    // Parent XdgSurface of the toplevel. We inject xdg_surface.set_window_geometry
+    // on every configure since mpv doesn't and the compositor otherwise falls
+    // back to the surface bounding box, which can leave window placement
+    // ambiguous on restore (e.g. Mutter unmaximize landing under the top bar).
+    static XDG_SURFACE: RefCell<Option<Rc<XdgSurface>>> = const { RefCell::new(None) };
     // The compositor-facing wl_seat and the most recent pointer-button serial,
     // captured by snooping forwarded input. xdg_toplevel.move requires both,
     // and the serial must come from THIS connection (the toplevel's), not the
@@ -517,6 +522,7 @@ impl XdgSurfaceHandler for SurfaceH {
     fn handle_get_toplevel(&mut self, slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
         id.set_handler(ToplevelH);
         TOPLEVEL.with(|t| *t.borrow_mut() = Some(id.clone()));
+        XDG_SURFACE.with(|s| *s.borrow_mut() = Some(slf.clone()));
         slf.send_get_toplevel(id);
     }
 
@@ -575,6 +581,17 @@ impl XdgToplevelHandler for ToplevelH {
         }
         fire_configure();
         fire_suspended(suspended);
+        // Tell compositor the logical window rect explicitly so unmaximize /
+        // restore placement isn't computed from the surface bounding box.
+        // Skip the 0,0 "client picks size" form — geometry must match the
+        // buffer that will be committed.
+        if width > 0 && height > 0 {
+            XDG_SURFACE.with(|s| {
+                if let Some(xs) = s.borrow().as_ref() {
+                    xs.send_set_window_geometry(0, 0, width, height);
+                }
+            });
+        }
         slf.send_configure(width, height, states);
     }
 }
