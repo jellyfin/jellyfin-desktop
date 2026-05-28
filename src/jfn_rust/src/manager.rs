@@ -7,15 +7,18 @@
 //! *above* `playback`, so it can't fold into the coordinator without a
 //! dependency cycle.
 //!
-//! Today its only client is shutdown, modeled as a `ManagerMsg::Shutdown`. The
-//! `SHUTTING_DOWN` flag (set async-signal-safely by `jfn_shutdown_initiate`)
+//! Owns the process-wide lifecycle FSM. Subsystems (X11/Wayland/macOS/Windows
+//! platform layers) translate native window/power events into `ManagerMsg`
+//! and post them via `jfn_manager_send`; the manager loop folds each message
+//! into a single `LifecycleState` and drives the side effects (CEF visibility
+//! fan-out, shutdown drain).
+//!
+//! The `SHUTTING_DOWN` flag (set async-signal-safely by `jfn_shutdown_initiate`)
 //! carries shutdown *state* — read synchronously by the TID_UI recreate guards;
 //! the queue carries the orchestration *command*. The SIGINT handler can't lock
 //! the queue (interrupt context), so it wakes the manager via the signal-safe
 //! bridge, and the manager — a normal-context thread — translates that wake into
-//! a queued `Shutdown`. Every manager action is therefore one `ManagerMsg`
-//! dispatched in one place. `jfn_manager_send` is the seam for future
-//! non-shutdown producers, who enqueue without blocking the platform/CEF loops.
+//! a queued `Shutdown`.
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -24,12 +27,40 @@ use std::thread::{self, JoinHandle};
 use jfn_playback::WakeEvent;
 use jfn_playback::shutdown::jfn_shutting_down;
 
-/// Work routed to the manager thread. `Shutdown` is synthesized by the manager
-/// loop when it observes the shutdown flag (the SIGINT path can't enqueue from
-/// its handler); future non-shutdown clients add variants here and post them
-/// via `jfn_manager_send`.
+/// Work routed to the manager thread. Producers post via `jfn_manager_send`
+/// (platform threads) or the signal-handler bridge `jfn_manager_notify_shutdown`
+/// (signal context).
 pub enum ManagerMsg {
+    /// Window/app became visible (true) or hidden (false). Posted by platform
+    /// layers on OS-level visibility changes — Wayland xdg_toplevel
+    /// suspended, X11 Map/Unmap/WM_STATE, macOS hide/unhide,
+    /// Windows WM_SHOWWINDOW / SC_MINIMIZE.
+    SetVisible(bool),
+    /// System-level suspend / resume — power transitions (laptop lid close,
+    /// macOS sleep, Windows WM_POWERBROADCAST). Treated as a stronger Hidden.
+    Suspend,
+    Resume,
+    /// Shutdown drain. Synthesized by the manager loop when it observes the
+    /// `SHUTTING_DOWN` flag — the SIGINT path can't enqueue from its handler.
     Shutdown,
+}
+
+/// Process-wide lifecycle phase. Owned by the manager loop; subsystems
+/// observe transitions via the side effects the manager invokes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LifecycleState {
+    /// Foreground + visible. Default after boot.
+    Running,
+    /// User-visible hiding (minimize, occlusion, app hide). CEF browsers
+    /// receive `WasHidden(true)`; mpv is left alone (jellyfin-web is the
+    /// playback authority — see project notes).
+    Hidden,
+    /// System-level suspend. Same CEF posture as Hidden plus a marker so a
+    /// later `Resume` always transitions back to Running regardless of any
+    /// intervening visibility flap.
+    Suspended,
+    /// Shutdown drain in progress. Terminal.
+    ShuttingDown,
 }
 
 struct Manager {
@@ -76,6 +107,7 @@ pub fn jfn_manager_send(msg: ManagerMsg) {
 
 fn manager_loop() {
     let m = manager();
+    let mut state = LifecycleState::Running;
     loop {
         m.wake.wait();
         m.wake.drain();
@@ -83,30 +115,59 @@ fn manager_loop() {
         // The signal-safe bridge wakes us with SHUTTING_DOWN set (from any
         // trigger, including the SIGINT handler that can't lock the queue).
         // Translate it into a queued message so every manager action is a
-        // ManagerMsg handled in one place. Runs at most once: the loop returns
-        // as soon as `handle` reports the shutdown was processed.
+        // ManagerMsg handled in one place. Loop returns as soon as `handle`
+        // observes the ShuttingDown terminal state.
         let work: VecDeque<ManagerMsg> = {
             let mut q = m.queue.lock().unwrap();
-            if jfn_shutting_down() {
+            if jfn_shutting_down() && state != LifecycleState::ShuttingDown {
                 q.push_back(ManagerMsg::Shutdown);
             }
             std::mem::take(&mut *q)
         };
         for msg in work {
-            if handle(msg) {
+            state = transition(state, msg);
+            if state == LifecycleState::ShuttingDown {
                 return;
             }
         }
     }
 }
 
-/// Dispatch one message. Returns `true` if it terminates the manager (shutdown).
-fn handle(msg: ManagerMsg) -> bool {
-    match msg {
-        ManagerMsg::Shutdown => {
+/// Apply one message to the lifecycle FSM. Returns the new state; the
+/// caller observes terminal `ShuttingDown` to exit the loop. Side effects
+/// happen inline (CEF visibility fan-out, shutdown drain).
+fn transition(state: LifecycleState, msg: ManagerMsg) -> LifecycleState {
+    use LifecycleState::*;
+    match (state, msg) {
+        // Shutdown is terminal and idempotent — once seen, ignore everything
+        // else and don't re-enter the drain.
+        (ShuttingDown, _) => ShuttingDown,
+        (_, ManagerMsg::Shutdown) => {
             run_shutdown();
-            true
+            ShuttingDown
         }
+        // Visibility flips while running. Suspended is *not* downgraded by a
+        // visibility event — the system must explicitly Resume first.
+        (Running, ManagerMsg::SetVisible(false)) => {
+            jfn_cef::browsers::jfn_browsers_set_hidden_all(true);
+            Hidden
+        }
+        (Hidden, ManagerMsg::SetVisible(true)) => {
+            jfn_cef::browsers::jfn_browsers_set_hidden_all(false);
+            Running
+        }
+        (Running | Hidden, ManagerMsg::Suspend) => {
+            if state == Running {
+                jfn_cef::browsers::jfn_browsers_set_hidden_all(true);
+            }
+            Suspended
+        }
+        (Suspended, ManagerMsg::Resume) => {
+            jfn_cef::browsers::jfn_browsers_set_hidden_all(false);
+            Running
+        }
+        // No-op: already in the requested posture, or a stray event.
+        _ => state,
     }
 }
 

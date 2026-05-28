@@ -302,6 +302,32 @@ pub fn jfn_browsers_send_external_begin_frame_all() {
     }
 }
 
+/// Mark every live browser visible or hidden. MUST run on TID_UI — called
+/// from the `SetHiddenAllTask` posted by `jfn_browsers_set_hidden_all`.
+/// CEF folds `WasHidden(true)` into pausing rendering / freeing GPU
+/// compositing resources and `WasHidden(false)` into a paint kick.
+pub(crate) fn jfn_browsers_apply_hidden_all(hidden: bool) {
+    let inners: Vec<Arc<Inner>> = {
+        let g = INSTANCE.lock();
+        let Some(b) = g.as_ref() else {
+            return;
+        };
+        b.layers
+            .iter()
+            .map(|l| unsafe { jfn_cef_layer_inner(*l) })
+            .collect()
+    };
+    for i in &inners {
+        i.cef_was_hidden(hidden);
+    }
+}
+
+/// Request a visibility change on every live browser. Thread-agnostic:
+/// posts a TID_UI task that calls `WasHidden(hidden)` on each layer.
+pub fn jfn_browsers_set_hidden_all(hidden: bool) {
+    crate::client::jfn_cef_post_set_hidden_all(hidden);
+}
+
 /// Force-close every layer's browser and block until each `OnBeforeClose`
 /// has fired. Thread-agnostic: callable from any non-TID_UI thread (the
 /// shutdown manager). Posts a single snapshot-and-close task onto TID_UI,
