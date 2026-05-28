@@ -23,9 +23,13 @@ pub(crate) fn read_utf8(p: *const c_char, len: usize) -> String {
 }
 
 pub(crate) fn jfn_cef_layer_new() -> *mut JfnCefLayer {
-    Box::into_raw(Box::new(JfnCefLayer {
+    let layer = Box::into_raw(Box::new(JfnCefLayer {
         inner: Inner::new(),
-    }))
+    }));
+    // Stash the raw handle so `handle_on_before_close` can auto-remove this
+    // layer from the `Browsers` registry without per-business wiring.
+    unsafe { (*layer).inner.set_layer_ptr(layer) };
+    layer
 }
 
 pub(crate) unsafe fn jfn_cef_layer_free(h: *mut JfnCefLayer) {
@@ -89,15 +93,6 @@ pub(crate) unsafe fn jfn_cef_layer_set_injection_profile_kind(
     let inner = unsafe { arc(h) };
     let s = read_utf8(kind_utf8, len);
     *inner.injection_kind.lock() = s;
-}
-
-/// Force-close this layer's CefBrowser. Called from `Browsers::closeAll` on
-/// shutdown. No-op when no browser is alive.
-pub(crate) unsafe fn jfn_cef_layer_close_browser_force(h: *const JfnCefLayer) {
-    let inner = unsafe { arc(h) };
-    if let Some(host) = inner.host() {
-        host.close_browser(1);
-    }
 }
 
 pub(crate) unsafe fn jfn_cef_layer_can_go_back(h: *const JfnCefLayer) -> bool {

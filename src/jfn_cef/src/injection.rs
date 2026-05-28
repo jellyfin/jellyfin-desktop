@@ -64,7 +64,6 @@ const OVERLAY_FUNCTIONS: &[&str] = &[
     "dismissOverlay",
     "checkServerConnectivity",
     "cancelServerConnectivity",
-    "overlayFadeComplete",
 ];
 
 const ABOUT_FUNCTIONS: &[&str] = &["aboutOpenPath", "aboutDismiss"];

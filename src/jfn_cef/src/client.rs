@@ -22,7 +22,7 @@ use cef::{
 };
 use parking_lot::{Condvar, Mutex};
 use std::os::raw::{c_int, c_void};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicPtr, AtomicU64, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -123,6 +123,12 @@ pub(crate) struct Inner {
     before_close_callback: Mutex<Option<Box<BeforeCloseFn>>>,
     context_menu_builder: Mutex<Option<Box<ContextBuilderFn>>>,
     context_menu_dispatcher: Mutex<Option<Box<ContextDispatcherFn>>>,
+
+    // Back-pointer to the owning `Box<JfnCefLayer>` raw handle. Set after
+    // `Box::leak` in `jfn_cef_layer_new`; read in `handle_on_before_close`
+    // to auto-remove the layer from the `Browsers` registry without forcing
+    // each business module to wire a `before_close_callback`.
+    layer_ptr: AtomicPtr<JfnCefLayer>,
 }
 
 // Typed closure signatures stored in each callback slot. `*mut c_void` args
@@ -197,11 +203,16 @@ impl Inner {
             before_close_callback: Mutex::new(None),
             context_menu_builder: Mutex::new(None),
             context_menu_dispatcher: Mutex::new(None),
+            layer_ptr: AtomicPtr::new(std::ptr::null_mut()),
         })
     }
 
     fn name_str(&self) -> String {
         self.name.lock().clone()
+    }
+
+    pub(crate) fn set_layer_ptr(&self, p: *mut JfnCefLayer) {
+        self.layer_ptr.store(p, Ordering::Release);
     }
 
     fn surface_ptr(&self) -> *mut c_void {
@@ -214,6 +225,15 @@ impl Inner {
 
     fn host(&self) -> Option<BrowserHost> {
         self.browser_clone().and_then(|b| b.host())
+    }
+
+    /// Force-close this layer's CefBrowser. No-op when no browser is alive.
+    /// Operates only on `Arc<Inner>` so callers don't need to keep a raw
+    /// `*mut JfnCefLayer` ptr live across this call.
+    pub(crate) fn close_browser_force(&self) {
+        if let Some(host) = self.host() {
+            host.close_browser(1);
+        }
     }
 
     fn focused_or_main(&self) -> Option<Frame> {
@@ -965,6 +985,21 @@ impl Inner {
         let slot = self.before_close_callback.lock().take();
         if let Some(f) = slot {
             f();
+        }
+        // Unified layer cleanup: drop this layer from the Browsers registry.
+        // `jfn_browsers_remove` no-ops on null and on layers already removed,
+        // so it's safe under shutdown's bulk-close path too.
+        let lp = self.layer_ptr.swap(std::ptr::null_mut(), Ordering::AcqRel);
+        if !lp.is_null() {
+            jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_INFO,
+                &format!(
+                    "CefLayer::OnBeforeClose name={} -> auto-remove",
+                    self.name_str()
+                ),
+            );
+            crate::browsers::jfn_browsers_remove(lp);
         }
     }
 
