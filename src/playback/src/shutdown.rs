@@ -7,9 +7,12 @@
 //! itself just CAS's the flag and signals the wake event.
 //!
 //! A wake event lives alongside the flag so threads parked in `poll()` or
-//! `WaitForMultipleObjects` can be unblocked. A handler (typically: close all
-//! CEF browsers + post a main-loop sentinel) registered via
-//! `jfn_shutdown_set_handler` runs once on the first call.
+//! `WaitForMultipleObjects` (e.g. the X11 input thread) can be unblocked. A
+//! handler registered via `jfn_shutdown_set_handler` runs once on the first
+//! call — it runs *inline on the calling thread*, so it MUST only signal or
+//! wake (e.g. signal the shutdown manager); it must never block, close a
+//! browser, or reenter CEF. The actual teardown is orchestrated off-thread by
+//! the manager.
 
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
@@ -38,18 +41,10 @@ pub fn jfn_shutdown_event() -> *const WakeEvent {
     wake_event() as *const _
 }
 
-/// Block until [`jfn_shutdown_initiate`] has run; returns immediately if it
-/// already has. The authoritative exit signal — the non-macOS main loop parks
-/// here so browser-close state never ends the process. Wake event is
-/// level-triggered; the flag re-check guards spurious wakeups.
-pub fn jfn_shutdown_wait() {
-    while !jfn_shutting_down() {
-        wake_event().wait();
-    }
-}
-
 /// Install (or clear, with `None`) the callback invoked exactly once on the
-/// first [`jfn_shutdown_initiate`] call.
+/// first [`jfn_shutdown_initiate`] call. The callback runs inline on the
+/// calling thread (possibly a signal handler or a CEF dispatch), so it MUST
+/// only signal/wake — never block, close a browser, or reenter CEF.
 pub fn jfn_shutdown_set_handler(handler: Option<fn()>) {
     let ptr = handler
         .map(|f| f as *mut ())

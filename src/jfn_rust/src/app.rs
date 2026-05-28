@@ -846,9 +846,13 @@ extern "C" fn h_theme_set_mpv_bg(hex: *const c_char) {
     unsafe { jfn_mpv::api::jfn_mpv_set_background_color_hex(hex) };
 }
 
-fn h_shutdown_close_browsers() {
-    jfn_cef::browsers::jfn_browsers_close_all();
-    plat().wake_main_loop();
+fn h_shutdown_wake_manager() {
+    // Runs inline on whichever thread called jfn_shutdown_initiate (signal
+    // handler, CEF dispatch, input thread, …). Signal-only by contract: just
+    // wake the manager, which orchestrates the close/drain off-thread. Never
+    // close a browser or wake the main loop here — that would reenter CEF or
+    // race the drain.
+    crate::manager::jfn_manager_notify_shutdown();
 }
 
 /// Owns the run_with_cef body — invoked once by `jfn_app_main`.
@@ -1018,9 +1022,13 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     }
     jfn_color::theme::jfn_theme_color_set_video_bg(video_bg_get());
 
-    // 9. Browsers init, shutdown handler, main browser create, overlay/web init.
+    // 9. Browsers init, manager thread + shutdown handler, main browser
+    //    create, overlay/web init.
     jfn_cef::browsers::jfn_browsers_init(lw, lh, mw, mh, hz, use_shared_textures);
-    jfn_playback::jfn_shutdown_set_handler(Some(h_shutdown_close_browsers));
+    // Headless control-plane thread. Owns shutdown orchestration (close/drain
+    // off the main thread + TID_UI) and is the seam for future routed work.
+    let manager_thread = crate::manager::jfn_manager_start();
+    jfn_playback::jfn_shutdown_set_handler(Some(h_shutdown_wake_manager));
 
     let web_kind = cs("web");
     let main_layer = unsafe { jfn_cef::browsers::jfn_browsers_create(web_kind.as_ptr()) };
@@ -1101,32 +1109,19 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
 
     tracing::info!(target: "Main", "[FLOW] Running — about to enter run_main_loop");
 
-    // 15. Main loop. macOS pumps NSApp; other platforms wait for browser close.
-    #[cfg(target_os = "macos")]
-    {
-        plat().run_main_loop();
-        tracing::info!(target: "Main", "[FLOW] run_main_loop returned — entering post-run drain");
-        // Spin CFRunLoop until browsers are gone.
-        unsafe extern "C" {
-            fn CFRunLoopRunInMode(
-                mode: *const std::ffi::c_void,
-                seconds: f64,
-                returnAfterSourceHandled: i32,
-            ) -> i32;
-            static kCFRunLoopDefaultMode: *const std::ffi::c_void;
-        }
-        while !jfn_cef::browsers::jfn_browsers_all_closed() {
-            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60.0, 1) };
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // Exit on the shutdown signal, not browser-close state (which flips
-        // transiently when the overlay resets the main layer). close_all
-        // already ran in h_shutdown_close_browsers; drain CEF before teardown.
-        jfn_playback::shutdown::jfn_shutdown_wait();
-        jfn_cef::browsers::jfn_browsers_wait_all_closed();
-    }
+    // 15. Park the main thread until the manager has closed + drained every
+    //     browser, at which point it calls plat().wake_main_loop() to release
+    //     us. Unified across platforms: macOS parks in [NSApp run] (whose
+    //     pump runs the posted close + OnBeforeClose while the manager waits);
+    //     other platforms park on the Condvar main-park. Exit is driven by the
+    //     shutdown signal (routed through the manager), never by transient
+    //     browser-close state when the overlay resets the main layer.
+    plat().run_main_loop();
+    tracing::info!(target: "Main", "[FLOW] run_main_loop returned — browsers drained, running teardown");
+
+    // Manager woke us, so its orchestration loop has returned. Join it before
+    // any teardown so no posted task outlives the layer free below.
+    let _ = manager_thread.join();
 
     // 16. Shutdown drain.
     jfn_color::theme::jfn_theme_color_shutdown();
