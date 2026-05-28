@@ -110,11 +110,14 @@ fn handle(msg: ManagerMsg) -> bool {
     }
 }
 
-/// Orchestrate shutdown off the main thread and off TID_UI: single TID_UI
-/// task closes every browser + ships the wait set back, manager blocks on
-/// `OnBeforeClose` for each, then releases the process main thread to run
-/// the teardown tail. One snapshot, no race between close set and wait set.
+/// Orchestrate shutdown off the main thread and off TID_UI: fan out the
+/// shutdown signal to every registered subsystem waker (input threads,
+/// clipboard, …), then a single TID_UI task closes every browser + ships
+/// the wait set back, manager blocks on `OnBeforeClose` for each, then
+/// releases the process main thread to run the teardown tail. One
+/// snapshot, no race between close set and wait set.
 fn run_shutdown() {
+    jfn_playback::shutdown::jfn_shutdown_fanout();
     jfn_cef::browsers::jfn_browsers_close_all_blocking();
     jfn_platform_abi::get().wake_main_loop();
 }

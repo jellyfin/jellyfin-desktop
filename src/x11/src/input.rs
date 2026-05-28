@@ -22,7 +22,7 @@ use jfn_input::{
     jfn_input_dispatch_mouse_button, jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
 };
 use jfn_playback::ingest_driver::jfn_playback_display_scale;
-use jfn_playback::shutdown::{jfn_shutdown_event, jfn_shutdown_initiate};
+use jfn_playback::shutdown::{jfn_shutdown_initiate, jfn_shutdown_register_waker};
 use jfn_playback::wake_event::{
     jfn_wake_event_drain, jfn_wake_event_fd, jfn_wake_event_free, jfn_wake_event_new,
     jfn_wake_event_signal,
@@ -463,6 +463,20 @@ fn drain_cursor_requests(st: &mut State) {
     }
 }
 
+/// Per-process X11 shutdown waker. Allocated on first use and registered
+/// with the shutdown fan-out so the input thread can `poll()` its fd
+/// alongside xcb + the cursor mailbox.
+fn x11_shutdown_waker() -> *const jfn_playback::WakeEvent {
+    use std::sync::OnceLock;
+    static EV: OnceLock<&'static jfn_playback::WakeEvent> = OnceLock::new();
+    *EV.get_or_init(|| {
+        let raw = jfn_playback::WakeEvent::new().expect("x11 shutdown waker allocation");
+        let leaked: &'static jfn_playback::WakeEvent = Box::leak(Box::new(raw));
+        jfn_shutdown_register_waker(leaked);
+        leaked
+    }) as *const _
+}
+
 fn input_thread_body(mut st: State) {
     // Resolve cursor context now that we're on the input thread (xcb-cursor
     // doesn't require any specific thread, but we keep the raw ctx pointer
@@ -509,7 +523,7 @@ fn input_thread_body(mut st: State) {
     let _ = st.conn.flush();
 
     let xcb_fd = st.conn.as_raw_fd();
-    let shutdown_ev = jfn_shutdown_event();
+    let shutdown_ev = x11_shutdown_waker();
     let shutdown_fd = unsafe { jfn_wake_event_fd(shutdown_ev) };
     let cursor_fd = unsafe { jfn_wake_event_fd(st.mailbox.wake) };
 
