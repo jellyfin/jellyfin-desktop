@@ -84,6 +84,12 @@ fn install_handlers(layer: *mut JfnCefLayer, _main_layer: *mut JfnCefLayer) {
     // Context menu.
     l.set_context_menu_builder_rust(Some(crate::app_menu::build_closure()));
     l.set_context_menu_dispatcher_rust(Some(crate::app_menu::dispatch_closure()));
+
+    let layer_for_close = LayerPtr(layer);
+    l.set_before_close_callback_rust(Some(Box::new(move || {
+        let lp = &layer_for_close;
+        unsafe { jfn_cef_layer_set_visible(lp.0, false) };
+    })));
 }
 
 fn list_string(args: &ListValue, idx: usize) -> String {
