@@ -4,7 +4,33 @@
 //! available here).
 
 use clap::error::ContextKind;
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Parser, ValueEnum};
+
+/// Force the X11 paint path, bypassing the Vulkan probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum X11Paint {
+    /// Vulkan pixel-upload via `jfn_gpu_paint`. Hard-fails init when no
+    /// Vulkan adapter is usable.
+    Gpu,
+    /// MIT-SHM CPU upload. Skips Vulkan init entirely.
+    Shm,
+}
+
+/// Force the Wayland paint path, bypassing the EGL/GBM dmabuf probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum WaylandPaint {
+    /// EGL/GBM dmabuf shared-texture path. If the dmabuf path is truly
+    /// broken at runtime, CEF surfaces the error itself.
+    Dmabuf,
+    /// Vulkan-WSI pixel-upload via `jfn_gpu_paint`. Disables CEF
+    /// shared-texture and presents BGRA frames through
+    /// `VK_KHR_wayland_surface`. Hard-fails init when no Vulkan
+    /// adapter is usable.
+    Gpu,
+    /// `wl_shm` CPU upload. Calls `set_shared_texture_unsupported`
+    /// immediately.
+    Shm,
+}
 
 /// Parsed flags carried by [`CliOutcome::Continue`]. Each optional value is
 /// `None` when the flag was absent; `log_file` is `Some("")` when passed
@@ -22,6 +48,8 @@ pub struct CliArgs {
     pub audio_exclusive: bool,
     pub disable_gpu_compositing: bool,
     pub remote_debugging_port: Option<i32>,
+    pub x11_paint: Option<X11Paint>,
+    pub wayland_paint: Option<WaylandPaint>,
 }
 
 /// Result of parsing argv.
@@ -62,6 +90,10 @@ struct Cli {
     ozone_platform: Option<String>,
     #[arg(long, overrides_with = "platform")]
     platform: Option<String>,
+    #[arg(long, value_enum, overrides_with = "x11_paint")]
+    x11_paint: Option<X11Paint>,
+    #[arg(long, value_enum, overrides_with = "wayland_paint")]
+    wayland_paint: Option<WaylandPaint>,
 }
 
 /// Parse `args` (argv, including argv[0]). `have_x11` gates `--platform`,
@@ -89,6 +121,8 @@ pub fn parse(args: Vec<String>, have_x11: bool) -> CliOutcome {
                 audio_exclusive: cli.audio_exclusive > 0,
                 disable_gpu_compositing: cli.disable_gpu_compositing > 0,
                 remote_debugging_port: cli.remote_debug_port,
+                x11_paint: cli.x11_paint,
+                wayland_paint: cli.wayland_paint,
             })
         }
         Err(err) => {
@@ -203,6 +237,52 @@ mod tests {
         assert!(!a.audio_exclusive);
         assert!(!a.disable_gpu_compositing);
         assert!(a.remote_debugging_port.is_none());
+        assert!(a.x11_paint.is_none());
+        assert!(a.wayland_paint.is_none());
+    }
+
+    #[test]
+    fn x11_paint_values() {
+        assert_eq!(
+            cont(&["app", "--x11-paint=gpu"]).x11_paint,
+            Some(X11Paint::Gpu)
+        );
+        assert_eq!(
+            cont(&["app", "--x11-paint", "shm"]).x11_paint,
+            Some(X11Paint::Shm)
+        );
+    }
+
+    #[test]
+    fn wayland_paint_values() {
+        assert_eq!(
+            cont(&["app", "--wayland-paint=dmabuf"]).wayland_paint,
+            Some(WaylandPaint::Dmabuf)
+        );
+        assert_eq!(
+            cont(&["app", "--wayland-paint", "shm"]).wayland_paint,
+            Some(WaylandPaint::Shm)
+        );
+    }
+
+    #[test]
+    fn paint_unknown_value_errors() {
+        match parse_args(&["app", "--x11-paint=bogus"]) {
+            CliOutcome::Error(_) => {}
+            _ => panic!("expected Error"),
+        }
+        match parse_args(&["app", "--wayland-paint=bogus"]) {
+            CliOutcome::Error(_) => {}
+            _ => panic!("expected Error"),
+        }
+    }
+
+    #[test]
+    fn paint_last_wins() {
+        let a = cont(&["app", "--x11-paint=gpu", "--x11-paint", "shm"]);
+        assert_eq!(a.x11_paint, Some(X11Paint::Shm));
+        let a = cont(&["app", "--wayland-paint=dmabuf", "--wayland-paint", "shm"]);
+        assert_eq!(a.wayland_paint, Some(WaylandPaint::Shm));
     }
 
     #[test]

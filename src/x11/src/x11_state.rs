@@ -7,6 +7,7 @@
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
 
+use jfn_gpu_paint::{Capabilities, GpuContext, GpuPainter};
 use xcb::{Xid, XidNew, x};
 
 /// Owns one SHM segment + the mapped memory. Two per surface so the
@@ -51,6 +52,10 @@ pub struct PlatformSurface {
     pub visible: bool,
     pub pw: i32,
     pub ph: i32,
+    /// GPU compositor, lazily created on the first software present
+    /// when a [`GpuContext`] is available. Falls back to SHM if init
+    /// fails.
+    pub painter: Option<GpuPainter>,
 }
 
 unsafe impl Send for PlatformSurface {}
@@ -71,6 +76,7 @@ impl PlatformSurface {
             visible: true,
             pw: 0,
             ph: 0,
+            painter: None,
         }
     }
 }
@@ -102,6 +108,10 @@ pub struct Mutable {
     pub cached_scale: f32,
     pub atoms: Atoms,
     pub live: Vec<*mut PlatformSurface>,
+    /// Shared GPU compositor. `None` when no Vulkan adapter was found
+    /// at init; in that case surface presents fall back to SHM.
+    pub gpu_ctx: Option<Arc<GpuContext>>,
+    pub gpu_caps: Capabilities,
 }
 
 unsafe impl Send for Mutable {}

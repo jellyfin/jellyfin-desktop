@@ -12,8 +12,10 @@
 
 use std::ffi::{c_int, c_void};
 use std::ptr;
+use std::ptr::NonNull;
 
-use xcb::x;
+use jfn_gpu_paint::{DirtyRect, GpuPainter, PixelFrame, WindowTarget};
+use xcb::{Xid, x};
 
 use crate::lifecycle::query_parent_geometry;
 use crate::shm::{shm_alloc, shm_free};
@@ -155,9 +157,79 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     drop(unsafe { Box::from_raw(s) });
 }
 
-/// Accelerated present is not supported on the X11 backend.
+/// Accelerated present is not supported on the X11 backend. v1 of
+/// gpu_paint will route CEF dmabufs through here.
 pub fn jfn_x11_surface_present(_s: *mut PlatformSurface, _info: *const c_void) -> bool {
     false
+}
+
+/// Lazily build the per-surface [`GpuPainter`] and present `buffer`
+/// through it. Returns false on any failure; caller falls back to SHM.
+#[allow(clippy::too_many_arguments)]
+fn try_gpu_present(
+    surf: &mut PlatformSurface,
+    m: &Mutable,
+    conn: &xcb::Connection,
+    dirty: *const JfnRect,
+    dirty_len: usize,
+    buffer: *const c_void,
+    w: c_int,
+    h: c_int,
+) -> bool {
+    let Some(ctx) = m.gpu_ctx.clone() else {
+        return false;
+    };
+    let size = (w as u32, h as u32);
+
+    if surf.painter.is_none() {
+        let Some(conn_ptr) = NonNull::new(conn.get_raw_conn() as *mut std::ffi::c_void) else {
+            return false;
+        };
+        let target = WindowTarget::Xcb {
+            connection: conn_ptr,
+            window: surf.window.resource_id(),
+            screen: m.screen_num,
+            visual: m.argb_visual,
+        };
+        match GpuPainter::new(ctx, target, size) {
+            Ok(p) => surf.painter = Some(p),
+            Err(e) => {
+                eprintln!("[x11] gpu_paint painter init failed: {e}; using SHM");
+                return false;
+            }
+        }
+    }
+    let painter = surf.painter.as_mut().unwrap();
+    painter.resize(size);
+
+    let stride = (w as u32) * 4;
+    let bgra = unsafe {
+        std::slice::from_raw_parts(buffer as *const u8, (h as usize) * (stride as usize))
+    };
+    let dirty_rects = unsafe { std::slice::from_raw_parts(dirty, dirty_len) };
+    let owned: Vec<DirtyRect> = dirty_rects
+        .iter()
+        .map(|r| DirtyRect {
+            x: r.x,
+            y: r.y,
+            w: r.w,
+            h: r.h,
+        })
+        .collect();
+    let frame = PixelFrame {
+        width: w as u32,
+        height: h as u32,
+        stride,
+        bgra,
+        dirty: &owned,
+    };
+    match painter.push_pixels(frame) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("[x11] gpu_paint push_pixels failed: {e}; using SHM");
+            false
+        }
+    }
 }
 
 pub unsafe fn jfn_x11_surface_present_software(
@@ -182,6 +254,12 @@ pub unsafe fn jfn_x11_surface_present_software(
     let surf = unsafe { &mut *s };
     if is_none_window(surf.window) || !surf.visible {
         return false;
+    }
+
+    // GPU pixel-upload path. Falls through to SHM on any failure so a
+    // bad first frame doesn't strand the surface.
+    if m.gpu_caps.gpu_available && try_gpu_present(surf, m, &conn, dirty, dirty_len, buffer, w, h) {
+        return true;
     }
 
     let buf = &mut surf.bufs[surf.buf_idx];
@@ -217,14 +295,9 @@ pub unsafe fn jfn_x11_surface_present_software(
             continue;
         }
         for row in ry..(ry + rh) {
-            let dst_off = (row as usize) * stride + (rx as usize) * 4;
-            let src_off = dst_off;
+            let off = (row as usize) * stride + (rx as usize) * 4;
             unsafe {
-                ptr::copy_nonoverlapping(
-                    src.add(src_off),
-                    buf.data.add(dst_off),
-                    (rw as usize) * 4,
-                );
+                ptr::copy_nonoverlapping(src.add(off), buf.data.add(off), (rw as usize) * 4);
             }
         }
         conn.send_request(&xcb::shm::PutImage {
@@ -316,20 +389,17 @@ pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool
 
     if visible {
         // Reposition to current parent geometry before mapping.
-        let pw = if surf.pw > 0 {
-            surf.pw as u32
-        } else if m.pw > 0 {
-            m.pw as u32
-        } else {
-            1
+        let pick = |s: i32, p: i32| -> u32 {
+            if s > 0 {
+                s as u32
+            } else if p > 0 {
+                p as u32
+            } else {
+                1
+            }
         };
-        let ph = if surf.ph > 0 {
-            surf.ph as u32
-        } else if m.ph > 0 {
-            m.ph as u32
-        } else {
-            1
-        };
+        let pw = pick(surf.pw, m.pw);
+        let ph = pick(surf.ph, m.ph);
         conn.send_request(&x::ConfigureWindow {
             window: surf.window,
             value_list: &[

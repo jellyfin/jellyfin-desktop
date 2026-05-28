@@ -27,7 +27,6 @@ fn video_bg_get() -> u32 {
     VIDEO_BG.load(std::sync::atomic::Ordering::Acquire)
 }
 
-const LOG_MAIN: u8 = 0;
 const DEFAULT_LOG_FILTER: &str = "info";
 
 struct BootArgs {
@@ -93,6 +92,12 @@ fn print_help() {
     println!("  --ozone-platform <plat>   CEF ozone platform (default: follows --platform)");
     if cfg!(target_os = "linux") {
         println!("  --platform <wayland|x11>  Force display backend (Linux only)");
+        println!(
+            "  --x11-paint <gpu|shm>     Force X11 paint path; skips Vulkan probe (Linux only)"
+        );
+        println!(
+            "  --wayland-paint <dmabuf|gpu|shm>  Force Wayland paint path; skips dmabuf probe (Linux only)"
+        );
     }
 }
 
@@ -165,6 +170,10 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     let mut ozone_platform = String::new();
     #[cfg(target_os = "linux")]
     let mut platform_override = String::new();
+    #[cfg(target_os = "linux")]
+    let mut x11_paint: Option<cli::X11Paint> = None;
+    #[cfg(target_os = "linux")]
+    let mut wayland_paint: Option<cli::WaylandPaint> = None;
     // Assigned exactly once in the Continue arm; the other arms diverge.
     let log_file: Option<String>;
     let mut disable_gpu_compositing = false;
@@ -204,6 +213,14 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
             if let Some(v) = a.platform_override {
                 platform_override = v;
             }
+            #[cfg(target_os = "linux")]
+            if let Some(v) = a.x11_paint {
+                x11_paint = Some(v);
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(v) = a.wayland_paint {
+                wayland_paint = Some(v);
+            }
             if a.audio_exclusive {
                 audio_exclusive = true;
             }
@@ -230,16 +247,13 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     //    activate file logging when --log-file was passed explicitly.
     //    macOS/Windows: GUI processes have no user-visible stderr, so
     //    default to a platform log file when --log-file is unset.
-    let log_path = match log_file {
-        Some(p) => p,
-        None => {
-            if cfg!(target_os = "linux") {
-                String::new()
-            } else {
-                jfn_paths::log_path().to_string_lossy().into_owned()
-            }
+    let log_path = log_file.unwrap_or_else(|| {
+        if cfg!(target_os = "linux") {
+            String::new()
+        } else {
+            jfn_paths::log_path().to_string_lossy().into_owned()
         }
-    };
+    });
 
     let filter = if log_level.is_empty() {
         DEFAULT_LOG_FILTER.to_string()
@@ -254,7 +268,6 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
         tracing::info!(target: "Main", "Log file: {log_path}");
     }
 
-    let _ = LOG_MAIN;
     // 9. Linux: pick display backend, populate g_platform, run early_init,
     //    register the platform-ops vtable with the Rust-side jfn-cef.
     //    Windows/macOS: g_platform was populated by main() before jfn_app_main
@@ -280,6 +293,31 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
                 DisplayBackend::X11
             }
         };
+        if matches!(backend, DisplayBackend::Wayland) && x11_paint.is_some() {
+            eprintln!("Error: --x11-paint set but display backend is wayland");
+            return 1;
+        }
+        if matches!(backend, DisplayBackend::X11) && wayland_paint.is_some() {
+            eprintln!("Error: --wayland-paint set but display backend is x11");
+            return 1;
+        }
+
+        if let Some(mode) = x11_paint {
+            let mapped = match mode {
+                cli::X11Paint::Gpu => jfn_x11::X11PaintOverride::Gpu,
+                cli::X11Paint::Shm => jfn_x11::X11PaintOverride::Shm,
+            };
+            jfn_x11::set_paint_override(mapped);
+        }
+        if let Some(mode) = wayland_paint {
+            let mapped = match mode {
+                cli::WaylandPaint::Dmabuf => jfn_wayland::WlPaintOverride::Dmabuf,
+                cli::WaylandPaint::Gpu => jfn_wayland::WlPaintOverride::Gpu,
+                cli::WaylandPaint::Shm => jfn_wayland::WlPaintOverride::Shm,
+            };
+            jfn_wayland::set_paint_override(mapped);
+        }
+
         let p: Box<dyn Platform> = match backend {
             DisplayBackend::Wayland => jfn_wayland::make_platform::make_wayland_platform(),
             DisplayBackend::X11 => jfn_x11::make_platform::make_x11_platform(),
@@ -387,7 +425,7 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     //     force-window=yes (not "immediate") defers VO creation so the
     //     user's color never flashes before the override.
     let user_bg = jfn_mpv::api::jfn_mpv_get_background_color();
-    publish_video_bg(user_bg);
+    video_bg_set(user_bg);
     {
         let hex = format!("#{:06x}", user_bg);
         tracing::info!(target: "Main", "video bg captured: {hex}");
@@ -721,10 +759,6 @@ fn mpv_log_level_from_filter() -> &'static str {
     } else {
         "no"
     }
-}
-
-fn publish_video_bg(rgb: u32) {
-    video_bg_set(rgb);
 }
 
 fn log_mpv_event(ev: *mut jfn_mpv::sys::mpv_event) {
