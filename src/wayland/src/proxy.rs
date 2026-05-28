@@ -30,6 +30,10 @@ fn load_scale() -> f32 {
 extern "C" fn on_scale(scale_120: c_int) {
     if scale_120 > 0 {
         store_scale(scale_120 as f32 / 120.0);
+        // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait
+        // loop in `jfn_rust::app`) so it re-checks the scale-known gate
+        // event-driven rather than via a polling timeout.
+        jfn_mpv::api::jfn_mpv_wakeup();
     }
 }
 

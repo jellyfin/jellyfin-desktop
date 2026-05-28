@@ -420,33 +420,48 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
         unsafe { jfn_mpv::sys::mpv_command(raw, argv.as_ptr() as *mut *const c_char) };
     }
 
-    // 21. Wait for the VO window. Drains mpv events into the ingest
-    //     layer; stops once OSD pixels are non-zero, the maximize gate
-    //     (if requested) flipped, and the Wayland scale is known.
+    // 21. Wait for the VO window. Event-driven: drain mpv's queued events
+    //     into the ingest layer, re-check the readiness gate (OSD pixels
+    //     non-zero, maximize state matches request, Wayland scale known),
+    //     and block until the next wakeup if not ready.
+    //
+    //     macOS pumps NSEvents + CFRunLoop sources between drains, because
+    //     the main thread must service AppKit while waiting. A mpv wakeup
+    //     callback dispatches a no-op block onto the main queue so the
+    //     CFRunLoop returns when libmpv has new events. Linux/Windows can
+    //     simply block in `mpv_wait_event(-1.0)`; the Wayland scale-known
+    //     path posts `mpv_wakeup` from the wl-proxy thread to unblock.
     let want_max = {
         let g = jfn_config::window_geometry();
         g.maximized
     };
     let wait_for_scale = cfg!(target_os = "linux") && plat().display() == DisplayBackend::Wayland;
-    #[cfg(not(target_os = "macos"))]
-    let wait_timeout = if wait_for_scale { 0.1 } else { 1.0 };
     tracing::info!(target: "Main", "Waiting for mpv window...");
+
+    #[cfg(target_os = "macos")]
+    unsafe {
+        jfn_mpv::api::jfn_mpv_set_wakeup_callback(
+            jfn_macos::macos_mpv_wakeup_cb,
+            std::ptr::null_mut(),
+        );
+    }
 
     let mut mw: i32 = 0;
     let mut mh: i32 = 0;
     let mut need_max = want_max;
-    loop {
-        #[cfg(target_os = "macos")]
-        {
-            plat().pump();
+    'wait: loop {
+        // Drain everything mpv has queued without blocking. consume_vo_event
+        // folds property changes into the ingest layer; if any drain step
+        // observes a fatal event we bail out of jfn_app_main.
+        loop {
             let ev = jfn_mpv::api::jfn_mpv_wait_event(0.0);
             if ev.is_null() {
-                continue;
+                break;
             }
             let event_id = unsafe { (*ev).event_id }.0;
             if event_id == 0 {
-                unsafe { libc::usleep(10000) };
-                continue;
+                // MPV_EVENT_NONE — queue empty.
+                break;
             }
             if event_id == 2 {
                 log_mpv_event(ev);
@@ -455,29 +470,39 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
             if event_id == 1 || event_id == 7 {
                 return 0;
             }
-            if consume_vo_event(ev, &mut mw, &mut mh, &mut need_max, wait_for_scale) {
-                break;
-            }
+            consume_vo_event(ev, &mut mw, &mut mh, &mut need_max);
         }
+        if vo_ready(mw, &need_max, wait_for_scale) {
+            break 'wait;
+        }
+        // Block until the next mpv wakeup (or, on macOS, until the main
+        // run loop services a source — e.g. the dispatch block posted by
+        // the wakeup callback).
+        #[cfg(target_os = "macos")]
+        jfn_macos::macos_pump_block(60.0);
         #[cfg(not(target_os = "macos"))]
         {
-            let ev = jfn_mpv::api::jfn_mpv_wait_event(wait_timeout);
-            if ev.is_null() {
-                continue;
-            }
-            let event_id = unsafe { (*ev).event_id }.0;
-            if event_id == 2 {
-                log_mpv_event(ev);
-                continue;
-            }
-            if event_id == 1 || event_id == 7 {
-                return 0;
-            }
-            if consume_vo_event(ev, &mut mw, &mut mh, &mut need_max, wait_for_scale) {
-                break;
+            let ev = jfn_mpv::api::jfn_mpv_wait_event(-1.0);
+            if !ev.is_null() {
+                let event_id = unsafe { (*ev).event_id }.0;
+                if event_id == 2 {
+                    log_mpv_event(ev);
+                } else if event_id == 1 || event_id == 7 {
+                    return 0;
+                } else if event_id != 0 {
+                    consume_vo_event(ev, &mut mw, &mut mh, &mut need_max);
+                }
             }
         }
     }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Drop the boot-time wakeup callback now that the VO is ready —
+        // the regular event-loop thread set up later does its own drain.
+        jfn_mpv::api::jfn_mpv_clear_wakeup_callback();
+    }
+
     store_vo_size(mw, mh);
 
     // 22. run_with_cef body + post-run mpv terminate. From here on
@@ -729,8 +754,7 @@ fn consume_vo_event(
     mw: &mut i32,
     mh: &mut i32,
     need_max: &mut bool,
-    wait_for_scale: bool,
-) -> bool {
+) {
     let event_id = unsafe { (*ev).event_id }.0;
     if event_id == 22 {
         // MPV_EVENT_PROPERTY_CHANGE
@@ -771,6 +795,11 @@ fn consume_vo_event(
         *mw = pw;
         *mh = ph;
     }
+}
+
+/// Boot-time VO readiness gate: OSD pixels reported, maximize state
+/// matches request (if requested), Wayland scale known (if applicable).
+fn vo_ready(mw: i32, need_max: &bool, wait_for_scale: bool) -> bool {
     #[cfg(target_os = "linux")]
     let scale_ready = !wait_for_scale || jfn_wayland::proxy::jfn_wl_scale_known();
     #[cfg(not(target_os = "linux"))]
@@ -778,7 +807,7 @@ fn consume_vo_event(
         let _ = wait_for_scale;
         true
     };
-    *mw > 0 && !*need_max && scale_ready
+    mw > 0 && !*need_max && scale_ready
 }
 
 static VO_SIZE: OnceLock<(i32, i32)> = OnceLock::new();

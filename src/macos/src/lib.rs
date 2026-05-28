@@ -395,6 +395,37 @@ pub fn macos_run_main_loop() {
     }
 }
 
+unsafe extern "C" fn noop_dispatch(_ctx: *mut c_void) {}
+
+/// Wakeup hook to install with `mpv_set_wakeup_callback`. Bridges mpv's
+/// foreign-thread wakeup notification into a dispatch on the main queue,
+/// which causes `CFRunLoopRunInMode(default, _, returnAfterSourceHandled=1)`
+/// to return promptly. Used during the pre-CefInitialize VO-wait loop so
+/// the main thread can block on the run loop instead of polling
+/// `mpv_wait_event(0)`. The block is a no-op — the side effect is the run
+/// loop wake.
+pub unsafe extern "C" fn macos_mpv_wakeup_cb(_data: *mut c_void) {
+    unsafe {
+        dispatch_async_f(
+            dispatch_get_main_queue(),
+            std::ptr::null_mut(),
+            noop_dispatch,
+        )
+    };
+}
+
+/// Pump pending NSEvents (non-blocking), then block on `CFRunLoopRunInMode`
+/// until a source fires (e.g. the dispatch-async block posted by
+/// `macos_mpv_wakeup_cb`, a CEF wake source, or a GCD main-queue block) or
+/// `seconds` elapses. `returnAfterSourceHandled` is true: the call returns
+/// as soon as the run loop services one source. Used by the VO-wait loop.
+pub fn macos_pump_block(seconds: f64) {
+    macos_pump();
+    unsafe {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, 1);
+    }
+}
+
 unsafe extern "C" fn wake_trampoline(_ctx: *mut c_void) {
     unsafe {
         let pool: *mut objc2::runtime::AnyObject =
