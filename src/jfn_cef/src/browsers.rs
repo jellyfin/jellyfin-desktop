@@ -14,16 +14,16 @@
 use parking_lot::Mutex;
 use std::ffi::c_char;
 use std::os::raw::c_void;
+use std::sync::Arc;
 
-use crate::client::JfnCefLayer;
+use crate::client::{Inner, JfnCefLayer};
 
 use crate::client::{
     jfn_cef_layer_close_browser_force, jfn_cef_layer_free, jfn_cef_layer_get_surface,
-    jfn_cef_layer_is_closed, jfn_cef_layer_new, jfn_cef_layer_on_deactivated, jfn_cef_layer_resize,
+    jfn_cef_layer_inner, jfn_cef_layer_new, jfn_cef_layer_on_deactivated, jfn_cef_layer_resize,
     jfn_cef_layer_send_mouse_move, jfn_cef_layer_set_focus,
     jfn_cef_layer_set_injection_profile_kind, jfn_cef_layer_set_refresh_rate,
-    jfn_cef_layer_set_surface, jfn_cef_layer_wait_for_close, jfn_cef_set_default_frame_rate,
-    jfn_cef_set_use_shared_textures,
+    jfn_cef_layer_set_surface, jfn_cef_set_default_frame_rate, jfn_cef_set_use_shared_textures,
 };
 use jfn_input::jfn_input_last_mouse_pos;
 
@@ -229,26 +229,24 @@ pub fn jfn_browsers_set_refresh_rate(hz: f64) {
     }
 }
 
-pub fn jfn_browsers_all_closed() -> bool {
+/// Snapshot every layer's `Arc<Inner>` and force-close its browser, all
+/// under one `INSTANCE` lock. MUST run on TID_UI — called from
+/// `CloseAndCollectTask::execute`. Single snapshot eliminates the
+/// snapshot-vs-post race that two-step (post then wait) would have. The
+/// returned `Arc<Inner>` set is exactly the set whose closes were issued,
+/// safe to `wait_for_close` even after `before_close_callback` self-removes
+/// the `JfnCefLayer` Box (the Arc keeps `Inner` and its `close_cv` alive).
+pub(crate) fn jfn_browsers_close_and_snapshot() -> Vec<Arc<Inner>> {
     let g = INSTANCE.lock();
-    let Some(b) = g.as_ref() else { return true };
+    let Some(b) = g.as_ref() else {
+        return Vec::new();
+    };
+    let mut inners = Vec::with_capacity(b.layers.len());
     for l in &b.layers {
-        if !unsafe { jfn_cef_layer_is_closed(*l) } {
-            return false;
-        }
+        inners.push(unsafe { jfn_cef_layer_inner(*l) });
+        unsafe { jfn_cef_layer_close_browser_force(*l) };
     }
-    true
-}
-
-pub fn jfn_browsers_close_all() {
-    let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
-        .lock()
-        .as_ref()
-        .map(|b| b.layers.clone())
-        .unwrap_or_default();
-    for l in snapshot {
-        unsafe { jfn_cef_layer_close_browser_force(l) };
-    }
+    inners
 }
 
 /// Drive an external BeginFrame on every layer. Called from the macOS
@@ -266,14 +264,20 @@ pub fn jfn_browsers_send_external_begin_frame_all() {
     }
 }
 
-pub fn jfn_browsers_wait_all_closed() {
-    let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
-        .lock()
-        .as_ref()
-        .map(|b| b.layers.clone())
-        .unwrap_or_default();
-    for l in snapshot {
-        unsafe { jfn_cef_layer_wait_for_close(l) };
+/// Force-close every layer's browser and block until each `OnBeforeClose`
+/// has fired. Thread-agnostic: callable from any non-TID_UI thread (the
+/// shutdown manager). Posts a single snapshot-and-close task onto TID_UI,
+/// then waits on every `Arc<Inner>` that task closed — no second-snapshot
+/// race window, and no UAF when a layer's `before_close_callback`
+/// self-removes its `JfnCefLayer` Box mid-drain (the about layer does).
+pub fn jfn_browsers_close_all_blocking() {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<Inner>>>(1);
+    crate::client::jfn_cef_post_close_and_collect(tx);
+    let inners = rx
+        .recv()
+        .expect("CloseAndCollectTask ran and sent the wait set");
+    for i in inners {
+        i.wait_for_close();
     }
 }
 

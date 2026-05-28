@@ -18,6 +18,45 @@ pub mod geometry;
 
 pub use geometry::{SurfaceSize, WindowGeometry, WindowPos};
 
+// =====================================================================
+// Main-thread park (non-macOS default for run_main_loop/wake_main_loop)
+// =====================================================================
+//
+// Non-macOS backends have no native run loop to block the process main
+// thread on. The default `Platform::run_main_loop` parks here until the
+// shutdown manager calls `wake_main_loop`, at which point main runs the
+// teardown tail. A latching `bool` + `Condvar` is enough — it's a single
+// dedicated blocking wait (not a `poll()` multiplexer), so no fd is needed
+// and there's no `playback`-crate dependency. macOS overrides both methods
+// (`[NSApp run]` / stop-NSApp) and never touches this.
+
+struct MainPark {
+    woken: std::sync::Mutex<bool>,
+    cv: std::sync::Condvar,
+}
+
+static MAIN_PARK: MainPark = MainPark {
+    woken: std::sync::Mutex::new(false),
+    cv: std::sync::Condvar::new(),
+};
+
+/// Block until [`main_park_signal`] is called. Returns immediately if the
+/// signal already fired (latched), so a wake racing ahead of the wait is
+/// not lost.
+pub fn main_park_wait() {
+    let mut woken = MAIN_PARK.woken.lock().unwrap();
+    while !*woken {
+        woken = MAIN_PARK.cv.wait(woken).unwrap();
+    }
+}
+
+/// Release [`main_park_wait`]. Idempotent and safe from any thread.
+pub fn main_park_signal() {
+    let mut woken = MAIN_PARK.woken.lock().unwrap();
+    *woken = true;
+    MAIN_PARK.cv.notify_all();
+}
+
 /// Canonical `cef_cursor_type_t` ordinals, the single source of truth for the
 /// cursor codes that flow through [`Platform::set_cursor`]. Values are derived
 /// from the generated CEF bindings so backends can never hand-copy (and drift
@@ -213,8 +252,18 @@ pub trait Platform: Send + Sync {
     }
 
     fn pump(&self) {}
-    fn run_main_loop(&self) {}
-    fn wake_main_loop(&self) {}
+    /// Block the process main thread until [`wake_main_loop`] is called.
+    /// Default parks on the process-wide [`main_park_wait`]; macOS overrides
+    /// with `[NSApp run]`.
+    fn run_main_loop(&self) {
+        main_park_wait();
+    }
+    /// Release [`run_main_loop`] so main can run the teardown tail. Safe from
+    /// any thread. Default signals [`main_park_signal`]; macOS overrides to
+    /// stop the NSApp loop.
+    fn wake_main_loop(&self) {
+        main_park_signal();
+    }
 
     fn set_cursor(&self, _cef_cursor_type: c_int) {}
     fn set_idle_inhibit(&self, _level: IdleInhibitLevel) {}

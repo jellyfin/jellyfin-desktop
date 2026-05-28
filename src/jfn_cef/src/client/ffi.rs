@@ -45,16 +45,15 @@ pub(crate) unsafe fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_c
     *inner.name.lock() = new;
 }
 
-pub(crate) unsafe fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool {
-    unsafe { arc(h) }.closed.load(Ordering::Acquire)
-}
-
-pub(crate) unsafe fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
-    let l = unsafe { arc(h) };
-    let mut g = l.close_mtx.lock();
-    while !l.closed.load(Ordering::Acquire) {
-        l.close_cv.wait(&mut g);
-    }
+/// Clone the layer's `Arc<Inner>`. The shutdown drain gate takes these under
+/// the `INSTANCE` lock so it can wait on a layer's close after the
+/// `JfnCefLayer` Box is freed by a self-removing `before_close_callback` (e.g.
+/// the about layer): the owned `Arc` keeps `Inner` (and its `close_cv`) alive.
+///
+/// # Safety
+/// `h` must be a live `JfnCefLayer` handle returned by `jfn_cef_layer_new`.
+pub(crate) unsafe fn jfn_cef_layer_inner(h: *const JfnCefLayer) -> Arc<Inner> {
+    unsafe { arc(h) }
 }
 
 /// # Safety
