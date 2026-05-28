@@ -64,6 +64,9 @@ struct InitState {
     /// `JellyfinWakeTarget*` retained for process lifetime — the
     /// NSWorkspace/screen-change observer that restarts the display link.
     wake_target: *mut AnyObject,
+    /// `JellyfinLifecycleObserver*` retained for process lifetime —
+    /// receives NSApplication hide/unhide + NSWorkspace sleep/wake.
+    lifecycle_observer: *mut AnyObject,
 }
 
 unsafe impl Send for InitState {}
@@ -75,6 +78,7 @@ static INIT_STATE: Mutex<InitState> = Mutex::new(InitState {
     display_link: ptr::null_mut(),
     app_menu_target: ptr::null_mut(),
     wake_target: ptr::null_mut(),
+    lifecycle_observer: ptr::null_mut(),
 });
 
 /// Returns the `NSWindow*` (non-retaining) for use by other modules.
@@ -264,6 +268,88 @@ define_class!(
 // BeginFrame on every browser. Fires on the main runloop at the
 // display's refresh rate.
 // =====================================================================
+
+// =====================================================================
+// Lifecycle observer — bridges NSApplication hide/unhide notifications
+// and NSWorkspace will-sleep/did-wake notifications into the manager
+// FSM (jfn_playback::lifecycle).
+// =====================================================================
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "JellyfinLifecycleObserver"]
+    pub struct JellyfinLifecycleObserver;
+
+    impl JellyfinLifecycleObserver {
+        #[unsafe(method(appDidHide:))]
+        unsafe fn app_did_hide(&self, _n: *mut AnyObject) {
+            jfn_playback::lifecycle::jfn_lifecycle_set_visible(false);
+        }
+        #[unsafe(method(appDidUnhide:))]
+        unsafe fn app_did_unhide(&self, _n: *mut AnyObject) {
+            jfn_playback::lifecycle::jfn_lifecycle_set_visible(true);
+        }
+        #[unsafe(method(workspaceWillSleep:))]
+        unsafe fn workspace_will_sleep(&self, _n: *mut AnyObject) {
+            jfn_playback::lifecycle::jfn_lifecycle_suspend();
+        }
+        #[unsafe(method(workspaceDidWake:))]
+        unsafe fn workspace_did_wake(&self, _n: *mut AnyObject) {
+            jfn_playback::lifecycle::jfn_lifecycle_resume();
+        }
+    }
+
+    unsafe impl NSObjectProtocol for JellyfinLifecycleObserver {}
+);
+
+unsafe fn install_lifecycle_observer() {
+    unsafe {
+        let observer: Retained<JellyfinLifecycleObserver> =
+            msg_send![JellyfinLifecycleObserver::class(), new];
+        let observer_obj: *mut AnyObject = Retained::into_raw(observer) as *mut AnyObject;
+
+        // App-level hide / unhide arrive via the default notification center.
+        let nc: *mut AnyObject = msg_send![class!(NSNotificationCenter), defaultCenter];
+        for (sel, name) in [
+            (sel!(appDidHide:), c"NSApplicationDidHideNotification"),
+            (sel!(appDidUnhide:), c"NSApplicationDidUnhideNotification"),
+        ] {
+            let name_ns: *mut AnyObject =
+                msg_send![class!(NSString), stringWithUTF8String: name.as_ptr()];
+            let _: () = msg_send![
+                nc,
+                addObserver: observer_obj,
+                selector: sel,
+                name: name_ns,
+                object: std::ptr::null_mut::<AnyObject>(),
+            ];
+        }
+
+        // System sleep / wake is published by the shared NSWorkspace's own
+        // notification center, not the default one.
+        let ws: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let ws_nc: *mut AnyObject = msg_send![ws, notificationCenter];
+        for (sel, name) in [
+            (
+                sel!(workspaceWillSleep:),
+                c"NSWorkspaceWillSleepNotification",
+            ),
+            (sel!(workspaceDidWake:), c"NSWorkspaceDidWakeNotification"),
+        ] {
+            let name_ns: *mut AnyObject =
+                msg_send![class!(NSString), stringWithUTF8String: name.as_ptr()];
+            let _: () = msg_send![
+                ws_nc,
+                addObserver: observer_obj,
+                selector: sel,
+                name: name_ns,
+                object: std::ptr::null_mut::<AnyObject>(),
+            ];
+        }
+
+        INIT_STATE.lock().lifecycle_observer = observer_obj;
+    }
+}
 
 define_class!(
     #[unsafe(super(NSObject))]
@@ -787,6 +873,10 @@ pub fn macos_early_init() {
         let mt: Retained<JellyfinAppMenuTarget> = msg_send![JellyfinAppMenuTarget::class(), new];
         let mt_obj: *mut AnyObject = Retained::into_raw(mt) as *mut AnyObject;
         INIT_STATE.lock().app_menu_target = mt_obj;
+
+        // Subscribe to NSApplication hide/unhide and NSWorkspace sleep/wake
+        // so the manager FSM can drive CEF visibility on lifecycle changes.
+        install_lifecycle_observer();
 
         // Build the menu bar.
         let menubar: *mut AnyObject = msg_send![class!(NSMenu), alloc];

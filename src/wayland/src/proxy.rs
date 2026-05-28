@@ -15,7 +15,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use crate::wl_ops;
 
 use jfn_playback::ingest_driver::jfn_playback_post_osd_pixels;
-use jfn_wlproxy::{jfn_wlproxy_set_configure_callback, jfn_wlproxy_set_scale_callback};
+use jfn_wlproxy::{
+    jfn_wlproxy_set_configure_callback, jfn_wlproxy_set_scale_callback,
+    jfn_wlproxy_set_suspended_callback,
+};
 
 static CACHED_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
 
@@ -67,7 +70,12 @@ extern "C" fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_i
     jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
 }
 
+extern "C" fn on_suspended(suspended: c_int) {
+    jfn_playback::lifecycle::jfn_lifecycle_set_visible(suspended == 0);
+}
+
 pub fn jfn_wl_register_proxy_callbacks() {
     jfn_wlproxy_set_configure_callback(on_configure);
     jfn_wlproxy_set_scale_callback(on_scale);
+    jfn_wlproxy_set_suspended_callback(on_suspended);
 }

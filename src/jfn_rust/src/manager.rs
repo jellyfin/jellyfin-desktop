@@ -80,11 +80,18 @@ fn manager() -> &'static Manager {
 
 /// Spawn the manager thread. Long-lived; returns the join handle so the
 /// teardown tail can join it once shutdown drains. Called once from
-/// `run_with_cef`.
+/// `run_with_cef`. Also installs the lifecycle dispatchers so platform
+/// layers can post visibility / suspend / resume events without a direct
+/// dep on this crate.
 pub fn jfn_manager_start() -> JoinHandle<()> {
     // Materialize the singleton so its wake event exists before any producer
     // (shutdown handler / sender) signals it.
     let _ = manager();
+    jfn_playback::lifecycle::jfn_lifecycle_set_handlers(
+        |v| jfn_manager_send(ManagerMsg::SetVisible(v)),
+        || jfn_manager_send(ManagerMsg::Suspend),
+        || jfn_manager_send(ManagerMsg::Resume),
+    );
     thread::Builder::new()
         .name("jfn-manager".into())
         .spawn(manager_loop)

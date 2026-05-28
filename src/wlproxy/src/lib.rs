@@ -66,11 +66,16 @@ pub struct Proxy {
 
 type ConfigureCb = extern "C" fn(c_int, c_int, c_int);
 type ScaleCb = extern "C" fn(c_int);
+type SuspendedCb = extern "C" fn(c_int);
 
 // Single proxy per process — callbacks are global. Fire from the per-client
 // proxy thread; the C side guards against thread-safety with its own mutex.
 static CONFIGURE_CB: Mutex<Option<ConfigureCb>> = Mutex::new(None);
 static SCALE_CB: Mutex<Option<ScaleCb>> = Mutex::new(None);
+static SUSPENDED_CB: Mutex<Option<SuspendedCb>> = Mutex::new(None);
+// Last reported suspended state to suppress no-op edges (the compositor
+// repeats the state on every configure).
+static LAST_SUSPENDED: Mutex<c_int> = Mutex::new(0);
 
 enum HostCommand {
     SetFullscreen(bool),
@@ -118,6 +123,19 @@ static PENDING: Mutex<PendingConfigure> = Mutex::new(PendingConfigure {
     fullscreen: 0,
     scale_120: 120,
 });
+
+fn fire_suspended(suspended: c_int) {
+    {
+        let mut last = LAST_SUSPENDED.lock();
+        if *last == suspended {
+            return;
+        }
+        *last = suspended;
+    }
+    if let Some(cb) = *SUSPENDED_CB.lock() {
+        cb(suspended);
+    }
+}
 
 fn fire_configure() {
     let p = PENDING.lock();
@@ -223,6 +241,16 @@ pub fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
 /// new preferred scale for the toplevel's surface.
 pub fn jfn_wlproxy_set_scale_callback(cb: ScaleCb) {
     *SCALE_CB.lock() = Some(cb);
+}
+
+/// Register the xdg_toplevel suspended-state callback.
+///
+/// Fires once on each transition into or out of `XDG_TOPLEVEL_STATE_SUSPENDED`
+/// (xdg-shell v6+). Argument is 1 when suspended (compositor signals updates
+/// have no user-visible effect, e.g. desktop switched, minimised on KDE),
+/// 0 when restored. Repeats are suppressed.
+pub fn jfn_wlproxy_set_suspended_callback(cb: SuspendedCb) {
+    *SUSPENDED_CB.lock() = Some(cb);
 }
 
 /// Queue an xdg_toplevel.set_fullscreen / unset_fullscreen request. Applied
@@ -523,13 +551,19 @@ impl XdgToplevelHandler for ToplevelH {
 
     fn handle_configure(&mut self, slf: &Rc<XdgToplevel>, width: i32, height: i32, states: &[u8]) {
         // states is a wire-encoded wl_array of uint32 XdgToplevelState values
-        // in native byte order. Scan for FULLSCREEN; ignore other states.
+        // in native byte order. Scan for FULLSCREEN + SUSPENDED; ignore other
+        // states. SUSPENDED (xdg-shell v6) signals the toplevel is occluded
+        // such that updates have no user-visible effect — the host treats it
+        // as a hide-equivalent and frees CEF GPU resources.
+        const STATE_SUSPENDED: u32 = 9;
         let mut fullscreen: c_int = 0;
+        let mut suspended: c_int = 0;
         for chunk in states.chunks_exact(4) {
             let v = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             if XdgToplevelState(v) == XdgToplevelState::FULLSCREEN {
                 fullscreen = 1;
-                break;
+            } else if v == STATE_SUSPENDED {
+                suspended = 1;
             }
         }
         {
@@ -540,6 +574,7 @@ impl XdgToplevelHandler for ToplevelH {
             p.fullscreen = fullscreen;
         }
         fire_configure();
+        fire_suspended(suspended);
         slf.send_configure(width, height, states);
     }
 }
