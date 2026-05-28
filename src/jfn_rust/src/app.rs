@@ -472,7 +472,7 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
             }
             consume_vo_event(ev, &mut mw, &mut mh, &mut need_max);
         }
-        if vo_ready(mw, &need_max, wait_for_scale) {
+        if vo_ready(&mut mw, &mut mh, &need_max, wait_for_scale) {
             break 'wait;
         }
         // Block until the next mpv wakeup (or, on macOS, until the main
@@ -799,7 +799,16 @@ fn consume_vo_event(
 
 /// Boot-time VO readiness gate: OSD pixels reported, maximize state
 /// matches request (if requested), Wayland scale known (if applicable).
-fn vo_ready(mw: i32, need_max: &bool, wait_for_scale: bool) -> bool {
+/// Reads OSD pixels directly from the ingest layer (rather than the
+/// caller's running `mw`) so a value that landed via the wlproxy synthetic
+/// path before the loop entered is still observed.
+fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool, wait_for_scale: bool) -> bool {
+    let pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
+    let ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
+    if pw > 0 && ph > 0 {
+        *mw = pw;
+        *mh = ph;
+    }
     #[cfg(target_os = "linux")]
     let scale_ready = !wait_for_scale || jfn_wayland::proxy::jfn_wl_scale_known();
     #[cfg(not(target_os = "linux"))]
@@ -807,7 +816,7 @@ fn vo_ready(mw: i32, need_max: &bool, wait_for_scale: bool) -> bool {
         let _ = wait_for_scale;
         true
     };
-    mw > 0 && !*need_max && scale_ready
+    *mw > 0 && !*need_max && scale_ready
 }
 
 static VO_SIZE: OnceLock<(i32, i32)> = OnceLock::new();
