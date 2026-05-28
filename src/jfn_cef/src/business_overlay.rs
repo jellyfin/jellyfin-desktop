@@ -1,3 +1,8 @@
+// JfnCefLayer is an opaque internal handle; callers within this crate
+// pass it back unchanged. Marking each consumer unsafe would cascade
+// without adding type safety, so the lint is suppressed module-wide.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 //! OverlayBrowser business logic.
 //!
 //! The server-selection overlay loads `app://resources/overlay.html` over the
@@ -6,39 +11,40 @@
 //! the main browser into a fresh load (navigate). One process-wide instance
 //! held in [`INSTANCE`]; lifetime mirrors the main browser.
 
-use cef::rc::ConvertReturnValue;
 use cef::*;
 use parking_lot::Mutex;
 use std::ffi::CString;
 use std::os::raw::c_void;
-
-use crate::client::JfnCefLayer;
+use std::sync::Arc;
 
 use crate::browsers::{jfn_browsers_create, jfn_browsers_set_active};
+use crate::business_common::{
+    adopt_message_refs, apply_setting_value, list_string, reject_double_init, send_process_message,
+};
 use crate::client::{
-    jfn_cef_layer_create, jfn_cef_layer_load_url, jfn_cef_layer_reset, jfn_cef_layer_set_name,
+    Inner, JfnCefLayer, jfn_cef_layer_create, jfn_cef_layer_inner, jfn_cef_layer_set_name,
     jfn_cef_layer_set_visible,
 };
 use jfn_color::theme::jfn_theme_color_on_overlay_dismissed;
 use jfn_jellyfin::{extract_base_url, is_valid_public_info, normalize_input};
 
 struct OverlayState {
-    main_layer: *mut JfnCefLayer,
+    main_layer: Arc<Inner>,
     active_probe: Option<Urlrequest>,
 }
 
-unsafe impl Send for OverlayState {}
-
 static INSTANCE: Mutex<Option<OverlayState>> = Mutex::new(None);
-
-#[derive(Clone, Copy)]
-struct LayerPtr(*mut JfnCefLayer);
-unsafe impl Send for LayerPtr {}
-unsafe impl Sync for LayerPtr {}
 
 /// Create the overlay layer over `main_layer`, install handlers, load the
 /// overlay URL. Called once after the main browser is created.
 pub fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
+    if main_layer.is_null() {
+        return;
+    }
+    if reject_double_init(&INSTANCE.lock(), "jfn_overlay_init") {
+        return;
+    }
+
     let kind = CString::new("overlay").unwrap();
     let layer = unsafe { jfn_browsers_create(kind.as_ptr()) };
     if layer.is_null() {
@@ -48,7 +54,8 @@ pub fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
     let name = CString::new("overlay").unwrap();
     unsafe { jfn_cef_layer_set_name(layer, name.as_ptr()) };
 
-    install_handlers(layer, main_layer);
+    let inner = unsafe { jfn_cef_layer_inner(layer) };
+    install_handlers(layer, Arc::clone(&inner));
 
     unsafe {
         jfn_cef_layer_set_visible(layer, true);
@@ -56,68 +63,47 @@ pub fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
         jfn_cef_layer_create(layer, url.as_ptr() as *const _, url.len());
     }
 
+    let main_inner = unsafe { jfn_cef_layer_inner(main_layer) };
     *INSTANCE.lock() = Some(OverlayState {
-        main_layer,
+        main_layer: main_inner,
         active_probe: None,
     });
 }
 
-fn install_handlers(layer: *mut JfnCefLayer, _main_layer: *mut JfnCefLayer) {
+fn install_handlers(layer: *mut JfnCefLayer, inner_for_created: Arc<Inner>) {
     let l = unsafe { &*layer };
 
     // Created → overlay wins input.
-    let lp_created = LayerPtr(layer);
     l.set_created_callback_rust(Some(Box::new(move |_b: *mut c_void| {
-        let lp = &lp_created;
-        jfn_browsers_set_active(lp.0);
+        let p = inner_for_created.layer_ptr();
+        if !p.is_null() {
+            jfn_browsers_set_active(p);
+        }
     })));
 
-    // Message dispatch.
     l.set_message_handler_rust(Some(Box::new(
         move |name: &str, args_raw: *mut c_void, browser_raw: *mut c_void| -> bool {
             handle_message(name, args_raw, browser_raw)
         },
     )));
 
-    // Context menu.
+    // BeforeClose: clear INSTANCE so post-close cancel/IPC paths no-op
+    // instead of touching a torn-down main browser handle.
+    l.set_before_close_callback_rust(Some(Box::new(|| {
+        cancel_active_probe();
+        *INSTANCE.lock() = None;
+    })));
+
     l.set_context_menu_builder_rust(Some(crate::app_menu::build_closure()));
     l.set_context_menu_dispatcher_rust(Some(crate::app_menu::dispatch_closure()));
 }
 
-fn list_string(args: &ListValue, idx: usize) -> String {
-    let userfree = args.string(idx);
-    let cs: CefString = (&userfree).into();
-    cs.to_string()
-}
-
-fn apply_setting_value(_section: &str, key: &str, value: &str) {
-    match key {
-        "hwdec" => jfn_config::set_hwdec(value),
-        "audioPassthrough" => jfn_config::set_audio_passthrough(value),
-        "audioExclusive" => jfn_config::set_audio_exclusive(value == "true"),
-        "audioChannels" => jfn_config::set_audio_channels(value),
-        "windowDecorations" => jfn_config::set_window_decorations(value),
-        "logLevel" => jfn_config::set_log_level(value),
-        // Pass empty platform_default — Rust setter clears when raw equals
-        // the empty string. The overlay path doesn't have the live hostname
-        // handy; accepting empty matches the legacy behaviour for the
-        // overlay (set what the user typed, no auto-clear).
-        "deviceName" => jfn_config::set_device_name(value, ""),
-        _ => jfn_logging::log(
-            jfn_logging::CATEGORY_CEF,
-            jfn_logging::LEVEL_WARN,
-            &format!("Unknown setting key: {_section}.{key}"),
-        ),
-    }
-    jfn_config::settings_save_async();
+fn main_layer_arc() -> Option<Arc<Inner>> {
+    INSTANCE.lock().as_ref().map(|s| Arc::clone(&s.main_layer))
 }
 
 fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
-    // Adopt the refs CEF added before invoke; release on function exit.
-    let args = (!args_raw.is_null())
-        .then(|| -> ListValue { (args_raw as *mut sys::_cef_list_value_t).wrap_result() });
-    let browser = (!browser_raw.is_null())
-        .then(|| -> Browser { (browser_raw as *mut sys::_cef_browser_t).wrap_result() });
+    let (args, browser) = adopt_message_refs(args_raw, browser_raw);
 
     match name {
         "getSavedServerUrl" => {
@@ -141,9 +127,8 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
             );
             jfn_config::set_server_url(&url);
             jfn_config::settings_save_async();
-            let main_layer = INSTANCE.lock().as_ref().map(|s| s.main_layer);
-            if let Some(ml) = main_layer {
-                unsafe { jfn_cef_layer_load_url(ml, url.as_ptr() as *const _, url.len()) };
+            if let Some(ml) = main_layer_arc() {
+                ml.load_url(&url);
             }
             true
         }
@@ -153,11 +138,13 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
                 jfn_logging::LEVEL_INFO,
                 "Overlay: dismissOverlay",
             );
-            let main_layer = match INSTANCE.lock().as_ref() {
-                Some(s) => s.main_layer,
-                None => return true,
+            let Some(ml) = main_layer_arc() else {
+                return true;
             };
-            jfn_browsers_set_active(main_layer);
+            let p = ml.layer_ptr();
+            if !p.is_null() {
+                jfn_browsers_set_active(p);
+            }
             jfn_theme_color_on_overlay_dismissed();
             true
         }
@@ -188,27 +175,13 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         "cancelServerConnectivity" => {
             cancel_active_probe();
             // Kill the pre-load.
-            let main_layer = INSTANCE.lock().as_ref().map(|s| s.main_layer);
-            if let Some(ml) = main_layer {
-                unsafe { jfn_cef_layer_reset(ml) };
+            if let Some(ml) = main_layer_arc() {
+                ml.reset();
             }
             true
         }
         _ => false,
     }
-}
-
-fn send_process_message<F: FnOnce(&ListValue)>(frame: &Frame, name: &str, fill: F) {
-    let Some(mut msg) = cef::process_message_create(Some(&CefString::from(name))) else {
-        return;
-    };
-    if let Some(args) = msg.argument_list() {
-        fill(&args);
-    }
-    frame.send_process_message(
-        ProcessId::from(sys::cef_process_id_t::PID_RENDERER),
-        Some(&mut msg),
-    );
 }
 
 fn cancel_active_probe() {
@@ -220,7 +193,7 @@ fn cancel_active_probe() {
 
 fn start_probe(browser: Browser, user_url: String, normalized: String) {
     let probe = ServerProbeClient::new(
-        normalized.clone(),
+        normalized,
         Box::new(move |success, base_url| {
             let Some(frame) = browser.main_frame() else {
                 return;
@@ -251,21 +224,14 @@ fn start_probe(browser: Browser, user_url: String, normalized: String) {
 // .cancel() aborts the active CefURLRequest; a late OnRequestComplete with
 // the slot cleared is harmless.
 
-use std::sync::Arc;
-
 type ProbeCallback = Box<dyn FnMut(bool, String) + Send + Sync>;
-
-struct ProbeInner {
-    callback: Mutex<Option<ProbeCallback>>,
-    state: Mutex<ProbeState>,
-}
 
 struct ProbeState {
     url: String,
     phase: Phase,
     base: String,
     body: Vec<u8>,
-    current_request: Option<Urlrequest>,
+    callback: Option<ProbeCallback>,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -275,100 +241,81 @@ enum Phase {
 }
 
 struct ServerProbeClient {
-    inner: Arc<ProbeInner>,
+    state: Arc<Mutex<ProbeState>>,
 }
 
 impl ServerProbeClient {
     fn new(url: String, callback: ProbeCallback) -> Self {
         Self {
-            inner: Arc::new(ProbeInner {
-                callback: Mutex::new(Some(callback)),
-                state: Mutex::new(ProbeState {
-                    url,
-                    phase: Phase::Head,
-                    base: String::new(),
-                    body: Vec::new(),
-                    current_request: None,
-                }),
-            }),
+            state: Arc::new(Mutex::new(ProbeState {
+                url,
+                phase: Phase::Head,
+                base: String::new(),
+                body: Vec::new(),
+                callback: Some(callback),
+            })),
         }
     }
 
     fn start(&self) {
-        let (url_clone, request) = {
-            let st = self.inner.state.lock();
-            (st.url.clone(), make_request("HEAD", &st.url, self.client()))
-        };
-        if let Some(r) = request {
-            let mut st = self.inner.state.lock();
-            // Store the cef::Urlrequest in the active slot too so cancel
-            // semantics line up with the C++ original.
-            if let Some(s) = INSTANCE.lock().as_mut() {
-                s.active_probe = Some(r.clone());
-            }
-            st.current_request = Some(r);
-            let _ = url_clone;
+        let url = self.state.lock().url.clone();
+        let request = make_request("HEAD", &url, self.client());
+        if let Some(r) = request
+            && let Some(s) = INSTANCE.lock().as_mut()
+        {
+            s.active_probe = Some(r);
         }
     }
 
     fn client(&self) -> UrlrequestClient {
-        let inner = Arc::clone(&self.inner);
-        JfnServerProbeClient::new(inner)
+        JfnServerProbeClient::new(Arc::clone(&self.state))
     }
 }
 
-impl ProbeInner {
-    fn on_complete(self: &Arc<Self>, request: &Urlrequest) {
-        // Capture phase + URL, then either start GET or finish.
-        let next_request = {
-            let mut st = self.state.lock();
-            if st.phase == Phase::Head {
-                let mut resolved = st.url.clone();
-                if let Some(resp) = request.response() {
-                    let url_uf = resp.url();
-                    let cs: CefString = (&url_uf).into();
-                    let s = cs.to_string();
-                    if !s.is_empty() {
-                        resolved = s;
-                    }
+fn on_complete(state: &Arc<Mutex<ProbeState>>, request: &Urlrequest) {
+    // HEAD phase: extract resolved base URL, post GET on /System/Info/Public.
+    let next_request = {
+        let mut st = state.lock();
+        if st.phase == Phase::Head {
+            let mut resolved = st.url.clone();
+            if let Some(resp) = request.response() {
+                let url_uf = resp.url();
+                let cs: CefString = (&url_uf).into();
+                let s = cs.to_string();
+                if !s.is_empty() {
+                    resolved = s;
                 }
-                st.base = extract_base_url(&resolved);
-                st.phase = Phase::Get;
-                let next_url = format!("{}/System/Info/Public", st.base);
-                let req = make_request(
-                    "GET",
-                    &next_url,
-                    JfnServerProbeClient::new(Arc::clone(self)),
-                );
-                if let Some(r) = req.clone() {
-                    st.current_request = Some(r);
-                }
-                req
-            } else {
-                None
             }
-        };
-        if next_request.is_some() {
-            return;
+            st.base = extract_base_url(&resolved);
+            st.phase = Phase::Get;
+            let next_url = format!("{}/System/Info/Public", st.base);
+            let client = JfnServerProbeClient::new(Arc::clone(state));
+            make_request("GET", &next_url, client)
+        } else {
+            None
         }
+    };
+    if next_request.is_some() {
+        return;
+    }
 
-        let (success, base) = {
-            let st = self.state.lock();
-            let mut ok = false;
-            let status = request.request_status();
-            if status.as_ref() == &sys::cef_urlrequest_status_t::UR_SUCCESS
-                && let Some(resp) = request.response()
-                && resp.status() == 200
-            {
-                ok = is_valid_public_info(&st.body);
-            }
-            (ok, st.base.clone())
-        };
-        let cb = self.callback.lock().take();
-        self.state.lock().current_request = None;
-        if let Some(mut f) = cb {
-            f(success, base);
+    // GET phase complete: validate body, then invoke caller.
+    let (success, base, cb) = {
+        let mut st = state.lock();
+        let mut ok = false;
+        let status = request.request_status();
+        if status.as_ref() == &sys::cef_urlrequest_status_t::UR_SUCCESS
+            && let Some(resp) = request.response()
+            && resp.status() == 200
+        {
+            ok = is_valid_public_info(&st.body);
         }
+        let base = st.base.clone();
+        let cb = st.callback.take();
+        (ok, base, cb)
+    };
+    if let Some(mut f) = cb {
+        f(success, base);
     }
 }
 
@@ -383,13 +330,13 @@ fn make_request(method: &str, url: &str, client: UrlrequestClient) -> Option<Url
 
 cef::wrap_urlrequest_client! {
     struct JfnServerProbeClient {
-        inner: Arc<ProbeInner>,
+        state: Arc<Mutex<ProbeState>>,
     }
 
     impl UrlrequestClient {
         fn on_request_complete(&self, request: Option<&mut Urlrequest>) {
             let Some(req) = request else { return };
-            self.inner.on_complete(req);
+            on_complete(&self.state, req);
         }
         fn on_download_data(
             &self,
@@ -397,7 +344,7 @@ cef::wrap_urlrequest_client! {
             data: *const u8,
             data_length: usize,
         ) {
-            let mut st = self.inner.state.lock();
+            let mut st = self.state.lock();
             if st.phase == Phase::Get && !data.is_null() && data_length > 0 {
                 let slice = unsafe { std::slice::from_raw_parts(data, data_length) };
                 st.body.extend_from_slice(slice);

@@ -238,28 +238,6 @@ pub unsafe fn jfn_cef_layer_create(h: *const JfnCefLayer, url_utf8: *const c_cha
     unsafe { arc(h) }.create(&url);
 }
 
-pub(crate) unsafe fn jfn_cef_layer_reset(h: *const JfnCefLayer) {
-    unsafe { arc(h) }.reset();
-}
-
-pub(crate) unsafe fn jfn_cef_layer_load_url(
-    h: *const JfnCefLayer,
-    url_utf8: *const c_char,
-    len: usize,
-) {
-    let url = read_utf8(url_utf8, len);
-    unsafe { arc(h) }.load_url(&url);
-}
-
-pub(crate) unsafe fn jfn_cef_layer_exec_js(
-    h: *const JfnCefLayer,
-    js_utf8: *const c_char,
-    len: usize,
-) {
-    let js = read_utf8(js_utf8, len);
-    unsafe { arc(h) }.exec_js(&js);
-}
-
 #[cfg(target_os = "macos")]
 pub(crate) unsafe fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCefLayer) {
     unsafe { arc(h) }.send_external_begin_frame();

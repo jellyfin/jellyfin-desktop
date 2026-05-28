@@ -218,6 +218,14 @@ impl Inner {
         self.layer_ptr.store(p, Ordering::Release);
     }
 
+    /// Current raw layer ptr, or null after `handle_on_before_close` swap.
+    /// Callbacks fired by `Inner` (created/before-close/etc.) read this to
+    /// route to ptr-keyed APIs (e.g. `jfn_browsers_set_active`) without
+    /// capturing the raw ptr into the closure.
+    pub(crate) fn layer_ptr(&self) -> *mut JfnCefLayer {
+        self.layer_ptr.load(Ordering::Acquire)
+    }
+
     fn surface_ptr(&self) -> *mut c_void {
         *self.surface.lock()
     }
@@ -728,11 +736,11 @@ impl Inner {
         }
     }
 
-    fn create(self: &Arc<Self>, url: &str) {
+    pub(crate) fn create(self: &Arc<Self>, url: &str) {
         self.cef_create_browser(url);
     }
 
-    fn reset(&self) {
+    pub(crate) fn reset(&self) {
         if self.state.load(Ordering::Acquire) != STATE_NORMAL {
             return;
         }
@@ -751,7 +759,7 @@ impl Inner {
         }
     }
 
-    fn load_url(&self, url: &str) {
+    pub(crate) fn load_url(&self, url: &str) {
         // If a reset is in flight or the initial create hasn't completed,
         // buffer the URL; OnAfterCreated drains it via take_pending_url.
         if self.state.load(Ordering::Acquire) != STATE_NORMAL
@@ -844,7 +852,7 @@ impl Inner {
     /// OnPreKeyEvent paste intercept. Caller has already matched the
     /// platform paste shortcut. Returns true if a platform clipboard read
     /// was triggered (CEF should swallow the key); false otherwise.
-    fn set_visible(&self, visible: bool) {
+    pub(crate) fn set_visible(&self, visible: bool) {
         let surface = self.surface_ptr();
         if surface.is_null() {
             return;
