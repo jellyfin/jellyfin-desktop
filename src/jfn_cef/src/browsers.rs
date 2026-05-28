@@ -123,6 +123,9 @@ pub unsafe fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
     layer
 }
 
+/// Drop `layer` from the registry. MUST be called on TID_UI — all `layers`
+/// and `active_stack` mutations are TID_UI-only, which is what lets the
+/// post-`drop(g)` refocus dereference `new_top` without revalidating.
 pub fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
     if layer.is_null() {
         return;

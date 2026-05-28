@@ -124,10 +124,13 @@ pub(crate) struct Inner {
     context_menu_builder: Mutex<Option<Box<ContextBuilderFn>>>,
     context_menu_dispatcher: Mutex<Option<Box<ContextDispatcherFn>>>,
 
-    // Back-pointer to the owning `Box<JfnCefLayer>` raw handle. Set after
-    // `Box::leak` in `jfn_cef_layer_new`; read in `handle_on_before_close`
-    // to auto-remove the layer from the `Browsers` registry without forcing
-    // each business module to wire a `before_close_callback`.
+    // Back-pointer to the owning `Box<JfnCefLayer>` raw handle. Set once
+    // after `Box::into_raw` in `jfn_cef_layer_new`; in
+    // `handle_on_before_close` we `swap` to null and act on the prior value.
+    // `AtomicPtr` (not `OnceLock`) because the null sentinel after swap is
+    // load-bearing — it guarantees the auto-remove + log fires exactly
+    // once even if `OnBeforeClose` were ever re-entered, and prevents a
+    // double-free of the registry entry.
     layer_ptr: AtomicPtr<JfnCefLayer>,
 }
 
@@ -980,26 +983,31 @@ impl Inner {
             self.load_cv.notify_all();
         }
         self.on_before_close();
-        // Take-and-invoke so the callback can install a new slot without
-        // destroying its own closure mid-call.
-        let slot = self.before_close_callback.lock().take();
-        if let Some(f) = slot {
-            f();
-        }
-        // Unified layer cleanup: drop this layer from the Browsers registry.
+        // Unified layer cleanup: drop this layer from the Browsers registry
+        // BEFORE invoking the user before_close_callback. Order matters —
+        // it lets a singleton-style module (e.g. business_about) clear its
+        // open-status flag knowing the layer is already gone, preventing
+        // a racing re-open from pushing a second layer onto active_stack
+        // while the old one is still mid-teardown.
         // `jfn_browsers_remove` no-ops on null and on layers already removed,
         // so it's safe under shutdown's bulk-close path too.
         let lp = self.layer_ptr.swap(std::ptr::null_mut(), Ordering::AcqRel);
         if !lp.is_null() {
             jfn_logging::log(
                 jfn_logging::CATEGORY_CEF,
-                jfn_logging::LEVEL_INFO,
+                jfn_logging::LEVEL_DEBUG,
                 &format!(
                     "CefLayer::OnBeforeClose name={} -> auto-remove",
                     self.name_str()
                 ),
             );
             crate::browsers::jfn_browsers_remove(lp);
+        }
+        // Take-and-invoke so the callback can install a new slot without
+        // destroying its own closure mid-call.
+        let slot = self.before_close_callback.lock().take();
+        if let Some(f) = slot {
+            f();
         }
     }
 
