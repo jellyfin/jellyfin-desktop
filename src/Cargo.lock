@@ -1328,7 +1328,7 @@ dependencies = [
  "parking_lot",
  "pollster",
  "raw-window-handle",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
  "wgpu",
 ]
