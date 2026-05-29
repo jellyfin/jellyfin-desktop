@@ -54,6 +54,13 @@ pub struct PlatformSurface {
     pub visible: bool,
     pub pw: i32,
     pub ph: i32,
+
+    pub popup_window: x::Window,
+    pub popup_gc: x::Gcontext,
+    pub popup_bufs: [ShmBuffer; 2],
+    pub popup_buf_idx: usize,
+    pub popup_visible: bool,
+
     /// GPU presenter worker, lazily created on the first software present
     /// when a [`GpuContext`] is available. Falls back to SHM if init or
     /// present fails.
@@ -77,6 +84,13 @@ impl PlatformSurface {
             visible: true,
             pw: 0,
             ph: 0,
+
+            popup_window: x::Window::new(0),
+            popup_gc: x::Gcontext::new(0),
+            popup_bufs: [ShmBuffer::default(), ShmBuffer::default()],
+            popup_buf_idx: 0,
+            popup_visible: false,
+
             gpu_paint_worker: None,
         }
     }

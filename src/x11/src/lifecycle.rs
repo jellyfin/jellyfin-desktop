@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use crate::shm::shm_free;
+
 use xcb::{Xid, XidNew, x};
 
 use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
@@ -265,6 +267,17 @@ pub fn cleanup() {
                 }
                 if let Some(worker) = s.shm_paint_worker.take() {
                     worker.shutdown();
+                }
+                for buf in &mut s.popup_bufs {
+                    shm_free(buf, Some(&conn));
+                }
+                if !is_none_gc(s.popup_gc) {
+                    conn.send_request(&x::FreeGc { gc: s.popup_gc });
+                }
+                if !is_none_window(s.popup_window) {
+                    conn.send_request(&x::DestroyWindow {
+                        window: s.popup_window,
+                    });
                 }
                 if !is_none_gc(s.gc) {
                     conn.send_request(&x::FreeGc { gc: s.gc });

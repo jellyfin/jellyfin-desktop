@@ -11,6 +11,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::ffi::{c_int, c_void};
+use std::ptr;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ use jfn_gpu_paint::{DirtyRect, WindowTarget};
 use xcb::{Xid, x};
 
 use crate::lifecycle::query_parent_geometry;
+use crate::shm::{shm_alloc, shm_free};
 use crate::x11_state::{MUT, Mutable, PlatformSurface, is_none_gc, is_none_window};
 
 pub use jfn_platform_abi::JfnRect;
@@ -103,12 +105,23 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
         value_list: &[],
     });
 
+    let popup_win = create_overlay_window(&conn, m, px, py, 1, 1);
+    let popup_gc: x::Gcontext = conn.generate_id();
+    conn.send_request(&x::CreateGc {
+        cid: popup_gc,
+        drawable: x::Drawable::Window(popup_win),
+        value_list: &[],
+    });
+
     unsafe {
         (*s).window = win;
         (*s).gc = gc;
         (*s).pw = pw as i32;
         (*s).ph = ph as i32;
         (*s).visible = true;
+        (*s).popup_window = popup_win;
+        (*s).popup_gc = popup_gc;
+        (*s).popup_visible = false;
     }
     conn.send_request(&x::MapWindow { window: win });
     let _ = conn.flush();
@@ -142,13 +155,29 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     if let Some(worker) = surf.shm_paint_worker.take() {
         worker.shutdown();
     }
+    for buf in &mut surf.popup_bufs {
+        shm_free(buf, Some(&conn));
+    }
+    if !is_none_window(surf.popup_window) {
+        conn.send_request(&x::UnmapWindow {
+            window: surf.popup_window,
+        });
+    }
     if !is_none_window(surf.window) {
         conn.send_request(&x::UnmapWindow {
             window: surf.window,
         });
     }
+    if !is_none_gc(surf.popup_gc) {
+        conn.send_request(&x::FreeGc { gc: surf.popup_gc });
+    }
     if !is_none_gc(surf.gc) {
         conn.send_request(&x::FreeGc { gc: surf.gc });
+    }
+    if !is_none_window(surf.popup_window) {
+        conn.send_request(&x::DestroyWindow {
+            window: surf.popup_window,
+        });
     }
     if !is_none_window(surf.window) {
         conn.send_request(&x::DestroyWindow {
@@ -256,6 +285,120 @@ fn queue_shm_present(
     let worker = surf.shm_paint_worker.as_ref().unwrap();
     worker.set_visible(surf.visible);
     worker.submit_frame(buffer, w, h, dirty, dirty_len)
+}
+
+pub unsafe fn jfn_x11_popup_show(
+    s: *mut PlatformSurface,
+    x_pos: c_int,
+    y_pos: c_int,
+    lw: c_int,
+    lh: c_int,
+) {
+    if s.is_null() {
+        return;
+    }
+    let Some(conn) = crate::x11_state::conn() else {
+        return;
+    };
+    let mut g = MUT.lock();
+    let Some(m) = g.as_mut() else { return };
+
+    let surf = unsafe { &mut *s };
+    if is_none_window(surf.popup_window) {
+        return;
+    }
+
+    surf.popup_visible = true;
+
+    conn.send_request(&x::ConfigureWindow {
+        window: surf.popup_window,
+        value_list: &[
+            x::ConfigWindow::X(m.parent_x + x_pos),
+            x::ConfigWindow::Y(m.parent_y + y_pos),
+            x::ConfigWindow::Width(if lw > 0 { lw as u32 } else { 1 }),
+            x::ConfigWindow::Height(if lh > 0 { lh as u32 } else { 1 }),
+            x::ConfigWindow::StackMode(x::StackMode::Above),
+        ],
+    });
+    conn.send_request(&x::MapWindow {
+        window: surf.popup_window,
+    });
+    let _ = conn.flush();
+}
+
+pub unsafe fn jfn_x11_popup_hide(s: *mut PlatformSurface) {
+    if s.is_null() {
+        return;
+    }
+    let Some(conn) = crate::x11_state::conn() else {
+        return;
+    };
+
+    let surf = unsafe { &mut *s };
+    surf.popup_visible = false;
+
+    if !is_none_window(surf.popup_window) {
+        conn.send_request(&x::UnmapWindow {
+            window: surf.popup_window,
+        });
+    }
+    let _ = conn.flush();
+}
+
+pub unsafe fn jfn_x11_popup_present_software(
+    s: *mut PlatformSurface,
+    buffer: *const c_void,
+    pw: c_int,
+    ph: c_int,
+    _lw: c_int,
+    _lh: c_int,
+) {
+    if s.is_null() || buffer.is_null() || pw <= 0 || ph <= 0 {
+        return;
+    }
+    let Some(conn) = crate::x11_state::conn() else {
+        return;
+    };
+    let mut g = MUT.lock();
+    let Some(m) = g.as_mut() else {
+        return;
+    };
+
+    let surf = unsafe { &mut *s };
+    if is_none_window(surf.popup_window) || !surf.popup_visible {
+        return;
+    }
+
+    let buf = &mut surf.popup_bufs[surf.popup_buf_idx];
+    if !shm_alloc(buf, &conn, pw, ph) {
+        return;
+    }
+
+    let len = (pw as usize) * (ph as usize) * 4;
+    unsafe {
+        ptr::copy_nonoverlapping(buffer as *const u8, buf.data, len);
+    }
+
+    conn.send_request(&xcb::shm::PutImage {
+        drawable: x::Drawable::Window(surf.popup_window),
+        gc: surf.popup_gc,
+        total_width: pw as u16,
+        total_height: ph as u16,
+        src_x: 0,
+        src_y: 0,
+        src_width: pw as u16,
+        src_height: ph as u16,
+        dst_x: 0,
+        dst_y: 0,
+        depth: m.argb_depth,
+        format: x::ImageFormat::ZPixmap as u8,
+        send_event: false,
+        offset: 0,
+        shmseg: buf.seg,
+    });
+
+    surf.popup_buf_idx ^= 1;
+    let _ = conn.flush();
 }
 
 pub unsafe fn jfn_x11_surface_present_software(

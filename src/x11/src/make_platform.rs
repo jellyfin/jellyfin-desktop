@@ -8,7 +8,8 @@
 use std::ffi::{c_int, c_void};
 
 use crate::surface::{
-    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_restack, jfn_x11_surface_present,
+    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_popup_hide,
+    jfn_x11_popup_present_software, jfn_x11_popup_show, jfn_x11_restack, jfn_x11_surface_present,
     jfn_x11_surface_present_software, jfn_x11_surface_resize, jfn_x11_surface_set_visible,
 };
 
@@ -95,8 +96,41 @@ impl Platform for X11Platform {
         };
     }
 
-    fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {
-        // CEF dispatches selection itself on X11; drop the closure.
+    fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
+        unsafe {
+            jfn_x11_popup_show(
+                s as *mut crate::x11_state::PlatformSurface,
+                req.x,
+                req.y,
+                req.lw,
+                req.lh,
+            )
+        };
+    }
+
+    fn popup_hide(&self, s: SurfaceHandle) {
+        unsafe { jfn_x11_popup_hide(s as *mut crate::x11_state::PlatformSurface) };
+    }
+
+    fn popup_present_software(
+        &self,
+        s: SurfaceHandle,
+        buffer: *const c_void,
+        pw: c_int,
+        ph: c_int,
+        lw: c_int,
+        lh: c_int,
+    ) {
+        unsafe {
+            jfn_x11_popup_present_software(
+                s as *mut crate::x11_state::PlatformSurface,
+                buffer,
+                pw,
+                ph,
+                lw,
+                lh,
+            )
+        };
     }
 
     fn set_fullscreen(&self, fullscreen: bool) {
