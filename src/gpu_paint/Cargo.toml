@@ -19,7 +19,7 @@ libc.workspace = true
 thiserror = "1"
 raw-window-handle = "0.6"
 wgpu = "22"
-pollster = "0.3"
+pollster = "0.4"
 
 [lints]
 workspace = true
