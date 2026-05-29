@@ -11,19 +11,13 @@ use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
 use jfn_mpv::api::jfn_mpv_get_property_int;
 
 /// Find a 32-bit TrueColor visual.
-fn find_argb_visual(screen: &x::Screen, depth_out: &mut u8) -> Option<x::Visualid> {
-    for depth in screen.allowed_depths() {
-        if depth.depth() != 32 {
-            continue;
-        }
-        for vis in depth.visuals() {
-            if vis.class() == x::VisualClass::TrueColor {
-                *depth_out = 32;
-                return Some(vis.visual_id());
-            }
-        }
-    }
-    None
+fn find_argb_visual(screen: &x::Screen) -> Option<x::Visualid> {
+    screen
+        .allowed_depths()
+        .filter(|d| d.depth() == 32)
+        .flat_map(|d| d.visuals())
+        .find(|v| v.class() == x::VisualClass::TrueColor)
+        .map(|v| v.visual_id())
 }
 
 fn intern_atom(conn: &xcb::Connection, name: &[u8]) -> x::Atom {
@@ -120,28 +114,22 @@ pub fn init() -> bool {
     let (conn, screen_num) = match xcb::Connection::connect(None) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[x11] failed to connect: {:?}", e);
+            eprintln!("[x11] failed to connect: {e:?}");
             return false;
         }
     };
 
     let setup = conn.get_setup();
-    let screen = match setup.roots().nth(screen_num as usize) {
-        Some(s) => s,
-        None => {
-            eprintln!("[x11] no screen at index {}", screen_num);
-            return false;
-        }
+    let Some(screen) = setup.roots().nth(screen_num as usize) else {
+        eprintln!("[x11] no screen at index {screen_num}");
+        return false;
     };
     let root = screen.root();
 
-    let mut argb_depth: u8 = 0;
-    let argb_visual = match find_argb_visual(screen, &mut argb_depth) {
-        Some(v) => v,
-        None => {
-            eprintln!("[x11] no 32-bit ARGB visual found");
-            return false;
-        }
+    let argb_depth: u8 = 32;
+    let Some(argb_visual) = find_argb_visual(screen) else {
+        eprintln!("[x11] no 32-bit ARGB visual found");
+        return false;
     };
 
     let colormap: x::Colormap = conn.generate_id();
@@ -174,6 +162,45 @@ pub fn init() -> bool {
     let (parent_x, parent_y, pw, ph) =
         query_parent_geometry(&conn, parent, root).unwrap_or((0, 0, 1, 1));
 
+    // Probe + initialize the Vulkan compositor. `--x11-paint` skips
+    // the probe in either direction; otherwise failure is benign and
+    // surface presents fall back to SHM upload.
+    let (gpu_ctx, gpu_caps) = match crate::paint_override::paint_override() {
+        Some(crate::paint_override::X11PaintOverride::Shm) => {
+            eprintln!("[x11] --x11-paint=shm: forcing SHM");
+            (None, jfn_gpu_paint::Capabilities::NONE)
+        }
+        Some(crate::paint_override::X11PaintOverride::Gpu) => {
+            match jfn_gpu_paint::GpuContext::new() {
+                Ok(c) => {
+                    let caps = c.capabilities();
+                    eprintln!("[x11] --x11-paint=gpu: Vulkan context initialised");
+                    (Some(c), caps)
+                }
+                Err(e) => {
+                    eprintln!("[x11] --x11-paint=gpu requested but init failed: {e}");
+                    return false;
+                }
+            }
+        }
+        None => {
+            let caps = jfn_gpu_paint::GpuContext::probe();
+            let ctx = if caps.gpu_available {
+                match jfn_gpu_paint::GpuContext::new() {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        eprintln!("[x11] gpu_paint context init failed: {e}; using SHM");
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[x11] no Vulkan adapter; using SHM");
+                None
+            };
+            (ctx, caps)
+        }
+    };
+
     // Populate the global mutable state.
     {
         let mut g = MUT.lock();
@@ -191,6 +218,8 @@ pub fn init() -> bool {
             cached_scale: 1.0,
             atoms,
             live: Vec::new(),
+            gpu_ctx,
+            gpu_caps,
         });
     }
 
@@ -220,7 +249,7 @@ pub fn cleanup() {
         }
     }
 
-    jfn_idle_inhibit_linux::cleanup();
+    jfn_linux_util::idle_inhibit::cleanup();
     crate::input_lifecycle::cleanup();
 
     // Free any surface that outlived Browsers (defensive).

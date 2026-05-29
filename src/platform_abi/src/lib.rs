@@ -14,6 +14,49 @@
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::OnceLock;
 
+pub mod geometry;
+
+pub use geometry::{SurfaceSize, WindowGeometry, WindowPos};
+
+// =====================================================================
+// Main-thread park (non-macOS default for run_main_loop/wake_main_loop)
+// =====================================================================
+//
+// Non-macOS backends have no native run loop to block the process main
+// thread on. The default `Platform::run_main_loop` parks here until the
+// shutdown manager calls `wake_main_loop`, at which point main runs the
+// teardown tail. A latching `bool` + `Condvar` is enough — it's a single
+// dedicated blocking wait (not a `poll()` multiplexer), so no fd is needed
+// and there's no `playback`-crate dependency. macOS overrides both methods
+// (`[NSApp run]` / stop-NSApp) and never touches this.
+
+struct MainPark {
+    woken: std::sync::Mutex<bool>,
+    cv: std::sync::Condvar,
+}
+
+static MAIN_PARK: MainPark = MainPark {
+    woken: std::sync::Mutex::new(false),
+    cv: std::sync::Condvar::new(),
+};
+
+/// Block until [`main_park_signal`] is called. Returns immediately if the
+/// signal already fired (latched), so a wake racing ahead of the wait is
+/// not lost.
+pub fn main_park_wait() {
+    let mut woken = MAIN_PARK.woken.lock().unwrap();
+    while !*woken {
+        woken = MAIN_PARK.cv.wait(woken).unwrap();
+    }
+}
+
+/// Release [`main_park_wait`]. Idempotent and safe from any thread.
+pub fn main_park_signal() {
+    let mut woken = MAIN_PARK.woken.lock().unwrap();
+    *woken = true;
+    MAIN_PARK.cv.notify_all();
+}
+
 /// Canonical `cef_cursor_type_t` ordinals, the single source of truth for the
 /// cursor codes that flow through [`Platform::set_cursor`]. Values are derived
 /// from the generated CEF bindings so backends can never hand-copy (and drift
@@ -41,6 +84,29 @@ pub mod cursor {
         CT_CONTEXTMENU, CT_ALIAS, CT_PROGRESS, CT_NODROP, CT_COPY, CT_NONE,
         CT_NOTALLOWED, CT_ZOOMIN, CT_ZOOMOUT, CT_GRAB, CT_GRABBING,
         CT_MIDDLE_PANNING_VERTICAL, CT_MIDDLE_PANNING_HORIZONTAL,
+    }
+}
+
+/// Canonical `cef_event_flags_t` modifier bits — the single source of truth
+/// for the CEF `EVENTFLAG_*` masks that flow through key/mouse dispatch.
+/// Derived from the generated CEF bindings (a newtype with associated
+/// constants) so backends import these instead of hand-copying bit shifts
+/// that can silently drift. Typed `u32` to match the dispatch ABI.
+pub mod event_flags {
+    use cef_dll_sys::cef_event_flags_t as ef;
+
+    macro_rules! flag_consts {
+        ($($name:ident),* $(,)?) => {
+            $(pub const $name: u32 = ef::$name.0 as u32;)*
+        };
+    }
+
+    flag_consts! {
+        EVENTFLAG_CAPS_LOCK_ON, EVENTFLAG_SHIFT_DOWN, EVENTFLAG_CONTROL_DOWN,
+        EVENTFLAG_ALT_DOWN, EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+        EVENTFLAG_RIGHT_MOUSE_BUTTON, EVENTFLAG_COMMAND_DOWN, EVENTFLAG_NUM_LOCK_ON,
+        EVENTFLAG_IS_KEY_PAD, EVENTFLAG_IS_LEFT, EVENTFLAG_IS_RIGHT, EVENTFLAG_ALTGR_DOWN,
+        EVENTFLAG_IS_REPEAT, EVENTFLAG_PRECISION_SCROLLING_DELTA, EVENTFLAG_SCROLL_BY_PAGE,
     }
 }
 
@@ -95,6 +161,7 @@ pub trait Platform: Send + Sync {
     fn display(&self) -> DisplayBackend;
 
     fn early_init(&self) {}
+    /// `mpv` is the opaque libmpv `mpv_handle` — a raw C handle, stays raw.
     fn init(&self, mpv: *mut c_void) -> bool {
         let _ = mpv;
         true
@@ -107,23 +174,26 @@ pub trait Platform: Send + Sync {
         std::ptr::null_mut()
     }
     fn free_surface(&self, _s: SurfaceHandle) {}
+    /// `_info` is CEF's `OnAcceleratedPaint` accel-paint info — a raw C
+    /// pointer that crosses the CEF ABI, so it stays raw.
     fn surface_present(&self, _s: SurfaceHandle, _info: *const c_void) -> bool {
         false
     }
+    /// `_buffer` is CEF's `OnPaint` software paint buffer — a raw C pointer
+    /// that crosses the CEF ABI, so it stays raw.
     fn surface_present_software(
         &self,
         _s: SurfaceHandle,
-        _dirty: *const JfnRect,
-        _dirty_len: usize,
+        _dirty: &[JfnRect],
         _buffer: *const c_void,
         _w: c_int,
         _h: c_int,
     ) -> bool {
         false
     }
-    fn surface_resize(&self, _s: SurfaceHandle, _lw: c_int, _lh: c_int, _pw: c_int, _ph: c_int) {}
+    fn surface_resize(&self, _s: SurfaceHandle, _size: SurfaceSize) {}
     fn surface_set_visible(&self, _s: SurfaceHandle, _visible: bool) {}
-    fn restack(&self, _ordered: *const SurfaceHandle, _n: usize) {}
+    fn restack(&self, _ordered: &[SurfaceHandle]) {}
 
     // Popup
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {}
@@ -144,6 +214,18 @@ pub trait Platform: Send + Sync {
     fn set_fullscreen(&self, _v: bool) {}
     fn toggle_fullscreen(&self) {}
 
+    // Window controls for client-side decorations. Default no-ops cover
+    // backends without CSD (X11 WMs / macOS / Windows draw their own).
+    fn window_minimize(&self) {}
+    fn window_toggle_maximize(&self) {}
+    /// Begin an interactive, compositor-driven window move. Must be called in
+    /// response to a pointer button press on the titlebar drag region.
+    fn window_start_move(&self) {}
+    /// Begin an interactive, compositor-driven resize from the given edge.
+    /// `edge` uses xdg_toplevel resize-edge values (1=top, 2=bottom, 4=left,
+    /// 8=right, corners are the ORs, e.g. 5=top-left).
+    fn window_start_resize(&self, _edge: c_int) {}
+
     // Transition
     fn begin_transition(&self) {}
     fn end_transition(&self) {}
@@ -159,21 +241,29 @@ pub trait Platform: Send + Sync {
         1.0
     }
 
-    fn query_window_position(&self, _x: &mut c_int, _y: &mut c_int) -> bool {
-        false
+    /// Current window position, or `None` if it can't be determined.
+    fn query_window_position(&self) -> Option<WindowPos> {
+        None
     }
-    fn clamp_window_geometry(
-        &self,
-        _w: &mut c_int,
-        _h: &mut c_int,
-        _x: &mut c_int,
-        _y: &mut c_int,
-    ) {
+    /// Clamp saved geometry to stay on-screen. Backends that don't constrain
+    /// geometry return `g` unchanged (the default).
+    fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
+        g
     }
 
     fn pump(&self) {}
-    fn run_main_loop(&self) {}
-    fn wake_main_loop(&self) {}
+    /// Block the process main thread until [`wake_main_loop`] is called.
+    /// Default parks on the process-wide [`main_park_wait`]; macOS overrides
+    /// with `[NSApp run]`.
+    fn run_main_loop(&self) {
+        main_park_wait();
+    }
+    /// Release [`run_main_loop`] so main can run the teardown tail. Safe from
+    /// any thread. Default signals [`main_park_signal`]; macOS overrides to
+    /// stop the NSApp loop.
+    fn wake_main_loop(&self) {
+        main_park_signal();
+    }
 
     fn set_cursor(&self, _cef_cursor_type: c_int) {}
     fn set_idle_inhibit(&self, _level: IdleInhibitLevel) {}

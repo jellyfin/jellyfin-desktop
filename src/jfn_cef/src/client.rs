@@ -22,7 +22,8 @@ use cef::{
 };
 use parking_lot::{Condvar, Mutex};
 use std::os::raw::{c_int, c_void};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicPtr, AtomicU64, Ordering};
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -122,6 +123,15 @@ pub(crate) struct Inner {
     before_close_callback: Mutex<Option<Box<BeforeCloseFn>>>,
     context_menu_builder: Mutex<Option<Box<ContextBuilderFn>>>,
     context_menu_dispatcher: Mutex<Option<Box<ContextDispatcherFn>>>,
+
+    // Back-pointer to the owning `Box<JfnCefLayer>` raw handle. Set once
+    // after `Box::into_raw` in `jfn_cef_layer_new`; in
+    // `handle_on_before_close` we `swap` to null and act on the prior value.
+    // `AtomicPtr` (not `OnceLock`) because the null sentinel after swap is
+    // load-bearing — it guarantees the auto-remove + log fires exactly
+    // once even if `OnBeforeClose` were ever re-entered, and prevents a
+    // double-free of the registry entry.
+    layer_ptr: AtomicPtr<JfnCefLayer>,
 }
 
 // Typed closure signatures stored in each callback slot. `*mut c_void` args
@@ -196,11 +206,24 @@ impl Inner {
             before_close_callback: Mutex::new(None),
             context_menu_builder: Mutex::new(None),
             context_menu_dispatcher: Mutex::new(None),
+            layer_ptr: AtomicPtr::new(std::ptr::null_mut()),
         })
     }
 
     fn name_str(&self) -> String {
         self.name.lock().clone()
+    }
+
+    pub(crate) fn set_layer_ptr(&self, p: *mut JfnCefLayer) {
+        self.layer_ptr.store(p, Ordering::Release);
+    }
+
+    /// Current raw layer ptr, or null after `handle_on_before_close` swap.
+    /// Callbacks fired by `Inner` (created/before-close/etc.) read this to
+    /// route to ptr-keyed APIs (e.g. `jfn_browsers_set_active`) without
+    /// capturing the raw ptr into the closure.
+    pub(crate) fn layer_ptr(&self) -> *mut JfnCefLayer {
+        self.layer_ptr.load(Ordering::Acquire)
     }
 
     fn surface_ptr(&self) -> *mut c_void {
@@ -213,6 +236,15 @@ impl Inner {
 
     fn host(&self) -> Option<BrowserHost> {
         self.browser_clone().and_then(|b| b.host())
+    }
+
+    /// Force-close this layer's CefBrowser. No-op when no browser is alive.
+    /// Operates only on `Arc<Inner>` so callers don't need to keep a raw
+    /// `*mut JfnCefLayer` ptr live across this call.
+    pub(crate) fn close_browser_force(&self) {
+        if let Some(host) = self.host() {
+            host.close_browser(1);
+        }
     }
 
     fn focused_or_main(&self) -> Option<Frame> {
@@ -244,6 +276,11 @@ impl Inner {
     fn cef_set_windowless_frame_rate(&self, hz: i32) {
         if let Some(h) = self.host() {
             h.set_windowless_frame_rate(hz);
+        }
+    }
+    pub(crate) fn cef_was_hidden(&self, hidden: bool) {
+        if let Some(h) = self.host() {
+            h.was_hidden(if hidden { 1 } else { 0 });
         }
     }
     pub(crate) fn exec_js(&self, js: &str) {
@@ -488,7 +525,15 @@ impl Inner {
         if !surface.is_null()
             && let Some(p) = platform_ops::ops()
         {
-            p.surface_resize(surface, w, h, pw, ph);
+            p.surface_resize(
+                surface,
+                platform_ops::SurfaceSize {
+                    logical_w: w,
+                    logical_h: h,
+                    physical_w: pw,
+                    physical_h: ph,
+                },
+            );
         }
 
         // Defer kick until the browser exists; OnAfterCreated will fire it.
@@ -696,11 +741,11 @@ impl Inner {
         }
     }
 
-    fn create(self: &Arc<Self>, url: &str) {
+    pub(crate) fn create(self: &Arc<Self>, url: &str) {
         self.cef_create_browser(url);
     }
 
-    fn reset(&self) {
+    pub(crate) fn reset(&self) {
         if self.state.load(Ordering::Acquire) != STATE_NORMAL {
             return;
         }
@@ -719,7 +764,7 @@ impl Inner {
         }
     }
 
-    fn load_url(&self, url: &str) {
+    pub(crate) fn load_url(&self, url: &str) {
         // If a reset is in flight or the initial create hasn't completed,
         // buffer the URL; OnAfterCreated drains it via take_pending_url.
         if self.state.load(Ordering::Acquire) != STATE_NORMAL
@@ -812,7 +857,7 @@ impl Inner {
     /// OnPreKeyEvent paste intercept. Caller has already matched the
     /// platform paste shortcut. Returns true if a platform clipboard read
     /// was triggered (CEF should swallow the key); false otherwise.
-    fn set_visible(&self, visible: bool) {
+    pub(crate) fn set_visible(&self, visible: bool) {
         let surface = self.surface_ptr();
         if surface.is_null() {
             return;
@@ -925,6 +970,16 @@ impl Inner {
         }
     }
 
+    /// Block until this layer's browser has closed (`OnBeforeClose` fired).
+    /// Callers hold the `Arc<Inner>`, so this is safe even after the owning
+    /// `JfnCefLayer` Box is freed during close.
+    pub(crate) fn wait_for_close(&self) {
+        let mut g = self.close_mtx.lock();
+        while !self.closed.load(Ordering::Acquire) {
+            self.close_cv.wait(&mut g);
+        }
+    }
+
     pub(crate) fn handle_on_before_close(self: &Arc<Self>) {
         *self.browser.lock() = None;
         // Signal the nudge loop to exit so the posted-task Arc clones keeping
@@ -941,6 +996,26 @@ impl Inner {
             self.load_cv.notify_all();
         }
         self.on_before_close();
+        // Unified layer cleanup: drop this layer from the Browsers registry
+        // BEFORE invoking the user before_close_callback. Order matters —
+        // it lets a singleton-style module (e.g. business_about) clear its
+        // open-status flag knowing the layer is already gone, preventing
+        // a racing re-open from pushing a second layer onto active_stack
+        // while the old one is still mid-teardown.
+        // `jfn_browsers_remove` no-ops on null and on layers already removed,
+        // so it's safe under shutdown's bulk-close path too.
+        let lp = self.layer_ptr.swap(std::ptr::null_mut(), Ordering::AcqRel);
+        if !lp.is_null() {
+            jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_DEBUG,
+                &format!(
+                    "CefLayer::OnBeforeClose name={} -> auto-remove",
+                    self.name_str()
+                ),
+            );
+            crate::browsers::jfn_browsers_remove(lp);
+        }
         // Take-and-invoke so the callback can install a new slot without
         // destroying its own closure mid-call.
         let slot = self.before_close_callback.lock().take();
@@ -1084,7 +1159,14 @@ impl Inner {
         if !self.should_present_paint() {
             return;
         }
-        p.surface_present_software(surface, dirty, n, buffer, w, h);
+        // CEF hands the dirty rects as a raw `RectList` pointer; reborrow as a
+        // slice here, the single boundary point, so the platform ABI stays safe.
+        let dirty: &[platform_ops::JfnRect] = if dirty.is_null() || n == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(dirty, n) }
+        };
+        p.surface_present_software(surface, dirty, buffer, w, h);
     }
 
     pub(crate) fn on_accelerated_paint(&self, is_popup: bool, info: *const c_void) {
@@ -1239,6 +1321,59 @@ wrap_task! {
             self.inner.exec_js_focused(&js);
         }
     }
+}
+
+type CloseCollectTx = Arc<Mutex<Option<SyncSender<Vec<Arc<Inner>>>>>>;
+
+wrap_task! {
+    struct CloseAndCollectTask {
+        tx: CloseCollectTx,
+    }
+    impl Task {
+        fn execute(&self) {
+            // Single snapshot: take Arc<Inner> + force-close every layer
+            // under one INSTANCE lock, on TID_UI. Holding the lock across
+            // close_browser_force is safe — that call only schedules close;
+            // OnBeforeClose → jfn_browsers_remove fires later on TID_UI
+            // after this task unwinds, so no reentrant INSTANCE.lock().
+            let inners = crate::browsers::jfn_browsers_close_and_snapshot();
+            if let Some(tx) = self.tx.lock().take() {
+                let _ = tx.send(inners);
+            }
+        }
+    }
+}
+
+/// Post a single-snapshot close-and-collect onto TID_UI. The posted task
+/// closes every layer's browser and ships the corresponding `Arc<Inner>`
+/// list back via `tx`, so the caller can wait on exactly the set that was
+/// closed (no second-snapshot race). Asserts the post: this site is
+/// load-bearing for shutdown — silent post loss = process hang.
+pub(crate) fn jfn_cef_post_close_and_collect(tx: SyncSender<Vec<Arc<Inner>>>) {
+    let mut task = CloseAndCollectTask::new(Arc::new(Mutex::new(Some(tx))));
+    assert!(
+        post_task(ThreadId::UI, Some(&mut task)) != 0,
+        "TID_UI post during shutdown — CEF UI thread invariant broken"
+    );
+}
+
+wrap_task! {
+    struct SetHiddenAllTask {
+        hidden: bool,
+    }
+    impl Task {
+        fn execute(&self) {
+            crate::browsers::jfn_browsers_apply_hidden_all(self.hidden);
+        }
+    }
+}
+
+/// Post a task onto TID_UI that calls `WasHidden(hidden)` on every live
+/// layer's BrowserHost. Caller-agnostic — any thread can request a
+/// visibility change; CEF requires the call on TID_UI.
+pub(crate) fn jfn_cef_post_set_hidden_all(hidden: bool) {
+    let mut task = SetHiddenAllTask::new(hidden);
+    let _ = post_task(ThreadId::UI, Some(&mut task));
 }
 
 // ---------------------------------------------------------------------------

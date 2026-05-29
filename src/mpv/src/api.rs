@@ -222,6 +222,32 @@ pub fn jfn_mpv_wakeup() {
     }
 }
 
+/// Install a C-style wakeup callback against the singleton mpv handle. The
+/// callback fires from a foreign thread whenever libmpv queues a new
+/// event; per the libmpv docs it must return promptly and call no
+/// blocking API.
+///
+/// # Safety
+/// `cb` must remain valid for as long as the mpv handle is in use.
+pub unsafe fn jfn_mpv_set_wakeup_callback(
+    cb: unsafe extern "C" fn(*mut std::ffi::c_void),
+    data: *mut std::ffi::c_void,
+) {
+    let h = raw();
+    if !h.is_null() {
+        unsafe { sys::mpv_set_wakeup_callback(h, Some(cb), data) };
+    }
+}
+
+/// Clear any previously-installed wakeup callback. After this call libmpv
+/// will not fire a foreign-thread notification on new events.
+pub fn jfn_mpv_clear_wakeup_callback() {
+    let h = raw();
+    if !h.is_null() {
+        unsafe { sys::mpv_set_wakeup_callback(h, None, std::ptr::null_mut()) };
+    }
+}
+
 // =============================================================================
 // Player API — convenience wrappers over property writes / commands.
 // =============================================================================

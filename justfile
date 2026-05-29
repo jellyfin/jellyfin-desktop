@@ -11,8 +11,16 @@ update-deps *args:
     python3 dev/tools/update_deps.py {{args}}
 
 # Remove build artifacts
+[macos]
+[linux]
 clean:
     rm -rf build dist
+
+# Remove build artifacts
+[windows]
+clean:
+    if (Test-Path build) { Remove-Item -Recurse -Force build }
+    if (Test-Path dist) { Remove-Item -Recurse -Force dist }
 
 # Run the workspace test suite (depends on the per-platform `build`).
 test: build

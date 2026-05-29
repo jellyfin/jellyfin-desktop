@@ -8,13 +8,13 @@
 use std::ffi::{c_int, c_void};
 
 use crate::surface::{
-    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_restack,
-    jfn_x11_surface_present, jfn_x11_surface_present_software, jfn_x11_surface_resize,
-    jfn_x11_surface_set_visible,
+    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_restack, jfn_x11_surface_present,
+    jfn_x11_surface_present_software, jfn_x11_surface_resize, jfn_x11_surface_set_visible,
 };
 
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
+    SurfaceSize, WindowGeometry, WindowPos,
 };
 
 use jfn_mpv::api::{jfn_mpv_set_fullscreen, jfn_mpv_toggle_fullscreen};
@@ -51,8 +51,7 @@ impl Platform for X11Platform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        dirty: *const JfnRect,
-        dirty_len: usize,
+        dirty: &[JfnRect],
         buffer: *const c_void,
         w: c_int,
         h: c_int,
@@ -60,8 +59,8 @@ impl Platform for X11Platform {
         unsafe {
             jfn_x11_surface_present_software(
                 s as *mut crate::x11_state::PlatformSurface,
-                dirty,
-                dirty_len,
+                dirty.as_ptr(),
+                dirty.len(),
                 buffer,
                 w,
                 h,
@@ -69,9 +68,15 @@ impl Platform for X11Platform {
         }
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
+    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
         unsafe {
-            jfn_x11_surface_resize(s as *mut crate::x11_state::PlatformSurface, lw, lh, pw, ph)
+            jfn_x11_surface_resize(
+                s as *mut crate::x11_state::PlatformSurface,
+                size.logical_w,
+                size.logical_h,
+                size.physical_w,
+                size.physical_h,
+            )
         };
     }
 
@@ -81,8 +86,13 @@ impl Platform for X11Platform {
         };
     }
 
-    fn restack(&self, handles: *const SurfaceHandle, n: usize) {
-        unsafe { jfn_x11_restack(handles as *const *mut crate::x11_state::PlatformSurface, n) };
+    fn restack(&self, handles: &[SurfaceHandle]) {
+        unsafe {
+            jfn_x11_restack(
+                handles.as_ptr() as *const *mut crate::x11_state::PlatformSurface,
+                handles.len(),
+            )
+        };
     }
 
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {
@@ -122,23 +132,24 @@ impl Platform for X11Platform {
         1.0
     }
 
-    fn query_window_position(&self, x: &mut c_int, y: &mut c_int) -> bool {
-        let Some(conn) = crate::x11_state::conn() else {
-            return false;
-        };
+    fn query_window_position(&self) -> Option<WindowPos> {
+        let conn = crate::x11_state::conn()?;
         let g = crate::x11_state::MUT.lock();
-        let Some(m) = g.as_ref() else { return false };
-        let Some((px, py, _, _)) = crate::lifecycle::query_parent_geometry(&conn, m.parent, m.root)
-        else {
-            return false;
-        };
-        *x = px;
-        *y = py;
-        true
+        let m = g.as_ref()?;
+        let (x, y, _, _) = crate::lifecycle::query_parent_geometry(&conn, m.parent, m.root)?;
+        Some(WindowPos { x, y })
     }
 
-    fn clamp_window_geometry(&self, w: &mut c_int, h: &mut c_int, _x: &mut c_int, _y: &mut c_int) {
-        crate::lifecycle::clamp_window_geometry(w, h);
+    fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
+        // X11 constrains only the size; position is left to the WM.
+        let (mut w, mut h) = (g.w, g.h);
+        crate::lifecycle::clamp_window_geometry(&mut w, &mut h);
+        WindowGeometry {
+            w,
+            h,
+            x: g.x,
+            y: g.y,
+        }
     }
 
     fn set_cursor(&self, t: c_int) {
@@ -146,7 +157,7 @@ impl Platform for X11Platform {
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
-        jfn_idle_inhibit_linux::set(level as u32);
+        jfn_linux_util::idle_inhibit::set(level as u32);
     }
 
     fn shared_texture_supported(&self) -> bool {
@@ -163,7 +174,7 @@ impl Platform for X11Platform {
     }
 
     fn open_external_url(&self, url: &str) {
-        jfn_open_url_linux::open(url);
+        jfn_linux_util::open_url::open(url);
     }
 }
 

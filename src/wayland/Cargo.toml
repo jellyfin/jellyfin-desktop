@@ -18,9 +18,9 @@ parking_lot.workspace = true
 # The whole crate is `#![cfg(target_os = "linux")]`, so it's an empty rlib
 # elsewhere and the workspace builds uniformly on every platform.
 [target.'cfg(target_os = "linux")'.dependencies]
-jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
+jfn-gpu-paint = { path = "../gpu_paint" }
 jfn-input = { path = "../input" }
-jfn-open-url-linux = { path = "../open_url_linux" }
+jfn-linux-util = { path = "../linux_util" }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-mpv = { path = "../mpv" }
 jfn-playback = { path = "../playback" }

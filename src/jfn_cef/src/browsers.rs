@@ -14,22 +14,25 @@
 use parking_lot::Mutex;
 use std::ffi::c_char;
 use std::os::raw::c_void;
+use std::sync::Arc;
 
-use crate::client::JfnCefLayer;
+use crate::client::{Inner, JfnCefLayer};
 
 use crate::client::{
-    jfn_cef_layer_close_browser_force, jfn_cef_layer_free, jfn_cef_layer_get_surface,
-    jfn_cef_layer_is_closed, jfn_cef_layer_new, jfn_cef_layer_on_deactivated, jfn_cef_layer_resize,
-    jfn_cef_layer_send_mouse_move, jfn_cef_layer_set_focus,
-    jfn_cef_layer_set_injection_profile_kind, jfn_cef_layer_set_refresh_rate,
-    jfn_cef_layer_set_surface, jfn_cef_layer_wait_for_close, jfn_cef_set_default_frame_rate,
+    jfn_cef_layer_free, jfn_cef_layer_get_surface, jfn_cef_layer_inner, jfn_cef_layer_new,
+    jfn_cef_layer_on_deactivated, jfn_cef_layer_resize, jfn_cef_layer_send_mouse_move,
+    jfn_cef_layer_set_focus, jfn_cef_layer_set_injection_profile_kind,
+    jfn_cef_layer_set_refresh_rate, jfn_cef_layer_set_surface, jfn_cef_set_default_frame_rate,
     jfn_cef_set_use_shared_textures,
 };
 use jfn_input::jfn_input_last_mouse_pos;
 
 struct Browsers {
     layers: Vec<*mut JfnCefLayer>,
-    active: *mut JfnCefLayer,
+    /// Focus history stack — top is currently active. `set_active` pushes /
+    /// promotes; `remove` drops the layer from the stack so the previous
+    /// top auto-regains focus.
+    active_stack: Vec<*mut JfnCefLayer>,
     lw: i32,
     lh: i32,
     pw: i32,
@@ -58,7 +61,7 @@ pub fn jfn_browsers_init(
     jfn_cef_set_use_shared_textures(use_shared_textures);
     *INSTANCE.lock() = Some(Browsers {
         layers: Vec::new(),
-        active: std::ptr::null_mut(),
+        active_stack: Vec::new(),
         lw,
         lh,
         pw,
@@ -120,16 +123,23 @@ pub unsafe fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
     layer
 }
 
+/// Drop `layer` from the registry. MUST be called on TID_UI — all `layers`
+/// and `active_stack` mutations are TID_UI-only, which is what lets the
+/// post-`drop(g)` refocus dereference `new_top` without revalidating.
 pub fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
     if layer.is_null() {
         return;
     }
     let mut g = INSTANCE.lock();
     let Some(b) = g.as_mut() else { return };
+    let was_top = b.active_stack.last().copied() == Some(layer);
+    b.active_stack.retain(|l| *l != layer);
+    let new_top = b
+        .active_stack
+        .last()
+        .copied()
+        .unwrap_or(std::ptr::null_mut());
     unsafe { jfn_cef_layer_on_deactivated(layer) };
-    if b.active == layer {
-        b.active = std::ptr::null_mut();
-    }
     let pos = b.layers.iter().position(|l| *l == layer);
     let Some(idx) = pos else { return };
     let surface = unsafe { jfn_cef_layer_get_surface(layer) };
@@ -139,16 +149,30 @@ pub fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
     }
     unsafe { jfn_cef_layer_free(layer) };
     restack(&b.layers);
+    drop(g);
+    // Skip refocus during shutdown — every layer is mid-close and posting
+    // input/focus to a dying browser hangs TID_UI before OnBeforeClose fires.
+    if was_top && !new_top.is_null() && !jfn_playback::shutdown::jfn_shutting_down() {
+        focus_and_replay_mouse(new_top);
+    }
 }
 
 pub fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
     let mut g = INSTANCE.lock();
     let Some(b) = g.as_mut() else { return };
-    if b.active == layer {
+    let prev = b
+        .active_stack
+        .last()
+        .copied()
+        .unwrap_or(std::ptr::null_mut());
+    if prev == layer {
         return;
     }
-    let prev = b.active;
-    b.active = layer;
+    // Promote: drop any prior occurrence, then push to top.
+    b.active_stack.retain(|l| *l != layer);
+    if !layer.is_null() {
+        b.active_stack.push(layer);
+    }
     drop(g);
     if !prev.is_null() {
         unsafe {
@@ -157,17 +181,21 @@ pub fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
         }
     }
     if !layer.is_null() {
-        unsafe { jfn_cef_layer_set_focus(layer, true) };
-        // Leave-then-move forces the renderer to re-emit OnCursorChange.
-        let mut x = 0;
-        let mut y = 0;
-        let mut mods: u32 = 0;
-        let valid = jfn_input_last_mouse_pos(&mut x, &mut y, &mut mods);
-        if valid != 0 {
-            unsafe {
-                jfn_cef_layer_send_mouse_move(layer, x, y, mods, true);
-                jfn_cef_layer_send_mouse_move(layer, x, y, mods, false);
-            }
+        focus_and_replay_mouse(layer);
+    }
+}
+
+fn focus_and_replay_mouse(layer: *mut JfnCefLayer) {
+    unsafe { jfn_cef_layer_set_focus(layer, true) };
+    // Leave-then-move forces the renderer to re-emit OnCursorChange.
+    let mut x = 0;
+    let mut y = 0;
+    let mut mods: u32 = 0;
+    let valid = jfn_input_last_mouse_pos(&mut x, &mut y, &mut mods);
+    if valid != 0 {
+        unsafe {
+            jfn_cef_layer_send_mouse_move(layer, x, y, mods, true);
+            jfn_cef_layer_send_mouse_move(layer, x, y, mods, false);
         }
     }
 }
@@ -176,7 +204,7 @@ pub fn jfn_browsers_active() -> *mut JfnCefLayer {
     INSTANCE
         .lock()
         .as_ref()
-        .map(|b| b.active)
+        .and_then(|b| b.active_stack.last().copied())
         .unwrap_or(std::ptr::null_mut())
 }
 
@@ -229,26 +257,34 @@ pub fn jfn_browsers_set_refresh_rate(hz: f64) {
     }
 }
 
-pub fn jfn_browsers_all_closed() -> bool {
-    let g = INSTANCE.lock();
-    let Some(b) = g.as_ref() else { return true };
-    for l in &b.layers {
-        if !unsafe { jfn_cef_layer_is_closed(*l) } {
-            return false;
-        }
+/// Snapshot every layer's `Arc<Inner>`, then force-close its browser. MUST
+/// run on TID_UI — called from `CloseAndCollectTask::execute`. The returned
+/// `Arc<Inner>` set is exactly the set whose closes were issued, safe to
+/// `wait_for_close` even after the layer's BeforeClose path frees its
+/// `JfnCefLayer` Box (the Arc keeps `Inner` and its `close_cv` alive).
+///
+/// The lock is released before `close_browser_force` runs so a synchronous
+/// `OnBeforeClose` callback (which now uniformly self-removes the layer via
+/// `handle_on_before_close`) can re-take the lock without deadlocking.
+pub(crate) fn jfn_browsers_close_and_snapshot() -> Vec<Arc<Inner>> {
+    let inners: Vec<Arc<Inner>> = {
+        let g = INSTANCE.lock();
+        let Some(b) = g.as_ref() else {
+            return Vec::new();
+        };
+        b.layers
+            .iter()
+            .map(|l| unsafe { jfn_cef_layer_inner(*l) })
+            .collect()
+    };
+    // Lock released — sync `OnBeforeClose` from close_browser_force can now
+    // re-take INSTANCE via `handle_on_before_close`'s auto-remove without
+    // deadlocking. Closes run on the held `Arc<Inner>`s, so no raw layer
+    // ptr is dereferenced after a peer layer's auto-remove frees its Box.
+    for i in &inners {
+        i.close_browser_force();
     }
-    true
-}
-
-pub fn jfn_browsers_close_all() {
-    let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
-        .lock()
-        .as_ref()
-        .map(|b| b.layers.clone())
-        .unwrap_or_default();
-    for l in snapshot {
-        unsafe { jfn_cef_layer_close_browser_force(l) };
-    }
+    inners
 }
 
 /// Drive an external BeginFrame on every layer. Called from the macOS
@@ -266,14 +302,46 @@ pub fn jfn_browsers_send_external_begin_frame_all() {
     }
 }
 
-pub fn jfn_browsers_wait_all_closed() {
-    let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
-        .lock()
-        .as_ref()
-        .map(|b| b.layers.clone())
-        .unwrap_or_default();
-    for l in snapshot {
-        unsafe { jfn_cef_layer_wait_for_close(l) };
+/// Mark every live browser visible or hidden. MUST run on TID_UI — called
+/// from the `SetHiddenAllTask` posted by `jfn_browsers_set_hidden_all`.
+/// CEF folds `WasHidden(true)` into pausing rendering / freeing GPU
+/// compositing resources and `WasHidden(false)` into a paint kick.
+pub(crate) fn jfn_browsers_apply_hidden_all(hidden: bool) {
+    let inners: Vec<Arc<Inner>> = {
+        let g = INSTANCE.lock();
+        let Some(b) = g.as_ref() else {
+            return;
+        };
+        b.layers
+            .iter()
+            .map(|l| unsafe { jfn_cef_layer_inner(*l) })
+            .collect()
+    };
+    for i in &inners {
+        i.cef_was_hidden(hidden);
+    }
+}
+
+/// Request a visibility change on every live browser. Thread-agnostic:
+/// posts a TID_UI task that calls `WasHidden(hidden)` on each layer.
+pub fn jfn_browsers_set_hidden_all(hidden: bool) {
+    crate::client::jfn_cef_post_set_hidden_all(hidden);
+}
+
+/// Force-close every layer's browser and block until each `OnBeforeClose`
+/// has fired. Thread-agnostic: callable from any non-TID_UI thread (the
+/// shutdown manager). Posts a single snapshot-and-close task onto TID_UI,
+/// then waits on every `Arc<Inner>` that task closed — no second-snapshot
+/// race window, and no UAF when a layer's `before_close_callback`
+/// self-removes its `JfnCefLayer` Box mid-drain (the about layer does).
+pub fn jfn_browsers_close_all_blocking() {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<Inner>>>(1);
+    crate::client::jfn_cef_post_close_and_collect(tx);
+    let inners = rx
+        .recv()
+        .expect("CloseAndCollectTask ran and sent the wait set");
+    for i in inners {
+        i.wait_for_close();
     }
 }
 
@@ -285,5 +353,5 @@ fn restack(layers: &[*mut JfnCefLayer]) {
             ordered.push(s);
         }
     }
-    jfn_platform_abi::get().restack(ordered.as_ptr(), ordered.len());
+    jfn_platform_abi::get().restack(&ordered);
 }

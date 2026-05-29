@@ -48,11 +48,13 @@ use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
 };
 use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
 use wl_proxy::protocols::wayland::wl_output::WlOutput;
+use wl_proxy::protocols::wayland::wl_pointer::{WlPointer, WlPointerButtonState, WlPointerHandler};
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
+use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatHandler};
 use wl_proxy::protocols::wayland::wl_surface::WlSurface;
 use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
 use wl_proxy::protocols::xdg_shell::xdg_toplevel::{
-    XdgToplevel, XdgToplevelHandler, XdgToplevelState,
+    XdgToplevel, XdgToplevelHandler, XdgToplevelResizeEdge, XdgToplevelState,
 };
 use wl_proxy::protocols::xdg_shell::xdg_wm_base::{XdgWmBase, XdgWmBaseHandler};
 use wl_proxy::state::State;
@@ -64,15 +66,23 @@ pub struct Proxy {
 
 type ConfigureCb = extern "C" fn(c_int, c_int, c_int);
 type ScaleCb = extern "C" fn(c_int);
+type SuspendedCb = extern "C" fn(c_int);
 
 // Single proxy per process — callbacks are global. Fire from the per-client
 // proxy thread; the C side guards against thread-safety with its own mutex.
 static CONFIGURE_CB: Mutex<Option<ConfigureCb>> = Mutex::new(None);
 static SCALE_CB: Mutex<Option<ScaleCb>> = Mutex::new(None);
+static SUSPENDED_CB: Mutex<Option<SuspendedCb>> = Mutex::new(None);
+// Last reported suspended state to suppress no-op edges (the compositor
+// repeats the state on every configure).
+static LAST_SUSPENDED: Mutex<c_int> = Mutex::new(0);
 
 enum HostCommand {
     SetFullscreen(bool),
     SetMaximized(bool),
+    SetMinimized,
+    Move,
+    Resize(u32),
 }
 
 static COMMANDS: Mutex<VecDeque<HostCommand>> = Mutex::new(VecDeque::new());
@@ -81,6 +91,17 @@ thread_local! {
     // Per-client thread stores the XdgToplevel it manages so the command
     // drain (which runs on the same thread) can issue requests on it.
     static TOPLEVEL: RefCell<Option<Rc<XdgToplevel>>> = const { RefCell::new(None) };
+    // Parent XdgSurface of the toplevel. We inject xdg_surface.set_window_geometry
+    // on every configure since mpv doesn't and the compositor otherwise falls
+    // back to the surface bounding box, which can leave window placement
+    // ambiguous on restore (e.g. Mutter unmaximize landing under the top bar).
+    static XDG_SURFACE: RefCell<Option<Rc<XdgSurface>>> = const { RefCell::new(None) };
+    // The compositor-facing wl_seat and the most recent pointer-button serial,
+    // captured by snooping forwarded input. xdg_toplevel.move requires both,
+    // and the serial must come from THIS connection (the toplevel's), not the
+    // mpv-side input subsystem's serial namespace.
+    static SEAT: RefCell<Option<Rc<WlSeat>>> = const { RefCell::new(None) };
+    static LAST_SERIAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 // Pending state for configure synthesis. We own the scale tracking via
@@ -107,6 +128,19 @@ static PENDING: Mutex<PendingConfigure> = Mutex::new(PendingConfigure {
     fullscreen: 0,
     scale_120: 120,
 });
+
+fn fire_suspended(suspended: c_int) {
+    {
+        let mut last = LAST_SUSPENDED.lock();
+        if *last == suspended {
+            return;
+        }
+        *last = suspended;
+    }
+    if let Some(cb) = *SUSPENDED_CB.lock() {
+        cb(suspended);
+    }
+}
 
 fn fire_configure() {
     let p = PENDING.lock();
@@ -214,6 +248,16 @@ pub fn jfn_wlproxy_set_scale_callback(cb: ScaleCb) {
     *SCALE_CB.lock() = Some(cb);
 }
 
+/// Register the xdg_toplevel suspended-state callback.
+///
+/// Fires once on each transition into or out of `XDG_TOPLEVEL_STATE_SUSPENDED`
+/// (xdg-shell v6+). Argument is 1 when suspended (compositor signals updates
+/// have no user-visible effect, e.g. desktop switched, minimised on KDE),
+/// 0 when restored. Repeats are suppressed.
+pub fn jfn_wlproxy_set_suspended_callback(cb: SuspendedCb) {
+    *SUSPENDED_CB.lock() = Some(cb);
+}
+
 /// Queue an xdg_toplevel.set_fullscreen / unset_fullscreen request. Applied
 /// from the proxy's per-client thread on its next dispatch iteration.
 pub extern "C" fn jfn_wlproxy_set_fullscreen(enable: c_int) {
@@ -228,6 +272,25 @@ pub fn jfn_wlproxy_set_maximized(enable: c_int) {
     COMMANDS
         .lock()
         .push_back(HostCommand::SetMaximized(enable != 0));
+}
+
+/// Queue an xdg_toplevel.set_minimized request.
+pub fn jfn_wlproxy_set_minimized() {
+    COMMANDS.lock().push_back(HostCommand::SetMinimized);
+}
+
+/// Queue an interactive xdg_toplevel.move. Uses the most recent pointer-button
+/// serial seen on this connection. Must be called in response to a button press
+/// (the compositor takes over the drag grab).
+pub fn jfn_wlproxy_window_move() {
+    COMMANDS.lock().push_back(HostCommand::Move);
+}
+
+/// Queue an interactive xdg_toplevel.resize. `edge` is an xdg_toplevel
+/// resize-edge value (1=top, 2=bottom, 4=left, 8=right, and their corner ORs).
+/// Like move, uses the most recent pointer-button serial.
+pub fn jfn_wlproxy_window_resize(edge: c_int) {
+    COMMANDS.lock().push_back(HostCommand::Resize(edge as u32));
 }
 
 // =========================================================================
@@ -310,25 +373,39 @@ fn run_client(socket: OwnedFd, upstream: Option<String>) {
 }
 
 fn drain_host_commands() {
-    let cmds: Vec<HostCommand> = COMMANDS.lock().drain(..).collect();
-    if cmds.is_empty() {
-        return;
-    }
+    // Only the client thread that owns the toplevel may consume commands.
+    // WAYLAND_DISPLAY points every client in the process (mpv AND CEF's GPU
+    // helper) at this proxy, so multiple per-client threads run this drain.
+    // Since COMMANDS is process-global but TOPLEVEL is thread-local, a thread
+    // without the toplevel must NOT drain — otherwise it pops the command and
+    // drops it, racing the owning thread.
     TOPLEVEL.with(|t| {
         let tl_ref = t.borrow();
         let Some(tl) = tl_ref.as_ref() else {
-            // No toplevel in this thread (e.g. early commands queued before
-            // mpv got to xdg_surface.get_toplevel). Drop silently — the
-            // commands aren't replayed, but for the current contract (host
-            // calls only after the window exists) that's fine.
             return;
         };
+        let cmds: Vec<HostCommand> = COMMANDS.lock().drain(..).collect();
         for cmd in cmds {
             match cmd {
                 HostCommand::SetFullscreen(true) => tl.send_set_fullscreen(None),
                 HostCommand::SetFullscreen(false) => tl.send_unset_fullscreen(),
                 HostCommand::SetMaximized(true) => tl.send_set_maximized(),
                 HostCommand::SetMaximized(false) => tl.send_unset_maximized(),
+                HostCommand::SetMinimized => tl.send_set_minimized(),
+                HostCommand::Move => SEAT.with(|s| {
+                    if let Some(seat) = s.borrow().as_ref() {
+                        tl.send_move(seat, LAST_SERIAL.with(|c| c.get()));
+                    }
+                }),
+                HostCommand::Resize(edge) => SEAT.with(|s| {
+                    if let Some(seat) = s.borrow().as_ref() {
+                        tl.send_resize(
+                            seat,
+                            LAST_SERIAL.with(|c| c.get()),
+                            XdgToplevelResizeEdge(edge),
+                        );
+                    }
+                }),
             }
         }
     });
@@ -362,6 +439,11 @@ impl WlRegistryHandler for RegistryH {
                 id.downcast::<WpFractionalScaleManagerV1>()
                     .set_handler(FracScaleMgrH);
             }
+            WlSeat::INTERFACE => {
+                let seat = id.downcast::<WlSeat>();
+                seat.set_handler(SeatH);
+                SEAT.with(|s| *s.borrow_mut() = Some(seat.clone()));
+            }
             _ => {}
         }
         slf.send_bind(name, id);
@@ -393,6 +475,35 @@ impl WpFractionalScaleV1Handler for FracScaleH {
     }
 }
 
+// Snoop the seat→pointer chain only to cache the latest button-press serial
+// (needed by xdg_toplevel.move). Every event is forwarded unchanged; we set
+// no policy. Other seat/pointer requests/events fall through to the default
+// forwarding impls.
+struct SeatH;
+impl WlSeatHandler for SeatH {
+    fn handle_get_pointer(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlPointer>) {
+        id.set_handler(PointerH);
+        slf.send_get_pointer(id);
+    }
+}
+
+struct PointerH;
+impl WlPointerHandler for PointerH {
+    fn handle_button(
+        &mut self,
+        slf: &Rc<WlPointer>,
+        serial: u32,
+        time: u32,
+        button: u32,
+        state: WlPointerButtonState,
+    ) {
+        if state == WlPointerButtonState::PRESSED {
+            LAST_SERIAL.with(|c| c.set(serial));
+        }
+        slf.send_button(serial, time, button, state);
+    }
+}
+
 struct WmBaseH;
 impl XdgWmBaseHandler for WmBaseH {
     fn handle_get_xdg_surface(
@@ -411,6 +522,7 @@ impl XdgSurfaceHandler for SurfaceH {
     fn handle_get_toplevel(&mut self, slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
         id.set_handler(ToplevelH);
         TOPLEVEL.with(|t| *t.borrow_mut() = Some(id.clone()));
+        XDG_SURFACE.with(|s| *s.borrow_mut() = Some(slf.clone()));
         slf.send_get_toplevel(id);
     }
 
@@ -445,13 +557,19 @@ impl XdgToplevelHandler for ToplevelH {
 
     fn handle_configure(&mut self, slf: &Rc<XdgToplevel>, width: i32, height: i32, states: &[u8]) {
         // states is a wire-encoded wl_array of uint32 XdgToplevelState values
-        // in native byte order. Scan for FULLSCREEN; ignore other states.
+        // in native byte order. Scan for FULLSCREEN + SUSPENDED; ignore other
+        // states. SUSPENDED (xdg-shell v6) signals the toplevel is occluded
+        // such that updates have no user-visible effect — the host treats it
+        // as a hide-equivalent and frees CEF GPU resources.
+        const STATE_SUSPENDED: u32 = 9;
         let mut fullscreen: c_int = 0;
+        let mut suspended: c_int = 0;
         for chunk in states.chunks_exact(4) {
             let v = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             if XdgToplevelState(v) == XdgToplevelState::FULLSCREEN {
                 fullscreen = 1;
-                break;
+            } else if v == STATE_SUSPENDED {
+                suspended = 1;
             }
         }
         {
@@ -462,6 +580,18 @@ impl XdgToplevelHandler for ToplevelH {
             p.fullscreen = fullscreen;
         }
         fire_configure();
+        fire_suspended(suspended);
+        // Tell compositor the logical window rect explicitly so unmaximize /
+        // restore placement isn't computed from the surface bounding box.
+        // Skip the 0,0 "client picks size" form — geometry must match the
+        // buffer that will be committed.
+        if width > 0 && height > 0 {
+            XDG_SURFACE.with(|s| {
+                if let Some(xs) = s.borrow().as_ref() {
+                    xs.send_set_window_geometry(0, 0, width, height);
+                }
+            });
+        }
         slf.send_configure(width, height, states);
     }
 }

@@ -397,6 +397,11 @@ impl StderrCapture {
     }
 
     fn stop(&mut self) {
+        // Order: restore STDERR FIRST (so any concurrent writer drains to
+        // the real fd from now on), THEN wake the capture thread via the
+        // signal pipe, THEN join, THEN close the signal write end. Joining
+        // before closing signal_write avoids a window where the capture
+        // thread races a close on its read end.
         unsafe {
             if self.original_fd >= 0 {
                 libc::dup2(self.original_fd, libc::STDERR_FILENO);
@@ -406,8 +411,10 @@ impl StderrCapture {
             let buf = b"x";
             libc::write(self.signal_write, buf.as_ptr() as *const _, 1);
         }
-        if let Some(h) = self.join.take() {
-            let _ = h.join();
+        if let Some(h) = self.join.take()
+            && let Err(e) = h.join()
+        {
+            eprintln!("[logging] stderr capture thread panicked: {e:?}");
         }
         unsafe {
             libc::close(self.signal_write);

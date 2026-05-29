@@ -31,6 +31,7 @@ use jfn_mpv::api::{
     jfn_mpv_set_window_minimized, jfn_mpv_toggle_fullscreen,
 };
 use jfn_mpv::boot::jfn_mpv_handle_get;
+use jfn_platform_abi::geometry::{Bounds, WindowGeometry, clamp_to_bounds};
 use jfn_playback::ingest_driver::{jfn_playback_display_scale, jfn_playback_fullscreen};
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 
@@ -221,7 +222,11 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
         if (msg.hwnd.0 as usize) == target_hwnd_raw {
             if msg.message == WM_SIZE {
                 if msg.wParam.0 == SIZE_MINIMIZED as usize {
+                    let was_minimized = STATE.lock().was_minimized;
                     STATE.lock().was_minimized = true;
+                    if !was_minimized {
+                        jfn_playback::lifecycle::jfn_lifecycle_set_visible(false);
+                    }
                     let hook_raw = STATE.lock().wndproc_hook_raw;
                     let hook = HHOOK(hook_raw as *mut c_void);
                     return unsafe { CallNextHookEx(Some(hook), n_code, wp, lp) };
@@ -253,6 +258,10 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                         let mut st = STATE.lock();
                         st.was_minimized = false;
                         st.was_fullscreen = fs;
+                        drop(st);
+                        // Restore from iconic — counterpart to the
+                        // SIZE_MINIMIZED arm above.
+                        jfn_playback::lifecycle::jfn_lifecycle_set_visible(true);
                     } else if fs_changed {
                         STATE.lock().was_fullscreen = fs;
                         // A fullscreen change we didn't drive through the
@@ -425,28 +434,15 @@ pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y:
     }
     let vw = work.right - work.left;
     let vh = work.bottom - work.top;
-    if *w > vw {
-        *w = vw;
-    }
-    if *h > vh {
-        *h = vh;
-    }
-    if *x < 0 {
-        *x = (vw - *w) / 2;
-    }
-    if *y < 0 {
-        *y = (vh - *h) / 2;
-    }
-    if *x + *w > vw {
-        *x = vw - *w;
-    }
-    if *y + *h > vh {
-        *y = vh - *h;
-    }
-    if *x < 0 {
-        *x = 0;
-    }
-    if *y < 0 {
-        *y = 0;
-    }
+    let mut g = WindowGeometry {
+        w: *w,
+        h: *h,
+        x: *x,
+        y: *y,
+    };
+    clamp_to_bounds(&mut g, Bounds { w: vw, h: vh });
+    *w = g.w;
+    *h = g.h;
+    *x = g.x;
+    *y = g.y;
 }

@@ -20,6 +20,7 @@ use crate::wl_ops::{self, JfnDmabufFrame};
 
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
+    SurfaceSize,
 };
 
 // =====================================================================
@@ -126,8 +127,7 @@ impl Platform for WaylandPlatform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        _dirty: *const JfnRect,
-        _dirty_len: usize,
+        _dirty: &[JfnRect],
         buffer: *const c_void,
         w: c_int,
         h: c_int,
@@ -143,8 +143,14 @@ impl Platform for WaylandPlatform {
         wl_ops::surface_present_software(s as *mut crate::wl_state::PlatformSurface, pixels, w, h)
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
-        wl_ops::surface_resize(s as *mut crate::wl_state::PlatformSurface, lw, lh, pw, ph);
+    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
+        wl_ops::surface_resize(
+            s as *mut crate::wl_state::PlatformSurface,
+            size.logical_w,
+            size.logical_h,
+            size.physical_w,
+            size.physical_h,
+        );
     }
 
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
@@ -157,12 +163,15 @@ impl Platform for WaylandPlatform {
         );
     }
 
-    fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
-        if ordered.is_null() {
-            return;
-        }
+    fn restack(&self, ordered: &[SurfaceHandle]) {
+        // SAFETY: a `&[SurfaceHandle]` (i.e. `&[*mut c_void]`) and a
+        // `&[*mut PlatformSurface]` have identical layout; each handle was
+        // minted by this backend's `alloc_surface`.
         let typed: &[*mut crate::wl_state::PlatformSurface] = unsafe {
-            std::slice::from_raw_parts(ordered as *const *mut crate::wl_state::PlatformSurface, n)
+            std::slice::from_raw_parts(
+                ordered.as_ptr() as *const *mut crate::wl_state::PlatformSurface,
+                ordered.len(),
+            )
         };
         wl_ops::restack(typed);
     }
@@ -225,6 +234,22 @@ impl Platform for WaylandPlatform {
         crate::wl_ffi::jfn_wl_toggle_fullscreen();
     }
 
+    fn window_minimize(&self) {
+        crate::wl_ffi::jfn_wl_window_minimize();
+    }
+
+    fn window_toggle_maximize(&self) {
+        crate::wl_ffi::jfn_wl_window_toggle_maximize();
+    }
+
+    fn window_start_move(&self) {
+        crate::wl_ffi::jfn_wl_window_start_move();
+    }
+
+    fn window_start_resize(&self, edge: c_int) {
+        crate::wl_ffi::jfn_wl_window_start_resize(edge);
+    }
+
     fn begin_transition(&self) {
         crate::wl_ffi::jfn_wl_begin_transition();
     }
@@ -251,7 +276,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
-        jfn_idle_inhibit_linux::set(level as u32);
+        jfn_linux_util::idle_inhibit::set(level as u32);
     }
 
     fn set_theme_color(&self, _rgb: u32) {
@@ -302,7 +327,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn open_external_url(&self, url: &str) {
-        jfn_open_url_linux::open(url);
+        jfn_linux_util::open_url::open(url);
     }
 }
 

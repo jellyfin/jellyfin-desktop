@@ -11,8 +11,11 @@ pub mod input_lifecycle;
 pub mod kde_palette;
 pub mod lifecycle;
 pub mod make_platform;
+pub mod paint_override;
 pub mod proxy;
 pub mod scale_probe;
 pub mod wl_ffi;
 pub mod wl_ops;
 pub mod wl_state;
+
+pub use paint_override::{WlPaintOverride, paint_override, set_paint_override};

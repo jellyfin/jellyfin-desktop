@@ -220,7 +220,7 @@ impl State {
     }
 }
 
-use crate::exec_js::call as call_exec_js;
+use crate::sink_core;
 
 // ============================================================================
 // D-Bus interface impls
@@ -274,38 +274,30 @@ struct Player {
 #[interface(name = "org.mpris.MediaPlayer2.Player")]
 impl Player {
     fn play(&self) {
-        jfn_mpv::api::jfn_mpv_play()
+        sink_core::execute(sink_core::MediaCommand::Play)
     }
     fn pause(&self) {
-        jfn_mpv::api::jfn_mpv_pause()
+        sink_core::execute(sink_core::MediaCommand::Pause)
     }
     fn play_pause(&self) {
-        jfn_mpv::api::jfn_mpv_toggle_pause()
+        sink_core::execute(sink_core::MediaCommand::PlayPause)
     }
     fn stop(&self) {
-        jfn_mpv::api::jfn_mpv_stop()
+        sink_core::execute(sink_core::MediaCommand::Stop)
     }
     fn next(&self) {
-        call_exec_js("if(window._nativeHostInput) window._nativeHostInput(['next']);");
+        sink_core::execute(sink_core::MediaCommand::Next);
     }
     fn previous(&self) {
-        call_exec_js("if(window._nativeHostInput) window._nativeHostInput(['previous']);");
+        sink_core::execute(sink_core::MediaCommand::Previous);
     }
     fn seek(&self, offset: i64) {
         let cur = self.state.lock().snapshot.position_us;
         let new_pos = (cur + offset).max(0);
-        let ms = new_pos / 1000;
-        call_exec_js(&format!(
-            "if(window._nativeSeek) window._nativeSeek({});",
-            ms
-        ));
+        sink_core::seek_to_ms(new_pos / 1000);
     }
     fn set_position(&self, _track: ObjectPath<'_>, position_us: i64) {
-        let ms = position_us / 1000;
-        call_exec_js(&format!(
-            "if(window._nativeSeek) window._nativeSeek({});",
-            ms
-        ));
+        sink_core::seek_to_ms(position_us / 1000);
     }
 
     #[zbus(property)]

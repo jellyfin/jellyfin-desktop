@@ -1,22 +1,20 @@
-//! macOS Now Playing / MPRemoteCommandCenter sink. Owns its own thread
-//! that drains queued PlaybackEvents on wake. Inbound MPRemoteCommand
-//! callbacks dispatch directly into mpv (jfn_mpv) / web browser
-//! (jfn_web_exec_js).
+//! macOS Now Playing / MPRemoteCommandCenter sink. The shared
+//! [`jfn_playback::sink_core`] harness owns the event queue and consumer
+//! thread; this crate supplies a [`MacosSink`] whose `deliver` drives
+//! MPNowPlayingInfoCenter. Inbound MPRemoteCommand callbacks dispatch via
+//! [`sink_core::execute`] / [`sink_core::seek_to_ms`].
 //!
-//! All UI updates run on the main thread via `dispatch_async`/
-//! `dispatch_sync` because MPNowPlayingInfoCenter mutations are not safe
-//! from background threads.
+//! All UI updates run on the consumer thread; MPNowPlayingInfoCenter
+//! mutations are performed there.
 
 #![cfg(target_os = "macos")]
 
-use parking_lot::{Condvar, Mutex};
-use std::collections::VecDeque;
-use std::ffi::{CStr, c_char, c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::ffi::{CStr, c_int, c_void};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use jfn_playback::{MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
+use jfn_playback::sink_core::{self, MediaCommand, MediaSink, Phase, map_kind_to_phase};
+use jfn_playback::{MediaMetadata, MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{ClassType, define_class, msg_send};
@@ -36,166 +34,42 @@ fn ns_key(s: &NSString) -> &ProtocolObject<dyn NSCopying> {
     ProtocolObject::from_ref(s)
 }
 
-// Stopped maps to MPNowPlayingPlaybackState::Stopped via a local Phase
-// enum so we keep the kind→phase mapping table.
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Phase {
-    Playing,
-    Paused,
-    Stopped,
-}
-
-// =====================================================================
-// Owned event copy (heap-allocated for the consumer thread). Holds only
-// the fields the consumer reads, so we avoid keeping the full event
-// clone alive across thread hops.
-// =====================================================================
-
-#[derive(Default, Clone)]
-struct OwnedMetadata {
-    id: String,
-    title: String,
-    artist: String,
-    album: String,
-    track_number: i32,
-    duration_us: i64,
-    art_data_uri: String,
-    media_type: PbMediaType,
-}
-
-struct OwnedEvent {
-    kind: PlaybackEventKind,
-    metadata: OwnedMetadata,
-    snapshot_position_us: i64,
-    snapshot_rate: f64,
-    artwork_uri: String,
-    can_go_next: bool,
-    can_go_prev: bool,
-}
-
-fn owned_event(ev: &PlaybackEvent) -> OwnedEvent {
-    OwnedEvent {
-        kind: ev.kind,
-        metadata: OwnedMetadata {
-            id: ev.metadata.id.clone(),
-            title: ev.metadata.title.clone(),
-            artist: ev.metadata.artist.clone(),
-            album: ev.metadata.album.clone(),
-            track_number: ev.metadata.track_number,
-            duration_us: ev.metadata.duration_us,
-            art_data_uri: ev.metadata.art_data_uri.clone(),
-            media_type: ev.metadata.media_type,
-        },
-        snapshot_position_us: ev.snapshot.position_us,
-        snapshot_rate: ev.snapshot.rate,
-        artwork_uri: ev.artwork_uri.clone(),
-        can_go_next: ev.can_go_next,
-        can_go_prev: ev.can_go_prev,
-    }
-}
-
-// =====================================================================
-// Sink state (singleton — one instance per process, started from
-// jfn_app_run_with_cef on macOS).
-// =====================================================================
-
-struct Inner {
-    queue: Mutex<VecDeque<OwnedEvent>>,
-    cv: Condvar,
-    running: AtomicBool,
-}
-
-static SINK: OnceLock<Arc<Inner>> = OnceLock::new();
-
-const EVENT_QUEUE_CAP: usize = 256;
-
-fn inner() -> Arc<Inner> {
-    SINK.get_or_init(|| {
-        Arc::new(Inner {
-            queue: Mutex::new(VecDeque::new()),
-            cv: Condvar::new(),
-            running: AtomicBool::new(false),
-        })
-    })
-    .clone()
-}
-
-// Coordinator-side: jfn-playback invokes this for every event. We copy
-// the small subset of fields the consumer thread reads.
-fn on_event(ev: &PlaybackEvent) {
-    let owned = owned_event(ev);
-    let inner = inner();
-    {
-        let mut q = inner.queue.lock();
-        if q.len() >= EVENT_QUEUE_CAP {
-            return;
-        }
-        q.push_back(owned);
-    }
-    inner.cv.notify_one();
-}
-
 // =====================================================================
 // Public start/stop entry points.
 // =====================================================================
 
 pub fn jfn_macos_sink_start() {
-    let inner = inner();
-    if inner.running.swap(true, Ordering::AcqRel) {
-        return;
-    }
-
-    jfn_playback::ffi::register_event_sink(Box::new(on_event));
-
-    // Consumer thread drains the queue and dispatches MPNowPlayingInfo /
-    // command-center updates onto the main thread.
-    std::thread::Builder::new()
-        .name("macos-sink".into())
-        .spawn(move || consumer_thread(inner))
-        .expect("spawn macos-sink thread");
+    sink_core::run_sink("macos-sink", MacosSink::default);
 }
 
 pub fn jfn_macos_sink_stop() {
-    let inner = match SINK.get() {
-        Some(i) => i.clone(),
-        None => return,
-    };
-    if !inner.running.swap(false, Ordering::AcqRel) {
-        return;
-    }
-    inner.cv.notify_all();
-    // Consumer thread observes !running on next wake and exits. We don't
-    // join because the OnceLock keeps the inner alive past process tear-
-    // down anyway, and joining requires storing the JoinHandle which
-    // adds locking complexity.
+    sink_core::stop();
 }
 
-fn consumer_thread(inner: Arc<Inner>) {
-    init_remote_command_center();
-
-    while inner.running.load(Ordering::Acquire) {
-        let drained: Vec<OwnedEvent> = {
-            let mut q = inner.queue.lock();
-            while q.is_empty() && inner.running.load(Ordering::Acquire) {
-                inner.cv.wait_for(&mut q, Duration::from_millis(100));
-            }
-            q.drain(..).collect()
-        };
-        let mut state = ConsumerState::default();
-        for ev in drained {
-            deliver(&mut state, ev);
-        }
-    }
-
-    teardown_remote_command_center();
-}
+// =====================================================================
+// Sink state — lives on the consumer thread for the sink's lifetime.
+// =====================================================================
 
 #[derive(Default)]
-struct ConsumerState {
-    metadata: OwnedMetadata,
+struct MacosSink {
+    metadata: MediaMetadata,
     position_us: i64,
     rate: f64,
     last_position_update: Option<Instant>,
+}
+
+impl MediaSink for MacosSink {
+    fn init(&mut self) {
+        init_remote_command_center();
+    }
+
+    fn deliver(&mut self, ev: &PlaybackEvent) {
+        deliver(self, ev);
+    }
+
+    fn teardown(&mut self) {
+        teardown_remote_command_center();
+    }
 }
 
 // =====================================================================
@@ -224,21 +98,22 @@ define_class!(
             // is sufficient.
             let cp = (&*command as *const MPRemoteCommand) as *const ();
             let eq = |c: &MPRemoteCommand| (c as *const MPRemoteCommand) as *const () == cp;
-            if eq(&play) {
-                jfn_mpv::api::jfn_mpv_play();
+            let cmd = if eq(&play) {
+                MediaCommand::Play
             } else if eq(&pause) {
-                jfn_mpv::api::jfn_mpv_pause();
+                MediaCommand::Pause
             } else if eq(&toggle) {
-                jfn_mpv::api::jfn_mpv_toggle_pause();
+                MediaCommand::PlayPause
             } else if eq(&stop) {
-                jfn_mpv::api::jfn_mpv_stop();
+                MediaCommand::Stop
             } else if eq(&next) {
-                exec_js(c"if(window._nativeHostInput) window._nativeHostInput(['next']);");
+                MediaCommand::Next
             } else if eq(&prev) {
-                exec_js(c"if(window._nativeHostInput) window._nativeHostInput(['previous']);");
+                MediaCommand::Previous
             } else {
                 return MPRemoteCommandHandlerStatus::CommandFailed;
-            }
+            };
+            sink_core::execute(cmd);
             MPRemoteCommandHandlerStatus::Success
         }
 
@@ -261,13 +136,7 @@ define_class!(
                     center.setNowPlayingInfo(Some(&info));
                 }
             }
-            let ms = (pos * 1000.0) as i64;
-            let js = format!(
-                "if(window._nativeSeek) window._nativeSeek({ms});\0"
-            );
-            unsafe {
-                jfn_cef::business_web::jfn_web_exec_js(js.as_ptr() as *const c_char);
-            }
+            sink_core::seek_to_ms((pos * 1000.0) as i64);
             MPRemoteCommandHandlerStatus::Success
         }
     }
@@ -324,10 +193,6 @@ fn teardown_remote_command_center() {
                 .removeTarget(Some(&*d.0));
         }
     }
-}
-
-fn exec_js(js: &CStr) {
-    unsafe { jfn_cef::business_web::jfn_web_exec_js(js.as_ptr()) };
 }
 
 fn mp_const(name: &str) -> Retained<NSString> {
@@ -427,17 +292,6 @@ fn media_remote_set_visibility_for_phase(phase: Phase) {
 // Event delivery.
 // =====================================================================
 
-fn map_kind_to_phase(kind: PlaybackEventKind) -> Phase {
-    match kind {
-        PlaybackEventKind::Started => Phase::Playing,
-        PlaybackEventKind::Paused | PlaybackEventKind::TrackLoaded => Phase::Paused,
-        PlaybackEventKind::Finished | PlaybackEventKind::Canceled | PlaybackEventKind::Error => {
-            Phase::Stopped
-        }
-        _ => Phase::Stopped,
-    }
-}
-
 fn convert_state(phase: Phase) -> MPNowPlayingPlaybackState {
     match phase {
         Phase::Playing => MPNowPlayingPlaybackState::Playing,
@@ -446,7 +300,7 @@ fn convert_state(phase: Phase) -> MPNowPlayingPlaybackState {
     }
 }
 
-fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
+fn deliver(state: &mut MacosSink, ev: &PlaybackEvent) {
     match ev.kind {
         PlaybackEventKind::MetadataChanged => {
             if !ev.metadata.id.is_empty() && ev.metadata.id == state.metadata.id {
@@ -507,7 +361,7 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
         | PlaybackEventKind::Error => {
             let p = map_kind_to_phase(ev.kind);
             if p == Phase::Stopped {
-                state.metadata = OwnedMetadata::default();
+                state.metadata = MediaMetadata::default();
                 state.position_us = 0;
                 unsafe {
                     let center = MPNowPlayingInfoCenter::defaultCenter();
@@ -527,14 +381,14 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
             }
             media_remote_set_visibility_for_phase(p);
             if p != Phase::Stopped {
-                update_timeline_throttled(state, ev.snapshot_position_us, true);
+                update_timeline_throttled(state, ev.snapshot.position_us, true);
             }
         }
         PlaybackEventKind::PositionChanged => {
-            update_timeline_throttled(state, ev.snapshot_position_us, false);
+            update_timeline_throttled(state, ev.snapshot.position_us, false);
         }
         PlaybackEventKind::RateChanged => unsafe {
-            state.rate = ev.snapshot_rate;
+            state.rate = ev.snapshot.rate;
             let center = MPNowPlayingInfoCenter::defaultCenter();
             if let Some(existing) = center.nowPlayingInfo() {
                 let info = NSMutableDictionary::dictionaryWithDictionary(&existing);
@@ -544,7 +398,7 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
             }
         },
         PlaybackEventKind::Seeked => unsafe {
-            state.position_us = ev.snapshot_position_us;
+            state.position_us = ev.snapshot.position_us;
             let center = MPNowPlayingInfoCenter::defaultCenter();
             if let Some(existing) = center.nowPlayingInfo() {
                 let info = NSMutableDictionary::dictionaryWithDictionary(&existing);
@@ -560,7 +414,7 @@ fn deliver(state: &mut ConsumerState, ev: OwnedEvent) {
     }
 }
 
-fn update_timeline_throttled(state: &mut ConsumerState, position_us: i64, force: bool) {
+fn update_timeline_throttled(state: &mut MacosSink, position_us: i64, force: bool) {
     state.position_us = position_us;
     let now = Instant::now();
     if !force
@@ -585,7 +439,7 @@ fn update_timeline_throttled(state: &mut ConsumerState, position_us: i64, force:
     state.last_position_update = Some(now);
 }
 
-fn update_now_playing_info(state: &mut ConsumerState) {
+fn update_now_playing_info(state: &mut MacosSink) {
     unsafe {
         let info = NSMutableDictionary::<NSString, AnyObject>::dictionary();
         if !state.metadata.title.is_empty() {

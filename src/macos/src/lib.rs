@@ -4,8 +4,9 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_char, c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
+use jfn_platform_abi::geometry::{Bounds, clamp_to_bounds};
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
 // =====================================================================
@@ -222,28 +223,20 @@ pub fn macos_query_window_position(x: &mut c_int, y: &mut c_int) -> bool {
 }
 
 // =====================================================================
-// Fullscreen-transition gating flag. The C++ compositor reads this on
-// every frame (macos_surface_present) and clears it when an incoming
-// frame matches g_expected_w/h. Set by macos_begin_transition below;
-// SeqCst matches the prior plain-bool semantics with no surrounding
-// ordering requirements.
+// Fullscreen-transition gating. The transition state lives in a
+// jfn-compositor-core `TransitionGate` owned by the compositor module
+// (`compositor::G_GATE`); these thin entry points drive it. The present
+// path clears the gate when an incoming frame matches the expected
+// post-transition size.
 // =====================================================================
 
-pub(crate) static G_IN_TRANSITION: AtomicBool = AtomicBool::new(false);
-
 pub fn macos_begin_transition() {
-    G_IN_TRANSITION.store(true, Ordering::SeqCst);
+    compositor::gate_begin();
     compositor::drop_input_textures();
 }
 
 pub fn macos_in_transition() -> bool {
-    G_IN_TRANSITION.load(Ordering::SeqCst)
-}
-
-/// Called by C++ macos_surface_present when an incoming frame matches
-/// the expected post-transition size.
-pub fn jfn_macos_transition_clear() {
-    G_IN_TRANSITION.store(false, Ordering::SeqCst);
+    compositor::gate_in_transition()
 }
 
 /// Backing scale factor of the main screen. Args are unused — the C++
@@ -276,33 +269,17 @@ pub fn macos_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, 
         let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
         let vw = (visible.size.width * scale) as c_int;
         let vh = (visible.size.height * scale) as c_int;
-        if *w > vw {
-            *w = vw;
-        }
-        if *h > vh {
-            *h = vh;
-        }
-        // mpv's own centering misbehaves when we override --geometry's wh
-        // but leave xy unset: it pre-centers against the video size and
-        // doesn't re-center after applying the requested wh.
-        if *x < 0 {
-            *x = (vw - *w) / 2;
-        }
-        if *y < 0 {
-            *y = (vh - *h) / 2;
-        }
-        if *x + *w > vw {
-            *x = vw - *w;
-        }
-        if *y + *h > vh {
-            *y = vh - *h;
-        }
-        if *x < 0 {
-            *x = 0;
-        }
-        if *y < 0 {
-            *y = 0;
-        }
+        let mut g = WindowGeometry {
+            w: *w,
+            h: *h,
+            x: *x,
+            y: *y,
+        };
+        clamp_to_bounds(&mut g, Bounds { w: vw, h: vh });
+        *w = g.w;
+        *h = g.h;
+        *x = g.x;
+        *y = g.y;
     }
 }
 
@@ -415,6 +392,37 @@ pub fn macos_run_main_loop() {
         let app: *mut objc2::runtime::AnyObject =
             objc2::msg_send![objc2::class!(NSApplication), sharedApplication];
         let _: () = objc2::msg_send![app, run];
+    }
+}
+
+unsafe extern "C" fn noop_dispatch(_ctx: *mut c_void) {}
+
+/// Wakeup hook to install with `mpv_set_wakeup_callback`. Bridges mpv's
+/// foreign-thread wakeup notification into a dispatch on the main queue,
+/// which causes `CFRunLoopRunInMode(default, _, returnAfterSourceHandled=1)`
+/// to return promptly. Used during the pre-CefInitialize VO-wait loop so
+/// the main thread can block on the run loop instead of polling
+/// `mpv_wait_event(0)`. The block is a no-op — the side effect is the run
+/// loop wake.
+pub unsafe extern "C" fn macos_mpv_wakeup_cb(_data: *mut c_void) {
+    unsafe {
+        dispatch_async_f(
+            dispatch_get_main_queue(),
+            std::ptr::null_mut(),
+            noop_dispatch,
+        )
+    };
+}
+
+/// Pump pending NSEvents (non-blocking), then block on `CFRunLoopRunInMode`
+/// until a source fires (e.g. the dispatch-async block posted by
+/// `macos_mpv_wakeup_cb`, a CEF wake source, or a GCD main-queue block) or
+/// `seconds` elapses. `returnAfterSourceHandled` is true: the call returns
+/// as soon as the run loop services one source. Used by the VO-wait loop.
+pub fn macos_pump_block(seconds: f64) {
+    macos_pump();
+    unsafe {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, 1);
     }
 }
 
@@ -568,9 +576,8 @@ mod init;
 mod input;
 mod popup;
 use compositor::{
-    macos_alloc_surface, macos_free_surface, macos_restack,
-    macos_set_expected_size, macos_surface_present, macos_surface_resize,
-    macos_surface_set_visible,
+    macos_alloc_surface, macos_free_surface, macos_restack, macos_set_expected_size,
+    macos_surface_present, macos_surface_resize, macos_surface_set_visible,
 };
 use popup::macos_popup_show;
 
@@ -578,7 +585,7 @@ use popup::macos_popup_show;
 // Backend impl
 // =====================================================================
 
-use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle};
+use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle, SurfaceSize, WindowGeometry, WindowPos};
 
 pub struct MacosPlatform;
 
@@ -614,25 +621,30 @@ impl Platform for MacosPlatform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        dirty: *const JfnRect,
-        dirty_len: usize,
+        dirty: &[JfnRect],
         buffer: *const c_void,
         w: c_int,
         h: c_int,
     ) -> bool {
-        macos_surface_present_software(s, dirty, dirty_len, buffer, w, h)
+        macos_surface_present_software(s, dirty.as_ptr(), dirty.len(), buffer, w, h)
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
-        macos_surface_resize(s, lw, lh, pw, ph);
+    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
+        macos_surface_resize(
+            s,
+            size.logical_w,
+            size.logical_h,
+            size.physical_w,
+            size.physical_h,
+        );
     }
 
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
         macos_surface_set_visible(s, visible);
     }
 
-    fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
-        macos_restack(ordered, n);
+    fn restack(&self, ordered: &[SurfaceHandle]) {
+        macos_restack(ordered.as_ptr(), ordered.len());
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
@@ -671,12 +683,19 @@ impl Platform for MacosPlatform {
         macos_get_display_scale(x, y)
     }
 
-    fn query_window_position(&self, x: &mut c_int, y: &mut c_int) -> bool {
-        macos_query_window_position(x, y)
+    fn query_window_position(&self) -> Option<WindowPos> {
+        let (mut x, mut y) = (0, 0);
+        if macos_query_window_position(&mut x, &mut y) {
+            Some(WindowPos { x, y })
+        } else {
+            None
+        }
     }
 
-    fn clamp_window_geometry(&self, w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
-        macos_clamp_window_geometry(w, h, x, y);
+    fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
+        let (mut w, mut h, mut x, mut y) = (g.w, g.h, g.x, g.y);
+        macos_clamp_window_geometry(&mut w, &mut h, &mut x, &mut y);
+        WindowGeometry { w, h, x, y }
     }
 
     fn pump(&self) {

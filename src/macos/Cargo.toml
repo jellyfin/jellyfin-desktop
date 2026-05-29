@@ -10,6 +10,7 @@ crate-type = ["rlib"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 jfn-cef = { path = "../jfn_cef" }
+jfn-compositor-core = { path = "../compositor_core" }
 jfn-input = { path = "../input" }
 jfn-mpv = { path = "../mpv" }
 jfn-platform-abi = { path = "../platform_abi" }

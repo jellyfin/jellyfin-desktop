@@ -23,9 +23,13 @@ pub(crate) fn read_utf8(p: *const c_char, len: usize) -> String {
 }
 
 pub(crate) fn jfn_cef_layer_new() -> *mut JfnCefLayer {
-    Box::into_raw(Box::new(JfnCefLayer {
+    let layer = Box::into_raw(Box::new(JfnCefLayer {
         inner: Inner::new(),
-    }))
+    }));
+    // Stash the raw handle so `handle_on_before_close` can auto-remove this
+    // layer from the `Browsers` registry without per-business wiring.
+    unsafe { (*layer).inner.set_layer_ptr(layer) };
+    layer
 }
 
 pub(crate) unsafe fn jfn_cef_layer_free(h: *mut JfnCefLayer) {
@@ -45,16 +49,15 @@ pub(crate) unsafe fn jfn_cef_layer_set_name(h: *const JfnCefLayer, s: *const c_c
     *inner.name.lock() = new;
 }
 
-pub(crate) unsafe fn jfn_cef_layer_is_closed(h: *const JfnCefLayer) -> bool {
-    unsafe { arc(h) }.closed.load(Ordering::Acquire)
-}
-
-pub(crate) unsafe fn jfn_cef_layer_wait_for_close(h: *const JfnCefLayer) {
-    let l = unsafe { arc(h) };
-    let mut g = l.close_mtx.lock();
-    while !l.closed.load(Ordering::Acquire) {
-        l.close_cv.wait(&mut g);
-    }
+/// Clone the layer's `Arc<Inner>`. The shutdown drain gate takes these under
+/// the `INSTANCE` lock so it can wait on a layer's close after the
+/// `JfnCefLayer` Box is freed by a self-removing `before_close_callback` (e.g.
+/// the about layer): the owned `Arc` keeps `Inner` (and its `close_cv`) alive.
+///
+/// # Safety
+/// `h` must be a live `JfnCefLayer` handle returned by `jfn_cef_layer_new`.
+pub(crate) unsafe fn jfn_cef_layer_inner(h: *const JfnCefLayer) -> Arc<Inner> {
+    unsafe { arc(h) }
 }
 
 /// # Safety
@@ -90,15 +93,6 @@ pub(crate) unsafe fn jfn_cef_layer_set_injection_profile_kind(
     let inner = unsafe { arc(h) };
     let s = read_utf8(kind_utf8, len);
     *inner.injection_kind.lock() = s;
-}
-
-/// Force-close this layer's CefBrowser. Called from `Browsers::closeAll` on
-/// shutdown. No-op when no browser is alive.
-pub(crate) unsafe fn jfn_cef_layer_close_browser_force(h: *const JfnCefLayer) {
-    let inner = unsafe { arc(h) };
-    if let Some(host) = inner.host() {
-        host.close_browser(1);
-    }
 }
 
 pub(crate) unsafe fn jfn_cef_layer_can_go_back(h: *const JfnCefLayer) -> bool {
@@ -242,28 +236,6 @@ pub(crate) unsafe fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f
 pub unsafe fn jfn_cef_layer_create(h: *const JfnCefLayer, url_utf8: *const c_char, len: usize) {
     let url = read_utf8(url_utf8, len);
     unsafe { arc(h) }.create(&url);
-}
-
-pub(crate) unsafe fn jfn_cef_layer_reset(h: *const JfnCefLayer) {
-    unsafe { arc(h) }.reset();
-}
-
-pub(crate) unsafe fn jfn_cef_layer_load_url(
-    h: *const JfnCefLayer,
-    url_utf8: *const c_char,
-    len: usize,
-) {
-    let url = read_utf8(url_utf8, len);
-    unsafe { arc(h) }.load_url(&url);
-}
-
-pub(crate) unsafe fn jfn_cef_layer_exec_js(
-    h: *const JfnCefLayer,
-    js_utf8: *const c_char,
-    len: usize,
-) {
-    let js = read_utf8(js_utf8, len);
-    unsafe { arc(h) }.exec_js(&js);
 }
 
 #[cfg(target_os = "macos")]

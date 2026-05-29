@@ -4,7 +4,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
 
@@ -14,10 +14,10 @@ mod platform;
 pub use compositor::{
     jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
     jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
-    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition,
-    win_free_surface, win_popup_hide, win_popup_present, win_popup_present_software,
-    win_popup_show, win_restack, win_set_expected_size, win_surface_present,
-    win_surface_present_software, win_surface_resize, win_surface_set_visible,
+    jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition, win_free_surface,
+    win_popup_hide, win_popup_present, win_popup_present_software, win_popup_show, win_restack,
+    win_set_expected_size, win_surface_present, win_surface_present_software, win_surface_resize,
+    win_surface_set_visible,
 };
 pub use input::{
     jfn_input_windows_resize_to_parent, jfn_input_windows_run_input_thread,
@@ -161,21 +161,17 @@ pub fn win_set_idle_inhibit(level: c_int) {
 }
 
 // =====================================================================
-// Fullscreen-transition gating flag. Read by win_surface_present each
-// frame (under STATE lock in compositor.rs); set/cleared by the Rust
-// begin_transition_locked / end_transition_locked helpers. SeqCst
-// matches the prior plain-bool semantics with no surrounding ordering
-// requirements.
+// Fullscreen-transition gating lives in a jfn-compositor-core
+// TransitionGate held inside the compositor's STATE lock (see
+// compositor::gate_in_transition); these are thin entry points.
 // =====================================================================
-
-pub(crate) static G_TRANSITIONING: AtomicBool = AtomicBool::new(false);
 
 pub fn win_begin_transition() {
     jfn_win_begin_transition_locked();
 }
 
 pub fn win_in_transition() -> bool {
-    G_TRANSITIONING.load(Ordering::SeqCst)
+    crate::compositor::gate_in_transition()
 }
 
 // =====================================================================
@@ -312,7 +308,7 @@ pub fn win_open_external_url(url: &str) {
 // Backend impl
 // =====================================================================
 
-use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle};
+use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle, SurfaceSize, WindowGeometry, WindowPos};
 
 pub struct WindowsPlatform;
 
@@ -348,25 +344,30 @@ impl Platform for WindowsPlatform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        _dirty: *const JfnRect,
-        _dirty_len: usize,
-        _buffer: *const c_void,
-        _w: c_int,
-        _h: c_int,
+        dirty: &[JfnRect],
+        buffer: *const c_void,
+        w: c_int,
+        h: c_int,
     ) -> bool {
-        win_surface_present_software(s, _dirty, _dirty_len, _buffer, _w, _h)
+        win_surface_present_software(s, dirty.as_ptr(), dirty.len(), buffer, w, h)
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, lw: c_int, lh: c_int, pw: c_int, ph: c_int) {
-        win_surface_resize(s, lw, lh, pw, ph);
+    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
+        win_surface_resize(
+            s,
+            size.logical_w,
+            size.logical_h,
+            size.physical_w,
+            size.physical_h,
+        );
     }
 
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
         win_surface_set_visible(s, visible);
     }
 
-    fn restack(&self, ordered: *const SurfaceHandle, n: usize) {
-        win_restack(ordered, n);
+    fn restack(&self, ordered: &[SurfaceHandle]) {
+        win_restack(ordered.as_ptr(), ordered.len());
     }
 
     fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
@@ -426,12 +427,19 @@ impl Platform for WindowsPlatform {
         win_get_display_scale(x, y)
     }
 
-    fn query_window_position(&self, x: &mut c_int, y: &mut c_int) -> bool {
-        win_query_window_position(x, y)
+    fn query_window_position(&self) -> Option<WindowPos> {
+        let (mut x, mut y) = (0, 0);
+        if win_query_window_position(&mut x, &mut y) {
+            Some(WindowPos { x, y })
+        } else {
+            None
+        }
     }
 
-    fn clamp_window_geometry(&self, w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
-        win_clamp_window_geometry(w, h, x, y);
+    fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
+        let (mut w, mut h, mut x, mut y) = (g.w, g.h, g.x, g.y);
+        win_clamp_window_geometry(&mut w, &mut h, &mut x, &mut y);
+        WindowGeometry { w, h, x, y }
     }
 
     fn pump(&self) {

@@ -13,11 +13,13 @@ pub mod hotkey;
 pub mod idle_inhibit_sink;
 mod ingest;
 pub mod ingest_driver;
+pub mod lifecycle;
 #[cfg(target_os = "linux")]
 mod mpris;
 #[cfg(target_os = "linux")]
 pub mod mpris_sink;
 pub mod shutdown;
+pub mod sink_core;
 mod state_machine;
 pub mod theme_color_sink;
 mod types;

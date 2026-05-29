@@ -55,19 +55,13 @@ unsafe extern "C" fn close_cb_trampoline(_: *mut c_void) {
 // =====================================================================
 
 pub fn jfn_wl_lifecycle_init() -> bool {
-    let display = match mpv_prop_intptr(c"wayland-display") {
-        Some(p) => p as *mut c_void,
-        None => {
-            tracing::error!("Failed to get Wayland display from mpv");
-            return false;
-        }
+    let Some(display) = mpv_prop_intptr(c"wayland-display").map(|p| p as *mut c_void) else {
+        tracing::error!("Failed to get Wayland display from mpv");
+        return false;
     };
-    let parent = match mpv_prop_intptr(c"wayland-surface") {
-        Some(p) => p as *mut c_void,
-        None => {
-            tracing::error!("Failed to get Wayland surface from mpv");
-            return false;
-        }
+    let Some(parent) = mpv_prop_intptr(c"wayland-surface").map(|p| p as *mut c_void) else {
+        tracing::error!("Failed to get Wayland surface from mpv");
+        return false;
     };
 
     // Seed Rust state with mpv's current fullscreen — first configure
@@ -92,26 +86,76 @@ pub fn jfn_wl_lifecycle_init() -> bool {
         unsafe { write_close_cb(slot, Some(close_cb_trampoline)) };
     }
 
-    // EGL init for CEF shared texture support + dmabuf probe.
-    let egl_dpy: *mut c_void = match egl::Egl::load_default() {
-        Ok(api) => unsafe {
-            let d = (api.get_display)(display as egl::NativeDisplayType);
-            if d.is_null() {
-                std::ptr::null_mut()
-            } else {
-                let mut major: egl::Int = 0;
-                let mut minor: egl::Int = 0;
-                (api.initialize)(d, &mut major, &mut minor);
-                d
-            }
-        },
-        Err(_) => std::ptr::null_mut(),
-    };
+    // EGL init for CEF shared texture support + dmabuf probe. Skipped
+    // entirely when `--wayland-paint` forces a path. The Vulkan-WSI
+    // fallback is enabled either by `--wayland-paint=gpu` (hard
+    // requirement) or by EGL-probe failure with a usable Vulkan
+    // adapter present.
+    let mut want_gpu_paint = false;
+    match crate::paint_override::paint_override() {
+        Some(crate::paint_override::WlPaintOverride::Dmabuf) => {
+            tracing::info!("--wayland-paint=dmabuf: skipping probe, forcing dmabuf");
+        }
+        Some(crate::paint_override::WlPaintOverride::Shm) => {
+            tracing::info!("--wayland-paint=shm: skipping probe, forcing wl_shm");
+            jfn_platform_abi::get().set_shared_texture_unsupported();
+        }
+        Some(crate::paint_override::WlPaintOverride::Gpu) => {
+            tracing::info!("--wayland-paint=gpu: skipping probe, forcing Vulkan WSI");
+            jfn_platform_abi::get().set_shared_texture_unsupported();
+            want_gpu_paint = true;
+        }
+        None => {
+            let egl_dpy: *mut c_void = match egl::Egl::load_default() {
+                Ok(api) => unsafe {
+                    let d = (api.get_display)(display as egl::NativeDisplayType);
+                    if d.is_null() {
+                        std::ptr::null_mut()
+                    } else {
+                        let mut major: egl::Int = 0;
+                        let mut minor: egl::Int = 0;
+                        (api.initialize)(d, &mut major, &mut minor);
+                        d
+                    }
+                },
+                Err(_) => std::ptr::null_mut(),
+            };
 
-    let ozone = jfn_platform_abi::get().cef_ozone_platform();
-    if !unsafe { jfn_wl_dmabuf_probe(ozone, egl_dpy) } {
-        tracing::warn!("Shared textures not supported; using software CEF rendering");
-        jfn_platform_abi::get().set_shared_texture_unsupported();
+            let ozone = jfn_platform_abi::get().cef_ozone_platform();
+            if !unsafe { jfn_wl_dmabuf_probe(ozone, egl_dpy) } {
+                // EGL+GBM dmabuf path unavailable. Probe the Vulkan
+                // compositor — a usable adapter wins over wl_shm.
+                let caps = jfn_gpu_paint::GpuContext::probe();
+                if caps.gpu_available {
+                    tracing::warn!(
+                        "EGL dmabuf unavailable; routing through Vulkan WSI pixel-upload"
+                    );
+                    want_gpu_paint = true;
+                } else {
+                    tracing::warn!("Shared textures not supported; using software CEF rendering");
+                }
+                jfn_platform_abi::get().set_shared_texture_unsupported();
+            }
+        }
+    }
+
+    if want_gpu_paint {
+        match jfn_gpu_paint::GpuContext::new() {
+            Ok(ctx) => {
+                crate::wl_state::install_gpu_paint(ctx);
+            }
+            Err(e) => {
+                let forced = matches!(
+                    crate::paint_override::paint_override(),
+                    Some(crate::paint_override::WlPaintOverride::Gpu)
+                );
+                if forced {
+                    tracing::error!("--wayland-paint=gpu requested but init failed: {e}");
+                    return false;
+                }
+                tracing::warn!("Vulkan WSI fallback unavailable: {e}; using wl_shm");
+            }
+        }
     }
 
     #[cfg(feature = "kde-palette")]
@@ -139,7 +183,7 @@ pub fn jfn_wl_lifecycle_cleanup() {
     // window. The scheme file is unlinked separately via
     // jfn_wl_kde_palette_post_window_cleanup after mpv tears down the
     // surface.
-    jfn_idle_inhibit_linux::cleanup();
+    jfn_linux_util::idle_inhibit::cleanup();
     crate::clipboard::clipboard_cleanup();
     crate::input_lifecycle::lifecycle_cleanup();
     // Rust-side WlState lives until process exit (mirrors C++ globals).

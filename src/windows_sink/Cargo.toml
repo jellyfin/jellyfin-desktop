@@ -11,7 +11,6 @@ crate-type = ["rlib"]
 [target.'cfg(target_os = "windows")'.dependencies]
 jfn-mpv = { path = "../mpv" }
 jfn-playback = { path = "../playback" }
-jfn-cef = { path = "../jfn_cef", default-features = false }
 tracing.workspace = true
 windows = { workspace = true, features = [
     "Win32_Foundation",
@@ -27,9 +26,6 @@ windows = { workspace = true, features = [
 ] }
 windows-core.workspace = true
 windows-future = "0.3"
-
-[dependencies]
-parking_lot.workspace = true
 
 [lints]
 workspace = true

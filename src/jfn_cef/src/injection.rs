@@ -64,10 +64,21 @@ const OVERLAY_FUNCTIONS: &[&str] = &[
     "dismissOverlay",
     "checkServerConnectivity",
     "cancelServerConnectivity",
-    "overlayFadeComplete",
 ];
 
 const ABOUT_FUNCTIONS: &[&str] = &["aboutOpenPath", "aboutDismiss"];
+
+// Client-side-decoration controls + script, shared by every browser layer
+// (web, overlay, about) so the window stays controllable from whichever one
+// is active.
+const WINDOW_FUNCTIONS: &[&str] = &[
+    "windowMinimize",
+    "windowToggleMaximize",
+    "windowClose",
+    "windowStartMove",
+    "windowStartResize",
+    "csdReady",
+];
 
 static DEVICE_PROFILE_JSON: OnceLock<String> = OnceLock::new();
 
@@ -88,13 +99,24 @@ pub unsafe fn jfn_cef_set_device_profile_json(json_utf8: *const c_char, len: usi
     let _ = DEVICE_PROFILE_JSON.set(s);
 }
 
-fn fill_list(funcs: &[&str], scripts: &[&str], add_ctx_menu: bool) -> Option<DictionaryValue> {
+fn fill_list(
+    funcs: &[&str],
+    scripts: &[&str],
+    add_ctx_menu: bool,
+    add_window: bool,
+) -> Option<DictionaryValue> {
     let dict = dictionary_value_create()?;
     let fn_list = list_value_create()?;
     let mut idx = 0;
     for &name in funcs {
         fn_list.set_string(idx, Some(&CefString::from(name)));
         idx += 1;
+    }
+    if add_window {
+        for &name in WINDOW_FUNCTIONS {
+            fn_list.set_string(idx, Some(&CefString::from(name)));
+            idx += 1;
+        }
     }
     if add_ctx_menu {
         fn_list.set_string(idx, Some(&CefString::from("menuItemSelected")));
@@ -110,6 +132,10 @@ fn fill_list(funcs: &[&str], scripts: &[&str], add_ctx_menu: bool) -> Option<Dic
         script_list.set_string(sidx, Some(&CefString::from(name)));
         sidx += 1;
     }
+    if add_window {
+        script_list.set_string(sidx, Some(&CefString::from("csd.js")));
+        sidx += 1;
+    }
     if add_ctx_menu {
         script_list.set_string(sidx, Some(&CefString::from("context-menu.js")));
     }
@@ -122,7 +148,7 @@ fn fill_list(funcs: &[&str], scripts: &[&str], add_ctx_menu: bool) -> Option<Dic
 pub fn build_for_kind(kind: &str, add_ctx_menu: bool) -> Option<DictionaryValue> {
     match kind {
         "web" => {
-            let dict = fill_list(WEB_FUNCTIONS, WEB_SCRIPTS, add_ctx_menu)?;
+            let dict = fill_list(WEB_FUNCTIONS, WEB_SCRIPTS, add_ctx_menu, true)?;
             if let Some(json) = DEVICE_PROFILE_JSON.get()
                 && !json.is_empty()
             {
@@ -133,8 +159,8 @@ pub fn build_for_kind(kind: &str, add_ctx_menu: bool) -> Option<DictionaryValue>
             }
             Some(dict)
         }
-        "overlay" => fill_list(OVERLAY_FUNCTIONS, &[], add_ctx_menu),
-        "about" => fill_list(ABOUT_FUNCTIONS, &[], add_ctx_menu),
+        "overlay" => fill_list(OVERLAY_FUNCTIONS, &[], add_ctx_menu, true),
+        "about" => fill_list(ABOUT_FUNCTIONS, &[], add_ctx_menu, true),
         _ => None,
     }
 }

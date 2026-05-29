@@ -105,8 +105,10 @@ impl PlaybackCoordinator {
             return;
         }
         self.shared.wake.signal();
-        if let Some(h) = self.join.take() {
-            let _ = h.join();
+        if let Some(h) = self.join.take()
+            && let Err(e) = h.join()
+        {
+            eprintln!("[playback] coordinator worker panicked: {e:?}");
         }
     }
 
@@ -283,7 +285,7 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
+    use std::sync::mpsc;
 
     #[test]
     fn snapshot_starts_fresh() {
@@ -298,19 +300,18 @@ mod tests {
     fn worker_updates_snapshot_after_input() {
         let mut coord = PlaybackCoordinator::new();
         coord.start();
+        // Register a sink BEFORE enqueuing so the first dispatched batch
+        // signals the channel. Sinks fire on the worker thread after the
+        // snapshot is published, so receiving = snapshot is up-to-date.
+        let (tx, rx) = mpsc::sync_channel::<()>(1);
+        coord.add_event_sink(Box::new(move |_ev| {
+            let _ = tx.try_send(());
+        }));
         coord.enqueue(Input::FileLoaded);
-        let deadline = Instant::now() + Duration::from_millis(500);
-        loop {
-            let s = coord.snapshot();
-            if s.presence == PlayerPresence::Present {
-                assert_eq!(s.phase, PlaybackPhase::Starting);
-                break;
-            }
-            if Instant::now() > deadline {
-                panic!("snapshot never updated");
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
+        rx.recv().expect("worker never published an event");
+        let s = coord.snapshot();
+        assert_eq!(s.presence, PlayerPresence::Present);
+        assert_eq!(s.phase, PlaybackPhase::Starting);
         coord.stop();
     }
 }

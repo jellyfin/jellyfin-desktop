@@ -30,25 +30,14 @@ extern_class!(
     pub struct NSView;
 );
 
-// =====================================================================
-// CEF constants (cef_types.h)
-// =====================================================================
-
-const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
-const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
-const EVENTFLAG_ALT_DOWN: u32 = 1 << 3;
-const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
-const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
-const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
-const EVENTFLAG_COMMAND_DOWN: u32 = 1 << 7;
-
-// CEF mouse button codes (matching dispatch.h's encoding for the
-// jfn_input_dispatch_mouse_button entry point).
-const MOUSE_BTN_LEFT: u32 = 0x110;
-const MOUSE_BTN_RIGHT: u32 = 0x111;
-const MOUSE_BTN_MIDDLE: u32 = 0x112;
-
+use jfn_input::buttons::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use jfn_input::scroll::ScrollAccum;
 use jfn_platform_abi::cursor::*;
+use jfn_platform_abi::event_flags::{
+    EVENTFLAG_ALT_DOWN, EVENTFLAG_COMMAND_DOWN, EVENTFLAG_CONTROL_DOWN,
+    EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
+    EVENTFLAG_SHIFT_DOWN,
+};
 
 // NSEventModifierFlags (NSEvent.h).
 const NSEVENT_MOD_SHIFT: u64 = 1 << 17;
@@ -289,72 +278,24 @@ pub fn jfn_input_macos_set_cursor(t: c_int) {
 // flush per runloop cycle. All fields touched from main thread only.
 // =====================================================================
 
-struct ScrollAccum {
-    ax: f32,
-    ay: f32,
-    x: i32,
-    y: i32,
-    mods: u32,
-    precise: bool,
-    pending: bool,
-    flush_scheduled: bool,
-}
-
-static SCROLL: Mutex<ScrollAccum> = Mutex::new(ScrollAccum {
-    ax: 0.0,
-    ay: 0.0,
-    x: 0,
-    y: 0,
-    mods: 0,
-    precise: false,
-    pending: false,
-    flush_scheduled: false,
-});
+static SCROLL: Mutex<ScrollAccum> = Mutex::new(ScrollAccum::new());
 
 unsafe extern "C" fn scroll_flush_trampoline(_ctx: *mut c_void) {
     flush_scroll_accumulator();
 }
 
 fn flush_scroll_accumulator() {
-    let (dx, dy, x, y, mods, precise) = {
-        let mut s = SCROLL.lock();
-        s.flush_scheduled = false;
-        if !s.pending {
-            return;
-        }
-        let mut dx: i32;
-        let mut dy: i32;
-        if s.precise {
-            dx = s.ax.round() as i32;
-            dy = s.ay.round() as i32;
-            s.ax -= dx as f32;
-            s.ay -= dy as f32;
-        } else {
-            const DRAIN: f32 = 0.45;
-            dx = (s.ax * DRAIN).round() as i32;
-            dy = (s.ay * DRAIN).round() as i32;
-            if dx == 0 && s.ax.abs() >= 1.0 {
-                dx = if s.ax > 0.0 { 1 } else { -1 };
-            }
-            if dy == 0 && s.ay.abs() >= 1.0 {
-                dy = if s.ay > 0.0 { 1 } else { -1 };
-            }
-            s.ax -= dx as f32;
-            s.ay -= dy as f32;
-            if s.ax.abs() < 0.5 {
-                s.ax = 0.0;
-            }
-            if s.ay.abs() < 0.5 {
-                s.ay = 0.0;
-            }
-        }
-        s.pending = s.ax != 0.0 || s.ay != 0.0;
-        (dx, dy, s.x, s.y, s.mods, s.precise)
-    };
-    if dx == 0 && dy == 0 {
-        return;
+    let flush = SCROLL.lock().flush();
+    if let Some(f) = flush {
+        jfn_input_dispatch_scroll_precise(
+            f.x,
+            f.y,
+            f.dx,
+            f.dy,
+            f.mods,
+            if f.precise { 1 } else { 0 },
+        );
     }
-    jfn_input_dispatch_scroll_precise(x, y, dx, dy, mods, if precise { 1 } else { 0 });
 }
 
 // =====================================================================
@@ -414,19 +355,19 @@ define_class!(
         // ---- Mouse buttons ----
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &AnyObject) {
-            dispatch_mouse_button(self, event, MOUSE_BTN_LEFT, true);
+            dispatch_mouse_button(self, event, BTN_LEFT, true);
         }
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &AnyObject) {
-            dispatch_mouse_button(self, event, MOUSE_BTN_LEFT, false);
+            dispatch_mouse_button(self, event, BTN_LEFT, false);
         }
         #[unsafe(method(rightMouseDown:))]
         fn right_mouse_down(&self, event: &AnyObject) {
-            dispatch_mouse_button(self, event, MOUSE_BTN_RIGHT, true);
+            dispatch_mouse_button(self, event, BTN_RIGHT, true);
         }
         #[unsafe(method(rightMouseUp:))]
         fn right_mouse_up(&self, event: &AnyObject) {
-            dispatch_mouse_button(self, event, MOUSE_BTN_RIGHT, false);
+            dispatch_mouse_button(self, event, BTN_RIGHT, false);
         }
         #[unsafe(method(otherMouseDown:))]
         fn other_mouse_down(&self, event: &AnyObject) {
@@ -435,7 +376,7 @@ define_class!(
                 jfn_input_dispatch_history_nav(if n == NS_MOUSE_BUTTON_FORWARD { 1 } else { 0 });
                 return;
             }
-            dispatch_mouse_button(self, event, MOUSE_BTN_MIDDLE, true);
+            dispatch_mouse_button(self, event, BTN_MIDDLE, true);
         }
         #[unsafe(method(otherMouseUp:))]
         fn other_mouse_up(&self, event: &AnyObject) {
@@ -443,7 +384,7 @@ define_class!(
             if n == NS_MOUSE_BUTTON_BACK || n == NS_MOUSE_BUTTON_FORWARD {
                 return;
             }
-            dispatch_mouse_button(self, event, MOUSE_BTN_MIDDLE, false);
+            dispatch_mouse_button(self, event, BTN_MIDDLE, false);
         }
 
         // ---- Mouse move ----
@@ -486,29 +427,14 @@ define_class!(
                 }
             };
             let mods_raw: u64 = unsafe { msg_send![event, modifierFlags] };
-            let mut sched = false;
-            {
-                let mut s = SCROLL.lock();
-                s.x = loc.x as i32;
-                s.y = loc.y as i32;
-                s.mods = ns_to_cef_modifiers(mods_raw);
-                s.precise = precise;
-                if precise {
-                    s.ax += delta_x;
-                    s.ay += delta_y;
-                } else {
-                    // Cocoa scrollWheel non-precise reports line deltas; Chromium maps
-                    // one scroll line to 40 CSS pixels.
-                    const PIXELS_PER_TICK: f32 = 40.0;
-                    s.ax += delta_x * PIXELS_PER_TICK;
-                    s.ay += delta_y * PIXELS_PER_TICK;
-                }
-                s.pending = true;
-                if !s.flush_scheduled {
-                    s.flush_scheduled = true;
-                    sched = true;
-                }
-            }
+            let sched = SCROLL.lock().accumulate(
+                loc.x as i32,
+                loc.y as i32,
+                ns_to_cef_modifiers(mods_raw),
+                precise,
+                delta_x,
+                delta_y,
+            );
             if sched {
                 unsafe {
                     dispatch_async_f(
@@ -627,9 +553,9 @@ fn mouse_loc_in_view(view: &InputView, event: &AnyObject) -> NSPoint {
 
 fn dispatch_mouse_button(view: &InputView, event: &AnyObject, button_code: u32, pressed: bool) {
     let flag = match button_code {
-        MOUSE_BTN_LEFT => EVENTFLAG_LEFT_MOUSE_BUTTON,
-        MOUSE_BTN_RIGHT => EVENTFLAG_RIGHT_MOUSE_BUTTON,
-        MOUSE_BTN_MIDDLE => EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+        BTN_LEFT => EVENTFLAG_LEFT_MOUSE_BUTTON,
+        BTN_RIGHT => EVENTFLAG_RIGHT_MOUSE_BUTTON,
+        BTN_MIDDLE => EVENTFLAG_MIDDLE_MOUSE_BUTTON,
         _ => 0,
     };
     let prev = G_MOUSE_BUTTON_MODIFIERS.load(Ordering::SeqCst);

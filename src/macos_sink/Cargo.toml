@@ -9,9 +9,7 @@ name = "jfn_macos_sink"
 crate-type = ["rlib"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
-jfn-mpv = { path = "../mpv" }
 jfn-playback = { path = "../playback" }
-jfn-cef = { path = "../jfn_cef", default-features = false }
 tracing.workspace = true
 objc2.workspace = true
 block2 = "0.6"
@@ -19,9 +17,6 @@ objc2-foundation.workspace = true
 objc2-app-kit = "0.3"
 objc2-media-player = "0.3"
 libc.workspace = true
-
-[dependencies]
-parking_lot.workspace = true
 
 [lints]
 workspace = true

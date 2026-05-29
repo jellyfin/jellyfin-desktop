@@ -135,6 +135,12 @@ wrap_client! {
                     self.inner.handle_menu_dismissed();
                     1
                 }
+                // Window controls (CSD) are handled centrally for every layer,
+                // so no per-layer message handler needs to know about them.
+                n if crate::window_controls::is_window_message(n) => {
+                    crate::window_controls::handle_window_op(n, args.as_ref(), browser);
+                    1
+                }
                 _ => {
                     // The callback adopts one owning reference for each ptr (CToCpp Wrap).
                     // Rust still holds its own ref via the Browser/ListValue wrappers,

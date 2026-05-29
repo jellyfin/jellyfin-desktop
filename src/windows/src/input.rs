@@ -49,24 +49,14 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 // CEF cursor-type ordinals + event flags (mirrors cef_types.h)
 // =====================================================================
 
+use jfn_input::buttons::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use jfn_platform_abi::cursor::*;
-
-const EVENTFLAG_CAPS_LOCK_ON: u32 = 1 << 0;
-const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
-const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
-const EVENTFLAG_ALT_DOWN: u32 = 1 << 3;
-const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
-const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
-const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
-const EVENTFLAG_NUM_LOCK_ON: u32 = 1 << 8;
-const EVENTFLAG_IS_KEY_PAD: u32 = 1 << 9;
-const EVENTFLAG_IS_LEFT: u32 = 1 << 10;
-const EVENTFLAG_IS_RIGHT: u32 = 1 << 11;
-
-// Mouse button codes (matching input::dispatch.h's encoding).
-const MOUSE_BTN_LEFT: u32 = 0x110;
-const MOUSE_BTN_RIGHT: u32 = 0x111;
-const MOUSE_BTN_MIDDLE: u32 = 0x112;
+use jfn_platform_abi::event_flags::{
+    EVENTFLAG_ALT_DOWN, EVENTFLAG_CAPS_LOCK_ON, EVENTFLAG_CONTROL_DOWN, EVENTFLAG_IS_KEY_PAD,
+    EVENTFLAG_IS_LEFT, EVENTFLAG_IS_RIGHT, EVENTFLAG_LEFT_MOUSE_BUTTON,
+    EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_NUM_LOCK_ON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
+    EVENTFLAG_SHIFT_DOWN,
+};
 
 use jfn_input::{
     jfn_input_dispatch_char_sys, jfn_input_dispatch_history_nav, jfn_input_dispatch_key_full,
@@ -282,10 +272,10 @@ fn cef_cursor_to_win(ct: i32) -> PCWSTR {
 
 fn msg_to_button_code(msg: u32) -> u32 {
     match msg {
-        WM_LBUTTONDOWN | WM_LBUTTONUP | WM_LBUTTONDBLCLK => MOUSE_BTN_LEFT,
-        WM_RBUTTONDOWN | WM_RBUTTONUP | WM_RBUTTONDBLCLK => MOUSE_BTN_RIGHT,
-        WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MBUTTONDBLCLK => MOUSE_BTN_MIDDLE,
-        _ => MOUSE_BTN_LEFT,
+        WM_LBUTTONDOWN | WM_LBUTTONUP | WM_LBUTTONDBLCLK => BTN_LEFT,
+        WM_RBUTTONDOWN | WM_RBUTTONUP | WM_RBUTTONDBLCLK => BTN_RIGHT,
+        WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MBUTTONDBLCLK => BTN_MIDDLE,
+        _ => BTN_LEFT,
     }
 }
 
