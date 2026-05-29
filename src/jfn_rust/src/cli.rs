@@ -44,11 +44,15 @@ pub struct CliArgs {
     pub log_level: Option<String>,
     pub log_file: Option<String>,
     pub ozone_platform: Option<String>,
+    // Read only on Linux (display-backend selection); compiles out elsewhere.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub platform_override: Option<String>,
     pub audio_exclusive: bool,
     pub disable_gpu_compositing: bool,
     pub remote_debugging_port: Option<i32>,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub x11_paint: Option<X11Paint>,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub wayland_paint: Option<WaylandPaint>,
 }
 
