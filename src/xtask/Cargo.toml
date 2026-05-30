@@ -10,8 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+cargo-lock = "11"
 clap = { version = "4", features = ["derive", "env"] }
+download-cef = "2.3"
 flate2 = "1"
+tempfile = "3"
 regex = "1"
 tar = "0.4"
 zip = { version = "8", default-features = false, features = ["deflate"] }

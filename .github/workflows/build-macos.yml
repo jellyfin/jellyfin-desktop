@@ -50,17 +50,9 @@ jobs:
             libunibreak \
             zimg
 
-      - name: Cache CEF
-        uses: actions/cache@v5
+      - uses: ./.github/actions/setup-cef
         with:
-          path: |
-            third_party/cef
-            third_party/cef_binary_*
-          key: cef-macos-${{ matrix.arch }}-${{ hashFiles('CEF_VERSION') }}
-
-      - name: Download CEF
-        run: |
-          python3 dev/tools/download_cef.py
+          platform: ${{ github.workflow }}-${{ matrix.arch }}
 
       - name: Build app bundle
         run: cargo xtask install --prefix build/output

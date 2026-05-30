@@ -6,10 +6,6 @@ import 'dev/windows/windows.just'
 list:
     @just --list --unsorted
 
-# Update vendored deps
-update-deps *args:
-    python3 dev/tools/update_deps.py {{args}}
-
 # Remove build artifacts
 [macos]
 [linux]

@@ -23,7 +23,7 @@ just dmg              # Build distributable DMG (dist/)
 
 ## Directory Structure
 
-- `third_party/cef/` - CEF binary distribution (downloaded on first build)
+- `.cache/cef/` - CEF binary distribution (downloaded on first build)
 - `third_party/mpv/` - mpv source (git submodule, built via meson by `cargo xtask`)
 - `build/` - Build output (safe to delete)
 - `build/jellyfin-desktop` - Staged binary tree (build step)
@@ -60,7 +60,7 @@ dev/macos/setup.sh
 
 Manually download CEF:
 ```bash
-python3 dev/tools/download_cef.py
+cargo xtask fetch-cef
 ```
 
 ### Web Debugger

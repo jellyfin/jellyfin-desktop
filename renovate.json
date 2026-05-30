@@ -3,29 +3,5 @@
   "extends": [
     "config:recommended"
   ],
-  "ignorePaths": ["third_party/**"],
-  "customDatasources": {
-    "cef": {
-      "defaultRegistryUrlTemplate": "https://cef-builds.spotifycdn.com/index.json",
-      "format": "json",
-      "transformTemplates": [
-        "{\"releases\": linux64.versions[channel='stable' and cef_version in $$.macosarm64.versions[channel='stable'].cef_version and cef_version in $$.macosx64.versions[channel='stable'].cef_version and cef_version in $$.windows64.versions[channel='stable'].cef_version and cef_version in $$.windowsarm64.versions[channel='stable'].cef_version].{\"version\": cef_version}}"
-      ]
-    }
-  },
-  "customManagers": [
-    {
-      "customType": "regex",
-      "fileMatch": ["^CEF_VERSION$"],
-      "matchStrings": ["^(?<currentValue>\\S+)"],
-      "datasourceTemplate": "custom.cef",
-      "depNameTemplate": "cef"
-    }
-  ],
-  "packageRules": [
-    {
-      "matchDatasources": ["custom.cef"],
-      "commitMessageTopic": "CEF"
-    }
-  ]
+  "ignorePaths": ["third_party/**"]
 }

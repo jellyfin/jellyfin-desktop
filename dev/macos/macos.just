@@ -8,7 +8,7 @@ deps:
     if ! [ -e third_party/mpv/.git ]; then
         git submodule update --init --recursive
     fi
-    python3 dev/tools/download_cef.py
+    cargo xtask fetch-cef
 
 [macos]
 build: deps

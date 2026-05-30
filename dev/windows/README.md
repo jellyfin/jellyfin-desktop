@@ -41,7 +41,7 @@ git submodule update --init --recursive
 ### 2. CEF (Chromium Embedded Framework)
 
 ```powershell
-python dev\tools\download_cef.py
+cargo xtask fetch-cef
 ```
 
 ### 3. mpv
@@ -67,7 +67,7 @@ This builds mpv from the submodule source using MSYS2, and generates an MSVC imp
 | Option | Description |
 |--------|-------------|
 | `EXTERNAL_MPV_DIR` | Path to mpv installation (auto-detected from `third_party/mpv-install`) |
-| `EXTERNAL_CEF_DIR` | Path to CEF installation (auto-detected from `third_party/cef`) |
+| `EXTERNAL_CEF_DIR` | Path to CEF installation (auto-detected from `.cache/cef`) |
 
 ## Scripts
 
@@ -76,7 +76,6 @@ This builds mpv from the submodule source using MSYS2, and generates an MSVC imp
 | `setup.ps1` | Full environment setup (CEF, mpv, checks prerequisites) |
 | `build.bat` | Entry point: loads VS environment and runs build.ps1 |
 | `build.ps1` | Configure and build with Ninja |
-| `build_cef.ps1` | Build CEF wrapper library |
 | `build_mpv_source.ps1` | Build mpv from submodule source using MSYS2 |
 
 ## Troubleshooting

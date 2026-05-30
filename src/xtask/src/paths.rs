@@ -14,6 +14,10 @@ pub fn workspace_manifest() -> PathBuf {
     repo_root().join("src").join("jfn_rust").join("Cargo.toml")
 }
 
+pub fn cef_cache_dir() -> PathBuf {
+    repo_root().join(".cache").join("cef")
+}
+
 pub fn cargo_target_dir(out: &std::path::Path) -> PathBuf {
     out.join("cargo-target")
 }

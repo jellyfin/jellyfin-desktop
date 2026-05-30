@@ -27,16 +27,17 @@ enum Cmd {
     Build(BuildArgs),
     Install(InstallArgs),
     Package(PackageArgs),
+    FetchCef,
 }
 
 #[derive(clap::Args, Clone)]
 pub struct BuildArgs {
-    /// Use the named external CEF SDK directory (must contain include/, Release/, Resources/).
+    /// download-cef root; staged next to the binary.
     #[arg(long)]
     pub external_cef: Option<PathBuf>,
-    /// Use the system-installed CEF (/usr/lib/cef, /usr/include/cef).
+    /// rpath an installed CEF in place.
     #[arg(long)]
-    pub system_cef: bool,
+    pub cef_path: Option<PathBuf>,
     /// Use the named external libmpv directory (must contain include/ and lib/).
     #[arg(long, env = "EXTERNAL_MPV_DIR")]
     pub external_mpv: Option<PathBuf>,
@@ -78,5 +79,8 @@ fn main() -> Result<()> {
         Cmd::Build(a) => build::run(&a).map(|_| ()),
         Cmd::Install(a) => install::run(&a).map(|_| ()),
         Cmd::Package(a) => package::run(&a),
+        Cmd::FetchCef => {
+            cef::ensure(&paths::cef_cache_dir()).map(|dir| println!("CEF ready: {}", dir.display()))
+        }
     }
 }

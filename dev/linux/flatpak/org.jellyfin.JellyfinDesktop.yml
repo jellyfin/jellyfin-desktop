@@ -27,24 +27,14 @@ cleanup:
   - /lib/pkgconfig
   - /share/man
 modules:
-  # Stage the CEF SDK tree at /app/cef in its standard layout. The wrapper is
-  # NOT built here — jellyfin-desktop's FindCEF.cmake builds it during the
-  # next module, where DetectCefApiVersion.cmake has already derived the
-  # api_version from cef-dll-sys's Cargo manifest and can pin the wrapper to
-  # match cef-rs's binding ABI. Building it here would default to
-  # CEF_API_VERSION_EXPERIMENTAL (999999), mismatch the app's struct sizes,
-  # and trip a runtime CHECK on the first Rust→C++ handoff. /app/cef itself
-  # is pruned at finish via the cleanup entry above; the wrapper .a is
-  # already linked into the binary and the SDK headers/libs that need to
-  # ship are copied to /app by the app's install rules.
   - name: cef
     buildsystem: simple
     build-commands:
       - mkdir -p /app/cef
-      - cp -r CMakeLists.txt cmake include libcef_dll Release Resources /app/cef/
+      - cp -r . /app/cef/
     sources:
       - type: dir
-        path: ../../../third_party/cef
+        path: ../../../.cache/cef
 
   - name: libmpv
     buildsystem: meson

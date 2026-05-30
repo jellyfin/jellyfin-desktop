@@ -39,17 +39,9 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache CEF
-        uses: actions/cache@v5
+      - uses: ./.github/actions/setup-cef
         with:
-          path: |
-            third_party/cef
-            third_party/cef_binary_*
-          key: cef-${{ matrix.platform }}-${{ hashFiles('CEF_VERSION') }}
-
-      - name: Download CEF
-        run: |
-          python dev/tools/download_cef.py --platform ${{ matrix.platform }}
+          platform: ${{ github.workflow }}-${{ matrix.arch }}
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
