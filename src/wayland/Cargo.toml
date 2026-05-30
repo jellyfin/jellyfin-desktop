@@ -25,7 +25,7 @@ jfn-platform-abi = { path = "../platform_abi" }
 jfn-mpv = { path = "../mpv" }
 jfn-playback = { path = "../playback" }
 jfn-wlproxy = { path = "../wlproxy" }
-cef-dll-sys.workspace = true
+cef.workspace = true
 libc.workspace = true
 libloading = "0.9"
 memmap2 = "0.9"
