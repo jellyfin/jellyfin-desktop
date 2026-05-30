@@ -513,13 +513,22 @@ fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
     replace_first(&mut code, "__SERVER_URL__", &jfn_config::server_url());
     // Include the active CEF/Ozone display backend in the injected settings JSON
     // so the web UI can hide startup modes unsupported by the current backend.
-    let display_backend = jfn_platform_abi::try_get()
+    let mut display_backend = jfn_platform_abi::try_get()
         .map(|p| unsafe {
             std::ffi::CStr::from_ptr(p.cef_ozone_platform())
                 .to_string_lossy()
                 .into_owned()
         })
         .unwrap_or_default();
+
+    // On Linux, the platform ABI may not have the Ozone backend populated before
+    // the web shim is injected. Fall back to the session type so Wayland can hide
+    // maximize mode when the compositor/backend does not honor it.
+    if display_backend.is_empty() {
+        display_backend = std::env::var("XDG_SESSION_TYPE")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+    }
 
     replace_first(
         &mut code,
