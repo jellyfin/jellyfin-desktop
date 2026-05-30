@@ -113,8 +113,8 @@ impl GpuPainter {
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("jfn_gpu_paint pl"),
-                bind_group_layouts: &[&bind_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&bind_layout)],
+                immediate_size: 0,
             });
 
         let pipeline = ctx
@@ -124,13 +124,13 @@ impl GpuPainter {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: "vs_main",
+                    entry_point: Some("vs_main"),
                     buffers: &[],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: "fs_main",
+                    entry_point: Some("fs_main"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: SURFACE_FORMAT,
@@ -144,7 +144,7 @@ impl GpuPainter {
                 },
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -156,7 +156,7 @@ impl GpuPainter {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -294,15 +294,19 @@ impl GpuPainter {
     }
 
     fn draw_and_present(&mut self) -> Result<(), GpuPaintError> {
+        use wgpu::CurrentSurfaceTexture::*;
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Success(f) | Suboptimal(f) => f,
+            Lost | Outdated => {
                 self.surface.configure(&self.ctx.device, &self.config);
-                self.surface
-                    .get_current_texture()
-                    .map_err(GpuPaintError::Acquire)?
+                match self.surface.get_current_texture() {
+                    Success(f) | Suboptimal(f) => f,
+                    _ => return Err(GpuPaintError::Acquire("lost after reconfigure")),
+                }
             }
-            Err(e) => return Err(GpuPaintError::Acquire(e)),
+            Timeout => return Err(GpuPaintError::Acquire("timeout")),
+            Occluded => return Err(GpuPaintError::Acquire("occluded")),
+            Validation => return Err(GpuPaintError::Acquire("validation")),
         };
         let view = frame
             .texture
@@ -319,6 +323,7 @@ impl GpuPainter {
                 label: Some("jfn_gpu_paint pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -328,6 +333,7 @@ impl GpuPainter {
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &upload.bind_group, &[]);
@@ -382,7 +388,7 @@ fn write_rect(
     let end = start + ((h - 1) as usize) * stride + (w as usize) * 4;
     let slice = &frame.bgra[start..end];
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &upload.tex,
             mip_level: 0,
             origin: wgpu::Origin3d {
@@ -393,7 +399,7 @@ fn write_rect(
             aspect: wgpu::TextureAspect::All,
         },
         slice,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(frame.stride),
             rows_per_image: NonZeroU32::new(h as u32).map(|n| n.get()),
@@ -440,7 +446,7 @@ unsafe fn create_surface(
     };
     let surface = unsafe {
         instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-            raw_display_handle: display,
+            raw_display_handle: Some(display),
             raw_window_handle: window,
         })?
     };

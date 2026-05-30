@@ -18,7 +18,7 @@ tracing.workspace = true
 libc.workspace = true
 thiserror = "2"
 raw-window-handle = "0.6"
-wgpu = "22"
+wgpu = "29"
 pollster = "0.4"
 
 [lints]

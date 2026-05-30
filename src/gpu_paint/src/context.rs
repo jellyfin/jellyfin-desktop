@@ -61,17 +61,17 @@ impl GpuContext {
         let adapter = pick_adapter(&instance).ok_or(GpuPaintError::NoAdapter)?;
         let info = adapter.get_info();
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("jfn_gpu_paint device"),
                 required_features: wgpu::Features::empty(),
                 // Adapter limits — the swapchain may be larger than the
                 // downlevel 2048×2048 cap on modern displays.
                 required_limits: adapter.limits(),
+                experimental_features: wgpu::ExperimentalFeatures::default(),
                 memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        ))?;
+                trace: wgpu::Trace::Off,
+            }))?;
 
         tracing::info!(
             adapter = %info.name,
@@ -100,14 +100,12 @@ fn build_instance() -> wgpu::Instance {
     wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
         flags: wgpu::InstanceFlags::empty(),
-        dx12_shader_compiler: wgpu::Dx12Compiler::default(),
-        gles_minor_version: wgpu::Gles3MinorVersion::default(),
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     })
 }
 
 fn pick_adapter(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
-    let adapters: Vec<_> = instance
-        .enumerate_adapters(wgpu::Backends::VULKAN)
+    let adapters: Vec<_> = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN))
         .into_iter()
         .filter(|a| {
             !matches!(
