@@ -10,8 +10,8 @@ pub enum GpuPaintError {
     SurfaceCreate(#[from] wgpu::CreateSurfaceError),
     #[error("adapter does not support requested surface")]
     SurfaceUnsupported,
-    #[error("swapchain acquire failed: {0:?}")]
-    Acquire(wgpu::SurfaceError),
+    #[error("swapchain acquire failed: {0}")]
+    Acquire(&'static str),
     #[error("invalid frame dimensions: {0}x{1}")]
     BadDimensions(u32, u32),
 }
