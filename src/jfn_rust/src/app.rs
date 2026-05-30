@@ -1045,9 +1045,14 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
     {
         let saved = jfn_config::window_geometry();
         let locked = fs_flag != 0 || jfn_playback::ingest_driver::jfn_playback_window_maximized();
+        // Only scale saved geometry when valid logical dimensions exist; otherwise
+        // a restored/backup settings file with missing dimensions could resize the
+        // window down to an unusable size.
         if !locked
             && display_hidpi_scale > 0.0
             && saved.scale > 0.0
+            && saved.logical_width > 0
+            && saved.logical_height > 0
             && (display_hidpi_scale - saved.scale as f64).abs() >= 0.01
         {
             let new_pw = (saved.logical_width as f64 * display_hidpi_scale).round() as c_int;
@@ -1178,6 +1183,77 @@ unsafe fn run_with_cef(ba: &BootArgs, mut mw: c_int, mut mh: c_int) -> c_int {
         jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer)
     };
     tracing::info!(target: "Main", "Main browser loaded");
+
+    // Apply the saved startup window mode only after the main browser has loaded.
+    // This avoids opening the app in the requested state before CEF has valid
+    // browser dimensions, which can leave the web UI scaled or positioned wrong.
+    match jfn_config::startup_window_mode() {
+        jfn_config::StartupWindowMode::Windowed => {
+            // Windowed is explicit so a previous fullscreen/maximized state does not
+            // unexpectedly win when the user has chosen normal windowed startup.
+            tracing::info!(
+                target: "Main",
+                "[FLOW] startupWindowMode=windowed applying post-load windowed mode"
+            );
+            plat().set_fullscreen(false);
+
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                jfn_mpv::api::jfn_mpv_set_window_maximized(false);
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(150));
+
+            let resize_js = cs(
+                "window.dispatchEvent(new Event('resize')); \
+                 setTimeout(() => window.dispatchEvent(new Event('resize')), 100);"
+            );
+            unsafe { jfn_cef::business_web::jfn_web_exec_js(resize_js.as_ptr()) };
+        }
+        jfn_config::StartupWindowMode::Maximized => {
+            #[cfg(target_os = "macos")]
+            {
+                tracing::info!(
+                    target: "Main",
+                    "[FLOW] startupWindowMode=maximized ignored on macOS"
+                );
+            }
+
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                tracing::info!(
+                    target: "Main",
+                    "[FLOW] startupWindowMode=maximized applying post-load maximize"
+                );
+                jfn_mpv::api::jfn_mpv_set_window_maximized(true);
+
+                std::thread::sleep(std::time::Duration::from_millis(250));
+
+                let resize_js = cs(
+                    "window.dispatchEvent(new Event('resize')); \
+                     setTimeout(() => window.dispatchEvent(new Event('resize')), 100); \
+                     setTimeout(() => window.dispatchEvent(new Event('resize')), 300);"
+                );
+                unsafe { jfn_cef::business_web::jfn_web_exec_js(resize_js.as_ptr()) };
+            }
+        }
+        jfn_config::StartupWindowMode::Fullscreen => {
+            tracing::info!(
+                target: "Main",
+                "[FLOW] startupWindowMode=fullscreen applying post-load fullscreen"
+            );
+            plat().set_fullscreen(true);
+
+            std::thread::sleep(std::time::Duration::from_millis(350));
+
+            let resize_js = cs(
+                "window.dispatchEvent(new Event('resize')); \
+                 setTimeout(() => window.dispatchEvent(new Event('resize')), 100); \
+                 setTimeout(() => window.dispatchEvent(new Event('resize')), 300);"
+            );
+            unsafe { jfn_cef::business_web::jfn_web_exec_js(resize_js.as_ptr()) };
+        }
+    }
 
     tracing::info!(target: "Main", "[FLOW] Running — about to enter run_main_loop");
 

@@ -62,6 +62,7 @@ struct SettingsData {
     // (server-side, tinted via the KDE palette protocol).
     window_decorations: Option<String>,
     hide_scrollbar: bool,
+    startup_window_mode: StartupWindowMode,
 }
 
 /// Auto default for window decorations. KDE draws its own server-side
@@ -73,6 +74,35 @@ fn default_window_decorations() -> String {
         .map(|v| v.split(':').any(|s| s.eq_ignore_ascii_case("KDE")))
         .unwrap_or(false);
     if kde { "serverThemed" } else { "csd" }.to_string()
+}
+
+// Controls how the main app window should be restored when Jellyfin Desktop starts.
+// This is saved through the client settings UI and applied by platform-specific
+// startup handling after the main browser has loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupWindowMode {
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
+impl StartupWindowMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Windowed => "windowed",
+            Self::Maximized => "maximized",
+            Self::Fullscreen => "fullscreen",
+        }
+    }
+
+    fn from_str(s: &str) -> Self {
+        match s {
+            "maximized" => Self::Maximized,
+            "fullscreen" => Self::Fullscreen,
+            "remember" | "windowed" => Self::Windowed,
+            _ => Self::Windowed,
+        }
+    }
 }
 
 impl Default for SettingsData {
@@ -91,6 +121,7 @@ impl Default for SettingsData {
             force_transcoding: false,
             window_decorations: None,
             hide_scrollbar: true,
+            startup_window_mode: StartupWindowMode::Windowed,
         }
     }
 }
@@ -164,6 +195,9 @@ impl SettingsData {
         if let Some(b) = v.get("hideScrollbar").and_then(Value::as_bool) {
             self.hide_scrollbar = b;
         }
+        if let Some(s) = v.get("startupWindowMode").and_then(Value::as_str) {
+            self.startup_window_mode = StartupWindowMode::from_str(s);
+        }
     }
 
     fn to_json(&self) -> Value {
@@ -227,6 +261,12 @@ impl SettingsData {
         if !self.hide_scrollbar {
             o.insert("hideScrollbar".into(), Value::Bool(false));
         }
+        // Always expose the startup mode so the settings UI can show the selected value
+        // without needing to duplicate the native default.
+        o.insert(
+            "startupWindowMode".into(),
+            Value::String(self.startup_window_mode.as_str().into()),
+        );
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
         }
@@ -275,6 +315,12 @@ impl SettingsData {
             ),
         );
         o.insert("hideScrollbar".into(), Value::Bool(self.hide_scrollbar));
+        // Expose startup mode to the injected web settings JSON so Client Settings
+        // shows the same value native startup handling applies.
+        o.insert(
+            "startupWindowMode".into(),
+            Value::String(self.startup_window_mode.as_str().into()),
+        );
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
         }
@@ -562,6 +608,16 @@ pub fn titlebar_theme_color() -> bool {
     resolve_window_decorations() == "serverThemed"
 }
 bool_accessors!(hide_scrollbar, set_hide_scrollbar, hide_scrollbar);
+
+// Stores the startup window mode selected in the client settings UI.
+pub fn set_startup_window_mode(v: &str) {
+    state().lock().data.startup_window_mode = StartupWindowMode::from_str(v);
+}
+
+// Exposes the saved startup window mode to startup/platform handling.
+pub fn startup_window_mode() -> StartupWindowMode {
+    state().lock().data.startup_window_mode
+}
 
 pub fn window_geometry() -> JfnWindowGeometry {
     state().lock().data.window
