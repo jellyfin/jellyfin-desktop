@@ -54,7 +54,7 @@ unsafe extern "C" {
 // ref-counted cef_task_t whose execute() runs on TID_UI and self-deletes.
 // =====================================================================
 
-use cef_dll_sys::{cef_base_ref_counted_t, cef_post_task, cef_task_t, cef_thread_id_t::TID_UI};
+use cef::sys::{cef_base_ref_counted_t, cef_post_task, cef_task_t, cef_thread_id_t::TID_UI};
 use std::sync::atomic::AtomicI32;
 
 #[repr(C)]

@@ -9,7 +9,7 @@ name = "jfn_platform_abi"
 crate-type = ["rlib"]
 
 [dependencies]
-cef-dll-sys.workspace = true
+cef.workspace = true
 
 [lints]
 workspace = true

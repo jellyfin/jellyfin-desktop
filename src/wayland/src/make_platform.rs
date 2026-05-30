@@ -44,7 +44,7 @@ const BG_G: u8 = 0x10;
 const BG_B: u8 = 0x10;
 
 unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFrame> {
-    let info = info as *const cef_dll_sys::_cef_accelerated_paint_info_t;
+    let info = info as *const cef::sys::_cef_accelerated_paint_info_t;
     if info.is_null() {
         return None;
     }

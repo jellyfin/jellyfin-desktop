@@ -14,7 +14,7 @@ jfn-input = { path = "../input" }
 jfn-mpv = { path = "../mpv" }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
-cef-dll-sys.workspace = true
+cef.workspace = true
 tracing.workspace = true
 windows = { workspace = true, features = [
     "Win32_Foundation",

@@ -14,7 +14,7 @@ kde-palette = []
 
 [dependencies]
 parking_lot.workspace = true
-cef = { version = "=148.1.0", default-features = false }
+cef = { workspace = true }
 jfn-color = { path = "../color" }
 jfn-config = { path = "../config" }
 jfn-input = { path = "../input" }

@@ -486,7 +486,7 @@ pub fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     if s.is_null() || raw_info.is_null() {
         return false;
     }
-    let info = unsafe { &*(raw_info as *const cef_dll_sys::_cef_accelerated_paint_info_t) };
+    let info = unsafe { &*(raw_info as *const cef::sys::_cef_accelerated_paint_info_t) };
     let handle = info.shared_texture_handle;
     if handle.is_null() {
         return false;
@@ -790,7 +790,7 @@ pub fn win_popup_present(s: *mut c_void, raw_info: *const c_void, _lw: c_int, _l
     if s.is_null() || raw_info.is_null() {
         return;
     }
-    let info = unsafe { &*(raw_info as *const cef_dll_sys::_cef_accelerated_paint_info_t) };
+    let info = unsafe { &*(raw_info as *const cef::sys::_cef_accelerated_paint_info_t) };
     let handle = info.shared_texture_handle;
     if handle.is_null() {
         return;

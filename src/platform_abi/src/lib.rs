@@ -63,7 +63,7 @@ pub fn main_park_signal() {
 /// from) them — every platform mapper imports these instead of redefining the
 /// enum locally. Typed `c_int` to match `set_cursor`'s parameter.
 pub mod cursor {
-    use cef_dll_sys::cef_cursor_type_t as ct;
+    use cef::sys::cef_cursor_type_t as ct;
     use std::ffi::c_int;
 
     macro_rules! cursor_consts {
@@ -93,7 +93,7 @@ pub mod cursor {
 /// constants) so backends import these instead of hand-copying bit shifts
 /// that can silently drift. Typed `u32` to match the dispatch ABI.
 pub mod event_flags {
-    use cef_dll_sys::cef_event_flags_t as ef;
+    use cef::sys::cef_event_flags_t as ef;
 
     macro_rules! flag_consts {
         ($($name:ident),* $(,)?) => {
