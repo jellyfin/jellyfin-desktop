@@ -378,9 +378,9 @@ dependencies = [
 
 [[package]]
 name = "cef-dll-sys"
-version = "148.1.0+147.0.14"
+version = "148.3.0+148.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e528ba9dfc0c7a28c820a6bb3f7c80611eaaa11e6b4f8d13913b2c527edf559d"
+checksum = "0fc364604c75169c992b3f8bc4396634bf64cfb2a4a0545cc9c7aa4eb3931057"
 dependencies = [
  "anyhow",
  "cmake",
@@ -780,7 +780,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1410,6 +1410,7 @@ dependencies = [
  "bindgen",
  "jfn-color",
  "libc",
+ "objc2",
  "parking_lot",
  "pkg-config",
  "tracing",
@@ -1825,7 +1826,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2410,7 +2411,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2729,7 +2730,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3527,7 +3528,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

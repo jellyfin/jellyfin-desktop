@@ -30,7 +30,7 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-cef-dll-sys = "=148.1.0"
+cef-dll-sys = "=148.3.0"
 libc = "0.2"
 objc2 = "0.6"
 parking_lot = "0.12"
