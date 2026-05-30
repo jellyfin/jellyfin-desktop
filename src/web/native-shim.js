@@ -79,22 +79,18 @@
     // that option there instead of exposing a setting that is saved but ignored.
     const _isMacPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform || '')
         || /Macintosh/.test(navigator.userAgent || '');
-    const _startupWindowModeOptions = [
-        { value: 'windowed', title: 'Open windowed' },
-        ...(_isMacPlatform ? [] : [{ value: 'maximized', title: 'Open maximized' }]),
-        { value: 'fullscreen', title: 'Open fullscreen' }
-    ];
-
-    // Normalize the saved startup mode before exposing it to the settings UI.
-    // Legacy "remember" maps to explicit windowed behavior, and unsupported
-    // platform values are also reduced to windowed.
-    const _startupWindowModeOptionValues = new Set(_startupWindowModeOptions.map((o) => o.value));
-    const _savedStartupWindowMode = _savedSettings.startupWindowMode === 'remember'
+    // Startup window modes use the same settings/dropdown path as other working
+    // Client Settings dropdowns. Legacy "remember" maps to explicit windowed
+    // startup so old config files do not restore stale fullscreen/maximized state.
+    const _startupWindowMode = _savedSettings.startupWindowMode === 'remember'
         ? 'windowed'
         : (_savedSettings.startupWindowMode || 'windowed');
-    const _startupWindowMode = _startupWindowModeOptionValues.has(_savedStartupWindowMode)
-        ? _savedStartupWindowMode
-        : 'windowed';
+    const _isWaylandPlatform = _savedSettings.displayBackend === 'wayland';
+    const _startupWindowModeOptions = [
+        { value: 'windowed', title: 'Open windowed' },
+        { value: 'maximized', title: 'Open maximized' },
+        { value: 'fullscreen', title: 'Open fullscreen' }
+    ].filter((option) => !((_isMacPlatform || _isWaylandPlatform) && option.value === 'maximized'));
 
     // window.jmpInfo - settings and device info
     window.jmpInfo = {

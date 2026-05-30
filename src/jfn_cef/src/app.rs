@@ -511,10 +511,20 @@ fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
         }
     }
     replace_first(&mut code, "__SERVER_URL__", &jfn_config::server_url());
+    // Include the active CEF/Ozone display backend in the injected settings JSON
+    // so the web UI can hide startup modes unsupported by the current backend.
+    let display_backend = jfn_platform_abi::try_get()
+        .map(|p| unsafe {
+            std::ffi::CStr::from_ptr(p.cef_ozone_platform())
+                .to_string_lossy()
+                .into_owned()
+        })
+        .unwrap_or_default();
+
     replace_first(
         &mut code,
         "__SETTINGS_JSON__",
-        &jfn_config::cli_json(&platform_device_name(), &hwdec_options()),
+        &jfn_config::cli_json(&platform_device_name(), &hwdec_options(), &display_backend),
     );
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
     replace_first(

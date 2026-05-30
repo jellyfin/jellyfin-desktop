@@ -273,7 +273,7 @@ impl SettingsData {
         Value::Object(o)
     }
 
-    fn cli_json(&self, platform_default: &str, hwdec_opts: &[String]) -> String {
+    fn cli_json(&self, platform_default: &str, hwdec_opts: &[String], display_backend: &str) -> String {
         let mut o = Map::new();
         if !self.hwdec.is_empty() {
             o.insert("hwdec".into(), Value::String(self.hwdec.clone()));
@@ -315,6 +315,11 @@ impl SettingsData {
             ),
         );
         o.insert("hideScrollbar".into(), Value::Bool(self.hide_scrollbar));
+        // Expose the active Linux display backend so the settings UI can hide
+        // startup modes that are unsupported by the current compositor/backend.
+        if !display_backend.is_empty() {
+            o.insert("displayBackend".into(), Value::String(display_backend.into()));
+        }
         // Expose startup mode to the injected web settings JSON so Client Settings
         // shows the same value native startup handling applies.
         o.insert(
@@ -627,10 +632,10 @@ pub fn set_window_geometry(g: JfnWindowGeometry) {
     state().lock().data.window = g;
 }
 
-pub fn cli_json(platform_default: &str, hwdec_opts: &[&str]) -> String {
+pub fn cli_json(platform_default: &str, hwdec_opts: &[&str], display_backend: &str) -> String {
     let snap = state().lock().data.clone();
     let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
-    snap.cli_json(platform_default, &opts)
+    snap.cli_json(platform_default, &opts, display_backend)
 }
 
 fn normalize_device_name(raw: &str, platform_default: &str) -> String {
