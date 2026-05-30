@@ -125,17 +125,9 @@ jobs:
               p.write_text(t)
           "
 
-      - name: Cache CEF
-        uses: actions/cache@v5
+      - uses: ./.github/actions/setup-cef
         with:
-          path: |
-            third_party/cef
-            third_party/cef_binary_*
-          key: cef-macos-x86_64-${{ hashFiles('CEF_VERSION') }}
-
-      - name: Download CEF
-        run: |
-          python3 dev/tools/download_cef.py
+          platform: ${{ github.workflow }}
 
       - name: Build app bundle
         run: |

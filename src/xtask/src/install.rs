@@ -47,10 +47,12 @@ fn install_linux(build_dir: &Path, prefix: &Path, args: &crate::BuildArgs) -> Re
     let bin_dst = prefix.join("jellyfin-desktop");
     copy_executable(&bin_src, &bin_dst)?;
 
-    let cef = crate::cef::discover(&args.external_cef, args.system_cef)?;
-    xfs::copy_glob(&cef.release_dir, prefix, &["*.so*", "*.bin"])?;
-    xfs::copy_glob(&cef.resource_dir, prefix, &["*.pak", "*.dat"])?;
-    xfs::copy_dir_recursive(&cef.resource_dir.join("locales"), &prefix.join("locales"))?;
+    if args.cef_path.is_none() {
+        let cef = crate::cef::discover(&args.external_cef)?;
+        xfs::copy_glob(&cef.dir, prefix, &["*.so*", "*.bin"])?;
+        xfs::copy_glob(&cef.dir, prefix, &["*.pak", "*.dat"])?;
+        xfs::copy_dir_recursive(&cef.dir.join("locales"), &prefix.join("locales"))?;
+    }
 
     if let Some(dir) = &args.external_mpv {
         xfs::copy_file(
@@ -70,10 +72,12 @@ fn install_windows(build_dir: &Path, prefix: &Path, args: &crate::BuildArgs) -> 
         &build_dir.join("jellyfin-desktop.exe"),
         &prefix.join("jellyfin-desktop.exe"),
     )?;
-    let cef = crate::cef::discover(&args.external_cef, args.system_cef)?;
-    xfs::copy_glob(&cef.release_dir, prefix, &["*.dll", "*.bin", "*.json"])?;
-    xfs::copy_glob(&cef.resource_dir, prefix, &["*.pak", "*.dat"])?;
-    xfs::copy_dir_recursive(&cef.resource_dir.join("locales"), &prefix.join("locales"))?;
+    if args.cef_path.is_none() {
+        let cef = crate::cef::discover(&args.external_cef)?;
+        xfs::copy_glob(&cef.dir, prefix, &["*.dll", "*.bin", "*.json"])?;
+        xfs::copy_glob(&cef.dir, prefix, &["*.pak", "*.dat"])?;
+        xfs::copy_dir_recursive(&cef.dir.join("locales"), &prefix.join("locales"))?;
+    }
     if let Some(dir) = &args.external_mpv {
         xfs::copy_glob(&dir.join("lib"), prefix, &["*.dll"])?;
     }

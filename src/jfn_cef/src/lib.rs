@@ -28,4 +28,12 @@ pub use ffi::*;
 
 pub const APP_VERSION: &str = env!("JFN_APP_VERSION");
 pub const APP_VERSION_FULL: &str = env!("JFN_APP_VERSION_FULL");
-pub const APP_CEF_VERSION: &str = env!("JFN_APP_CEF_VERSION");
+pub const APP_CEF_VERSION: &str = {
+    match std::ffi::CStr::from_bytes_with_nul(cef::sys::CEF_VERSION) {
+        Ok(s) => match s.to_str() {
+            Ok(s) => s,
+            Err(_) => "unknown",
+        },
+        Err(_) => "unknown",
+    }
+};

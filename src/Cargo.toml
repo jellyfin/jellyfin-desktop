@@ -30,12 +30,11 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-cef = { version = "=148.1.0", default-features = false }
+cef = { version = "=148.3.0", default-features = false }
 libc = "0.2"
 objc2 = "0.6"
 parking_lot = "0.12"
 objc2-foundation = "0.3"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 windows = "0.62"

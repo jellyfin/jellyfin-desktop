@@ -42,10 +42,7 @@ if ! flatpak info --user org.freedesktop.Sdk.Extension.llvm20//$RUNTIME_VERSION 
     flatpak install --user -y flathub org.freedesktop.Sdk.Extension.llvm20//$RUNTIME_VERSION
 fi
 
-# Ensure CEF is extracted at third_party/cef
-if [ ! -d "${REPO_ROOT}/third_party/cef" ]; then
-    python3 "${REPO_ROOT}/dev/tools/download_cef.py"
-fi
+(cd "$REPO_ROOT" && cargo xtask fetch-cef)
 
 # Generate metainfo.xml with the current version injected.
 python3 "${SCRIPT_DIR}/generate_metainfo.py" \

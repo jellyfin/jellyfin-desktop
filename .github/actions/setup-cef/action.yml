@@ -1,0 +1,24 @@
+name: Setup CEF
+inputs:
+  platform:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: CEF version
+      id: cef
+      shell: bash
+      run: |
+        version=$(cargo metadata --format-version 1 --locked --manifest-path src/Cargo.toml \
+          | jq -r 'first(.packages[] | select(.name=="cef") | .version) // error("cannot determine version")')
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Cache CEF
+      uses: actions/cache@v5
+      with:
+        path: .cache/cef
+        key: cef-${{ inputs.platform }}-${{ steps.cef.outputs.version }}
+
+    - name: Download CEF
+      shell: bash
+      run: cargo xtask fetch-cef

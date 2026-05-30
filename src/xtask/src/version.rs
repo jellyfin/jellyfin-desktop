@@ -1,5 +1,5 @@
 use crate::paths;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use regex::Regex;
 use std::process::Command;
 
@@ -55,28 +55,14 @@ pub fn read() -> Result<Version> {
     Ok(Version { full })
 }
 
-pub fn check_cef_version(found: &str) -> Result<()> {
-    let path = paths::repo_root().join("CEF_VERSION");
-    if !path.exists() {
-        return Ok(());
-    }
-    let expected = std::fs::read_to_string(&path)?.trim().to_string();
-    if expected != found {
-        bail!("CEF version mismatch:\n  CEF_VERSION file: {expected}\n  Found CEF:        {found}");
-    }
-    Ok(())
-}
-
-pub fn warn_cef_version(found: &str) -> Result<()> {
-    let path = paths::repo_root().join("CEF_VERSION");
-    if !path.exists() {
-        return Ok(());
-    }
-    let expected = std::fs::read_to_string(&path)?.trim().to_string();
-    if expected != found {
-        eprintln!(
-            "warning: system CEF version does not match CEF_VERSION file:\n  CEF_VERSION file: {expected}\n  System CEF:       {found}"
-        );
-    }
-    Ok(())
+pub fn cef_package_version() -> Result<String> {
+    let lock = paths::repo_root().join("src").join("Cargo.lock");
+    let lockfile =
+        cargo_lock::Lockfile::load(&lock).with_context(|| format!("parse {}", lock.display()))?;
+    lockfile
+        .packages
+        .iter()
+        .find(|pkg| pkg.name.as_str() == "cef")
+        .map(|pkg| pkg.version.to_string())
+        .ok_or_else(|| anyhow!("`cef` package not found in {}", lock.display()))
 }

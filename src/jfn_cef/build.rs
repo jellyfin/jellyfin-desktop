@@ -13,20 +13,13 @@ fn main() {
         .to_string();
     println!("cargo:rustc-env=JFN_APP_VERSION={version}");
 
-    let cef_version_path = repo_root.join("CEF_VERSION");
-    println!("cargo:rerun-if-changed={}", cef_version_path.display());
-    let cef_version = std::fs::read_to_string(&cef_version_path)
-        .expect("read CEF_VERSION")
-        .trim()
-        .to_string();
-    println!("cargo:rustc-env=JFN_APP_CEF_VERSION={cef_version}");
-
     // VERSION_FULL = "<VERSION>+<git short hash>[-dirty]", but only for
     // pre-release VERSIONs (those with a "-suffix"); a clean release stays
     // bare. xtask injects JFN_GIT_HASH/JFN_GIT_DIRTY as the authoritative
     // source; fall back to shelling out for bare `cargo build`.
     println!("cargo:rerun-if-env-changed=JFN_GIT_HASH");
     println!("cargo:rerun-if-env-changed=JFN_GIT_DIRTY");
+    println!("cargo:rerun-if-env-changed=CEF_RESOURCES_DIR");
     let (git_hash, dirty) = match std::env::var("JFN_GIT_HASH") {
         Ok(h) if !h.is_empty() => {
             let dirty = std::env::var("JFN_GIT_DIRTY").as_deref() == Ok("1");

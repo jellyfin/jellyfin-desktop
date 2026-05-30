@@ -31,14 +31,9 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache CEF SDK
-        uses: actions/cache@v5
+      - uses: ./.github/actions/setup-cef
         with:
-          path: third_party/cef*
-          key: cef-appimage-${{ matrix.arch }}-${{ hashFiles('CEF_VERSION') }}
-
-      - name: Download CEF SDK
-        run: python3 dev/tools/download_cef.py
+          platform: ${{ github.workflow }}-${{ matrix.arch }}
 
       - name: Build AppImage
         run: ./dev/linux/appimage/build.sh
