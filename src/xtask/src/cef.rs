@@ -79,8 +79,8 @@ pub fn sdk_proxy(real_dir: &Path) -> Result<(tempfile::TempDir, PathBuf)> {
     let tmp = tempfile::tempdir()?;
     let proxy = tmp.path().to_path_buf();
 
-    for entry in std::fs::read_dir(real_dir)
-        .with_context(|| format!("read {}", real_dir.display()))?
+    for entry in
+        std::fs::read_dir(real_dir).with_context(|| format!("read {}", real_dir.display()))?
     {
         let entry = entry?;
         let name = entry.file_name();
