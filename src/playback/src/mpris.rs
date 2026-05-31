@@ -12,7 +12,7 @@
 //! Pass-through fields (volume, can_go_next, can_go_previous, metadata
 //! itself) are NOT computed here — they live in the caller's MprisContent
 //! and copy straight into the view. The diff over those is trivial bool /
-//! double / struct equality which the C++ side handles directly.
+//! double / struct equality and is handled by the caller.
 
 use crate::types::PlaybackPhase;
 
@@ -82,8 +82,7 @@ pub fn project(input: &ProjectInput) -> MprisDerived {
     // Rate reflects actual frame motion, not user intent. Anything other
     // than steady playback (pre-roll, seek, buffer underrun) pins it to 0
     // so MPRIS clients don't extrapolate position.
-    let rolling =
-        input.phase == PlaybackPhase::Playing && !input.seeking && !input.buffering;
+    let rolling = input.phase == PlaybackPhase::Playing && !input.seeking && !input.buffering;
     MprisDerived {
         status: status_for(input.phase),
         can_play: active,
@@ -92,61 +91,6 @@ pub fn project(input: &ProjectInput) -> MprisDerived {
         can_control: active,
         metadata_active: active,
         rate: if rolling { input.pending_rate } else { 0.0 },
-    }
-}
-
-// ============================================================================
-// FFI
-// ============================================================================
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct JfnMprisDerivedC {
-    /// 0=Stopped 1=Playing 2=Paused
-    pub status: u8,
-    pub can_play: bool,
-    pub can_pause: bool,
-    pub can_seek: bool,
-    pub can_control: bool,
-    pub metadata_active: bool,
-    pub rate: f64,
-}
-
-/// # Safety
-/// `out` must point to writable storage for one `JfnMprisDerivedC`. `phase`
-/// must be a valid PlaybackPhase discriminant (0..=3).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpris_project(
-    phase: u8,
-    seeking: bool,
-    buffering: bool,
-    metadata_duration_us: i64,
-    pending_rate: f64,
-    out: *mut JfnMprisDerivedC,
-) {
-    let phase = match phase {
-        0 => PlaybackPhase::Starting,
-        1 => PlaybackPhase::Playing,
-        2 => PlaybackPhase::Paused,
-        _ => PlaybackPhase::Stopped,
-    };
-    let derived = project(&ProjectInput {
-        phase,
-        seeking,
-        buffering,
-        metadata_duration_us,
-        pending_rate,
-    });
-    unsafe {
-        out.write(JfnMprisDerivedC {
-            status: derived.status as u8,
-            can_play: derived.can_play,
-            can_pause: derived.can_pause,
-            can_seek: derived.can_seek,
-            can_control: derived.can_control,
-            metadata_active: derived.metadata_active,
-            rate: derived.rate,
-        });
     }
 }
 

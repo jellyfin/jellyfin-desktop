@@ -125,30 +125,16 @@ jobs:
               p.write_text(t)
           "
 
-      - name: Cache CEF
-        uses: actions/cache@v5
+      - uses: ./.github/actions/setup-cef
         with:
-          path: |
-            third_party/cef
-            third_party/cef_binary_*
-          key: cef-macos-x86_64-${{ hashFiles('CEF_VERSION') }}
+          platform: ${{ github.workflow }}
 
-      - name: Download CEF
-        run: |
-          python3 dev/tools/download_cef.py
-
-      - name: Configure and build
+      - name: Build app bundle
         run: |
           export PKG_CONFIG_PATH="$HOME/jellyfin-deps/lib/pkgconfig:$PKG_CONFIG_PATH"
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET} \
-            -DCMAKE_PREFIX_PATH="$HOME/jellyfin-deps"
-          cmake --build build
-
-      - name: Create app bundle
-        run: |
-          cmake --install build --prefix build/output
+          export CMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}"
+          export CMAKE_PREFIX_PATH="$HOME/jellyfin-deps"
+          cargo xtask install --prefix build/output
 
       - name: Create DMG
         run: |

@@ -1,26 +1,57 @@
 [workspace]
 resolver = "3"
 members = [
-    "cli",
     "color",
+    "compositor_core",
     "config",
-    "idle_inhibit_linux",
+    "gpu_paint",
+    "input",
     "jellyfin",
+    "jfn_cef",
     "jfn_rust",
+    "linux_util",
     "logging",
+    "macos",
+    "macos_sink",
     "mpv",
-    "open_url_linux",
     "paths",
+    "platform_abi",
     "playback",
-    "signal_guard",
-    "single_instance",
     "wayland",
+    "windows",
+    "windows_sink",
     "wlproxy",
+    "x11",
+    "xtask",
 ]
+
+[workspace.package]
+version = "3.0.0-dev"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+cef = { version = "=148.3.0", default-features = false }
+gix = { version = "0.84", default-features = false, features = ["status", "sha1"] }
+libc = "0.2"
+objc2 = "0.6"
+parking_lot = "0.12"
+objc2-foundation = "0.3"
+serde_json = "1"
+tracing = "0.1"
+windows = "0.62"
+windows-core = "0.62"
+windows-sys = "0.61"
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 panic = "abort"
-strip = true

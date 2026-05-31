@@ -1,13 +1,9 @@
 //! Adapters wiring [`crate::ingest`] to the rest of the world:
-//! the global [`IngestState`], C ABI entry points for the C++ mpv event
-//! thread, and the side-channel callbacks (display scale, window
-//! pixels, shutdown) that don't flow through the coordinator queue.
-//!
-//! Replaces the legacy `src/playback/jfn_dispatcher.h` API and the C++
-//! `digest_property` switch in `src/mpv/event.cpp`.
+//! the global [`IngestState`], entry points for the mpv event thread,
+//! and the side-channel callbacks (display scale, window pixels,
+//! shutdown) that don't flow through the coordinator queue.
 
 use std::ffi::c_void;
-use std::os::raw::c_int;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -52,11 +48,11 @@ impl IngestCtx for CallerCtx {
 // Side-channel callbacks (display scale, window pixels)
 // ---------------------------------------------------------------------
 
-type DisplayScaleCb = extern "C" fn(f64);
+type DisplayScaleCb = Box<dyn Fn(f64) + Send + Sync + 'static>;
 
-fn display_scale_slot() -> &'static std::sync::Mutex<Option<DisplayScaleCb>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<DisplayScaleCb>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn display_scale_slot() -> &'static parking_lot::Mutex<Option<DisplayScaleCb>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<DisplayScaleCb>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
 fn shutdown_flag() -> &'static AtomicBool {
@@ -74,7 +70,7 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
         match o {
             IngestOut::Input(i) => post_input(i),
             IngestOut::DisplayScaleChanged(d) => {
-                if let Some(cb) = *display_scale_slot().lock().unwrap() {
+                if let Some(cb) = display_scale_slot().lock().as_ref() {
                     cb(d);
                 }
             }
@@ -93,27 +89,23 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
 
 /// Install the browser-side `setScale` thunk used to resolve
 /// `DISPLAY_SCALE` property changes. Replaces any prior callback.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_display_scale_handler(cb: DisplayScaleCb) {
-    *display_scale_slot().lock().unwrap() = Some(cb);
+pub fn jfn_playback_set_display_scale_handler<F: Fn(f64) + Send + Sync + 'static>(cb: F) {
+    *display_scale_slot().lock() = Some(Box::new(cb));
 }
 
 /// Push a device-pixel window size into the geometry-save cache.
 /// Mirrors the legacy `mpv::set_window_pixels` producer used at boot
 /// (geometry seed) and runtime resize.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_window_pixels(pw: c_int, ph: c_int) {
-    state().set_window_pixels(pw as i32, ph as i32);
+pub fn jfn_playback_set_window_pixels(pw: i32, ph: i32) {
+    state().set_window_pixels(pw, ph);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_window_pw() -> c_int {
-    state().window_pw() as c_int
+pub fn jfn_playback_window_pw() -> i32 {
+    state().window_pw()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_window_ph() -> c_int {
-    state().window_ph() as c_int
+pub fn jfn_playback_window_ph() -> i32 {
+    state().window_ph()
 }
 
 /// Decode one raw `mpv_event*` (returned by `mpv_wait_event`) into
@@ -127,13 +119,12 @@ pub extern "C" fn jfn_playback_window_ph() -> c_int {
 /// # Safety
 /// `ev` must be a pointer returned by `mpv_wait_event` and not yet
 /// invalidated by a subsequent call on the same handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_playback_ingest_mpv_event(
+pub unsafe fn jfn_playback_ingest_mpv_event(
     ev: *const c_void,
     scale: f32,
     has_macos_logical: bool,
-    mac_lw: c_int,
-    mac_lh: c_int,
+    mac_lw: i32,
+    mac_lh: i32,
 ) -> u8 {
     if ev.is_null() {
         return 0;
@@ -142,7 +133,7 @@ pub unsafe extern "C" fn jfn_playback_ingest_mpv_event(
     let ctx = CallerCtx {
         scale,
         mac: if has_macos_logical {
-            Some((mac_lw as i32, mac_lh as i32))
+            Some((mac_lw, mac_lh))
         } else {
             None
         },
@@ -153,16 +144,15 @@ pub unsafe extern "C" fn jfn_playback_ingest_mpv_event(
 
 /// Push synthetic OSD-dim pixels through the same digest path the
 /// `osd-dimensions` property observation drives. Used by the Wayland
-/// xdg_toplevel.configure intercept (`platform::wayland::on_proxy_configure`)
+/// xdg_toplevel.configure intercept (`jfn_wayland::proxy::on_configure`)
 /// in place of mpv's own osd-dimensions delivery.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_post_osd_pixels(
-    pw: c_int,
-    ph: c_int,
+pub fn jfn_playback_post_osd_pixels(
+    pw: i32,
+    ph: i32,
     scale: f32,
     has_macos_logical: bool,
-    mac_lw: c_int,
-    mac_lh: c_int,
+    mac_lw: i32,
+    mac_lh: i32,
 ) {
     use jfn_mpv::Node;
     let node = Node::Map(vec![
@@ -172,7 +162,7 @@ pub extern "C" fn jfn_playback_post_osd_pixels(
     let ctx = CallerCtx {
         scale,
         mac: if has_macos_logical {
-            Some((mac_lw as i32, mac_lh as i32))
+            Some((mac_lw, mac_lh))
         } else {
             None
         },
@@ -192,71 +182,156 @@ const OSD_DIMS_OBSERVE_ID: ObserveId = crate::ingest::observe_id::OSD_DIMS;
 // State accessors mirroring the legacy `mpv::*` getters
 // ---------------------------------------------------------------------
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_fullscreen() -> bool {
+pub fn jfn_playback_fullscreen() -> bool {
     state().fullscreen()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_window_maximized() -> bool {
+pub fn jfn_playback_window_maximized() -> bool {
     state().window_maximized()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_osd_pw() -> c_int {
-    state().osd_pw() as c_int
+pub fn jfn_playback_osd_pw() -> i32 {
+    state().osd_pw()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_osd_ph() -> c_int {
-    state().osd_ph() as c_int
+pub fn jfn_playback_osd_ph() -> i32 {
+    state().osd_ph()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_display_scale() -> f64 {
+pub fn jfn_playback_display_scale() -> f64 {
     state().display_scale()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_display_hz() -> f64 {
+pub fn jfn_playback_display_hz() -> f64 {
     state().display_hz()
 }
 
 /// Seed the display-hz cache from a synchronous probe (call only from a
 /// non-event context — sync mpv property reads from inside the event
 /// thread deadlock).
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_display_hz(hz: f64) {
+pub fn jfn_playback_set_display_hz(hz: f64) {
     state().set_display_hz(hz);
+}
+
+// ---------------------------------------------------------------------
+// Property observation + sync seed
+// ---------------------------------------------------------------------
+
+/// Display-backend discriminant.
+///   0 = Wayland, 1 = X11, 2 = Other (macOS/Windows)
+pub const BACKEND_WAYLAND: u8 = 0;
+
+/// Register the property observations whose IDs are dispatched by the
+/// ingest layer. Backend selection skips `osd-dimensions` on Wayland —
+/// the proxy's `xdg_toplevel.configure` intercept feeds those dims via
+/// [`jfn_playback_post_osd_pixels`] instead, and observing it here would
+/// double-post identical values.
+///
+/// Requires `jfn_mpv_handle_init` to have succeeded; returns false if
+/// the handle is missing.
+pub fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
+    use crate::ingest::observe_id::*;
+    use jfn_mpv::sys::mpv_format;
+
+    let Some(raw) = jfn_mpv::boot::current_raw_handle() else {
+        return false;
+    };
+
+    // Order matches the legacy C++ observe_properties(): display-hidpi-scale
+    // is registered before osd-dimensions so mpv's FIFO initial-value
+    // delivery seeds the scale before osd-dimensions consumes it.
+    let pairs: &[(u64, &std::ffi::CStr, mpv_format)] = &[
+        (
+            DISPLAY_SCALE,
+            c"display-hidpi-scale",
+            mpv_format::MPV_FORMAT_DOUBLE,
+        ),
+        (OSD_DIMS, c"osd-dimensions", mpv_format::MPV_FORMAT_NODE),
+        (FULLSCREEN, c"fullscreen", mpv_format::MPV_FORMAT_FLAG),
+        (PAUSE, c"pause", mpv_format::MPV_FORMAT_FLAG),
+        (TIME_POS, c"time-pos", mpv_format::MPV_FORMAT_DOUBLE),
+        (DURATION, c"duration", mpv_format::MPV_FORMAT_DOUBLE),
+        (SPEED, c"speed", mpv_format::MPV_FORMAT_DOUBLE),
+        (SEEKING, c"seeking", mpv_format::MPV_FORMAT_FLAG),
+        (DISPLAY_FPS, c"display-fps", mpv_format::MPV_FORMAT_DOUBLE),
+        (
+            CACHE_STATE,
+            c"demuxer-cache-state",
+            mpv_format::MPV_FORMAT_NODE,
+        ),
+        (WINDOW_MAX, c"window-maximized", mpv_format::MPV_FORMAT_FLAG),
+        (
+            PAUSED_FOR_CACHE,
+            c"paused-for-cache",
+            mpv_format::MPV_FORMAT_FLAG,
+        ),
+        (CORE_IDLE, c"core-idle", mpv_format::MPV_FORMAT_FLAG),
+        (
+            VIDEO_FRAME_INFO,
+            c"video-frame-info",
+            mpv_format::MPV_FORMAT_NODE,
+        ),
+    ];
+
+    for &(id, name, fmt) in pairs {
+        if backend == BACKEND_WAYLAND && id == OSD_DIMS {
+            continue;
+        }
+        unsafe { jfn_mpv::sys::mpv_observe_property(raw, id, name.as_ptr(), fmt) };
+    }
+    true
+}
+
+/// Sync mpv read for `display-fps`; seeds the `display_hz` cache from a
+/// non-event context. Must not be called from inside an mpv event
+/// callback — sync property reads from the event thread deadlock.
+///
+/// No-op if the handle isn't initialized or the property is unavailable.
+pub fn jfn_playback_seed_display_hz_sync() {
+    let Some(raw) = jfn_mpv::boot::current_raw_handle() else {
+        return;
+    };
+    let mut fps: f64 = 0.0;
+    let rc = unsafe {
+        jfn_mpv::sys::mpv_get_property(
+            raw,
+            c"display-fps".as_ptr(),
+            jfn_mpv::sys::mpv_format::MPV_FORMAT_DOUBLE,
+            &mut fps as *mut _ as *mut std::ffi::c_void,
+        )
+    };
+    if rc >= 0 && fps > 0.0 {
+        state().set_display_hz(fps);
+    }
 }
 
 // ---------------------------------------------------------------------
 // Rust-owned mpv event thread
 // ---------------------------------------------------------------------
 
-type ScaleProvider = extern "C" fn() -> f32;
-type MacosLogicalProvider = extern "C" fn(*mut c_int, *mut c_int) -> bool;
-type FullscreenHandler = extern "C" fn(bool);
-type ShutdownHandler = extern "C" fn();
+type ScaleProvider = Box<dyn Fn() -> f32 + Send + Sync + 'static>;
+type MacosLogicalProvider = Box<dyn Fn() -> Option<(i32, i32)> + Send + Sync + 'static>;
+type FullscreenHandler = Box<dyn Fn(bool) + Send + Sync + 'static>;
+type ShutdownHandler = Box<dyn Fn() + Send + Sync + 'static>;
 
-fn scale_slot() -> &'static std::sync::Mutex<Option<ScaleProvider>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<ScaleProvider>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn scale_slot() -> &'static parking_lot::Mutex<Option<ScaleProvider>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<ScaleProvider>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
-fn macos_logical_slot() -> &'static std::sync::Mutex<Option<MacosLogicalProvider>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<MacosLogicalProvider>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn macos_logical_slot() -> &'static parking_lot::Mutex<Option<MacosLogicalProvider>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<MacosLogicalProvider>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
-fn fullscreen_handler_slot() -> &'static std::sync::Mutex<Option<FullscreenHandler>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<FullscreenHandler>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn fullscreen_handler_slot() -> &'static parking_lot::Mutex<Option<FullscreenHandler>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<FullscreenHandler>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
-fn shutdown_handler_slot() -> &'static std::sync::Mutex<Option<ShutdownHandler>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<ShutdownHandler>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn shutdown_handler_slot() -> &'static parking_lot::Mutex<Option<ShutdownHandler>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<ShutdownHandler>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
 struct EventThread {
@@ -264,68 +339,59 @@ struct EventThread {
     join: Option<JoinHandle<()>>,
 }
 
-fn event_thread_slot() -> &'static std::sync::Mutex<Option<EventThread>> {
-    static SLOT: OnceLock<std::sync::Mutex<Option<EventThread>>> = OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+fn event_thread_slot() -> &'static parking_lot::Mutex<Option<EventThread>> {
+    static SLOT: OnceLock<parking_lot::Mutex<Option<EventThread>>> = OnceLock::new();
+    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
 }
 
 /// Install the platform fullscreen-state thunk. Invoked from the Rust
-/// event thread when the `fullscreen` property changes — the C++
-/// platform vtable is not bridged into Rust, so the call must run
-/// through this handler.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_fullscreen_handler(cb: FullscreenHandler) {
-    *fullscreen_handler_slot().lock().unwrap() = Some(cb);
+/// event thread when the `fullscreen` property changes.
+pub fn jfn_playback_set_fullscreen_handler<F: Fn(bool) + Send + Sync + 'static>(cb: F) {
+    *fullscreen_handler_slot().lock() = Some(Box::new(cb));
 }
 
 /// Install the per-event scale provider used when normalizing OSD
 /// dimensions. Must return the device pixel scale (> 0); zero or
 /// negative is substituted with 1.0.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_scale_provider(cb: ScaleProvider) {
-    *scale_slot().lock().unwrap() = Some(cb);
+pub fn jfn_playback_set_scale_provider<F: Fn() -> f32 + Send + Sync + 'static>(cb: F) {
+    *scale_slot().lock() = Some(Box::new(cb));
 }
 
-/// Install the macOS logical-content-size override provider. The
-/// callback fills `*lw` / `*lh` and returns `true` when an override
-/// applies. Non-macOS callers should leave this unset.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_macos_logical_provider(cb: MacosLogicalProvider) {
-    *macos_logical_slot().lock().unwrap() = Some(cb);
+/// Install the macOS logical-content-size override provider. Returns
+/// `Some((lw, lh))` when an override applies. Non-macOS callers should
+/// leave this unset.
+pub fn jfn_playback_set_macos_logical_provider<
+    F: Fn() -> Option<(i32, i32)> + Send + Sync + 'static,
+>(
+    cb: F,
+) {
+    *macos_logical_slot().lock() = Some(Box::new(cb));
 }
 
-/// Install the `MPV_EVENT_SHUTDOWN` handler. The C++ side wires this
-/// to `initiate_shutdown()`.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_set_shutdown_handler(cb: ShutdownHandler) {
-    *shutdown_handler_slot().lock().unwrap() = Some(cb);
+/// Install the `MPV_EVENT_SHUTDOWN` handler.
+pub fn jfn_playback_set_shutdown_handler<F: Fn() + Send + Sync + 'static>(cb: F) {
+    *shutdown_handler_slot().lock() = Some(Box::new(cb));
 }
 
 fn snapshot_scale() -> f32 {
-    let cb = *scale_slot().lock().unwrap();
-    let s = cb.map(|f| f()).unwrap_or(1.0);
+    let guard = scale_slot().lock();
+    let s = guard.as_ref().map(|f| f()).unwrap_or(1.0);
     if s > 0.0 { s } else { 1.0 }
 }
 
 fn snapshot_macos_logical() -> Option<(i32, i32)> {
-    let cb = (*macos_logical_slot().lock().unwrap())?;
-    let mut lw: c_int = 0;
-    let mut lh: c_int = 0;
-    if cb(&mut lw, &mut lh) {
-        Some((lw as i32, lh as i32))
-    } else {
-        None
-    }
+    let guard = macos_logical_slot().lock();
+    guard.as_ref().and_then(|cb| cb())
 }
 
 fn invoke_fullscreen_handler(f: bool) {
-    if let Some(cb) = *fullscreen_handler_slot().lock().unwrap() {
+    if let Some(cb) = fullscreen_handler_slot().lock().as_ref() {
         cb(f);
     }
 }
 
 fn invoke_shutdown_handler() {
-    if let Some(cb) = *shutdown_handler_slot().lock().unwrap() {
+    if let Some(cb) = shutdown_handler_slot().lock().as_ref() {
         cb();
     }
 }
@@ -336,9 +402,8 @@ fn invoke_shutdown_handler() {
 /// `jfn_mpv::Event`, and routes through the same ingest path that
 /// [`jfn_playback_ingest_mpv_event`] uses. Returns `false` if the
 /// handle is not yet initialized or the thread is already running.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_start_mpv_event_thread() -> bool {
-    let mut guard = event_thread_slot().lock().unwrap();
+pub fn jfn_playback_start_mpv_event_thread() -> bool {
+    let mut guard = event_thread_slot().lock();
     if guard.is_some() {
         return false;
     }
@@ -362,9 +427,8 @@ pub extern "C" fn jfn_playback_start_mpv_event_thread() -> bool {
 /// Stop the Rust-owned mpv event thread and join it. Idempotent.
 /// `mpv_wakeup` is called on the live handle so the in-flight
 /// `mpv_wait_event` returns immediately.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_playback_stop_mpv_event_thread() {
-    let entry = event_thread_slot().lock().unwrap().take();
+pub fn jfn_playback_stop_mpv_event_thread() {
+    let entry = event_thread_slot().lock().take();
     let Some(mut t) = entry else { return };
     t.stop.store(true, Ordering::Release);
     jfn_mpv::boot::wakeup_current();
@@ -388,10 +452,10 @@ fn event_loop(handle_addr: usize, stop: std::sync::Arc<AtomicBool>) {
                 continue;
             }
             Event::PropertyChange { id, ref value, .. } => {
-                if id == crate::ingest::observe_id::FULLSCREEN {
-                    if let PropertyValue::Flag(f) = value {
-                        invoke_fullscreen_handler(*f);
-                    }
+                if id == crate::ingest::observe_id::FULLSCREEN
+                    && let PropertyValue::Flag(f) = value
+                {
+                    invoke_fullscreen_handler(*f);
                 }
             }
             _ => {}

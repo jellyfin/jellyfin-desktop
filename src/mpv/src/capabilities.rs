@@ -1,5 +1,4 @@
-//! Decoder + demuxer enumeration, matching the prior C++
-//! `mpv_capabilities::Query` exactly.
+//! Decoder + demuxer enumeration.
 //!
 //! Two sources:
 //! - **Decoders**: linked libavcodec, iterated via `av_codec_iterate` and
@@ -14,10 +13,16 @@
 
 use crate::handle::Handle;
 use crate::node::Node;
+use crate::sys;
 use std::collections::HashSet;
 use std::ffi::CStr;
 
-#[allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+#[allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    dead_code
+)]
 mod avcodec_sys {
     include!(concat!(env!("OUT_DIR"), "/avcodec_bindings.rs"));
 }
@@ -42,20 +47,44 @@ pub struct Capabilities {
 }
 
 pub fn query(handle: Option<&Handle>) -> Capabilities {
+    unsafe { query_raw(handle.map(|h| h.raw()).unwrap_or(std::ptr::null_mut())) }
+}
+
+/// Same as [`query`], but takes a raw `mpv_handle*` (non-owning). Used by
+/// the C FFI. `raw` may be NULL — in that case the demuxer list is empty.
+///
+/// # Safety
+/// `raw`, if non-NULL, must point to a live `mpv_handle` for the
+/// duration of the call. Reads `demuxer-lavf-list` via `mpv_get_property`.
+pub unsafe fn query_raw(raw: *mut sys::mpv_handle) -> Capabilities {
     let mut caps = Capabilities {
         decoders: enumerate_decoders(),
         demuxers: Vec::new(),
     };
-    if let Some(h) = handle {
-        match h.get_property_node("demuxer-lavf-list") {
-            Ok(node) => caps.demuxers = parse_string_list(&node),
-            Err(e) => tracing::warn!(
-                target: "mpv",
-                "mpv_get_property(demuxer-lavf-list) failed: {}",
-                e
-            ),
-        }
+    if raw.is_null() {
+        return caps;
     }
+    let name = c"demuxer-lavf-list";
+    let mut node: sys::mpv_node = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        sys::mpv_get_property(
+            raw,
+            name.as_ptr(),
+            sys::mpv_format::MPV_FORMAT_NODE,
+            &mut node as *mut _ as *mut std::os::raw::c_void,
+        )
+    };
+    if rc < 0 {
+        tracing::warn!(
+            target: "mpv",
+            "mpv_get_property(demuxer-lavf-list) failed: {}",
+            rc
+        );
+        return caps;
+    }
+    let owned = unsafe { Node::from_raw(&node) };
+    unsafe { sys::mpv_free_node_contents(&mut node) };
+    caps.demuxers = parse_string_list(&owned);
     caps
 }
 

@@ -15,13 +15,8 @@ build: deps
     & 'dev/windows/build.ps1'
 
 [windows]
-test: build
-    ctest --test-dir build --output-on-failure
-    cargo test --manifest-path src/Cargo.toml --workspace --exclude jfn-wlproxy --exclude jfn-signal-guard
-
-[windows]
 run *args: build
-    & 'build/jellyfin-desktop.exe' --log-level=debug --log-file=build/run.log {{args}}
+    $env:RUST_BACKTRACE = 'full'; & 'build/jellyfin-desktop.exe' --log-level=debug --log-file=build/run.log {{args}} 2>&1 | Tee-Object -FilePath build/stderr.log
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [windows]

@@ -7,6 +7,7 @@ use crate::sys;
 /// subscription.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
+#[allow(clippy::unnecessary_cast)] // bindgen emits i32 on windows, u32 on linux; cast keeps both green
 pub enum LogLevel {
     Off = sys::mpv_log_level::MPV_LOG_LEVEL_NONE.0 as u32,
     Fatal = sys::mpv_log_level::MPV_LOG_LEVEL_FATAL.0 as u32,
@@ -52,10 +53,9 @@ impl LogLevel {
 }
 
 /// Forward an `MPV_EVENT_LOG_MESSAGE` payload to `tracing` under target
-/// `"mpv"`. Level mapping mirrors the historical C++ `log_mpv_message`:
-/// mpv's `v` lands at DEBUG and mpv's `debug` lands at TRACE so the
-/// console isn't flooded at default verbosity. Unknown/`trace` levels
-/// surface as WARN with an unhandled-level marker.
+/// `"mpv"`. mpv's `v` lands at DEBUG and mpv's `debug` lands at TRACE so
+/// the console isn't flooded at default verbosity. Unknown/`trace`
+/// levels surface as WARN with an unhandled-level marker.
 pub fn forward_to_tracing(msg: &LogMessage) {
     let text = msg.text.trim_end_matches(['\r', '\n']);
     let prefix = msg.prefix.as_str();

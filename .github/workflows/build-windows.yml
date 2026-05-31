@@ -39,17 +39,9 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache CEF
-        uses: actions/cache@v5
+      - uses: ./.github/actions/setup-cef
         with:
-          path: |
-            third_party/cef
-            third_party/cef_binary_*
-          key: cef-${{ matrix.platform }}-${{ hashFiles('CEF_VERSION') }}
-
-      - name: Download CEF
-        run: |
-          python dev/tools/download_cef.py --platform ${{ matrix.platform }}
+          platform: ${{ github.workflow }}-${{ matrix.arch }}
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
@@ -74,7 +66,7 @@ jobs:
         run: |
           dev\windows\build_mpv_source.ps1 -Arch ${{ matrix.arch }} -Force
 
-      - name: Configure and build
+      - name: Build and package
         shell: cmd
         env:
           # bindgen (used by jfn-mpv's build.rs) dlopens libclang at
@@ -88,20 +80,11 @@ jobs:
           # MSVC's arch-specific headers (__int64, vcruntime intrinsics,
           # etc.) get parsed against the wrong default target. Pin it.
           BINDGEN_EXTRA_CLANG_ARGS: --target=${{ matrix.triple }}
+          MATRIX_ARCH: ${{ matrix.arch }}
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" %MATRIX_ARCH%
           set "PATH=%PATH%;%MSYS_BIN%"
-          cmake -B build -G Ninja ^
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
-            -DEXTERNAL_MPV_DIR=%CD%\third_party\mpv-install
-          cmake --build build
-
-      - name: Create package
-        shell: cmd
-        run: |
-          cmake --install build --prefix build/install
-          cd build
-          cpack -G ZIP -B ../dist
+          cargo xtask package --external-mpv "%CD%\third_party\mpv-install" --prefix build/install --dist dist
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

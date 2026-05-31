@@ -1,0 +1,27 @@
+[package]
+name = "jfn-macos"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "jfn_macos"
+crate-type = ["rlib"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+jfn-cef = { path = "../jfn_cef" }
+jfn-compositor-core = { path = "../compositor_core" }
+jfn-input = { path = "../input" }
+jfn-mpv = { path = "../mpv" }
+jfn-platform-abi = { path = "../platform_abi" }
+jfn-playback = { path = "../playback" }
+cef.workspace = true
+objc2.workspace = true
+objc2-foundation.workspace = true
+tracing.workspace = true
+
+[dependencies]
+parking_lot.workspace = true
+
+[lints]
+workspace = true

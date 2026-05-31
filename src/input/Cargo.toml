@@ -1,0 +1,20 @@
+[package]
+name = "jfn-input"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "jfn_input"
+path = "src/lib.rs"
+
+[dependencies]
+parking_lot.workspace = true
+jfn-platform-abi = { path = "../platform_abi" }
+jfn-playback = { path = "../playback" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+xkbcommon = "0.9"
+
+[lints]
+workspace = true

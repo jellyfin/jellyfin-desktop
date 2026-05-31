@@ -71,6 +71,13 @@ async function tryConnect(server, spinnerStartTime = Date.now()) {
 
         if (window.jmpNative && window.jmpNative.dismissOverlay) {
             window.jmpNative.dismissOverlay();
+            const onEnd = (e) => {
+                if (e.animationName !== 'fadeOut') return;
+                document.body.removeEventListener('animationend', onEnd);
+                window.close();
+            };
+            document.body.addEventListener('animationend', onEnd);
+            document.body.classList.add('fade-out');
         }
         return true;
     } catch (e) {

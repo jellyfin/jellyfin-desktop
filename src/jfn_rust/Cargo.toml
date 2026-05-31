@@ -1,15 +1,27 @@
 [package]
 name = "jfn-rust"
-version = "0.1.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_rust"
-crate-type = ["staticlib"]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "jellyfin-desktop"
+path = "src/main.rs"
+
+[features]
+default = ["kde-palette"]
+kde-palette = ["jfn-cef/kde-palette", "jfn-wayland/kde-palette"]
 
 [dependencies]
-jfn-cli = { path = "../cli" }
+tracing.workspace = true
+parking_lot.workspace = true
+clap = { version = "4", default-features = false, features = ["std", "derive", "error-context"] }
+jfn-platform-abi = { path = "../platform_abi" }
+jfn-cef = { path = "../jfn_cef", default-features = false }
 jfn-color = { path = "../color" }
 jfn-config = { path = "../config" }
 jfn-jellyfin = { path = "../jellyfin" }
@@ -17,13 +29,34 @@ jfn-logging = { path = "../logging" }
 jfn-mpv = { path = "../mpv" }
 jfn-paths = { path = "../paths" }
 jfn-playback = { path = "../playback" }
-jfn-single-instance = { path = "../single_instance" }
 
 [target.'cfg(unix)'.dependencies]
-jfn-signal-guard = { path = "../signal_guard" }
+libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+jfn-macos = { path = "../macos" }
+jfn-macos-sink = { path = "../macos_sink" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+jfn-windows = { path = "../windows" }
+jfn-windows-sink = { path = "../windows_sink" }
+windows-sys = { workspace = true, features = [
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Security",
+] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = "3"
+gix = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-jfn-idle-inhibit-linux = { path = "../idle_inhibit_linux" }
-jfn-open-url-linux = { path = "../open_url_linux" }
-jfn-wayland = { path = "../wayland" }
+jfn-wayland = { path = "../wayland", default-features = false }
 jfn-wlproxy = { path = "../wlproxy" }
+jfn-x11 = { path = "../x11" }
+
+[lints]
+workspace = true

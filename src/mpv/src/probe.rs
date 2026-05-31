@@ -1,6 +1,6 @@
-//! Static-version queries that need a transient mpv handle. Mirrors the
-//! prior C++ `cli::print_version` mpv block: create a handle, initialize
-//! it, read `mpv-version` and `ffmpeg-version`, tear it down.
+//! Static-version queries that need a transient mpv handle: create a
+//! handle, initialize it, read `mpv-version` and `ffmpeg-version`, tear
+//! it down.
 
 use crate::handle::Handle;
 use std::io::{self, Write};
@@ -28,10 +28,8 @@ pub fn version_info() -> Vec<(String, String)> {
         .collect()
 }
 
-/// C ABI for the C++ `cli::print_version` entry point. Prints each
-/// `"<name> <value>\n"` line to stdout.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_mpv_print_version_info() {
+/// Prints each `"<name> <value>\n"` line to stdout.
+pub fn jfn_mpv_print_version_info() {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     for (name, value) in version_info() {

@@ -1,24 +1,50 @@
-//! End-to-end handle bring-up driven from C++ main(). Replaces the
-//! prior C++ `MpvHandle::Create` + `SetDefaults` + per-arg option
-//! setters + `Initialize` + `SetLogLevel` sequence with a single
-//! `jfn_mpv_handle_init` C entry point.
+//! End-to-end mpv handle bring-up: create, apply defaults + per-arg
+//! options, initialize, and set log level — exposed as a single
+//! `jfn_mpv_handle_init` entry point.
 //!
-//! After init the raw `mpv_handle*` is returned for the C++ MpvHandle
-//! wrapper to borrow. Rust owns the lifetime: a process-global slot
-//! retains the [`Handle`], and `jfn_mpv_handle_terminate` drops it,
-//! calling `mpv_terminate_destroy` via [`Handle::Drop`].
+//! Rust owns the lifetime: a process-global slot retains the
+//! [`Handle`], and `jfn_mpv_handle_terminate` drops it, calling
+//! `mpv_terminate_destroy` via [`Handle::Drop`].
 
+use parking_lot::Mutex;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use crate::handle::Handle;
 use crate::sys;
 
-/// Display backend the C++ side reports. Matches the discriminants of
-/// `enum class DisplayBackend` so the C ABI need not negotiate names.
+/// Whether the system's Metal device advertises the Mac2 GPU family.
+///
+/// MoltenVK's MTLHeap (placement-heap) path requires Mac2-class features.
+/// Legacy Intel GPUs — e.g. the Iris Pro 5200, which reports only "Metal
+/// GPUFamily macOS 1" — lack them, and the Apple driver aborts on the
+/// first libplacebo GPU upload when MoltenVK tries to use heaps there.
+/// Probing the live device (rather than matching model names) keeps the
+/// workaround tied to the actual capability. Returns `true` when no Metal
+/// device is present, so a machine we cannot probe keeps the fast path.
+#[cfg(target_os = "macos")]
+fn metal_has_mac2_family() -> bool {
+    use objc2::runtime::AnyObject;
+    // MTLGPUFamilyMac2, from <Metal/MTLDevice.h>.
+    const MTL_GPU_FAMILY_MAC2: isize = 2002;
+    #[link(name = "Metal", kind = "framework")]
+    unsafe extern "C" {
+        fn MTLCreateSystemDefaultDevice() -> *mut AnyObject;
+    }
+    unsafe {
+        let device = MTLCreateSystemDefaultDevice();
+        if device.is_null() {
+            return true;
+        }
+        let has_mac2: bool = objc2::msg_send![device, supportsFamily: MTL_GPU_FAMILY_MAC2];
+        let _: () = objc2::msg_send![device, release];
+        has_mac2
+    }
+}
+
+/// Display backend in use for this process.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DisplayBackend {
@@ -37,9 +63,9 @@ impl DisplayBackend {
     }
 }
 
-/// Boot-time configuration handed to `jfn_mpv_handle_init`. Mirrors
-/// every option the prior C++ path applied between `mpv_create` and
-/// `mpv_initialize`. All string fields are NUL-terminated UTF-8 or
+/// Boot-time configuration handed to `jfn_mpv_handle_init`. Every
+/// option applied between `mpv_create` and `mpv_initialize` lives here.
+/// All string fields are NUL-terminated UTF-8 or
 /// null; non-null pointers must remain valid for the duration of the
 /// init call only (Rust copies what it needs).
 #[repr(C)]
@@ -59,6 +85,10 @@ pub struct JfnMpvBoot {
     /// libmpv log-message subscription level (`"no"`, `"error"`,
     /// `"warn"`, `"info"`, `"v"`, `"debug"`, `"trace"`).
     pub mpv_log_level: *const c_char,
+    /// When set on Wayland, suppress mpv's server-side decoration request so
+    /// the app's own client-side decorations don't stack under a compositor
+    /// titlebar (e.g. KDE). No effect on X11 (WM draws decorations).
+    pub client_side_decorations: bool,
 }
 
 /// Owns the Handle for the rest of the process. `mpv_terminate_destroy`
@@ -81,7 +111,7 @@ unsafe fn cstr_opt(p: *const c_char) -> Option<String> {
 fn set_option_or_skip(handle: &Handle, name: &str, value: &str) -> crate::error::Result<()> {
     match handle.set_option_string(name, value) {
         Ok(()) => Ok(()),
-        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 as i32 => {
+        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 => {
             tracing::warn!(target: "mpv", "option {} not supported by this libmpv build; skipping", name);
             Ok(())
         }
@@ -96,7 +126,7 @@ fn set_option_or_skip(handle: &Handle, name: &str, value: &str) -> crate::error:
 fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::error::Result<()> {
     match handle.set_option_flag(name, value) {
         Ok(()) => Ok(()),
-        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 as i32 => {
+        Err(e) if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0 => {
             tracing::warn!(target: "mpv", "option {} not supported by this libmpv build; skipping", name);
             Ok(())
         }
@@ -107,8 +137,11 @@ fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::e
     }
 }
 
-fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Result<()> {
-    // Mirror src/mpv/handle.h `SetDefaults`.
+fn apply_defaults(
+    handle: &Handle,
+    display: DisplayBackend,
+    client_side_decorations: bool,
+) -> crate::error::Result<()> {
     let set = |name: &str, value: &str| set_option_or_skip(handle, name, value);
 
     // OSD/OSC off — CEF overlay handles all UI.
@@ -145,7 +178,11 @@ fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Res
     set("stop-screensaver", "no")?;
     set("keepaspect-window", "no")?;
     set("auto-window-resize", "no")?;
-    set("border", "yes")?;
+    // Suppress the server-side decoration request on Wayland when the app
+    // draws its own client-side decorations; otherwise a compositor titlebar
+    // (e.g. KDE) would stack on top of ours.
+    let suppress_ssd = display == DisplayBackend::Wayland && client_side_decorations;
+    set("border", if suppress_ssd { "no" } else { "yes" })?;
     set("title", "Jellyfin Desktop")?;
     set("wayland-app-id", "org.jellyfin.JellyfinDesktop")?;
 
@@ -162,6 +199,29 @@ fn apply_defaults(handle: &Handle, display: DisplayBackend) -> crate::error::Res
         let key = c"MPVBUNDLE";
         let val = c"true";
         libc::setenv(key.as_ptr(), val.as_ptr(), 1);
+
+        // MoltenVK's MTLHeap path crashes on legacy Metal GPUs: the Apple
+        // Intel driver (e.g. Iris Pro 5200, which reports only "Metal
+        // GPUFamily macOS 1") rejects the heap descriptor and aborts on the
+        // first frame in libplacebo's GPU upload. Placement heaps require
+        // the Mac2 feature set, so disable MoltenVK heaps only where Mac2 is
+        // absent — Apple Silicon and Metal-3-class Intel keep the fast path.
+        // The per-resource MTLBuffer/MTLTexture fallback is correct on every
+        // GPU; the cost is negligible.
+        if metal_has_mac2_family() {
+            tracing::debug!(
+                target: "mpv",
+                "Metal Mac2 family present; keeping MoltenVK MTLHeap path"
+            );
+        } else {
+            let key = c"MVK_CONFIG_USE_MTLHEAP";
+            let val = c"0";
+            libc::setenv(key.as_ptr(), val.as_ptr(), 1);
+            tracing::info!(
+                target: "mpv",
+                "legacy Metal GPU without Mac2 family; disabled MoltenVK MTLHeap (MVK_CONFIG_USE_MTLHEAP=0)"
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -206,32 +266,31 @@ fn apply_boot_options(handle: &Handle, boot: &JfnMpvBoot) -> crate::error::Resul
     if boot.window_maximized_at_boot {
         set("window-maximized", "yes")?;
     }
-    if let Some(spdif) = unsafe { cstr_opt(boot.audio_passthrough) } {
-        if !spdif.is_empty() {
-            set("audio-spdif", &spdif)?;
-        }
+    if let Some(spdif) = unsafe { cstr_opt(boot.audio_passthrough) }
+        && !spdif.is_empty()
+    {
+        set("audio-spdif", &spdif)?;
     }
     if boot.audio_exclusive {
         set_flag("audio-exclusive", true)?;
     }
-    if let Some(ch) = unsafe { cstr_opt(boot.audio_channels) } {
-        if !ch.is_empty() {
-            set("audio-channels", &ch)?;
-        }
+    if let Some(ch) = unsafe { cstr_opt(boot.audio_channels) }
+        && !ch.is_empty()
+    {
+        set("audio-channels", &ch)?;
     }
     Ok(())
 }
 
 /// Create + configure + initialize the libmpv handle. On success, the
-/// raw `mpv_handle*` is returned for the C++ MpvHandle wrapper to
-/// borrow. On failure, returns null and any partially-initialized
-/// handle is destroyed before returning.
+/// raw `mpv_handle*` is returned for callers to borrow. On failure,
+/// returns null and any partially-initialized handle is destroyed
+/// before returning.
 ///
 /// # Safety
 /// `boot` must point to a valid `JfnMpvBoot` whose string fields are
 /// either null or NUL-terminated UTF-8 valid for the call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_handle {
+pub unsafe fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_handle {
     if boot.is_null() {
         return ptr::null_mut();
     }
@@ -246,7 +305,7 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
         }
     };
 
-    if let Err(e) = apply_defaults(&handle, display) {
+    if let Err(e) = apply_defaults(&handle, display, boot.client_side_decorations) {
         tracing::error!(target: "mpv", "apply_defaults failed: {:?}", e);
         return ptr::null_mut();
     }
@@ -256,7 +315,7 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
     }
 
     // Wakeup callback exists only to unstick mpv_wait_event during
-    // shutdown. No-op closure matches the prior C++ behavior.
+    // shutdown.
     handle.set_wakeup_callback(|| {});
 
     if let Err(e) = handle.initialize() {
@@ -266,19 +325,19 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
 
     // mpv log subscription. Token is the same one
     // `mpv_request_log_messages` accepts directly.
-    if let Some(level) = unsafe { cstr_opt(boot.mpv_log_level) } {
-        if !level.is_empty() {
-            unsafe {
-                use std::ffi::CString;
-                if let Ok(c) = CString::new(level) {
-                    sys::mpv_request_log_messages(handle.raw(), c.as_ptr());
-                }
+    if let Some(level) = unsafe { cstr_opt(boot.mpv_log_level) }
+        && !level.is_empty()
+    {
+        unsafe {
+            use std::ffi::CString;
+            if let Ok(c) = CString::new(level) {
+                sys::mpv_request_log_messages(handle.raw(), c.as_ptr());
             }
         }
     }
 
     let raw = handle.raw();
-    *handle_slot().lock().unwrap() = Some(handle);
+    *handle_slot().lock() = Some(handle);
     raw
 }
 
@@ -286,30 +345,22 @@ pub unsafe extern "C" fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sy
 /// Idempotent — repeated calls are no-ops.
 ///
 /// On macOS the caller must invoke this off the main thread (mpv's VO
-/// uninit does `DispatchQueue.main.sync`); see the C++ side's
-/// existing teardown thread.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_mpv_handle_terminate() {
-    let _ = handle_slot().lock().unwrap().take();
+/// uninit does `DispatchQueue.main.sync`).
+pub fn jfn_mpv_handle_terminate() {
+    let _ = handle_slot().lock().take();
 }
 
 /// Borrow the live raw `mpv_handle*`. Returns null before
 /// [`jfn_mpv_handle_init`] succeeds and after
 /// [`jfn_mpv_handle_terminate`].
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_mpv_handle_get() -> *mut sys::mpv_handle {
+pub fn jfn_mpv_handle_get() -> *mut sys::mpv_handle {
     current_raw_handle().unwrap_or(ptr::null_mut())
 }
 
-/// Rust-side accessor used by sibling crates (e.g. `jfn-playback`) that
-/// want to talk to the live handle without round-tripping through the
-/// C ABI. Returns `None` until [`jfn_mpv_handle_init`] has succeeded.
+/// Returns the live mpv handle. `None` until [`jfn_mpv_handle_init`]
+/// has succeeded.
 pub fn current_raw_handle() -> Option<*mut sys::mpv_handle> {
-    handle_slot()
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|h| h.raw())
+    handle_slot().lock().as_ref().map(|h| h.raw())
 }
 
 /// Wake the live handle's `mpv_wait_event` from any thread. No-op if

@@ -103,7 +103,8 @@
             },
             advanced: {
                 transparentTitlebar: _savedSettings.transparentTitlebar !== false,
-                titlebarThemeColor: _savedSettings.titlebarThemeColor !== false,
+                windowDecorations: _savedSettings.windowDecorations || 'csd',
+                hideScrollbar: _savedSettings.hideScrollbar !== false,
                 logLevel: _savedSettings.logLevel || '',
                 deviceName: _savedSettings.deviceName || ''
             }
@@ -126,6 +127,7 @@
                 { key: 'forceTranscoding', displayName: 'Force Transcoding', help: 'Always request a transcoded stream from the server, even when direct play would work.' }
             ],
             advanced: [
+                { key: 'hideScrollbar', displayName: 'Hide Scrollbar', help: 'Hide scrollbars throughout the app. Scrolling with the wheel, trackpad, and keyboard still works. Requires restart.' },
                 { key: 'deviceName', displayName: 'Device Name', help: 'Identifies this machine to the server. Leave blank to use the system hostname.', inputType: 'text', maxLength: 64, placeholder: _savedSettings.deviceNameDefault },
                 { key: 'logLevel', displayName: 'Log Level', help: 'Set the application log verbosity level.', options: [
                     { value: '', title: 'Default (Info)' },
@@ -149,12 +151,21 @@
         });
     }
 
-    // Linux-only: titlebar theme color toggle
-    if (navigator.platform.startsWith('Linux')) {
+    // Window decorations (Linux): how the titlebar is drawn. Replaces separate
+    // client-side-decoration and titlebar-theme-color toggles.
+    if (__CSD_SUPPORTED__) {
+        const decorationOptions = [
+            { value: 'csd', title: 'In-app (client-side)' },
+            { value: 'server', title: 'System (server-side)' }
+        ];
+        if (__KDE_PALETTE_SUPPORTED__) {
+            decorationOptions.push({ value: 'serverThemed', title: 'System, themed (KDE)' });
+        }
         jmpInfo.settingsDescriptions.advanced.unshift({
-            key: 'titlebarThemeColor',
-            displayName: 'Titlebar Theme Color',
-            help: 'Set titlebar color to match Jellyfin theme'
+            key: 'windowDecorations',
+            displayName: 'Window Decorations',
+            help: 'How the window titlebar is drawn. In-app is needed on desktops without their own (e.g. GNOME). Auto-detected by default; changing requires restart.',
+            options: decorationOptions
         });
     }
 
@@ -444,9 +455,15 @@
         let css = 'body.mouseIdle, body.mouseIdle * { cursor: none !important; }';
         css += '\n@keyframes mpv-video-zoomin { from { transform: scale3d(0.2, 0.2, 0.2); opacity: 0.6; } to { transform: none; opacity: initial; } }';
 
+        // Hide scrollbars app-wide (scroll still works via wheel/trackpad/keys).
+        if (jmpInfo.settings.advanced.hideScrollbar) {
+            css += '\n::-webkit-scrollbar, *::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }';
+            css += '\nhtml { scrollbar-width: none !important; }';
+        }
+
         // macOS: offset UI elements so traffic lights don't overlap content
         if (navigator.platform.startsWith('Mac') && jmpInfo.settings.advanced.transparentTitlebar) {
-            css += '\n:root { --mac-titlebar-height: 28px; }';
+            css += '\n:root { --mac-titlebar-height: 22px; }';
             css += '\n.skinHeader { padding-top: var(--mac-titlebar-height) !important; }';
             css += '\n.mainAnimatedPage { top: var(--mac-titlebar-height) !important; }';
             css += '\n.touch-menu-la { padding-top: var(--mac-titlebar-height); }';

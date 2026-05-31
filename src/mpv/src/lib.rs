@@ -20,6 +20,7 @@ mod node;
 mod options;
 mod property;
 
+pub mod api;
 pub mod boot;
 pub mod capabilities;
 pub mod color;

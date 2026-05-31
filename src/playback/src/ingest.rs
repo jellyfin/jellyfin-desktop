@@ -1,13 +1,12 @@
-//! Pure-Rust port of `src/mpv/event.cpp:digest_property` (and the
-//! end-file / file-loaded / shutdown decoding in `mpv_digest_thread`).
+//! Digests mpv events into coordinator inputs.
 //!
 //! Consumes [`mpv::Event`] values from the Rust event loop and produces
 //! coordinator [`Input`]s plus a couple of side outputs that don't fit
 //! the [`Input`] vocabulary (display-scale callback fanout, raw OSD
 //! pixel-dim mirror for the geometry-save cache).
 //!
-//! State that mirrored the C++ `s_*` atomics (fullscreen, window_max,
-//! display_scale, display_hz) lives in [`IngestState`] so multiple
+//! Per-process state (fullscreen, window_max, display_scale, display_hz)
+//! lives in [`IngestState`] so multiple
 //! ingest calls observe the same change-suppression behavior.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -17,9 +16,7 @@ use jfn_mpv::{Event, ObserveId, PropertyValue};
 use crate::coordinator::Input;
 use crate::types::{EndReason, PlaybackBufferedRange};
 
-/// Property observe-IDs passed to `mpv_observe_property`. Mirrors
-/// `enum MpvObserveId` in `src/mpv/event.h` so the C++ side and the Rust
-/// digest agree on which ID maps to which property.
+/// Property observe-IDs passed to `mpv_observe_property`.
 pub mod observe_id {
     pub const OSD_DIMS: u64 = 2;
     pub const FULLSCREEN: u64 = 3;
@@ -131,9 +128,7 @@ impl IngestState {
     }
 }
 
-/// Decode one [`Event`] into zero or more [`IngestOut`]s. Mirrors
-/// `mpv_digest_thread` in `src/main.cpp` plus `digest_property` in
-/// `src/mpv/event.cpp`.
+/// Decode one [`Event`] into zero or more [`IngestOut`]s.
 /// Re-exported under stable FFI-facing name for [`crate::ingest_driver`].
 pub(crate) fn ingest_event_for_ffi<C: IngestCtx>(
     event: &Event,
@@ -154,11 +149,7 @@ pub(crate) fn ingest_property_for_ffi<C: IngestCtx>(
     digest_property(id, value, state, ctx)
 }
 
-pub(crate) fn ingest<C: IngestCtx>(
-    event: &Event,
-    state: &IngestState,
-    ctx: &C,
-) -> Vec<IngestOut> {
+pub(crate) fn ingest<C: IngestCtx>(event: &Event, state: &IngestState, ctx: &C) -> Vec<IngestOut> {
     match event {
         Event::Shutdown => vec![IngestOut::Shutdown],
         Event::FileLoaded => vec![IngestOut::Input(Input::FileLoaded)],
@@ -201,25 +192,15 @@ fn digest_property<C: IngestCtx>(
 ) -> Vec<IngestOut> {
     use observe_id::*;
     match id {
-        OSD_DIMS => digest_osd_dims(value, state, ctx)
-            .into_iter()
-            .collect(),
+        OSD_DIMS => digest_osd_dims(value, state, ctx).into_iter().collect(),
         PAUSE => as_flag(value)
             .map(|f| vec![IngestOut::Input(Input::PauseChanged(f))])
             .unwrap_or_default(),
         TIME_POS => as_double(value)
-            .map(|d| {
-                vec![IngestOut::Input(Input::Position(
-                    (d * 1_000_000.0) as i64,
-                ))]
-            })
+            .map(|d| vec![IngestOut::Input(Input::Position((d * 1_000_000.0) as i64))])
             .unwrap_or_default(),
         DURATION => as_double(value)
-            .map(|d| {
-                vec![IngestOut::Input(Input::Duration(
-                    (d * 1_000_000.0) as i64,
-                ))]
-            })
+            .map(|d| vec![IngestOut::Input(Input::Duration((d * 1_000_000.0) as i64))])
             .unwrap_or_default(),
         FULLSCREEN => match as_flag(value) {
             Some(f) => {
@@ -243,9 +224,10 @@ fn digest_property<C: IngestCtx>(
         CORE_IDLE => as_flag(value)
             .map(|f| vec![IngestOut::Input(Input::CoreIdle(f))])
             .unwrap_or_default(),
-        VIDEO_FRAME_INFO => vec![IngestOut::Input(Input::VideoFrameAvailable(
-            !matches!(value, PropertyValue::None),
-        ))],
+        VIDEO_FRAME_INFO => vec![IngestOut::Input(Input::VideoFrameAvailable(!matches!(
+            value,
+            PropertyValue::None
+        )))],
         WINDOW_MAX => {
             if let Some(f) = as_flag(value) {
                 state.window_maximized.store(f, Ordering::Relaxed);
@@ -306,13 +288,14 @@ fn digest_osd_dims<C: IngestCtx>(
     };
     let mut lw = (pw as f32 / scale) as i32;
     let mut lh = (ph as f32 / scale) as i32;
-    if let Some((qlw, qlh)) = ctx.macos_logical_size() {
-        if qlw > 0 && qlh > 0 {
-            lw = qlw;
-            lh = qlh;
-            pw = (qlw as f32 * scale) as i32;
-            ph = (qlh as f32 * scale) as i32;
-        }
+    if let Some((qlw, qlh)) = ctx.macos_logical_size()
+        && qlw > 0
+        && qlh > 0
+    {
+        lw = qlw;
+        lh = qlh;
+        pw = (qlw as f32 * scale) as i32;
+        ph = (qlh as f32 * scale) as i32;
     }
     if lw <= 0 || lh <= 0 {
         return Vec::new();
@@ -332,7 +315,10 @@ fn digest_cache_state(value: &PropertyValue) -> Vec<IngestOut> {
     };
     let mut ranges = Vec::with_capacity(arr.len().min(MAX_BUFFERED_RANGES));
     for range in arr.iter().take(MAX_BUFFERED_RANGES) {
-        let start = range.get("start").and_then(|v| v.as_double()).unwrap_or(0.0);
+        let start = range
+            .get("start")
+            .and_then(|v| v.as_double())
+            .unwrap_or(0.0);
         let end = range.get("end").and_then(|v| v.as_double()).unwrap_or(0.0);
         ranges.push(PlaybackBufferedRange {
             start_ticks: (start * 10_000_000.0) as i64,
@@ -460,7 +446,11 @@ mod tests {
     fn display_scale_suppresses_duplicates() {
         let state = IngestState::new();
         let v = PropertyValue::Double(2.0);
-        let out = ingest(&prop(observe_id::DISPLAY_SCALE, v.clone()), &state, &ctx(1.0));
+        let out = ingest(
+            &prop(observe_id::DISPLAY_SCALE, v.clone()),
+            &state,
+            &ctx(1.0),
+        );
         assert!(matches!(out[0], IngestOut::DisplayScaleChanged(s) if s == 2.0));
         let out = ingest(&prop(observe_id::DISPLAY_SCALE, v), &state, &ctx(1.0));
         assert!(out.is_empty());

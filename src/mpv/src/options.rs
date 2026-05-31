@@ -1,20 +1,25 @@
 //! Port of `src/mpv/options.h` — hwdec mode list.
 
+use std::ffi::CStr;
+
 pub const HWDEC_DEFAULT: &str = "no";
 
+#[cfg(target_os = "linux")]
+static HWDEC_LIST: &[&CStr] = &[c"auto", c"no", c"vaapi", c"nvdec", c"vulkan"];
+#[cfg(target_os = "windows")]
+static HWDEC_LIST: &[&CStr] = &[c"auto", c"no", c"d3d11va", c"nvdec", c"vulkan"];
+#[cfg(target_os = "macos")]
+static HWDEC_LIST: &[&CStr] = &[c"auto", c"no", c"videotoolbox", c"vulkan"];
+
 pub fn hwdec_options() -> Vec<&'static str> {
-    let mut out: Vec<&'static str> = vec!["auto", "no"];
-    #[cfg(target_os = "linux")]
-    out.extend_from_slice(&["vaapi", "nvdec", "vulkan"]);
-    #[cfg(target_os = "windows")]
-    out.extend_from_slice(&["d3d11va", "nvdec", "vulkan"]);
-    #[cfg(target_os = "macos")]
-    out.extend_from_slice(&["videotoolbox", "vulkan"]);
-    out
+    HWDEC_LIST
+        .iter()
+        .map(|s| s.to_str().expect("hwdec entries are ASCII"))
+        .collect()
 }
 
 pub fn is_valid_hwdec(value: &str) -> bool {
-    hwdec_options().iter().any(|o| *o == value)
+    HWDEC_LIST.iter().any(|s| s.to_bytes() == value.as_bytes())
 }
 
 #[cfg(test)]

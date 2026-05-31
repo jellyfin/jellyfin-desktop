@@ -8,19 +8,15 @@ deps:
     if ! [ -e third_party/mpv/.git ]; then
         git submodule update --init --recursive
     fi
-    python3 dev/tools/download_cef.py
+    cargo xtask fetch-cef
 
 [macos]
 build: deps
-    ./dev/macos/build.sh
-
-[macos]
-test: build
-    ./dev/macos/test.sh
+    cargo xtask install --mpv-cli --prefix build/output
 
 [macos]
 run *args: build
-    ./dev/macos/run.sh --log-level=debug --log-file=build/run.log {{args}}
+    "build/output/Jellyfin Desktop.app/Contents/MacOS/jellyfin-desktop" --log-level=debug --log-file=build/run.log {{args}}
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [macos]
@@ -29,5 +25,5 @@ run-mpv *args: build
 
 # Build app bundle and distributable DMG (outputs to dist/)
 [macos]
-dmg:
-    ./dev/macos/build_bundle.sh
+dmg: build
+    ./dev/macos/build_dmg.sh

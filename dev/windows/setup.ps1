@@ -1,5 +1,6 @@
 # Setup Windows development environment for jellyfin-desktop
-# Prerequisites: Visual Studio 2022, Python 3, 7-Zip, CMake, Ninja
+# Prerequisites: Visual Studio 2022, Python 3, 7-Zip, CMake (needed by
+# cef-dll-sys to build libcef_dll_wrapper), Ninja, meson, Rust.
 
 param(
     [switch]$SkipMpv,
@@ -101,7 +102,9 @@ Pop-Location
 if (-not $SkipCef) {
     Write-Host ""
     Write-Host "=== CEF (Chromium Embedded Framework) ===" -ForegroundColor Cyan
-    & python (Join-Path $RepoRoot "dev\tools\download_cef.py")
+    Push-Location $RepoRoot
+    & cargo xtask fetch-cef
+    Pop-Location
 }
 
 # Build libmpv from source
@@ -123,9 +126,6 @@ Write-Host ""
 Write-Host "To build:"
 Write-Host "  1. Open 'x64 Native Tools Command Prompt for VS 2022'"
 Write-Host "  2. Navigate to repository: cd $RepoRoot"
-Write-Host "  3. Configure:"
-Write-Host "     cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
-Write-Host "  4. Build:"
-Write-Host "     cmake --build build"
+Write-Host "  3. Run: cargo xtask build"
 Write-Host ""
-Write-Host "Or use dev\windows\build.ps1 for a complete build"
+Write-Host "Or use dev\windows\build.ps1 for the full build flow (loads vcvars and sets LIBCLANG_PATH)."

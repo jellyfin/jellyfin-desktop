@@ -1,10 +1,9 @@
 //! Jellyfin DeviceProfile JSON builder.
 //!
-//! Mirrors the C++ implementation that previously lived in
-//! `src/jellyfin/device_profile.cpp`. Jellyfin source pinned to commit
-//! 2c62d40 (matches the `third_party/jellyfin` submodule). Profile-vs-stream
-//! matching is plain case-insensitive equality against ffprobe-derived names,
-//! so any rename below has to mirror what the server stores on
+//! Jellyfin source pinned to commit 2c62d40 (matches the
+//! `third_party/jellyfin` submodule). Profile-vs-stream matching is
+//! plain case-insensitive equality against ffprobe-derived names, so
+//! any rename below has to mirror what the server stores on
 //! `MediaSource.Container` / `MediaStream.Codec` at probe time.
 //!
 //! Match logic:
@@ -17,28 +16,18 @@
 //!   <https://github.com/jellyfin/jellyfin/blob/2c62d40f0d13926874eef9118a95be0dcee4e659/MediaBrowser.MediaEncoding/Probing/ProbeResultNormalizer.cs#L632-L652>
 
 use serde_json::{Map, Value, json};
-use std::ffi::{CStr, CString, c_char};
-use std::os::raw::c_uchar;
-use std::sync::Mutex;
 
-#[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum MediaKind {
-    Video = 0,
-    Audio = 1,
-    Subtitle = 2,
+    Video,
+    Audio,
+    Subtitle,
 }
 
 #[derive(Clone, Debug)]
 pub struct Codec {
     pub name: String,
     pub kind: MediaKind,
-}
-
-#[repr(C)]
-pub struct JfnCodec {
-    pub name: *const c_char,
-    pub kind: c_uchar,
 }
 
 const SUBTITLE_RENAMES: &[(&str, &str)] = &[
@@ -121,7 +110,7 @@ fn subtitle_profile(format: &str, method: &str) -> Value {
 }
 
 /// Build the DeviceProfile JSON.
-pub fn build(
+pub fn build_device_profile(
     decoders: &[Codec],
     demuxers: &[String],
     device_name: &str,
@@ -275,80 +264,6 @@ pub fn build(
     serde_json::to_string(&Value::Object(profile)).expect("serde_json::to_string on owned Value")
 }
 
-// ---- C ABI ----
-
-unsafe fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
-}
-
-/// # Safety
-/// `decoders` must point to `n_decoders` valid `JfnCodec` entries; each
-/// `name` must be a valid NUL-terminated C string. `demuxers` must point to
-/// `n_demuxers` valid C-string pointers. `device_name` and `app_version`
-/// must be valid NUL-terminated C strings (or NULL → empty).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_build_device_profile(
-    decoders: *const JfnCodec,
-    n_decoders: usize,
-    demuxers: *const *const c_char,
-    n_demuxers: usize,
-    device_name: *const c_char,
-    app_version: *const c_char,
-    force_transcode: bool,
-) -> *mut c_char {
-    let decoders_slice: &[JfnCodec] = if decoders.is_null() || n_decoders == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(decoders, n_decoders) }
-    };
-    let demuxers_slice: &[*const c_char] = if demuxers.is_null() || n_demuxers == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(demuxers, n_demuxers) }
-    };
-
-    let mut codecs: Vec<Codec> = Vec::with_capacity(decoders_slice.len());
-    for c in decoders_slice {
-        let kind = match c.kind {
-            0 => MediaKind::Video,
-            1 => MediaKind::Audio,
-            2 => MediaKind::Subtitle,
-            _ => continue,
-        };
-        codecs.push(Codec {
-            name: unsafe { cstr_to_string(c.name) },
-            kind,
-        });
-    }
-
-    let demuxers_vec: Vec<String> = demuxers_slice
-        .iter()
-        .map(|p| unsafe { cstr_to_string(*p) })
-        .collect();
-
-    let name = unsafe { cstr_to_string(device_name) };
-    let version = unsafe { cstr_to_string(app_version) };
-    let json = build(&codecs, &demuxers_vec, &name, &version, force_transcode);
-    match std::ffi::CString::new(json) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
-}
-
-/// # Safety
-/// `s` must be a pointer previously returned by a `jfn_jellyfin_*` function
-/// that returns `*mut c_char`, or NULL.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_free_string(s: *mut c_char) {
-    if s.is_null() {
-        return;
-    }
-    drop(unsafe { CString::from_raw(s) });
-}
-
 // ---- URL helpers ----
 
 /// Trim surrounding whitespace, lowercase `Http:`/`Https:` scheme prefixes,
@@ -356,7 +271,8 @@ pub unsafe extern "C" fn jfn_jellyfin_free_string(s: *mut c_char) {
 pub fn normalize_input(user_input: &str) -> String {
     let trimmed = user_input.trim();
     let mut s = String::with_capacity(trimmed.len() + 7);
-    let lower_prefix = |s: &str, p: &str| s.len() >= p.len() && s[..p.len()].eq_ignore_ascii_case(p);
+    let lower_prefix =
+        |s: &str, p: &str| s.len() >= p.len() && s[..p.len()].eq_ignore_ascii_case(p);
     if lower_prefix(trimmed, "http:") {
         s.push_str("http:");
         s.push_str(&trimmed[5..]);
@@ -405,77 +321,6 @@ pub fn is_valid_public_info(body: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
-fn cstring_or_null(s: String) -> *mut c_char {
-    match CString::new(s) {
-        Ok(cs) => cs.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
-}
-
-/// # Safety
-/// `input` must be a valid NUL-terminated C string (or NULL → empty).
-/// Returns a malloc'd, NUL-terminated UTF-8 string; free with
-/// `jfn_jellyfin_free_string`. Returns NULL only on interior-NUL serialization
-/// failure.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_normalize_input(input: *const c_char) -> *mut c_char {
-    let s = unsafe { cstr_to_string(input) };
-    cstring_or_null(normalize_input(&s))
-}
-
-/// # Safety
-/// `url` must be a valid NUL-terminated C string (or NULL → empty).
-/// Returns a malloc'd, NUL-terminated UTF-8 string; free with
-/// `jfn_jellyfin_free_string`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_extract_base_url(url: *const c_char) -> *mut c_char {
-    let s = unsafe { cstr_to_string(url) };
-    cstring_or_null(extract_base_url(&s))
-}
-
-/// # Safety
-/// `body` must point to at least `len` bytes of readable memory (need not be
-/// NUL-terminated). Passing a null pointer or zero length returns false.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_is_valid_public_info(
-    body: *const c_char,
-    len: usize,
-) -> bool {
-    if body.is_null() || len == 0 {
-        return false;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(body as *const u8, len) };
-    is_valid_public_info(slice)
-}
-
-// ---- Cached device-profile JSON ----
-//
-// Set once at startup in the browser process; read by WebBrowser when
-// building extra_info for the renderer. Empty string until set.
-
-static CACHED_PROFILE: Mutex<String> = Mutex::new(String::new());
-
-/// # Safety
-/// `json` must be a valid NUL-terminated C string, or NULL to clear.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_jellyfin_set_cached_profile(json: *const c_char) {
-    let s = unsafe { cstr_to_string(json) };
-    if let Ok(mut guard) = CACHED_PROFILE.lock() {
-        *guard = s;
-    }
-}
-
-/// Returns a malloc'd copy of the cached profile JSON (possibly empty).
-/// Free with `jfn_jellyfin_free_string`.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_jellyfin_cached_profile() -> *mut c_char {
-    let s = CACHED_PROFILE
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    cstring_or_null(s)
-}
-
 // ---- tests ----
 
 #[cfg(test)]
@@ -496,7 +341,7 @@ mod tests {
 
     #[test]
     fn empty_capabilities_emits_photo_only_direct_play() {
-        let s = build(&[], &[], "dev", "1.0", false);
+        let s = build_device_profile(&[], &[], "dev", "1.0", false);
         let v = parse(&s);
         let dp = v["DirectPlayProfiles"].as_array().unwrap();
         assert_eq!(dp.len(), 1);
@@ -509,7 +354,7 @@ mod tests {
             codec("h264", MediaKind::Video),
             codec("aac", MediaKind::Audio),
         ];
-        let s = build(&decoders, &["matroska".into()], "dev", "1.0", true);
+        let s = build_device_profile(&decoders, &["matroska".into()], "dev", "1.0", true);
         let v = parse(&s);
         let dp = v["DirectPlayProfiles"].as_array().unwrap();
         let video = dp.iter().find(|e| e["Type"] == "Video").unwrap();
@@ -527,7 +372,7 @@ mod tests {
     fn container_rename_expands_and_dedupes() {
         // Container CSV is only emitted when there are video/audio decoders.
         let decoders = vec![codec("h264", MediaKind::Video)];
-        let s = build(&decoders, &["matroska,webm".into()], "dev", "1.0", false);
+        let s = build_device_profile(&decoders, &["matroska,webm".into()], "dev", "1.0", false);
         let v = parse(&s);
         let dp = v["DirectPlayProfiles"].as_array().unwrap();
         let video = dp.iter().find(|e| e["Type"] == "Video").unwrap();
@@ -546,7 +391,7 @@ mod tests {
     #[test]
     fn subtitle_rename_emits_both_methods() {
         let decoders = vec![codec("subrip", MediaKind::Subtitle)];
-        let s = build(&decoders, &[], "dev", "1.0", false);
+        let s = build_device_profile(&decoders, &[], "dev", "1.0", false);
         let v = parse(&s);
         let sp = v["SubtitleProfiles"].as_array().unwrap();
         let formats: Vec<&str> = sp.iter().map(|e| e["Format"].as_str().unwrap()).collect();
@@ -572,7 +417,7 @@ mod tests {
             codec("aac", MediaKind::Audio),
             codec("opus", MediaKind::Audio),
         ];
-        let s = build(&decoders, &["matroska".into()], "dev", "1.0", false);
+        let s = build_device_profile(&decoders, &["matroska".into()], "dev", "1.0", false);
         let v = parse(&s);
         let tp = v["TranscodingProfiles"].as_array().unwrap();
         let fmp4 = tp
@@ -584,22 +429,34 @@ mod tests {
 
     #[test]
     fn normalize_trims_whitespace() {
-        assert_eq!(normalize_input("  http://example.com  "), "http://example.com");
+        assert_eq!(
+            normalize_input("  http://example.com  "),
+            "http://example.com"
+        );
         assert_eq!(normalize_input("\thttps://host\n"), "https://host");
     }
 
     #[test]
     fn normalize_lowercases_scheme() {
         assert_eq!(normalize_input("HTTP://example.com"), "http://example.com");
-        assert_eq!(normalize_input("HTTPS://example.com"), "https://example.com");
+        assert_eq!(
+            normalize_input("HTTPS://example.com"),
+            "https://example.com"
+        );
         assert_eq!(normalize_input("Http://example.com"), "http://example.com");
-        assert_eq!(normalize_input("Https://example.com"), "https://example.com");
+        assert_eq!(
+            normalize_input("Https://example.com"),
+            "https://example.com"
+        );
     }
 
     #[test]
     fn normalize_prepends_http_when_no_scheme() {
         assert_eq!(normalize_input("example.com"), "http://example.com");
-        assert_eq!(normalize_input("example.com:8096"), "http://example.com:8096");
+        assert_eq!(
+            normalize_input("example.com:8096"),
+            "http://example.com:8096"
+        );
         assert_eq!(normalize_input("192.168.1.10"), "http://192.168.1.10");
     }
 
@@ -629,7 +486,10 @@ mod tests {
 
     #[test]
     fn extract_base_truncates_at_web() {
-        assert_eq!(extract_base_url("https://host/web/index.html"), "https://host");
+        assert_eq!(
+            extract_base_url("https://host/web/index.html"),
+            "https://host"
+        );
         assert_eq!(extract_base_url("https://host/web"), "https://host");
     }
 
@@ -655,9 +515,18 @@ mod tests {
 
     #[test]
     fn extract_base_case_insensitive_web() {
-        assert_eq!(extract_base_url("https://host/WEB/index.html"), "https://host");
-        assert_eq!(extract_base_url("https://host/Web/index.html"), "https://host");
-        assert_eq!(extract_base_url("https://host/wEb/index.html"), "https://host");
+        assert_eq!(
+            extract_base_url("https://host/WEB/index.html"),
+            "https://host"
+        );
+        assert_eq!(
+            extract_base_url("https://host/Web/index.html"),
+            "https://host"
+        );
+        assert_eq!(
+            extract_base_url("https://host/wEb/index.html"),
+            "https://host"
+        );
     }
 
     #[test]
@@ -674,18 +543,30 @@ mod tests {
             extract_base_url("http://host:8096/web/index.html"),
             "http://host:8096"
         );
-        assert_eq!(extract_base_url("http://localhost:8096/web/"), "http://localhost:8096");
+        assert_eq!(
+            extract_base_url("http://localhost:8096/web/"),
+            "http://localhost:8096"
+        );
         assert_eq!(
             extract_base_url("http://192.168.1.100:8096/web/"),
             "http://192.168.1.100:8096"
         );
-        assert_eq!(extract_base_url("http://[::1]:8096/web/"), "http://[::1]:8096");
+        assert_eq!(
+            extract_base_url("http://[::1]:8096/web/"),
+            "http://[::1]:8096"
+        );
     }
 
     #[test]
     fn extract_base_strips_query_and_fragment_after_web() {
-        assert_eq!(extract_base_url("https://host/web/?foo=bar"), "https://host");
-        assert_eq!(extract_base_url("https://host/web/#section"), "https://host");
+        assert_eq!(
+            extract_base_url("https://host/web/?foo=bar"),
+            "https://host"
+        );
+        assert_eq!(
+            extract_base_url("https://host/web/#section"),
+            "https://host"
+        );
         assert_eq!(
             extract_base_url("https://host/jellyfin/web/?foo=bar#section"),
             "https://host/jellyfin"
@@ -708,7 +589,10 @@ mod tests {
 
     #[test]
     fn idn_hosts_survive_unchanged() {
-        assert_eq!(normalize_input("http://example.みんな"), "http://example.みんな");
+        assert_eq!(
+            normalize_input("http://example.みんな"),
+            "http://example.みんな"
+        );
         assert_eq!(normalize_input("example.みんな"), "http://example.みんな");
         assert_eq!(
             normalize_input("  HTTPS://example.みんな/web "),
@@ -723,7 +607,10 @@ mod tests {
             extract_base_url("https://example.みんな/jellyfin/web"),
             "https://example.みんな/jellyfin"
         );
-        assert_eq!(extract_base_url("http://example.みんな/"), "http://example.みんな");
+        assert_eq!(
+            extract_base_url("http://example.みんな/"),
+            "http://example.みんな"
+        );
     }
 
     #[test]
@@ -771,7 +658,7 @@ mod tests {
 
     #[test]
     fn top_level_keys_in_expected_order() {
-        let s = build(&[], &[], "dev", "1.0", false);
+        let s = build_device_profile(&[], &[], "dev", "1.0", false);
         let v: Value = parse(&s);
         let obj = v.as_object().unwrap();
         let keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();

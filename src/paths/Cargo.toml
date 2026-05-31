@@ -1,9 +1,15 @@
 [package]
 name = "jfn-paths"
-version = "0.1.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_paths"
 crate-type = ["rlib"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+jfn-linux-util = { path = "../linux_util" }
+
+[lints]
+workspace = true

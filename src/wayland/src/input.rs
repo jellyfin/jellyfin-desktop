@@ -6,18 +6,17 @@
 //! fd. Input events come back to C++ as primitives via JfnInputCallbacks so
 //! no CEF-typed structs cross the FFI boundary.
 
+use parking_lot::Mutex;
 use std::ffi::{c_int, c_void};
 use std::os::fd::{AsFd, AsRawFd};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use memmap2::MmapOptions;
 use wayland_backend::client::Backend;
-use wayland_client::globals::{registry_queue_init, GlobalListContents};
-use wayland_client::protocol::{
-    wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_surface,
-};
+use wayland_client::globals::{GlobalListContents, registry_queue_init};
+use wayland_client::protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_surface};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1::{self, WpCursorShapeDeviceV1},
@@ -25,65 +24,26 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 };
 use xkbcommon::xkb;
 
-// CEF EVENTFLAG values (kept in sync with include/internal/cef_types.h).
-const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
-const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
-const EVENTFLAG_ALT_DOWN: u32 = 1 << 3;
-const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
-const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
-const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
+use jfn_input::buttons::{
+    BTN_BACK, BTN_EXTRA, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE,
+};
+use jfn_platform_abi::event_flags::{
+    EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
+};
 
-// CEF cef_cursor_type_t values (order from cef_types.h).
-#[allow(dead_code)]
-const CT_POINTER: u32 = 0;
-const CT_CROSS: u32 = 1;
-const CT_HAND: u32 = 2;
-const CT_IBEAM: u32 = 3;
-const CT_WAIT: u32 = 4;
-const CT_HELP: u32 = 5;
-const CT_EASTRESIZE: u32 = 6;
-const CT_NORTHRESIZE: u32 = 7;
-const CT_NORTHEASTRESIZE: u32 = 8;
-const CT_NORTHWESTRESIZE: u32 = 9;
-const CT_SOUTHRESIZE: u32 = 10;
-const CT_SOUTHEASTRESIZE: u32 = 11;
-const CT_SOUTHWESTRESIZE: u32 = 12;
-const CT_WESTRESIZE: u32 = 13;
-const CT_NORTHSOUTHRESIZE: u32 = 14;
-const CT_EASTWESTRESIZE: u32 = 15;
-const CT_NORTHEASTSOUTHWESTRESIZE: u32 = 16;
-const CT_NORTHWESTSOUTHEASTRESIZE: u32 = 17;
-const CT_COLUMNRESIZE: u32 = 18;
-const CT_ROWRESIZE: u32 = 19;
-const CT_MIDDLEPANNING: u32 = 20;
-#[allow(dead_code)] const CT_EASTPANNING: u32 = 21;
-#[allow(dead_code)] const CT_NORTHPANNING: u32 = 22;
-#[allow(dead_code)] const CT_NORTHEASTPANNING: u32 = 23;
-#[allow(dead_code)] const CT_NORTHWESTPANNING: u32 = 24;
-#[allow(dead_code)] const CT_SOUTHPANNING: u32 = 25;
-#[allow(dead_code)] const CT_SOUTHEASTPANNING: u32 = 26;
-#[allow(dead_code)] const CT_SOUTHWESTPANNING: u32 = 27;
-#[allow(dead_code)] const CT_WESTPANNING: u32 = 28;
-const CT_MOVE: u32 = 29;
-const CT_VERTICALTEXT: u32 = 30;
-const CT_CELL: u32 = 31;
-const CT_CONTEXTMENU: u32 = 32;
-const CT_ALIAS: u32 = 33;
-const CT_PROGRESS: u32 = 34;
-const CT_NODROP: u32 = 35;
-const CT_COPY: u32 = 36;
-const CT_NONE: u32 = 37;
-const CT_NOTALLOWED: u32 = 38;
-const CT_ZOOMIN: u32 = 39;
-const CT_ZOOMOUT: u32 = 40;
-const CT_GRAB: u32 = 41;
-const CT_GRABBING: u32 = 42;
-const CT_MIDDLE_PANNING_VERTICAL: u32 = 43;
-const CT_MIDDLE_PANNING_HORIZONTAL: u32 = 44;
+use jfn_platform_abi::cursor::{
+    CT_ALIAS, CT_CELL, CT_COLUMNRESIZE, CT_CONTEXTMENU, CT_COPY, CT_CROSS, CT_EASTRESIZE,
+    CT_EASTWESTRESIZE, CT_GRAB, CT_GRABBING, CT_HAND, CT_HELP, CT_IBEAM,
+    CT_MIDDLE_PANNING_HORIZONTAL, CT_MIDDLE_PANNING_VERTICAL, CT_MIDDLEPANNING, CT_MOVE, CT_NODROP,
+    CT_NONE, CT_NORTHEASTRESIZE, CT_NORTHEASTSOUTHWESTRESIZE, CT_NORTHRESIZE, CT_NORTHSOUTHRESIZE,
+    CT_NORTHWESTRESIZE, CT_NORTHWESTSOUTHEASTRESIZE, CT_NOTALLOWED, CT_POINTER, CT_PROGRESS,
+    CT_ROWRESIZE, CT_SOUTHEASTRESIZE, CT_SOUTHRESIZE, CT_SOUTHWESTRESIZE, CT_VERTICALTEXT, CT_WAIT,
+    CT_WESTRESIZE, CT_ZOOMIN, CT_ZOOMOUT,
+};
 
 fn cef_to_wl_shape(cef: u32) -> u32 {
     use wp_cursor_shape_device_v1::Shape;
-    let s = match cef {
+    let s = match cef as c_int {
         CT_CROSS => Shape::Crosshair,
         CT_HAND => Shape::Pointer,
         CT_IBEAM => Shape::Text,
@@ -124,27 +84,23 @@ fn cef_to_wl_shape(cef: u32) -> u32 {
     s as u32
 }
 
-// linux/input-event-codes.h. Defined here to avoid pulling libc::input.
-const BTN_LEFT: u32 = 0x110;
-const BTN_RIGHT: u32 = 0x111;
-const BTN_MIDDLE: u32 = 0x112;
-const BTN_SIDE: u32 = 0x113;
-const BTN_EXTRA: u32 = 0x114;
-const BTN_FORWARD: u32 = 0x115;
-const BTN_BACK: u32 = 0x116;
+pub type MouseMoveFn = fn(x: i32, y: i32, mods: u32, leave: c_int);
+pub type MouseButtonFn = fn(button: u32, pressed: c_int, x: i32, y: i32, mods: u32);
+pub type ScrollFn = fn(x: i32, y: i32, dx: i32, dy: i32, mods: u32);
+pub type HistoryNavFn = fn(forward: c_int);
+pub type KbFocusFn = fn(gained: c_int);
+pub type KeyFn = fn(keysym: u32, native_code: u32, mods: u32, pressed: c_int);
+pub type CharFn = fn(codepoint: u32, mods: u32, native_code: u32);
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Callbacks {
-    pub mouse_move: Option<unsafe extern "C" fn(x: i32, y: i32, mods: u32, leave: c_int)>,
-    pub mouse_button:
-        Option<unsafe extern "C" fn(button: u32, pressed: c_int, x: i32, y: i32, mods: u32)>,
-    pub scroll: Option<unsafe extern "C" fn(x: i32, y: i32, dx: i32, dy: i32, mods: u32)>,
-    pub history_nav: Option<unsafe extern "C" fn(forward: c_int)>,
-    pub kb_focus: Option<unsafe extern "C" fn(gained: c_int)>,
-    pub key:
-        Option<unsafe extern "C" fn(keysym: u32, native_code: u32, mods: u32, pressed: c_int)>,
-    pub char_: Option<unsafe extern "C" fn(codepoint: u32, mods: u32, native_code: u32)>,
+    pub mouse_move: Option<MouseMoveFn>,
+    pub mouse_button: Option<MouseButtonFn>,
+    pub scroll: Option<ScrollFn>,
+    pub history_nav: Option<HistoryNavFn>,
+    pub kb_focus: Option<KbFocusFn>,
+    pub key: Option<KeyFn>,
+    pub char_: Option<CharFn>,
 }
 
 unsafe impl Send for Callbacks {}
@@ -194,21 +150,10 @@ impl State {
     }
 
     fn refresh_modifiers(&mut self) {
-        let Some(st) = &self.xkb_st else {
-            self.modifiers = 0;
-            return;
+        self.modifiers = match &self.xkb_st {
+            Some(st) => jfn_input::xkb::to_cef_mods(st),
+            None => 0,
         };
-        let mut m = 0;
-        if st.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE) {
-            m |= EVENTFLAG_SHIFT_DOWN;
-        }
-        if st.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE) {
-            m |= EVENTFLAG_CONTROL_DOWN;
-        }
-        if st.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE) {
-            m |= EVENTFLAG_ALT_DOWN;
-        }
-        self.modifiers = m;
     }
 
     fn apply_cursor(&mut self, qh: &QueueHandle<Self>) {
@@ -217,14 +162,14 @@ impl State {
         if self.pointer_serial == 0 {
             return;
         }
-        if cef == CT_NONE {
+        if cef as c_int == CT_NONE {
             pointer.set_cursor(self.pointer_serial, None, 0, 0);
             return;
         }
-        if self.cursor_dev.is_none() {
-            if let Some(mgr) = &self.cursor_mgr {
-                self.cursor_dev = Some(mgr.get_pointer(pointer, qh, ()));
-            }
+        if self.cursor_dev.is_none()
+            && let Some(mgr) = &self.cursor_mgr
+        {
+            self.cursor_dev = Some(mgr.get_pointer(pointer, qh, ()));
         }
         if let Some(dev) = &self.cursor_dev {
             let shape: wp_cursor_shape_device_v1::Shape = unsafe {
@@ -282,36 +227,55 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
     ) {
         use wl_pointer::Event;
         match event {
-            Event::Enter { serial, surface_x, surface_y, .. } => {
+            Event::Enter {
+                serial,
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_serial = serial;
                 state.apply_cursor(qh);
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
                 if let Some(f) = state.cb.mouse_move {
-                    unsafe {
-                        f(state.ptr_x as i32, state.ptr_y as i32, state.cef_modifiers(), 0);
-                    }
+                    f(
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        state.cef_modifiers(),
+                        0,
+                    );
                 }
             }
             Event::Leave { .. } => {
                 if let Some(f) = state.cb.mouse_move {
-                    unsafe {
-                        f(state.ptr_x as i32, state.ptr_y as i32, state.cef_modifiers(), 1);
-                    }
+                    f(
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        state.cef_modifiers(),
+                        1,
+                    );
                 }
             }
-            Event::Motion { surface_x, surface_y, .. } => {
+            Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
                 if let Some(f) = state.cb.mouse_move {
-                    unsafe {
-                        f(state.ptr_x as i32, state.ptr_y as i32, state.cef_modifiers(), 0);
-                    }
+                    f(
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        state.cef_modifiers(),
+                        0,
+                    );
                 }
             }
-            Event::Button { button, state: bs, .. } => {
-                let pressed =
-                    matches!(bs, WEnum::Value(wl_pointer::ButtonState::Pressed));
+            Event::Button {
+                button, state: bs, ..
+            } => {
+                let pressed = matches!(bs, WEnum::Value(wl_pointer::ButtonState::Pressed));
                 if button == BTN_SIDE
                     || button == BTN_EXTRA
                     || button == BTN_BACK
@@ -320,7 +284,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     if pressed {
                         let forward = button == BTN_EXTRA || button == BTN_FORWARD;
                         if let Some(f) = state.cb.history_nav {
-                            unsafe { f(if forward { 1 } else { 0 }) };
+                            f(if forward { 1 } else { 0 });
                         }
                     }
                     return;
@@ -337,15 +301,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     state.mouse_button_modifiers &= !flag;
                 }
                 if let Some(f) = state.cb.mouse_button {
-                    unsafe {
-                        f(
-                            button,
-                            if pressed { 1 } else { 0 },
-                            state.ptr_x as i32,
-                            state.ptr_y as i32,
-                            state.cef_modifiers(),
-                        );
-                    }
+                    f(
+                        button,
+                        if pressed { 1 } else { 0 },
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        state.cef_modifiers(),
+                    );
                 }
             }
             Event::Axis { axis, value, .. } => {
@@ -395,15 +357,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     return;
                 }
                 if let Some(f) = state.cb.scroll {
-                    unsafe {
-                        f(
-                            state.ptr_x as i32,
-                            state.ptr_y as i32,
-                            dx,
-                            dy,
-                            state.cef_modifiers(),
-                        );
-                    }
+                    f(
+                        state.ptr_x as i32,
+                        state.ptr_y as i32,
+                        dx,
+                        dy,
+                        state.cef_modifiers(),
+                    );
                 }
             }
             _ => {}
@@ -450,31 +410,33 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             }
             Event::Enter { .. } => {
                 if let Some(f) = state.cb.kb_focus {
-                    unsafe { f(1) };
+                    f(1);
                 }
             }
             Event::Leave { .. } => {
                 if let Some(f) = state.cb.kb_focus {
-                    unsafe { f(0) };
+                    f(0);
                 }
             }
             Event::Key { key, state: ks, .. } => {
                 let Some(st) = &state.xkb_st else { return };
                 let kc: xkb::Keycode = (key + 8).into();
                 let sym = st.key_get_one_sym(kc);
-                let pressed =
-                    matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                let pressed = matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
                 if let Some(f) = state.cb.key {
-                    unsafe {
-                        f(sym.into(), key, state.modifiers, if pressed { 1 } else { 0 });
-                    }
+                    f(
+                        sym.into(),
+                        key,
+                        state.modifiers,
+                        if pressed { 1 } else { 0 },
+                    );
                 }
                 if pressed {
                     let cp = st.key_get_utf32(kc);
-                    if cp > 0 {
-                        if let Some(f) = state.cb.char_ {
-                            unsafe { f(cp, state.modifiers, key) };
-                        }
+                    if cp > 0
+                        && let Some(f) = state.cb.char_
+                    {
+                        f(cp, state.modifiers, key);
                     }
                 }
             }
@@ -533,7 +495,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for State {
 
 pub struct JfnInputWayland {
     cursor_type: Arc<AtomicU32>,
-    set_cursor_inbox: Arc<Mutex<Option<u32>>>,
+    set_cursor_inbox: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     wake_fd: c_int,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -546,14 +508,13 @@ fn worker_loop(
     wake_fd: c_int,
     stop: Arc<AtomicBool>,
     cursor_type: Arc<AtomicU32>,
-    set_cursor_inbox: Arc<Mutex<Option<u32>>>,
+    set_cursor_inbox: Arc<AtomicBool>,
 ) {
     let display_fd = conn.as_fd().as_raw_fd();
     let qh = queue.handle();
     loop {
         // Apply any pending cursor change before we block.
-        let pending = set_cursor_inbox.lock().unwrap().take();
-        if pending.is_some() {
+        if set_cursor_inbox.swap(false, Ordering::Acquire) {
             // cursor_type already reflects the desired value (writer updates
             // it before signalling); this just ensures we re-issue the
             // Wayland request on the current pointer/serial.
@@ -570,8 +531,16 @@ fn worker_loop(
         };
 
         let mut pfds = [
-            libc::pollfd { fd: display_fd, events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: wake_fd, events: libc::POLLIN, revents: 0 },
+            libc::pollfd {
+                fd: display_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: wake_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
         ];
         let r = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as _, -1) };
         if r < 0 {
@@ -597,9 +566,7 @@ fn worker_loop(
             // Drain wake fd.
             let mut buf = [0u8; 64];
             loop {
-                let n = unsafe {
-                    libc::read(wake_fd, buf.as_mut_ptr() as *mut c_void, buf.len())
-                };
+                let n = unsafe { libc::read(wake_fd, buf.as_mut_ptr() as *mut c_void, buf.len()) };
                 if n <= 0 {
                     break;
                 }
@@ -634,8 +601,8 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=8, ()).ok()?;
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
 
-    let cursor_type = Arc::new(AtomicU32::new(CT_POINTER));
-    let set_cursor_inbox = Arc::new(Mutex::new(None));
+    let cursor_type = Arc::new(AtomicU32::new(CT_POINTER as u32));
+    let set_cursor_inbox = Arc::new(AtomicBool::new(false));
 
     let state = State {
         cb,
@@ -665,7 +632,15 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let inbox_thread = set_cursor_inbox.clone();
     let stop_thread = stop.clone();
     let worker = thread::spawn(move || {
-        worker_loop(conn, queue, state, wake_fd, stop_thread, cursor_type_thread, inbox_thread)
+        worker_loop(
+            conn,
+            queue,
+            state,
+            wake_fd,
+            stop_thread,
+            cursor_type_thread,
+            inbox_thread,
+        )
     });
     Some(JfnInputWayland {
         cursor_type,
@@ -676,8 +651,11 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     })
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_input_wayland_init(
+/// # Safety
+/// `display` must be a valid `wl_display*` and `callbacks` must point to
+/// a `Callbacks` live for the duration of the call (the value is copied
+/// in).
+pub unsafe fn jfn_input_wayland_init(
     display: *mut c_void,
     callbacks: *const Callbacks,
 ) -> *mut JfnInputWayland {
@@ -691,20 +669,22 @@ pub unsafe extern "C" fn jfn_input_wayland_init(
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_input_wayland_start(_ctx: *mut JfnInputWayland) {
+/// # Safety
+/// `_ctx` is unused; the function is kept unsafe for symmetry with the
+/// rest of the FFI surface.
+pub unsafe fn jfn_input_wayland_start(_ctx: *mut JfnInputWayland) {
     // Thread starts in init; this is kept for ABI compatibility with the
     // C++ API which had an explicit start step.
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_input_wayland_set_cursor(
-    ctx: *mut JfnInputWayland,
-    cef_cursor_type: u32,
-) {
-    let Some(c) = (unsafe { ctx.as_ref() }) else { return };
+/// # Safety
+/// `ctx` must be a pointer returned by [`jfn_input_wayland_init`] (or null).
+pub unsafe fn jfn_input_wayland_set_cursor(ctx: *mut JfnInputWayland, cef_cursor_type: u32) {
+    let Some(c) = (unsafe { ctx.as_ref() }) else {
+        return;
+    };
     c.cursor_type.store(cef_cursor_type, Ordering::Relaxed);
-    *c.set_cursor_inbox.lock().unwrap() = Some(cef_cursor_type);
+    c.set_cursor_inbox.store(true, Ordering::Release);
     // Wake the input thread so it picks up the cursor change.
     let v: u64 = 1;
     unsafe {
@@ -712,8 +692,10 @@ pub unsafe extern "C" fn jfn_input_wayland_set_cursor(
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_input_wayland_cleanup(ctx: *mut JfnInputWayland) {
+/// # Safety
+/// `ctx` must be the pointer returned by [`jfn_input_wayland_init`] (or
+/// null). Calling twice with the same non-null `ctx` causes use-after-free.
+pub unsafe fn jfn_input_wayland_cleanup(ctx: *mut JfnInputWayland) {
     if ctx.is_null() {
         return;
     }
@@ -723,7 +705,7 @@ pub unsafe extern "C" fn jfn_input_wayland_cleanup(ctx: *mut JfnInputWayland) {
     unsafe {
         libc::write(boxed.wake_fd, &v as *const u64 as *const c_void, 8);
     }
-    if let Some(w) = boxed.worker.get_mut().unwrap().take() {
+    if let Some(w) = boxed.worker.get_mut().take() {
         let _ = w.join();
     }
     unsafe { libc::close(boxed.wake_fd) };

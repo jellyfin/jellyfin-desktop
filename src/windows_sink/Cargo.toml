@@ -1,0 +1,31 @@
+[package]
+name = "jfn-windows-sink"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "jfn_windows_sink"
+crate-type = ["rlib"]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+jfn-mpv = { path = "../mpv" }
+jfn-playback = { path = "../playback" }
+tracing.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Com",
+    "Win32_System_WinRT",
+    "Win32_Security_Cryptography",
+    "Media",
+    "Media_Playback",
+    "Storage_Streams",
+    "Foundation",
+    "Foundation_Collections",
+] }
+windows-core.workspace = true
+windows-future = "0.3"
+
+[lints]
+workspace = true

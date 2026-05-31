@@ -102,6 +102,29 @@ mod imp {
                 }
             }
         }
+
+        /// Block until signaled. Level-triggered, so a `signal()` that lands
+        /// before the call returns immediately. Returns on any non-`EINTR`
+        /// `poll` error rather than spinning.
+        pub fn wait(&self) {
+            let mut pfd = libc::pollfd {
+                fd: self.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            loop {
+                let r = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, -1) };
+                if r < 0 {
+                    if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                        continue;
+                    }
+                    return;
+                }
+                if pfd.revents != 0 {
+                    return;
+                }
+            }
+        }
     }
 
     impl Drop for WakeEvent {
@@ -128,7 +151,9 @@ mod imp {
 mod imp {
     use core::ptr;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent};
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForSingleObject,
+    };
 
     pub struct WakeEvent {
         handle: HANDLE,
@@ -164,6 +189,14 @@ mod imp {
                 ResetEvent(self.handle);
             }
         }
+
+        /// Block until signaled. Manual-reset, so a `signal()` that lands
+        /// before the call returns immediately.
+        pub fn wait(&self) {
+            unsafe {
+                WaitForSingleObject(self.handle, INFINITE);
+            }
+        }
     }
 
     impl Drop for WakeEvent {
@@ -177,8 +210,7 @@ mod imp {
 
 pub use imp::WakeEvent;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_wake_event_new() -> *mut WakeEvent {
+pub fn jfn_wake_event_new() -> *mut WakeEvent {
     match WakeEvent::new() {
         Some(ev) => Box::into_raw(Box::new(ev)),
         None => core::ptr::null_mut(),
@@ -189,8 +221,7 @@ pub extern "C" fn jfn_wake_event_new() -> *mut WakeEvent {
 ///
 /// # Safety
 /// `ev` must be a pointer previously returned by `jfn_wake_event_new`, or null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_wake_event_free(ev: *mut WakeEvent) {
+pub unsafe fn jfn_wake_event_free(ev: *mut WakeEvent) {
     if !ev.is_null() {
         unsafe { drop(Box::from_raw(ev)) };
     }
@@ -200,8 +231,7 @@ pub unsafe extern "C" fn jfn_wake_event_free(ev: *mut WakeEvent) {
 ///
 /// # Safety
 /// `ev` must point to a live wake event or be null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_wake_event_signal(ev: *const WakeEvent) {
+pub unsafe fn jfn_wake_event_signal(ev: *const WakeEvent) {
     if let Some(ev) = unsafe { ev.as_ref() } {
         ev.signal();
     }
@@ -211,8 +241,7 @@ pub unsafe extern "C" fn jfn_wake_event_signal(ev: *const WakeEvent) {
 ///
 /// # Safety
 /// `ev` must point to a live wake event or be null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_wake_event_drain(ev: *const WakeEvent) {
+pub unsafe fn jfn_wake_event_drain(ev: *const WakeEvent) {
     if let Some(ev) = unsafe { ev.as_ref() } {
         ev.drain();
     }
@@ -223,8 +252,7 @@ pub unsafe extern "C" fn jfn_wake_event_drain(ev: *const WakeEvent) {
 ///
 /// # Safety
 /// `ev` must point to a live wake event or be null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_wake_event_fd(ev: *const WakeEvent) -> libc::c_int {
+pub unsafe fn jfn_wake_event_fd(ev: *const WakeEvent) -> libc::c_int {
     match unsafe { ev.as_ref() } {
         Some(ev) => ev.fd(),
         None => -1,
@@ -236,8 +264,7 @@ pub unsafe extern "C" fn jfn_wake_event_fd(ev: *const WakeEvent) -> libc::c_int 
 ///
 /// # Safety
 /// `ev` must point to a live wake event or be null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_wake_event_handle(ev: *const WakeEvent) -> *mut core::ffi::c_void {
+pub unsafe fn jfn_wake_event_handle(ev: *const WakeEvent) -> *mut core::ffi::c_void {
     match unsafe { ev.as_ref() } {
         Some(ev) => ev.handle() as *mut core::ffi::c_void,
         None => core::ptr::null_mut(),

@@ -2,7 +2,7 @@
 # Run inside the appimage build container (jellyfin-desktop-appimage:base).
 # Bind mounts (set up by `just appimage build`):
 #   /src           rw  -- repo root (CEF + submodules must be populated by host)
-#   /build         rw  -- cmake/ninja/meson state, persists on host for incremental builds
+#   /build         rw  -- cargo + meson incremental state, persists on host
 #   /host-output   rw  -- .AppImage output dir
 # Env:
 #   VERSION        -- version string for the output filename
@@ -19,15 +19,7 @@ esac
 
 cd /src
 
-# Build (cmake's mpv_build target invokes meson)
-if [ ! -f /build/CMakeCache.txt ]; then
-    cmake -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_SKIP_RPATH=1 \
-        -Wno-dev \
-        -S /src -B /build
-fi
-cmake --build /build
+cargo xtask build --out /build
 strip /build/*.so /build/jellyfin-desktop
 
 BUILD=/build
@@ -57,10 +49,10 @@ cp "$BUILD"/libvk_swiftshader.so "$APPDIR/usr/bin/"
 # Fedora x86_64: shared libs live in /usr/lib64; /usr/lib holds noarch only.
 cp -a /usr/lib64 "$APPDIR/usr/lib"
 
-# mpv lib (cmake post-build copies it next to jellyfin-desktop)
+# mpv lib (xtask build copies it next to jellyfin-desktop)
 cp "$BUILD"/libmpv.so.2 "$APPDIR/usr/lib/"
 
-# Fedora's ffmpeg-free links GnuTLS; GnuTLS needs a system priority file from
+# Fedora's ffmpeg links GnuTLS; GnuTLS needs a system priority file from
 # crypto-policies. Bundle the DEFAULT one; AppRun points GNUTLS_SYSTEM_PRIORITY_FILE at it.
 mkdir -p "$APPDIR/usr/share/crypto-policies/DEFAULT"
 cp /usr/share/crypto-policies/DEFAULT/gnutls.txt \

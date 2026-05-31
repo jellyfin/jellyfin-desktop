@@ -1,24 +1,22 @@
 //! Settings store. Owns the in-memory state, JSON persistence, and the
-//! singleton accessor that the C++ side calls through.
+//! singleton accessor that the rest of the workspace calls into.
 //!
 //! On-disk schema is a JSON object with the field names used by
 //! [`SettingsData::to_json`]. Missing keys keep their defaults on load; save
 //! suppresses fields that are at their default (empty strings, sentinel
 //! values, zero geometry) so existing config files round-trip unchanged.
 
+use parking_lot::{Condvar, Mutex};
 use serde_json::{Map, Value, json};
-use std::ffi::{CStr, CString, c_char};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::ptr;
-use std::sync::{Mutex, OnceLock};
-use std::thread;
+use std::sync::OnceLock;
+use std::thread::{self, JoinHandle};
 
 const DEVICE_NAME_MAX: usize = 64;
 const HWDEC_DEFAULT: &str = "no";
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct JfnWindowGeometry {
     pub x: i32,
@@ -57,9 +55,24 @@ struct SettingsData {
     window: JfnWindowGeometry,
     audio_exclusive: bool,
     disable_gpu_compositing: bool,
-    titlebar_theme_color: bool,
     transparent_titlebar: bool,
     force_transcoding: bool,
+    // None = auto (detected from the desktop environment); Some = explicit.
+    // Values: "csd" (in-app), "server" (server-side), "serverThemed"
+    // (server-side, tinted via the KDE palette protocol).
+    window_decorations: Option<String>,
+    hide_scrollbar: bool,
+}
+
+/// Auto default for window decorations. KDE draws its own server-side
+/// decorations (and we can tint them), so default to themed server-side there;
+/// elsewhere (notably GNOME, which never draws decorations) default to in-app
+/// client-side. Detected from `XDG_CURRENT_DESKTOP`.
+fn default_window_decorations() -> String {
+    let kde = std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|v| v.split(':').any(|s| s.eq_ignore_ascii_case("KDE")))
+        .unwrap_or(false);
+    if kde { "serverThemed" } else { "csd" }.to_string()
 }
 
 impl Default for SettingsData {
@@ -74,9 +87,10 @@ impl Default for SettingsData {
             window: JfnWindowGeometry::default(),
             audio_exclusive: false,
             disable_gpu_compositing: false,
-            titlebar_theme_color: true,
             transparent_titlebar: true,
             force_transcoding: false,
+            window_decorations: None,
+            hide_scrollbar: true,
         }
     }
 }
@@ -138,14 +152,17 @@ impl SettingsData {
         if let Some(b) = v.get("disableGpuCompositing").and_then(Value::as_bool) {
             self.disable_gpu_compositing = b;
         }
-        if let Some(b) = v.get("titlebarThemeColor").and_then(Value::as_bool) {
-            self.titlebar_theme_color = b;
-        }
         if let Some(b) = v.get("transparentTitlebar").and_then(Value::as_bool) {
             self.transparent_titlebar = b;
         }
         if let Some(b) = v.get("forceTranscoding").and_then(Value::as_bool) {
             self.force_transcoding = b;
+        }
+        if let Some(s) = v.get("windowDecorations").and_then(Value::as_str) {
+            self.window_decorations = Some(s.to_string());
+        }
+        if let Some(b) = v.get("hideScrollbar").and_then(Value::as_bool) {
+            self.hide_scrollbar = b;
         }
     }
 
@@ -157,7 +174,10 @@ impl SettingsData {
             o.insert("windowHeight".into(), json!(self.window.height));
         }
         if self.window.logical_width > 0 && self.window.logical_height > 0 {
-            o.insert("windowLogicalWidth".into(), json!(self.window.logical_width));
+            o.insert(
+                "windowLogicalWidth".into(),
+                json!(self.window.logical_width),
+            );
             o.insert(
                 "windowLogicalHeight".into(),
                 json!(self.window.logical_height),
@@ -170,10 +190,7 @@ impl SettingsData {
             o.insert("windowX".into(), json!(self.window.x));
             o.insert("windowY".into(), json!(self.window.y));
         }
-        o.insert(
-            "windowMaximized".into(),
-            Value::Bool(self.window.maximized),
-        );
+        o.insert("windowMaximized".into(), Value::Bool(self.window.maximized));
         if !self.hwdec.is_empty() && self.hwdec != HWDEC_DEFAULT {
             o.insert("hwdec".into(), Value::String(self.hwdec.clone()));
         }
@@ -195,9 +212,6 @@ impl SettingsData {
         if self.disable_gpu_compositing {
             o.insert("disableGpuCompositing".into(), Value::Bool(true));
         }
-        if !self.titlebar_theme_color {
-            o.insert("titlebarThemeColor".into(), Value::Bool(false));
-        }
         if !self.transparent_titlebar {
             o.insert("transparentTitlebar".into(), Value::Bool(false));
         }
@@ -206,6 +220,12 @@ impl SettingsData {
         }
         if self.force_transcoding {
             o.insert("forceTranscoding".into(), Value::Bool(true));
+        }
+        if let Some(s) = &self.window_decorations {
+            o.insert("windowDecorations".into(), Value::String(s.clone()));
+        }
+        if !self.hide_scrollbar {
+            o.insert("hideScrollbar".into(), Value::Bool(false));
         }
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
@@ -236,9 +256,6 @@ impl SettingsData {
         if self.disable_gpu_compositing {
             o.insert("disableGpuCompositing".into(), Value::Bool(true));
         }
-        if !self.titlebar_theme_color {
-            o.insert("titlebarThemeColor".into(), Value::Bool(false));
-        }
         if !self.transparent_titlebar {
             o.insert("transparentTitlebar".into(), Value::Bool(false));
         }
@@ -249,6 +266,15 @@ impl SettingsData {
             "forceTranscoding".into(),
             Value::Bool(self.force_transcoding),
         );
+        o.insert(
+            "windowDecorations".into(),
+            Value::String(
+                self.window_decorations
+                    .clone()
+                    .unwrap_or_else(default_window_decorations),
+            ),
+        );
+        o.insert("hideScrollbar".into(), Value::Bool(self.hide_scrollbar));
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
         }
@@ -282,6 +308,54 @@ fn state() -> &'static Mutex<State> {
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
+// Single persistent background save worker. save_async() coalesces into
+// Pending::data (only the newest snapshot survives); the worker wakes on the
+// condvar, writes the latest snapshot, then sleeps. Shutdown drains any queued
+// write and joins the thread so nothing is lost at exit.
+struct Pending {
+    data: Option<SettingsData>,
+    path: PathBuf,
+    stop: bool,
+    started: bool,
+}
+
+struct SaveWorker {
+    pending: Mutex<Pending>,
+    cv: Condvar,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+static SAVE_WORKER: OnceLock<SaveWorker> = OnceLock::new();
+
+fn save_worker() -> &'static SaveWorker {
+    SAVE_WORKER.get_or_init(|| SaveWorker {
+        pending: Mutex::new(Pending {
+            data: None,
+            path: PathBuf::new(),
+            stop: false,
+            started: false,
+        }),
+        cv: Condvar::new(),
+        handle: Mutex::new(None),
+    })
+}
+
+fn save_worker_loop(w: &'static SaveWorker) {
+    loop {
+        let (data, path) = {
+            let mut p = w.pending.lock();
+            while p.data.is_none() && !p.stop {
+                w.cv.wait(&mut p);
+            }
+            match p.data.take() {
+                Some(d) => (d, p.path.clone()),
+                None => return, // stop with nothing pending — drained
+            }
+        };
+        save_data(&path, &data);
+    }
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let tmp = dir.join(format!(
@@ -304,44 +378,27 @@ fn save_data(path: &Path, data: &SettingsData) -> bool {
         return false;
     };
     text.push('\n');
-    let _guard = SAVE_LOCK.lock().unwrap();
+    let _guard = SAVE_LOCK.lock();
     write_atomic(path, text.as_bytes()).is_ok()
 }
 
-fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
-}
-
-fn string_to_cstr(s: &str) -> *mut c_char {
-    CString::new(s).unwrap_or_default().into_raw()
-}
-
 // =====================================================================
-// FFI — settings singleton
+// Public Rust API
 // =====================================================================
 
 /// Initialize the settings store with the on-disk path. Idempotent: only the
 /// first call sets the path; subsequent calls are ignored.
-///
-/// # Safety
-/// `path` must be a valid NUL-terminated C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_init(path: *const c_char) {
-    let s = cstr_to_string(path);
-    let mut st = state().lock().unwrap();
+pub fn settings_init(path: &Path) {
+    let mut st = state().lock();
     if st.path.as_os_str().is_empty() {
-        st.path = PathBuf::from(s);
+        st.path = path.to_path_buf();
     }
 }
 
 /// Load settings from the configured path. Missing keys keep their defaults.
 /// Returns false if the file is missing or contains invalid JSON.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_settings_load() -> bool {
-    let mut st = state().lock().unwrap();
+pub fn settings_load() -> bool {
+    let mut st = state().lock();
     let path = st.path.clone();
     let Ok(contents) = fs::read_to_string(&path) else {
         return false;
@@ -357,111 +414,167 @@ pub extern "C" fn jfn_settings_load() -> bool {
 }
 
 /// Serialize current state and atomically write to the configured path.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_settings_save() -> bool {
+pub fn settings_save() -> bool {
     let (path, snap) = {
-        let st = state().lock().unwrap();
+        let st = state().lock();
         (st.path.clone(), st.data.clone())
     };
     save_data(&path, &snap)
 }
 
-/// Snapshot current state and save on a detached thread. Concurrent saves are
-/// serialized by an internal mutex.
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_settings_save_async() {
+/// Snapshot current state and hand it to the background save worker. Repeated
+/// calls coalesce: only the most recent snapshot is written. The worker is
+/// started lazily on the first call. After [`settings_shutdown_save_worker`]
+/// this becomes a no-op.
+pub fn settings_save_async() {
     let (path, snap) = {
-        let st = state().lock().unwrap();
+        let st = state().lock();
         (st.path.clone(), st.data.clone())
     };
-    thread::spawn(move || {
-        save_data(&path, &snap);
-    });
+    let w = save_worker();
+    // Hold `handle` across the spawn so a second caller racing in between
+    // `started = true` and the JoinHandle store can't observe a "started"
+    // worker before the thread actually exists.
+    let mut handle_guard = w.handle.lock();
+    let need_spawn = {
+        let mut p = w.pending.lock();
+        if p.stop {
+            return;
+        }
+        p.data = Some(snap);
+        p.path = path;
+        if p.started {
+            false
+        } else {
+            p.started = true;
+            true
+        }
+    };
+    if need_spawn {
+        *handle_guard = Some(thread::spawn(|| save_worker_loop(save_worker())));
+    }
+    drop(handle_guard);
+    w.cv.notify_one();
 }
 
-/// Free a string previously returned by this module.
-///
-/// # Safety
-/// `s` must be null or a pointer returned by one of the `jfn_settings_*`
-/// string-returning functions, freed at most once.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_free_string(s: *mut c_char) {
-    if !s.is_null() {
-        unsafe { drop(CString::from_raw(s)) };
+/// Stop the background save worker after draining any pending write. Safe to
+/// call if the worker was never started; safe to call multiple times.
+pub fn settings_shutdown_save_worker() {
+    let Some(w) = SAVE_WORKER.get() else {
+        return;
+    };
+    {
+        let mut p = w.pending.lock();
+        if p.stop {
+            return;
+        }
+        p.stop = true;
+    }
+    w.cv.notify_one();
+    let handle = w.handle.lock().take();
+    if let Some(h) = handle
+        && let Err(e) = h.join()
+    {
+        eprintln!("[config] save worker panicked: {e:?}");
     }
 }
 
-macro_rules! string_getter {
-    ($name:ident, $field:ident) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $name() -> *mut c_char {
-            let st = state().lock().unwrap();
-            string_to_cstr(&st.data.$field)
+macro_rules! string_accessors {
+    ($getter:ident, $setter:ident, $field:ident) => {
+        pub fn $getter() -> String {
+            state().lock().data.$field.clone()
+        }
+        pub fn $setter(v: &str) {
+            state().lock().data.$field = v.to_string();
         }
     };
 }
 
-macro_rules! string_setter {
-    ($name:ident, $field:ident) => {
-        /// # Safety
-        /// `v` must be null or a valid NUL-terminated C string.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(v: *const c_char) {
-            let s = cstr_to_string(v);
-            let mut st = state().lock().unwrap();
-            st.data.$field = s;
+macro_rules! bool_accessors {
+    ($getter:ident, $setter:ident, $field:ident) => {
+        pub fn $getter() -> bool {
+            state().lock().data.$field
+        }
+        pub fn $setter(v: bool) {
+            state().lock().data.$field = v;
         }
     };
 }
 
-macro_rules! bool_getter {
-    ($name:ident, $field:ident) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $name() -> bool {
-            state().lock().unwrap().data.$field
-        }
-    };
-}
+string_accessors!(server_url, set_server_url, server_url);
+string_accessors!(hwdec, set_hwdec, hwdec);
+string_accessors!(audio_passthrough, set_audio_passthrough, audio_passthrough);
+string_accessors!(audio_channels, set_audio_channels, audio_channels);
+string_accessors!(log_level, set_log_level, log_level);
 
-macro_rules! bool_setter {
-    ($name:ident, $field:ident) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $name(v: bool) {
-            state().lock().unwrap().data.$field = v;
-        }
-    };
+pub fn device_name() -> String {
+    state().lock().data.device_name.clone()
 }
-
-string_getter!(jfn_settings_get_server_url, server_url);
-string_setter!(jfn_settings_set_server_url, server_url);
-string_getter!(jfn_settings_get_hwdec, hwdec);
-string_setter!(jfn_settings_set_hwdec, hwdec);
-string_getter!(jfn_settings_get_audio_passthrough, audio_passthrough);
-string_setter!(jfn_settings_set_audio_passthrough, audio_passthrough);
-string_getter!(jfn_settings_get_audio_channels, audio_channels);
-string_setter!(jfn_settings_set_audio_channels, audio_channels);
-string_getter!(jfn_settings_get_log_level, log_level);
-string_setter!(jfn_settings_set_log_level, log_level);
-string_getter!(jfn_settings_get_device_name, device_name);
 
 /// Setter for device_name. Trims and collapses whitespace, truncates to the
 /// server's 64-char DeviceName column limit, and clears the override when the
 /// result matches `platform_default` (so hostname changes propagate
 /// automatically on the next launch).
-///
-/// # Safety
-/// `v` and `platform_default` must each be null or a valid NUL-terminated C
-/// string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_set_device_name(
-    v: *const c_char,
-    platform_default: *const c_char,
-) {
-    let raw = cstr_to_string(v);
-    let platform = cstr_to_string(platform_default);
-    let cleaned = normalize_device_name(&raw, &platform);
-    let mut st = state().lock().unwrap();
-    st.data.device_name = cleaned;
+pub fn set_device_name(raw: &str, platform_default: &str) {
+    let cleaned = normalize_device_name(raw, platform_default);
+    state().lock().data.device_name = cleaned;
+}
+
+bool_accessors!(audio_exclusive, set_audio_exclusive, audio_exclusive);
+bool_accessors!(
+    disable_gpu_compositing,
+    set_disable_gpu_compositing,
+    disable_gpu_compositing
+);
+bool_accessors!(
+    transparent_titlebar,
+    set_transparent_titlebar,
+    transparent_titlebar
+);
+bool_accessors!(force_transcoding, set_force_transcoding, force_transcoding);
+/// Effective window-decoration mode ("csd" | "server" | "serverThemed"): the
+/// user's explicit choice, or the desktop-environment auto default when unset.
+fn resolve_window_decorations() -> String {
+    state()
+        .lock()
+        .data
+        .window_decorations
+        .clone()
+        .unwrap_or_else(default_window_decorations)
+}
+
+pub fn window_decorations() -> String {
+    resolve_window_decorations()
+}
+pub fn set_window_decorations(v: &str) {
+    if matches!(v, "csd" | "server" | "serverThemed") {
+        state().lock().data.window_decorations = Some(v.to_string());
+    }
+}
+
+/// True when the app draws its own (client-side) titlebar.
+pub fn client_side_decorations() -> bool {
+    resolve_window_decorations() == "csd"
+}
+/// True when server-side decorations should be tinted to the Jellyfin theme
+/// (KDE palette protocol).
+pub fn titlebar_theme_color() -> bool {
+    resolve_window_decorations() == "serverThemed"
+}
+bool_accessors!(hide_scrollbar, set_hide_scrollbar, hide_scrollbar);
+
+pub fn window_geometry() -> JfnWindowGeometry {
+    state().lock().data.window
+}
+
+pub fn set_window_geometry(g: JfnWindowGeometry) {
+    state().lock().data.window = g;
+}
+
+pub fn cli_json(platform_default: &str, hwdec_opts: &[&str]) -> String {
+    let snap = state().lock().data.clone();
+    let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
+    snap.cli_json(platform_default, &opts)
 }
 
 fn normalize_device_name(raw: &str, platform_default: &str) -> String {
@@ -491,72 +604,6 @@ fn normalize_device_name(raw: &str, platform_default: &str) -> String {
         trimmed.clear();
     }
     trimmed
-}
-
-bool_getter!(jfn_settings_get_audio_exclusive, audio_exclusive);
-bool_setter!(jfn_settings_set_audio_exclusive, audio_exclusive);
-bool_getter!(jfn_settings_get_disable_gpu_compositing, disable_gpu_compositing);
-bool_setter!(jfn_settings_set_disable_gpu_compositing, disable_gpu_compositing);
-bool_getter!(jfn_settings_get_titlebar_theme_color, titlebar_theme_color);
-bool_setter!(jfn_settings_set_titlebar_theme_color, titlebar_theme_color);
-bool_getter!(jfn_settings_get_transparent_titlebar, transparent_titlebar);
-bool_setter!(jfn_settings_set_transparent_titlebar, transparent_titlebar);
-bool_getter!(jfn_settings_get_force_transcoding, force_transcoding);
-bool_setter!(jfn_settings_set_force_transcoding, force_transcoding);
-
-/// Copy the window geometry into `out`.
-///
-/// # Safety
-/// `out` must be non-null and point to writable storage for a
-/// [`JfnWindowGeometry`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_get_window_geometry(out: *mut JfnWindowGeometry) {
-    if out.is_null() {
-        return;
-    }
-    let g = state().lock().unwrap().data.window;
-    unsafe { ptr::write(out, g) };
-}
-
-/// Overwrite the window geometry from `in_`.
-///
-/// # Safety
-/// `in_` must be non-null and point to a valid [`JfnWindowGeometry`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_set_window_geometry(in_: *const JfnWindowGeometry) {
-    if in_.is_null() {
-        return;
-    }
-    let g = unsafe { *in_ };
-    state().lock().unwrap().data.window = g;
-}
-
-/// Build the CLI-equivalent settings JSON string for injection into the web
-/// UI. Caller frees with [`jfn_settings_free_string`].
-///
-/// # Safety
-/// `platform_default` must be a valid NUL-terminated C string. `hwdec_opts`,
-/// if non-null, must point to an array of `n_opts` valid NUL-terminated C
-/// strings.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_settings_cli_json(
-    platform_default: *const c_char,
-    hwdec_opts: *const *const c_char,
-    n_opts: usize,
-) -> *mut c_char {
-    let platform_default = cstr_to_string(platform_default);
-    let mut opts: Vec<String> = Vec::with_capacity(n_opts);
-    if !hwdec_opts.is_null() {
-        for i in 0..n_opts {
-            let p = unsafe { *hwdec_opts.add(i) };
-            opts.push(cstr_to_string(p));
-        }
-    }
-    let snap = state().lock().unwrap().data.clone();
-    let s = snap.cli_json(&platform_default, &opts);
-    CString::new(s)
-        .map(|c| c.into_raw())
-        .unwrap_or(ptr::null_mut())
 }
 
 #[cfg(test)]
@@ -617,4 +664,3 @@ mod tests {
         assert_eq!(normalize_device_name(&padded, PLATFORM), "");
     }
 }
-

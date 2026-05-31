@@ -1,15 +1,16 @@
 [package]
 name = "jfn-logging"
-version = "0.1.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_logging"
 crate-type = ["rlib"]
 
 [dependencies]
-tracing = "0.1"
+parking_lot.workspace = true
+tracing.workspace = true
 tracing-core = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "std",
@@ -20,4 +21,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 tracing-appender = "0.2"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
-libc = "0.2"
+libc.workspace = true
+
+[lints]
+workspace = true

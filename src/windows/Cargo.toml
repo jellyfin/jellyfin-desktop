@@ -1,0 +1,42 @@
+[package]
+name = "jfn-windows"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "jfn_windows"
+crate-type = ["rlib"]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+jfn-compositor-core = { path = "../compositor_core" }
+jfn-input = { path = "../input" }
+jfn-mpv = { path = "../mpv" }
+jfn-platform-abi = { path = "../platform_abi" }
+jfn-playback = { path = "../playback" }
+cef.workspace = true
+tracing.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectComposition",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-core.workspace = true
+
+[dependencies]
+parking_lot.workspace = true
+
+[lints]
+workspace = true

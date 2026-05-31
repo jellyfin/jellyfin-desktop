@@ -11,12 +11,12 @@
 
 mod redact;
 
-use std::ffi::{CString, c_char};
+use parking_lot::Mutex;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
 #[cfg(unix)]
 use std::thread::{self, JoinHandle};
 
@@ -30,11 +30,17 @@ use tracing_core::{
 };
 use tracing_subscriber::{EnvFilter, Registry, fmt, layer::SubscriberExt};
 
-// Keep enum values aligned with src/logging.h (LogCategory enum).
-const CATEGORY_NAMES: &[&str] = &[
-    "Main", "mpv", "CEF", "Media", "Platform", "JS", "Resource",
-];
-const CATEGORY_CEF: u8 = 2;
+const CATEGORY_NAMES: &[&str] = &["Main", "mpv", "CEF", "Media", "Platform", "JS", "Resource"];
+
+// Public category/level constants. Indices into CATEGORY_NAMES, and the u8
+// values accepted by `log` / `log_enabled` / `jfn_log` / `jfn_log_enabled`.
+pub const CATEGORY_CEF: u8 = 2;
+pub const CATEGORY_JS: u8 = 5;
+pub const CATEGORY_RESOURCE: u8 = 6;
+pub const LEVEL_DEBUG: u8 = 1;
+pub const LEVEL_INFO: u8 = 2;
+pub const LEVEL_WARN: u8 = 3;
+pub const LEVEL_ERROR: u8 = 4;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -129,7 +135,7 @@ fn rotate_backups(path: &PathBuf) -> io::Result<()> {
     Ok(())
 }
 
-fn backup_path(path: &PathBuf, n: usize) -> PathBuf {
+fn backup_path(path: &Path, n: usize) -> PathBuf {
     let mut s = path.as_os_str().to_owned();
     s.push(format!(".{}", n));
     PathBuf::from(s)
@@ -264,16 +270,14 @@ const CONSOLE_TRACE_FMT: &[FormatItem<'static>] =
 
 // =====================================================================
 // Per-(category, level) enablement table — primed once at init from the
-// EnvFilter. C++ macros consult this via jfn_log_enabled to skip
-// formatting when filtered out, recovering the per-callsite gating that
-// tracing's own Interest cache would do for pure-Rust callers.
+// EnvFilter. Lets call sites skip formatting when filtered out, matching
+// the gating tracing's own Interest cache provides for pure-Rust callers.
 // =====================================================================
 
 const N_LEVELS: usize = 5;
 const ENABLED_LEN: usize = 7 * N_LEVELS; // CATEGORY_NAMES.len() == 7
 
-static ENABLED: [AtomicBool; ENABLED_LEN] =
-    [const { AtomicBool::new(false) }; ENABLED_LEN];
+static ENABLED: [AtomicBool; ENABLED_LEN] = [const { AtomicBool::new(false) }; ENABLED_LEN];
 
 #[inline]
 fn enabled_slot(category: u8, level: u8) -> usize {
@@ -328,9 +332,10 @@ fn prime_enabled_table() {
 /// anywhere — used to decide whether to prepend HH:MM:SS.mmm on console
 /// lines (preserving the previous crate's trace-mode timestamps).
 fn directive_contains_trace(filter: &str) -> bool {
-    filter
-        .split(',')
-        .any(|tok| tok.trim().eq_ignore_ascii_case("trace") || tok.trim().to_ascii_lowercase().ends_with("=trace"))
+    filter.split(',').any(|tok| {
+        tok.trim().eq_ignore_ascii_case("trace")
+            || tok.trim().to_ascii_lowercase().ends_with("=trace")
+    })
 }
 
 // =====================================================================
@@ -392,6 +397,11 @@ impl StderrCapture {
     }
 
     fn stop(&mut self) {
+        // Order: restore STDERR FIRST (so any concurrent writer drains to
+        // the real fd from now on), THEN wake the capture thread via the
+        // signal pipe, THEN join, THEN close the signal write end. Joining
+        // before closing signal_write avoids a window where the capture
+        // thread races a close on its read end.
         unsafe {
             if self.original_fd >= 0 {
                 libc::dup2(self.original_fd, libc::STDERR_FILENO);
@@ -401,8 +411,10 @@ impl StderrCapture {
             let buf = b"x";
             libc::write(self.signal_write, buf.as_ptr() as *const _, 1);
         }
-        if let Some(h) = self.join.take() {
-            let _ = h.join();
+        if let Some(h) = self.join.take()
+            && let Err(e) = h.join()
+        {
+            eprintln!("[logging] stderr capture thread panicked: {e:?}");
         }
         unsafe {
             libc::close(self.signal_write);
@@ -503,28 +515,9 @@ fn emit(category: u8, level: Level, msg: &str) {
     }
 }
 
-// =====================================================================
-// FFI
-// =====================================================================
-
-/// # Safety
-/// `path` and `filter` may be null or valid NUL-terminated C strings.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_log_init(path: *const c_char, filter: *const c_char) {
-    let path_str = if path.is_null() {
-        String::new()
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(path) }
-            .to_string_lossy()
-            .into_owned()
-    };
-    let filter_str_raw = if filter.is_null() {
-        String::new()
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(filter) }
-            .to_string_lossy()
-            .into_owned()
-    };
+pub fn jfn_log_init(path: &str, filter: &str) {
+    let path_str = path.to_string();
+    let filter_str_raw = filter.to_string();
     let filter_str = if filter_str_raw.trim().is_empty() {
         "info".to_string()
     } else {
@@ -534,7 +527,7 @@ pub unsafe extern "C" fn jfn_log_init(path: *const c_char, filter: *const c_char
     // Bail early on second init: dispatcher is already installed and the
     // capture pipe / guards live in STATE. Mirrors prior behavior.
     {
-        let guard = state().lock().unwrap();
+        let guard = state().lock();
         if guard.is_some() {
             return;
         }
@@ -595,7 +588,7 @@ pub unsafe extern "C" fn jfn_log_init(path: *const c_char, filter: *const c_char
 
     let stderr_capture = StderrCapture::start();
 
-    let mut guard = state().lock().unwrap();
+    let mut guard = state().lock();
     *guard = Some(State {
         active_log_path: path_str,
         _console_guard: console_guard,
@@ -604,9 +597,8 @@ pub unsafe extern "C" fn jfn_log_init(path: *const c_char, filter: *const c_char
     });
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_log_shutdown() {
-    let mut guard = state().lock().unwrap();
+pub fn jfn_log_shutdown() {
+    let mut guard = state().lock();
     if let Some(mut s) = guard.take() {
         if let Some(mut cap) = s.stderr_capture.take() {
             cap.stop();
@@ -619,47 +611,23 @@ pub extern "C" fn jfn_log_shutdown() {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_log_enabled(category: u8, level: u8) -> bool {
+pub fn log_enabled(category: u8, level: u8) -> bool {
     if (category as usize) >= CATEGORY_NAMES.len() || (level as usize) >= N_LEVELS {
         return false;
     }
     ENABLED[enabled_slot(category, level)].load(Ordering::Relaxed)
 }
 
-/// # Safety
-/// `msg` must point to `len` bytes of readable memory (or be null when
-/// `len == 0`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_log(category: u8, level: u8, msg: *const c_char, len: usize) {
-    if len == 0 || msg.is_null() {
-        return;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(msg as *const u8, len) };
-    let text = String::from_utf8_lossy(slice);
-    emit(category, Level::from_u8(level), &text);
+pub fn log(category: u8, level: u8, msg: &str) {
+    emit(category, Level::from_u8(level), msg);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn jfn_log_active_path() -> *mut c_char {
-    let guard = state().lock().unwrap();
-    let s = guard
+pub fn active_path() -> String {
+    let guard = state().lock();
+    guard
         .as_ref()
         .map(|st| st.active_log_path.clone())
-        .unwrap_or_default();
-    CString::new(s)
-        .map(|c| c.into_raw())
-        .unwrap_or(std::ptr::null_mut())
-}
-
-/// # Safety
-/// `s` must be null or a pointer previously returned by
-/// [`jfn_log_active_path`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn jfn_log_free_string(s: *mut c_char) {
-    if !s.is_null() {
-        unsafe { drop(CString::from_raw(s)) };
-    }
+        .unwrap_or_default()
 }
 
 // =====================================================================
@@ -726,12 +694,11 @@ where
         mut w: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        if self.trace_mode {
-            if let Ok(now) = OffsetDateTime::now_local() {
-                if let Ok(s) = now.format(&CONSOLE_TRACE_FMT) {
-                    write!(w, "{s} ")?;
-                }
-            }
+        if self.trace_mode
+            && let Ok(now) = OffsetDateTime::now_local()
+            && let Ok(s) = now.format(&CONSOLE_TRACE_FMT)
+        {
+            write!(w, "{s} ")?;
         }
         let meta = event.metadata();
         let target = meta.target();
@@ -760,10 +727,10 @@ where
         mut w: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        if let Ok(now) = OffsetDateTime::now_local() {
-            if let Ok(s) = now.format(&ISO_FILE_FMT) {
-                write!(w, "{s} ")?;
-            }
+        if let Ok(now) = OffsetDateTime::now_local()
+            && let Ok(s) = now.format(&ISO_FILE_FMT)
+        {
+            write!(w, "{s} ")?;
         }
         let meta = event.metadata();
         let label = level_to_local_level(meta.level()).label();
@@ -831,13 +798,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex as StdMutex};
+    use parking_lot::Mutex as StdMutex;
+    use std::sync::Arc;
 
     #[derive(Clone)]
     struct VecSink(Arc<StdMutex<Vec<u8>>>);
     impl Write for VecSink {
         fn write(&mut self, b: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(b);
+            self.0.lock().extend_from_slice(b);
             Ok(b.len())
         }
         fn flush(&mut self) -> io::Result<()> {
@@ -854,13 +822,16 @@ mod tests {
             w.write_all(b"GET /Items?api_key=abc123secret&x=1\n")
                 .unwrap();
         }
-        let bytes = sink.0.lock().unwrap().clone();
+        let bytes = sink.0.lock().clone();
         let text = String::from_utf8(bytes).unwrap();
         assert!(
             !text.contains("abc123secret"),
             "secret leaked through redactor: {text}"
         );
-        assert!(text.contains("api_key=xxx"), "expected censored bytes: {text}");
+        assert!(
+            text.contains("api_key=xxx"),
+            "expected censored bytes: {text}"
+        );
     }
 
     #[test]
@@ -871,7 +842,7 @@ mod tests {
             let mut w = make.make_writer();
             w.write_all(b"[mpv] hello\n").unwrap();
         }
-        assert_eq!(&*sink.0.lock().unwrap(), b"[mpv] hello\n");
+        assert_eq!(&*sink.0.lock(), b"[mpv] hello\n");
     }
 
     #[test]
@@ -914,14 +885,17 @@ mod tests {
         let filter = EnvFilter::new(directive);
         let subscriber = Registry::default().with(filter);
         let dispatch = tracing::Dispatch::new(subscriber);
-        tracing::dispatcher::with_default(&dispatch, || prime_enabled_table());
+        tracing::dispatcher::with_default(&dispatch, prime_enabled_table);
         ENABLED[enabled_slot(cat_idx as u8, lvl)].load(Ordering::Relaxed)
     }
 
     #[test]
     fn enabled_table_respects_global_filter() {
         // "warn" → Info+ disabled, Warn/Error enabled for any category.
-        assert!(!probe_with_filter("warn", 0 /* Main */, 2 /* Info */));
+        assert!(!probe_with_filter(
+            "warn", 0, /* Main */
+            2  /* Info */
+        ));
         assert!(probe_with_filter("warn", 0, 3 /* Warn */));
         assert!(probe_with_filter("warn", 0, 4 /* Error */));
     }
@@ -929,14 +903,22 @@ mod tests {
     #[test]
     fn enabled_table_respects_target_override() {
         // Global warn, but mpv=trace → mpv Trace enabled, Main Trace not.
-        assert!(probe_with_filter("warn,mpv=trace", 1 /* mpv */, 0 /* Trace */));
+        assert!(probe_with_filter(
+            "warn,mpv=trace",
+            1, /* mpv */
+            0  /* Trace */
+        ));
         assert!(!probe_with_filter("warn,mpv=trace", 0 /* Main */, 0));
     }
 
     #[test]
     fn enabled_table_respects_off_directive() {
         // Global info, CEF=off → CEF Error disabled, Main Error enabled.
-        assert!(!probe_with_filter("info,CEF=off", 2 /* CEF */, 4 /* Error */));
+        assert!(!probe_with_filter(
+            "info,CEF=off",
+            2, /* CEF */
+            4  /* Error */
+        ));
         assert!(probe_with_filter("info,CEF=off", 0 /* Main */, 4));
     }
 
@@ -956,7 +938,7 @@ mod tests {
         tracing::dispatcher::with_default(&dispatch, || {
             tracing::event!(target: "mpv", tracing::Level::ERROR, "boom");
         });
-        let bytes = sink.0.lock().unwrap().clone();
+        let bytes = sink.0.lock().clone();
         String::from_utf8(bytes).unwrap()
     }
 

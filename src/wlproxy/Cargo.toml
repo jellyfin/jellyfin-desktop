@@ -1,14 +1,22 @@
 [package]
 name = "jfn-wlproxy"
-version = "0.1.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "jfn_wlproxy"
 crate-type = ["rlib"]
 
 [dependencies]
+parking_lot.workspace = true
+
+# wl-proxy bundles the Wayland protocol machinery and only builds on Linux;
+# the whole crate is `#![cfg(target_os = "linux")]`, so it's an empty rlib
+# elsewhere and the workspace builds uniformly on every platform.
+[target.'cfg(target_os = "linux")'.dependencies]
 wl-proxy = { git = "https://github.com/mahkoh/wl-proxy", features = ["all-protocols"] }
 error_reporter = "1.0.0"
-log = "0.4"
+
+[lints]
+workspace = true

@@ -1,12 +1,12 @@
 #!/bin/sh
 # Build .AppImage in dist/. Runs the container-based build via :base image.
-# Source / cmake / ninja / meson state persists in build/appimage/ on the host.
+# Source / cargo / meson state persists in build/appimage/ on the host.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 IMG="jellyfin-desktop-appimage:base"
-VERSION="$("${PROJECT_ROOT}/dev/tools/version.sh")"
+VERSION="$(cargo run --quiet --manifest-path "${PROJECT_ROOT}/src/xtask/Cargo.toml" -- version)"
 
 if command -v podman >/dev/null 2>&1; then
     cmd=podman

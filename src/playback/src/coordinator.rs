@@ -3,19 +3,20 @@
 //! them in batches, runs transitions, publishes the canonical snapshot,
 //! and hands events to registered sinks via the FFI vtable.
 
+use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crate::wake_event::WakeEvent;
 
-use crate::ffi::{ActionSinkEntry, EventSinkEntry};
+use crate::ffi::{ActionSink, EventSink};
 use crate::state_machine::PlaybackStateMachine;
 use crate::types::*;
 
 #[derive(Debug)]
-pub(crate) enum Input {
+pub enum Input {
     FileLoaded,
     LoadStarting(String),
     PauseChanged(bool),
@@ -57,13 +58,21 @@ struct Shared {
     wake: WakeEvent,
     running: AtomicBool,
     snapshot: Mutex<PlaybackSnapshot>,
-    event_sinks: Mutex<Vec<EventSinkEntry>>,
-    action_sinks: Mutex<Vec<ActionSinkEntry>>,
+    event_sinks: Mutex<Vec<EventSink>>,
+    action_sinks: Mutex<Vec<ActionSink>>,
+    builtin_event_sinks: Mutex<Vec<EventSink>>,
+    builtin_action_sinks: Mutex<Vec<ActionSink>>,
 }
 
 pub struct PlaybackCoordinator {
     shared: Arc<Shared>,
     join: Option<JoinHandle<()>>,
+}
+
+impl Default for PlaybackCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PlaybackCoordinator {
@@ -76,6 +85,8 @@ impl PlaybackCoordinator {
                 snapshot: Mutex::new(PlaybackSnapshot::fresh()),
                 event_sinks: Mutex::new(Vec::new()),
                 action_sinks: Mutex::new(Vec::new()),
+                builtin_event_sinks: Mutex::new(Vec::new()),
+                builtin_action_sinks: Mutex::new(Vec::new()),
             }),
             join: None,
         }
@@ -94,29 +105,39 @@ impl PlaybackCoordinator {
             return;
         }
         self.shared.wake.signal();
-        if let Some(h) = self.join.take() {
-            let _ = h.join();
+        if let Some(h) = self.join.take()
+            && let Err(e) = h.join()
+        {
+            eprintln!("[playback] coordinator worker panicked: {e:?}");
         }
     }
 
-    pub(crate) fn enqueue(&self, in_: Input) {
+    pub fn enqueue(&self, in_: Input) {
         {
-            let mut q = self.shared.queue.lock().unwrap();
+            let mut q = self.shared.queue.lock();
             q.push_back(in_);
         }
         self.shared.wake.signal();
     }
 
     pub fn snapshot(&self) -> PlaybackSnapshot {
-        self.shared.snapshot.lock().unwrap().clone()
+        self.shared.snapshot.lock().clone()
     }
 
-    pub(crate) fn add_event_sink(&self, sink: EventSinkEntry) {
-        self.shared.event_sinks.lock().unwrap().push(sink);
+    pub fn add_event_sink(&self, sink: EventSink) {
+        self.shared.event_sinks.lock().push(sink);
     }
 
-    pub(crate) fn add_action_sink(&self, sink: ActionSinkEntry) {
-        self.shared.action_sinks.lock().unwrap().push(sink);
+    pub fn add_action_sink(&self, sink: ActionSink) {
+        self.shared.action_sinks.lock().push(sink);
+    }
+
+    pub fn add_builtin_event_sink(&self, sink: EventSink) {
+        self.shared.builtin_event_sinks.lock().push(sink);
+    }
+
+    pub fn add_builtin_action_sink(&self, sink: ActionSink) {
+        self.shared.builtin_action_sinks.lock().push(sink);
     }
 }
 
@@ -130,7 +151,7 @@ fn worker(shared: Arc<Shared>) {
     let mut sm = PlaybackStateMachine::new();
     while shared.running.load(Ordering::Relaxed) {
         let work: VecDeque<Input> = {
-            let mut q = shared.queue.lock().unwrap();
+            let mut q = shared.queue.lock();
             std::mem::take(&mut *q)
         };
 
@@ -152,22 +173,34 @@ fn worker(shared: Arc<Shared>) {
             e.snapshot = snap.clone();
         }
         {
-            let mut s = shared.snapshot.lock().unwrap();
+            let mut s = shared.snapshot.lock();
             *s = snap;
         }
 
-        // Sinks: dispatched in registration order. Each sink's try_post
-        // must not block; the sink owns its own queue + consumer thread.
-        let event_sinks = shared.event_sinks.lock().unwrap();
+        // Sinks: dispatched in registration order. Each closure must
+        // not block; sinks own their own queue + consumer thread.
+        let event_sinks = shared.event_sinks.lock();
         for sink in event_sinks.iter() {
             for e in &events {
-                sink.dispatch(e);
+                sink(e);
             }
         }
-        let action_sinks = shared.action_sinks.lock().unwrap();
+        let action_sinks = shared.action_sinks.lock();
         for sink in action_sinks.iter() {
             for a in &actions {
-                sink.dispatch(a);
+                sink(a);
+            }
+        }
+        let builtin_event_sinks = shared.builtin_event_sinks.lock();
+        for sink in builtin_event_sinks.iter() {
+            for e in &events {
+                sink(e);
+            }
+        }
+        let builtin_action_sinks = shared.builtin_action_sinks.lock();
+        for sink in builtin_action_sinks.iter() {
+            for a in &actions {
+                sink(a);
             }
         }
     }
@@ -198,7 +231,10 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
         Input::FileLoaded => sm.on_file_loaded(),
         Input::LoadStarting(id) => sm.on_load_starting(id),
         Input::PauseChanged(paused) => sm.on_pause_changed(paused),
-        Input::EndFile { reason, error_message } => sm.on_end_file(reason, error_message),
+        Input::EndFile {
+            reason,
+            error_message,
+        } => sm.on_end_file(reason, error_message),
         Input::SeekingChanged(seeking) => sm.on_seeking_changed(seeking),
         Input::PausedForCache(pfc) => sm.on_paused_for_cache(pfc),
         Input::CoreIdle(ci) => sm.on_core_idle(ci),
@@ -207,9 +243,10 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
         Input::VideoFrameAvailable(a) => sm.on_video_frame_available(a),
         Input::Speed(r) => sm.on_speed(r),
         Input::Duration(d) => sm.on_duration(d),
-        Input::Fullscreen { fullscreen, was_maximized } => {
-            sm.on_fullscreen(fullscreen, was_maximized)
-        }
+        Input::Fullscreen {
+            fullscreen,
+            was_maximized,
+        } => sm.on_fullscreen(fullscreen, was_maximized),
         Input::OsdDims { lw, lh, pw, ph } => sm.on_osd_dims(lw, lh, pw, ph),
         Input::BufferedRanges(r) => sm.on_buffered_ranges(r),
         Input::DisplayHz(h) => sm.on_display_hz(h),
@@ -227,7 +264,10 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
             ev.artwork_uri = uri;
             vec![ev]
         }
-        Input::QueueCaps { can_go_next, can_go_prev } => {
+        Input::QueueCaps {
+            can_go_next,
+            can_go_prev,
+        } => {
             let mut ev = PlaybackEvent::new(PlaybackEventKind::QueueCapsChanged);
             ev.can_go_next = can_go_next;
             ev.can_go_prev = can_go_prev;
@@ -245,7 +285,7 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
+    use std::sync::mpsc;
 
     #[test]
     fn snapshot_starts_fresh() {
@@ -260,19 +300,18 @@ mod tests {
     fn worker_updates_snapshot_after_input() {
         let mut coord = PlaybackCoordinator::new();
         coord.start();
+        // Register a sink BEFORE enqueuing so the first dispatched batch
+        // signals the channel. Sinks fire on the worker thread after the
+        // snapshot is published, so receiving = snapshot is up-to-date.
+        let (tx, rx) = mpsc::sync_channel::<()>(1);
+        coord.add_event_sink(Box::new(move |_ev| {
+            let _ = tx.try_send(());
+        }));
         coord.enqueue(Input::FileLoaded);
-        let deadline = Instant::now() + Duration::from_millis(500);
-        loop {
-            let s = coord.snapshot();
-            if s.presence == PlayerPresence::Present {
-                assert_eq!(s.phase, PlaybackPhase::Starting);
-                break;
-            }
-            if Instant::now() > deadline {
-                panic!("snapshot never updated");
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
+        rx.recv().expect("worker never published an event");
+        let s = coord.snapshot();
+        assert_eq!(s.presence, PlayerPresence::Present);
+        assert_eq!(s.phase, PlaybackPhase::Starting);
         coord.stop();
     }
 }

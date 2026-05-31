@@ -10,7 +10,7 @@ cd "$BUILD_OUT"
 
 MANIFEST="${SCRIPT_DIR}/org.jellyfin.JellyfinDesktop.yml"
 APP_ID="org.jellyfin.JellyfinDesktop"
-VERSION="$("${REPO_ROOT}/dev/tools/version.sh")"
+VERSION="$(cargo run --quiet --manifest-path "${REPO_ROOT}/src/xtask/Cargo.toml" -- version)"
 DATE="$(date -u +%Y-%m-%d)"
 ARCH="$(uname -m)"
 BUNDLE_NAME="JellyfinDesktop-${VERSION}-linux-${ARCH}.flatpak"
@@ -42,10 +42,7 @@ if ! flatpak info --user org.freedesktop.Sdk.Extension.llvm20//$RUNTIME_VERSION 
     flatpak install --user -y flathub org.freedesktop.Sdk.Extension.llvm20//$RUNTIME_VERSION
 fi
 
-# Ensure CEF is extracted at third_party/cef
-if [ ! -d "${REPO_ROOT}/third_party/cef" ]; then
-    python3 "${REPO_ROOT}/dev/tools/download_cef.py"
-fi
+(cd "$REPO_ROOT" && cargo xtask fetch-cef)
 
 # Generate metainfo.xml with the current version injected.
 python3 "${SCRIPT_DIR}/generate_metainfo.py" \
