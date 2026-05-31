@@ -10,7 +10,7 @@ cd "$BUILD_OUT"
 
 MANIFEST="${SCRIPT_DIR}/org.jellyfin.JellyfinDesktop.yml"
 APP_ID="org.jellyfin.JellyfinDesktop"
-VERSION="$("${REPO_ROOT}/dev/tools/version.sh")"
+VERSION="$(cargo run --quiet --manifest-path "${REPO_ROOT}/src/xtask/Cargo.toml" -- version)"
 DATE="$(date -u +%Y-%m-%d)"
 ARCH="$(uname -m)"
 BUNDLE_NAME="JellyfinDesktop-${VERSION}-linux-${ARCH}.flatpak"

@@ -1,7 +1,5 @@
 use crate::paths;
 use anyhow::{Context, Result, anyhow};
-use regex::Regex;
-use std::process::Command;
 
 pub struct Version {
     /// "<raw>[+<short-hash>[-dirty]]" — adds git suffix iff raw is a
@@ -9,42 +7,21 @@ pub struct Version {
     pub full: String,
 }
 
-/// Resolve the current commit's short hash and whether the working tree is
-/// dirty. Returns `(None, _)` when git is unavailable (e.g. no `.git`).
+/// Short HEAD hash and dirty flag. `(None, false)` when there is no repo.
 pub fn git_info() -> (Option<String>, bool) {
-    let hash = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(paths::repo_root())
-        .output()
+    let Ok(repo) = gix::discover(paths::repo_root()) else {
+        return (None, false);
+    };
+    let hash = repo
+        .head_id()
         .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty());
-    let dirty = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(paths::repo_root())
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false);
+        .map(|id| id.to_hex_with_len(7).to_string());
+    let dirty = repo.is_dirty().unwrap_or(false);
     (hash, dirty)
 }
 
 pub fn read() -> Result<Version> {
-    let path = paths::repo_root().join("VERSION");
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?
-        .trim()
-        .to_string();
-    let re = Regex::new(r"^(\d+)\.(\d+)\.(\d+)(?:-.*)?$").unwrap();
-    if !re.is_match(&raw) {
-        return Err(anyhow!(
-            "VERSION must be MAJOR.MINOR.PATCH[-suffix]; got '{raw}'"
-        ));
-    }
-    // Only pre-release builds carry the commit suffix; a clean release
-    // VERSION stays bare.
+    let raw = env!("CARGO_PKG_VERSION").to_string();
     let full = match (raw.contains('-'), git_info()) {
         (true, (Some(hash), dirty)) => {
             let suffix = if dirty { "-dirty" } else { "" };
