@@ -3,6 +3,7 @@ import 'dev/macos/macos.just'
 import 'dev/windows/windows.just'
 
 # List recipes
+[private]
 list:
     @just --list --unsorted
 
