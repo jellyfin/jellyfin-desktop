@@ -28,6 +28,8 @@ enum Cmd {
     Install(InstallArgs),
     Package(PackageArgs),
     FetchCef,
+    /// Print the full version string (`<semver>+<short-sha>[-dirty]`).
+    Version,
 }
 
 #[derive(clap::Args, Clone)]
@@ -81,6 +83,10 @@ fn main() -> Result<()> {
         Cmd::Package(a) => package::run(&a),
         Cmd::FetchCef => {
             cef::ensure(&paths::cef_cache_dir()).map(|dir| println!("CEF ready: {}", dir.display()))
+        }
+        Cmd::Version => {
+            println!("{}", version::read()?.full);
+            Ok(())
         }
     }
 }

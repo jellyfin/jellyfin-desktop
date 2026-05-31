@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
@@ -14,8 +14,8 @@ cargo-lock = "11"
 clap = { version = "4", features = ["derive", "env"] }
 download-cef = "2.3"
 flate2 = "1"
+gix = { workspace = true }
 tempfile = "3"
-regex = "1"
 tar = "0.4"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 

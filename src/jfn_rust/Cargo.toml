@@ -1,6 +1,6 @@
 [package]
 name = "jfn-rust"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
@@ -51,6 +51,7 @@ windows-sys = { workspace = true, features = [
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3"
+gix = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 jfn-wayland = { path = "../wayland", default-features = false }

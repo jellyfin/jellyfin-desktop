@@ -14,7 +14,7 @@ if [ ! -d "${APP_DIR}" ]; then
     exit 1
 fi
 
-VERSION="$("${PROJECT_ROOT}/dev/tools/version.sh")"
+VERSION="$(cargo run --quiet --manifest-path "${PROJECT_ROOT}/src/xtask/Cargo.toml" -- version)"
 ARCH="$(uname -m)"
 mkdir -p "${DIST_DIR}"
 

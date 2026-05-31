@@ -1,22 +1,19 @@
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 fn main() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
 
-    let version_path = repo_root.join("VERSION");
-    println!("cargo:rerun-if-changed={}", version_path.display());
-    let version = std::fs::read_to_string(&version_path)
-        .expect("read VERSION")
-        .trim()
-        .to_string();
+    // `env!` (not std::env::var) so rustc records the dep and re-runs this
+    // script when the workspace version bumps.
+    println!("cargo:rerun-if-changed=../Cargo.toml");
+    let version = env!("CARGO_PKG_VERSION");
     println!("cargo:rustc-env=JFN_APP_VERSION={version}");
 
     // VERSION_FULL = "<VERSION>+<git short hash>[-dirty]", but only for
     // pre-release VERSIONs (those with a "-suffix"); a clean release stays
     // bare. xtask injects JFN_GIT_HASH/JFN_GIT_DIRTY as the authoritative
-    // source; fall back to shelling out for bare `cargo build`.
+    // source; fall back to gitoxide for a bare `cargo build`.
     println!("cargo:rerun-if-env-changed=JFN_GIT_HASH");
     println!("cargo:rerun-if-env-changed=JFN_GIT_DIRTY");
     println!("cargo:rerun-if-env-changed=CEF_RESOURCES_DIR");
@@ -25,10 +22,10 @@ fn main() {
             let dirty = std::env::var("JFN_GIT_DIRTY").as_deref() == Ok("1");
             (h, dirty)
         }
-        _ => git_info_from_cli(repo_root),
+        _ => git_info(repo_root),
     };
     let version_full = if !version.contains('-') || git_hash.is_empty() {
-        version.clone()
+        version.to_string()
     } else if dirty {
         format!("{version}+{git_hash}-dirty")
     } else {
@@ -44,65 +41,39 @@ fn main() {
     }
 }
 
-/// Fallback for bare `cargo build` (no xtask): short hash + dirty flag.
-fn git_info_from_cli(repo_root: &Path) -> (String, bool) {
-    let hash = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(repo_root)
-        .output()
+/// Fallback for bare `cargo build` (no xtask). Empty hash when there is no repo.
+fn git_info(repo_root: &std::path::Path) -> (String, bool) {
+    let Ok(repo) = gix::discover(repo_root) else {
+        return (String::new(), false);
+    };
+    let hash = repo
+        .head_id()
         .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .map(|id| id.to_hex_with_len(7).to_string())
         .unwrap_or_default();
-    let dirty = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(repo_root)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false);
+    let dirty = repo.is_dirty().unwrap_or(false);
     (hash, dirty)
 }
 
-/// Tell cargo to re-run when HEAD moves. Resolving paths via
-/// `git rev-parse --git-path` keeps this correct for worktrees,
-/// `.git`-as-gitfile, and packed-refs — unlike a hardcoded `.git/HEAD`,
-/// which never changes when you commit on a branch.
-fn track_git_refs(repo_root: &Path) {
-    let git_path = |spec: &str| -> Option<PathBuf> {
-        let out = Command::new("git")
-            .args(["rev-parse", "--git-path", spec])
-            .current_dir(repo_root)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())?;
-        let rel = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if rel.is_empty() {
-            return None;
-        }
-        let p = Path::new(&rel);
-        Some(if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            repo_root.join(p)
-        })
+/// Re-run when HEAD moves. git_dir holds HEAD; common_dir holds refs/packed-refs
+/// (they differ under a linked worktree).
+fn track_git_refs(repo_root: &std::path::Path) {
+    let Ok(repo) = gix::discover(repo_root) else {
+        return;
     };
-
-    // HEAD itself (changes on branch switch / detached checkout).
-    let head = git_path("HEAD");
-    if let Some(ref head) = head {
-        println!("cargo:rerun-if-changed={}", head.display());
-        // The ref HEAD points to is what moves on commit-on-branch.
-        if let Ok(contents) = std::fs::read_to_string(head)
-            && let Some(refname) = contents.strip_prefix("ref: ")
-            && let Some(ref_path) = git_path(refname.trim())
-        {
-            println!("cargo:rerun-if-changed={}", ref_path.display());
-        }
-    }
-    // packed-refs covers the case where the ref is packed (no loose file).
-    if let Some(packed) = git_path("packed-refs") {
-        println!("cargo:rerun-if-changed={}", packed.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo.git_dir().join("HEAD").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo.common_dir().join("packed-refs").display()
+    );
+    if let Ok(Some(r)) = repo.head_ref() {
+        let name = r.name().as_bstr().to_string();
+        println!(
+            "cargo:rerun-if-changed={}",
+            repo.common_dir().join(name).display()
+        );
     }
 }
