@@ -10,6 +10,7 @@ use std::sync::{Arc, OnceLock};
 use jfn_gpu_paint::{Capabilities, GpuContext};
 
 use crate::gpu_paint_worker::X11GpuPaintWorker;
+use crate::shm_paint_worker::X11ShmPaintWorker;
 use xcb::{Xid, XidNew, x};
 
 /// Owns one SHM segment + the mapped memory. Two per surface so the
@@ -49,8 +50,7 @@ impl Default for ShmBuffer {
 pub struct PlatformSurface {
     pub window: x::Window,
     pub gc: x::Gcontext,
-    pub bufs: [ShmBuffer; 2],
-    pub buf_idx: usize,
+    pub(crate) shm_paint_worker: Option<X11ShmPaintWorker>,
     pub visible: bool,
     pub pw: i32,
     pub ph: i32,
@@ -73,8 +73,7 @@ impl PlatformSurface {
         Self {
             window: x::Window::new(0),
             gc: x::Gcontext::new(0),
-            bufs: [ShmBuffer::default(), ShmBuffer::default()],
-            buf_idx: 0,
+            shm_paint_worker: None,
             visible: true,
             pw: 0,
             ph: 0,
