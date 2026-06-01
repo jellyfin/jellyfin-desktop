@@ -127,7 +127,7 @@ impl Platform for WaylandPlatform {
     fn surface_present_software(
         &self,
         s: SurfaceHandle,
-        _dirty: &[JfnRect],
+        dirty: &[JfnRect],
         buffer: *const c_void,
         w: c_int,
         h: c_int,
@@ -140,7 +140,13 @@ impl Platform for WaylandPlatform {
             .and_then(|n| n.checked_mul(4));
         let Some(len) = len else { return false };
         let pixels = unsafe { std::slice::from_raw_parts(buffer as *const u8, len) };
-        wl_ops::surface_present_software(s as *mut crate::wl_state::PlatformSurface, pixels, w, h)
+        wl_ops::surface_present_software(
+            s as *mut crate::wl_state::PlatformSurface,
+            dirty,
+            pixels,
+            w,
+            h,
+        )
     }
 
     fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {

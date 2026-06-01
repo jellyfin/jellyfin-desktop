@@ -104,7 +104,7 @@ pub unsafe fn jfn_wl_surface_present_software(
         .and_then(|n| n.checked_mul(4));
     let Some(len) = len else { return false };
     let pixels = unsafe { slice::from_raw_parts(pixels, len) };
-    wl_ops::surface_present_software(cast(handle), pixels, w, h)
+    wl_ops::surface_present_software(cast(handle), &[], pixels, w, h)
 }
 
 pub unsafe fn jfn_wl_popup_show(handle: *mut c_void, x: i32, y: i32, lw: i32, lh: i32) {

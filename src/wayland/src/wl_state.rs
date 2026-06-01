@@ -24,7 +24,9 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
-use jfn_gpu_paint::{GpuContext, GpuPainter};
+use jfn_gpu_paint::GpuContext;
+
+use crate::gpu_paint_worker::WaylandGpuPaintWorker;
 
 use memmap2::MmapOptions;
 use wayland_backend::client::{Backend, ObjectId};
@@ -87,12 +89,11 @@ pub(crate) struct PlatformSurface {
     pub popup_buffer: Option<WlBuffer>,
     pub popup_visible: bool,
 
-    /// Vulkan-WSI painter, lazily created on first software present
-    /// when `WlState::use_gpu_paint` is set. Owns its own swapchain
-    /// over this surface's `wl_surface`; once created, all attaches
-    /// to `surface` go through Vulkan WSI (we stop calling
-    /// `wl_surface.attach` from this crate for this surface).
-    pub painter: Option<GpuPainter>,
+    /// Vulkan-WSI presenter worker, lazily created on first software
+    /// present when `WlState::use_gpu_paint` is set. The worker owns the
+    /// per-surface GpuPainter/swapchain so CEF paint callbacks only copy
+    /// latest pixels and signal it.
+    pub gpu_paint_worker: Option<WaylandGpuPaintWorker>,
 }
 
 impl PlatformSurface {
@@ -116,7 +117,7 @@ impl PlatformSurface {
             popup_viewport: None,
             popup_buffer: None,
             popup_visible: false,
-            painter: None,
+            gpu_paint_worker: None,
         }
     }
 }
@@ -171,8 +172,8 @@ pub(crate) struct WlState {
     /// outside the EGL-fail-with-Vulkan-adapter fallback path.
     pub gpu_ctx: Option<Arc<GpuContext>>,
     /// When true, `surface_present_software` routes through each
-    /// surface's [`PlatformSurface::painter`] (Vulkan WSI) instead of
-    /// `wl_shm`. `set_visible` and `resize` also skip their
+    /// surface's GPU paint worker (Vulkan WSI) instead of `wl_shm`.
+    /// `set_visible` and `resize` also skip their
     /// `wl_surface.attach`/`viewport.set_destination` work for the
     /// gpu_paint surface.
     pub use_gpu_paint: bool,
