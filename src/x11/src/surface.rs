@@ -14,7 +14,7 @@ use std::ffi::{c_int, c_void};
 use std::ptr;
 use std::ptr::NonNull;
 
-use jfn_gpu_paint::{DirtyRect, GpuPainter, PixelFrame, WindowTarget};
+use jfn_gpu_paint::{DirtyRect, WindowTarget};
 use xcb::{Xid, x};
 
 use crate::lifecycle::query_parent_geometry;
@@ -137,6 +137,9 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     }
 
     let surf = unsafe { &mut *s };
+    if let Some(worker) = surf.gpu_paint_worker.take() {
+        worker.shutdown();
+    }
     for buf in &mut surf.bufs {
         shm_free(buf, Some(&conn));
     }
@@ -163,10 +166,11 @@ pub fn jfn_x11_surface_present(_s: *mut PlatformSurface, _info: *const c_void) -
     false
 }
 
-/// Lazily build the per-surface [`GpuPainter`] and present `buffer`
-/// through it. Returns false on any failure; caller falls back to SHM.
+/// Lazily build the per-surface GPU presenter worker and queue `buffer`
+/// through it. Returns false once the worker has failed so caller falls back
+/// to SHM on subsequent frames.
 #[allow(clippy::too_many_arguments)]
-fn try_gpu_present(
+fn queue_gpu_present(
     surf: &mut PlatformSurface,
     m: &Mutable,
     conn: &xcb::Connection,
@@ -181,7 +185,15 @@ fn try_gpu_present(
     };
     let size = (w as u32, h as u32);
 
-    if surf.painter.is_none() {
+    if surf
+        .gpu_paint_worker
+        .as_ref()
+        .is_some_and(|worker| worker.failed())
+    {
+        return false;
+    }
+
+    if surf.gpu_paint_worker.is_none() {
         let Some(conn_ptr) = NonNull::new(conn.get_raw_conn() as *mut std::ffi::c_void) else {
             return false;
         };
@@ -191,21 +203,19 @@ fn try_gpu_present(
             screen: m.screen_num,
             visual: m.argb_visual,
         };
-        match GpuPainter::new(ctx, target, size) {
-            Ok(p) => surf.painter = Some(p),
-            Err(e) => {
-                eprintln!("[x11] gpu_paint painter init failed: {e}; using SHM");
-                return false;
-            }
-        }
+        surf.gpu_paint_worker = Some(crate::gpu_paint_worker::X11GpuPaintWorker::new(
+            ctx,
+            target,
+            size,
+            surf.visible,
+        ));
     }
-    let painter = surf.painter.as_mut().unwrap();
-    painter.resize(size);
 
-    let stride = (w as u32) * 4;
-    let bgra = unsafe {
-        std::slice::from_raw_parts(buffer as *const u8, (h as usize) * (stride as usize))
+    let stride = (w as u32).saturating_mul(4);
+    let Some(len) = (h as usize).checked_mul(stride as usize) else {
+        return false;
     };
+    let bgra = unsafe { std::slice::from_raw_parts(buffer as *const u8, len) };
     let dirty_rects = unsafe { std::slice::from_raw_parts(dirty, dirty_len) };
     let owned: Vec<DirtyRect> = dirty_rects
         .iter()
@@ -216,20 +226,11 @@ fn try_gpu_present(
             h: r.h,
         })
         .collect();
-    let frame = PixelFrame {
-        width: w as u32,
-        height: h as u32,
-        stride,
-        bgra,
-        dirty: &owned,
-    };
-    match painter.push_pixels(frame) {
-        Ok(()) => true,
-        Err(e) => {
-            eprintln!("[x11] gpu_paint push_pixels failed: {e}; using SHM");
-            false
-        }
-    }
+
+    let worker = surf.gpu_paint_worker.as_ref().unwrap();
+    worker.set_visible(surf.visible);
+    worker.resize(size);
+    worker.submit_frame(bgra, w as u32, h as u32, owned)
 }
 
 pub unsafe fn jfn_x11_surface_present_software(
@@ -258,7 +259,8 @@ pub unsafe fn jfn_x11_surface_present_software(
 
     // GPU pixel-upload path. Falls through to SHM on any failure so a
     // bad first frame doesn't strand the surface.
-    if m.gpu_caps.gpu_available && try_gpu_present(surf, m, &conn, dirty, dirty_len, buffer, w, h) {
+    if m.gpu_caps.gpu_available && queue_gpu_present(surf, m, &conn, dirty, dirty_len, buffer, w, h)
+    {
         return true;
     }
 
@@ -345,6 +347,12 @@ pub unsafe fn jfn_x11_surface_resize(
     let surf = unsafe { &mut *s };
     surf.pw = pw;
     surf.ph = ph;
+    if pw > 0
+        && ph > 0
+        && let Some(worker) = surf.gpu_paint_worker.as_ref()
+    {
+        worker.resize((pw as u32, ph as u32));
+    }
     if is_none_window(surf.window) {
         return;
     }
@@ -416,6 +424,9 @@ pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool
         conn.send_request(&x::UnmapWindow {
             window: surf.window,
         });
+    }
+    if let Some(worker) = surf.gpu_paint_worker.as_ref() {
+        worker.set_visible(visible);
     }
     let _ = conn.flush();
 }

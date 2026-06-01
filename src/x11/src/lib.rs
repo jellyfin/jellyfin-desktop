@@ -2,6 +2,7 @@
 
 #![cfg(target_os = "linux")]
 
+pub(crate) mod gpu_paint_worker;
 pub mod input;
 pub mod input_lifecycle;
 pub mod lifecycle;

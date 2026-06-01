@@ -7,7 +7,9 @@
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
 
-use jfn_gpu_paint::{Capabilities, GpuContext, GpuPainter};
+use jfn_gpu_paint::{Capabilities, GpuContext};
+
+use crate::gpu_paint_worker::X11GpuPaintWorker;
 use xcb::{Xid, XidNew, x};
 
 /// Owns one SHM segment + the mapped memory. Two per surface so the
@@ -52,10 +54,10 @@ pub struct PlatformSurface {
     pub visible: bool,
     pub pw: i32,
     pub ph: i32,
-    /// GPU compositor, lazily created on the first software present
-    /// when a [`GpuContext`] is available. Falls back to SHM if init
-    /// fails.
-    pub painter: Option<GpuPainter>,
+    /// GPU presenter worker, lazily created on the first software present
+    /// when a [`GpuContext`] is available. Falls back to SHM if init or
+    /// present fails.
+    pub(crate) gpu_paint_worker: Option<X11GpuPaintWorker>,
 }
 
 unsafe impl Send for PlatformSurface {}
@@ -76,7 +78,7 @@ impl PlatformSurface {
             visible: true,
             pw: 0,
             ph: 0,
-            painter: None,
+            gpu_paint_worker: None,
         }
     }
 }
