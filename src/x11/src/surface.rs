@@ -11,14 +11,13 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::ffi::{c_int, c_void};
-use std::ptr;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use jfn_gpu_paint::{DirtyRect, WindowTarget};
 use xcb::{Xid, x};
 
 use crate::lifecycle::query_parent_geometry;
-use crate::shm::{shm_alloc, shm_free};
 use crate::x11_state::{MUT, Mutable, PlatformSurface, is_none_gc, is_none_window};
 
 pub use jfn_platform_abi::JfnRect;
@@ -140,8 +139,8 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     if let Some(worker) = surf.gpu_paint_worker.take() {
         worker.shutdown();
     }
-    for buf in &mut surf.bufs {
-        shm_free(buf, Some(&conn));
+    if let Some(worker) = surf.shm_paint_worker.take() {
+        worker.shutdown();
     }
     if !is_none_window(surf.window) {
         conn.send_request(&x::UnmapWindow {
@@ -233,6 +232,32 @@ fn queue_gpu_present(
     worker.submit_frame(bgra, w as u32, h as u32, owned)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn queue_shm_present(
+    surf: &mut PlatformSurface,
+    m: &Mutable,
+    conn: Arc<xcb::Connection>,
+    dirty: *const JfnRect,
+    dirty_len: usize,
+    buffer: *const c_void,
+    w: c_int,
+    h: c_int,
+) -> bool {
+    if surf.shm_paint_worker.is_none() {
+        surf.shm_paint_worker = Some(crate::shm_paint_worker::X11ShmPaintWorker::new(
+            conn,
+            surf.window,
+            surf.gc,
+            m.argb_depth,
+            surf.visible,
+        ));
+    }
+
+    let worker = surf.shm_paint_worker.as_ref().unwrap();
+    worker.set_visible(surf.visible);
+    worker.submit_frame(buffer, w, h, dirty, dirty_len)
+}
+
 pub unsafe fn jfn_x11_surface_present_software(
     s: *mut PlatformSurface,
     dirty: *const JfnRect,
@@ -264,66 +289,7 @@ pub unsafe fn jfn_x11_surface_present_software(
         return true;
     }
 
-    let buf = &mut surf.bufs[surf.buf_idx];
-    if !shm_alloc(buf, &conn, w, h) {
-        return false;
-    }
-
-    let stride = (w as usize) * 4;
-    let src = buffer as *const u8;
-    let dirty_slice = unsafe { std::slice::from_raw_parts(dirty, dirty_len) };
-
-    let depth = m.argb_depth;
-    for rect in dirty_slice {
-        let mut rx = rect.x;
-        let mut ry = rect.y;
-        let mut rw = rect.w;
-        let mut rh = rect.h;
-        if rx < 0 {
-            rw += rx;
-            rx = 0;
-        }
-        if ry < 0 {
-            rh += ry;
-            ry = 0;
-        }
-        if rx + rw > w {
-            rw = w - rx;
-        }
-        if ry + rh > h {
-            rh = h - ry;
-        }
-        if rw <= 0 || rh <= 0 {
-            continue;
-        }
-        for row in ry..(ry + rh) {
-            let off = (row as usize) * stride + (rx as usize) * 4;
-            unsafe {
-                ptr::copy_nonoverlapping(src.add(off), buf.data.add(off), (rw as usize) * 4);
-            }
-        }
-        conn.send_request(&xcb::shm::PutImage {
-            drawable: x::Drawable::Window(surf.window),
-            gc: surf.gc,
-            total_width: w as u16,
-            total_height: h as u16,
-            src_x: rx as u16,
-            src_y: ry as u16,
-            src_width: rw as u16,
-            src_height: rh as u16,
-            dst_x: rx as i16,
-            dst_y: ry as i16,
-            depth,
-            format: x::ImageFormat::ZPixmap as u8,
-            send_event: false,
-            offset: 0,
-            shmseg: buf.seg,
-        });
-    }
-
-    surf.buf_idx ^= 1;
-    let _ = conn.flush();
-    true
+    queue_shm_present(surf, m, conn, dirty, dirty_len, buffer, w, h)
 }
 
 pub unsafe fn jfn_x11_surface_resize(

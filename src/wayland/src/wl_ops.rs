@@ -12,6 +12,7 @@ use wayland_client::Proxy;
 use wayland_client::protocol::wl_subsurface::WlSubsurface;
 
 use crate::gpu_paint_worker::WaylandGpuPaintWorker;
+use crate::shm_paint_worker::{ViewportState, WaylandShmPaintWorker};
 use crate::wl_state::{
     PlatformSurface, PresentMode, WlState, create_dmabuf_buffer, create_shm_buffer,
     create_solid_color_buffer, lock, size_in_tolerance,
@@ -88,6 +89,9 @@ pub(crate) fn free_surface(ptr: *mut PlatformSurface) {
         if let Some(worker) = s.gpu_paint_worker.take() {
             worker.shutdown();
         }
+        if let Some(worker) = s.shm_paint_worker.take() {
+            worker.shutdown();
+        }
     }
 
     {
@@ -162,6 +166,10 @@ pub(crate) fn surface_resize(ptr: *mut PlatformSurface, lw: i32, lh: i32, pw: i3
         st.flush();
         return;
     }
+    if let Some(worker) = s.shm_paint_worker.as_ref() {
+        worker.resize(lw, lh, pw, ph);
+        return;
+    }
 
     let Some(surface) = s.surface.as_ref() else {
         return;
@@ -212,6 +220,16 @@ pub(crate) fn surface_set_visible(
     if st.use_gpu_paint {
         if let Some(worker) = s.gpu_paint_worker.as_ref() {
             worker.set_visible(visible);
+        }
+        return;
+    }
+    if let Some(worker) = s.shm_paint_worker.as_ref() {
+        worker.set_visible(visible);
+        if !visible {
+            surface.attach(None, 0, 0);
+            surface.commit();
+            st.flush();
+            s.null_attached = true;
         }
         return;
     }
@@ -388,6 +406,45 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
     true
 }
 
+fn queue_shm_present(
+    s: &mut PlatformSurface,
+    st: &WlState,
+    dirty: &[JfnRect],
+    pixels: &[u8],
+    w: i32,
+    h: i32,
+) -> bool {
+    let Some(surface) = s.surface.as_ref() else {
+        return false;
+    };
+    s.buffer_w = w;
+    s.buffer_h = h;
+    s.placeholder = false;
+    s.null_attached = false;
+
+    if s.shm_paint_worker.is_none() {
+        s.shm_paint_worker = Some(WaylandShmPaintWorker::new(
+            st.conn.clone(),
+            st.qh.clone(),
+            st.shm.clone(),
+            surface.clone(),
+            s.viewport.clone(),
+            ViewportState {
+                lw: s.lw,
+                lh: s.lh,
+                pw: s.pw,
+                ph: s.ph,
+            },
+            s.visible,
+        ));
+    }
+
+    let worker = s.shm_paint_worker.as_ref().unwrap();
+    worker.set_visible(s.visible);
+    worker.resize(s.lw, s.lh, s.pw, s.ph);
+    worker.submit_frame(pixels, w, h, dirty)
+}
+
 pub(crate) fn surface_present_software(
     ptr: *mut PlatformSurface,
     dirty: &[JfnRect],
@@ -405,11 +462,10 @@ pub(crate) fn surface_present_software(
         return false;
     }
     if !st.use_gpu_paint {
-        let Some(buf) = create_shm_buffer(&st, pixels, w, h) else {
+        if st.present_mode == PresentMode::Drop {
             return false;
-        };
-        attach_and_commit_locked(s, buf, w, h);
-        return true;
+        }
+        return queue_shm_present(s, &st, dirty, pixels, w, h);
     }
     if st.present_mode == PresentMode::Drop {
         return false;
@@ -644,6 +700,9 @@ fn begin_transition_locked(st: &mut WlState) {
             }
             continue;
         }
+        if let Some(worker) = s.shm_paint_worker.as_ref() {
+            worker.set_visible(false);
+        }
         surface.attach(None, 0, 0);
         if let Some(viewport) = s.viewport.as_ref() {
             viewport.set_destination(-1, -1);
@@ -674,6 +733,16 @@ fn end_transition_locked(st: &mut WlState) {
             }
         }
         return;
+    }
+    for &p in &st.stack {
+        if p.is_null() {
+            continue;
+        }
+        let s = unsafe { surface_mut(p) };
+        if let Some(worker) = s.shm_paint_worker.as_ref() {
+            worker.resize(s.lw, s.lh, s.pw, s.ph);
+            worker.set_visible(s.visible);
+        }
     }
     if let Some(&p) = st.stack.first()
         && !p.is_null()
@@ -725,6 +794,9 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
         s.lh = lh;
         s.pw = pw;
         s.ph = ph;
+        if let Some(worker) = s.shm_paint_worker.as_ref() {
+            worker.resize(lw, lh, pw, ph);
+        }
     }
 
     update_surface_size_locked(&st, lw, lh, pw, ph);
@@ -770,6 +842,10 @@ fn update_surface_size_locked(st: &WlState, lw: i32, lh: i32, pw: i32, ph: i32) 
         return;
     }
     let s = unsafe { surface_mut(p) };
+    if let Some(worker) = s.shm_paint_worker.as_ref() {
+        worker.resize(lw, lh, pw, ph);
+        return;
+    }
     let (Some(surface), Some(viewport)) = (s.surface.as_ref(), s.viewport.as_ref()) else {
         return;
     };

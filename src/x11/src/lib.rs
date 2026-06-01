@@ -9,6 +9,7 @@ pub mod lifecycle;
 pub mod make_platform;
 pub mod paint_override;
 pub mod shm;
+pub(crate) mod shm_paint_worker;
 pub mod surface;
 pub mod x11_state;
 

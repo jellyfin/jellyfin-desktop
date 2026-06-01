@@ -27,6 +27,7 @@ use std::sync::{Arc, OnceLock};
 use jfn_gpu_paint::GpuContext;
 
 use crate::gpu_paint_worker::WaylandGpuPaintWorker;
+use crate::shm_paint_worker::WaylandShmPaintWorker;
 
 use memmap2::MmapOptions;
 use wayland_backend::client::{Backend, ObjectId};
@@ -94,6 +95,7 @@ pub(crate) struct PlatformSurface {
     /// per-surface GpuPainter/swapchain so CEF paint callbacks only copy
     /// latest pixels and signal it.
     pub gpu_paint_worker: Option<WaylandGpuPaintWorker>,
+    pub shm_paint_worker: Option<WaylandShmPaintWorker>,
 }
 
 impl PlatformSurface {
@@ -118,6 +120,7 @@ impl PlatformSurface {
             popup_buffer: None,
             popup_visible: false,
             gpu_paint_worker: None,
+            shm_paint_worker: None,
         }
     }
 }
@@ -425,7 +428,7 @@ pub(crate) fn create_dmabuf_buffer(
 }
 
 /// Create a CLOEXEC anonymous memfd of the given size and truncate it.
-fn memfd_anon(name: &str, size: usize) -> Option<OwnedFd> {
+pub(crate) fn memfd_anon(name: &str, size: usize) -> Option<OwnedFd> {
     let c = std::ffi::CString::new(name).ok()?;
     let raw = unsafe { libc::memfd_create(c.as_ptr(), libc::MFD_CLOEXEC) };
     if raw < 0 {
