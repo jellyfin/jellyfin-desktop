@@ -8,6 +8,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 
 use crate::embedded_js;
+use crate::injection::ExtraInfo;
 use crate::state;
 use crate::v8_handler::NativeHandlerBuilder;
 
@@ -30,7 +31,7 @@ fn readonly_attr() -> V8Propertyattribute {
 // browser-id → injection-profile map. Holding the inner state on JfnApp via
 // Arc lets us clone-cheap on every render_process_handler() invocation while
 // preserving the map across calls.
-type ProfileMap = std::sync::Arc<Mutex<HashMap<i32, DictionaryValue>>>;
+type ProfileMap = std::sync::Arc<Mutex<HashMap<i32, ExtraInfo>>>;
 
 #[derive(Clone)]
 pub struct JfnApp {
@@ -180,7 +181,7 @@ wrap_browser_process_handler! {
 
 #[derive(Default, Clone)]
 struct JfnRph {
-    profiles: std::sync::Arc<Mutex<HashMap<i32, DictionaryValue>>>,
+    profiles: ProfileMap,
 }
 
 wrap_render_process_handler! {
@@ -197,7 +198,7 @@ wrap_render_process_handler! {
             self.inner
                 .profiles
                 .lock()
-                .insert(id, extra.clone());
+                .insert(id, ExtraInfo::from_dictionary(extra.clone()));
         }
 
         fn on_browser_destroyed(&self, browser: Option<&mut Browser>) {
@@ -415,34 +416,22 @@ fn collect_popup_options(frame: &Frame) -> (Vec<String>, i32) {
     (options, selected)
 }
 
-fn inject_jmp_native(browser: &mut Browser, profile: &DictionaryValue, context: &mut V8Context) {
+fn inject_jmp_native(browser: &mut Browser, profile: &ExtraInfo, context: &mut V8Context) {
     let Some(global) = context.global() else {
         return;
     };
-    let functions_key = CefString::from("functions");
-    let functions = profile.list(Some(&functions_key));
-
     let Some(mut jmp_native) = v8_value_create_object(None, None) else {
         return;
     };
     let browser_id = browser.identifier();
-    if let Some(list) = functions {
-        let count = list.size();
-        for i in 0..count {
-            let fn_name_uf = list.string(i);
-            let fn_name_str = userfree_to_string(&fn_name_uf);
-            if fn_name_str.is_empty() {
-                continue;
-            }
-            let cef_name = CefString::from(fn_name_str.as_str());
-            let _ = browser_id;
-            let mut handler = NativeHandlerBuilder::new(crate::v8_handler::NativeHandler);
-            let Some(mut fn_val) = v8_value_create_function(Some(&cef_name), Some(&mut handler))
-            else {
-                continue;
-            };
-            jmp_native.set_value_bykey(Some(&cef_name), Some(&mut fn_val), readonly_attr());
-        }
+    for function in profile.functions() {
+        let cef_name = CefString::from(function.name());
+        let _ = browser_id;
+        let mut handler = NativeHandlerBuilder::new(crate::v8_handler::NativeHandler);
+        let Some(mut fn_val) = v8_value_create_function(Some(&cef_name), Some(&mut handler)) else {
+            continue;
+        };
+        jmp_native.set_value_bykey(Some(&cef_name), Some(&mut fn_val), readonly_attr());
     }
     let key = CefString::from("jmpNative");
     global.set_value_bykey(Some(&key), Some(&mut jmp_native), readonly_attr());
@@ -480,13 +469,9 @@ fn install_raf_nudge(frame: &Frame) {
     frame.execute_java_script(Some(&code), Some(&url), 0);
 }
 
-fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
-    let scripts_key = CefString::from("scripts");
-    let Some(scripts) = profile.list(Some(&scripts_key)) else {
-        return;
-    };
-    let n = scripts.size();
-    if n == 0 {
+fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
+    let scripts = profile.scripts();
+    if scripts.is_empty() {
         return;
     }
 
@@ -495,12 +480,11 @@ fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
     ensure_renderer_settings_loaded();
 
     let mut code = String::new();
-    for i in 0..n {
+    for (i, script) in scripts.iter().enumerate() {
         if i > 0 {
             code.push('\n');
         }
-        let name = userfree_to_string(&scripts.string(i));
-        if let Some(src) = embedded_js::get(&name) {
+        if let Some(src) = embedded_js::get(script.file_name()) {
             code.push_str(src);
         }
     }
@@ -536,10 +520,8 @@ fn run_user_scripts(profile: &DictionaryValue, frame: &Frame) {
         },
     );
 
-    let device_profile_key = CefString::from("device_profile_json");
-    if profile.has_key(Some(&device_profile_key)) == 1 {
-        let dp = userfree_to_string(&profile.string(Some(&device_profile_key)));
-        replace_first(&mut code, "__DEVICE_PROFILE_JSON__", &dp);
+    if let Some(dp) = profile.device_profile_json() {
+        replace_first(&mut code, "__DEVICE_PROFILE_JSON__", dp);
     }
 
     let url_uf = frame.url();

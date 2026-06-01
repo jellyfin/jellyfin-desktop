@@ -338,7 +338,7 @@ impl Inner {
 
         let mut client = crate::client_impl::make_client(Arc::clone(self));
         let url_cef = CefString::from(url);
-        let mut extra_opt = extra;
+        let mut extra_opt = extra.and_then(crate::injection::ExtraInfo::into_dictionary);
         let _ = browser_host_create_browser(
             Some(&wi),
             Some(&mut client),
