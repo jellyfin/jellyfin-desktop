@@ -261,6 +261,9 @@ pub fn cleanup() {
                     continue;
                 }
                 let s = unsafe { &mut *s_ptr };
+                if let Some(worker) = s.gpu_paint_worker.take() {
+                    worker.shutdown();
+                }
                 for buf in &mut s.bufs {
                     shm_free(buf, Some(&conn));
                 }
