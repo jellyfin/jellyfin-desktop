@@ -13,6 +13,7 @@ mod client_impl;
 mod embedded_js;
 pub mod ffi;
 pub mod injection;
+mod paint_scheduler;
 pub mod platform_ops;
 #[cfg(target_os = "macos")]
 mod pump;

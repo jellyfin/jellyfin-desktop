@@ -32,6 +32,8 @@ use crate::platform_ops;
 use jfn_playback::ingest_driver::jfn_playback_display_hz;
 use jfn_playback::shutdown::jfn_shutting_down;
 
+use crate::paint_scheduler::{PaintMode, PaintScheduler};
+
 mod ffi;
 pub(crate) use ffi::*;
 pub use ffi::{jfn_cef_layer_create, jfn_cef_layer_wait_for_load};
@@ -48,10 +50,7 @@ pub struct JfnCefLayer {
 // Process-wide defaults set once at startup by Browsers ctor; consumed by
 // Inner::do_create_browser when building WindowInfo + BrowserSettings.
 static DEFAULT_FRAME_RATE: AtomicI32 = AtomicI32::new(60);
-static USE_SHARED_TEXTURES: AtomicBool = AtomicBool::new(false);
-
-const BOOST_MULTIPLIER: i32 = 2;
-const INVALIDATE_TICK_LIMIT: i32 = 1000;
+static PAINT_MODE: OnceLock<PaintMode> = OnceLock::new();
 
 pub(crate) struct Inner {
     // identity / state queries (slice 1)
@@ -83,27 +82,29 @@ pub(crate) struct Inner {
     physical_w: AtomicI32,
     physical_h: AtomicI32,
 
+    paint_scheduler: Box<dyn PaintScheduler>,
+
     // frame rate (slice 3): configured, boost-saved, last applied
-    frame_rate: AtomicI32,
-    saved_frame_rate: AtomicI32,
+    pub(crate) frame_rate: AtomicI32,
+    pub(crate) saved_frame_rate: AtomicI32,
     current_frame_rate: AtomicI32,
 
     // resize-debounce (slice 3)
     resize_scheduled: AtomicBool,
     last_was_resized_ns: AtomicI64,
-    resize_gen: AtomicU64,
+    pub(crate) resize_gen: AtomicU64,
 
     // invalidate-loop state (slice 3)
-    invalidate_running: AtomicBool,
-    invalidate_stop: AtomicBool,
-    invalidate_tick_count: AtomicI32,
+    pub(crate) invalidate_running: AtomicBool,
+    pub(crate) invalidate_stop: AtomicBool,
+    pub(crate) invalidate_tick_count: AtomicI32,
 
     // post-resize paint-skip / pump-stop (slice 3)
-    last_paint_gen: AtomicU64,
-    paints_since_resize: AtomicI32,
-    skip_paints_after_resize: AtomicI32,
-    pump_paint_count: AtomicI32,
-    last_skip_reset_ns: AtomicI64,
+    pub(crate) last_paint_gen: AtomicU64,
+    pub(crate) paints_since_resize: AtomicI32,
+    pub(crate) skip_paints_after_resize: AtomicI32,
+    pub(crate) pump_paint_count: AtomicI32,
+    pub(crate) last_skip_reset_ns: AtomicI64,
 
     // popup state (slice 4). Owned 1:1 with the platform surface; each
     // CefLayer owns its popup on the platform side. Two-phase reveal: rect
@@ -163,6 +164,7 @@ unsafe impl Sync for Inner {}
 
 impl Inner {
     fn new() -> Arc<Self> {
+        let paint_scheduler = PAINT_MODE.get().unwrap().make_scheduler();
         Arc::new(Self {
             name: Mutex::new(String::new()),
             closed: AtomicBool::new(false),
@@ -179,6 +181,7 @@ impl Inner {
             height: AtomicI32::new(0),
             physical_w: AtomicI32::new(0),
             physical_h: AtomicI32::new(0),
+            paint_scheduler,
             frame_rate: AtomicI32::new(0),
             saved_frame_rate: AtomicI32::new(0),
             current_frame_rate: AtomicI32::new(0),
@@ -262,13 +265,13 @@ impl Inner {
             h.was_resized();
         }
     }
-    fn invalidate(&self) {
+    pub(crate) fn invalidate_view(&self) {
         if let Some(h) = self.host() {
             h.invalidate(PaintElementType::VIEW);
         }
     }
     #[cfg(target_os = "macos")]
-    fn send_external_begin_frame(&self) {
+    pub(crate) fn send_external_begin_frame(&self) {
         if let Some(h) = self.host() {
             h.send_external_begin_frame();
         }
@@ -307,7 +310,7 @@ impl Inner {
         // WindowInfo: windowless OSR. shared_texture_enabled comes from the
         // process-wide flag set by Browsers ctor; external_begin_frame is on
         // macOS only (CVDisplayLink drives BeginFrames there).
-        let shared = USE_SHARED_TEXTURES.load(Ordering::Acquire);
+        let shared = PAINT_MODE.get().unwrap().shared_textures();
         let parent: sys::cef_window_handle_t = unsafe { std::mem::zeroed() };
         let mut wi = WindowInfo::default().set_as_windowless(parent);
         wi.shared_texture_enabled = if shared { 1 } else { 0 };
@@ -424,11 +427,11 @@ impl Inner {
         }
     }
 
-    fn browser_alive(&self) -> bool {
+    pub(crate) fn browser_alive(&self) -> bool {
         self.browser.lock().is_some() && !self.closed.load(Ordering::Acquire)
     }
 
-    fn set_frame_rate(&self, hz: i32) {
+    pub(crate) fn set_frame_rate(&self, hz: i32) {
         if hz <= 0 || !self.browser_alive() {
             return;
         }
@@ -449,11 +452,10 @@ impl Inner {
         self.resize_gen.fetch_add(1, Ordering::AcqRel);
         self.notify_screen_info_changed();
         self.cef_was_resized();
-        self.invalidate();
-        self.kick_invalidate_loop();
+        self.paint_scheduler.after_resize(self);
     }
 
-    fn kick_invalidate_loop(self: &Arc<Self>) {
+    pub(crate) fn kick_invalidate_loop(self: &Arc<Self>) {
         self.invalidate_stop.store(false, Ordering::Release);
         if self
             .invalidate_running
@@ -469,47 +471,11 @@ impl Inner {
     }
 
     fn kick_apply(self: &Arc<Self>) {
-        // Boost CEF compositor rate while the loop is live — JS rAF ties to
-        // compositor rate, so this speeds up convergence to post-resize dims.
-        let fps = self.frame_rate.load(Ordering::Acquire);
-        if self.browser_alive() && fps > 0 && self.saved_frame_rate.load(Ordering::Acquire) == 0 {
-            self.saved_frame_rate.store(fps, Ordering::Release);
-            self.set_frame_rate(fps * BOOST_MULTIPLIER);
-        }
-        self.invalidate_tick();
+        self.paint_scheduler.kick_apply(self);
     }
 
-    fn invalidate_tick(self: &Arc<Self>) {
-        if self.invalidate_tick_count.fetch_add(1, Ordering::AcqRel) + 1 > INVALIDATE_TICK_LIMIT {
-            self.invalidate_stop.store(true, Ordering::Release);
-        }
-        if self.invalidate_stop.load(Ordering::Acquire) {
-            let saved = self.saved_frame_rate.swap(0, Ordering::AcqRel);
-            if self.browser_alive() && saved > 0 {
-                self.set_frame_rate(saved);
-            }
-            self.invalidate_running.store(false, Ordering::Release);
-            return;
-        }
-        if self.browser_alive() {
-            self.invalidate();
-            #[cfg(target_os = "macos")]
-            self.send_external_begin_frame();
-        }
-        let fps = self.frame_rate.load(Ordering::Acquire);
-        if fps <= 0 {
-            self.invalidate_running.store(false, Ordering::Release);
-            return;
-        }
-        // Tick at 4x display refresh so the compositor gets nudged more
-        // often than the boosted output rate (2x) — keeps frame production
-        // ahead of the present cadence during a resize.
-        let tick_hz = fps * 4;
-        let delay_ms = ((1000.0 / tick_hz as f64) + 0.5) as i64;
-        let delay_ms = delay_ms.max(1);
-        let inner = Arc::clone(self);
-        let mut task = TickTask::new(inner);
-        let _ = post_delayed_task(ThreadId::UI, Some(&mut task), delay_ms);
+    pub(crate) fn invalidate_tick(self: &Arc<Self>) {
+        self.paint_scheduler.invalidate_tick(self);
     }
 
     fn resize(self: &Arc<Self>, w: i32, h: i32, pw: i32, ph: i32) {
@@ -556,8 +522,7 @@ impl Inner {
             self.last_was_resized_ns.store(now, Ordering::Release);
             self.notify_screen_info_changed();
             self.cef_was_resized();
-            self.invalidate();
-            self.kick_invalidate_loop();
+            self.paint_scheduler.after_resize(self);
             return;
         }
         // Within the debounce window — schedule a single deferred apply if
@@ -572,7 +537,7 @@ impl Inner {
             let mut task = ApplyResizeTask::new(inner);
             let _ = post_delayed_task(ThreadId::UI, Some(&mut task), delay_ms);
         }
-        self.kick_invalidate_loop();
+        self.paint_scheduler.after_resize(self);
     }
 
     fn set_refresh_rate(self: &Arc<Self>, hz: f64) {
@@ -936,9 +901,8 @@ impl Inner {
         if let Some(h) = browser.host() {
             h.notify_screen_info_changed();
             h.was_resized();
-            h.invalidate(PaintElementType::VIEW);
         }
-        self.kick_invalidate_loop();
+        self.paint_scheduler.after_resize(self);
 
         // Reset state machine: PendingReset path → close the freshly created
         // browser so the deferred replacement spawns via ResetCreateTask.
@@ -1187,45 +1151,11 @@ impl Inner {
     }
 
     fn should_present_paint(&self) -> bool {
-        let cur_gen = self.resize_gen.load(Ordering::Acquire);
-        let last_gen = self.last_paint_gen.load(Ordering::Acquire);
-        if cur_gen != last_gen {
-            self.last_paint_gen.store(cur_gen, Ordering::Release);
-            // Rate-clamp the skip-counter reset. Continuous drag bumps gen
-            // many times per second; resetting on every bump would keep
-            // wiping the counter before any paint clears the skip threshold.
-            let now_ns_val = now_ns();
-            let hz = jfn_playback_display_hz();
-            let period_ns = if hz > 0.0 {
-                (1e9 / hz) as i64
-            } else {
-                16_666_667
-            };
-            if now_ns_val - self.last_skip_reset_ns.load(Ordering::Acquire) >= period_ns {
-                self.last_skip_reset_ns.store(now_ns_val, Ordering::Release);
-                let fps = self.frame_rate.load(Ordering::Acquire);
-                self.skip_paints_after_resize.store(1, Ordering::Release);
-                self.pump_paint_count
-                    .store(if fps > 0 { 1 + fps } else { 0 }, Ordering::Release);
-                self.paints_since_resize.store(0, Ordering::Release);
-            }
-        }
-        let count = self.paints_since_resize.fetch_add(1, Ordering::AcqRel) + 1;
-        let skip = self.skip_paints_after_resize.load(Ordering::Acquire);
-        let pump = self.pump_paint_count.load(Ordering::Acquire);
-        let present = count > skip;
-        if pump > 0 && count == pump {
-            // Pumped enough frames — signal stop to host Invalidate loop and
-            // renderer's rAF loop. Counter remains past pump so subsequent
-            // paints don't re-fire.
-            self.invalidate_stop.store(true, Ordering::Release);
-            self.exec_js("window.__cefStopRaf && window.__cefStopRaf();");
-        }
-        present
+        self.paint_scheduler.should_present_paint(self)
     }
 }
 
-fn now_ns() -> i64 {
+pub(crate) fn now_ns() -> i64 {
     static ORIGIN: OnceLock<Instant> = OnceLock::new();
     Instant::now()
         .duration_since(*ORIGIN.get_or_init(Instant::now))
@@ -1259,7 +1189,7 @@ wrap_task! {
 }
 
 wrap_task! {
-    struct TickTask {
+    pub(crate) struct TickTask {
         inner: Arc<Inner>,
     }
     impl Task {

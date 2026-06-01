@@ -8,7 +8,8 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::{DEFAULT_FRAME_RATE, Inner, JfnCefLayer, USE_SHARED_TEXTURES};
+use super::{DEFAULT_FRAME_RATE, Inner, JfnCefLayer, PAINT_MODE};
+use crate::paint_scheduler::PaintMode;
 
 unsafe fn arc(h: *const JfnCefLayer) -> Arc<Inner> {
     Arc::clone(unsafe { &(*h).inner })
@@ -80,7 +81,7 @@ pub(crate) fn jfn_cef_set_default_frame_rate(hz: c_int) {
 }
 
 pub(crate) fn jfn_cef_set_use_shared_textures(enable: bool) {
-    USE_SHARED_TEXTURES.store(enable, Ordering::Release);
+    PAINT_MODE.set(PaintMode::new(enable)).unwrap();
 }
 
 /// Set the injection-profile kind for this layer ("web" / "overlay" /
