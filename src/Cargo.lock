@@ -2412,6 +2412,7 @@ dependencies = [
  "jfn-playback",
  "libc",
  "parking_lot",
+ "tracing",
  "xcb",
  "xcb-util-cursor-sys",
  "xkbcommon",

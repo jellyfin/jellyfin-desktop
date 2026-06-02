@@ -22,6 +22,16 @@ use jfn_playback::shutdown::jfn_shutdown_initiate;
 // Helpers
 // =====================================================================
 
+/// CLI-facing name of a paint tier, for `--platform-paint` log messages.
+fn paint_name(mode: crate::paint_override::WlPaintOverride) -> &'static str {
+    use crate::paint_override::WlPaintOverride as M;
+    match mode {
+        M::Dmabuf => "dmabuf",
+        M::Gpu => "gpu",
+        M::Shm => "shm",
+    }
+}
+
 fn mpv_prop_intptr(name: &CStr) -> Option<usize> {
     let mut v: i64 = 0;
     let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut v) };
@@ -86,26 +96,29 @@ pub fn jfn_wl_lifecycle_init() -> bool {
         unsafe { write_close_cb(slot, Some(close_cb_trampoline)) };
     }
 
-    // EGL init for CEF shared texture support + dmabuf probe. Skipped
-    // entirely when `--wayland-paint` forces a path. The Vulkan-WSI
-    // fallback is enabled either by `--wayland-paint=gpu` (hard
-    // requirement) or by EGL-probe failure with a usable Vulkan
-    // adapter present.
+    // Resolve the paint preference down the dmabuf → gpu → shm chain. The
+    // `--platform-paint` preference picks the entry tier; the dmabuf probe
+    // still runs and an unusable tier degrades to the next. A degrade from
+    // an explicitly requested tier warns; auto-resolution only logs info.
+    use crate::paint_override::WlPaintOverride as Req;
+    let requested = crate::paint_override::paint_override();
+    let explicit = requested.is_some();
+    let entry = requested.unwrap_or(Req::Dmabuf);
+
     let mut want_gpu_paint = false;
-    match crate::paint_override::paint_override() {
-        Some(crate::paint_override::WlPaintOverride::Dmabuf) => {
-            tracing::info!("--wayland-paint=dmabuf: skipping probe, forcing dmabuf");
-        }
-        Some(crate::paint_override::WlPaintOverride::Shm) => {
-            tracing::info!("--wayland-paint=shm: skipping probe, forcing wl_shm");
+    let mut resolved = Req::Shm;
+    match entry {
+        Req::Shm => {
+            tracing::info!("paint: using wl_shm");
             jfn_platform_abi::get().set_shared_texture_unsupported();
         }
-        Some(crate::paint_override::WlPaintOverride::Gpu) => {
-            tracing::info!("--wayland-paint=gpu: skipping probe, forcing Vulkan WSI");
+        Req::Gpu => {
+            tracing::info!("paint: Vulkan WSI pixel-upload");
             jfn_platform_abi::get().set_shared_texture_unsupported();
             want_gpu_paint = true;
+            resolved = Req::Gpu;
         }
-        None => {
+        Req::Dmabuf => {
             let egl_dpy: *mut c_void = match egl::Egl::load_default() {
                 Ok(api) => unsafe {
                     let d = (api.get_display)(display as egl::NativeDisplayType);
@@ -122,19 +135,15 @@ pub fn jfn_wl_lifecycle_init() -> bool {
             };
 
             let ozone = jfn_platform_abi::get().cef_ozone_platform();
-            if !unsafe { jfn_wl_dmabuf_probe(ozone, egl_dpy) } {
-                // EGL+GBM dmabuf path unavailable. Probe the Vulkan
-                // compositor — a usable adapter wins over wl_shm.
-                let caps = jfn_gpu_paint::GpuContext::probe();
-                if caps.gpu_available {
-                    tracing::warn!(
-                        "EGL dmabuf unavailable; routing through Vulkan WSI pixel-upload"
-                    );
-                    want_gpu_paint = true;
-                } else {
-                    tracing::warn!("Shared textures not supported; using software CEF rendering");
-                }
+            if unsafe { jfn_wl_dmabuf_probe(ozone, egl_dpy) } {
+                tracing::info!("paint: EGL/GBM dmabuf shared texture");
+                resolved = Req::Dmabuf;
+            } else {
+                // dmabuf unavailable — a usable Vulkan adapter beats wl_shm.
+                tracing::info!("paint: EGL dmabuf unavailable; trying gpu");
                 jfn_platform_abi::get().set_shared_texture_unsupported();
+                want_gpu_paint = true;
+                resolved = Req::Gpu;
             }
         }
     }
@@ -145,17 +154,20 @@ pub fn jfn_wl_lifecycle_init() -> bool {
                 crate::wl_state::install_gpu_paint(ctx);
             }
             Err(e) => {
-                let forced = matches!(
-                    crate::paint_override::paint_override(),
-                    Some(crate::paint_override::WlPaintOverride::Gpu)
-                );
-                if forced {
-                    tracing::error!("--wayland-paint=gpu requested but init failed: {e}");
-                    return false;
-                }
-                tracing::warn!("Vulkan WSI fallback unavailable: {e}; using wl_shm");
+                // shared_texture is already disabled, so CEF emits BGRA
+                // and wl_shm presents it.
+                tracing::info!("paint: Vulkan init failed: {e}; using wl_shm");
+                resolved = Req::Shm;
             }
         }
+    }
+
+    if explicit && requested != Some(resolved) {
+        tracing::warn!(
+            "--platform-paint={} unavailable; using {}",
+            paint_name(requested.unwrap()),
+            paint_name(resolved)
+        );
     }
 
     #[cfg(feature = "kde-palette")]

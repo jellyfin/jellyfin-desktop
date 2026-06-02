@@ -1,20 +1,21 @@
-//! CLI-driven Wayland paint-mode override. Set once by `app.rs` before
-//! `early_init`; read by `lifecycle::jfn_wl_lifecycle_init` to bypass
-//! the EGL/GBM dmabuf probe.
+//! CLI-driven Wayland paint preference. Set once by `app.rs` before
+//! `early_init`; read by `lifecycle::jfn_wl_lifecycle_init` to choose the
+//! entry tier of the dmabuf → gpu → shm fallback chain. The probe still
+//! runs — the preference only picks where the chain starts.
 
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WlPaintOverride {
-    /// Force the EGL/GBM dmabuf shared-texture path. Leaves
-    /// `shared_texture` enabled without probing.
+    /// Prefer the EGL/GBM dmabuf shared-texture path. The probe still
+    /// runs; on failure it falls back to gpu then shm.
     Dmabuf,
-    /// Force the Vulkan-WSI pixel-upload path via `jfn_gpu_paint`.
+    /// Prefer the Vulkan-WSI pixel-upload path via `jfn_gpu_paint`.
     /// Calls `set_shared_texture_unsupported` (CEF emits BGRA) and
     /// presents through `vkCreateWaylandSurfaceKHR` rather than
-    /// `wl_shm`. Hard-fails init if no Vulkan adapter is usable.
+    /// `wl_shm`. Falls back to `wl_shm` if no Vulkan adapter is usable.
     Gpu,
-    /// Force the `wl_shm` CPU path. Calls
+    /// Prefer the `wl_shm` CPU path. Calls
     /// `set_shared_texture_unsupported` immediately.
     Shm,
 }

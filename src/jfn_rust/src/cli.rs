@@ -7,33 +7,18 @@
 
 use clap::{ArgAction, Parser, ValueEnum};
 
-/// Preferred X11 paint path. A preference, not a force: the chosen tier is
+/// Preferred paint path. A preference, not a force: the chosen tier is
 /// probed and gracefully falls back down the chain dmabuf → gpu → shm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum X11Paint {
-    /// Zero-copy dmabuf shared-texture path: Vulkan external-memory import on
-    /// X11. Falls back to gpu then shm if the device can't import dmabufs.
+pub enum Paint {
+    /// Zero-copy dmabuf shared-texture path: EGL/GBM subsurface on
+    /// Wayland, Vulkan external-memory import on X11. Falls back to gpu
+    /// then shm if the device can't import dmabufs.
     Dmabuf,
     /// Vulkan pixel-upload via `jfn_gpu_paint`. Falls back to shm when no
     /// Vulkan adapter is usable.
     Gpu,
-    /// MIT-SHM CPU upload. Skips Vulkan init entirely.
-    Shm,
-}
-
-/// Force the Wayland paint path, bypassing the EGL/GBM dmabuf probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum WaylandPaint {
-    /// EGL/GBM dmabuf shared-texture path. If the dmabuf path is truly
-    /// broken at runtime, CEF surfaces the error itself.
-    Dmabuf,
-    /// Vulkan-WSI pixel-upload via `jfn_gpu_paint`. Disables CEF
-    /// shared-texture and presents BGRA frames through
-    /// `VK_KHR_wayland_surface`. Hard-fails init when no Vulkan
-    /// adapter is usable.
-    Gpu,
-    /// `wl_shm` CPU upload. Calls `set_shared_texture_unsupported`
-    /// immediately.
+    /// CPU upload (`wl_shm` / MIT-SHM). The floor of the fallback chain.
     Shm,
 }
 
@@ -111,15 +96,11 @@ pub struct Cli {
     #[arg(long, value_enum)]
     pub platform: Option<PlatformArg>,
 
-    /// Force the X11 paint path; skips the Vulkan probe (Linux only).
+    /// Preferred paint path (Linux only); falls back dmabuf→gpu→shm.
+    /// Values not available on the active backend degrade gracefully.
     #[cfg(target_os = "linux")]
     #[arg(long, value_enum)]
-    pub x11_paint: Option<X11Paint>,
-
-    /// Force the Wayland paint path; skips the dmabuf probe (Linux only).
-    #[cfg(target_os = "linux")]
-    #[arg(long, value_enum)]
-    pub wayland_paint: Option<WaylandPaint>,
+    pub platform_paint: Option<Paint>,
 }
 
 #[cfg(test)]
@@ -236,8 +217,7 @@ mod tests {
         #[cfg(target_os = "linux")]
         {
             assert!(a.platform.is_none());
-            assert!(a.x11_paint.is_none());
-            assert!(a.wayland_paint.is_none());
+            assert!(a.platform_paint.is_none());
         }
     }
 
@@ -334,27 +314,18 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn x11_paint_values() {
+    fn paint_values() {
         assert_eq!(
-            ok(&["app", "--x11-paint=gpu"]).x11_paint,
-            Some(X11Paint::Gpu)
+            ok(&["app", "--platform-paint=dmabuf"]).platform_paint,
+            Some(Paint::Dmabuf)
         );
         assert_eq!(
-            ok(&["app", "--x11-paint", "shm"]).x11_paint,
-            Some(X11Paint::Shm)
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn wayland_paint_values() {
-        assert_eq!(
-            ok(&["app", "--wayland-paint=dmabuf"]).wayland_paint,
-            Some(WaylandPaint::Dmabuf)
+            ok(&["app", "--platform-paint=gpu"]).platform_paint,
+            Some(Paint::Gpu)
         );
         assert_eq!(
-            ok(&["app", "--wayland-paint", "shm"]).wayland_paint,
-            Some(WaylandPaint::Shm)
+            ok(&["app", "--platform-paint", "shm"]).platform_paint,
+            Some(Paint::Shm)
         );
     }
 
@@ -362,11 +333,7 @@ mod tests {
     #[test]
     fn paint_unknown_value_errors() {
         assert_eq!(
-            err_kind(&["app", "--x11-paint=bogus"]),
-            ErrorKind::InvalidValue
-        );
-        assert_eq!(
-            err_kind(&["app", "--wayland-paint=bogus"]),
+            err_kind(&["app", "--platform-paint=bogus"]),
             ErrorKind::InvalidValue
         );
     }
@@ -375,12 +342,8 @@ mod tests {
     #[test]
     fn paint_last_wins() {
         assert_eq!(
-            ok(&["app", "--x11-paint=gpu", "--x11-paint", "shm"]).x11_paint,
-            Some(X11Paint::Shm)
-        );
-        assert_eq!(
-            ok(&["app", "--wayland-paint=dmabuf", "--wayland-paint", "shm"]).wayland_paint,
-            Some(WaylandPaint::Shm)
+            ok(&["app", "--platform-paint=dmabuf", "--platform-paint", "shm"]).platform_paint,
+            Some(Paint::Shm)
         );
     }
 
@@ -392,11 +355,7 @@ mod tests {
             ErrorKind::UnknownArgument
         );
         assert_eq!(
-            err_kind(&["app", "--x11-paint", "gpu"]),
-            ErrorKind::UnknownArgument
-        );
-        assert_eq!(
-            err_kind(&["app", "--wayland-paint", "shm"]),
+            err_kind(&["app", "--platform-paint", "shm"]),
             ErrorKind::UnknownArgument
         );
     }
