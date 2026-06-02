@@ -5,6 +5,7 @@ use std::ffi::{CStr, CString, c_char, c_int};
 use std::ptr;
 use std::sync::OnceLock;
 
+use clap::Parser;
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
 use jfn_platform_abi::{DisplayBackend, IdleInhibitLevel, Platform, WindowGeometry};
 
@@ -27,34 +28,12 @@ fn video_bg_get() -> u32 {
     VIDEO_BG.load(std::sync::atomic::Ordering::Acquire)
 }
 
-const DEFAULT_LOG_FILTER: &str = "info";
+pub(crate) const DEFAULT_LOG_FILTER: &str = "info";
 
 struct BootArgs {
     ozone_platform: String,
     disable_gpu_compositing: bool,
     remote_debugging_port: c_int,
-}
-
-/// Collect the C `argc`/`argv` into owned Rust strings. Null entries become
-/// empty strings; non-UTF-8 bytes are replaced lossily.
-///
-/// # Safety
-/// `argv` must point to `argc` valid NUL-terminated C strings (or null
-/// entries).
-unsafe fn argv_to_vec(argc: c_int, argv: *const *const c_char) -> Vec<String> {
-    if argv.is_null() || argc <= 0 {
-        return Vec::new();
-    }
-    let mut args = Vec::with_capacity(argc as usize);
-    for i in 0..argc as isize {
-        let p = unsafe { *argv.offset(i) };
-        if p.is_null() {
-            args.push(String::new());
-        } else {
-            args.push(unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned());
-        }
-    }
-    args
 }
 
 fn cs(s: &str) -> CString {
@@ -73,36 +52,6 @@ fn normalize_passthrough(s: &str) -> String {
         .join(",")
 }
 
-fn print_help() {
-    let hwdec_default = jfn_mpv::HWDEC_DEFAULT;
-    println!("Usage: jellyfin-desktop [options]\n");
-    println!("Options:");
-    println!("  -h, --help                Show this help");
-    println!("  -v, --version             Show version");
-    println!(
-        "  --log-level <filter>      e.g. info | debug | debug,mpv=trace,CEF=off (default: {DEFAULT_LOG_FILTER})"
-    );
-    println!("  --log-file <path>         Write logs to file ('' to disable)");
-    println!("  --config-dir <path>       Override app config directory");
-    println!("  --cache-dir <path>        Override CEF/cache directory");
-    println!("  --hwdec <mode>            Hardware decoding mode (default: {hwdec_default})");
-    println!("  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd");
-    println!("  --audio-exclusive         Exclusive audio output");
-    println!("  --audio-channels <layout> e.g. stereo, 5.1, 7.1");
-    println!("  --remote-debug-port <port> Chrome remote debugging");
-    println!("  --disable-gpu-compositing Disable CEF GPU compositing");
-    println!("  --ozone-platform <plat>   CEF ozone platform (default: follows --platform)");
-    if cfg!(target_os = "linux") {
-        println!("  --platform <wayland|x11>  Force display backend (Linux only)");
-        println!(
-            "  --x11-paint <gpu|shm>     Force X11 paint path; skips Vulkan probe (Linux only)"
-        );
-        println!(
-            "  --wayland-paint <dmabuf|gpu|shm>  Force Wayland paint path; skips dmabuf probe (Linux only)"
-        );
-    }
-}
-
 fn print_version() {
     println!(
         "jellyfin-desktop {}\n\nCEF {}\n",
@@ -114,10 +63,7 @@ fn print_version() {
 }
 
 /// Subprocess dispatch + early-boot (settings/CLI/logging).
-///
-/// # Safety
-/// `argv` must point to `argc` valid NUL-terminated C strings.
-pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
+pub fn jfn_app_main() -> c_int {
     // Windows/macOS use a fixed display backend so the Platform must be
     // installed before CefExecuteProcess (subprocesses bail out of the
     // browser-process flow but may still query the platform).
@@ -142,28 +88,19 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     }
 
     // 2. Parse argv early enough for path overrides to affect settings load
-    //    and CEF root_cache_path construction.
-    let have_x11 = cfg!(target_os = "linux");
-    let args = unsafe { argv_to_vec(argc, argv) };
-    let cli_args = match cli::parse(args, have_x11) {
-        cli::CliOutcome::Help => {
-            print_help();
-            return 0;
-        }
-        cli::CliOutcome::Version => {
-            print_version();
-            return 0;
-        }
-        cli::CliOutcome::Error(arg) => {
-            eprintln!("Error: unknown argument '{arg}'");
-            return 1;
-        }
-        cli::CliOutcome::Continue(a) => *a,
-    };
-    if let Some(path) = &cli_args.config_dir {
+    //    and CEF root_cache_path construction. clap reads std::env::args_os()
+    //    itself and runs only in the browser process (subprocesses already
+    //    returned above). clap auto-handles --help and bad args (prints +
+    //    exits); --version is the one flag we intercept ourselves.
+    let cli = cli::Cli::parse();
+    if cli.version {
+        print_version();
+        return 0;
+    }
+    if let Some(path) = &cli.config_dir {
         jfn_paths::set_config_dir_override(path.into());
     }
-    if let Some(path) = &cli_args.cache_dir {
+    if let Some(path) = &cli.cache_dir {
         jfn_paths::set_cache_dir_override(path.into());
     }
 
@@ -192,50 +129,32 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     let mut log_level = saved_log_level;
 
     let mut ozone_platform = String::new();
-    #[cfg(target_os = "linux")]
-    let mut platform_override = String::new();
-    #[cfg(target_os = "linux")]
-    let mut x11_paint: Option<cli::X11Paint> = None;
-    #[cfg(target_os = "linux")]
-    let mut wayland_paint: Option<cli::WaylandPaint> = None;
-    let log_file = cli_args.log_file;
+    let log_file = cli.log_file;
     let mut disable_gpu_compositing = false;
     let mut remote_debugging_port: c_int = 0;
 
-    if let Some(v) = cli_args.hwdec {
+    if let Some(v) = cli.hwdec {
         hwdec = v;
     }
-    if let Some(v) = cli_args.audio_passthrough {
+    if let Some(v) = cli.audio_passthrough {
         audio_passthrough = v;
     }
-    if let Some(v) = cli_args.audio_channels {
+    if let Some(v) = cli.audio_channels {
         audio_channels = v;
     }
-    if let Some(v) = cli_args.log_level {
+    if let Some(v) = cli.log_level {
         log_level = v;
     }
-    if let Some(v) = cli_args.ozone_platform {
+    if let Some(v) = cli.ozone_platform {
         ozone_platform = v;
     }
-    #[cfg(target_os = "linux")]
-    if let Some(v) = cli_args.platform_override {
-        platform_override = v;
-    }
-    #[cfg(target_os = "linux")]
-    if let Some(v) = cli_args.x11_paint {
-        x11_paint = Some(v);
-    }
-    #[cfg(target_os = "linux")]
-    if let Some(v) = cli_args.wayland_paint {
-        wayland_paint = Some(v);
-    }
-    if cli_args.audio_exclusive {
+    if cli.audio_exclusive {
         audio_exclusive = true;
     }
-    if cli_args.disable_gpu_compositing {
+    if cli.disable_gpu_compositing {
         disable_gpu_compositing = true;
     }
-    if let Some(p) = cli_args.remote_debugging_port {
+    if let Some(p) = cli.remote_debug_port {
         remote_debugging_port = p;
     }
 
@@ -280,42 +199,36 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     //    returned (we ran before CefExecuteProcess on those platforms).
     #[cfg(target_os = "linux")]
     {
-        let backend = if platform_override == "wayland" {
-            DisplayBackend::Wayland
-        } else if platform_override == "x11" {
-            DisplayBackend::X11
-        } else if !platform_override.is_empty() {
-            eprintln!(
-                "Unknown platform: {} (expected wayland or x11)",
-                platform_override
-            );
-            return 1;
-        } else {
-            let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
-            let has_display = std::env::var_os("DISPLAY").is_some();
-            if has_wayland || !has_display {
-                DisplayBackend::Wayland
-            } else {
-                DisplayBackend::X11
+        let backend = match cli.platform {
+            Some(cli::PlatformArg::Wayland) => DisplayBackend::Wayland,
+            Some(cli::PlatformArg::X11) => DisplayBackend::X11,
+            None => {
+                let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+                let has_display = std::env::var_os("DISPLAY").is_some();
+                if has_wayland || !has_display {
+                    DisplayBackend::Wayland
+                } else {
+                    DisplayBackend::X11
+                }
             }
         };
-        if matches!(backend, DisplayBackend::Wayland) && x11_paint.is_some() {
+        if matches!(backend, DisplayBackend::Wayland) && cli.x11_paint.is_some() {
             eprintln!("Error: --x11-paint set but display backend is wayland");
             return 1;
         }
-        if matches!(backend, DisplayBackend::X11) && wayland_paint.is_some() {
+        if matches!(backend, DisplayBackend::X11) && cli.wayland_paint.is_some() {
             eprintln!("Error: --wayland-paint set but display backend is x11");
             return 1;
         }
 
-        if let Some(mode) = x11_paint {
+        if let Some(mode) = cli.x11_paint {
             let mapped = match mode {
                 cli::X11Paint::Gpu => jfn_x11::X11PaintOverride::Gpu,
                 cli::X11Paint::Shm => jfn_x11::X11PaintOverride::Shm,
             };
             jfn_x11::set_paint_override(mapped);
         }
-        if let Some(mode) = wayland_paint {
+        if let Some(mode) = cli.wayland_paint {
             let mapped = match mode {
                 cli::WaylandPaint::Dmabuf => jfn_wayland::WlPaintOverride::Dmabuf,
                 cli::WaylandPaint::Gpu => jfn_wayland::WlPaintOverride::Gpu,

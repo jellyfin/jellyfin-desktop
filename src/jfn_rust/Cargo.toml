@@ -21,7 +21,7 @@ tracing.workspace = true
 parking_lot.workspace = true
 serde_json.workspace = true
 uuid = { version = "1", features = ["v4"] }
-clap = { version = "4", default-features = false, features = ["std", "derive", "error-context"] }
+clap = { version = "4", default-features = false, features = ["std", "derive", "error-context", "help", "usage", "suggestions", "env"] }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-cef = { path = "../jfn_cef", default-features = false }
 jfn-color = { path = "../color" }
