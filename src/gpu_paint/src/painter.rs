@@ -374,17 +374,13 @@ impl GpuPainter {
         // CommandEncoder, so record the Vulkan acquire barrier in its own
         // command buffer and submit it before the render command buffer.
         if let Some(image) = external_image {
-            let mut acquire_encoder = self
-                .ctx
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("jfn_gpu_paint dmabuf acquire enc"),
-                });
-            crate::dmabuf_import::acquire_barrier(
-                &self.ctx.device,
-                &mut acquire_encoder,
-                image,
-            );
+            let mut acquire_encoder =
+                self.ctx
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("jfn_gpu_paint dmabuf acquire enc"),
+                    });
+            crate::dmabuf_import::acquire_barrier(&self.ctx.device, &mut acquire_encoder, image);
             self.ctx
                 .queue
                 .submit(std::iter::once(acquire_encoder.finish()));

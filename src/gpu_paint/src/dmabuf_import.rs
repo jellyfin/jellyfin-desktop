@@ -210,7 +210,11 @@ pub(crate) unsafe fn import(
 /// image it does not own and faults (device lost). Record this with the
 /// raw HAL encoding API only; wgpu 29 forbids mixing raw and normal wgpu
 /// commands in the same `CommandEncoder`.
-pub(crate) fn acquire_barrier(device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, image: u64) {
+pub(crate) fn acquire_barrier(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    image: u64,
+) {
     let cmd = unsafe { encoder.as_hal_mut::<vulkan::Api, _, _>(|e| e.map(|e| e.raw_handle())) };
     let Some(cmd) = cmd else { return };
     let Some(hal_device) = (unsafe { device.as_hal::<vulkan::Api>() }) else {

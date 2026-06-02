@@ -9,13 +9,13 @@ use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
 
 use jfn_mpv::api::jfn_mpv_get_property_int;
 
-
-/// CLI-facing name of a paint tier, for paint preference log messages.
+/// CLI-facing name of a paint tier, for `--platform-paint` log messages.
 fn paint_name(mode: crate::paint_override::X11PaintOverride) -> &'static str {
+    use crate::paint_override::X11PaintOverride as M;
     match mode {
-        crate::paint_override::X11PaintOverride::Dmabuf => "dmabuf",
-        crate::paint_override::X11PaintOverride::Gpu => "gpu",
-        crate::paint_override::X11PaintOverride::Shm => "shm",
+        M::Dmabuf => "dmabuf",
+        M::Gpu => "gpu",
+        M::Shm => "shm",
     }
 }
 
@@ -164,7 +164,7 @@ pub fn init() -> bool {
     // Verify the MIT-SHM extension is present.
     let shm_cookie = conn.send_request(&xcb::shm::QueryVersion {});
     if conn.wait_for_reply(shm_cookie).is_err() {
-        eprintln!("[x11] MIT-SHM extension not available");
+        tracing::error!("MIT-SHM extension not available");
         return false;
     }
 
@@ -172,7 +172,7 @@ pub fn init() -> bool {
         query_parent_geometry(&conn, parent, root).unwrap_or((0, 0, 1, 1));
 
     // Resolve the paint preference down the dmabuf → gpu → shm chain. The
-    // `--x11-paint` preference only picks the entry tier; an unusable
+    // `--platform-paint` preference only picks the entry tier; an unusable
     // tier degrades to the next one. A degrade from an explicitly
     // requested tier warns; auto-resolution only logs info. dmabuf needs
     // Vulkan plus the external-memory import capability; without it the
@@ -211,7 +211,7 @@ pub fn init() -> bool {
     };
     if explicit && requested != Some(resolved) {
         tracing::warn!(
-            "--x11-paint={} unavailable; using {}",
+            "--platform-paint={} unavailable; using {}",
             paint_name(requested.unwrap()),
             paint_name(resolved)
         );

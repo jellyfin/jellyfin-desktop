@@ -171,8 +171,9 @@ pub(crate) struct WlState {
     /// Raw `wl_display*` — kept so `GpuPainter::new` can build
     /// `VK_KHR_wayland_surface` handles for child surfaces.
     pub display_ptr: NonNull<c_void>,
-    /// Shared Vulkan context. `None` outside `--wayland-paint=gpu` and
-    /// outside the EGL-fail-with-Vulkan-adapter fallback path.
+    /// Shared Vulkan context. `None` unless the paint chain resolved to
+    /// the gpu tier (whether via `--platform-paint=gpu` or dmabuf-probe
+    /// fallback).
     pub gpu_ctx: Option<Arc<GpuContext>>,
     /// When true, `surface_present_software` routes through each
     /// surface's GPU paint worker (Vulkan WSI) instead of `wl_shm`.
@@ -336,8 +337,7 @@ impl WlState {
 }
 
 /// Install the shared [`GpuContext`] and flip `use_gpu_paint`. Called
-/// from `lifecycle` once the EGL probe has decided (or been bypassed
-/// by `--wayland-paint`).
+/// from `lifecycle` once the paint chain has resolved to the gpu tier.
 pub fn install_gpu_paint(ctx: Arc<GpuContext>) {
     let mut st = lock();
     st.gpu_ctx = Some(ctx);

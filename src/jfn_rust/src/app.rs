@@ -212,30 +212,20 @@ pub fn jfn_app_main() -> c_int {
                 }
             }
         };
-        if matches!(backend, DisplayBackend::Wayland) && cli.x11_paint.is_some() {
-            eprintln!("Error: --x11-paint set but display backend is wayland");
-            return 1;
-        }
-        if matches!(backend, DisplayBackend::X11) && cli.wayland_paint.is_some() {
-            eprintln!("Error: --wayland-paint set but display backend is x11");
-            return 1;
-        }
-
-        if let Some(mode) = cli.x11_paint {
-            let mapped = match mode {
-                cli::X11Paint::Dmabuf => jfn_x11::X11PaintOverride::Dmabuf,
-                cli::X11Paint::Gpu => jfn_x11::X11PaintOverride::Gpu,
-                cli::X11Paint::Shm => jfn_x11::X11PaintOverride::Shm,
-            };
-            jfn_x11::set_paint_override(mapped);
-        }
-        if let Some(mode) = cli.wayland_paint {
-            let mapped = match mode {
-                cli::WaylandPaint::Dmabuf => jfn_wayland::WlPaintOverride::Dmabuf,
-                cli::WaylandPaint::Gpu => jfn_wayland::WlPaintOverride::Gpu,
-                cli::WaylandPaint::Shm => jfn_wayland::WlPaintOverride::Shm,
-            };
-            jfn_wayland::set_paint_override(mapped);
+        if let Some(p) = cli.platform_paint {
+            match backend {
+                DisplayBackend::Wayland => jfn_wayland::set_paint_override(match p {
+                    cli::Paint::Dmabuf => jfn_wayland::WlPaintOverride::Dmabuf,
+                    cli::Paint::Gpu => jfn_wayland::WlPaintOverride::Gpu,
+                    cli::Paint::Shm => jfn_wayland::WlPaintOverride::Shm,
+                }),
+                DisplayBackend::X11 => jfn_x11::set_paint_override(match p {
+                    cli::Paint::Dmabuf => jfn_x11::X11PaintOverride::Dmabuf,
+                    cli::Paint::Gpu => jfn_x11::X11PaintOverride::Gpu,
+                    cli::Paint::Shm => jfn_x11::X11PaintOverride::Shm,
+                }),
+                _ => {}
+            }
         }
 
         let p: Box<dyn Platform> = match backend {

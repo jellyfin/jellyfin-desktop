@@ -22,6 +22,7 @@ jfn-mpv = { path = "../mpv" }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
 libc.workspace = true
+tracing.workspace = true
 xcb = { version = "1.7", features = ["shm", "shape", "xkb", "as-raw-xcb-connection"] }
 xcb-util-cursor-sys = "0.2"
 xkbcommon = { version = "0.9", default-features = false, features = ["x11"] }
