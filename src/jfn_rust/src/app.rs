@@ -338,9 +338,8 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     // 10. Install signal handler (Unix) / Windows ConsoleCtrl handler.
     install_signal_handler();
 
-    // 11. Single-instance check (Linux + Windows; macOS uses NSApp delegate
-    //     activation).
-    #[cfg(not(target_os = "macos"))]
+    // 11. Single-instance check. The IPC endpoint is keyed by the config
+    //     directory's instance.json instanceId.
     {
         if crate::single_instance::try_signal_existing() {
             tracing::info!(target: "Main", "Signaled existing instance, exiting");
@@ -637,23 +636,17 @@ fn install_signal_handler() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
 static LISTENER_GUARD: OnceLock<ListenerGuardSlot> = OnceLock::new();
 
-#[cfg(not(target_os = "macos"))]
 struct ListenerGuardSlot;
-#[cfg(not(target_os = "macos"))]
 impl Drop for ListenerGuardSlot {
     fn drop(&mut self) {
         crate::single_instance::stop_listener();
     }
 }
-#[cfg(not(target_os = "macos"))]
 unsafe impl Send for ListenerGuardSlot {}
-#[cfg(not(target_os = "macos"))]
 unsafe impl Sync for ListenerGuardSlot {}
 
-#[cfg(not(target_os = "macos"))]
 fn install_listener_guard() {
     let _ = LISTENER_GUARD.set(ListenerGuardSlot);
 }

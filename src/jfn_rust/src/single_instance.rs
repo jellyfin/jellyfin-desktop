@@ -1,25 +1,71 @@
 //! Single-instance gate.
 //!
-//! Lets a second invocation of the app raise the existing window instead
-//! of starting a fresh process. Implementation per platform:
+//! Lets a second invocation of the app using the same config directory raise
+//! the existing window instead of starting a fresh process. The config
+//! directory owns an `instance.json` file with an `instanceId` string; that ID
+//! is used to name the platform IPC endpoint.
 //!
-//! - Linux: AF_UNIX SOCK_STREAM socket under `$XDG_RUNTIME_DIR` or `/tmp`.
+//! - Unix: AF_UNIX SOCK_STREAM socket under `$XDG_RUNTIME_DIR` or `/tmp`.
 //!   The new process writes `raise [token]\n` and the running process's
 //!   listener thread invokes the callback with the activation token (used
-//!   by xdg-activation-v1 to focus the window).
-//! - Windows: named pipe `\\.\pipe\jellyfin-desktop`. The new process
-//!   writes `raise\n` (no activation token concept on Windows).
-//!
-//! macOS uses the NSApp delegate for activation, so this module is not
-//! compiled there.
+//!   by xdg-activation-v1 to focus the window when available).
+//! - Windows: named pipe `\\.\pipe\jellyfin-desktop-{instanceId}`. The new
+//!   process writes `raise\n` (no activation token concept on Windows).
+
+use std::sync::OnceLock;
 
 /// Listener callback: invoked on the listener thread when another instance
 /// signals us, with the activation token (empty on Windows / when none).
 type Callback = Box<dyn Fn(&str) + Send>;
 
+static INSTANCE_ID: OnceLock<String> = OnceLock::new();
+
+fn instance_id() -> String {
+    INSTANCE_ID.get_or_init(load_or_create_instance_id).clone()
+}
+
+fn load_or_create_instance_id() -> String {
+    let path = jfn_paths::config_dir().join("instance.json");
+    if let Some(id) = read_instance_id(&path) {
+        return id;
+    }
+
+    let id = new_instance_id();
+    let value = serde_json::json!({ "instanceId": &id });
+    let Ok(bytes) = serde_json::to_vec_pretty(&value) else {
+        return id;
+    };
+
+    match jfn_paths::write_atomic_noclobber(&path, &bytes) {
+        Ok(true) => id,
+        Ok(false) => read_instance_id(&path).unwrap_or(id),
+        Err(_) => read_instance_id(&path).unwrap_or(id),
+    }
+}
+
+fn read_instance_id(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let id = value.get("instanceId")?.as_str()?;
+    sanitize_instance_id(id)
+}
+
+fn sanitize_instance_id(id: &str) -> Option<String> {
+    let clean: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect();
+    if clean.is_empty() { None } else { Some(clean) }
+}
+
+fn new_instance_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
 #[cfg(unix)]
 mod imp {
-    use super::Callback;
+    use super::{Callback, instance_id};
     use libc::getuid;
     use libc::{
         AF_UNIX, ECONNREFUSED, ENOENT, POLLIN, SOCK_STREAM, c_char, c_int, c_void, close, pipe,
@@ -38,15 +84,17 @@ mod imp {
     static THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
     fn socket_path() -> PathBuf {
+        let id = instance_id();
+        let file_name = format!("jellyfin-desktop-{id}.sock");
         if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR")
             && !dir.is_empty()
         {
             let mut p = PathBuf::from(dir);
-            p.push("jellyfin-desktop.sock");
+            p.push(file_name);
             return p;
         }
         let uid = unsafe { getuid() };
-        PathBuf::from(format!("/tmp/jellyfin-desktop-{uid}.sock"))
+        PathBuf::from(format!("/tmp/jellyfin-desktop-{uid}-{id}.sock"))
     }
 
     fn fill_sockaddr(path: &std::ffi::CStr) -> Option<sockaddr_un> {
@@ -248,8 +296,9 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    use super::Callback;
+    use super::{Callback, instance_id};
     use parking_lot::Mutex;
+    use std::ffi::CString;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread::{self, JoinHandle};
     use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};
@@ -267,17 +316,22 @@ mod imp {
 
     type HANDLE = *mut std::ffi::c_void;
     const WAIT_OBJECT_0: u32 = 0;
-    const PIPE_NAME: &[u8] = b"\\\\.\\pipe\\jellyfin-desktop\0";
     const FILE_FLAG_OVERLAPPED: u32 = 0x40000000;
+
+    fn pipe_name() -> CString {
+        CString::new(format!(r"\\.\pipe\jellyfin-desktop-{}", instance_id()))
+            .expect("sanitized instance id cannot contain NUL")
+    }
 
     static RUNNING: AtomicBool = AtomicBool::new(false);
     static SHUTDOWN_EVENT: AtomicUsize = AtomicUsize::new(0);
     static THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
     pub fn try_signal_existing() -> bool {
+        let name = pipe_name();
         let pipe = unsafe {
             CreateFileA(
-                PIPE_NAME.as_ptr(),
+                name.as_ptr().cast(),
                 GENERIC_WRITE,
                 0,
                 std::ptr::null(),
@@ -307,9 +361,10 @@ mod imp {
     fn listener_loop(cb: Callback) {
         let shutdown = SHUTDOWN_EVENT.load(Ordering::Acquire) as HANDLE;
         while RUNNING.load(Ordering::Acquire) {
+            let name = pipe_name();
             let pipe = unsafe {
                 CreateNamedPipeA(
-                    PIPE_NAME.as_ptr(),
+                    name.as_ptr().cast(),
                     PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                     1,
@@ -389,9 +444,10 @@ mod imp {
             unsafe { SetEvent(event) };
         }
         // Unblock the pending ConnectNamedPipe by making a dummy connection.
+        let name = pipe_name();
         let pipe = unsafe {
             CreateFileA(
-                PIPE_NAME.as_ptr(),
+                name.as_ptr().cast(),
                 GENERIC_WRITE,
                 0,
                 std::ptr::null(),

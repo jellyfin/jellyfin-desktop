@@ -75,6 +75,22 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// Atomically write `bytes` to `path` only if it does not already exist.
+///
+/// Returns `Ok(true)` when the file was created and `Ok(false)` when another
+/// process won the race and created it first.
+pub fn write_atomic_noclobber(path: &Path, bytes: &[u8]) -> io::Result<bool> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    match tmp.persist_noclobber(path) {
+        Ok(_) => Ok(true),
+        Err(err) if err.error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(err) => Err(err.error),
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn xdg_or_home(xdg_var: &str, home_subdir: &str) -> PathBuf {
     let fallback = format!("{}{}", home(), home_subdir);
