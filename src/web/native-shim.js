@@ -75,6 +75,23 @@
     // Saved settings from native (injected as placeholder, replaced at load time)
     const _savedSettings = JSON.parse('__SETTINGS_JSON__');
 
+    // macOS does not have a native maximize behavior matching Windows/Linux, so hide
+    // that option there instead of exposing a setting that is saved but ignored.
+    const _isMacPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform || '')
+        || /Macintosh/.test(navigator.userAgent || '');
+    // Startup window modes use the same settings/dropdown path as other working
+    // Client Settings dropdowns. Legacy "remember" maps to explicit windowed
+    // startup so old config files do not restore stale fullscreen/maximized state.
+    const _startupWindowMode = _savedSettings.startupWindowMode === 'remember'
+        ? 'windowed'
+        : (_savedSettings.startupWindowMode || 'windowed');
+    const _isWaylandPlatform = _savedSettings.displayBackend === 'wayland';
+    const _startupWindowModeOptions = [
+        { value: 'windowed', title: 'Open windowed' },
+        { value: 'maximized', title: 'Open maximized' },
+        { value: 'fullscreen', title: 'Open fullscreen' }
+    ].filter((option) => !((_isMacPlatform || _isWaylandPlatform) && option.value === 'maximized'));
+
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
         version: '__APP_VERSION__',
@@ -91,7 +108,10 @@
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
             playback: {
-                hwdec: _savedSettings.hwdec || 'auto'
+                hwdec: _savedSettings.hwdec || 'auto',
+                // Controls how the app window is restored on startup. Native code
+                // applies this after the browser has loaded so the web UI sizes correctly.
+                startupWindowMode: _startupWindowMode
             },
             audio: {
                 audioPassthrough: _savedSettings.audioPassthrough || '',
@@ -111,7 +131,9 @@
         },
         settingsDescriptions: {
             playback: [
-                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions }
+                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions },
+                // Exposes only startup-window modes supported by the current platform.
+                { key: 'startupWindowMode', displayName: 'Startup Window Mode', help: 'Choose how the app window opens on startup.', options: _startupWindowModeOptions }
             ],
             audio: [
                 { key: 'audioPassthrough', displayName: 'Audio Passthrough', help: 'Comma-separated list of codecs to pass through to the audio device (e.g. ac3,eac3,dts-hd,truehd). Leave empty to disable.', inputType: 'textarea' },

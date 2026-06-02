@@ -119,6 +119,9 @@ pub(crate) fn apply_setting_value(_section: &str, key: &str, value: &str) {
         "audioChannels" => jfn_config::set_audio_channels(value),
         "windowDecorations" => jfn_config::set_window_decorations(value),
         "hideScrollbar" => jfn_config::set_hide_scrollbar(value == "true"),
+        // Persists the startup window mode selected in client settings so it can
+        // be applied by platform-specific startup handling after browser load.
+        "startupWindowMode" => jfn_config::set_startup_window_mode(value),
         "logLevel" => jfn_config::set_log_level(value),
         "forceTranscoding" => jfn_config::set_force_transcoding(value == "true"),
         // Pass empty platform_default — Rust setter clears when raw equals
