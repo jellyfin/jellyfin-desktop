@@ -493,6 +493,10 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
         replace_first(&mut code, "__DEVICE_PROFILE_JSON__", dp);
     }
 
+    if let Some(wd) = profile.window_decorations() {
+        replace_first(&mut code, "__WINDOW_DECORATIONS__", wd);
+    }
+
     let url_uf = frame.url();
     let url = CefString::from(&url_uf);
     let code_cef = CefString::from(code.as_str());

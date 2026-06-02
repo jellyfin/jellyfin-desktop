@@ -11,6 +11,7 @@ use cef::{
     CefString, CefStringUserfreeUtf16, DictionaryValue, ImplDictionaryValue, ImplListValue,
     dictionary_value_create, list_value_create, sys,
 };
+use jfn_platform_abi::WindowDecorations;
 use std::os::raw::c_char;
 use std::sync::OnceLock;
 
@@ -278,6 +279,7 @@ const FUNCTIONS_KEY: &str = "functions";
 const SCRIPTS_KEY: &str = "scripts";
 const DEVICE_PROFILE_JSON_KEY: &str = "device_profile_json";
 const SHARED_TEXTURES_ENABLED_KEY: &str = "shared_textures_enabled";
+const WINDOW_DECORATIONS_KEY: &str = "window_decorations";
 
 static DEVICE_PROFILE_JSON: OnceLock<String> = OnceLock::new();
 
@@ -287,6 +289,9 @@ pub(crate) struct ExtraInfo {
     scripts: Vec<InjectedScript>,
     device_profile_json: Option<String>,
     shared_textures_enabled: bool,
+    // Effective decoration mode, resolved by the browser process (the renderer
+    // has no Platform on Linux to resolve it itself). Drives only the settings UI.
+    window_decorations: Option<WindowDecorations>,
 }
 
 impl ExtraInfo {
@@ -296,6 +301,9 @@ impl ExtraInfo {
             scripts: read_injected_scripts(&dict),
             device_profile_json: read_string(&dict, DEVICE_PROFILE_JSON_KEY),
             shared_textures_enabled: read_bool(&dict, SHARED_TEXTURES_ENABLED_KEY),
+            window_decorations: read_string(&dict, WINDOW_DECORATIONS_KEY)
+                .as_deref()
+                .and_then(WindowDecorations::parse),
         }
     }
 
@@ -311,6 +319,12 @@ impl ExtraInfo {
             dict.set_string(
                 Some(&CefString::from(DEVICE_PROFILE_JSON_KEY)),
                 Some(&CefString::from(json.as_str())),
+            );
+        }
+        if let Some(wd) = self.window_decorations {
+            dict.set_string(
+                Some(&CefString::from(WINDOW_DECORATIONS_KEY)),
+                Some(&CefString::from(wd.as_str())),
             );
         }
         Some(dict)
@@ -330,6 +344,10 @@ impl ExtraInfo {
 
     pub(crate) fn shared_textures_enabled(&self) -> bool {
         self.shared_textures_enabled
+    }
+
+    pub(crate) fn window_decorations(&self) -> Option<&'static str> {
+        self.window_decorations.map(WindowDecorations::as_str)
     }
 }
 
@@ -455,6 +473,7 @@ fn build_extra_info(
         scripts,
         device_profile_json: None,
         shared_textures_enabled,
+        window_decorations: None,
     }
 }
 
@@ -477,6 +496,10 @@ pub(crate) fn build_for_kind(
             {
                 extra_info.device_profile_json = Some(json.clone());
             }
+            // Resolve the effective decoration mode here (the Platform is
+            // installed in the browser process) and ship it to the renderer,
+            // which has no Platform on Linux. Used only for the settings UI.
+            extra_info.window_decorations = Some(jfn_config::window_decorations_mode());
             Some(extra_info)
         }
         "overlay" => Some(build_extra_info(

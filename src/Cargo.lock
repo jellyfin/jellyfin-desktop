@@ -2174,6 +2174,7 @@ version = "3.0.0-dev"
 name = "jfn-config"
 version = "3.0.0-dev"
 dependencies = [
+ "jfn-platform-abi",
  "parking_lot",
  "serde_json",
 ]
@@ -2212,6 +2213,7 @@ dependencies = [
 name = "jfn-linux-util"
 version = "3.0.0-dev"
 dependencies = [
+ "jfn-platform-abi",
  "parking_lot",
  "tracing",
  "zbus",

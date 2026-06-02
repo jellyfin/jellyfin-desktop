@@ -103,7 +103,7 @@
             },
             advanced: {
                 transparentTitlebar: _savedSettings.transparentTitlebar !== false,
-                windowDecorations: _savedSettings.windowDecorations || 'csd',
+                windowDecorations: '__WINDOW_DECORATIONS__',
                 hideScrollbar: _savedSettings.hideScrollbar !== false,
                 logLevel: _savedSettings.logLevel || '',
                 deviceName: _savedSettings.deviceName || ''
