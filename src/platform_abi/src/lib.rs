@@ -118,6 +118,39 @@ pub enum DisplayBackend {
     MacOS,
 }
 
+/// How the window's decorations (titlebar / borders) are drawn.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum WindowDecorations {
+    /// The app draws its own titlebar in-page (client-side).
+    Csd,
+    /// The platform draws the decorations; left at the platform's own colors.
+    Server,
+    /// The platform draws the decorations and tints them to the theme color.
+    ServerThemed,
+}
+
+impl WindowDecorations {
+    /// Canonical wire/persistence string — settings.json, the JS↔Rust IPC, and
+    /// the web settings UI all speak these values.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WindowDecorations::Csd => "csd",
+            WindowDecorations::Server => "server",
+            WindowDecorations::ServerThemed => "serverThemed",
+        }
+    }
+
+    /// Inverse of [`as_str`]; `None` on an unrecognized value.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "csd" => Some(WindowDecorations::Csd),
+            "server" => Some(WindowDecorations::Server),
+            "serverThemed" => Some(WindowDecorations::ServerThemed),
+            _ => None,
+        }
+    }
+}
+
 #[repr(C)]
 pub struct JfnRect {
     pub x: c_int,
@@ -159,6 +192,9 @@ pub type SurfaceHandle = *mut c_void;
 /// (`Mutex`, `AtomicBool`, etc) where they need it.
 pub trait Platform: Send + Sync {
     fn display(&self) -> DisplayBackend;
+
+    /// The backend's default decoration mode when the user hasn't chosen one.
+    fn default_window_decorations(&self) -> WindowDecorations;
 
     fn early_init(&self) {}
     /// `mpv` is the opaque libmpv `mpv_handle` — a raw C handle, stays raw.

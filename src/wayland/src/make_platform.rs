@@ -20,7 +20,7 @@ use crate::wl_ops::{self, JfnDmabufFrame};
 
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
-    SurfaceSize,
+    SurfaceSize, WindowDecorations,
 };
 
 // =====================================================================
@@ -94,6 +94,10 @@ impl Default for WaylandPlatform {
 impl Platform for WaylandPlatform {
     fn display(&self) -> DisplayBackend {
         DisplayBackend::Wayland
+    }
+
+    fn default_window_decorations(&self) -> WindowDecorations {
+        jfn_linux_util::default_window_decorations()
     }
 
     fn init(&self, _mpv: *mut c_void) -> bool {

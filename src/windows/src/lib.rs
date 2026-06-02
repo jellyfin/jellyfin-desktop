@@ -6,7 +6,7 @@
 use std::ffi::{c_int, c_void};
 use std::sync::atomic::Ordering;
 
-pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
+pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform, WindowDecorations};
 
 mod compositor;
 mod input;
@@ -315,6 +315,11 @@ pub struct WindowsPlatform;
 impl Platform for WindowsPlatform {
     fn display(&self) -> DisplayBackend {
         DisplayBackend::Windows
+    }
+
+    fn default_window_decorations(&self) -> WindowDecorations {
+        // The OS draws the titlebar; we tint it via DWMWA_CAPTION_COLOR.
+        WindowDecorations::ServerThemed
     }
 
     fn early_init(&self) {

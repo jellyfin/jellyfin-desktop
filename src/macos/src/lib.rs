@@ -7,7 +7,7 @@ use std::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::Ordering;
 
 use jfn_platform_abi::geometry::{Bounds, clamp_to_bounds};
-pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform};
+pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform, WindowDecorations};
 
 // =====================================================================
 // Backend no-op entry points.
@@ -592,6 +592,11 @@ pub struct MacosPlatform;
 impl Platform for MacosPlatform {
     fn display(&self) -> DisplayBackend {
         DisplayBackend::MacOS
+    }
+
+    fn default_window_decorations(&self) -> WindowDecorations {
+        // The OS draws the titlebar; we tint it via AppKit.
+        WindowDecorations::ServerThemed
     }
 
     fn early_init(&self) {

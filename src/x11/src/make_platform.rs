@@ -14,7 +14,7 @@ use crate::surface::{
 
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
-    SurfaceSize, WindowGeometry, WindowPos,
+    SurfaceSize, WindowDecorations, WindowGeometry, WindowPos,
 };
 
 use jfn_mpv::api::{jfn_mpv_set_fullscreen, jfn_mpv_toggle_fullscreen};
@@ -26,6 +26,10 @@ pub struct X11Platform;
 impl Platform for X11Platform {
     fn display(&self) -> DisplayBackend {
         DisplayBackend::X11
+    }
+
+    fn default_window_decorations(&self) -> WindowDecorations {
+        jfn_linux_util::default_window_decorations()
     }
 
     fn init(&self, _mpv: *mut c_void) -> bool {
