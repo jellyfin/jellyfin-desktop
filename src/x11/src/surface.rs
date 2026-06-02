@@ -14,7 +14,7 @@ use std::ffi::{c_int, c_void};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use jfn_gpu_paint::{DirtyRect, WindowTarget};
+use jfn_gpu_paint::{DirtyRect, DmabufFrame, WindowTarget};
 use xcb::{Xid, x};
 
 use crate::lifecycle::query_parent_geometry;
@@ -159,10 +159,60 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     drop(unsafe { Box::from_raw(s) });
 }
 
-/// Accelerated present is not supported on the X11 backend. v1 of
-/// gpu_paint will route CEF dmabufs through here.
-pub fn jfn_x11_surface_present(_s: *mut PlatformSurface, _info: *const c_void) -> bool {
-    false
+/// Present a CEF `OnAcceleratedPaint` dmabuf frame through the GPU
+/// worker. Active only when the dmabuf tier resolved at init
+/// (`use_dmabuf`); CEF then emits accelerated paints that route here
+/// instead of the pixel-upload software path. The caller (make_platform)
+/// has already unpacked `CefAcceleratedPaintInfo` into `frame`.
+pub unsafe fn jfn_x11_surface_present_dmabuf(s: *mut PlatformSurface, frame: DmabufFrame) -> bool {
+    if jfn_shutting_down() || s.is_null() {
+        return false;
+    }
+    let Some(conn) = crate::x11_state::conn() else {
+        return false;
+    };
+    let mut g = MUT.lock();
+    let Some(m) = g.as_mut() else {
+        return false;
+    };
+
+    let surf = unsafe { &mut *s };
+    if is_none_window(surf.window) || !surf.visible {
+        return false;
+    }
+    let Some(ctx) = m.gpu_ctx.clone() else {
+        return false;
+    };
+    if surf
+        .gpu_paint_worker
+        .as_ref()
+        .is_some_and(|worker| worker.failed())
+    {
+        return false;
+    }
+
+    if surf.gpu_paint_worker.is_none() {
+        let Some(conn_ptr) = NonNull::new(conn.get_raw_conn() as *mut c_void) else {
+            return false;
+        };
+        let target = WindowTarget::Xcb {
+            connection: conn_ptr,
+            window: surf.window.resource_id(),
+            screen: m.screen_num,
+            visual: m.argb_visual,
+        };
+        let size = (frame.width.max(1), frame.height.max(1));
+        surf.gpu_paint_worker = Some(crate::gpu_paint_worker::X11GpuPaintWorker::new(
+            ctx,
+            target,
+            size,
+            surf.visible,
+        ));
+    }
+
+    let worker = surf.gpu_paint_worker.as_ref().unwrap();
+    worker.set_visible(surf.visible);
+    worker.submit_dmabuf(frame)
 }
 
 /// Lazily build the per-surface GPU presenter worker and queue `buffer`

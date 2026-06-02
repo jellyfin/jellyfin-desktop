@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::os::fd::RawFd;
+use std::os::fd::OwnedFd;
 use std::ptr::NonNull;
 
 /// Where the painter should attach its swapchain. Caller passes raw
@@ -36,24 +36,35 @@ pub struct DirtyRect {
     pub h: i32,
 }
 
-#[derive(Copy, Clone)]
+/// Pixel layout of a CEF accelerated-paint dmabuf. CEF only ever emits
+/// 8888 (its `cef_color_type_t`); we map it straight to a `VkFormat`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DmabufFormat {
+    /// BGRA8888 — matches the painter's swapchain format.
+    Bgra8,
+    /// RGBA8888.
+    Rgba8,
+}
+
+/// One plane of a dmabuf. Owns its fd; closed on drop (Vulkan consumes a
+/// dup of it at import, so the frame's copy is released afterwards).
 pub struct DmabufPlane {
-    pub fd: RawFd,
-    pub offset: u32,
+    pub fd: OwnedFd,
+    pub offset: u64,
     pub stride: u32,
 }
 
-/// Reserved for the v1 dmabuf-import path. v0 only routes
-/// [`PixelFrame`]; call sites already pass `DmabufFrame` so the wiring
-/// does not change shape when v1 lands.
-pub struct DmabufFrame<'a> {
+/// A CEF `OnAcceleratedPaint` frame, owned so it can be handed to the
+/// presenter worker thread (CEF reclaims the original fd when the paint
+/// callback returns, so the caller dups into `OwnedFd`). The painter
+/// imports it as a Vulkan image and samples it into the swapchain — no
+/// CPU copy. CEF overlay frames are single-plane.
+pub struct DmabufFrame {
     pub width: u32,
     pub height: u32,
-    pub fourcc: u32,
+    pub format: DmabufFormat,
     pub modifier: u64,
-    pub planes: &'a [DmabufPlane],
-    pub buffer_id: u64,
-    pub dirty: &'a [DirtyRect],
+    pub planes: Vec<DmabufPlane>,
 }
 
 pub struct PixelFrame<'a> {

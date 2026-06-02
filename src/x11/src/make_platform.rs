@@ -6,11 +6,64 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::{c_int, c_void};
+use std::os::fd::{FromRawFd, OwnedFd};
+
+use jfn_gpu_paint::{DmabufFormat, DmabufFrame, DmabufPlane};
 
 use crate::surface::{
-    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_restack, jfn_x11_surface_present,
+    jfn_x11_alloc_surface, jfn_x11_free_surface, jfn_x11_restack, jfn_x11_surface_present_dmabuf,
     jfn_x11_surface_present_software, jfn_x11_surface_resize, jfn_x11_surface_set_visible,
 };
+
+/// Unpack a `CefAcceleratedPaintInfo` into an owned [`DmabufFrame`]. CEF
+/// reclaims the original fd when the paint callback returns, so the fd is
+/// dup'd into an `OwnedFd` the presenter worker can outlive. CEF overlay
+/// frames are single-plane 8888.
+unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<DmabufFrame> {
+    let info = info as *const cef::sys::_cef_accelerated_paint_info_t;
+    if info.is_null() {
+        return None;
+    }
+    let info = unsafe { &*info };
+    if info.plane_count < 1 {
+        return None;
+    }
+    let format = match info.format {
+        cef::sys::cef_color_type_t::CEF_COLOR_TYPE_BGRA_8888 => DmabufFormat::Bgra8,
+        cef::sys::cef_color_type_t::CEF_COLOR_TYPE_RGBA_8888 => DmabufFormat::Rgba8,
+        _ => return None,
+    };
+    let w = info.extra.coded_size.width;
+    let h = info.extra.coded_size.height;
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    // Include every memory plane the modifier uses (DCC/CCS modifiers add an
+    // auxiliary plane). Each is dup'd into an OwnedFd the worker can outlive.
+    let n = info.plane_count.clamp(0, info.planes.len() as i32) as usize;
+    if n < 1 {
+        return None;
+    }
+    let mut planes = Vec::with_capacity(n);
+    for p in &info.planes[..n] {
+        let dup_fd = unsafe { libc::dup(p.fd) };
+        if dup_fd < 0 {
+            return None;
+        }
+        planes.push(DmabufPlane {
+            fd: unsafe { OwnedFd::from_raw_fd(dup_fd) },
+            offset: p.offset,
+            stride: p.stride,
+        });
+    }
+    Some(DmabufFrame {
+        width: w as u32,
+        height: h as u32,
+        format,
+        modifier: info.modifier,
+        planes,
+    })
+}
 
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
@@ -49,7 +102,12 @@ impl Platform for X11Platform {
     }
 
     fn surface_present(&self, s: SurfaceHandle, info: *const c_void) -> bool {
-        jfn_x11_surface_present(s as *mut crate::x11_state::PlatformSurface, info)
+        let Some(frame) = (unsafe { to_dmabuf_frame(info) }) else {
+            return false;
+        };
+        unsafe {
+            jfn_x11_surface_present_dmabuf(s as *mut crate::x11_state::PlatformSurface, frame)
+        }
     }
 
     fn surface_present_software(
@@ -165,7 +223,10 @@ impl Platform for X11Platform {
     }
 
     fn shared_texture_supported(&self) -> bool {
-        false
+        crate::x11_state::MUT
+            .lock()
+            .as_ref()
+            .is_some_and(|m| m.use_dmabuf)
     }
 
     fn clipboard_text_supported(&self) -> bool {

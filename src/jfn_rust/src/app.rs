@@ -223,6 +223,7 @@ pub fn jfn_app_main() -> c_int {
 
         if let Some(mode) = cli.x11_paint {
             let mapped = match mode {
+                cli::X11Paint::Dmabuf => jfn_x11::X11PaintOverride::Dmabuf,
                 cli::X11Paint::Gpu => jfn_x11::X11PaintOverride::Gpu,
                 cli::X11Paint::Shm => jfn_x11::X11PaintOverride::Shm,
             };

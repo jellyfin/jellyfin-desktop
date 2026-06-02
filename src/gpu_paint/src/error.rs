@@ -14,4 +14,8 @@ pub enum GpuPaintError {
     Acquire(&'static str),
     #[error("invalid frame dimensions: {0}x{1}")]
     BadDimensions(u32, u32),
+    #[error("dmabuf import unsupported on this device")]
+    DmabufUnsupported,
+    #[error("dmabuf import failed: {0}")]
+    DmabufImport(&'static str),
 }

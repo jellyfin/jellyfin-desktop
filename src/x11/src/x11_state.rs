@@ -113,6 +113,10 @@ pub struct Mutable {
     /// at init; in that case surface presents fall back to SHM.
     pub gpu_ctx: Option<Arc<GpuContext>>,
     pub gpu_caps: Capabilities,
+    /// True when the dmabuf-import tier is active: CEF emits
+    /// `OnAcceleratedPaint` and presents flow through `surface_present`
+    /// instead of the pixel-upload `surface_present_software`.
+    pub use_dmabuf: bool,
 }
 
 unsafe impl Send for Mutable {}
