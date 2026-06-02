@@ -83,6 +83,8 @@ fn print_help() {
         "  --log-level <filter>      e.g. info | debug | debug,mpv=trace,CEF=off (default: {DEFAULT_LOG_FILTER})"
     );
     println!("  --log-file <path>         Write logs to file ('' to disable)");
+    println!("  --config-dir <path>       Override app config directory");
+    println!("  --cache-dir <path>        Override CEF/cache directory");
     println!("  --hwdec <mode>            Hardware decoding mode (default: {hwdec_default})");
     println!("  --audio-passthrough <codecs>  e.g. ac3,dts-hd,eac3,truehd");
     println!("  --audio-exclusive         Exclusive audio output");
@@ -139,12 +141,38 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
         return rc;
     }
 
-    // 2. Settings init + load.
+    // 2. Parse argv early enough for path overrides to affect settings load
+    //    and CEF root_cache_path construction.
+    let have_x11 = cfg!(target_os = "linux");
+    let args = unsafe { argv_to_vec(argc, argv) };
+    let cli_args = match cli::parse(args, have_x11) {
+        cli::CliOutcome::Help => {
+            print_help();
+            return 0;
+        }
+        cli::CliOutcome::Version => {
+            print_version();
+            return 0;
+        }
+        cli::CliOutcome::Error(arg) => {
+            eprintln!("Error: unknown argument '{arg}'");
+            return 1;
+        }
+        cli::CliOutcome::Continue(a) => *a,
+    };
+    if let Some(path) = &cli_args.config_dir {
+        jfn_paths::set_config_dir_override(path.into());
+    }
+    if let Some(path) = &cli_args.cache_dir {
+        jfn_paths::set_cache_dir_override(path.into());
+    }
+
+    // 3. Settings init + load.
     let settings_path = jfn_paths::config_dir().join("settings.json");
     jfn_config::settings_init(&settings_path);
     jfn_config::settings_load();
 
-    // 3. Seed CLI defaults from saved settings.
+    // 4. Seed CLI defaults from saved settings.
     let saved_hwdec = jfn_config::hwdec();
     let saved_pass = jfn_config::audio_passthrough();
     let saved_chans = jfn_config::audio_channels();
@@ -163,10 +191,6 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     let mut audio_channels = saved_chans;
     let mut log_level = saved_log_level;
 
-    // 4. Parse argv.
-    let have_x11 = cfg!(target_os = "linux");
-    let args = unsafe { argv_to_vec(argc, argv) };
-
     let mut ozone_platform = String::new();
     #[cfg(target_os = "linux")]
     let mut platform_override = String::new();
@@ -174,63 +198,45 @@ pub unsafe fn jfn_app_main(argc: c_int, argv: *const *const c_char) -> c_int {
     let mut x11_paint: Option<cli::X11Paint> = None;
     #[cfg(target_os = "linux")]
     let mut wayland_paint: Option<cli::WaylandPaint> = None;
-    // Assigned exactly once in the Continue arm; the other arms diverge.
-    let log_file: Option<String>;
+    let log_file = cli_args.log_file;
     let mut disable_gpu_compositing = false;
     let mut remote_debugging_port: c_int = 0;
 
-    match cli::parse(args, have_x11) {
-        cli::CliOutcome::Help => {
-            print_help();
-            return 0;
-        }
-        cli::CliOutcome::Version => {
-            print_version();
-            return 0;
-        }
-        cli::CliOutcome::Error(arg) => {
-            eprintln!("Error: unknown argument '{arg}'");
-            return 1;
-        }
-        cli::CliOutcome::Continue(a) => {
-            if let Some(v) = a.hwdec {
-                hwdec = v;
-            }
-            if let Some(v) = a.audio_passthrough {
-                audio_passthrough = v;
-            }
-            if let Some(v) = a.audio_channels {
-                audio_channels = v;
-            }
-            if let Some(v) = a.log_level {
-                log_level = v;
-            }
-            log_file = a.log_file;
-            if let Some(v) = a.ozone_platform {
-                ozone_platform = v;
-            }
-            #[cfg(target_os = "linux")]
-            if let Some(v) = a.platform_override {
-                platform_override = v;
-            }
-            #[cfg(target_os = "linux")]
-            if let Some(v) = a.x11_paint {
-                x11_paint = Some(v);
-            }
-            #[cfg(target_os = "linux")]
-            if let Some(v) = a.wayland_paint {
-                wayland_paint = Some(v);
-            }
-            if a.audio_exclusive {
-                audio_exclusive = true;
-            }
-            if a.disable_gpu_compositing {
-                disable_gpu_compositing = true;
-            }
-            if let Some(p) = a.remote_debugging_port {
-                remote_debugging_port = p;
-            }
-        }
+    if let Some(v) = cli_args.hwdec {
+        hwdec = v;
+    }
+    if let Some(v) = cli_args.audio_passthrough {
+        audio_passthrough = v;
+    }
+    if let Some(v) = cli_args.audio_channels {
+        audio_channels = v;
+    }
+    if let Some(v) = cli_args.log_level {
+        log_level = v;
+    }
+    if let Some(v) = cli_args.ozone_platform {
+        ozone_platform = v;
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(v) = cli_args.platform_override {
+        platform_override = v;
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(v) = cli_args.x11_paint {
+        x11_paint = Some(v);
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(v) = cli_args.wayland_paint {
+        wayland_paint = Some(v);
+    }
+    if cli_args.audio_exclusive {
+        audio_exclusive = true;
+    }
+    if cli_args.disable_gpu_compositing {
+        disable_gpu_compositing = true;
+    }
+    if let Some(p) = cli_args.remote_debugging_port {
+        remote_debugging_port = p;
     }
 
     // 5. Validate hwdec.

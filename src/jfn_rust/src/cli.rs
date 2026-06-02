@@ -43,6 +43,8 @@ pub struct CliArgs {
     pub audio_channels: Option<String>,
     pub log_level: Option<String>,
     pub log_file: Option<String>,
+    pub config_dir: Option<String>,
+    pub cache_dir: Option<String>,
     pub ozone_platform: Option<String>,
     // Read only on Linux (display-backend selection); compiles out elsewhere.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -58,7 +60,7 @@ pub struct CliArgs {
 
 /// Result of parsing argv.
 pub enum CliOutcome {
-    Continue(CliArgs),
+    Continue(Box<CliArgs>),
     Help,
     Version,
     /// Parse failed; carries the offending argument (empty if clap gave none).
@@ -76,6 +78,10 @@ struct Cli {
     log_level: Option<String>,
     #[arg(long, overrides_with = "log_file")]
     log_file: Option<String>,
+    #[arg(long, overrides_with = "config_dir")]
+    config_dir: Option<String>,
+    #[arg(long, overrides_with = "cache_dir")]
+    cache_dir: Option<String>,
     #[arg(long, overrides_with = "hwdec")]
     hwdec: Option<String>,
     #[arg(long, overrides_with = "audio_passthrough")]
@@ -114,12 +120,14 @@ pub fn parse(args: Vec<String>, have_x11: bool) -> CliOutcome {
             if cli.platform.is_some() && !have_x11 {
                 return CliOutcome::Error("--platform".to_string());
             }
-            CliOutcome::Continue(CliArgs {
+            CliOutcome::Continue(Box::new(CliArgs {
                 hwdec: cli.hwdec,
                 audio_passthrough: cli.audio_passthrough,
                 audio_channels: cli.audio_channels,
                 log_level: cli.log_level,
                 log_file: cli.log_file,
+                config_dir: cli.config_dir,
+                cache_dir: cli.cache_dir,
                 ozone_platform: cli.ozone_platform,
                 platform_override: cli.platform,
                 audio_exclusive: cli.audio_exclusive > 0,
@@ -127,7 +135,7 @@ pub fn parse(args: Vec<String>, have_x11: bool) -> CliOutcome {
                 remote_debugging_port: cli.remote_debug_port,
                 x11_paint: cli.x11_paint,
                 wayland_paint: cli.wayland_paint,
-            })
+            }))
         }
         Err(err) => {
             let bad = err.context().find_map(|(k, v)| match k {
@@ -155,7 +163,7 @@ mod tests {
 
     fn cont(args: &[&str]) -> CliArgs {
         match parse_args(args) {
-            CliOutcome::Continue(a) => a,
+            CliOutcome::Continue(a) => *a,
             _ => panic!("expected Continue"),
         }
     }
@@ -236,6 +244,8 @@ mod tests {
         assert!(a.audio_channels.is_none());
         assert!(a.log_level.is_none());
         assert!(a.log_file.is_none());
+        assert!(a.config_dir.is_none());
+        assert!(a.cache_dir.is_none());
         assert!(a.ozone_platform.is_none());
         assert!(a.platform_override.is_none());
         assert!(!a.audio_exclusive);
@@ -315,6 +325,10 @@ mod tests {
             "debug",
             "--log-file",
             "/tmp/x.log",
+            "--config-dir",
+            "/tmp/config",
+            "--cache-dir",
+            "/tmp/cache",
             "--audio-passthrough",
             "ac3,dts-hd",
             "--audio-channels",
@@ -329,6 +343,8 @@ mod tests {
         assert_eq!(a.hwdec.as_deref(), Some("vaapi"));
         assert_eq!(a.log_level.as_deref(), Some("debug"));
         assert_eq!(a.log_file.as_deref(), Some("/tmp/x.log"));
+        assert_eq!(a.config_dir.as_deref(), Some("/tmp/config"));
+        assert_eq!(a.cache_dir.as_deref(), Some("/tmp/cache"));
         assert_eq!(a.audio_passthrough.as_deref(), Some("ac3,dts-hd"));
         assert_eq!(a.audio_channels.as_deref(), Some("5.1"));
         assert_eq!(a.remote_debugging_port, Some(9222));
