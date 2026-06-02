@@ -8,6 +8,9 @@ publish.workspace = true
 name = "jfn_paths"
 crate-type = ["rlib"]
 
+[dependencies]
+tempfile.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 jfn-linux-util = { path = "../linux_util" }
 

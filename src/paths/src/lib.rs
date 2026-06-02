@@ -10,7 +10,9 @@
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::io;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", windows))]
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -61,6 +63,16 @@ fn home() -> String {
 fn ensure(path: PathBuf) -> PathBuf {
     let _ = fs::create_dir_all(&path);
     path
+}
+
+/// Atomically write `bytes` to `path`, replacing any existing file.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|err| err.error)?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
