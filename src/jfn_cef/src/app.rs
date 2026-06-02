@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use crate::embedded_js;
 use crate::injection::ExtraInfo;
+use crate::paint_scheduler::PaintScheduler;
 use crate::state;
 use crate::v8_handler::NativeHandlerBuilder;
 
@@ -228,7 +229,7 @@ wrap_render_process_handler! {
             let Some(profile) = profile else { return };
 
             inject_jmp_native(browser, &profile, ctx);
-            install_raf_nudge(frame);
+            PaintScheduler::on_context_created(profile.shared_textures_enabled(), frame);
             run_user_scripts(&profile, frame);
         }
 
@@ -435,38 +436,6 @@ fn inject_jmp_native(browser: &mut Browser, profile: &ExtraInfo, context: &mut V
     }
     let key = CefString::from("jmpNative");
     global.set_value_bykey(Some(&key), Some(&mut jmp_native), readonly_attr());
-}
-
-// After each window resize, keep producing compositor frames until
-// `CefLayer::noteStableSize` calls `window.__cefStopRaf`.
-const RAF_NUDGE: &str = r#"
-(function () {
-    var running = false;
-    var stop = false;
-    function tick() {
-        if (stop) {
-            stop = false;
-            running = false;
-            return;
-        }
-        requestAnimationFrame(tick);
-    }
-    window.addEventListener('resize', function () {
-        stop = false;
-        if (!running) {
-            running = true;
-            requestAnimationFrame(tick);
-        }
-    });
-    window.__cefStopRaf = function () { stop = true; };
-})();
-"#;
-
-fn install_raf_nudge(frame: &Frame) {
-    let code = CefString::from(RAF_NUDGE);
-    let url_uf = frame.url();
-    let url = CefString::from(&url_uf);
-    frame.execute_java_script(Some(&code), Some(&url), 0);
 }
 
 fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
