@@ -13,9 +13,38 @@ use std::fs;
 use std::path::PathBuf;
 #[cfg(any(target_os = "macos", windows))]
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 const APP_DIR_NAME: &str = "jellyfin-desktop";
 const LOG_FILE_NAME: &str = "jellyfin-desktop.log";
+
+#[derive(Default)]
+struct Overrides {
+    config_dir: Option<PathBuf>,
+    cache_dir: Option<PathBuf>,
+}
+
+static OVERRIDES: OnceLock<Mutex<Overrides>> = OnceLock::new();
+
+fn overrides() -> &'static Mutex<Overrides> {
+    OVERRIDES.get_or_init(|| Mutex::new(Overrides::default()))
+}
+
+pub fn set_config_dir_override(path: PathBuf) {
+    overrides().lock().unwrap().config_dir = Some(path);
+}
+
+pub fn set_cache_dir_override(path: PathBuf) {
+    overrides().lock().unwrap().cache_dir = Some(path);
+}
+
+fn config_override() -> Option<PathBuf> {
+    overrides().lock().unwrap().config_dir.clone()
+}
+
+fn cache_override() -> Option<PathBuf> {
+    overrides().lock().unwrap().cache_dir.clone()
+}
 
 fn env_or(var: &str, fallback: &str) -> String {
     match env::var(var) {
@@ -42,11 +71,17 @@ fn xdg_or_home(xdg_var: &str, home_subdir: &str) -> PathBuf {
 
 #[cfg(target_os = "linux")]
 pub fn config_dir() -> PathBuf {
+    if let Some(path) = config_override() {
+        return ensure(path);
+    }
     ensure(xdg_or_home("XDG_CONFIG_HOME", "/.config").join(APP_DIR_NAME))
 }
 
 #[cfg(target_os = "linux")]
 pub fn cache_dir() -> PathBuf {
+    if let Some(path) = cache_override() {
+        return ensure(path);
+    }
     ensure(xdg_or_home("XDG_CACHE_HOME", "/.cache").join(APP_DIR_NAME))
 }
 
@@ -57,12 +92,18 @@ pub fn log_dir() -> PathBuf {
 
 #[cfg(target_os = "macos")]
 pub fn config_dir() -> PathBuf {
+    if let Some(path) = config_override() {
+        return ensure(path);
+    }
     let base = env_or("XDG_CONFIG_HOME", &format!("{}/.config", home()));
     ensure(PathBuf::from(base).join(APP_DIR_NAME))
 }
 
 #[cfg(target_os = "macos")]
 pub fn cache_dir() -> PathBuf {
+    if let Some(path) = cache_override() {
+        return ensure(path);
+    }
     ensure(
         PathBuf::from(home())
             .join("Library/Caches")
@@ -81,6 +122,9 @@ pub fn log_dir() -> PathBuf {
 
 #[cfg(windows)]
 pub fn config_dir() -> PathBuf {
+    if let Some(path) = config_override() {
+        return ensure(path);
+    }
     ensure(PathBuf::from(env_or("APPDATA", "C:")).join(APP_DIR_NAME))
 }
 
@@ -91,6 +135,9 @@ fn local_appdata() -> String {
 
 #[cfg(windows)]
 pub fn cache_dir() -> PathBuf {
+    if let Some(path) = cache_override() {
+        return ensure(path);
+    }
     ensure(PathBuf::from(local_appdata()).join(APP_DIR_NAME))
 }
 
