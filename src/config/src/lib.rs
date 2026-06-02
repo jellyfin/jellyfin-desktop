@@ -10,7 +10,6 @@ use jfn_platform_abi::WindowDecorations;
 use parking_lot::{Condvar, Mutex};
 use serde_json::{Map, Value, json};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
@@ -348,22 +347,6 @@ fn save_worker_loop(w: &'static SaveWorker) {
     }
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let tmp = dir.join(format!(
-        ".{}.tmp",
-        path.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "config".into())
-    ));
-    {
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-    }
-    fs::rename(&tmp, path)
-}
-
 fn save_data(path: &Path, data: &SettingsData) -> bool {
     let v = data.to_json();
     let Ok(mut text) = serde_json::to_string_pretty(&v) else {
@@ -371,7 +354,7 @@ fn save_data(path: &Path, data: &SettingsData) -> bool {
     };
     text.push('\n');
     let _guard = SAVE_LOCK.lock();
-    write_atomic(path, text.as_bytes()).is_ok()
+    jfn_paths::write_atomic(path, text.as_bytes()).is_ok()
 }
 
 // =====================================================================
