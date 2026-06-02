@@ -26,6 +26,7 @@ use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
+use crate::ipc::BrowserMessage;
 use crate::platform_ops;
 
 use jfn_playback::ingest_driver::jfn_playback_display_hz;
@@ -123,7 +124,7 @@ pub(crate) struct Inner {
 // Typed closure signatures stored in each callback slot. `*mut c_void` args
 // stay raw because callers may want to receive cef-rs handles or C++
 // CefRefPtr objects depending on which side installed the handler.
-pub type MessageFn = dyn Fn(&str, *mut c_void, *mut c_void) -> bool + Send + Sync;
+pub(crate) type MessageFn = dyn Fn(BrowserMessage) -> bool + Send + Sync;
 pub type CreatedFn = dyn Fn(*mut c_void) + Send + Sync;
 pub type BeforeCloseFn = dyn Fn() + Send + Sync;
 pub type ContextBuilderFn = dyn Fn(*mut c_void) + Send + Sync;
@@ -1009,14 +1010,9 @@ impl Inner {
         *g = Some(cb);
     }
 
-    pub(crate) fn invoke_message_handler(
-        &self,
-        name: &str,
-        args: *mut c_void,
-        browser: *mut c_void,
-    ) -> bool {
+    pub(crate) fn invoke_message_handler(&self, message: BrowserMessage) -> bool {
         let g = self.message_handler.lock();
-        g.as_ref().map(|f| f(name, args, browser)).unwrap_or(false)
+        g.as_ref().map(|f| f(message)).unwrap_or(false)
     }
 
     pub(crate) fn has_context_menu_builder(&self) -> bool {
@@ -1236,7 +1232,7 @@ pub(crate) fn jfn_cef_post_set_hidden_all(hidden: bool) {
 // to clear; the previously installed closure is dropped.
 // ---------------------------------------------------------------------------
 impl JfnCefLayer {
-    pub fn set_message_handler_rust(&self, f: Option<Box<MessageFn>>) {
+    pub(crate) fn set_message_handler_rust(&self, f: Option<Box<MessageFn>>) {
         *self.inner.message_handler.lock() = f;
     }
     pub fn set_created_callback_rust(&self, f: Option<Box<CreatedFn>>) {

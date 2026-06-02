@@ -14,10 +14,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::browsers::{jfn_browsers_create, jfn_browsers_set_active};
-use crate::business_common::{adopt_message_refs, list_string};
 use crate::client::{
     jfn_cef_layer_create, jfn_cef_layer_inner, jfn_cef_layer_set_name, jfn_cef_layer_set_visible,
 };
+use crate::ipc::{BrowserMessage, list_string};
 use crate::platform_ops;
 
 static OPEN: AtomicBool = AtomicBool::new(false);
@@ -55,11 +55,7 @@ pub fn jfn_about_open() {
     })));
 
     // setMessageHandler — aboutDismiss / aboutOpenPath.
-    l.set_message_handler_rust(Some(Box::new(
-        move |name: &str, args_raw: *mut c_void, browser_raw: *mut c_void| -> bool {
-            handle_message(name, args_raw, browser_raw)
-        },
-    )));
+    l.set_message_handler_rust(Some(Box::new(handle_message)));
 
     // setContextMenuBuilder / dispatcher — shared app menu.
     l.set_context_menu_builder_rust(Some(crate::app_menu::build_closure()));
@@ -79,12 +75,12 @@ pub fn jfn_about_open() {
     }
 }
 
-fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
-    let (args, browser) = adopt_message_refs(args_raw, browser_raw);
+fn handle_message(message: BrowserMessage) -> bool {
+    let args = message.args();
 
-    match name {
+    match message.name() {
         "aboutDismiss" => {
-            if let Some(b) = browser
+            if let Some(b) = message.browser()
                 && let Some(host) = b.host()
             {
                 host.close_browser(0);
@@ -93,7 +89,7 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         }
         "aboutOpenPath" => {
             let Some(args) = args else { return true };
-            let path = list_string(&args, 0);
+            let path = list_string(args, 0);
             if path.is_empty() {
                 return true;
             }

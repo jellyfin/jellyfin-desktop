@@ -13,6 +13,7 @@ mod client_impl;
 mod embedded_js;
 pub mod ffi;
 pub mod injection;
+mod ipc;
 mod paint_scheduler;
 pub mod platform_ops;
 #[cfg(target_os = "macos")]
@@ -22,9 +23,7 @@ mod state;
 mod v8_handler;
 pub mod window_controls;
 
-pub use client::{
-    BeforeCloseFn, ContextBuilderFn, ContextDispatcherFn, CreatedFn, JfnCefLayer, MessageFn,
-};
+pub use client::{BeforeCloseFn, ContextBuilderFn, ContextDispatcherFn, CreatedFn, JfnCefLayer};
 pub use ffi::*;
 
 pub const APP_VERSION: &str = env!("JFN_APP_VERSION");

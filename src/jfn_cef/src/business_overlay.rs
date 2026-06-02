@@ -18,13 +18,12 @@ use std::os::raw::c_void;
 use std::sync::Arc;
 
 use crate::browsers::{jfn_browsers_create, jfn_browsers_set_active};
-use crate::business_common::{
-    adopt_message_refs, apply_setting_value, list_string, reject_double_init, send_process_message,
-};
+use crate::business_common::{apply_setting_value, reject_double_init};
 use crate::client::{
     Inner, JfnCefLayer, jfn_cef_layer_create, jfn_cef_layer_inner, jfn_cef_layer_set_name,
     jfn_cef_layer_set_visible,
 };
+use crate::ipc::{BrowserMessage, list_string, send_to_renderer};
 use jfn_color::theme::jfn_theme_color_on_overlay_dismissed;
 use jfn_jellyfin::{extract_base_url, is_valid_public_info, normalize_input};
 
@@ -81,11 +80,7 @@ fn install_handlers(layer: *mut JfnCefLayer, inner_for_created: Arc<Inner>) {
         }
     })));
 
-    l.set_message_handler_rust(Some(Box::new(
-        move |name: &str, args_raw: *mut c_void, browser_raw: *mut c_void| -> bool {
-            handle_message(name, args_raw, browser_raw)
-        },
-    )));
+    l.set_message_handler_rust(Some(Box::new(handle_message)));
 
     // BeforeClose: clear INSTANCE so post-close cancel/IPC paths no-op
     // instead of touching a torn-down main browser handle.
@@ -102,24 +97,23 @@ fn main_layer_arc() -> Option<Arc<Inner>> {
     INSTANCE.lock().as_ref().map(|s| Arc::clone(&s.main_layer))
 }
 
-fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
-    let (args, browser) = adopt_message_refs(args_raw, browser_raw);
+fn handle_message(message: BrowserMessage) -> bool {
+    let args = message.args();
 
-    match name {
+    match message.name() {
         "getSavedServerUrl" => {
-            let Some(b) = browser else { return true };
-            let Some(frame) = b.main_frame() else {
+            let Some(frame) = message.main_frame() else {
                 return true;
             };
             let url = jfn_config::server_url();
-            send_process_message(&frame, "savedServerUrl", |args| {
+            send_to_renderer(&frame, "savedServerUrl", |args| {
                 args.set_string(0, Some(&CefString::from(url.as_str())));
             });
             true
         }
         "navigateMain" => {
             let Some(args) = args else { return true };
-            let url = list_string(&args, 0);
+            let url = list_string(args, 0);
             jfn_logging::log(
                 jfn_logging::CATEGORY_CEF,
                 jfn_logging::LEVEL_INFO,
@@ -150,23 +144,25 @@ fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -
         }
         "saveServerUrl" => {
             let Some(args) = args else { return true };
-            let url = list_string(&args, 0);
+            let url = list_string(args, 0);
             jfn_config::set_server_url(&url);
             jfn_config::settings_save_async();
             true
         }
         "setSettingValue" => {
             let Some(args) = args else { return true };
-            let section = list_string(&args, 0);
-            let key = list_string(&args, 1);
-            let value = list_string(&args, 2);
+            let section = list_string(args, 0);
+            let key = list_string(args, 1);
+            let value = list_string(args, 2);
             apply_setting_value(&section, &key, &value);
             true
         }
         "checkServerConnectivity" => {
             let Some(args) = args else { return true };
-            let Some(b) = browser else { return true };
-            let url = list_string(&args, 0);
+            let Some(b) = message.browser().cloned() else {
+                return true;
+            };
+            let url = list_string(args, 0);
             cancel_active_probe();
             let normalized = normalize_input(&url);
             start_probe(b, url, normalized);
@@ -203,7 +199,7 @@ fn start_probe(browser: Browser, user_url: String, normalized: String) {
             } else {
                 user_url.clone()
             };
-            send_process_message(&frame, "serverConnectivityResult", |args| {
+            send_to_renderer(&frame, "serverConnectivityResult", |args| {
                 args.set_string(0, Some(&CefString::from(user_url.as_str())));
                 args.set_bool(1, if success { 1 } else { 0 });
                 args.set_string(2, Some(&CefString::from(reply_url.as_str())));
