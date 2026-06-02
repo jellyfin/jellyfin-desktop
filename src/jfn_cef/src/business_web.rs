@@ -17,11 +17,9 @@ use std::os::raw::c_void;
 use std::sync::Arc;
 
 use crate::browsers::{jfn_browsers_active, jfn_browsers_set_active};
-use crate::business_common::{
-    adopt_message_refs, apply_setting_value, js_cstr_or_warn, list_int, list_string,
-    reject_double_init,
-};
+use crate::business_common::{apply_setting_value, js_cstr_or_warn, reject_double_init};
 use crate::client::{Inner, JfnCefLayer, jfn_cef_layer_inner, jfn_cef_layer_set_name};
+use crate::ipc::{BrowserMessage, list_int, list_string};
 use jfn_color::jfn_cef_parse_color;
 use jfn_color::theme::{jfn_theme_color_on_color, jfn_theme_color_set_video_mode};
 use jfn_mpv::api::{
@@ -117,11 +115,7 @@ fn install_handlers(layer: *mut JfnCefLayer, inner_for_created: Arc<Inner>) {
         }
     })));
 
-    l.set_message_handler_rust(Some(Box::new(
-        move |name: &str, args_raw: *mut c_void, browser_raw: *mut c_void| -> bool {
-            handle_message(name, args_raw, browser_raw)
-        },
-    )));
+    l.set_message_handler_rust(Some(Box::new(handle_message)));
 
     // BeforeClose: clear INSTANCE so any post-close jfn_web_exec_js becomes
     // a no-op instead of touching a torn-down layer.
@@ -275,24 +269,23 @@ fn handle_player_load(args: &ListValue) {
 /// Run `f` if the IPC arrived with an args list. Always returns `true` —
 /// every arm using this is considered "handled" even when args are
 /// missing, matching the prior behaviour.
-fn with_args(args: Option<ListValue>, f: impl FnOnce(&ListValue)) -> bool {
+fn with_args(args: Option<&ListValue>, f: impl FnOnce(&ListValue)) -> bool {
     if let Some(a) = args {
-        f(&a);
+        f(a);
     }
     true
 }
 
-fn handle_message(name: &str, args_raw: *mut c_void, browser_raw: *mut c_void) -> bool {
-    let (args, _browser) = adopt_message_refs(args_raw, browser_raw);
+fn handle_message(message: BrowserMessage) -> bool {
+    let args = message.args();
 
     // mpv handle not yet initialised — IPC arrives before boot completes
-    // (rare). Return false so CEF treats the message as unhandled and the
-    // adopted refs drop on scope exit.
+    // (rare). Return false so CEF treats the message as unhandled.
     if jfn_mpv_handle_get().is_null() {
         return false;
     }
 
-    match name {
+    match message.name() {
         "playerLoad" => with_args(args, handle_player_load),
         "playerStop" => {
             jfn_mpv_stop();

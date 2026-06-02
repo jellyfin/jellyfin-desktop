@@ -4,68 +4,9 @@
 //!   1. Generic CEF/Rust helpers — could lift into a `cef-rs-helpers` crate.
 //!   2. App-specific dispatch — Jellyfin-desktop config wiring.
 
-use cef::rc::ConvertReturnValue;
-use cef::{
-    Browser, CefString, Frame, ImplFrame, ImplListValue, ImplProcessMessage, ListValue, ProcessId,
-    process_message_create, sys,
-};
 use std::ffi::CString;
-use std::os::raw::c_void;
 
-// --- generic CEF helpers ---------------------------------------------------
-
-/// Read a CefString out of a `ListValue` at `idx` as an owned Rust `String`.
-pub(crate) fn list_string(args: &ListValue, idx: usize) -> String {
-    let userfree = args.string(idx);
-    let cs: CefString = (&userfree).into();
-    cs.to_string()
-}
-
-/// Read an integer arg out of a `ListValue` at `idx`. Handles JS numbers
-/// that the renderer happened to send as `VTYPE_DOUBLE` (e.g. via `parseFloat`).
-pub(crate) fn list_int(args: &ListValue, idx: usize) -> i32 {
-    let t = args.get_type(idx);
-    if t.as_ref() == &sys::cef_value_type_t::VTYPE_DOUBLE {
-        args.double(idx).round() as i32
-    } else {
-        args.int(idx)
-    }
-}
-
-/// Adopt the refs the CEF dispatcher hands a message-handler callback.
-///
-/// Contract: the per-layer dispatcher in `client.rs` (`invoke_message_handler`)
-/// hands raw CEF pointers that CEF already `AddRef`'d. We wrap them with
-/// `wrap_result()` so the returned `ListValue` / `Browser` own one ref each;
-/// they're released when the returned `Option`s drop at the caller's scope
-/// end. If the dispatcher contract ever changes (e.g. caller pre-adopts and
-/// hands borrowed ptrs), update *this* function and the contract holds for
-/// every handler.
-pub(crate) fn adopt_message_refs(
-    args_raw: *mut c_void,
-    browser_raw: *mut c_void,
-) -> (Option<ListValue>, Option<Browser>) {
-    let args = (!args_raw.is_null())
-        .then(|| -> ListValue { (args_raw as *mut sys::_cef_list_value_t).wrap_result() });
-    let browser = (!browser_raw.is_null())
-        .then(|| -> Browser { (browser_raw as *mut sys::_cef_browser_t).wrap_result() });
-    (args, browser)
-}
-
-/// Build a `CefProcessMessage` named `name`, call `fill` to populate its
-/// argument list, then ship it to the renderer process on `frame`.
-pub(crate) fn send_process_message<F: FnOnce(&ListValue)>(frame: &Frame, name: &str, fill: F) {
-    let Some(mut msg) = process_message_create(Some(&CefString::from(name))) else {
-        return;
-    };
-    if let Some(args) = msg.argument_list() {
-        fill(&args);
-    }
-    frame.send_process_message(
-        ProcessId::from(sys::cef_process_id_t::PID_RENDERER),
-        Some(&mut msg),
-    );
-}
+// --- generic Rust helpers --------------------------------------------------
 
 /// Returns true if the supplied `MutexGuard`-bearing `Option` already holds
 /// a value — i.e. a singleton `init` is being called twice. Crashes loud in

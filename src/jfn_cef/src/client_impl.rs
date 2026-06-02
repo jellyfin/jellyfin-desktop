@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::app::userfree_to_string;
 use crate::client::Inner;
+use crate::ipc::BrowserMessage;
 use crate::platform_ops;
 
 #[cfg(target_os = "linux")]
@@ -142,27 +143,9 @@ wrap_client! {
                     1
                 }
                 _ => {
-                    // The callback adopts one owning reference for each ptr (CToCpp Wrap).
-                    // Rust still holds its own ref via the Browser/ListValue wrappers,
-                    // so add_ref before transferring ownership.
-                    let browser_raw = browser
-                        .map(|b| {
-                            unsafe { Rc::add_ref(b) };
-                            ImplBrowser::get_raw(b) as *mut c_void
-                        })
-                        .unwrap_or(std::ptr::null_mut());
-                    let args_raw = args
-                        .as_ref()
-                        .map(|a| {
-                            unsafe { Rc::add_ref(a) };
-                            ImplListValue::get_raw(a) as *mut c_void
-                        })
-                        .unwrap_or(std::ptr::null_mut());
-                    if self.inner.invoke_message_handler(&name, args_raw, browser_raw) {
-                        1
-                    } else {
-                        0
-                    }
+                    let browser = browser.map(|b| b.clone());
+                    let message = BrowserMessage::new(name, args, browser);
+                    if self.inner.invoke_message_handler(message) { 1 } else { 0 }
                 }
             }
         }
