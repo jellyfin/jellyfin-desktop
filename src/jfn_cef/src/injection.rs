@@ -277,6 +277,7 @@ const WINDOW_FUNCTIONS: &[NativeFunction] = &[
 const FUNCTIONS_KEY: &str = "functions";
 const SCRIPTS_KEY: &str = "scripts";
 const DEVICE_PROFILE_JSON_KEY: &str = "device_profile_json";
+const SHARED_TEXTURES_ENABLED_KEY: &str = "shared_textures_enabled";
 
 static DEVICE_PROFILE_JSON: OnceLock<String> = OnceLock::new();
 
@@ -285,6 +286,7 @@ pub(crate) struct ExtraInfo {
     functions: Vec<NativeFunction>,
     scripts: Vec<InjectedScript>,
     device_profile_json: Option<String>,
+    shared_textures_enabled: bool,
 }
 
 impl ExtraInfo {
@@ -293,6 +295,7 @@ impl ExtraInfo {
             functions: read_native_functions(&dict),
             scripts: read_injected_scripts(&dict),
             device_profile_json: read_string(&dict, DEVICE_PROFILE_JSON_KEY),
+            shared_textures_enabled: read_bool(&dict, SHARED_TEXTURES_ENABLED_KEY),
         }
     }
 
@@ -300,6 +303,10 @@ impl ExtraInfo {
         let dict = dictionary_value_create()?;
         write_native_functions(&dict, &self.functions)?;
         write_injected_scripts(&dict, &self.scripts)?;
+        dict.set_bool(
+            Some(&CefString::from(SHARED_TEXTURES_ENABLED_KEY)),
+            if self.shared_textures_enabled { 1 } else { 0 },
+        );
         if let Some(json) = self.device_profile_json {
             dict.set_string(
                 Some(&CefString::from(DEVICE_PROFILE_JSON_KEY)),
@@ -319,6 +326,10 @@ impl ExtraInfo {
 
     pub(crate) fn device_profile_json(&self) -> Option<&str> {
         self.device_profile_json.as_deref()
+    }
+
+    pub(crate) fn shared_textures_enabled(&self) -> bool {
+        self.shared_textures_enabled
     }
 }
 
@@ -355,6 +366,11 @@ fn read_string(dict: &DictionaryValue, key: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+fn read_bool(dict: &DictionaryValue, key: &str) -> bool {
+    let key = CefString::from(key);
+    dict.has_key(Some(&key)) == 1 && dict.bool(Some(&key)) == 1
 }
 
 fn write_native_functions(dict: &DictionaryValue, functions: &[NativeFunction]) -> Option<()> {
@@ -413,6 +429,7 @@ fn build_extra_info(
     scripts: &[InjectedScript],
     add_ctx_menu: bool,
     add_window: bool,
+    shared_textures_enabled: bool,
 ) -> ExtraInfo {
     let mut functions = functions.to_vec();
     if add_window {
@@ -437,13 +454,24 @@ fn build_extra_info(
         functions,
         scripts,
         device_profile_json: None,
+        shared_textures_enabled,
     }
 }
 
-pub(crate) fn build_for_kind(kind: &str, add_ctx_menu: bool) -> Option<ExtraInfo> {
+pub(crate) fn build_for_kind(
+    kind: &str,
+    add_ctx_menu: bool,
+    shared_textures_enabled: bool,
+) -> Option<ExtraInfo> {
     match kind {
         "web" => {
-            let mut extra_info = build_extra_info(WEB_FUNCTIONS, WEB_SCRIPTS, add_ctx_menu, true);
+            let mut extra_info = build_extra_info(
+                WEB_FUNCTIONS,
+                WEB_SCRIPTS,
+                add_ctx_menu,
+                true,
+                shared_textures_enabled,
+            );
             if let Some(json) = DEVICE_PROFILE_JSON.get()
                 && !json.is_empty()
             {
@@ -451,8 +479,20 @@ pub(crate) fn build_for_kind(kind: &str, add_ctx_menu: bool) -> Option<ExtraInfo
             }
             Some(extra_info)
         }
-        "overlay" => Some(build_extra_info(OVERLAY_FUNCTIONS, &[], add_ctx_menu, true)),
-        "about" => Some(build_extra_info(ABOUT_FUNCTIONS, &[], add_ctx_menu, true)),
+        "overlay" => Some(build_extra_info(
+            OVERLAY_FUNCTIONS,
+            &[],
+            add_ctx_menu,
+            true,
+            shared_textures_enabled,
+        )),
+        "about" => Some(build_extra_info(
+            ABOUT_FUNCTIONS,
+            &[],
+            add_ctx_menu,
+            true,
+            shared_textures_enabled,
+        )),
         _ => None,
     }
 }
