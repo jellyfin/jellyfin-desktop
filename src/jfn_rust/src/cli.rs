@@ -7,10 +7,14 @@
 
 use clap::{ArgAction, Parser, ValueEnum};
 
-/// Force the X11 paint path, bypassing the Vulkan probe.
+/// Preferred X11 paint path. A preference, not a force: the chosen tier is
+/// probed and gracefully falls back down the chain dmabuf → gpu → shm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum X11Paint {
-    /// Vulkan pixel-upload via `jfn_gpu_paint`. Hard-fails init when no
+    /// Zero-copy dmabuf shared-texture path: Vulkan external-memory import on
+    /// X11. Falls back to gpu then shm if the device can't import dmabufs.
+    Dmabuf,
+    /// Vulkan pixel-upload via `jfn_gpu_paint`. Falls back to shm when no
     /// Vulkan adapter is usable.
     Gpu,
     /// MIT-SHM CPU upload. Skips Vulkan init entirely.

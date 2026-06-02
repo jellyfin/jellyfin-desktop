@@ -9,6 +9,16 @@ use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
 
 use jfn_mpv::api::jfn_mpv_get_property_int;
 
+
+/// CLI-facing name of a paint tier, for paint preference log messages.
+fn paint_name(mode: crate::paint_override::X11PaintOverride) -> &'static str {
+    match mode {
+        crate::paint_override::X11PaintOverride::Dmabuf => "dmabuf",
+        crate::paint_override::X11PaintOverride::Gpu => "gpu",
+        crate::paint_override::X11PaintOverride::Shm => "shm",
+    }
+}
+
 /// Find a 32-bit TrueColor visual.
 fn find_argb_visual(screen: &x::Screen) -> Option<x::Visualid> {
     screen
@@ -161,44 +171,51 @@ pub fn init() -> bool {
     let (parent_x, parent_y, pw, ph) =
         query_parent_geometry(&conn, parent, root).unwrap_or((0, 0, 1, 1));
 
-    // Probe + initialize the Vulkan compositor. `--x11-paint` skips
-    // the probe in either direction; otherwise failure is benign and
-    // surface presents fall back to SHM upload.
-    let (gpu_ctx, gpu_caps) = match crate::paint_override::paint_override() {
-        Some(crate::paint_override::X11PaintOverride::Shm) => {
-            eprintln!("[x11] --x11-paint=shm: forcing SHM");
-            (None, jfn_gpu_paint::Capabilities::NONE)
-        }
-        Some(crate::paint_override::X11PaintOverride::Gpu) => {
+    // Resolve the paint preference down the dmabuf → gpu → shm chain. The
+    // `--x11-paint` preference only picks the entry tier; an unusable
+    // tier degrades to the next one. A degrade from an explicitly
+    // requested tier warns; auto-resolution only logs info. dmabuf needs
+    // Vulkan plus the external-memory import capability; without it the
+    // tier degrades to the Vulkan pixel-upload path.
+    use crate::paint_override::X11PaintOverride as Req;
+    let requested = crate::paint_override::paint_override();
+    let explicit = requested.is_some();
+    let want_gpu = !matches!(requested, Some(Req::Shm));
+    let want_dmabuf = matches!(requested, None | Some(Req::Dmabuf));
+    let (gpu_ctx, gpu_caps, use_dmabuf, resolved) = if want_gpu {
+        let caps = jfn_gpu_paint::GpuContext::probe();
+        if caps.gpu_available {
             match jfn_gpu_paint::GpuContext::new() {
                 Ok(c) => {
                     let caps = c.capabilities();
-                    eprintln!("[x11] --x11-paint=gpu: Vulkan context initialised");
-                    (Some(c), caps)
-                }
-                Err(e) => {
-                    eprintln!("[x11] --x11-paint=gpu requested but init failed: {e}");
-                    return false;
-                }
-            }
-        }
-        None => {
-            let caps = jfn_gpu_paint::GpuContext::probe();
-            let ctx = if caps.gpu_available {
-                match jfn_gpu_paint::GpuContext::new() {
-                    Ok(c) => Some(c),
-                    Err(e) => {
-                        eprintln!("[x11] gpu_paint context init failed: {e}; using SHM");
-                        None
+                    if want_dmabuf && caps.dmabuf_import {
+                        tracing::info!("paint: dmabuf import");
+                        (Some(c), caps, true, Req::Dmabuf)
+                    } else {
+                        tracing::info!("paint: Vulkan pixel-upload");
+                        (Some(c), caps, false, Req::Gpu)
                     }
                 }
-            } else {
-                eprintln!("[x11] no Vulkan adapter; using SHM");
-                None
-            };
-            (ctx, caps)
+                Err(e) => {
+                    tracing::info!("paint: Vulkan init failed: {e}; using SHM");
+                    (None, jfn_gpu_paint::Capabilities::NONE, false, Req::Shm)
+                }
+            }
+        } else {
+            tracing::info!("paint: no Vulkan adapter; using SHM");
+            (None, jfn_gpu_paint::Capabilities::NONE, false, Req::Shm)
         }
+    } else {
+        tracing::info!("paint: using SHM");
+        (None, jfn_gpu_paint::Capabilities::NONE, false, Req::Shm)
     };
+    if explicit && requested != Some(resolved) {
+        tracing::warn!(
+            "--x11-paint={} unavailable; using {}",
+            paint_name(requested.unwrap()),
+            paint_name(resolved)
+        );
+    }
 
     // Populate the global mutable state.
     {
@@ -219,6 +236,7 @@ pub fn init() -> bool {
             live: Vec::new(),
             gpu_ctx,
             gpu_caps,
+            use_dmabuf,
         });
     }
 
