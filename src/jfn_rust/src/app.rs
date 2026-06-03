@@ -410,23 +410,21 @@ pub fn jfn_app_main() -> c_int {
         // folds property changes into the ingest layer; if any drain step
         // observes a fatal event we bail out of jfn_app_main.
         loop {
-            let ev = jfn_mpv::api::jfn_mpv_wait_event(0.0);
-            if ev.is_null() {
-                break;
+            match jfn_mpv::api::wait_event_owned(0.0) {
+                jfn_mpv::api::WaitEvent::None => {
+                    break;
+                }
+                jfn_mpv::api::WaitEvent::LogMessage(m) => {
+                    jfn_mpv::forward_log_to_tracing(&m);
+                    continue;
+                }
+                jfn_mpv::api::WaitEvent::Event(
+                    jfn_mpv::Event::Shutdown | jfn_mpv::Event::EndFile(_),
+                ) => return 0,
+                jfn_mpv::api::WaitEvent::Event(event) => {
+                    consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
+                }
             }
-            let event_id = unsafe { (*ev).event_id }.0;
-            if event_id == 0 {
-                // MPV_EVENT_NONE — queue empty.
-                break;
-            }
-            if event_id == 2 {
-                log_mpv_event(ev);
-                continue;
-            }
-            if event_id == 1 || event_id == 7 {
-                return 0;
-            }
-            consume_vo_event(ev, &mut mw, &mut mh, &mut need_max);
         }
         if vo_ready(&mut mw, &mut mh, &need_max, wait_for_scale) {
             break 'wait;
@@ -438,15 +436,14 @@ pub fn jfn_app_main() -> c_int {
         jfn_macos::macos_pump_block(60.0);
         #[cfg(not(target_os = "macos"))]
         {
-            let ev = jfn_mpv::api::jfn_mpv_wait_event(-1.0);
-            if !ev.is_null() {
-                let event_id = unsafe { (*ev).event_id }.0;
-                if event_id == 2 {
-                    log_mpv_event(ev);
-                } else if event_id == 1 || event_id == 7 {
-                    return 0;
-                } else if event_id != 0 {
-                    consume_vo_event(ev, &mut mw, &mut mh, &mut need_max);
+            match jfn_mpv::api::wait_event_owned(-1.0) {
+                jfn_mpv::api::WaitEvent::None => {}
+                jfn_mpv::api::WaitEvent::LogMessage(m) => jfn_mpv::forward_log_to_tracing(&m),
+                jfn_mpv::api::WaitEvent::Event(
+                    jfn_mpv::Event::Shutdown | jfn_mpv::Event::EndFile(_),
+                ) => return 0,
+                jfn_mpv::api::WaitEvent::Event(event) => {
+                    consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
                 }
             }
         }
@@ -673,67 +670,38 @@ fn mpv_log_level_from_filter() -> &'static str {
     }
 }
 
-fn log_mpv_event(ev: *mut jfn_mpv::sys::mpv_event) {
-    let msg = unsafe { (*ev).data as *mut jfn_mpv::sys::mpv_event_log_message };
-    if msg.is_null() {
-        return;
+const JFN_OBSERVE_WINDOW_MAX: u64 = 11;
+
+fn current_macos_logical_size() -> Option<(i32, i32)> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut w: c_int = 0;
+        let mut h: c_int = 0;
+        if jfn_macos::jfn_macos_query_logical_content_size(&mut w, &mut h) {
+            Some((w, h))
+        } else {
+            None
+        }
     }
-    let prefix = unsafe { CStr::from_ptr((*msg).prefix) }.to_string_lossy();
-    let text = unsafe { CStr::from_ptr((*msg).text) }.to_string_lossy();
-    let level = unsafe { (*msg).log_level }.0 as i32;
-    // mpv log levels: FATAL=10, ERROR=20, WARN=30, INFO=40, V=50,
-    // DEBUG=60, TRACE=70.
-    match level {
-        10 | 20 => tracing::error!(target: "mpv", "{prefix}: {text}"),
-        30 => tracing::warn!(target: "mpv", "{prefix}: {text}"),
-        40 => tracing::info!(target: "mpv", "{prefix}: {text}"),
-        50 => tracing::debug!(target: "mpv", "{prefix}: {text}"),
-        60 => tracing::trace!(target: "mpv", "{prefix}: {text}"),
-        _ => tracing::warn!(target: "mpv", "[unhandled mpv level {level}] {prefix}: {text}"),
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
     }
 }
 
-const JFN_OBSERVE_WINDOW_MAX: u64 = 11;
-
-fn consume_vo_event(
-    ev: *mut jfn_mpv::sys::mpv_event,
-    mw: &mut i32,
-    mh: &mut i32,
-    need_max: &mut bool,
-) {
-    let event_id = unsafe { (*ev).event_id }.0;
-    if event_id == 22 {
-        // MPV_EVENT_PROPERTY_CHANGE
-        let scale_raw = plat().get_scale();
-        let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
-        let has_macos_logical;
-        let mut mac_lw: c_int = 0;
-        let mut mac_lh: c_int = 0;
-        #[cfg(target_os = "macos")]
-        {
-            has_macos_logical =
-                jfn_macos::jfn_macos_query_logical_content_size(&mut mac_lw, &mut mac_lh);
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            has_macos_logical = false;
-            let _ = (&mut mac_lw, &mut mac_lh);
-        }
-        unsafe {
-            jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event(
-                ev as *const _,
-                scale,
-                has_macos_logical,
-                mac_lw,
-                mac_lh,
-            );
-        }
-        let reply = unsafe { (*ev).reply_userdata };
-        if reply == JFN_OBSERVE_WINDOW_MAX
-            && jfn_playback::ingest_driver::jfn_playback_window_maximized()
-        {
-            *need_max = false;
-        }
+fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max: &mut bool) {
+    let scale_raw = plat().get_scale();
+    let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
+    jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event_owned(
+        event,
+        scale,
+        current_macos_logical_size(),
+    );
+    if let jfn_mpv::Event::PropertyChange { id, .. } = event
+        && *id == JFN_OBSERVE_WINDOW_MAX
+        && jfn_playback::ingest_driver::jfn_playback_window_maximized()
+    {
+        *need_max = false;
     }
     let pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
     let ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();

@@ -204,6 +204,17 @@ pub unsafe fn jfn_mpv_command_async(args: *const *const c_char, n: usize) {
 // Event drain (wait_event / wakeup).
 // =============================================================================
 
+/// Result of polling libmpv through the owned-event path.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WaitEvent {
+    /// No event was available, or the global handle is missing.
+    None,
+    /// A libmpv log event, decoded into owned Rust data.
+    LogMessage(crate::LogMessage),
+    /// A non-log mpv event, decoded into owned Rust data.
+    Event(crate::Event),
+}
+
 /// Pumps libmpv's event queue. Returns the raw `mpv_event*` libmpv owns;
 /// valid only until the next call on the same handle. NULL if the handle
 /// is missing.
@@ -213,6 +224,21 @@ pub fn jfn_mpv_wait_event(timeout: f64) -> *mut sys::mpv_event {
         return std::ptr::null_mut();
     }
     unsafe { sys::mpv_wait_event(h, timeout) }
+}
+
+/// Pumps libmpv's event queue through the shared decoder. `MPV_EVENT_NONE`
+/// is normalized to [`WaitEvent::None`] so callers only need one queue-empty
+/// case.
+pub fn wait_event_owned(timeout: f64) -> WaitEvent {
+    let ev = jfn_mpv_wait_event(timeout);
+    if ev.is_null() {
+        return WaitEvent::None;
+    }
+    match unsafe { crate::Event::from_raw(ev) } {
+        crate::Event::None => WaitEvent::None,
+        crate::Event::LogMessage(m) => WaitEvent::LogMessage(m),
+        event => WaitEvent::Event(event),
+    }
 }
 
 pub fn jfn_mpv_wakeup() {
