@@ -45,8 +45,8 @@ impl Default for ShmBuffer {
     }
 }
 
-/// Per-CefLayer surface. Each is a top-level ARGB override-redirect
-/// window positioned over mpv's window.
+/// Per-CefLayer surface. Each is a top-level ARGB window positioned over
+/// mpv's parent window.
 pub struct PlatformSurface {
     pub window: x::Window,
     pub gc: x::Gcontext,
@@ -84,15 +84,15 @@ impl PlatformSurface {
 
 #[derive(Copy, Clone)]
 pub struct Atoms {
-    pub net_wm_opacity: x::Atom,
     pub net_wm_window_type: x::Atom,
-    pub net_wm_window_type_notification: x::Atom,
+    pub net_wm_window_type_utility: x::Atom,
     pub net_wm_state: x::Atom,
-    pub net_wm_state_above: x::Atom,
     pub net_wm_state_skip_taskbar: x::Atom,
     pub net_wm_state_skip_pager: x::Atom,
     pub wm_protocols: x::Atom,
     pub wm_delete_window: x::Atom,
+    pub motif_wm_hints: x::Atom,
+    pub net_active_window: x::Atom,
 }
 
 pub struct Mutable {

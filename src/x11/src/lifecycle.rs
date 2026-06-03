@@ -1,8 +1,6 @@
 //! X11 init/cleanup/clamp and helpers for atom interning, ARGB visual
 //! discovery, parent geometry queries, and overlay repositioning.
 
-use std::sync::Arc;
-
 use xcb::{Xid, XidNew, x};
 
 use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
@@ -65,29 +63,59 @@ pub fn query_parent_geometry(
     ))
 }
 
-/// Reposition every live surface to match mpv's parent window. Called
-/// from the input thread on ConfigureNotify. Caller must hold `MUT`.
-pub fn sync_overlay_positions_locked(conn: &xcb::Connection, m: &mut Mutable) {
-    let Some((px, py, pw, ph)) = query_parent_geometry(conn, m.parent, m.root) else {
-        return;
-    };
+/// A copied-out overlay descriptor. Holds only XIDs/flags so it can be used
+/// for X I/O after `MUT` is released — never the live `PlatformSurface`.
+#[derive(Copy, Clone)]
+pub(crate) struct OverlaySnap {
+    pub window: x::Window,
+    pub visible: bool,
+    /// Drive width/height from the geometry thread. False on the dmabuf tier
+    /// once a worker exists, since the GPU worker sizes the window in lockstep.
+    pub send_size: bool,
+}
+
+/// Copy the live overlay list into plain descriptors under the caller's lock so
+/// the X I/O that positions/maps them can run lock-free afterward.
+pub(crate) fn snapshot_live_overlays_locked(m: &Mutable) -> Vec<OverlaySnap> {
+    m.live
+        .iter()
+        .filter(|&&s_ptr| !s_ptr.is_null())
+        .map(|&s_ptr| unsafe { &*s_ptr })
+        .filter(|s| !is_none_window(s.window))
+        .map(|s| OverlaySnap {
+            window: s.window,
+            visible: s.visible,
+            send_size: !(m.use_dmabuf && s.gpu_paint_worker.is_some()),
+        })
+        .collect()
+}
+
+/// Record the freshly queried parent geometry. Cheap field writes only; the
+/// X I/O that mirrors it onto overlays runs lock-free via [`reposition_overlays`].
+pub(crate) fn set_parent_geometry_locked(m: &mut Mutable, px: i32, py: i32, pw: i32, ph: i32) {
     m.parent_x = px;
     m.parent_y = py;
+    m.pw = pw;
+    m.ph = ph;
+}
 
-    for &s_ptr in &m.live {
-        if s_ptr.is_null() {
+/// Position every visible overlay over the parent. Lock-free: operates on a
+/// snapshot and issues only buffered sends + one flush, so it must run after
+/// `MUT` is released.
+pub(crate) fn reposition_overlays(
+    conn: &xcb::Connection,
+    px: i32,
+    py: i32,
+    pw: i32,
+    ph: i32,
+    snaps: &[OverlaySnap],
+) {
+    for s in snaps {
+        if !s.visible {
             continue;
         }
-        let s = unsafe { &*s_ptr };
-        if is_none_window(s.window) || !s.visible {
-            continue;
-        }
-        // Dmabuf tier: the GPU worker sizes the overlay in lockstep with the
-        // frame it presents, so don't drive the window size ahead of content
-        // here — that race is the resize flicker. Position-only; software
-        // tiers keep eager resize.
         let mut value_list = vec![x::ConfigWindow::X(px), x::ConfigWindow::Y(py)];
-        if !(m.use_dmabuf && s.gpu_paint_worker.is_some()) {
+        if s.send_size {
             value_list.push(x::ConfigWindow::Width(pw as u32));
             value_list.push(x::ConfigWindow::Height(ph as u32));
         }
@@ -96,6 +124,76 @@ pub fn sync_overlay_positions_locked(conn: &xcb::Connection, m: &mut Mutable) {
             value_list: &value_list,
         });
     }
+    let _ = conn.flush();
+}
+
+/// Map every visible overlay. Lock-free; run after releasing `MUT`.
+pub(crate) fn map_overlays(conn: &xcb::Connection, snaps: &[OverlaySnap]) {
+    for s in snaps {
+        if s.visible {
+            conn.send_request(&x::MapWindow { window: s.window });
+        }
+    }
+    let _ = conn.flush();
+}
+
+/// Unmap every overlay. Lock-free; run after releasing `MUT`.
+pub(crate) fn unmap_overlays(conn: &xcb::Connection, snaps: &[OverlaySnap]) {
+    for s in snaps {
+        conn.send_request(&x::UnmapWindow { window: s.window });
+    }
+    let _ = conn.flush();
+}
+
+/// Re-raise the overlays above `parent`, bottom to top in `snaps` order (which
+/// mirrors the z-order). Mirrors [`crate::surface::jfn_x11_restack`] but runs
+/// lock-free on a snapshot. A WM may drop the transient overlays below the
+/// parent on a fullscreen transition; re-asserting the stack on settle keeps
+/// them visible regardless of WM policy.
+pub(crate) fn restack_overlays_above(
+    conn: &xcb::Connection,
+    parent: x::Window,
+    snaps: &[OverlaySnap],
+) {
+    let mut prev = parent;
+    for s in snaps {
+        if s.window == prev {
+            continue;
+        }
+        conn.send_request(&x::ConfigureWindow {
+            window: s.window,
+            value_list: &[
+                x::ConfigWindow::Sibling(prev),
+                x::ConfigWindow::StackMode(x::StackMode::Above),
+            ],
+        });
+        prev = s.window;
+    }
+    let _ = conn.flush();
+}
+
+/// Ask the WM to make `parent` the active window again. Restoring from the
+/// taskbar re-maps the transient overlays on top of the parent, which can
+/// displace the WM's active window off mpv; without re-asserting it the
+/// taskbar's minimize/activate toggle stalls. Pager source-indication so
+/// focus-stealing prevention still honors it.
+pub(crate) fn activate_parent(
+    conn: &xcb::Connection,
+    root: x::Window,
+    parent: x::Window,
+    net_active_window: x::Atom,
+) {
+    let ev = x::ClientMessageEvent::new(
+        parent,
+        net_active_window,
+        x::ClientMessageData::Data32([2, 0, 0, 0, 0]),
+    );
+    conn.send_request(&x::SendEvent {
+        propagate: false,
+        destination: x::SendEventDest::Window(root),
+        event_mask: x::EventMask::SUBSTRUCTURE_NOTIFY | x::EventMask::SUBSTRUCTURE_REDIRECT,
+        event: &ev,
+    });
     let _ = conn.flush();
 }
 
@@ -131,13 +229,22 @@ pub fn init() -> bool {
             return false;
         }
     };
+    let conn = std::sync::Arc::new(conn);
+
+    let root = {
+        let setup = conn.get_setup();
+        let Some(screen) = setup.roots().nth(screen_num as usize) else {
+            eprintln!("[x11] no screen at index {screen_num}");
+            return false;
+        };
+        screen.root()
+    };
 
     let setup = conn.get_setup();
     let Some(screen) = setup.roots().nth(screen_num as usize) else {
         eprintln!("[x11] no screen at index {screen_num}");
         return false;
     };
-    let root = screen.root();
 
     let argb_depth: u8 = 32;
     let Some(argb_visual) = find_argb_visual(screen) else {
@@ -154,15 +261,15 @@ pub fn init() -> bool {
     });
 
     let atoms = Atoms {
-        net_wm_opacity: intern_atom(&conn, b"_NET_WM_WINDOW_OPACITY"),
         net_wm_window_type: intern_atom(&conn, b"_NET_WM_WINDOW_TYPE"),
-        net_wm_window_type_notification: intern_atom(&conn, b"_NET_WM_WINDOW_TYPE_NOTIFICATION"),
+        net_wm_window_type_utility: intern_atom(&conn, b"_NET_WM_WINDOW_TYPE_UTILITY"),
         net_wm_state: intern_atom(&conn, b"_NET_WM_STATE"),
-        net_wm_state_above: intern_atom(&conn, b"_NET_WM_STATE_ABOVE"),
         net_wm_state_skip_taskbar: intern_atom(&conn, b"_NET_WM_STATE_SKIP_TASKBAR"),
         net_wm_state_skip_pager: intern_atom(&conn, b"_NET_WM_STATE_SKIP_PAGER"),
         wm_protocols: intern_atom(&conn, b"WM_PROTOCOLS"),
         wm_delete_window: intern_atom(&conn, b"WM_DELETE_WINDOW"),
+        motif_wm_hints: intern_atom(&conn, b"_MOTIF_WM_HINTS"),
+        net_active_window: intern_atom(&conn, b"_NET_ACTIVE_WINDOW"),
     };
 
     // Verify the MIT-SHM extension is present.
@@ -245,15 +352,16 @@ pub fn init() -> bool {
         });
     }
 
-    let conn = Arc::new(conn);
     if CONN.set(conn.clone()).is_err() {
         eprintln!("[x11] connection already initialized");
         return false;
     }
 
-    // Spawn input thread on mpv's parent window. Configure callback runs
-    // `sync_overlay_positions_locked`; shutdown callback hides surfaces.
+    // Input thread handles keyboard/pointer on the shared connection; the
+    // geometry thread watches window structure on its own connection and
+    // repositions overlays via `reposition_overlays`.
     crate::input_lifecycle::start(conn.clone(), parent);
+    crate::geometry::start(parent, root);
 
     eprintln!(
         "[x11] platform initialized (parent=0x{:x})",
@@ -272,6 +380,7 @@ pub fn cleanup() {
     }
 
     jfn_linux_util::idle_inhibit::cleanup();
+    crate::geometry::cleanup();
     crate::input_lifecycle::cleanup();
 
     // Free any surface that outlived Browsers (defensive).

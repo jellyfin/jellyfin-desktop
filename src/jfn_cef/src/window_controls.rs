@@ -11,11 +11,8 @@ use cef::*;
 /// and running on a backend that needs them (Wayland). X11/macOS/Windows draw
 /// their own and are excluded.
 pub fn csd_enabled() -> bool {
-    jfn_config::client_side_decorations()
-        && matches!(
-            jfn_platform_abi::get().display(),
-            jfn_platform_abi::DisplayBackend::Wayland
-        )
+    let display = jfn_platform_abi::get().display();
+    jfn_config::client_side_decorations() && display == jfn_platform_abi::DisplayBackend::Wayland
 }
 
 fn list_int(args: &ListValue, idx: usize) -> i32 {

@@ -237,6 +237,7 @@ pub fn jfn_app_main() -> c_int {
         jfn_platform_abi::install(p);
         tracing::info!(target: "Main", "Display backend: {}",
             if backend == DisplayBackend::Wayland { "wayland" } else { "x11" });
+
     }
 
     // 10. Install signal handler (Unix) / Windows ConsoleCtrl handler.

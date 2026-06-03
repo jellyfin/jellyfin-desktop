@@ -101,6 +101,7 @@ pub struct Cli {
     #[cfg(target_os = "linux")]
     #[arg(long, value_enum)]
     pub platform_paint: Option<Paint>,
+
 }
 
 #[cfg(test)]
@@ -347,6 +348,12 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wid_is_rejected() {
+        assert_eq!(err_kind(&["app", "--wid", "1234"]), ErrorKind::UnknownArgument);
+    }
+
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn platform_flags_rejected_off_linux() {
@@ -356,6 +363,10 @@ mod tests {
         );
         assert_eq!(
             err_kind(&["app", "--platform-paint", "shm"]),
+            ErrorKind::UnknownArgument
+        );
+        assert_eq!(
+            err_kind(&["app", "--wid", "1234"]),
             ErrorKind::UnknownArgument
         );
     }

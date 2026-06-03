@@ -17,14 +17,13 @@ use std::sync::Arc;
 use jfn_gpu_paint::{DirtyRect, DmabufFrame, WindowTarget};
 use xcb::{Xid, x};
 
-use crate::lifecycle::query_parent_geometry;
 use crate::x11_state::{MUT, Mutable, PlatformSurface, is_none_gc, is_none_window};
 
 pub use jfn_platform_abi::JfnRect;
 
 use jfn_playback::shutdown::jfn_shutting_down;
 
-/// Create an ARGB override-redirect overlay window at (x, y, w, h).
+/// Create a WM-managed ARGB utility/transient overlay window at (x, y, w, h).
 /// Caller holds `MUT` and provides the mutable state borrow.
 fn create_overlay_window(
     conn: &xcb::Connection,
@@ -49,9 +48,54 @@ fn create_overlay_window(
         value_list: &[
             x::Cw::BackPixel(0),
             x::Cw::BorderPixel(0),
-            x::Cw::OverrideRedirect(true),
+            x::Cw::EventMask(x::EventMask::EXPOSURE),
             x::Cw::Colormap(m.colormap),
         ],
+    });
+
+    // Tie the overlay to mpv's window so the WM raises/lowers/covers it with
+    // the parent, instead of bypassing the WM with override_redirect.
+    conn.send_request(&x::ChangeProperty {
+        mode: x::PropMode::Replace,
+        window: win,
+        property: x::ATOM_WM_TRANSIENT_FOR,
+        r#type: x::ATOM_WINDOW,
+        data: &[m.parent],
+    });
+
+    // Utility window + skip taskbar/pager keeps it decoration/taskbar-free on
+    // normal EWMH WMs while still letting the WM manage stacking as a transient.
+    conn.send_request(&x::ChangeProperty {
+        mode: x::PropMode::Replace,
+        window: win,
+        property: m.atoms.net_wm_window_type,
+        r#type: x::ATOM_ATOM,
+        data: &[m.atoms.net_wm_window_type_utility],
+    });
+    conn.send_request(&x::ChangeProperty {
+        mode: x::PropMode::Replace,
+        window: win,
+        property: m.atoms.net_wm_state,
+        r#type: x::ATOM_ATOM,
+        data: &[m.atoms.net_wm_state_skip_taskbar, m.atoms.net_wm_state_skip_pager],
+    });
+
+    // Motif hints: flags=MWM_HINTS_DECORATIONS, decorations=0.
+    conn.send_request(&x::ChangeProperty {
+        mode: x::PropMode::Replace,
+        window: win,
+        property: m.atoms.motif_wm_hints,
+        r#type: m.atoms.motif_wm_hints,
+        data: &[2_u32, 0, 0, 0, 0],
+    });
+
+    // WM_HINTS: InputHint set, input=false; focus should stay on mpv.
+    conn.send_request(&x::ChangeProperty {
+        mode: x::PropMode::Replace,
+        window: win,
+        property: x::ATOM_WM_HINTS,
+        r#type: x::ATOM_WM_HINTS,
+        data: &[1_u32, 0, 0, 0, 0, 0, 0, 0, 0],
     });
 
     // Input-passthrough: empty input shape sends all input to mpv parent.
@@ -114,6 +158,12 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     let _ = conn.flush();
 
     m.live.push(s);
+    drop(g);
+
+    // Kick the geometry watcher: the parent may already be at its final WM
+    // placement (no further ConfigureNotify), so without this the new overlay
+    // would sit at stale geometry until the next resize.
+    crate::geometry::request_resync();
     s
 }
 
@@ -131,7 +181,10 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
         if let Some(m) = g.as_mut()
             && let Some(pos) = m.live.iter().position(|&p| p == s)
         {
-            m.live.swap_remove(pos);
+            // Order-preserving: m.live order must stay equal to the z-order
+            // (b.layers) so the geometry watcher can restack overlays above the
+            // parent in the correct order. swap_remove would scramble it.
+            m.live.remove(pos);
         }
     }
 
@@ -401,26 +454,20 @@ pub unsafe fn jfn_x11_surface_resize(
         return;
     }
 
-    // Refresh parent position too — fullscreen and inter-monitor moves
-    // both arrive through this path.
-    if let Some((px, py, _, _)) = query_parent_geometry(&conn, m.parent, m.root) {
-        m.parent_x = px;
-        m.parent_y = py;
-    }
-
-    let mut value_list = vec![
-        x::ConfigWindow::X(m.parent_x),
-        x::ConfigWindow::Y(m.parent_y),
-    ];
+    // Size only. Overlay position is owned exclusively by the geometry thread
+    // (apply_overlay_positions_locked); writing X/Y here would race it with a
+    // stale value during fullscreen/maximize transitions. The dmabuf tier
+    // defers sizing to the GPU worker, so there's nothing to send.
     if !dmabuf_lockstep {
-        value_list.push(x::ConfigWindow::Width(pw as u32));
-        value_list.push(x::ConfigWindow::Height(ph as u32));
+        conn.send_request(&x::ConfigureWindow {
+            window: surf.window,
+            value_list: &[
+                x::ConfigWindow::Width(pw as u32),
+                x::ConfigWindow::Height(ph as u32),
+            ],
+        });
+        let _ = conn.flush();
     }
-    conn.send_request(&x::ConfigureWindow {
-        window: surf.window,
-        value_list: &value_list,
-    });
-    let _ = conn.flush();
 }
 
 pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool) {
@@ -443,7 +490,9 @@ pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool
     }
 
     if visible {
-        // Reposition to current parent geometry before mapping.
+        // Place from the geometry thread's cached parent geometry (the single
+        // source of truth for position); it keeps m.parent_x/parent_y current.
+        // Re-querying here would race the geometry thread with a stale value.
         let pick = |s: i32, p: i32| -> u32 {
             if s > 0 {
                 s as u32
@@ -496,7 +545,7 @@ pub unsafe fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
             continue;
         }
         let s = unsafe { &*s_ptr };
-        if is_none_window(s.window) {
+        if is_none_window(s.window) || s.window == prev {
             continue;
         }
         conn.send_request(&x::ConfigureWindow {
