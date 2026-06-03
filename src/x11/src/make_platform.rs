@@ -174,6 +174,9 @@ impl Platform for X11Platform {
     }
 
     fn end_transition(&self) {
+        // Only end the gate. Overlay position is owned by the geometry thread;
+        // ending a CEF content transition must not re-apply it from a fresh,
+        // possibly mid-transition query.
         if let Some(m) = crate::x11_state::MUT.lock().as_mut() {
             m.gate.end();
         }
@@ -223,6 +226,10 @@ impl Platform for X11Platform {
             return m.cached_scale;
         }
         1.0
+    }
+
+    fn get_display_scale(&self, _x: c_int, _y: c_int) -> f32 {
+        crate::scale::query_display_scale().unwrap_or(1.0)
     }
 
     fn query_window_position(&self) -> Option<WindowPos> {
