@@ -38,6 +38,10 @@ unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<DmabufFrame> {
     if w <= 0 || h <= 0 {
         return None;
     }
+    // Visible rect can be smaller than the padded coded size; the gate
+    // compares the visible size against the window's expected size.
+    let vw = info.extra.visible_rect.width.max(0);
+    let vh = info.extra.visible_rect.height.max(0);
     // Include every memory plane the modifier uses (DCC/CCS modifiers add an
     // auxiliary plane). Each is dup'd into an OwnedFd the worker can outlive.
     let n = info.plane_count.clamp(0, info.planes.len() as i32) as usize;
@@ -59,6 +63,8 @@ unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<DmabufFrame> {
     Some(DmabufFrame {
         width: w as u32,
         height: h as u32,
+        visible_w: vw as u32,
+        visible_h: vh as u32,
         format,
         modifier: info.modifier,
         planes,
@@ -159,6 +165,31 @@ impl Platform for X11Platform {
 
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {
         // CEF dispatches selection itself on X11; drop the closure.
+    }
+
+    fn begin_transition(&self) {
+        if let Some(m) = crate::x11_state::MUT.lock().as_mut() {
+            m.gate.begin_capturing((m.pw, m.ph));
+        }
+    }
+
+    fn end_transition(&self) {
+        if let Some(m) = crate::x11_state::MUT.lock().as_mut() {
+            m.gate.end();
+        }
+    }
+
+    fn in_transition(&self) -> bool {
+        crate::x11_state::MUT
+            .lock()
+            .as_ref()
+            .is_some_and(|m| m.gate.in_transition())
+    }
+
+    fn set_expected_size(&self, w: c_int, h: c_int) {
+        if let Some(m) = crate::x11_state::MUT.lock().as_mut() {
+            m.gate.set_expected((w, h));
+        }
     }
 
     fn set_fullscreen(&self, fullscreen: bool) {

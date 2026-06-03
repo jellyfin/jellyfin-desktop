@@ -62,6 +62,11 @@ pub struct DmabufPlane {
 pub struct DmabufFrame {
     pub width: u32,
     pub height: u32,
+    /// CEF's visible rect within the (possibly padded) coded `width`/`height`.
+    /// Used by the resize transition gate to compare against the window's
+    /// expected size; the coded size can be padded larger.
+    pub visible_w: u32,
+    pub visible_h: u32,
     pub format: DmabufFormat,
     pub modifier: u64,
     pub planes: Vec<DmabufPlane>,

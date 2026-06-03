@@ -2404,6 +2404,7 @@ name = "jfn-x11"
 version = "3.0.0-dev"
 dependencies = [
  "cef",
+ "jfn-compositor-core",
  "jfn-gpu-paint",
  "jfn-input",
  "jfn-linux-util",

@@ -82,14 +82,18 @@ pub fn sync_overlay_positions_locked(conn: &xcb::Connection, m: &mut Mutable) {
         if is_none_window(s.window) || !s.visible {
             continue;
         }
+        // Dmabuf tier: the GPU worker sizes the overlay in lockstep with the
+        // frame it presents, so don't drive the window size ahead of content
+        // here — that race is the resize flicker. Position-only; software
+        // tiers keep eager resize.
+        let mut value_list = vec![x::ConfigWindow::X(px), x::ConfigWindow::Y(py)];
+        if !(m.use_dmabuf && s.gpu_paint_worker.is_some()) {
+            value_list.push(x::ConfigWindow::Width(pw as u32));
+            value_list.push(x::ConfigWindow::Height(ph as u32));
+        }
         conn.send_request(&x::ConfigureWindow {
             window: s.window,
-            value_list: &[
-                x::ConfigWindow::X(px),
-                x::ConfigWindow::Y(py),
-                x::ConfigWindow::Width(pw as u32),
-                x::ConfigWindow::Height(ph as u32),
-            ],
+            value_list: &value_list,
         });
     }
     let _ = conn.flush();
@@ -237,6 +241,7 @@ pub fn init() -> bool {
             gpu_ctx,
             gpu_caps,
             use_dmabuf,
+            gate: jfn_compositor_core::transition::TransitionGate::new(),
         });
     }
 

@@ -15,6 +15,7 @@ parking_lot.workspace = true
 # elsewhere and the workspace builds uniformly on every platform.
 [target.'cfg(target_os = "linux")'.dependencies]
 cef.workspace = true
+jfn-compositor-core = { path = "../compositor_core" }
 jfn-gpu-paint = { path = "../gpu_paint" }
 jfn-input = { path = "../input" }
 jfn-linux-util = { path = "../linux_util" }
