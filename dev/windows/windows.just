@@ -16,7 +16,7 @@ build: deps
 
 [windows]
 run *args: build
-    $env:RUST_BACKTRACE = 'full'; & 'build/jellyfin-desktop.exe' --log-level=debug --log-file=build/run.log {{args}} 2>&1 | Tee-Object -FilePath build/stderr.log
+    $env:RUST_BACKTRACE = 'full'; & 'build/jellyfin-desktop.exe' {{args}} 2>&1 | Tee-Object -FilePath build/stderr.log
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [windows]

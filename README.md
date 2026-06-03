@@ -34,12 +34,11 @@ This project uses [just](https://github.com/casey/just) as a command runner.
 ```
 Available recipes:
     clean         # Remove build artifacts
-    test          # Run the workspace test suite (depends on the per-platform `build`).
-    lint          # centrally via [workspace.lints] in src/Cargo.toml, so no -D flag is needed.
+    test          # Run tests
+    lint          # Lint workspace
     build         # Build the app
     run *args     # Run the app
     run-mpv *args # Run the mpv CLI
     appimage ...
     flatpak ...
-
 ```

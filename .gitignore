@@ -11,6 +11,9 @@ __pycache__/
 third_party/*
 !third_party/mpv
 
+# Local environment
+.env
+
 # Project-scoped MCP
 .mcp.json
 

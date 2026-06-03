@@ -16,7 +16,7 @@ build: deps
 
 [macos]
 run *args: build
-    "build/output/Jellyfin Desktop.app/Contents/MacOS/jellyfin-desktop" --log-level=debug --log-file=build/run.log {{args}}
+    "build/output/Jellyfin Desktop.app/Contents/MacOS/jellyfin-desktop" {{args}}
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [macos]
