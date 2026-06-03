@@ -3,7 +3,6 @@
 //! and the side-channel callbacks (display scale, window pixels,
 //! shutdown) that don't flow through the coordinator queue.
 
-use std::ffi::c_void;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -24,12 +23,11 @@ fn state() -> &'static IngestState {
     STATE.get_or_init(IngestState::new)
 }
 
-/// Returned by [`jfn_playback_ingest_mpv_event`] as a bitfield:
+/// Returned by [`jfn_playback_ingest_mpv_event_owned`] as a bitfield:
 ///   bit 0 — `MPV_EVENT_SHUTDOWN` reached; caller should break its loop.
 pub const INGEST_FLAG_SHUTDOWN: u8 = 1;
 
-/// `(scale, has_macos_logical, mac_lw, mac_lh)` snapshot supplied per
-/// event by the C++ caller.
+/// Per-event caller context supplied by the app-side mpv event consumer.
 struct CallerCtx {
     scale: f32,
     mac: Option<(i32, i32)>,
@@ -108,37 +106,21 @@ pub fn jfn_playback_window_ph() -> i32 {
     state().window_ph()
 }
 
-/// Decode one raw `mpv_event*` (returned by `mpv_wait_event`) into
-/// coordinator inputs + side-channel callbacks. Returns flag bits — see
-/// [`INGEST_FLAG_SHUTDOWN`].
+/// Push an already-decoded mpv event into the coordinator. Returns flag bits —
+/// see [`INGEST_FLAG_SHUTDOWN`].
 ///
-/// `has_macos_logical` set to non-zero signals that `mac_lw`/`mac_lh`
-/// carry a valid macOS logical-content size override. Non-macOS callers
-/// pass `false` / zeros.
-///
-/// # Safety
-/// `ev` must be a pointer returned by `mpv_wait_event` and not yet
-/// invalidated by a subsequent call on the same handle.
-pub unsafe fn jfn_playback_ingest_mpv_event(
-    ev: *const c_void,
+/// `macos_logical` carries a valid macOS logical-content size override when
+/// present. Non-macOS callers pass `None`.
+pub fn jfn_playback_ingest_mpv_event_owned(
+    event: &Event,
     scale: f32,
-    has_macos_logical: bool,
-    mac_lw: i32,
-    mac_lh: i32,
+    macos_logical: Option<(i32, i32)>,
 ) -> u8 {
-    if ev.is_null() {
-        return 0;
-    }
-    let event = unsafe { Event::from_raw(ev as *const mpv_sys::mpv_event) };
     let ctx = CallerCtx {
         scale,
-        mac: if has_macos_logical {
-            Some((mac_lw, mac_lh))
-        } else {
-            None
-        },
+        mac: macos_logical,
     };
-    let outs = ingest_event_for_ffi(&event, state(), &ctx);
+    let outs = ingest_event_for_ffi(event, state(), &ctx);
     dispatch(outs)
 }
 
