@@ -180,6 +180,22 @@ pub unsafe fn jfn_x11_surface_present_dmabuf(s: *mut PlatformSurface, frame: Dma
     if is_none_window(surf.window) || !surf.visible {
         return false;
     }
+
+    // Drop stale-size frames while a resize is in flight so the last good
+    // frame holds until CEF relays out at the new size (mirrors Windows'
+    // main-surface present path). Compare the visible size; the coded size
+    // can be padded.
+    let gate_size = if frame.visible_w > 0 && frame.visible_h > 0 {
+        (frame.visible_w as i32, frame.visible_h as i32)
+    } else {
+        (frame.width as i32, frame.height as i32)
+    };
+    if m.gate.main_present_decision(gate_size)
+        == jfn_compositor_core::transition::PresentDecision::Reject
+    {
+        return false;
+    }
+
     let Some(ctx) = m.gpu_ctx.clone() else {
         return false;
     };
@@ -358,11 +374,23 @@ pub unsafe fn jfn_x11_surface_resize(
     let mut g = MUT.lock();
     let Some(m) = g.as_mut() else { return };
 
+    let old = (m.pw, m.ph);
     m.pw = pw;
     m.ph = ph;
     let surf = unsafe { &mut *s };
     surf.pw = pw;
     surf.ph = ph;
+
+    // Dmabuf tier: the GPU worker sizes the overlay in lockstep with the
+    // frame it presents (below), so don't drive the window size ahead of
+    // content here. Arm the gate to drop stale-size frames during the
+    // resize. Software tiers keep eager resize.
+    let dmabuf_lockstep = m.use_dmabuf && surf.gpu_paint_worker.is_some();
+    if dmabuf_lockstep && pw > 0 && ph > 0 && old != (pw, ph) {
+        m.gate.begin_capturing(old);
+        m.gate.set_expected((pw, ph));
+    }
+
     if pw > 0
         && ph > 0
         && let Some(worker) = surf.gpu_paint_worker.as_ref()
@@ -380,14 +408,17 @@ pub unsafe fn jfn_x11_surface_resize(
         m.parent_y = py;
     }
 
+    let mut value_list = vec![
+        x::ConfigWindow::X(m.parent_x),
+        x::ConfigWindow::Y(m.parent_y),
+    ];
+    if !dmabuf_lockstep {
+        value_list.push(x::ConfigWindow::Width(pw as u32));
+        value_list.push(x::ConfigWindow::Height(ph as u32));
+    }
     conn.send_request(&x::ConfigureWindow {
         window: surf.window,
-        value_list: &[
-            x::ConfigWindow::X(m.parent_x),
-            x::ConfigWindow::Y(m.parent_y),
-            x::ConfigWindow::Width(pw as u32),
-            x::ConfigWindow::Height(ph as u32),
-        ],
+        value_list: &value_list,
     });
     let _ = conn.flush();
 }

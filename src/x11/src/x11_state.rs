@@ -117,6 +117,9 @@ pub struct Mutable {
     /// `OnAcceleratedPaint` and presents flow through `surface_present`
     /// instead of the pixel-upload `surface_present_software`.
     pub use_dmabuf: bool,
+    /// Resize/fullscreen transition gate, shared with macOS/Windows. Drops
+    /// stale-size frames during a resize so the last good frame holds.
+    pub gate: jfn_compositor_core::transition::TransitionGate,
 }
 
 unsafe impl Send for Mutable {}
