@@ -11,7 +11,7 @@ build: linux_common::deps
 # Run the app
 [linux]
 run *args: build
-    build/jellyfin-desktop --log-level=debug --log-file=build/run.log {{args}}
+    build/jellyfin-desktop {{args}}
 
 # Run the mpv CLI
 [linux]
