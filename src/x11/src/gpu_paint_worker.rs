@@ -1,39 +1,19 @@
-use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 use jfn_gpu_paint::{DirtyRect, DmabufFrame, GpuContext, GpuPainter, PixelFrame, WindowTarget};
+use x11rb::connection::Connection;
+use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt as _};
+use x11rb::rust_connection::RustConnection;
 
-const XCB_CONFIG_WINDOW_WIDTH: u16 = 1 << 2;
-const XCB_CONFIG_WINDOW_HEIGHT: u16 = 1 << 3;
-
-#[repr(C)]
-struct XcbVoidCookie {
-    sequence: std::ffi::c_uint,
-}
-
-unsafe extern "C" {
-    fn xcb_configure_window(
-        c: *mut c_void,
-        window: u32,
-        value_mask: u16,
-        value_list: *const c_void,
-    ) -> XcbVoidCookie;
-    fn xcb_flush(c: *mut c_void) -> c_int;
-}
-
-unsafe fn configure_window_size(conn: *mut c_void, window: u32, w: u32, h: u32) {
-    let value_mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
-    let value_list: [u32; 2] = [w, h];
-    unsafe {
-        xcb_configure_window(
-            conn,
-            window,
-            value_mask,
-            value_list.as_ptr() as *const c_void,
-        );
-        xcb_flush(conn);
+fn configure_window_size(conn: &RustConnection, window: u32, w: u32, h: u32) {
+    let aux = ConfigureWindowAux::new().width(w).height(h);
+    if let Err(e) = conn
+        .configure_window(window, &aux)
+        .and_then(|_| conn.flush())
+    {
+        tracing::warn!("[x11] gpu_paint worker failed to resize target window: {e}");
     }
 }
 
@@ -194,11 +174,9 @@ fn run_worker(
 ) {
     let mut painter: Option<GpuPainter> = None;
 
-    let (xcb_conn, xcb_window) = match &target {
-        WindowTarget::Xcb {
-            connection, window, ..
-        } => (connection.as_ptr(), Some(*window)),
-        _ => (std::ptr::null_mut(), None),
+    let x11_window = match &target {
+        WindowTarget::Xcb { window, .. } => Some(*window),
+        _ => None,
     };
     let mut last_configured: Option<(u32, u32)> = None;
 
@@ -273,10 +251,12 @@ fn run_worker(
                 // so window extent and swapchain extent stay matched.
                 // jfn_x11_surface_resize omits window sizing for the dmabuf tier,
                 // so nothing else does it.
-                if let Some(window) = xcb_window {
+                if let Some(window) = x11_window {
                     let size = (dmabuf.width, dmabuf.height);
-                    if last_configured != Some(size) {
-                        unsafe { configure_window_size(xcb_conn, window, size.0, size.1) };
+                    if last_configured != Some(size)
+                        && let Some(conn) = crate::x11_state::x11rb_conn()
+                    {
+                        configure_window_size(&conn, window, size.0, size.1);
                         last_configured = Some(size);
                     }
                 }

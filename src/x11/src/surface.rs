@@ -11,11 +11,17 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::ffi::{c_int, c_void};
-use std::ptr::NonNull;
 use std::sync::Arc;
 
 use jfn_gpu_paint::{DirtyRect, DmabufFrame, WindowTarget};
-use xcb::{Xid, x};
+use x11rb::connection::Connection;
+use x11rb::protocol::shape::{ConnectionExt as X11rbShapeConnection, SK, SO};
+use x11rb::protocol::xproto::{
+    AtomEnum, ClipOrdering, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux,
+    EventMask, PropMode, StackMode, WindowClass,
+};
+use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as X11rbWrapperConnection;
 
 use crate::x11_state::{MUT, Mutable, PlatformSurface, is_none_gc, is_none_window};
 
@@ -26,105 +32,110 @@ use jfn_playback::shutdown::jfn_shutting_down;
 /// Create a WM-managed ARGB utility/transient overlay window at (x, y, w, h).
 /// Caller holds `MUT` and provides the mutable state borrow.
 fn create_overlay_window(
-    conn: &xcb::Connection,
+    x11_conn: &RustConnection,
     m: &Mutable,
     x: i32,
     y: i32,
     w: u32,
     h: u32,
-) -> x::Window {
-    let win: x::Window = conn.generate_id();
-    conn.send_request(&x::CreateWindow {
-        depth: m.argb_depth,
-        wid: win,
-        parent: m.root,
-        x: x as i16,
-        y: y as i16,
-        width: w as u16,
-        height: h as u16,
-        border_width: 0,
-        class: x::WindowClass::InputOutput,
-        visual: m.argb_visual,
-        value_list: &[
-            x::Cw::BackPixel(0),
-            x::Cw::BorderPixel(0),
-            x::Cw::EventMask(x::EventMask::EXPOSURE),
-            x::Cw::Colormap(m.colormap),
-        ],
-    });
+) -> u32 {
+    let Ok(win_id) = x11_conn.generate_id() else {
+        return 0;
+    };
+    let aux = CreateWindowAux::new()
+        .background_pixel(0)
+        .border_pixel(0)
+        .event_mask(EventMask::EXPOSURE)
+        .colormap(m.colormap);
+    let _ = x11_conn.create_window(
+        m.argb_depth,
+        win_id,
+        m.root,
+        x as i16,
+        y as i16,
+        w as u16,
+        h as u16,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        m.argb_visual,
+        &aux,
+    );
 
-    // Tie the overlay to mpv's window so the WM raises/lowers/covers it with
-    // the parent.
-    conn.send_request(&x::ChangeProperty {
-        mode: x::PropMode::Replace,
-        window: win,
-        property: x::ATOM_WM_TRANSIENT_FOR,
-        r#type: x::ATOM_WINDOW,
-        data: &[m.parent],
-    });
+    {
+        // Tie the overlay to mpv's window so the WM raises/lowers/covers it with
+        // the parent.
+        let _ = x11_conn.change_property32(
+            PropMode::REPLACE,
+            win_id,
+            u32::from(AtomEnum::WM_TRANSIENT_FOR),
+            u32::from(AtomEnum::WINDOW),
+            &[m.parent],
+        );
 
-    conn.send_request(&x::ChangeProperty {
-        mode: x::PropMode::Replace,
-        window: win,
-        property: m.atoms.net_wm_window_type,
-        r#type: x::ATOM_ATOM,
-        data: &[m.atoms.net_wm_window_type_utility],
-    });
-    conn.send_request(&x::ChangeProperty {
-        mode: x::PropMode::Replace,
-        window: win,
-        property: m.atoms.net_wm_state,
-        r#type: x::ATOM_ATOM,
-        data: &[
-            m.atoms.net_wm_state_skip_taskbar,
-            m.atoms.net_wm_state_skip_pager,
-        ],
-    });
+        let _ = x11_conn.change_property32(
+            PropMode::REPLACE,
+            win_id,
+            m.atoms.net_wm_window_type,
+            u32::from(AtomEnum::ATOM),
+            &[m.atoms.net_wm_window_type_utility],
+        );
+        let _ = x11_conn.change_property32(
+            PropMode::REPLACE,
+            win_id,
+            m.atoms.net_wm_state,
+            u32::from(AtomEnum::ATOM),
+            &[
+                m.atoms.net_wm_state_skip_taskbar,
+                m.atoms.net_wm_state_skip_pager,
+            ],
+        );
 
-    // Motif hints: flags=MWM_HINTS_DECORATIONS, decorations=0.
-    conn.send_request(&x::ChangeProperty {
-        mode: x::PropMode::Replace,
-        window: win,
-        property: m.atoms.motif_wm_hints,
-        r#type: m.atoms.motif_wm_hints,
-        data: &[2_u32, 0, 0, 0, 0],
-    });
+        // Motif hints: flags=MWM_HINTS_DECORATIONS, decorations=0.
+        let _ = x11_conn.change_property32(
+            PropMode::REPLACE,
+            win_id,
+            m.atoms.motif_wm_hints,
+            m.atoms.motif_wm_hints,
+            &[2_u32, 0, 0, 0, 0],
+        );
 
-    // WM_HINTS: InputHint set, input=false; focus should stay on mpv.
-    conn.send_request(&x::ChangeProperty {
-        mode: x::PropMode::Replace,
-        window: win,
-        property: x::ATOM_WM_HINTS,
-        r#type: x::ATOM_WM_HINTS,
-        data: &[1_u32, 0, 0, 0, 0, 0, 0, 0, 0],
-    });
+        // WM_HINTS: InputHint set, input=false; focus should stay on mpv.
+        let _ = x11_conn.change_property32(
+            PropMode::REPLACE,
+            win_id,
+            u32::from(AtomEnum::WM_HINTS),
+            u32::from(AtomEnum::WM_HINTS),
+            &[1_u32, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
 
-    // Input-passthrough: empty input shape sends all input to mpv parent.
-    conn.send_request(&xcb::shape::Rectangles {
-        operation: xcb::shape::So::Set,
-        destination_kind: xcb::shape::Sk::Input,
-        ordering: x::ClipOrdering::Unsorted,
-        destination_window: win,
-        x_offset: 0,
-        y_offset: 0,
-        rectangles: &[],
-    });
+        // Input-passthrough: empty input shape sends all input to mpv parent.
+        let _ = x11_conn.shape_rectangles(
+            SO::SET,
+            SK::INPUT,
+            ClipOrdering::UNSORTED,
+            win_id,
+            0,
+            0,
+            &[],
+        );
 
-    // WM_DELETE_WINDOW handler.
-    conn.send_request(&x::ChangeProperty {
-        mode: x::PropMode::Replace,
-        window: win,
-        property: m.atoms.wm_protocols,
-        r#type: x::ATOM_ATOM,
-        data: &[m.atoms.wm_delete_window],
-    });
+        // WM_DELETE_WINDOW handler.
+        let _ = x11_conn.change_property32(
+            PropMode::REPLACE,
+            win_id,
+            m.atoms.wm_protocols,
+            u32::from(AtomEnum::ATOM),
+            &[m.atoms.wm_delete_window],
+        );
+        let _ = x11_conn.flush();
+    }
 
-    win
+    win_id
 }
 
 pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     let s = Box::into_raw(Box::new(PlatformSurface::new()));
-    let Some(conn) = crate::x11_state::conn() else {
+    let Some(x11_conn) = crate::x11_state::x11rb_conn() else {
         return s;
     };
     let mut g = MUT.lock();
@@ -140,13 +151,9 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     let pw = if m.pw > 0 { m.pw as u32 } else { 1 };
     let ph = if m.ph > 0 { m.ph as u32 } else { 1 };
 
-    let win = create_overlay_window(&conn, m, px, py, pw, ph);
-    let gc: x::Gcontext = conn.generate_id();
-    conn.send_request(&x::CreateGc {
-        cid: gc,
-        drawable: x::Drawable::Window(win),
-        value_list: &[],
-    });
+    let win = create_overlay_window(&x11_conn, m, px, py, pw, ph);
+    let gc = x11_conn.generate_id().unwrap_or(0);
+    let _ = x11_conn.create_gc(gc, win, &CreateGCAux::new());
 
     unsafe {
         (*s).window = win;
@@ -155,8 +162,8 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
         (*s).ph = ph as i32;
         (*s).visible = true;
     }
-    conn.send_request(&x::MapWindow { window: win });
-    let _ = conn.flush();
+    let _ = x11_conn.map_window(win);
+    let _ = x11_conn.flush();
 
     m.live.push(s);
     drop(g);
@@ -171,11 +178,6 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     if s.is_null() {
         return;
     }
-    let Some(conn) = crate::x11_state::conn() else {
-        // Connection gone; just drop the box.
-        drop(unsafe { Box::from_raw(s) });
-        return;
-    };
     {
         let mut g = MUT.lock();
         if let Some(m) = g.as_mut()
@@ -194,20 +196,18 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     if let Some(worker) = surf.shm_paint_worker.take() {
         worker.shutdown();
     }
-    if !is_none_window(surf.window) {
-        conn.send_request(&x::UnmapWindow {
-            window: surf.window,
-        });
+    if let Some(x11_conn) = crate::x11_state::x11rb_conn() {
+        if !is_none_window(surf.window) {
+            let _ = x11_conn.unmap_window(surf.window);
+        }
+        if !is_none_gc(surf.gc) {
+            let _ = x11_conn.free_gc(surf.gc);
+        }
+        if !is_none_window(surf.window) {
+            let _ = x11_conn.destroy_window(surf.window);
+        }
+        let _ = x11_conn.flush();
     }
-    if !is_none_gc(surf.gc) {
-        conn.send_request(&x::FreeGc { gc: surf.gc });
-    }
-    if !is_none_window(surf.window) {
-        conn.send_request(&x::DestroyWindow {
-            window: surf.window,
-        });
-    }
-    let _ = conn.flush();
     drop(unsafe { Box::from_raw(s) });
 }
 
@@ -218,7 +218,7 @@ pub unsafe fn jfn_x11_surface_present_dmabuf(s: *mut PlatformSurface, frame: Dma
     if jfn_shutting_down() || s.is_null() {
         return false;
     }
-    let Some(conn) = crate::x11_state::conn() else {
+    let Some(conn_ptr) = crate::x11_state::raw_xcb_connection() else {
         return false;
     };
     let mut g = MUT.lock();
@@ -257,12 +257,9 @@ pub unsafe fn jfn_x11_surface_present_dmabuf(s: *mut PlatformSurface, frame: Dma
     }
 
     if surf.gpu_paint_worker.is_none() {
-        let Some(conn_ptr) = NonNull::new(conn.get_raw_conn() as *mut c_void) else {
-            return false;
-        };
         let target = WindowTarget::Xcb {
             connection: conn_ptr,
-            window: surf.window.resource_id(),
+            window: surf.window,
             screen: m.screen_num,
             visual: m.argb_visual,
         };
@@ -287,7 +284,6 @@ pub unsafe fn jfn_x11_surface_present_dmabuf(s: *mut PlatformSurface, frame: Dma
 fn queue_gpu_present(
     surf: &mut PlatformSurface,
     m: &Mutable,
-    conn: &xcb::Connection,
     dirty: *const JfnRect,
     dirty_len: usize,
     buffer: *const c_void,
@@ -308,12 +304,12 @@ fn queue_gpu_present(
     }
 
     if surf.gpu_paint_worker.is_none() {
-        let Some(conn_ptr) = NonNull::new(conn.get_raw_conn() as *mut std::ffi::c_void) else {
+        let Some(conn_ptr) = crate::x11_state::raw_xcb_connection() else {
             return false;
         };
         let target = WindowTarget::Xcb {
             connection: conn_ptr,
-            window: surf.window.resource_id(),
+            window: surf.window,
             screen: m.screen_num,
             visual: m.argb_visual,
         };
@@ -351,7 +347,7 @@ fn queue_gpu_present(
 fn queue_shm_present(
     surf: &mut PlatformSurface,
     m: &Mutable,
-    conn: Arc<xcb::Connection>,
+    conn: Arc<RustConnection>,
     dirty: *const JfnRect,
     dirty_len: usize,
     buffer: *const c_void,
@@ -384,7 +380,7 @@ pub unsafe fn jfn_x11_surface_present_software(
     if jfn_shutting_down() || s.is_null() || buffer.is_null() || w <= 0 || h <= 0 {
         return false;
     }
-    let Some(conn) = crate::x11_state::conn() else {
+    let Some(x11_conn) = crate::x11_state::x11rb_conn() else {
         return false;
     };
     let mut g = MUT.lock();
@@ -399,12 +395,11 @@ pub unsafe fn jfn_x11_surface_present_software(
 
     // GPU pixel-upload path. Falls through to SHM on any failure so a
     // bad first frame doesn't strand the surface.
-    if m.gpu_caps.gpu_available && queue_gpu_present(surf, m, &conn, dirty, dirty_len, buffer, w, h)
-    {
+    if m.gpu_caps.gpu_available && queue_gpu_present(surf, m, dirty, dirty_len, buffer, w, h) {
         return true;
     }
 
-    queue_shm_present(surf, m, conn, dirty, dirty_len, buffer, w, h)
+    queue_shm_present(surf, m, x11_conn, dirty, dirty_len, buffer, w, h)
 }
 
 pub unsafe fn jfn_x11_surface_resize(
@@ -417,7 +412,7 @@ pub unsafe fn jfn_x11_surface_resize(
     if s.is_null() {
         return;
     }
-    let Some(conn) = crate::x11_state::conn() else {
+    let Some(x11_conn) = crate::x11_state::x11rb_conn() else {
         return;
     };
     let mut g = MUT.lock();
@@ -453,14 +448,9 @@ pub unsafe fn jfn_x11_surface_resize(
     // writing X/Y here would race it with a stale value during
     // fullscreen/maximize transitions.
     if !dmabuf_lockstep {
-        conn.send_request(&x::ConfigureWindow {
-            window: surf.window,
-            value_list: &[
-                x::ConfigWindow::Width(pw as u32),
-                x::ConfigWindow::Height(ph as u32),
-            ],
-        });
-        let _ = conn.flush();
+        let aux = ConfigureWindowAux::new().width(pw as u32).height(ph as u32);
+        let _ = x11_conn.configure_window(surf.window, &aux);
+        let _ = x11_conn.flush();
     }
 }
 
@@ -468,7 +458,7 @@ pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool
     if s.is_null() {
         return;
     }
-    let Some(conn) = crate::x11_state::conn() else {
+    let Some(x11_conn) = crate::x11_state::x11rb_conn() else {
         return;
     };
     let mut g = MUT.lock();
@@ -497,27 +487,20 @@ pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool
         };
         let pw = pick(surf.pw, m.pw);
         let ph = pick(surf.ph, m.ph);
-        conn.send_request(&x::ConfigureWindow {
-            window: surf.window,
-            value_list: &[
-                x::ConfigWindow::X(m.parent_x),
-                x::ConfigWindow::Y(m.parent_y),
-                x::ConfigWindow::Width(pw),
-                x::ConfigWindow::Height(ph),
-            ],
-        });
-        conn.send_request(&x::MapWindow {
-            window: surf.window,
-        });
+        let aux = ConfigureWindowAux::new()
+            .x(m.parent_x)
+            .y(m.parent_y)
+            .width(pw)
+            .height(ph);
+        let _ = x11_conn.configure_window(surf.window, &aux);
+        let _ = x11_conn.map_window(surf.window);
     } else {
-        conn.send_request(&x::UnmapWindow {
-            window: surf.window,
-        });
+        let _ = x11_conn.unmap_window(surf.window);
     }
     if let Some(worker) = surf.gpu_paint_worker.as_ref() {
         worker.set_visible(visible);
     }
-    let _ = conn.flush();
+    let _ = x11_conn.flush();
 }
 
 /// Stack `ordered[0..n]` above the mpv parent, bottom to top.
@@ -525,30 +508,28 @@ pub unsafe fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
     if n == 0 || ordered.is_null() {
         return;
     }
-    let Some(conn) = crate::x11_state::conn() else {
+    let Some(x11_conn) = crate::x11_state::x11rb_conn() else {
         return;
     };
     let g = MUT.lock();
     let Some(m) = g.as_ref() else { return };
 
     let slice = unsafe { std::slice::from_raw_parts(ordered, n) };
-    let mut prev: x::Window = m.parent;
+    let mut prev = m.parent;
     for &s_ptr in slice {
         if s_ptr.is_null() {
             continue;
         }
         let s = unsafe { &*s_ptr };
-        if is_none_window(s.window) || s.window == prev {
+        let window = s.window;
+        if is_none_window(s.window) || window == prev {
             continue;
         }
-        conn.send_request(&x::ConfigureWindow {
-            window: s.window,
-            value_list: &[
-                x::ConfigWindow::Sibling(prev),
-                x::ConfigWindow::StackMode(x::StackMode::Above),
-            ],
-        });
-        prev = s.window;
+        let aux = ConfigureWindowAux::new()
+            .sibling(prev)
+            .stack_mode(StackMode::ABOVE);
+        let _ = x11_conn.configure_window(window, &aux);
+        prev = window;
     }
-    let _ = conn.flush();
+    let _ = x11_conn.flush();
 }

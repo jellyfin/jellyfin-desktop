@@ -4,21 +4,18 @@
 //! Platform-vtable cursor setter and the cleanup path can reach it from
 //! any thread.
 
-use parking_lot::Mutex;
-use std::sync::Arc;
-
-use xcb::x;
-
 use crate::input::{Handle, set_cursor, start as start_thread};
+use parking_lot::Mutex;
 
 static G: Mutex<Option<Handle>> = Mutex::new(None);
 
-pub fn start(conn: Arc<xcb::Connection>, parent: x::Window) {
+pub fn start(parent: u32) {
     let m = crate::x11_state::MUT.lock();
     let screen_num = m.as_ref().map(|s| s.screen_num).unwrap_or(0);
     drop(m);
-    let handle = start_thread(conn, screen_num, parent);
-    *G.lock() = Some(handle);
+    if let Some(handle) = start_thread(screen_num, parent) {
+        *G.lock() = Some(handle);
+    }
 }
 
 pub fn cleanup() {

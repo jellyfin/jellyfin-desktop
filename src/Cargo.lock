@@ -2426,7 +2426,6 @@ dependencies = [
  "tracing",
  "x11rb",
  "xcb",
- "xcb-util-cursor-sys",
  "xkbcommon",
 ]
 
@@ -5021,6 +5020,7 @@ dependencies = [
  "gethostname",
  "rustix",
  "x11rb-protocol",
+ "xcursor",
 ]
 
 [[package]]
@@ -5049,17 +5049,6 @@ dependencies = [
  "bitflags 1.3.2",
  "libc",
  "quick-xml 0.30.0",
-]
-
-[[package]]
-name = "xcb-util-cursor-sys"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8346f6cad5cb6b38645c53431ffe35bd0634e8154f529fa9d3f5f762c03c98b6"
-dependencies = [
- "bindgen",
- "pkg-config",
- "xcb",
 ]
 
 [[package]]
