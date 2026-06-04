@@ -4,13 +4,19 @@ use std::os::fd::AsRawFd;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use xcb::{Xid, x};
+use x11rb::connection::Connection;
+use x11rb::protocol::Event;
+use x11rb::protocol::xproto::{
+    ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConfigureWindowAux,
+    ConnectionExt as _, EventMask, StackMode, Window,
+};
+use x11rb::rust_connection::RustConnection;
 
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use jfn_playback::wake_event::{jfn_wake_event_drain, jfn_wake_event_fd, jfn_wake_event_signal};
 
 use crate::input::x11_shutdown_waker;
-use crate::lifecycle::query_parent_geometry;
+use crate::lifecycle::OverlaySnap;
 use crate::x11_state::MUT;
 
 /// Settle poll interval. Catches the final position-only frame move after
@@ -51,8 +57,8 @@ pub fn request_resync() {
     unsafe { jfn_wake_event_signal(x11_geometry_resync_waker()) };
 }
 
-pub fn start(parent: x::Window, root: x::Window) {
-    let conn = match xcb::Connection::connect(None) {
+pub fn start(parent: u32, root: u32) {
+    let conn = match RustConnection::connect(None) {
         Ok((conn, _)) => Arc::new(conn),
         Err(e) => {
             eprintln!("[x11] geometry watcher failed to connect: {e:?}");
@@ -74,44 +80,132 @@ pub fn cleanup() {
     *g = None;
 }
 
-fn find_frame(conn: &xcb::Connection, mut w: x::Window, root: x::Window) -> x::Window {
+fn find_frame(conn: &RustConnection, mut w: Window, root: Window) -> Window {
     loop {
-        let Ok(reply) = conn.wait_for_reply(conn.send_request(&x::QueryTree { window: w })) else {
+        let Ok(cookie) = conn.query_tree(w) else {
             return w;
         };
-        let parent = reply.parent();
-        if parent.resource_id() == 0 || parent.resource_id() == root.resource_id() {
+        let Ok(reply) = cookie.reply() else {
+            return w;
+        };
+        let parent = reply.parent;
+        if parent == 0 || parent == root {
             return w;
         }
         w = parent;
     }
 }
 
-fn watch_structure(conn: &xcb::Connection, window: x::Window) {
-    conn.send_request(&x::ChangeWindowAttributes {
-        window,
-        value_list: &[x::Cw::EventMask(x::EventMask::STRUCTURE_NOTIFY)],
-    });
+fn watch_structure(conn: &RustConnection, window: Window) {
+    let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY);
+    let _ = conn.change_window_attributes(window, &aux);
 }
 
-fn geometry_thread_body(conn: Arc<xcb::Connection>, parent: x::Window, root: x::Window) {
+/// Query a window's absolute screen position + size. Returns None on protocol failure.
+fn query_geometry(
+    conn: &RustConnection,
+    window: Window,
+    root: Window,
+) -> Option<(i32, i32, i32, i32)> {
+    let geo = conn.get_geometry(window).ok()?.reply().ok()?;
+    let trans = conn
+        .translate_coordinates(window, root, 0, 0)
+        .ok()?
+        .reply()
+        .ok()?;
+    Some((
+        trans.dst_x as i32,
+        trans.dst_y as i32,
+        geo.width as i32,
+        geo.height as i32,
+    ))
+}
+
+fn reposition_overlays(
+    conn: &RustConnection,
+    px: i32,
+    py: i32,
+    pw: i32,
+    ph: i32,
+    snaps: &[OverlaySnap],
+) {
+    for s in snaps {
+        if !s.visible {
+            continue;
+        }
+        let mut aux = ConfigureWindowAux::new().x(px).y(py);
+        if s.send_size {
+            aux = aux.width(pw as u32).height(ph as u32);
+        }
+        let _ = conn.configure_window(s.window, &aux);
+    }
+    let _ = conn.flush();
+}
+
+fn map_overlays(conn: &RustConnection, snaps: &[OverlaySnap]) {
+    for s in snaps.iter().filter(|s| s.visible) {
+        let _ = conn.map_window(s.window);
+    }
+    let _ = conn.flush();
+}
+
+fn unmap_overlays(conn: &RustConnection, snaps: &[OverlaySnap]) {
+    for s in snaps {
+        let _ = conn.unmap_window(s.window);
+    }
+    let _ = conn.flush();
+}
+
+fn restack_overlays_above(conn: &RustConnection, parent: Window, snaps: &[OverlaySnap]) {
+    let mut prev = parent;
+    for s in snaps.iter().filter(|s| s.visible) {
+        let win = s.window;
+        if win == prev {
+            continue;
+        }
+        let aux = ConfigureWindowAux::new()
+            .sibling(prev)
+            .stack_mode(StackMode::ABOVE);
+        let _ = conn.configure_window(win, &aux);
+        prev = win;
+    }
+    let _ = conn.flush();
+}
+
+fn activate_parent(conn: &RustConnection, root: Window, parent: Window, net_active_window: u32) {
+    let ev = ClientMessageEvent::new(
+        32,
+        parent,
+        net_active_window,
+        ClientMessageData::from([2, 0, 0, 0, 0]),
+    );
+    let _ = conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+        ev,
+    );
+    let _ = conn.flush();
+}
+
+fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window) {
     // A frame move emits no ConfigureNotify on the client, so without also
     // watching the frame the overlays never learn the window's new position
     // after fullscreen/maximize exit.
     watch_structure(&conn, parent);
     let mut frame = find_frame(&conn, parent, root);
-    if frame.resource_id() != parent.resource_id() {
+    if frame != parent {
         watch_structure(&conn, frame);
     }
     let _ = conn.flush();
 
-    let xcb_fd = conn.as_raw_fd();
+    let x11_fd = conn.stream().as_raw_fd();
     let shutdown_fd = unsafe { jfn_wake_event_fd(x11_shutdown_waker()) };
     let resync_fd = unsafe { jfn_wake_event_fd(x11_geometry_resync_waker()) };
 
     let mut fds: [libc::pollfd; 3] = [
         libc::pollfd {
-            fd: xcb_fd,
+            fd: x11_fd,
             events: libc::POLLIN,
             revents: 0,
         },
@@ -189,11 +283,11 @@ fn geometry_thread_body(conn: Arc<xcb::Connection>, parent: x::Window, root: x::
 
 type Geom = (i32, i32, i32, i32);
 fn settle_tick(
-    conn: &xcb::Connection,
-    parent: x::Window,
-    root: x::Window,
+    conn: &RustConnection,
+    parent: Window,
+    root: Window,
 ) -> (bool, Geom, Vec<(u32, Option<Geom>)>) {
-    let geo = query_parent_geometry(conn, parent, root);
+    let geo = query_geometry(conn, parent, root);
 
     let (mpv, snaps) = {
         let mut g = MUT.lock();
@@ -207,7 +301,7 @@ fn settle_tick(
         (mpv, crate::lifecycle::snapshot_live_overlays_locked(m))
     };
 
-    crate::lifecycle::reposition_overlays(conn, mpv.0, mpv.1, mpv.2, mpv.3, &snaps);
+    reposition_overlays(conn, mpv.0, mpv.1, mpv.2, mpv.3, &snaps);
 
     let mut all_match = true;
     let mut samples = Vec::new();
@@ -215,22 +309,22 @@ fn settle_tick(
         if !s.visible {
             continue;
         }
-        let overlay = query_parent_geometry(conn, s.window, root);
+        let overlay = query_geometry(conn, s.window, root);
         all_match &= overlay == Some(mpv);
-        samples.push((s.window.resource_id(), overlay));
+        samples.push((s.window, overlay));
     }
 
     // A WM can drop the transient overlays behind the video on a fullscreen
     // transition, leaving CEF invisible; re-assert above-parent stacking.
     if all_match {
-        crate::lifecycle::restack_overlays_above(conn, parent, &snaps);
+        restack_overlays_above(conn, parent, &snaps);
         tracing::debug!(target: "x11::settle", "restacked overlays above parent");
     }
     (all_match, mpv, samples)
 }
 
-fn resync_overlays(conn: &xcb::Connection, parent: x::Window, root: x::Window) {
-    let Some((px, py, pw, ph)) = query_parent_geometry(conn, parent, root) else {
+fn resync_overlays(conn: &RustConnection, parent: Window, root: Window) {
+    let Some((px, py, pw, ph)) = query_geometry(conn, parent, root) else {
         return;
     };
     let snaps = {
@@ -239,12 +333,12 @@ fn resync_overlays(conn: &xcb::Connection, parent: x::Window, root: x::Window) {
         crate::lifecycle::set_parent_geometry_locked(m, px, py, pw, ph);
         crate::lifecycle::snapshot_live_overlays_locked(m)
     };
-    crate::lifecycle::reposition_overlays(conn, px, py, pw, ph, &snaps);
+    reposition_overlays(conn, px, py, pw, ph, &snaps);
 }
 
-fn set_visibility(conn: &xcb::Connection, parent: x::Window, root: x::Window, visible: bool) {
+fn set_visibility(conn: &RustConnection, parent: Window, root: Window, visible: bool) {
     if visible {
-        if let Some((px, py, pw, ph)) = query_parent_geometry(conn, parent, root) {
+        if let Some((px, py, pw, ph)) = query_geometry(conn, parent, root) {
             let snapshot = {
                 let mut g = MUT.lock();
                 g.as_mut().map(|m| {
@@ -256,16 +350,16 @@ fn set_visibility(conn: &xcb::Connection, parent: x::Window, root: x::Window, vi
                 })
             };
             if let Some((snaps, net_active_window)) = snapshot {
-                crate::lifecycle::reposition_overlays(conn, px, py, pw, ph, &snaps);
-                crate::lifecycle::map_overlays(conn, &snaps);
+                reposition_overlays(conn, px, py, pw, ph, &snaps);
+                map_overlays(conn, &snaps);
                 // Restore (un-minimize) re-maps without necessarily emitting a
                 // ConfigureNotify, so settle-restack may not fire — re-assert
                 // stacking here too.
-                crate::lifecycle::restack_overlays_above(conn, parent, &snaps);
+                restack_overlays_above(conn, parent, &snaps);
                 // Re-mapping the transient overlays on top of the parent can
                 // displace the WM's active window off mpv, stalling the
                 // taskbar's minimize/activate toggle; re-assert it.
-                crate::lifecycle::activate_parent(conn, root, parent, net_active_window);
+                activate_parent(conn, root, parent, net_active_window);
             }
         }
     } else {
@@ -275,38 +369,31 @@ fn set_visibility(conn: &xcb::Connection, parent: x::Window, root: x::Window, vi
                 .map(|m| crate::lifecycle::snapshot_live_overlays_locked(m))
         };
         if let Some(snaps) = snaps {
-            crate::lifecycle::unmap_overlays(conn, &snaps);
+            unmap_overlays(conn, &snaps);
         }
     }
     jfn_playback::lifecycle::jfn_lifecycle_set_visible(visible);
 }
 
 fn handle_event(
-    conn: &xcb::Connection,
-    parent: x::Window,
-    root: x::Window,
-    frame: &mut x::Window,
-    ev: xcb::Event,
+    conn: &RustConnection,
+    parent: Window,
+    root: Window,
+    frame: &mut Window,
+    ev: Event,
 ) -> bool {
-    use xcb::Event;
     match ev {
-        Event::X(x::Event::ConfigureNotify(e)) => {
-            let w = e.window().resource_id();
-            w == parent.resource_id() || w == frame.resource_id()
-        }
+        Event::ConfigureNotify(e) => e.window == parent || e.window == *frame,
         // A WM/pager that restacks via XCirculateSubwindows emits CirculateNotify
         // instead of ConfigureNotify; treat it as a geometry change so the
         // settle re-asserts overlay stacking.
-        Event::X(x::Event::CirculateNotify(e)) => {
-            let w = e.window().resource_id();
-            w == parent.resource_id() || w == frame.resource_id()
-        }
+        Event::CirculateNotify(e) => e.window == parent || e.window == *frame,
         // The WM swaps the client into a different frame on fullscreen/maximize
         // toggles; re-resolve and re-watch the new frame.
-        Event::X(x::Event::ReparentNotify(e)) => {
-            if e.window().resource_id() == parent.resource_id() {
+        Event::ReparentNotify(e) => {
+            if e.window == parent {
                 let new_frame = find_frame(conn, parent, root);
-                if new_frame.resource_id() != parent.resource_id() {
+                if new_frame != parent {
                     watch_structure(conn, new_frame);
                 }
                 *frame = new_frame;
@@ -315,23 +402,23 @@ fn handle_event(
             }
             false
         }
-        Event::X(x::Event::MapNotify(e)) => {
-            if e.window().resource_id() == parent.resource_id() {
+        Event::MapNotify(e) => {
+            if e.window == parent {
                 set_visibility(conn, parent, root, true);
             }
             false
         }
-        Event::X(x::Event::UnmapNotify(e)) => {
-            if e.window().resource_id() == parent.resource_id() {
+        Event::UnmapNotify(e) => {
+            if e.window == parent {
                 set_visibility(conn, parent, root, false);
             }
             false
         }
-        Event::X(x::Event::DestroyNotify(_)) => {
+        Event::DestroyNotify(_) => {
             jfn_shutdown_initiate();
             false
         }
-        Event::X(x::Event::ClientMessage(_)) => {
+        Event::ClientMessage(_) => {
             jfn_shutdown_initiate();
             false
         }

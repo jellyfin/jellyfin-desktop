@@ -2,7 +2,9 @@ use std::ffi::c_void;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
-use xcb::x;
+use x11rb::connection::Connection;
+use x11rb::protocol::{shm::ConnectionExt as X11rbShmConnection, xproto};
+use x11rb::rust_connection::RustConnection;
 
 use crate::shm::{shm_alloc, shm_free};
 use crate::surface::JfnRect;
@@ -32,7 +34,7 @@ struct WorkerState {
 ///
 /// The CEF paint callback copies only the dirty pixels into this worker and
 /// returns. SHM buffer allocation, expansion into the SHM segment,
-/// xcb-shm PutImage requests, and flushes happen on the worker thread.
+/// MIT-SHM PutImage requests, and flushes happen on the worker thread.
 pub(crate) struct X11ShmPaintWorker {
     shared: Arc<(Mutex<WorkerState>, Condvar)>,
     thread: Option<JoinHandle<()>>,
@@ -40,9 +42,9 @@ pub(crate) struct X11ShmPaintWorker {
 
 impl X11ShmPaintWorker {
     pub(crate) fn new(
-        conn: Arc<xcb::Connection>,
-        window: x::Window,
-        gc: x::Gcontext,
+        conn: Arc<RustConnection>,
+        window: u32,
+        gc: u32,
         depth: u8,
         visible: bool,
     ) -> Self {
@@ -175,9 +177,9 @@ fn copy_dirty_rect(
 }
 
 fn run_worker(
-    conn: Arc<xcb::Connection>,
-    window: x::Window,
-    gc: x::Gcontext,
+    conn: Arc<RustConnection>,
+    window: u32,
+    gc: u32,
     depth: u8,
     shared: Arc<(Mutex<WorkerState>, Condvar)>,
 ) {
@@ -222,9 +224,9 @@ fn run_worker(
 }
 
 fn present_frame(
-    conn: &xcb::Connection,
-    window: x::Window,
-    gc: x::Gcontext,
+    conn: &RustConnection,
+    window: u32,
+    gc: u32,
     depth: u8,
     buf: &mut ShmBuffer,
     frame: &PendingFrame,
@@ -243,22 +245,22 @@ fn present_frame(
                 );
             }
         }
-        conn.send_request(&xcb::shm::PutImage {
-            drawable: x::Drawable::Window(window),
+        let _ = conn.shm_put_image(
+            window,
             gc,
-            total_width: frame.width as u16,
-            total_height: frame.height as u16,
-            src_x: rect.x as u16,
-            src_y: rect.y as u16,
-            src_width: rect.w as u16,
-            src_height: rect.h as u16,
-            dst_x: rect.x as i16,
-            dst_y: rect.y as i16,
+            frame.width as u16,
+            frame.height as u16,
+            rect.x as u16,
+            rect.y as u16,
+            rect.w as u16,
+            rect.h as u16,
+            rect.x as i16,
+            rect.y as i16,
             depth,
-            format: x::ImageFormat::ZPixmap as u8,
-            send_event: false,
-            offset: 0,
-            shmseg: buf.seg,
-        });
+            u8::from(xproto::ImageFormat::Z_PIXMAP),
+            false,
+            buf.seg,
+            0,
+        );
     }
 }

@@ -228,10 +228,10 @@ impl Platform for X11Platform {
     }
 
     fn query_window_position(&self) -> Option<WindowPos> {
-        let conn = crate::x11_state::conn()?;
+        let conn = crate::x11_state::x11rb_conn()?;
         let g = crate::x11_state::MUT.lock();
         let m = g.as_ref()?;
-        let (x, y, _, _) = crate::lifecycle::query_parent_geometry(&conn, m.parent, m.root)?;
+        let (x, y, _, _) = crate::lifecycle::query_parent_geometry_x11rb(&conn, m.parent, m.root)?;
         Some(WindowPos { x, y })
     }
 

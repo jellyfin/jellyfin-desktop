@@ -1,14 +1,20 @@
 //! X11 input thread.
 
 use parking_lot::Mutex;
-use std::ffi::{CString, c_int};
+use std::ffi::c_int;
 use std::os::fd::AsRawFd;
-use std::os::raw::c_uchar;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use xcb::{Xid, XidNew, x};
-use xcb_util_cursor_sys as cursor_ffi;
+use x11rb::connection::Connection as X11rbConnection;
+use x11rb::cursor::Handle as X11rbCursorHandle;
+use x11rb::protocol::xproto::{
+    ChangeWindowAttributesAux as X11rbChangeWindowAttributesAux,
+    ConnectionExt as X11rbXprotoConnection,
+};
+use x11rb::resource_manager::new_from_default;
+use x11rb::rust_connection::RustConnection;
+use xcb::{XidNew, x};
 use xkbcommon::xkb::{self, x11 as xkb_x11};
 
 use jfn_input::{
@@ -93,8 +99,6 @@ impl Drop for CursorMailbox {
 }
 
 pub struct Handle {
-    pub conn: Arc<xcb::Connection>,
-    pub parent: x::Window,
     join: Option<std::thread::JoinHandle<()>>,
     cursor_join: Option<std::thread::JoinHandle<()>>,
     input_join: Option<std::thread::JoinHandle<()>>,
@@ -219,7 +223,7 @@ impl Drop for InputMailbox {
 
 struct State {
     conn: Arc<xcb::Connection>,
-    window: x::Window,
+    window: u32,
     xkb_ctx: xkb::Context,
     xkb_kmap: Option<xkb::Keymap>,
     xkb_st: Option<xkb::State>,
@@ -236,27 +240,6 @@ struct State {
 }
 
 unsafe impl Send for State {}
-
-fn build_cursor_screen(screen: &x::Screen, allowed_depths_len: u8) -> cursor_ffi::xcb_screen_t {
-    cursor_ffi::xcb_screen_t {
-        root: screen.root().resource_id(),
-        default_colormap: screen.default_colormap().resource_id(),
-        white_pixel: screen.white_pixel(),
-        black_pixel: screen.black_pixel(),
-        current_input_masks: screen.current_input_masks().bits(),
-        width_in_pixels: screen.width_in_pixels(),
-        height_in_pixels: screen.height_in_pixels(),
-        width_in_millimeters: screen.width_in_millimeters(),
-        height_in_millimeters: screen.height_in_millimeters(),
-        min_installed_maps: screen.min_installed_maps(),
-        max_installed_maps: screen.max_installed_maps(),
-        root_visual: screen.root_visual(),
-        backing_stores: screen.backing_stores() as u8,
-        save_unders: screen.save_unders() as c_uchar,
-        root_depth: screen.root_depth(),
-        allowed_depths_len,
-    }
-}
 
 fn cef_cursor_to_name(t: u32) -> &'static str {
     match t as c_int {
@@ -551,11 +534,10 @@ fn handle_xkb_state_notify(st: &mut State, ev: &xcb::xkb::StateNotifyEvent) {
 }
 
 struct CursorState {
-    conn: Arc<xcb::Connection>,
-    window: x::Window,
-    screen_num: i32,
+    conn: Arc<RustConnection>,
+    window: u32,
     current_cursor: u32,
-    cursor_ctx: *mut cursor_ffi::xcb_cursor_context_t,
+    cursor_handle: Option<X11rbCursorHandle>,
 }
 
 unsafe impl Send for CursorState {}
@@ -564,61 +546,41 @@ fn apply_cursor(st: &mut CursorState, t: u32) {
     let conn = &st.conn;
 
     if t as c_int == CT_NONE {
-        let pix: x::Pixmap = conn.generate_id();
-        conn.send_request(&x::CreatePixmap {
-            depth: 1,
-            pid: pix,
-            drawable: x::Drawable::Window(st.window),
-            width: 1,
-            height: 1,
-        });
-        let blank: x::Cursor = conn.generate_id();
-        conn.send_request(&x::CreateCursor {
-            cid: blank,
-            source: pix,
-            mask: pix,
-            fore_red: 0,
-            fore_green: 0,
-            fore_blue: 0,
-            back_red: 0,
-            back_green: 0,
-            back_blue: 0,
-            x: 0,
-            y: 0,
-        });
-        conn.send_request(&x::ChangeWindowAttributes {
-            window: st.window,
-            value_list: &[x::Cw::Cursor(blank)],
-        });
+        let Ok(pix) = conn.generate_id() else {
+            return;
+        };
+        let _ = conn.create_pixmap(1, pix, st.window, 1, 1);
+        let Ok(blank) = conn.generate_id() else {
+            let _ = conn.free_pixmap(pix);
+            return;
+        };
+        let _ = conn.create_cursor(blank, pix, pix, 0, 0, 0, 0, 0, 0, 0, 0);
+        let aux = X11rbChangeWindowAttributesAux::new().cursor(blank);
+        let _ = conn.change_window_attributes(st.window, &aux);
         let _ = conn.flush();
         if st.current_cursor != 0 {
-            let old = x::Cursor::new(st.current_cursor);
-            conn.send_request(&x::FreeCursor { cursor: old });
+            let _ = conn.free_cursor(st.current_cursor);
         }
-        st.current_cursor = blank.resource_id();
-        conn.send_request(&x::FreePixmap { pixmap: pix });
+        st.current_cursor = blank;
+        let _ = conn.free_pixmap(pix);
         return;
     }
 
-    if st.cursor_ctx.is_null() {
+    let Some(cursor_handle) = st.cursor_handle.as_ref() else {
         return;
-    }
-
+    };
     let name = cef_cursor_to_name(t);
-    let cname = CString::new(name).unwrap();
-    let cursor_id = unsafe { cursor_ffi::xcb_cursor_load_cursor(st.cursor_ctx, cname.as_ptr()) };
+    let Ok(cursor_id) = cursor_handle.load_cursor(&**conn, name) else {
+        return;
+    };
     if cursor_id == 0 {
         return;
     }
-    let cur = x::Cursor::new(cursor_id);
-    conn.send_request(&x::ChangeWindowAttributes {
-        window: st.window,
-        value_list: &[x::Cw::Cursor(cur)],
-    });
+    let aux = X11rbChangeWindowAttributesAux::new().cursor(cursor_id);
+    let _ = conn.change_window_attributes(st.window, &aux);
     let _ = conn.flush();
     if st.current_cursor != 0 && st.current_cursor != cursor_id {
-        let old = x::Cursor::new(st.current_cursor);
-        conn.send_request(&x::FreeCursor { cursor: old });
+        let _ = conn.free_cursor(st.current_cursor);
     }
     st.current_cursor = cursor_id;
 }
@@ -652,7 +614,8 @@ fn input_thread_body(mut st: State) {
     }
 
     // No STRUCTURE_NOTIFY here: window structure (geometry/map state) is watched
-    // on a separate connection by the geometry thread.
+    // on a separate connection by the geometry thread. Select these events on
+    // the same xcb connection this thread polls; event masks are per-client.
     let mask = x::EventMask::KEY_PRESS
         | x::EventMask::KEY_RELEASE
         | x::EventMask::BUTTON_PRESS
@@ -661,7 +624,7 @@ fn input_thread_body(mut st: State) {
         | x::EventMask::ENTER_WINDOW
         | x::EventMask::LEAVE_WINDOW;
     st.conn.send_request(&x::ChangeWindowAttributes {
-        window: st.window,
+        window: x::Window::new(st.window),
         value_list: &[x::Cw::EventMask(mask)],
     });
     let _ = st.conn.flush();
@@ -705,41 +668,25 @@ fn input_thread_body(mut st: State) {
     }
 }
 
-fn cursor_thread_body(
-    conn: Arc<xcb::Connection>,
-    screen_num: i32,
-    window: x::Window,
-    mailbox: Arc<CursorMailbox>,
-) {
+fn cursor_thread_body(screen_num: i32, window: u32, mailbox: Arc<CursorMailbox>) {
+    let Some(conn) = crate::x11_state::x11rb_conn() else {
+        return;
+    };
+    let cursor_handle = new_from_default(&*conn).ok().and_then(|db| {
+        X11rbCursorHandle::new(&*conn, screen_num as usize, &db)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+    });
+    if cursor_handle.is_none() {
+        eprintln!("[x11] x11rb cursor handle creation failed");
+    }
+
     let mut st = CursorState {
         conn,
         window,
-        screen_num,
         current_cursor: 0,
-        cursor_ctx: std::ptr::null_mut(),
+        cursor_handle,
     };
-
-    {
-        let conn = st.conn.clone();
-        let setup = conn.get_setup();
-        if let Some(screen) = setup.roots().nth(st.screen_num as usize) {
-            let allowed = screen.allowed_depths().count() as u8;
-            let mut sc = build_cursor_screen(screen, allowed);
-            let mut ctx_ptr: *mut cursor_ffi::xcb_cursor_context_t = std::ptr::null_mut();
-            let rc = unsafe {
-                cursor_ffi::xcb_cursor_context_new(
-                    conn.get_raw_conn() as *mut _,
-                    &mut sc as *mut _,
-                    &mut ctx_ptr as *mut _,
-                )
-            };
-            if rc == 0 {
-                st.cursor_ctx = ctx_ptr;
-            } else {
-                eprintln!("[x11] xcb_cursor_context_new failed rc={}", rc);
-            }
-        }
-    }
 
     let mut fds = [libc::pollfd {
         fd: unsafe { jfn_wake_event_fd(mailbox.wake) },
@@ -766,13 +713,8 @@ fn cursor_thread_body(
         drain_cursor_requests(&mut st, &mailbox);
     }
 
-    if !st.cursor_ctx.is_null() {
-        unsafe { cursor_ffi::xcb_cursor_context_free(st.cursor_ctx) };
-        st.cursor_ctx = std::ptr::null_mut();
-    }
     if st.current_cursor != 0 {
-        let cur = x::Cursor::new(st.current_cursor);
-        st.conn.send_request(&x::FreeCursor { cursor: cur });
+        let _ = st.conn.free_cursor(st.current_cursor);
         let _ = st.conn.flush();
     }
 }
@@ -868,7 +810,11 @@ fn handle_event(st: &mut State, ev: xcb::Event) {
     }
 }
 
-pub fn start(conn: Arc<xcb::Connection>, screen_num: i32, parent: x::Window) -> Handle {
+pub fn start(screen_num: i32, parent: u32) -> Option<Handle> {
+    let Some(conn) = crate::x11_state::xcb_conn() else {
+        eprintln!("[x11] xcb input connection unavailable");
+        return None;
+    };
     let mailbox = Arc::new(CursorMailbox::new());
     let input_mailbox = Arc::new(InputMailbox::new());
     let st = State {
@@ -893,11 +839,10 @@ pub fn start(conn: Arc<xcb::Connection>, screen_num: i32, parent: x::Window) -> 
         .spawn(move || input_dispatch_thread_body(input_thread_mailbox))
         .expect("spawn x11 input dispatch thread");
 
-    let cursor_conn = conn.clone();
     let cursor_mailbox = mailbox.clone();
     let cursor_join = std::thread::Builder::new()
         .name("jfn-x11-cursor".into())
-        .spawn(move || cursor_thread_body(cursor_conn, screen_num, parent, cursor_mailbox))
+        .spawn(move || cursor_thread_body(screen_num, parent, cursor_mailbox))
         .expect("spawn x11 cursor thread");
 
     let join = std::thread::Builder::new()
@@ -905,15 +850,13 @@ pub fn start(conn: Arc<xcb::Connection>, screen_num: i32, parent: x::Window) -> 
         .spawn(move || input_thread_body(st))
         .expect("spawn x11 input thread");
 
-    Handle {
-        conn,
-        parent,
+    Some(Handle {
         join: Some(join),
         cursor_join: Some(cursor_join),
         input_join: Some(input_join),
         mailbox,
         input_mailbox,
-    }
+    })
 }
 
 pub fn set_cursor(handle: &Handle, t: u32) {
