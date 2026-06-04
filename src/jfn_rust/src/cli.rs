@@ -1,14 +1,18 @@
-//! Argv parser for jellyfin-desktop, built on clap. `Cli::parse()` reads the
-//! OS argv directly and clap owns `--help`, usage, and error rendering.
-//! `--version` is the one exception: it stays a plain `bool` intercepted by
-//! `app::jfn_app_main` after parsing, so the libmpv version probe (which the
-//! version string needs) only fires when `--version` is actually requested,
-//! not on every launch.
+//! Argv parser for jellyfin-desktop, built on clap. `--version` is a plain
+//! `bool` intercepted by `app::jfn_app_main` after parsing, so the libmpv
+//! version probe the version string needs only fires when `--version` is
+//! actually requested.
 
 use clap::{ArgAction, Parser, ValueEnum};
 
-/// Preferred paint path. A preference, not a force: the chosen tier is
-/// probed and gracefully falls back down the chain dmabuf → gpu → shm.
+const ENV_LOG_LEVEL: &str = "JELLYFIN_DESKTOP_LOG_LEVEL";
+const ENV_LOG_FILE: &str = "JELLYFIN_DESKTOP_LOG_FILE";
+const ENV_CONFIG_DIR: &str = "JELLYFIN_DESKTOP_CONFIG_DIR";
+const ENV_CACHE_DIR: &str = "JELLYFIN_DESKTOP_CACHE_DIR";
+
+#[cfg(test)]
+const ENV_BACKED: &[&str] = &[ENV_LOG_LEVEL, ENV_LOG_FILE, ENV_CONFIG_DIR, ENV_CACHE_DIR];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Paint {
     /// Zero-copy dmabuf shared-texture path: EGL/GBM subsurface on
@@ -22,7 +26,6 @@ pub enum Paint {
     Shm,
 }
 
-/// Display backend forced by `--platform` (Linux only).
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum PlatformArg {
@@ -48,19 +51,19 @@ pub struct Cli {
     pub version: bool,
 
     /// Log filter, e.g. info | debug | debug,mpv=trace,CEF=off (default: info).
-    #[arg(long, env = "JELLYFIN_DESKTOP_LOG_LEVEL")]
+    #[arg(long, env = ENV_LOG_LEVEL)]
     pub log_level: Option<String>,
 
     /// Write logs to this file ('' to disable).
-    #[arg(long, env = "JELLYFIN_DESKTOP_LOG_FILE")]
+    #[arg(long, env = ENV_LOG_FILE)]
     pub log_file: Option<String>,
 
     /// Override the app config directory.
-    #[arg(long, env = "JELLYFIN_DESKTOP_CONFIG_DIR")]
+    #[arg(long, env = ENV_CONFIG_DIR)]
     pub config_dir: Option<String>,
 
     /// Override the CEF/cache directory.
-    #[arg(long, env = "JELLYFIN_DESKTOP_CACHE_DIR")]
+    #[arg(long, env = ENV_CACHE_DIR)]
     pub cache_dir: Option<String>,
 
     /// Hardware decoding mode (default: no).
@@ -101,7 +104,6 @@ pub struct Cli {
     #[cfg(target_os = "linux")]
     #[arg(long, value_enum)]
     pub platform_paint: Option<Paint>,
-
 }
 
 #[cfg(test)]
@@ -124,6 +126,32 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             unsafe { std::env::remove_var(self.0) };
+        }
+    }
+
+    // clap reads the real process env at parse time, so "unset" assertions must clear it first.
+    struct EnvClear(Vec<(&'static str, Option<String>)>);
+    impl EnvClear {
+        fn new() -> Self {
+            let saved = ENV_BACKED
+                .iter()
+                .map(|&k| {
+                    let prev = std::env::var(k).ok();
+                    unsafe { std::env::remove_var(k) };
+                    (k, prev)
+                })
+                .collect();
+            EnvClear(saved)
+        }
+    }
+    impl Drop for EnvClear {
+        fn drop(&mut self) {
+            for (k, prev) in &self.0 {
+                match prev {
+                    Some(v) => unsafe { std::env::set_var(k, v) },
+                    None => unsafe { std::env::remove_var(k) },
+                }
+            }
         }
     }
 
@@ -203,6 +231,7 @@ mod tests {
     #[test]
     fn no_args_all_unset() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _clear = EnvClear::new();
         let a = ok(&["app"]);
         assert!(a.hwdec.is_none());
         assert!(a.audio_passthrough.is_none());
@@ -274,6 +303,7 @@ mod tests {
     #[test]
     fn log_file_unset_vs_explicit_empty() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _clear = EnvClear::new();
         assert!(ok(&["app"]).log_file.is_none());
         assert_eq!(ok(&["app", "--log-file="]).log_file.as_deref(), Some(""));
     }
@@ -351,7 +381,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn wid_is_rejected() {
-        assert_eq!(err_kind(&["app", "--wid", "1234"]), ErrorKind::UnknownArgument);
+        assert_eq!(
+            err_kind(&["app", "--wid", "1234"]),
+            ErrorKind::UnknownArgument
+        );
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -374,14 +407,14 @@ mod tests {
     #[test]
     fn env_log_level_fallback() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _v = EnvGuard::set("JELLYFIN_DESKTOP_LOG_LEVEL", "debug");
+        let _v = EnvGuard::set(ENV_LOG_LEVEL, "debug");
         assert_eq!(ok(&["app"]).log_level.as_deref(), Some("debug"));
     }
 
     #[test]
     fn env_cli_flag_overrides_env() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _v = EnvGuard::set("JELLYFIN_DESKTOP_LOG_LEVEL", "debug");
+        let _v = EnvGuard::set(ENV_LOG_LEVEL, "debug");
         assert_eq!(
             ok(&["app", "--log-level", "info"]).log_level.as_deref(),
             Some("info")
@@ -391,12 +424,12 @@ mod tests {
     #[test]
     fn env_config_dir_fallback() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _v = EnvGuard::set("JELLYFIN_DESKTOP_CONFIG_DIR", "/tmp/jfd-cfg");
+        let _v = EnvGuard::set(ENV_CONFIG_DIR, "/tmp/jfd-cfg");
         assert_eq!(ok(&["app"]).config_dir.as_deref(), Some("/tmp/jfd-cfg"));
     }
 
-    // Help text writes these defaults as literals; catch a drift in the
-    // backing consts.
+    // The `///` help strings hardcode these defaults as literals; nothing
+    // links them to the consts, so guard the drift here.
     #[test]
     fn const_defaults_match_help_text() {
         assert_eq!(jfn_mpv::HWDEC_DEFAULT, "no");

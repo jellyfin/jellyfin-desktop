@@ -289,8 +289,6 @@ pub(crate) struct ExtraInfo {
     scripts: Vec<InjectedScript>,
     device_profile_json: Option<String>,
     shared_textures_enabled: bool,
-    // Effective decoration mode, resolved by the browser process (the renderer
-    // has no Platform on Linux to resolve it itself). Drives only the settings UI.
     window_decorations: Option<WindowDecorations>,
 }
 
@@ -496,9 +494,6 @@ pub(crate) fn build_for_kind(
             {
                 extra_info.device_profile_json = Some(json.clone());
             }
-            // Resolve the effective decoration mode here (the Platform is
-            // installed in the browser process) and ship it to the renderer,
-            // which has no Platform on Linux. Used only for the settings UI.
             extra_info.window_decorations = Some(jfn_config::window_decorations_mode());
             Some(extra_info)
         }

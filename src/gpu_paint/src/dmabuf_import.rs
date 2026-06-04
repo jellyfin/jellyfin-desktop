@@ -1,12 +1,4 @@
 //! Vulkan dmabuf import for CEF accelerated-paint frames.
-//!
-//! Wraps a CEF dmabuf fd as a `wgpu::Texture` via the wgpu-hal Vulkan
-//! backdoor (external memory + DRM format modifier). The frame is
-//! re-imported on every paint: wgpu's resource tracking then inserts the
-//! `UNDEFINED -> shader-read` transition (which makes the producer's
-//! writes visible) and defers image/memory destruction until the GPU is
-//! done with the submission, so no manual barriers or import caching are
-//! needed. The import only aliases the fd — there is no pixel copy.
 
 use std::ffi::CStr;
 use std::os::fd::AsRawFd;
@@ -18,22 +10,16 @@ use wgpu_hal::vulkan;
 use crate::error::GpuPaintError;
 use crate::types::{DmabufFormat, DmabufFrame};
 
-/// `DRM_FORMAT_MOD_INVALID` — the producer did not negotiate an explicit
-/// modifier; the buffer is in the driver's implicit layout.
 const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
 
-/// Extensions wgpu-hal does not enable by default that we add via the
-/// device-create callback when the physical device supports them. The
-/// `external_memory_fd` / `external_memory_dma_buf` pair is already added
-/// by wgpu-hal itself. `image_drm_format_modifier` is required to alias a
-/// tiled dmabuf; `queue_family_foreign` is required for the ownership
-/// barrier that acquires the producer-written image before sampling.
+/// Extensions wgpu-hal does not enable itself; added via the
+/// device-create callback. The `external_memory_fd` /
+/// `external_memory_dma_buf` pair is already added by wgpu-hal.
 const EXTRA_EXTENSIONS: [&CStr; 2] = [
     ext::image_drm_format_modifier::NAME,
     ext::queue_family_foreign::NAME,
 ];
 
-/// Extensions that must end up enabled for [`import`] to work.
 const REQUIRED_EXTENSIONS: [&CStr; 4] = [
     khr::external_memory_fd::NAME,
     ext::external_memory_dma_buf::NAME,
@@ -53,9 +39,8 @@ fn device_extensions(
     unsafe { instance.enumerate_device_extension_properties(phys) }.unwrap_or_default()
 }
 
-/// The subset of [`EXTRA_EXTENSIONS`] the device actually supports —
-/// pushed into the device-create extension list. Pushing an unsupported
-/// extension makes `vkCreateDevice` hard-error, so this filter matters.
+/// Filtered to extensions the device advertises: pushing an unsupported
+/// extension makes `vkCreateDevice` hard-error.
 pub(crate) fn extra_device_extensions(
     instance: &ash::Instance,
     phys: vk::PhysicalDevice,
@@ -75,8 +60,6 @@ fn required_extensions_present(instance: &ash::Instance, phys: vk::PhysicalDevic
         .all(|want| available.iter().any(|p| ext_name(p) == *want))
 }
 
-/// Post-build confirmation that the built device actually enabled every
-/// required extension (the import-capable gate is only valid if so).
 pub(crate) fn required_extensions_enabled(device: &wgpu::Device) -> bool {
     unsafe { device.as_hal::<vulkan::Api>() }
         .map(|d| {
@@ -102,11 +85,6 @@ fn wgpu_format(format: DmabufFormat) -> wgpu::TextureFormat {
     }
 }
 
-/// Capability gate: required extensions present AND the device reports it
-/// can import a dma_buf BGRA8 sampled image for at least one DRM modifier
-/// it advertises. Read-only Vulkan queries; no allocation. Validates the
-/// same-GPU case the overwhelmingly common deployment hits; a cross-GPU
-/// modifier that still slips through fails per-frame at [`import`].
 pub(crate) fn import_supported(instance: &ash::Instance, phys: vk::PhysicalDevice) -> bool {
     if !required_extensions_present(instance, phys) {
         return false;
@@ -119,7 +97,6 @@ unsafe fn format_importable(
     phys: vk::PhysicalDevice,
     format: vk::Format,
 ) -> bool {
-    // Two-call pattern: count, then fill the modifier list.
     let mut list = vk::DrmFormatModifierPropertiesListEXT::default();
     let mut props2 = vk::FormatProperties2::default().push_next(&mut list);
     unsafe { instance.get_physical_device_format_properties2(phys, format, &mut props2) };
@@ -164,10 +141,9 @@ unsafe fn format_importable(
     })
 }
 
-/// Import one CEF dmabuf frame as a sampled `wgpu::Texture`. Returns the
-/// texture (which owns the Vulkan image and imported memory, freed on drop
-/// once the GPU is idle) and the raw `VkImage` handle, which the caller
-/// passes to [`acquire_barrier`] before sampling.
+/// Import one CEF dmabuf frame as a sampled `wgpu::Texture`. The returned
+/// raw `VkImage` handle must be passed to [`acquire_barrier`] before
+/// sampling.
 ///
 /// # Safety
 /// - `frame.planes[0].fd` must be a valid dmabuf fd describing a
@@ -204,11 +180,10 @@ pub(crate) unsafe fn import(
     Ok((texture, image.as_raw()))
 }
 
-/// Record a queue-family ownership acquire for an imported dmabuf image:
-/// transfer ownership from the foreign producer to our graphics queue and
-/// move it into the shader-read layout. Without this the GPU samples an
-/// image it does not own and faults (device lost). Record this with the
-/// raw HAL encoding API only; wgpu 29 forbids mixing raw and normal wgpu
+/// Acquire an imported dmabuf image from the foreign producer queue into
+/// our graphics queue and the shader-read layout. Without this the GPU
+/// samples an image it does not own and faults (device lost). Must use the
+/// raw HAL encoding API only: wgpu 29 forbids mixing raw and normal wgpu
 /// commands in the same `CommandEncoder`.
 pub(crate) fn acquire_barrier(
     device: &wgpu::Device,
@@ -257,12 +232,10 @@ unsafe fn import_hal_texture(
     let ash_device = hal_device.raw_device();
     let instance = hal_device.shared_instance().raw_instance();
 
-    // --- create the image aliasing the dmabuf, no memory bound yet ---
-    // CEF exports with the implicit modifier (`DRM_FORMAT_MOD_INVALID`) on
-    // the X11/RADV path: there is no explicit tiling to describe, so import
-    // with OPTIMAL tiling and let the (same) driver interpret its own
-    // layout. Only an explicit modifier uses the DRM-modifier path (one
-    // layout per memory plane; compressed modifiers add an auxiliary plane).
+    // The implicit modifier (`DRM_FORMAT_MOD_INVALID`) has no explicit
+    // tiling to describe, so import with OPTIMAL tiling and let the (same)
+    // driver interpret its own layout; only an explicit modifier may use
+    // the DRM-modifier path.
     let explicit = frame.modifier != DRM_FORMAT_MOD_INVALID;
     let plane_layouts: Vec<vk::SubresourceLayout> = frame
         .planes
@@ -353,8 +326,6 @@ unsafe fn import_hal_texture(
         memory_flags: wgpu_hal::MemoryFlags::empty(),
         view_formats: vec![],
     };
-    // hal frees the image (drop_callback None) and the memory (Dedicated)
-    // when the wgpu texture is dropped and the GPU is done with it.
     let texture = unsafe {
         hal_device.texture_from_raw(image, &desc, None, vulkan::TextureMemory::Dedicated(memory))
     };

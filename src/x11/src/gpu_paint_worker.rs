@@ -5,10 +5,6 @@ use std::thread::{self, JoinHandle};
 
 use jfn_gpu_paint::{DirtyRect, DmabufFrame, GpuContext, GpuPainter, PixelFrame, WindowTarget};
 
-// Minimal libxcb FFI for sizing the overlay window from the worker thread.
-// libxcb is thread-safe, so configuring on the shared connection here keeps
-// the window extent in lockstep with the swapchain extent set by the present
-// just below. The xcb crate links libxcb, so these resolve at link time.
 const XCB_CONFIG_WINDOW_WIDTH: u16 = 1 << 2;
 const XCB_CONFIG_WINDOW_HEIGHT: u16 = 1 << 3;
 
@@ -27,9 +23,6 @@ unsafe extern "C" {
     fn xcb_flush(c: *mut c_void) -> c_int;
 }
 
-/// Resize the overlay window to `(w, h)` and flush, via raw libxcb on the
-/// worker thread. `conn` is the `xcb_connection_t*` copied out of the Xcb
-/// target; `window` is the overlay XID.
 unsafe fn configure_window_size(conn: *mut c_void, window: u32, w: u32, h: u32) {
     let value_mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
     let value_list: [u32; 2] = [w, h];
@@ -201,8 +194,6 @@ fn run_worker(
 ) {
     let mut painter: Option<GpuPainter> = None;
 
-    // Raw handles for lockstep window sizing on the dmabuf path. Copied out
-    // before `target` is consumed into the painter below.
     let (xcb_conn, xcb_window) = match &target {
         WindowTarget::Xcb {
             connection, window, ..
@@ -278,10 +269,10 @@ fn run_worker(
                 }
             }
             PendingFrame::Dmabuf(dmabuf) => {
-                // Lockstep: size the overlay to exactly this frame before the
-                // swapchain reconfigures to it on present, so window extent ==
-                // swapchain extent == content. jfn_x11_surface_resize omits the
-                // window size for the dmabuf tier, deferring it to here.
+                // Size the overlay before the swapchain reconfigures on present,
+                // so window extent and swapchain extent stay matched.
+                // jfn_x11_surface_resize omits window sizing for the dmabuf tier,
+                // so nothing else does it.
                 if let Some(window) = xcb_window {
                     let size = (dmabuf.width, dmabuf.height);
                     if last_configured != Some(size) {
@@ -289,9 +280,9 @@ fn run_worker(
                         last_configured = Some(size);
                     }
                 }
-                // Transient failure: drop this frame and keep going. CEF is
-                // producing dmabufs (shared textures on), so there is no
-                // per-surface CPU fallback — latching failed would strand it.
+                // Don't latch `failed` here as the pixels path does: with CEF
+                // producing dmabufs there is no per-surface CPU fallback, so
+                // latching would strand the surface with no output.
                 if let Err(e) = painter.push_dmabuf(dmabuf) {
                     tracing::warn!("[x11] gpu_paint worker push_dmabuf failed: {e}");
                 }

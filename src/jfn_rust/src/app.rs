@@ -87,11 +87,8 @@ pub fn jfn_app_main() -> c_int {
         return rc;
     }
 
-    // 2. Parse argv early enough for path overrides to affect settings load
-    //    and CEF root_cache_path construction. clap reads std::env::args_os()
-    //    itself and runs only in the browser process (subprocesses already
-    //    returned above). clap auto-handles --help and bad args (prints +
-    //    exits); --version is the one flag we intercept ourselves.
+    // Path overrides must be applied before settings load and CEF
+    // root_cache_path construction below.
     let cli = cli::Cli::parse();
     if cli.version {
         print_version();
@@ -237,14 +234,12 @@ pub fn jfn_app_main() -> c_int {
         jfn_platform_abi::install(p);
         tracing::info!(target: "Main", "Display backend: {}",
             if backend == DisplayBackend::Wayland { "wayland" } else { "x11" });
-
     }
 
     // 10. Install signal handler (Unix) / Windows ConsoleCtrl handler.
     install_signal_handler();
 
-    // 11. Single-instance check. The IPC endpoint is keyed by the config
-    //     directory's instance.json instanceId.
+    // 11. Single-instance check.
     {
         if crate::single_instance::try_signal_existing() {
             tracing::info!(target: "Main", "Signaled existing instance, exiting");

@@ -3,10 +3,9 @@
 //! mpv's `--geometry` is specified in physical X11 pixels, while Jellyfin
 //! stores/restores window size in logical pixels. At startup this backend must
 //! therefore predict the same X11 HiDPI scale mpv will later expose through
-//! `display-hidpi-scale`. Mirror mpv's X11 logic from
-//! `third_party/mpv/video/out/x11_common.c`: prefer the `Xft.dpi` Xresource,
-//! then fall back to physical screen DPI, with both paths quantized to
-//! half-step scales.
+//! `display-hidpi-scale`, so this mirrors mpv's logic in
+//! `third_party/mpv/video/out/x11_common.c` — including the half-step
+//! quantization the tests pin.
 
 use x11rb::connection::Connection;
 use x11rb::resource_manager::new_from_resource_manager;
@@ -14,7 +13,6 @@ use x11rb::rust_connection::RustConnection;
 
 const BASE_DPI: f64 = 96.0;
 
-/// Query the startup display scale for X11, matching mpv's X11 DPI logic.
 pub(crate) fn query_display_scale() -> Option<f32> {
     let (conn, screen_num) = RustConnection::connect(None).ok()?;
     if let Some(scale) = query_xft_dpi_scale(&conn) {
@@ -67,11 +65,7 @@ fn quantize_dpi_steps(dpi: f64) -> Option<i32> {
         return None;
     }
     let s = (2.0 * dpi / BASE_DPI).clamp(0.0, 20.0).round_ties_even() as i32;
-    if s > 2 && s < 20 {
-        Some(s)
-    } else {
-        None
-    }
+    if s > 2 && s < 20 { Some(s) } else { None }
 }
 
 #[cfg(test)]

@@ -15,10 +15,8 @@ use crate::surface::{
     jfn_x11_surface_present_software, jfn_x11_surface_resize, jfn_x11_surface_set_visible,
 };
 
-/// Unpack a `CefAcceleratedPaintInfo` into an owned [`DmabufFrame`]. CEF
-/// reclaims the original fd when the paint callback returns, so the fd is
-/// dup'd into an `OwnedFd` the presenter worker can outlive. CEF overlay
-/// frames are single-plane 8888.
+/// CEF reclaims the original fd when the paint callback returns, so each plane
+/// fd is dup'd into an `OwnedFd` the presenter worker can outlive.
 unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<DmabufFrame> {
     let info = info as *const cef::sys::_cef_accelerated_paint_info_t;
     if info.is_null() {
@@ -38,12 +36,10 @@ unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<DmabufFrame> {
     if w <= 0 || h <= 0 {
         return None;
     }
-    // Visible rect can be smaller than the padded coded size; the gate
-    // compares the visible size against the window's expected size.
     let vw = info.extra.visible_rect.width.max(0);
     let vh = info.extra.visible_rect.height.max(0);
-    // Include every memory plane the modifier uses (DCC/CCS modifiers add an
-    // auxiliary plane). Each is dup'd into an OwnedFd the worker can outlive.
+    // Include every memory plane the modifier uses; DCC/CCS modifiers add an
+    // auxiliary plane beyond the color plane.
     let n = info.plane_count.clamp(0, info.planes.len() as i32) as usize;
     if n < 1 {
         return None;
@@ -174,9 +170,8 @@ impl Platform for X11Platform {
     }
 
     fn end_transition(&self) {
-        // Only end the gate. Overlay position is owned by the geometry thread;
-        // ending a CEF content transition must not re-apply it from a fresh,
-        // possibly mid-transition query.
+        // Only end the gate; the geometry thread is the sole owner of overlay
+        // position, so do not re-apply it here.
         if let Some(m) = crate::x11_state::MUT.lock().as_mut() {
             m.gate.end();
         }

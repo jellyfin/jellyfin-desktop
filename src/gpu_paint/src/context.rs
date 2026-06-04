@@ -58,18 +58,12 @@ impl GpuContext {
         }
     }
 
-    /// Build the full context. The device is opened through the wgpu-hal
-    /// Vulkan backdoor so we can enable the extra device extensions the
-    /// dmabuf-import path needs (`request_device` allows none). Blocks on
-    /// device creation (the native Vulkan path resolves synchronously).
     pub fn new() -> Result<Arc<Self>, GpuPaintError> {
         let instance = build_instance();
         let adapter = pick_adapter(&instance).ok_or(GpuPaintError::NoAdapter)?;
         let info = adapter.get_info();
         let limits = adapter.limits();
 
-        // Decide dmabuf support and which extra extensions to request,
-        // from the physical device, before opening it.
         let (want_dmabuf, extra_exts) = unsafe {
             match adapter.as_hal::<vulkan::Api>() {
                 Some(hal) => {
@@ -160,8 +154,6 @@ fn build_instance() -> wgpu::Instance {
     })
 }
 
-/// Cheap dmabuf-import estimate from an adapter (no device): required
-/// extensions present + the format reports an importable DRM modifier.
 fn probe_dmabuf_import(adapter: &wgpu::Adapter) -> bool {
     unsafe {
         adapter

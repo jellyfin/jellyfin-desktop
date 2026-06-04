@@ -1,9 +1,8 @@
 //! Single-instance gate.
 //!
 //! Lets a second invocation of the app using the same config directory raise
-//! the existing window instead of starting a fresh process. The config
-//! directory owns an `instance.json` file with an `instanceId` string; that ID
-//! is used to name the platform IPC endpoint.
+//! the existing window instead of starting a fresh process. Implementation
+//! per platform:
 //!
 //! - Unix: AF_UNIX SOCK_STREAM socket under `$XDG_RUNTIME_DIR` or `/tmp`.
 //!   The new process writes `raise [token]\n` and the running process's

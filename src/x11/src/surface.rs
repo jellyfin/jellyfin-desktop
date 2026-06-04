@@ -54,7 +54,7 @@ fn create_overlay_window(
     });
 
     // Tie the overlay to mpv's window so the WM raises/lowers/covers it with
-    // the parent, instead of bypassing the WM with override_redirect.
+    // the parent.
     conn.send_request(&x::ChangeProperty {
         mode: x::PropMode::Replace,
         window: win,
@@ -63,8 +63,6 @@ fn create_overlay_window(
         data: &[m.parent],
     });
 
-    // Utility window + skip taskbar/pager keeps it decoration/taskbar-free on
-    // normal EWMH WMs while still letting the WM manage stacking as a transient.
     conn.send_request(&x::ChangeProperty {
         mode: x::PropMode::Replace,
         window: win,
@@ -77,7 +75,10 @@ fn create_overlay_window(
         window: win,
         property: m.atoms.net_wm_state,
         r#type: x::ATOM_ATOM,
-        data: &[m.atoms.net_wm_state_skip_taskbar, m.atoms.net_wm_state_skip_pager],
+        data: &[
+            m.atoms.net_wm_state_skip_taskbar,
+            m.atoms.net_wm_state_skip_pager,
+        ],
     });
 
     // Motif hints: flags=MWM_HINTS_DECORATIONS, decorations=0.
@@ -160,9 +161,8 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     m.live.push(s);
     drop(g);
 
-    // Kick the geometry watcher: the parent may already be at its final WM
-    // placement (no further ConfigureNotify), so without this the new overlay
-    // would sit at stale geometry until the next resize.
+    // The parent may already be at its final WM placement with no further
+    // ConfigureNotify coming, leaving this new overlay at stale geometry.
     crate::geometry::request_resync();
     s
 }
@@ -181,9 +181,8 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
         if let Some(m) = g.as_mut()
             && let Some(pos) = m.live.iter().position(|&p| p == s)
         {
-            // Order-preserving: m.live order must stay equal to the z-order
-            // (b.layers) so the geometry watcher can restack overlays above the
-            // parent in the correct order. swap_remove would scramble it.
+            // Order-preserving: m.live must stay in z-order for the geometry
+            // watcher's restack. swap_remove would scramble it.
             m.live.remove(pos);
         }
     }
@@ -212,11 +211,9 @@ pub unsafe fn jfn_x11_free_surface(s: *mut PlatformSurface) {
     drop(unsafe { Box::from_raw(s) });
 }
 
-/// Present a CEF `OnAcceleratedPaint` dmabuf frame through the GPU
-/// worker. Active only when the dmabuf tier resolved at init
-/// (`use_dmabuf`); CEF then emits accelerated paints that route here
-/// instead of the pixel-upload software path. The caller (make_platform)
-/// has already unpacked `CefAcceleratedPaintInfo` into `frame`.
+/// Present a CEF `OnAcceleratedPaint` dmabuf frame through the GPU worker. Only
+/// reached when the dmabuf tier resolved at init (`use_dmabuf`). The caller has
+/// already unpacked `CefAcceleratedPaintInfo` into `frame`.
 pub unsafe fn jfn_x11_surface_present_dmabuf(s: *mut PlatformSurface, frame: DmabufFrame) -> bool {
     if jfn_shutting_down() || s.is_null() {
         return false;
@@ -234,10 +231,9 @@ pub unsafe fn jfn_x11_surface_present_dmabuf(s: *mut PlatformSurface, frame: Dma
         return false;
     }
 
-    // Drop stale-size frames while a resize is in flight so the last good
-    // frame holds until CEF relays out at the new size (mirrors Windows'
-    // main-surface present path). Compare the visible size; the coded size
-    // can be padded.
+    // Drop stale-size frames while a resize is in flight so the last good frame
+    // holds until CEF relays out at the new size. Gate on the visible size; the
+    // coded size can be padded.
     let gate_size = if frame.visible_w > 0 && frame.visible_h > 0 {
         (frame.visible_w as i32, frame.visible_h as i32)
     } else {
@@ -434,10 +430,9 @@ pub unsafe fn jfn_x11_surface_resize(
     surf.pw = pw;
     surf.ph = ph;
 
-    // Dmabuf tier: the GPU worker sizes the overlay in lockstep with the
-    // frame it presents (below), so don't drive the window size ahead of
-    // content here. Arm the gate to drop stale-size frames during the
-    // resize. Software tiers keep eager resize.
+    // On the dmabuf tier the GPU worker sizes the overlay in lockstep with the
+    // frame it presents, so don't drive the window size ahead of content here;
+    // just arm the gate to drop stale-size frames during the resize.
     let dmabuf_lockstep = m.use_dmabuf && surf.gpu_paint_worker.is_some();
     if dmabuf_lockstep && pw > 0 && ph > 0 && old != (pw, ph) {
         m.gate.begin_capturing(old);
@@ -454,10 +449,9 @@ pub unsafe fn jfn_x11_surface_resize(
         return;
     }
 
-    // Size only. Overlay position is owned exclusively by the geometry thread
-    // (apply_overlay_positions_locked); writing X/Y here would race it with a
-    // stale value during fullscreen/maximize transitions. The dmabuf tier
-    // defers sizing to the GPU worker, so there's nothing to send.
+    // Size only: overlay position is owned exclusively by the geometry thread;
+    // writing X/Y here would race it with a stale value during
+    // fullscreen/maximize transitions.
     if !dmabuf_lockstep {
         conn.send_request(&x::ConfigureWindow {
             window: surf.window,
@@ -490,9 +484,8 @@ pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool
     }
 
     if visible {
-        // Place from the geometry thread's cached parent geometry (the single
-        // source of truth for position); it keeps m.parent_x/parent_y current.
-        // Re-querying here would race the geometry thread with a stale value.
+        // Place from the geometry thread's cached parent geometry, the single
+        // source of truth for position; re-querying here would race it.
         let pick = |s: i32, p: i32| -> u32 {
             if s > 0 {
                 s as u32

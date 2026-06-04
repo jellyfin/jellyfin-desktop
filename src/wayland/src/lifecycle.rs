@@ -22,7 +22,6 @@ use jfn_playback::shutdown::jfn_shutdown_initiate;
 // Helpers
 // =====================================================================
 
-/// CLI-facing name of a paint tier, for `--platform-paint` log messages.
 fn paint_name(mode: crate::paint_override::WlPaintOverride) -> &'static str {
     use crate::paint_override::WlPaintOverride as M;
     match mode {
@@ -96,10 +95,6 @@ pub fn jfn_wl_lifecycle_init() -> bool {
         unsafe { write_close_cb(slot, Some(close_cb_trampoline)) };
     }
 
-    // Resolve the paint preference down the dmabuf → gpu → shm chain. The
-    // `--platform-paint` preference picks the entry tier; the dmabuf probe
-    // still runs and an unusable tier degrades to the next. A degrade from
-    // an explicitly requested tier warns; auto-resolution only logs info.
     use crate::paint_override::WlPaintOverride as Req;
     let requested = crate::paint_override::paint_override();
     let explicit = requested.is_some();
@@ -139,7 +134,6 @@ pub fn jfn_wl_lifecycle_init() -> bool {
                 tracing::info!("paint: EGL/GBM dmabuf shared texture");
                 resolved = Req::Dmabuf;
             } else {
-                // dmabuf unavailable — a usable Vulkan adapter beats wl_shm.
                 tracing::info!("paint: EGL dmabuf unavailable; trying gpu");
                 jfn_platform_abi::get().set_shared_texture_unsupported();
                 want_gpu_paint = true;
@@ -154,8 +148,6 @@ pub fn jfn_wl_lifecycle_init() -> bool {
                 crate::wl_state::install_gpu_paint(ctx);
             }
             Err(e) => {
-                // shared_texture is already disabled, so CEF emits BGRA
-                // and wl_shm presents it.
                 tracing::info!("paint: Vulkan init failed: {e}; using wl_shm");
                 resolved = Req::Shm;
             }

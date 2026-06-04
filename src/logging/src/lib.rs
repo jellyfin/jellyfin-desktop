@@ -310,7 +310,7 @@ fn probe_meta(target: &'static str, level: tracing::Level) -> Metadata<'static> 
     )
 }
 
-fn prime_enabled_table() {
+fn compute_enabled_table() -> [bool; ENABLED_LEN] {
     use tracing::Level as L;
     let levels = [
         (0u8, L::TRACE),
@@ -319,12 +319,20 @@ fn prime_enabled_table() {
         (3, L::WARN),
         (4, L::ERROR),
     ];
+    let mut table = [false; ENABLED_LEN];
     for (cat_idx, cat_name) in CATEGORY_NAMES.iter().enumerate() {
         for (lvl_u8, tlvl) in levels {
             let md = probe_meta(cat_name, tlvl);
             let on = tracing::dispatcher::get_default(|d| d.enabled(&md));
-            ENABLED[enabled_slot(cat_idx as u8, lvl_u8)].store(on, Ordering::Relaxed);
+            table[enabled_slot(cat_idx as u8, lvl_u8)] = on;
         }
+    }
+    table
+}
+
+fn prime_enabled_table() {
+    for (i, on) in compute_enabled_table().iter().enumerate() {
+        ENABLED[i].store(*on, Ordering::Relaxed);
     }
 }
 
@@ -876,17 +884,11 @@ mod tests {
     }
 
     fn probe_with_filter(directive: &str, cat_idx: usize, lvl: u8) -> bool {
-        // Build a one-shot Registry with just our EnvFilter, scoped to
-        // this thread via with_default. prime_enabled_table reads from
-        // the thread-local dispatcher, so the global STATE isn't touched.
-        // Reset ENABLED slot first so a leak from another test can't
-        // confuse the assertion.
-        ENABLED[enabled_slot(cat_idx as u8, lvl)].store(false, Ordering::Relaxed);
         let filter = EnvFilter::new(directive);
         let subscriber = Registry::default().with(filter);
         let dispatch = tracing::Dispatch::new(subscriber);
-        tracing::dispatcher::with_default(&dispatch, prime_enabled_table);
-        ENABLED[enabled_slot(cat_idx as u8, lvl)].load(Ordering::Relaxed)
+        let table = tracing::dispatcher::with_default(&dispatch, compute_enabled_table);
+        table[enabled_slot(cat_idx as u8, lvl)]
     }
 
     #[test]

@@ -6,8 +6,6 @@
 
 use std::ffi::CString;
 
-// --- generic Rust helpers --------------------------------------------------
-
 /// Returns true if the supplied `MutexGuard`-bearing `Option` already holds
 /// a value — i.e. a singleton `init` is being called twice. Crashes loud in
 /// debug; logs + returns true in release so a programmer error never
