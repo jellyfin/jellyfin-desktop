@@ -118,20 +118,17 @@ pub enum DisplayBackend {
     MacOS,
 }
 
-/// How the window's decorations (titlebar / borders) are drawn.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum WindowDecorations {
-    /// The app draws its own titlebar in-page (client-side).
+    /// Client-side: the app draws its own titlebar in-page.
     Csd,
-    /// The platform draws the decorations; left at the platform's own colors.
     Server,
-    /// The platform draws the decorations and tints them to the theme color.
     ServerThemed,
 }
 
 impl WindowDecorations {
-    /// Canonical wire/persistence string — settings.json, the JS↔Rust IPC, and
-    /// the web settings UI all speak these values.
+    /// Wire/persistence contract: settings.json, the JS↔Rust IPC, and the web
+    /// settings UI all speak these literals.
     pub fn as_str(self) -> &'static str {
         match self {
             WindowDecorations::Csd => "csd",
@@ -140,7 +137,6 @@ impl WindowDecorations {
         }
     }
 
-    /// Inverse of [`as_str`]; `None` on an unrecognized value.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "csd" => Some(WindowDecorations::Csd),
@@ -193,7 +189,6 @@ pub type SurfaceHandle = *mut c_void;
 pub trait Platform: Send + Sync {
     fn display(&self) -> DisplayBackend;
 
-    /// The backend's default decoration mode when the user hasn't chosen one.
     fn default_window_decorations(&self) -> WindowDecorations;
 
     fn early_init(&self) {}

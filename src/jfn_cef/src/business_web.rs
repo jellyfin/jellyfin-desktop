@@ -279,8 +279,7 @@ fn with_args(args: Option<&ListValue>, f: impl FnOnce(&ListValue)) -> bool {
 fn handle_message(message: BrowserMessage) -> bool {
     let args = message.args();
 
-    // mpv handle not yet initialised — IPC arrives before boot completes
-    // (rare). Return false so CEF treats the message as unhandled.
+    // mpv handle not yet initialised — return false so CEF treats the message as unhandled.
     if jfn_mpv_handle_get().is_null() {
         return false;
     }

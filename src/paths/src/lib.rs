@@ -65,7 +65,6 @@ fn ensure(path: PathBuf) -> PathBuf {
     path
 }
 
-/// Atomically write `bytes` to `path`, replacing any existing file.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
@@ -75,10 +74,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// Atomically write `bytes` to `path` only if it does not already exist.
-///
-/// Returns `Ok(true)` when the file was created and `Ok(false)` when another
-/// process won the race and created it first.
+/// `Ok(false)` means another process won the race and created `path` first.
 pub fn write_atomic_noclobber(path: &Path, bytes: &[u8]) -> io::Result<bool> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;

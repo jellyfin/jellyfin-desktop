@@ -1,19 +1,12 @@
-//! CLI-driven X11 paint preference. Set once by `app.rs` before
-//! `early_init`; read by `lifecycle::init` to choose the entry tier of
-//! the dmabuf → gpu → shm fallback chain.
+//! CLI-driven X11 paint preference. Must be set before `early_init`, since the
+//! backing `OnceLock` ignores later writes.
 
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum X11PaintOverride {
-    /// Prefer the zero-copy dmabuf-import path (CEF `OnAcceleratedPaint`
-    /// → Vulkan external memory). Falls back to the Vulkan pixel-upload
-    /// tier when the device can't import dmabufs.
     Dmabuf,
-    /// Prefer the Vulkan pixel-upload path; falls back to shm if no usable
-    /// adapter is available.
     Gpu,
-    /// Prefer the MIT-SHM CPU path. Skips Vulkan init entirely.
     Shm,
 }
 

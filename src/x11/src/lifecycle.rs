@@ -7,7 +7,6 @@ use crate::x11_state::{Atoms, CONN, MUT, Mutable, is_none_gc, is_none_window};
 
 use jfn_mpv::api::jfn_mpv_get_property_int;
 
-/// CLI-facing name of a paint tier, for `--platform-paint` log messages.
 fn paint_name(mode: crate::paint_override::X11PaintOverride) -> &'static str {
     use crate::paint_override::X11PaintOverride as M;
     match mode {
@@ -63,19 +62,15 @@ pub fn query_parent_geometry(
     ))
 }
 
-/// A copied-out overlay descriptor. Holds only XIDs/flags so it can be used
-/// for X I/O after `MUT` is released — never the live `PlatformSurface`.
 #[derive(Copy, Clone)]
 pub(crate) struct OverlaySnap {
     pub window: x::Window,
     pub visible: bool,
-    /// Drive width/height from the geometry thread. False on the dmabuf tier
-    /// once a worker exists, since the GPU worker sizes the window in lockstep.
+    /// False on the dmabuf tier once a worker exists: the GPU worker sizes the
+    /// window in lockstep, so the geometry thread must not drive size too.
     pub send_size: bool,
 }
 
-/// Copy the live overlay list into plain descriptors under the caller's lock so
-/// the X I/O that positions/maps them can run lock-free afterward.
 pub(crate) fn snapshot_live_overlays_locked(m: &Mutable) -> Vec<OverlaySnap> {
     m.live
         .iter()
@@ -90,8 +85,6 @@ pub(crate) fn snapshot_live_overlays_locked(m: &Mutable) -> Vec<OverlaySnap> {
         .collect()
 }
 
-/// Record the freshly queried parent geometry. Cheap field writes only; the
-/// X I/O that mirrors it onto overlays runs lock-free via [`reposition_overlays`].
 pub(crate) fn set_parent_geometry_locked(m: &mut Mutable, px: i32, py: i32, pw: i32, ph: i32) {
     m.parent_x = px;
     m.parent_y = py;
@@ -99,9 +92,6 @@ pub(crate) fn set_parent_geometry_locked(m: &mut Mutable, px: i32, py: i32, pw: 
     m.ph = ph;
 }
 
-/// Position every visible overlay over the parent. Lock-free: operates on a
-/// snapshot and issues only buffered sends + one flush, so it must run after
-/// `MUT` is released.
 pub(crate) fn reposition_overlays(
     conn: &xcb::Connection,
     px: i32,
@@ -145,11 +135,9 @@ pub(crate) fn unmap_overlays(conn: &xcb::Connection, snaps: &[OverlaySnap]) {
     let _ = conn.flush();
 }
 
-/// Re-raise the overlays above `parent`, bottom to top in `snaps` order (which
-/// mirrors the z-order). Mirrors [`crate::surface::jfn_x11_restack`] but runs
-/// lock-free on a snapshot. A WM may drop the transient overlays below the
-/// parent on a fullscreen transition; re-asserting the stack on settle keeps
-/// them visible regardless of WM policy.
+/// Re-raise the overlays above `parent` in `snaps` (z-)order. A WM may drop the
+/// transient overlays below the parent on a fullscreen transition; re-asserting
+/// the stack on settle keeps them visible.
 pub(crate) fn restack_overlays_above(
     conn: &xcb::Connection,
     parent: x::Window,
@@ -173,10 +161,10 @@ pub(crate) fn restack_overlays_above(
 }
 
 /// Ask the WM to make `parent` the active window again. Restoring from the
-/// taskbar re-maps the transient overlays on top of the parent, which can
-/// displace the WM's active window off mpv; without re-asserting it the
-/// taskbar's minimize/activate toggle stalls. Pager source-indication so
-/// focus-stealing prevention still honors it.
+/// taskbar re-maps the transient overlays on top of the parent, displacing the
+/// WM's active window off mpv; without re-asserting it the taskbar's
+/// minimize/activate toggle stalls. Source-indication 2 (pager) so
+/// focus-stealing prevention still honors the request.
 pub(crate) fn activate_parent(
     conn: &xcb::Connection,
     root: x::Window,
@@ -282,12 +270,9 @@ pub fn init() -> bool {
     let (parent_x, parent_y, pw, ph) =
         query_parent_geometry(&conn, parent, root).unwrap_or((0, 0, 1, 1));
 
-    // Resolve the paint preference down the dmabuf → gpu → shm chain. The
-    // `--platform-paint` preference only picks the entry tier; an unusable
-    // tier degrades to the next one. A degrade from an explicitly
-    // requested tier warns; auto-resolution only logs info. dmabuf needs
-    // Vulkan plus the external-memory import capability; without it the
-    // tier degrades to the Vulkan pixel-upload path.
+    // Resolve the paint preference down the dmabuf → gpu → shm chain, where
+    // `--platform-paint` only picks the entry tier and an unusable tier degrades
+    // to the next.
     use crate::paint_override::X11PaintOverride as Req;
     let requested = crate::paint_override::paint_override();
     let explicit = requested.is_some();
@@ -357,9 +342,6 @@ pub fn init() -> bool {
         return false;
     }
 
-    // Input thread handles keyboard/pointer on the shared connection; the
-    // geometry thread watches window structure on its own connection and
-    // repositions overlays via `reposition_overlays`.
     crate::input_lifecycle::start(conn.clone(), parent);
     crate::geometry::start(parent, root);
 

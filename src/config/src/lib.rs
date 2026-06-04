@@ -57,8 +57,6 @@ struct SettingsData {
     disable_gpu_compositing: bool,
     transparent_titlebar: bool,
     force_transcoding: bool,
-    // None = auto (the host platform's default, resolved via the Platform
-    // trait); Some = explicit user choice.
     window_decorations: Option<WindowDecorations>,
     hide_scrollbar: bool,
 }
@@ -261,10 +259,8 @@ impl SettingsData {
             "forceTranscoding".into(),
             Value::Bool(self.force_transcoding),
         );
-        // windowDecorations is intentionally absent: its effective value needs
-        // the Platform default, which isn't available in the CEF renderer where
-        // cli_json runs. The browser process resolves it and ships it through
-        // the injection profile instead (see jfn_cef build_for_kind).
+        // windowDecorations is absent: resolving its effective value needs the
+        // Platform default, unavailable in the CEF renderer where cli_json runs.
         o.insert("hideScrollbar".into(), Value::Bool(self.hide_scrollbar));
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
@@ -507,9 +503,8 @@ bool_accessors!(
     transparent_titlebar
 );
 bool_accessors!(force_transcoding, set_force_transcoding, force_transcoding);
-/// Effective window-decoration mode: the user's explicit choice, or the host
-/// platform's default (via the `Platform` trait) when unset. Browser-process
-/// only — the installed `Platform` is required.
+/// Browser-process only: falls back to the installed `Platform`, which panics
+/// if absent.
 pub fn window_decorations_mode() -> WindowDecorations {
     state()
         .lock()
@@ -531,7 +526,6 @@ pub fn set_window_decorations(v: &str) {
 pub fn client_side_decorations() -> bool {
     window_decorations_mode() == WindowDecorations::Csd
 }
-/// True when the platform's decorations should be tinted to the theme color.
 pub fn titlebar_theme_color() -> bool {
     window_decorations_mode() == WindowDecorations::ServerThemed
 }

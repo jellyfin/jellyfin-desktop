@@ -1,9 +1,4 @@
 //! X11 input thread.
-//!
-//! Owns its own `Arc<xcb::Connection>` and pumps the event queue via
-//! `poll()` over (xcb fd, shutdown wake fd). xkb state lives on this thread
-//! only; cursor and geometry work are delegated to separate wake-driven
-//! threads so event intake stays minimally blocked.
 
 use parking_lot::Mutex;
 use std::ffi::{CString, c_int};
@@ -37,7 +32,6 @@ use jfn_platform_abi::event_flags::{
 const XKB_KEY_XF86BACK: u32 = 0x1008ff26;
 const XKB_KEY_XF86FORWARD: u32 = 0x1008ff27;
 
-/// Cursor request queued for the cursor thread.
 #[derive(Copy, Clone)]
 enum CursorReq {
     Set(u32),
@@ -657,9 +651,8 @@ fn input_thread_body(mut st: State) {
         eprintln!("[x11] xkb setup failed; key input disabled");
     }
 
-    // Subscribe to keyboard/pointer events on the app window. Window
-    // structure (geometry/map state) is watched on a separate connection by
-    // the geometry thread so geometry round-trips never stall input intake.
+    // No STRUCTURE_NOTIFY here: window structure (geometry/map state) is watched
+    // on a separate connection by the geometry thread.
     let mask = x::EventMask::KEY_PRESS
         | x::EventMask::KEY_RELEASE
         | x::EventMask::BUTTON_PRESS

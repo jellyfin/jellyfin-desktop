@@ -27,7 +27,6 @@ fn state() -> &'static IngestState {
 ///   bit 0 — `MPV_EVENT_SHUTDOWN` reached; caller should break its loop.
 pub const INGEST_FLAG_SHUTDOWN: u8 = 1;
 
-/// Per-event caller context supplied by the app-side mpv event consumer.
 struct CallerCtx {
     scale: f32,
     mac: Option<(i32, i32)>,
@@ -106,11 +105,7 @@ pub fn jfn_playback_window_ph() -> i32 {
     state().window_ph()
 }
 
-/// Push an already-decoded mpv event into the coordinator. Returns flag bits —
-/// see [`INGEST_FLAG_SHUTDOWN`].
-///
-/// `macos_logical` carries a valid macOS logical-content size override when
-/// present. Non-macOS callers pass `None`.
+/// Returns flag bits — see [`INGEST_FLAG_SHUTDOWN`].
 pub fn jfn_playback_ingest_mpv_event_owned(
     event: &Event,
     scale: f32,

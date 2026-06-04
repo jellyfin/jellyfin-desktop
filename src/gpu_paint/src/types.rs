@@ -36,35 +36,26 @@ pub struct DirtyRect {
     pub h: i32,
 }
 
-/// Pixel layout of a CEF accelerated-paint dmabuf. CEF only ever emits
-/// 8888 (its `cef_color_type_t`); we map it straight to a `VkFormat`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DmabufFormat {
-    /// BGRA8888 — matches the painter's swapchain format.
     Bgra8,
-    /// RGBA8888.
     Rgba8,
 }
 
-/// One plane of a dmabuf. Owns its fd; closed on drop (Vulkan consumes a
-/// dup of it at import, so the frame's copy is released afterwards).
+/// One plane of a dmabuf. Owns its fd, closed on drop; Vulkan consumes a
+/// dup of it at import.
 pub struct DmabufPlane {
     pub fd: OwnedFd,
     pub offset: u64,
     pub stride: u32,
 }
 
-/// A CEF `OnAcceleratedPaint` frame, owned so it can be handed to the
-/// presenter worker thread (CEF reclaims the original fd when the paint
-/// callback returns, so the caller dups into `OwnedFd`). The painter
-/// imports it as a Vulkan image and samples it into the swapchain — no
-/// CPU copy. CEF overlay frames are single-plane.
+/// A CEF `OnAcceleratedPaint` frame. CEF reclaims the original fd when the
+/// paint callback returns, so the caller must dup into the `OwnedFd`.
 pub struct DmabufFrame {
     pub width: u32,
     pub height: u32,
-    /// CEF's visible rect within the (possibly padded) coded `width`/`height`.
-    /// Used by the resize transition gate to compare against the window's
-    /// expected size; the coded size can be padded larger.
+    /// CEF's visible rect; the coded `width`/`height` may be padded larger.
     pub visible_w: u32,
     pub visible_h: u32,
     pub format: DmabufFormat,

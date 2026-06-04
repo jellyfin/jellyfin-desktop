@@ -595,7 +595,6 @@ impl Platform for MacosPlatform {
     }
 
     fn default_window_decorations(&self) -> WindowDecorations {
-        // The OS draws the titlebar; we tint it via AppKit.
         WindowDecorations::ServerThemed
     }
 

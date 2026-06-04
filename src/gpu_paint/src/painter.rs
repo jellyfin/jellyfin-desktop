@@ -241,11 +241,6 @@ impl GpuPainter {
         self.draw_and_present(bind_group, None)
     }
 
-    /// Present a CEF dmabuf frame zero-copy: import it as a Vulkan image
-    /// and sample it into the swapchain through the same pipeline as
-    /// [`push_pixels`]. The frame is re-imported each call so wgpu's
-    /// resource tracking handles the layout transition and the in-flight
-    /// lifetime of the imported image. Consumes `frame` (closing its fds).
     pub fn push_dmabuf(&mut self, frame: DmabufFrame) -> Result<(), GpuPaintError> {
         if frame.width == 0 || frame.height == 0 {
             return Err(GpuPaintError::BadDimensions(frame.width, frame.height));
@@ -258,8 +253,6 @@ impl GpuPainter {
             return Ok(());
         }
 
-        // Present at the producer's size to stay 1:1 (no stretching),
-        // mirroring the pixel path's size gate.
         if (self.config.width, self.config.height) != (frame.width, frame.height) {
             self.config.width = frame.width;
             self.config.height = frame.height;
@@ -289,8 +282,6 @@ impl GpuPainter {
             });
 
         self.draw_and_present(&bind_group, Some(image))
-        // texture/view/bind_group drop here; wgpu defers the underlying
-        // image/memory free until the submission completes.
     }
 
     pub fn shutdown(self) {
@@ -368,11 +359,9 @@ impl GpuPainter {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        // Acquire the imported dmabuf image from the foreign producer queue
-        // before the render pass samples it. wgpu 29 forbids mixing raw HAL
-        // encoding (`as_hal_mut`) and normal wgpu encoding on the same
-        // CommandEncoder, so record the Vulkan acquire barrier in its own
-        // command buffer and submit it before the render command buffer.
+        // The acquire barrier must precede the render pass, in its own
+        // command buffer: wgpu 29 forbids mixing raw HAL encoding
+        // (`as_hal_mut`) and normal wgpu encoding on one CommandEncoder.
         if let Some(image) = external_image {
             let mut acquire_encoder =
                 self.ctx

@@ -1,16 +1,8 @@
-//! Browser-process IPC helpers.
-//!
-//! This module is the boundary between CEF's `CefProcessMessage` transport and
-//! the application/business handlers. CEF callback code constructs a typed
-//! [`BrowserMessage`] once, then business modules consume browser/list wrappers
-//! without receiving raw CEF pointers or owning-reference bookkeeping.
-
 use cef::{
     Browser, CefString, Frame, ImplBrowser, ImplFrame, ImplListValue, ImplProcessMessage,
     ListValue, ProcessId, process_message_create, sys,
 };
 
-/// IPC message received in the browser process from renderer JavaScript.
 pub(crate) struct BrowserMessage {
     name: String,
     args: Option<ListValue>,
@@ -43,13 +35,11 @@ impl BrowserMessage {
     }
 }
 
-/// Read a CefString out of a `ListValue` at `idx` as an owned Rust `String`.
 pub(crate) fn list_string(args: &ListValue, idx: usize) -> String {
     crate::app::userfree_to_string(&args.string(idx))
 }
 
-/// Read an integer arg out of a `ListValue` at `idx`. Handles JS numbers
-/// that the renderer happened to send as `VTYPE_DOUBLE` (e.g. via `parseFloat`).
+/// JS can send integers as `VTYPE_DOUBLE` (e.g. via `parseFloat`); round to i32 in that case.
 pub(crate) fn list_int(args: &ListValue, idx: usize) -> i32 {
     let t = args.get_type(idx);
     if t.as_ref() == &sys::cef_value_type_t::VTYPE_DOUBLE {
@@ -59,8 +49,6 @@ pub(crate) fn list_int(args: &ListValue, idx: usize) -> i32 {
     }
 }
 
-/// Build a `CefProcessMessage` named `name`, call `fill` to populate its
-/// argument list, then ship it to the renderer process on `frame`.
 pub(crate) fn send_to_renderer<F: FnOnce(&ListValue)>(frame: &Frame, name: &str, fill: F) {
     let Some(mut msg) = process_message_create(Some(&CefString::from(name))) else {
         return;

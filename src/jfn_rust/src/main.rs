@@ -14,7 +14,5 @@ fn main() {
         default_hook(info);
     }));
 
-    // jfn_app_main reads the OS argv itself (clap for the browser process,
-    // CEF's own arg reader for subprocesses), so nothing is threaded through.
     std::process::exit(jfn_rust::app::jfn_app_main());
 }

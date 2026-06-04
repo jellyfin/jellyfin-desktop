@@ -13,11 +13,9 @@ pub mod open_url;
 
 use jfn_platform_abi::WindowDecorations;
 
-/// Default window-decoration mode for the current Linux desktop. KDE draws its
-/// own server-side decorations and lets us tint them via the palette protocol,
-/// so default to themed server-side there; elsewhere (notably GNOME, which
-/// draws none) draw our own client-side titlebar. Detected from
-/// `XDG_CURRENT_DESKTOP`. Backend-free, so it resolves the same in any process.
+/// KDE draws its own server-side decorations and lets us tint them via the
+/// palette protocol; elsewhere (notably GNOME) nothing draws them, so we draw
+/// our own client-side titlebar.
 pub fn default_window_decorations() -> WindowDecorations {
     let kde = std::env::var("XDG_CURRENT_DESKTOP")
         .map(|v| v.split(':').any(|s| s.eq_ignore_ascii_case("KDE")))
