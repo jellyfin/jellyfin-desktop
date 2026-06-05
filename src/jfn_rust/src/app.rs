@@ -857,16 +857,23 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         use_shared_textures,
     );
 
-    // Apply startup fullscreen/maximize after CEF surfaces exist. On Windows
-    // the WndProc resize fires on mpv's window thread as soon as the command
-    // is processed; surfaces must be present or the resize is lost. On macOS
-    // the transition is deferred to [NSApp run], so the timing is naturally
-    // safe there too.
     let startup_mode = jfn_config::startup_window_mode();
-    if startup_mode == jfn_config::StartupWindowMode::Fullscreen {
-        plat().set_fullscreen(true);
-    } else if startup_mode == jfn_config::StartupWindowMode::Maximized {
-        jfn_mpv::api::jfn_mpv_set_window_maximized(true);
+
+    // On macOS the fullscreen/maximize transition is deferred to [NSApp run]
+    // inside run_main_loop, so it must be queued before start_playback_coordination.
+    // On Linux/Windows (no external CEF pump) we instead apply it after the page
+    // loads: VM hosts such as Parallels resize the X11 display when mpv goes
+    // fullscreen, and if we apply it early the first osd-dimensions fires at the
+    // pre-resize size. By that time the geometry thread has grown the overlay to
+    // fill the expanded display, so only a fraction of the CEF content is visible.
+    // Deferring to after page load means osd-dimensions fires at the final size,
+    // matching runtime fullscreen toggle behavior exactly.
+    if plat().cef_host().is_some() {
+        if startup_mode == jfn_config::StartupWindowMode::Fullscreen {
+            plat().set_fullscreen(true);
+        } else if startup_mode == jfn_config::StartupWindowMode::Maximized {
+            jfn_mpv::api::jfn_mpv_set_window_maximized(true);
+        }
     }
 
     if !start_playback_coordination() {
@@ -878,6 +885,13 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
     //     blocking main here would starve the pump and never load.
     if plat().cef_host().is_none() {
         unsafe { jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer) };
+        // Linux/Windows: apply startup mode now that the page is loaded and the
+        // display has stabilized. Surfaces exist, so no WndProc resize is lost.
+        if startup_mode == jfn_config::StartupWindowMode::Fullscreen {
+            plat().set_fullscreen(true);
+        } else if startup_mode == jfn_config::StartupWindowMode::Maximized {
+            jfn_mpv::api::jfn_mpv_set_window_maximized(true);
+        }
     }
     tracing::info!(target: "Main", "Main browser loaded");
 
