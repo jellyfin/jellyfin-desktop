@@ -15,10 +15,9 @@ use std::sync::Arc;
 
 use jfn_gpu_paint::{DirtyRect, DmabufFrame, WindowTarget};
 use x11rb::connection::Connection;
-use x11rb::protocol::shape::{ConnectionExt as X11rbShapeConnection, SK, SO};
 use x11rb::protocol::xproto::{
-    AtomEnum, ClipOrdering, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux,
-    EventMask, PropMode, StackMode, WindowClass,
+    AtomEnum, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask,
+    PropMode, StackMode, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as X11rbWrapperConnection;
@@ -45,6 +44,8 @@ fn create_overlay_window(
     let aux = CreateWindowAux::new()
         .background_pixel(0)
         .border_pixel(0)
+        // No override_redirect: the WM must stack the overlay with its transient
+        // parent. override_redirect forces reactive restacking, which flickers.
         .event_mask(EventMask::EXPOSURE)
         .colormap(m.colormap);
     let _ = x11_conn.create_window(
@@ -108,16 +109,8 @@ fn create_overlay_window(
             &[1_u32, 0, 0, 0, 0, 0, 0, 0, 0],
         );
 
-        // Input-passthrough: empty input shape sends all input to mpv parent.
-        let _ = x11_conn.shape_rectangles(
-            SO::SET,
-            SK::INPUT,
-            ClipOrdering::UNSORTED,
-            win_id,
-            0,
-            0,
-            &[],
-        );
+        // No empty input shape — the overlay keeps a real input region so
+        // GrabButton can capture clicks on it directly.
 
         // WM_DELETE_WINDOW handler.
         let _ = x11_conn.change_property32(
@@ -152,6 +145,7 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     let ph = if m.ph > 0 { m.ph as u32 } else { 1 };
 
     let win = create_overlay_window(&x11_conn, m, px, py, pw, ph);
+    crate::input::grab_overlay_input(win);
     let gc = x11_conn.generate_id().unwrap_or(0);
     let _ = x11_conn.create_gc(gc, win, &CreateGCAux::new());
 

@@ -8,7 +8,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{
     ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConfigureWindowAux,
-    ConnectionExt as _, EventMask, StackMode, Window,
+    ConnectionExt as _, EventMask, Window,
 };
 use x11rb::rust_connection::RustConnection;
 
@@ -156,22 +156,6 @@ fn unmap_overlays(conn: &RustConnection, snaps: &[OverlaySnap]) {
     let _ = conn.flush();
 }
 
-fn restack_overlays_above(conn: &RustConnection, parent: Window, snaps: &[OverlaySnap]) {
-    let mut prev = parent;
-    for s in snaps.iter().filter(|s| s.visible) {
-        let win = s.window;
-        if win == prev {
-            continue;
-        }
-        let aux = ConfigureWindowAux::new()
-            .sibling(prev)
-            .stack_mode(StackMode::ABOVE);
-        let _ = conn.configure_window(win, &aux);
-        prev = win;
-    }
-    let _ = conn.flush();
-}
-
 fn activate_parent(conn: &RustConnection, root: Window, parent: Window, net_active_window: u32) {
     let ev = ClientMessageEvent::new(
         32,
@@ -314,12 +298,6 @@ fn settle_tick(
         samples.push((s.window, overlay));
     }
 
-    // A WM can drop the transient overlays behind the video on a fullscreen
-    // transition, leaving CEF invisible; re-assert above-parent stacking.
-    if all_match {
-        restack_overlays_above(conn, parent, &snaps);
-        tracing::debug!(target: "x11::settle", "restacked overlays above parent");
-    }
     (all_match, mpv, samples)
 }
 
@@ -352,10 +330,6 @@ fn set_visibility(conn: &RustConnection, parent: Window, root: Window, visible: 
             if let Some((snaps, net_active_window)) = snapshot {
                 reposition_overlays(conn, px, py, pw, ph, &snaps);
                 map_overlays(conn, &snaps);
-                // Restore (un-minimize) re-maps without necessarily emitting a
-                // ConfigureNotify, so settle-restack may not fire — re-assert
-                // stacking here too.
-                restack_overlays_above(conn, parent, &snaps);
                 // Re-mapping the transient overlays on top of the parent can
                 // displace the WM's active window off mpv, stalling the
                 // taskbar's minimize/activate toggle; re-assert it.
@@ -373,6 +347,14 @@ fn set_visibility(conn: &RustConnection, parent: Window, root: Window, visible: 
         }
     }
     jfn_playback::lifecycle::jfn_lifecycle_set_visible(visible);
+}
+
+fn is_wm_delete(e: &ClientMessageEvent) -> bool {
+    let g = MUT.lock();
+    let Some(m) = g.as_ref() else {
+        return false;
+    };
+    e.type_ == m.atoms.wm_protocols && e.data.as_data32()[0] == m.atoms.wm_delete_window
 }
 
 fn handle_event(
@@ -414,12 +396,20 @@ fn handle_event(
             }
             false
         }
-        Event::DestroyNotify(_) => {
-            jfn_shutdown_initiate();
+        // Only the client window's destruction is the teardown signal. A stale
+        // frame we still hold STRUCTURE_NOTIFY on (never un-watched after a
+        // reparent) emits DestroyNotify on fullscreen/maximize toggles — reacting
+        // to it would quit the app mid-transition.
+        Event::DestroyNotify(e) => {
+            if e.window == parent {
+                jfn_shutdown_initiate();
+            }
             false
         }
-        Event::ClientMessage(_) => {
-            jfn_shutdown_initiate();
+        Event::ClientMessage(e) => {
+            if e.window == parent && is_wm_delete(&e) {
+                jfn_shutdown_initiate();
+            }
             false
         }
         _ => false,
