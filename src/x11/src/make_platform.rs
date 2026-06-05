@@ -88,6 +88,16 @@ impl Platform for X11Platform {
         jfn_linux_util::default_window_decorations()
     }
 
+    fn resolve_window_decorations(
+        &self,
+        configured: Option<WindowDecorations>,
+    ) -> WindowDecorations {
+        match configured.unwrap_or_else(|| self.default_window_decorations()) {
+            WindowDecorations::Csd => WindowDecorations::Server,
+            other => other,
+        }
+    }
+
     fn init(&self, _mpv: *mut c_void) -> bool {
         crate::lifecycle::init()
     }
@@ -192,6 +202,10 @@ impl Platform for X11Platform {
     }
 
     fn set_fullscreen(&self, fullscreen: bool) {
+        // Runs before the guard below: as the observation handler this must
+        // mirror every fullscreen change to the overlays, not just app-initiated
+        // ones.
+        crate::geometry::set_parent_fullscreen(fullscreen);
         if jfn_mpv_handle_get().is_null() {
             return;
         }

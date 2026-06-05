@@ -28,7 +28,7 @@ pub use jfn_platform_abi::JfnRect;
 
 use jfn_playback::shutdown::jfn_shutting_down;
 
-/// Create a WM-managed ARGB utility/transient overlay window at (x, y, w, h).
+/// Create a WM-managed ARGB transient overlay window at (x, y, w, h).
 /// Caller holds `MUT` and provides the mutable state borrow.
 fn create_overlay_window(
     x11_conn: &RustConnection,
@@ -78,17 +78,24 @@ fn create_overlay_window(
             win_id,
             m.atoms.net_wm_window_type,
             u32::from(AtomEnum::ATOM),
-            &[m.atoms.net_wm_window_type_utility],
+            &[m.atoms.net_wm_window_type_normal],
         );
+        // The geometry thread only emits the state on a flip, so an overlay born
+        // mid-fullscreen must carry it in its initial property or it never escapes
+        // the strut-reserved area.
+        let mut wm_state = vec![
+            m.atoms.net_wm_state_skip_taskbar,
+            m.atoms.net_wm_state_skip_pager,
+        ];
+        if m.parent_fullscreen {
+            wm_state.push(m.atoms.net_wm_state_fullscreen);
+        }
         let _ = x11_conn.change_property32(
             PropMode::REPLACE,
             win_id,
             m.atoms.net_wm_state,
             u32::from(AtomEnum::ATOM),
-            &[
-                m.atoms.net_wm_state_skip_taskbar,
-                m.atoms.net_wm_state_skip_pager,
-            ],
+            &wm_state,
         );
 
         // Motif hints: flags=MWM_HINTS_DECORATIONS, decorations=0.

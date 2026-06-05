@@ -6,11 +6,13 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
+use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
 use x11rb::protocol::xproto::{
-    ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConfigureWindowAux,
-    ConnectionExt as _, EventMask, Window,
+    AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConfigureWindowAux,
+    ConnectionExt as _, EventMask, PropMode, Window,
 };
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use jfn_playback::wake_event::{jfn_wake_event_drain, jfn_wake_event_fd, jfn_wake_event_signal};
@@ -57,6 +59,15 @@ pub fn request_resync() {
     unsafe { jfn_wake_event_signal(x11_geometry_resync_waker()) };
 }
 
+pub fn set_parent_fullscreen(fs: bool) {
+    {
+        let mut g = MUT.lock();
+        let Some(m) = g.as_mut() else { return };
+        m.parent_fullscreen = fs;
+    }
+    request_resync();
+}
+
 pub fn start(parent: u32, root: u32) {
     let conn = match RustConnection::connect(None) {
         Ok((conn, _)) => Arc::new(conn),
@@ -101,6 +112,32 @@ fn watch_structure(conn: &RustConnection, window: Window) {
     let _ = conn.change_window_attributes(window, &aux);
 }
 
+/// Subscribe to ownership changes of the `_NET_WM_CM_S{n}` selection so we learn
+/// when a compositing manager starts or stops mid-session.
+fn watch_compositor(conn: &RustConnection, root: Window) {
+    let screen_num = {
+        let g = MUT.lock();
+        let Some(m) = g.as_ref() else { return };
+        m.screen_num
+    };
+    if !matches!(
+        conn.xfixes_query_version(5, 0).map(|c| c.reply()),
+        Ok(Ok(_))
+    ) {
+        return;
+    }
+    let Ok(Ok(atom)) = conn
+        .intern_atom(false, crate::lifecycle::cm_atom_name(screen_num).as_bytes())
+        .map(|c| c.reply())
+    else {
+        return;
+    };
+    let mask = SelectionEventMask::SET_SELECTION_OWNER
+        | SelectionEventMask::SELECTION_WINDOW_DESTROY
+        | SelectionEventMask::SELECTION_CLIENT_CLOSE;
+    let _ = conn.xfixes_select_selection_input(root, atom.atom, mask);
+}
+
 /// Query a window's absolute screen position + size. Returns None on protocol failure.
 fn query_geometry(
     conn: &RustConnection,
@@ -138,6 +175,51 @@ fn reposition_overlays(
             aux = aux.width(pw as u32).height(ph as u32);
         }
         let _ = conn.configure_window(s.window, &aux);
+    }
+    let _ = conn.flush();
+}
+
+/// Per EWMH a mapped window's `_NET_WM_STATE` changes via a root client message;
+/// an unmapped one's via a property rewrite, read by the WM on its next map.
+fn apply_fullscreen_state(conn: &RustConnection, root: Window, snaps: &[OverlaySnap], fs: bool) {
+    let (net_wm_state, skip_taskbar, skip_pager, fullscreen) = {
+        let g = MUT.lock();
+        let Some(m) = g.as_ref() else { return };
+        (
+            m.atoms.net_wm_state,
+            m.atoms.net_wm_state_skip_taskbar,
+            m.atoms.net_wm_state_skip_pager,
+            m.atoms.net_wm_state_fullscreen,
+        )
+    };
+    let action = u32::from(fs);
+    let mut prop = vec![skip_taskbar, skip_pager];
+    if fs {
+        prop.push(fullscreen);
+    }
+    for s in snaps {
+        if s.visible {
+            let ev = ClientMessageEvent::new(
+                32,
+                s.window,
+                net_wm_state,
+                ClientMessageData::from([action, fullscreen, 0, 1, 0]),
+            );
+            let _ = conn.send_event(
+                false,
+                root,
+                EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+                ev,
+            );
+        } else {
+            let _ = conn.change_property32(
+                PropMode::REPLACE,
+                s.window,
+                net_wm_state,
+                u32::from(AtomEnum::ATOM),
+                &prop,
+            );
+        }
     }
     let _ = conn.flush();
 }
@@ -181,6 +263,7 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
     if frame != parent {
         watch_structure(&conn, frame);
     }
+    watch_compositor(&conn, root);
     let _ = conn.flush();
 
     let x11_fd = conn.stream().as_raw_fd();
@@ -206,6 +289,7 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
     ];
 
     let mut settling = false;
+    let mut applied_fs = false;
 
     loop {
         let timeout = if settling { TICK_MS } else { -1 };
@@ -229,7 +313,7 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
 
         if fds[2].revents & libc::POLLIN != 0 {
             unsafe { jfn_wake_event_drain(x11_geometry_resync_waker()) };
-            resync_overlays(&conn, parent, root);
+            resync_and_track_fullscreen(&conn, parent, root, &mut applied_fs);
             if !settling {
                 settling = true;
                 tracing::debug!(target: "x11::settle", "settle started (layer created)");
@@ -241,7 +325,7 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
             geometry_changed |= handle_event(&conn, parent, root, &mut frame, ev);
         }
         if geometry_changed {
-            resync_overlays(&conn, parent, root);
+            resync_and_track_fullscreen(&conn, parent, root, &mut applied_fs);
             if !settling {
                 settling = true;
                 tracing::debug!(target: "x11::settle", "settle started (geometry changed)");
@@ -301,17 +385,38 @@ fn settle_tick(
     (all_match, mpv, samples)
 }
 
-fn resync_overlays(conn: &RustConnection, parent: Window, root: Window) {
-    let Some((px, py, pw, ph)) = query_geometry(conn, parent, root) else {
-        return;
-    };
-    let snaps = {
+fn resync_overlays(
+    conn: &RustConnection,
+    parent: Window,
+    root: Window,
+) -> Option<(Vec<OverlaySnap>, bool)> {
+    let (px, py, pw, ph) = query_geometry(conn, parent, root)?;
+    let (snaps, fullscreen) = {
         let mut g = MUT.lock();
-        let Some(m) = g.as_mut() else { return };
+        let m = g.as_mut()?;
         crate::lifecycle::set_parent_geometry_locked(m, px, py, pw, ph);
-        crate::lifecycle::snapshot_live_overlays_locked(m)
+        (
+            crate::lifecycle::snapshot_live_overlays_locked(m),
+            m.parent_fullscreen,
+        )
     };
     reposition_overlays(conn, px, py, pw, ph, &snaps);
+    Some((snaps, fullscreen))
+}
+
+/// Resync fires on every ConfigureNotify; only re-emit the state on a real flip.
+fn resync_and_track_fullscreen(
+    conn: &RustConnection,
+    parent: Window,
+    root: Window,
+    applied_fs: &mut bool,
+) {
+    if let Some((snaps, fs)) = resync_overlays(conn, parent, root)
+        && fs != *applied_fs
+    {
+        apply_fullscreen_state(conn, root, &snaps, fs);
+        *applied_fs = fs;
+    }
 }
 
 fn set_visibility(conn: &RustConnection, parent: Window, root: Window, visible: bool) {
@@ -409,6 +514,15 @@ fn handle_event(
         Event::ClientMessage(e) => {
             if e.window == parent && is_wm_delete(&e) {
                 jfn_shutdown_initiate();
+            }
+            false
+        }
+        Event::XfixesSelectionNotify(e) => {
+            if e.owner != x11rb::NONE {
+                tracing::debug!(target: "Platform", "{}", crate::lifecycle::COMPOSITOR_DETECTED_MSG);
+                request_resync();
+            } else {
+                tracing::error!(target: "Platform", "{}", crate::lifecycle::COMPOSITOR_NOT_DETECTED_MSG);
             }
             false
         }

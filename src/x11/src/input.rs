@@ -226,6 +226,8 @@ impl Drop for InputMailbox {
 struct State {
     conn: Arc<xcb::Connection>,
     window: u32,
+    root: u32,
+    net_active_window: u32,
     xkb_ctx: xkb::Context,
     xkb_kmap: Option<xkb::Keymap>,
     xkb_st: Option<xkb::State>,
@@ -480,6 +482,9 @@ fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed
         3 => buttons::BTN_RIGHT,
         _ => return,
     };
+    if pressed {
+        activate_parent(st);
+    }
     st.input_mailbox.push(QueuedInputEvent::MouseButton {
         code,
         pressed: pressed as c_int,
@@ -487,6 +492,24 @@ fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed
         y,
         modifiers: cef_modifiers(st),
     });
+}
+
+fn activate_parent(st: &State) {
+    if st.root == 0 || st.net_active_window == 0 {
+        return;
+    }
+    let ev = x::ClientMessageEvent::new(
+        x::Window::new(st.window),
+        x::Atom::new(st.net_active_window),
+        x::ClientMessageData::Data32([2, 0, 0, 0, 0]),
+    );
+    st.conn.send_request(&x::SendEvent {
+        propagate: false,
+        destination: x::SendEventDest::Window(x::Window::new(st.root)),
+        event_mask: x::EventMask::SUBSTRUCTURE_NOTIFY | x::EventMask::SUBSTRUCTURE_REDIRECT,
+        event: &ev,
+    });
+    let _ = st.conn.flush();
 }
 
 fn handle_motion(st: &mut State, ev: &xcb::x::MotionNotifyEvent) {
@@ -834,9 +857,16 @@ pub fn start(screen_num: i32, parent: u32) -> Option<Handle> {
     };
     let mailbox = Arc::new(CursorMailbox::new());
     let input_mailbox = Arc::new(InputMailbox::new());
+    let (root, net_active_window) = crate::x11_state::MUT
+        .lock()
+        .as_ref()
+        .map(|m| (m.root, m.atoms.net_active_window))
+        .unwrap_or((0, 0));
     let st = State {
         conn: conn.clone(),
         window: parent,
+        root,
+        net_active_window,
         xkb_ctx: xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
         xkb_kmap: None,
         xkb_st: None,

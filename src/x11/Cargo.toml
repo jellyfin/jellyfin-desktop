@@ -26,7 +26,7 @@ jfn-playback = { path = "../playback" }
 libc.workspace = true
 tracing.workspace = true
 xcb = { version = "1.7", features = ["xkb", "as-raw-xcb-connection"] }
-x11rb = { version = "0.13", features = ["cursor", "resource_manager", "shape", "shm"] }
+x11rb = { version = "0.13", features = ["cursor", "resource_manager", "shape", "shm", "xfixes"] }
 xkbcommon = { version = "0.9", default-features = false, features = ["x11"] }
 
 [lints]

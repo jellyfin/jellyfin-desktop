@@ -8,13 +8,13 @@
 
 use std::ffi::{CStr, c_void};
 
-use crate::egl_dyn as egl;
+use jfn_linux_util::egl_dyn as egl;
 
 // =====================================================================
 // FFI declarations consumed during init/cleanup.
 // =====================================================================
 
-use crate::dmabuf_probe::jfn_wl_dmabuf_probe;
+use jfn_linux_util::dmabuf_probe::jfn_wl_dmabuf_probe;
 use jfn_mpv::api::jfn_mpv_get_property_int;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 
