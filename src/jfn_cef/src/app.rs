@@ -532,15 +532,6 @@ fn inject_jmp_native(browser: &mut Browser, profile: &ExtraInfo, context: &mut V
     global.set_value_bykey(Some(&key), Some(&mut jmp_native), readonly_attr());
 }
 
-fn display_backend_name() -> &'static str {
-    match jfn_platform_abi::get().display() {
-        jfn_platform_abi::DisplayBackend::Wayland => "wayland",
-        jfn_platform_abi::DisplayBackend::X11 => "x11",
-        jfn_platform_abi::DisplayBackend::MacOS => "macos",
-        jfn_platform_abi::DisplayBackend::Windows => "windows",
-    }
-}
-
 fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
     let scripts = profile.scripts();
     if scripts.is_empty() {
@@ -570,7 +561,10 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
     replace_first(
         &mut code,
         "__SETTINGS_JSON__",
-        &jfn_config::cli_json(jfn_mpv::hwdec_options(), display_backend_name()),
+        &jfn_config::cli_json(
+            jfn_mpv::hwdec_options(),
+            profile.display_backend().unwrap_or(""),
+        ),
     );
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
     replace_first(

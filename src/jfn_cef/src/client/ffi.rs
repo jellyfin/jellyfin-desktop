@@ -19,7 +19,7 @@ pub(crate) fn read_utf8(p: *const c_char, len: usize) -> String {
     if p.is_null() || len == 0 {
         return String::new();
     }
-    let slice = unsafe { std::slice::from_raw_parts(p as *const u8, len) };
+    let slice = unsafe { std::slice::from_raw_parts(p, len) };
     String::from_utf8_lossy(slice).into_owned()
 }
 
