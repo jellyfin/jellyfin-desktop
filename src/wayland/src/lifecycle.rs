@@ -41,6 +41,25 @@ fn mpv_prop_intptr(name: &CStr) -> Option<usize> {
     }
 }
 
+// These requried properties are non-upstream
+// Use https://github.com/andrewrabert/mpv/tree/cef-mpv
+fn nonupstream_wayland_hooks_present() -> bool {
+    const HOOKS: [&CStr; 3] = [c"wayland-display", c"wayland-surface", c"wayland-close-cb-ptr"];
+    let mut missing: Vec<&str> = Vec::new();
+    for name in HOOKS {
+        let mut v: i64 = 0;
+        let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut v) };
+        if rc == jfn_mpv::sys::mpv_error::MPV_ERROR_PROPERTY_NOT_FOUND.0 {
+            missing.push(name.to_str().unwrap_or("?"));
+        }
+    }
+    if missing.is_empty() {
+        return true;
+    }
+    tracing::error!(?missing, "non-upstream mpv Wayland embedding hooks absent");
+    false
+}
+
 // Installs `cb` into mpv's wayland-close-cb-ptr slot (a
 // `void(**)(void*)` followed by a `void**` data slot, packed by libmpv).
 // Passing `None` clears the slot.
@@ -64,6 +83,11 @@ unsafe extern "C" fn close_cb_trampoline(_: *mut c_void) {
 // =====================================================================
 
 pub fn jfn_wl_lifecycle_init() -> bool {
+    if !nonupstream_wayland_hooks_present() {
+        tracing::error!("Wayland embedding hooks missing");
+        return false;
+    }
+
     let Some(display) = mpv_prop_intptr(c"wayland-display").map(|p| p as *mut c_void) else {
         tracing::error!("Failed to get Wayland display from mpv");
         return false;
