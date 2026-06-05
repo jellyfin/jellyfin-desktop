@@ -506,11 +506,8 @@ bool_accessors!(force_transcoding, set_force_transcoding, force_transcoding);
 /// Browser-process only: falls back to the installed `Platform`, which panics
 /// if absent.
 pub fn window_decorations_mode() -> WindowDecorations {
-    state()
-        .lock()
-        .data
-        .window_decorations
-        .unwrap_or_else(|| jfn_platform_abi::get().default_window_decorations())
+    let configured = state().lock().data.window_decorations;
+    jfn_platform_abi::get().resolve_window_decorations(configured)
 }
 
 pub fn window_decorations() -> String {

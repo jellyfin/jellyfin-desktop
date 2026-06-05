@@ -3,8 +3,6 @@
 #![cfg(target_os = "linux")]
 
 pub mod clipboard;
-pub mod dmabuf_probe;
-pub mod egl_dyn;
 pub(crate) mod gpu_paint_worker;
 pub mod input;
 pub mod input_lifecycle;

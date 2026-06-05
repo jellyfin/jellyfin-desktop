@@ -87,10 +87,11 @@ impl PlatformSurface {
 #[derive(Copy, Clone)]
 pub struct Atoms {
     pub net_wm_window_type: u32,
-    pub net_wm_window_type_utility: u32,
+    pub net_wm_window_type_normal: u32,
     pub net_wm_state: u32,
     pub net_wm_state_skip_taskbar: u32,
     pub net_wm_state_skip_pager: u32,
+    pub net_wm_state_fullscreen: u32,
     pub wm_protocols: u32,
     pub wm_delete_window: u32,
     pub motif_wm_hints: u32,
@@ -108,6 +109,7 @@ pub struct Mutable {
     pub parent_y: i32,
     pub pw: i32,
     pub ph: i32,
+    pub parent_fullscreen: bool,
     pub cached_scale: f32,
     pub atoms: Atoms,
     pub live: Vec<*mut PlatformSurface>,

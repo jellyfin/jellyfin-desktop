@@ -19,6 +19,11 @@ fn paint_name(mode: crate::paint_override::X11PaintOverride) -> &'static str {
     }
 }
 
+fn cef_dmabuf_producer_ok() -> bool {
+    let ozone = jfn_platform_abi::get().cef_ozone_platform();
+    unsafe { jfn_linux_util::dmabuf_probe::jfn_wl_dmabuf_probe(ozone, std::ptr::null_mut()) }
+}
+
 /// Find a 32-bit TrueColor visual.
 fn find_argb_visual(screen: &Screen) -> Option<u32> {
     screen
@@ -36,6 +41,22 @@ fn intern_atom(conn: &RustConnection, name: &[u8]) -> u32 {
         .and_then(|cookie| cookie.reply().ok())
         .map(|r| r.atom)
         .unwrap_or(0)
+}
+
+pub(crate) const COMPOSITOR_NOT_DETECTED_MSG: &str =
+    "X11 compositing manager not detected. CEF overlays will not be transparent";
+pub(crate) const COMPOSITOR_DETECTED_MSG: &str = "X11 compositing manager detected";
+
+pub(crate) fn cm_atom_name(screen_num: i32) -> String {
+    format!("_NET_WM_CM_S{screen_num}")
+}
+
+fn compositor_present(conn: &RustConnection, screen_num: i32) -> bool {
+    let atom = intern_atom(conn, cm_atom_name(screen_num).as_bytes());
+    match conn.get_selection_owner(atom).map(|c| c.reply()) {
+        Ok(Ok(reply)) => reply.owner != x11rb::NONE,
+        _ => true,
+    }
 }
 
 pub(crate) fn query_parent_geometry_x11rb(
@@ -134,6 +155,10 @@ pub fn init() -> bool {
     };
     let root = screen.root;
 
+    if !compositor_present(&x11rb_conn, screen_num) {
+        tracing::error!(target: "Platform", "{COMPOSITOR_NOT_DETECTED_MSG}");
+    }
+
     let argb_depth: u8 = 32;
     let Some(argb_visual) = find_argb_visual(screen) else {
         eprintln!("[x11] no 32-bit ARGB visual found");
@@ -160,10 +185,11 @@ pub fn init() -> bool {
 
     let atoms = Atoms {
         net_wm_window_type: intern_atom(&x11rb_conn, b"_NET_WM_WINDOW_TYPE"),
-        net_wm_window_type_utility: intern_atom(&x11rb_conn, b"_NET_WM_WINDOW_TYPE_UTILITY"),
+        net_wm_window_type_normal: intern_atom(&x11rb_conn, b"_NET_WM_WINDOW_TYPE_NORMAL"),
         net_wm_state: intern_atom(&x11rb_conn, b"_NET_WM_STATE"),
         net_wm_state_skip_taskbar: intern_atom(&x11rb_conn, b"_NET_WM_STATE_SKIP_TASKBAR"),
         net_wm_state_skip_pager: intern_atom(&x11rb_conn, b"_NET_WM_STATE_SKIP_PAGER"),
+        net_wm_state_fullscreen: intern_atom(&x11rb_conn, b"_NET_WM_STATE_FULLSCREEN"),
         wm_protocols: intern_atom(&x11rb_conn, b"WM_PROTOCOLS"),
         wm_delete_window: intern_atom(&x11rb_conn, b"WM_DELETE_WINDOW"),
         motif_wm_hints: intern_atom(&x11rb_conn, b"_MOTIF_WM_HINTS"),
@@ -198,7 +224,9 @@ pub fn init() -> bool {
             match jfn_gpu_paint::GpuContext::new() {
                 Ok(c) => {
                     let caps = c.capabilities();
-                    if want_dmabuf && caps.dmabuf_import {
+                    // caps.dmabuf_import only proves our Vulkan side can consume;
+                    // also probe CEF's producer, broken on NVIDIA proprietary X11.
+                    if want_dmabuf && caps.dmabuf_import && cef_dmabuf_producer_ok() {
                         tracing::info!("paint: dmabuf import");
                         (Some(c), caps, true, Req::Dmabuf)
                     } else {
@@ -241,6 +269,7 @@ pub fn init() -> bool {
             parent_y,
             pw,
             ph,
+            parent_fullscreen: false,
             cached_scale: 1.0,
             atoms,
             live: Vec::new(),

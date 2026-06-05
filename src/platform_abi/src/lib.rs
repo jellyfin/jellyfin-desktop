@@ -237,6 +237,13 @@ pub trait Platform: Send + Sync {
 
     fn default_window_decorations(&self) -> WindowDecorations;
 
+    fn resolve_window_decorations(
+        &self,
+        configured: Option<WindowDecorations>,
+    ) -> WindowDecorations {
+        configured.unwrap_or_else(|| self.default_window_decorations())
+    }
+
     fn early_init(&self) {}
     /// `mpv` is the opaque libmpv `mpv_handle` — a raw C handle, stays raw.
     fn init(&self, mpv: *mut c_void) -> bool {
