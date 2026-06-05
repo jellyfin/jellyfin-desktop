@@ -14,6 +14,7 @@ use crate::app::userfree_to_string;
 use crate::client::Inner;
 use crate::ipc::BrowserMessage;
 use crate::platform_ops;
+use jfn_platform_abi::cursor::CursorShape;
 
 #[cfg(target_os = "linux")]
 type CursorHandle = std::os::raw::c_ulong;
@@ -444,7 +445,9 @@ wrap_display_handler! {
             _custom_cursor_info: Option<&CursorInfo>,
         ) -> c_int {
             let t: sys::cef_cursor_type_t = type_.into();
-            self.inner.on_cursor_change(t as c_int);
+            if let Some(shape) = CursorShape::from_cef(t as i32) {
+                self.inner.emit_cursor(shape);
+            }
             1
         }
         fn on_console_message(

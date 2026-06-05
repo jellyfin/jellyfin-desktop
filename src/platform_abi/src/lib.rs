@@ -57,33 +57,79 @@ pub fn main_park_signal() {
     MAIN_PARK.cv.notify_all();
 }
 
-/// Canonical `cef_cursor_type_t` ordinals, the single source of truth for the
-/// cursor codes that flow through [`Platform::set_cursor`]. Values are derived
-/// from the generated CEF bindings so backends can never hand-copy (and drift
-/// from) them — every platform mapper imports these instead of redefining the
-/// enum locally. Typed `c_int` to match `set_cursor`'s parameter.
+/// Fixed `cef_cursor_type_t` shapes. `CT_CUSTOM` (a bitmap) and the `CT_DND_*`
+/// cursors are excluded — listing them here would map a non-fixed cursor to a
+/// fixed shape.
 pub mod cursor {
     use cef::sys::cef_cursor_type_t as ct;
-    use std::ffi::c_int;
 
-    macro_rules! cursor_consts {
-        ($($name:ident),* $(,)?) => {
-            $(pub const $name: c_int = ct::$name as c_int;)*
+    macro_rules! cursor_shape {
+        ($($variant:ident = $ct:ident),* $(,)?) => {
+            #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+            #[repr(i32)]
+            pub enum CursorShape {
+                $($variant = ct::$ct as i32,)*
+            }
+
+            impl CursorShape {
+                pub fn from_cef(raw: i32) -> Option<Self> {
+                    $(if raw == ct::$ct as i32 { return Some(Self::$variant); })*
+                    None
+                }
+
+                pub const fn as_raw(self) -> i32 {
+                    self as i32
+                }
+            }
         };
     }
 
-    cursor_consts! {
-        CT_POINTER, CT_CROSS, CT_HAND, CT_IBEAM, CT_WAIT, CT_HELP,
-        CT_EASTRESIZE, CT_NORTHRESIZE, CT_NORTHEASTRESIZE, CT_NORTHWESTRESIZE,
-        CT_SOUTHRESIZE, CT_SOUTHEASTRESIZE, CT_SOUTHWESTRESIZE, CT_WESTRESIZE,
-        CT_NORTHSOUTHRESIZE, CT_EASTWESTRESIZE, CT_NORTHEASTSOUTHWESTRESIZE,
-        CT_NORTHWESTSOUTHEASTRESIZE, CT_COLUMNRESIZE, CT_ROWRESIZE,
-        CT_MIDDLEPANNING, CT_EASTPANNING, CT_NORTHPANNING, CT_NORTHEASTPANNING,
-        CT_NORTHWESTPANNING, CT_SOUTHPANNING, CT_SOUTHEASTPANNING,
-        CT_SOUTHWESTPANNING, CT_WESTPANNING, CT_MOVE, CT_VERTICALTEXT, CT_CELL,
-        CT_CONTEXTMENU, CT_ALIAS, CT_PROGRESS, CT_NODROP, CT_COPY, CT_NONE,
-        CT_NOTALLOWED, CT_ZOOMIN, CT_ZOOMOUT, CT_GRAB, CT_GRABBING,
-        CT_MIDDLE_PANNING_VERTICAL, CT_MIDDLE_PANNING_HORIZONTAL,
+    cursor_shape! {
+        Pointer = CT_POINTER,
+        Cross = CT_CROSS,
+        Hand = CT_HAND,
+        IBeam = CT_IBEAM,
+        Wait = CT_WAIT,
+        Help = CT_HELP,
+        EastResize = CT_EASTRESIZE,
+        NorthResize = CT_NORTHRESIZE,
+        NorthEastResize = CT_NORTHEASTRESIZE,
+        NorthWestResize = CT_NORTHWESTRESIZE,
+        SouthResize = CT_SOUTHRESIZE,
+        SouthEastResize = CT_SOUTHEASTRESIZE,
+        SouthWestResize = CT_SOUTHWESTRESIZE,
+        WestResize = CT_WESTRESIZE,
+        NorthSouthResize = CT_NORTHSOUTHRESIZE,
+        EastWestResize = CT_EASTWESTRESIZE,
+        NorthEastSouthWestResize = CT_NORTHEASTSOUTHWESTRESIZE,
+        NorthWestSouthEastResize = CT_NORTHWESTSOUTHEASTRESIZE,
+        ColumnResize = CT_COLUMNRESIZE,
+        RowResize = CT_ROWRESIZE,
+        MiddlePanning = CT_MIDDLEPANNING,
+        EastPanning = CT_EASTPANNING,
+        NorthPanning = CT_NORTHPANNING,
+        NorthEastPanning = CT_NORTHEASTPANNING,
+        NorthWestPanning = CT_NORTHWESTPANNING,
+        SouthPanning = CT_SOUTHPANNING,
+        SouthEastPanning = CT_SOUTHEASTPANNING,
+        SouthWestPanning = CT_SOUTHWESTPANNING,
+        WestPanning = CT_WESTPANNING,
+        Move = CT_MOVE,
+        VerticalText = CT_VERTICALTEXT,
+        Cell = CT_CELL,
+        ContextMenu = CT_CONTEXTMENU,
+        Alias = CT_ALIAS,
+        Progress = CT_PROGRESS,
+        NoDrop = CT_NODROP,
+        Copy = CT_COPY,
+        None = CT_NONE,
+        NotAllowed = CT_NOTALLOWED,
+        ZoomIn = CT_ZOOMIN,
+        ZoomOut = CT_ZOOMOUT,
+        Grab = CT_GRAB,
+        Grabbing = CT_GRABBING,
+        MiddlePanningVertical = CT_MIDDLE_PANNING_VERTICAL,
+        MiddlePanningHorizontal = CT_MIDDLE_PANNING_HORIZONTAL,
     }
 }
 
@@ -296,7 +342,7 @@ pub trait Platform: Send + Sync {
         main_park_signal();
     }
 
-    fn set_cursor(&self, _cef_cursor_type: c_int) {}
+    fn set_cursor(&self, _shape: cursor::CursorShape) {}
     fn set_idle_inhibit(&self, _level: IdleInhibitLevel) {}
     fn set_theme_color(&self, _rgb: u32) {}
 

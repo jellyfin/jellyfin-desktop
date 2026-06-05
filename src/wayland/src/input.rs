@@ -31,54 +31,45 @@ use jfn_platform_abi::event_flags::{
     EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
 };
 
-use jfn_platform_abi::cursor::{
-    CT_ALIAS, CT_CELL, CT_COLUMNRESIZE, CT_CONTEXTMENU, CT_COPY, CT_CROSS, CT_EASTRESIZE,
-    CT_EASTWESTRESIZE, CT_GRAB, CT_GRABBING, CT_HAND, CT_HELP, CT_IBEAM,
-    CT_MIDDLE_PANNING_HORIZONTAL, CT_MIDDLE_PANNING_VERTICAL, CT_MIDDLEPANNING, CT_MOVE, CT_NODROP,
-    CT_NONE, CT_NORTHEASTRESIZE, CT_NORTHEASTSOUTHWESTRESIZE, CT_NORTHRESIZE, CT_NORTHSOUTHRESIZE,
-    CT_NORTHWESTRESIZE, CT_NORTHWESTSOUTHEASTRESIZE, CT_NOTALLOWED, CT_POINTER, CT_PROGRESS,
-    CT_ROWRESIZE, CT_SOUTHEASTRESIZE, CT_SOUTHRESIZE, CT_SOUTHWESTRESIZE, CT_VERTICALTEXT, CT_WAIT,
-    CT_WESTRESIZE, CT_ZOOMIN, CT_ZOOMOUT,
-};
+use jfn_platform_abi::cursor::CursorShape;
 
-fn cef_to_wl_shape(cef: u32) -> u32 {
+fn cef_to_wl_shape(shape: CursorShape) -> u32 {
+    use CursorShape::*;
     use wp_cursor_shape_device_v1::Shape;
-    let s = match cef as c_int {
-        CT_CROSS => Shape::Crosshair,
-        CT_HAND => Shape::Pointer,
-        CT_IBEAM => Shape::Text,
-        CT_WAIT => Shape::Wait,
-        CT_HELP => Shape::Help,
-        CT_EASTRESIZE => Shape::EResize,
-        CT_NORTHRESIZE => Shape::NResize,
-        CT_NORTHEASTRESIZE => Shape::NeResize,
-        CT_NORTHWESTRESIZE => Shape::NwResize,
-        CT_SOUTHRESIZE => Shape::SResize,
-        CT_SOUTHEASTRESIZE => Shape::SeResize,
-        CT_SOUTHWESTRESIZE => Shape::SwResize,
-        CT_WESTRESIZE => Shape::WResize,
-        CT_NORTHSOUTHRESIZE => Shape::NsResize,
-        CT_EASTWESTRESIZE => Shape::EwResize,
-        CT_NORTHEASTSOUTHWESTRESIZE => Shape::NeswResize,
-        CT_NORTHWESTSOUTHEASTRESIZE => Shape::NwseResize,
-        CT_COLUMNRESIZE => Shape::ColResize,
-        CT_ROWRESIZE => Shape::RowResize,
-        CT_MOVE => Shape::Move,
-        CT_VERTICALTEXT => Shape::VerticalText,
-        CT_CELL => Shape::Cell,
-        CT_CONTEXTMENU => Shape::ContextMenu,
-        CT_ALIAS => Shape::Alias,
-        CT_PROGRESS => Shape::Progress,
-        CT_NODROP => Shape::NoDrop,
-        CT_COPY => Shape::Copy,
-        CT_NOTALLOWED => Shape::NotAllowed,
-        CT_ZOOMIN => Shape::ZoomIn,
-        CT_ZOOMOUT => Shape::ZoomOut,
-        CT_GRAB => Shape::Grab,
-        CT_GRABBING => Shape::Grabbing,
-        CT_MIDDLEPANNING | CT_MIDDLE_PANNING_VERTICAL | CT_MIDDLE_PANNING_HORIZONTAL => {
-            Shape::AllScroll
-        }
+    let s = match shape {
+        Cross => Shape::Crosshair,
+        Hand => Shape::Pointer,
+        IBeam => Shape::Text,
+        Wait => Shape::Wait,
+        Help => Shape::Help,
+        EastResize => Shape::EResize,
+        NorthResize => Shape::NResize,
+        NorthEastResize => Shape::NeResize,
+        NorthWestResize => Shape::NwResize,
+        SouthResize => Shape::SResize,
+        SouthEastResize => Shape::SeResize,
+        SouthWestResize => Shape::SwResize,
+        WestResize => Shape::WResize,
+        NorthSouthResize => Shape::NsResize,
+        EastWestResize => Shape::EwResize,
+        NorthEastSouthWestResize => Shape::NeswResize,
+        NorthWestSouthEastResize => Shape::NwseResize,
+        ColumnResize => Shape::ColResize,
+        RowResize => Shape::RowResize,
+        Move => Shape::Move,
+        VerticalText => Shape::VerticalText,
+        Cell => Shape::Cell,
+        ContextMenu => Shape::ContextMenu,
+        Alias => Shape::Alias,
+        Progress => Shape::Progress,
+        NoDrop => Shape::NoDrop,
+        Copy => Shape::Copy,
+        NotAllowed => Shape::NotAllowed,
+        ZoomIn => Shape::ZoomIn,
+        ZoomOut => Shape::ZoomOut,
+        Grab => Shape::Grab,
+        Grabbing => Shape::Grabbing,
+        MiddlePanning | MiddlePanningVertical | MiddlePanningHorizontal => Shape::AllScroll,
         _ => Shape::Default,
     };
     s as u32
@@ -157,12 +148,13 @@ impl State {
     }
 
     fn apply_cursor(&mut self, qh: &QueueHandle<Self>) {
-        let cef = self.cursor_type.load(Ordering::Relaxed);
+        let cef = CursorShape::from_cef(self.cursor_type.load(Ordering::Relaxed) as i32)
+            .unwrap_or(CursorShape::Pointer);
         let Some(pointer) = &self.pointer else { return };
         if self.pointer_serial == 0 {
             return;
         }
-        if cef as c_int == CT_NONE {
+        if cef == CursorShape::None {
             pointer.set_cursor(self.pointer_serial, None, 0, 0);
             return;
         }
@@ -601,7 +593,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=8, ()).ok()?;
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
 
-    let cursor_type = Arc::new(AtomicU32::new(CT_POINTER as u32));
+    let cursor_type = Arc::new(AtomicU32::new(CursorShape::Pointer.as_raw() as u32));
     let set_cursor_inbox = Arc::new(AtomicBool::new(false));
 
     let state = State {

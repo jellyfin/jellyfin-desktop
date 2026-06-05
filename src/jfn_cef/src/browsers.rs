@@ -16,16 +16,29 @@ use std::ffi::c_char;
 use std::os::raw::c_void;
 use std::sync::Arc;
 
+use jfn_platform_abi::cursor::CursorShape;
+
 use crate::client::{Inner, JfnCefLayer};
 
 use crate::client::{
     jfn_cef_layer_free, jfn_cef_layer_get_surface, jfn_cef_layer_inner, jfn_cef_layer_new,
-    jfn_cef_layer_on_deactivated, jfn_cef_layer_resize, jfn_cef_layer_send_mouse_move,
-    jfn_cef_layer_set_focus, jfn_cef_layer_set_injection_profile_kind,
-    jfn_cef_layer_set_refresh_rate, jfn_cef_layer_set_surface, jfn_cef_set_default_frame_rate,
-    jfn_cef_set_use_shared_textures,
+    jfn_cef_layer_on_deactivated, jfn_cef_layer_resize, jfn_cef_layer_set_focus,
+    jfn_cef_layer_set_injection_profile_kind, jfn_cef_layer_set_refresh_rate,
+    jfn_cef_layer_set_surface, jfn_cef_set_default_frame_rate, jfn_cef_set_use_shared_textures,
 };
-use jfn_input::jfn_input_last_mouse_pos;
+use crate::sink_routing::{Handle, Router, Sink};
+
+// Runs inside `route_cursor`'s `INSTANCE` critical section, so `emit` MUST NOT
+// lock `INSTANCE` — the lock is not reentrant.
+struct CursorSink;
+
+impl Sink<CursorShape> for CursorSink {
+    fn emit(&mut self, shape: CursorShape) {
+        if let Some(p) = jfn_platform_abi::try_get() {
+            p.set_cursor(shape);
+        }
+    }
+}
 
 struct Browsers {
     layers: Vec<*mut JfnCefLayer>,
@@ -33,6 +46,7 @@ struct Browsers {
     /// promotes; `remove` drops the layer from the stack so the previous
     /// top auto-regains focus.
     active_stack: Vec<*mut JfnCefLayer>,
+    cursor_router: Router<CursorShape, CursorSink>,
     lw: i32,
     lh: i32,
     pw: i32,
@@ -62,6 +76,7 @@ pub fn jfn_browsers_init(
     *INSTANCE.lock() = Some(Browsers {
         layers: Vec::new(),
         active_stack: Vec::new(),
+        cursor_router: Router::new(CursorSink),
         lw,
         lh,
         pw,
@@ -119,6 +134,8 @@ pub unsafe fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
         }
     }
     b.layers.push(layer);
+    let handle = b.cursor_router.add_level();
+    unsafe { jfn_cef_layer_inner(layer) }.set_cursor_handle(handle);
     restack(&b.layers);
     layer
 }
@@ -139,6 +156,11 @@ pub fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
         .last()
         .copied()
         .unwrap_or(std::ptr::null_mut());
+    // `cursor_handle_of(layer)` derefs the layer, so this must run before
+    // `jfn_cef_layer_free(layer)` below.
+    if let Some(gone) = cursor_handle_of(layer) {
+        b.cursor_router.remove(gone, cursor_handle_of(new_top));
+    }
     unsafe { jfn_cef_layer_on_deactivated(layer) };
     let pos = b.layers.iter().position(|l| *l == layer);
     let Some(idx) = pos else { return };
@@ -153,7 +175,7 @@ pub fn jfn_browsers_remove(layer: *mut JfnCefLayer) {
     // Skip refocus during shutdown — every layer is mid-close and posting
     // input/focus to a dying browser hangs TID_UI before OnBeforeClose fires.
     if was_top && !new_top.is_null() && !jfn_playback::shutdown::jfn_shutting_down() {
-        focus_and_replay_mouse(new_top);
+        refocus(new_top);
     }
 }
 
@@ -172,6 +194,9 @@ pub fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
     b.active_stack.retain(|l| *l != layer);
     if !layer.is_null() {
         b.active_stack.push(layer);
+        if let Some(h) = cursor_handle_of(layer) {
+            b.cursor_router.select(h);
+        }
     }
     drop(g);
     if !prev.is_null() {
@@ -181,22 +206,24 @@ pub fn jfn_browsers_set_active(layer: *mut JfnCefLayer) {
         }
     }
     if !layer.is_null() {
-        focus_and_replay_mouse(layer);
+        refocus(layer);
     }
 }
 
-fn focus_and_replay_mouse(layer: *mut JfnCefLayer) {
+fn refocus(layer: *mut JfnCefLayer) {
     unsafe { jfn_cef_layer_set_focus(layer, true) };
-    // Leave-then-move forces the renderer to re-emit OnCursorChange.
-    let mut x = 0;
-    let mut y = 0;
-    let mut mods: u32 = 0;
-    let valid = jfn_input_last_mouse_pos(&mut x, &mut y, &mut mods);
-    if valid != 0 {
-        unsafe {
-            jfn_cef_layer_send_mouse_move(layer, x, y, mods, true);
-            jfn_cef_layer_send_mouse_move(layer, x, y, mods, false);
-        }
+}
+
+fn cursor_handle_of(layer: *mut JfnCefLayer) -> Option<Handle> {
+    if layer.is_null() {
+        return None;
+    }
+    unsafe { jfn_cef_layer_inner(layer) }.cursor_handle()
+}
+
+pub(crate) fn route_cursor(handle: Handle, shape: CursorShape) {
+    if let Some(b) = INSTANCE.lock().as_mut() {
+        b.cursor_router.emit(handle, shape);
     }
 }
 

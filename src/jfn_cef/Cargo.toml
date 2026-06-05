@@ -25,6 +25,7 @@ jfn-paths = { path = "../paths" }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
 serde_json.workspace = true
+slotmap.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

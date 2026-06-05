@@ -50,7 +50,7 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 // =====================================================================
 
 use jfn_input::buttons::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
-use jfn_platform_abi::cursor::*;
+use jfn_platform_abi::cursor::CursorShape;
 use jfn_platform_abi::event_flags::{
     EVENTFLAG_ALT_DOWN, EVENTFLAG_CAPS_LOCK_ON, EVENTFLAG_CONTROL_DOWN, EVENTFLAG_IS_KEY_PAD,
     EVENTFLAG_IS_LEFT, EVENTFLAG_IS_RIGHT, EVENTFLAG_LEFT_MOUSE_BUTTON,
@@ -82,7 +82,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     mpv_hwnd_raw: 0,
     input_hwnd_raw: 0,
     thread_id: 0,
-    cursor_type: CT_POINTER,
+    cursor_type: CursorShape::Pointer.as_raw(),
 });
 
 // =====================================================================
@@ -246,22 +246,21 @@ fn keyboard_modifiers(wp: WPARAM, lp: LPARAM) -> u32 {
 // Cursor mapping.
 // =====================================================================
 
-fn cef_cursor_to_win(ct: i32) -> PCWSTR {
-    match ct {
-        CT_CROSS => IDC_CROSS,
-        CT_HAND | CT_GRAB | CT_GRABBING => IDC_HAND,
-        CT_IBEAM => IDC_IBEAM,
-        CT_WAIT => IDC_WAIT,
-        CT_HELP => IDC_HELP,
-        CT_EASTRESIZE | CT_WESTRESIZE | CT_EASTWESTRESIZE | CT_COLUMNRESIZE => IDC_SIZEWE,
-        CT_NORTHRESIZE | CT_SOUTHRESIZE | CT_NORTHSOUTHRESIZE | CT_ROWRESIZE => IDC_SIZENS,
-        CT_NORTHEASTRESIZE | CT_SOUTHWESTRESIZE | CT_NORTHEASTSOUTHWESTRESIZE => IDC_SIZENESW,
-        CT_NORTHWESTRESIZE | CT_SOUTHEASTRESIZE | CT_NORTHWESTSOUTHEASTRESIZE => IDC_SIZENWSE,
-        CT_MOVE | CT_MIDDLEPANNING | CT_MIDDLE_PANNING_VERTICAL | CT_MIDDLE_PANNING_HORIZONTAL => {
-            IDC_SIZEALL
-        }
-        CT_PROGRESS => IDC_APPSTARTING,
-        CT_NODROP | CT_NOTALLOWED => IDC_NO,
+fn cef_cursor_to_win(shape: CursorShape) -> PCWSTR {
+    use CursorShape::*;
+    match shape {
+        Cross => IDC_CROSS,
+        Hand | Grab | Grabbing => IDC_HAND,
+        IBeam => IDC_IBEAM,
+        Wait => IDC_WAIT,
+        Help => IDC_HELP,
+        EastResize | WestResize | EastWestResize | ColumnResize => IDC_SIZEWE,
+        NorthResize | SouthResize | NorthSouthResize | RowResize => IDC_SIZENS,
+        NorthEastResize | SouthWestResize | NorthEastSouthWestResize => IDC_SIZENESW,
+        NorthWestResize | SouthEastResize | NorthWestSouthEastResize => IDC_SIZENWSE,
+        Move | MiddlePanning | MiddlePanningVertical | MiddlePanningHorizontal => IDC_SIZEALL,
+        Progress => IDC_APPSTARTING,
+        NoDrop | NotAllowed => IDC_NO,
         _ => IDC_ARROW,
     }
 }
@@ -293,11 +292,12 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
         WM_SETCURSOR => {
             // HTCLIENT = 1
             if loword_u32(lp.0 as u32) == 1 {
-                let ct = STATE.lock().cursor_type;
-                if ct == CT_NONE {
+                let shape =
+                    CursorShape::from_cef(STATE.lock().cursor_type).unwrap_or(CursorShape::Pointer);
+                if shape == CursorShape::None {
                     unsafe { SetCursor(None) };
                 } else {
-                    let cur = unsafe { LoadCursorW(None, cef_cursor_to_win(ct)).ok() };
+                    let cur = unsafe { LoadCursorW(None, cef_cursor_to_win(shape)).ok() };
                     unsafe { SetCursor(cur) };
                 }
                 return LRESULT(1); // TRUE

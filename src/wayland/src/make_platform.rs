@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::wl_ops::{self, JfnDmabufFrame};
 
+use jfn_platform_abi::cursor::CursorShape;
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
     SurfaceSize, WindowDecorations,
@@ -281,8 +282,8 @@ impl Platform for WaylandPlatform {
         if s > 0.0 { s as f32 } else { 1.0 }
     }
 
-    fn set_cursor(&self, ty: c_int) {
-        crate::input_lifecycle::set_cursor_active(ty as u32);
+    fn set_cursor(&self, shape: CursorShape) {
+        crate::input_lifecycle::set_cursor_active(shape);
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {

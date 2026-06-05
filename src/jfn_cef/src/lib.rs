@@ -19,6 +19,7 @@ pub mod platform_ops;
 #[cfg(target_os = "macos")]
 mod pump;
 mod resource;
+pub mod sink_routing;
 mod state;
 mod v8_handler;
 pub mod window_controls;

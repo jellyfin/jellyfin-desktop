@@ -33,7 +33,7 @@ use jfn_playback::ingest_driver::jfn_playback_fullscreen;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use jfn_playback::{Input as PbInput, MediaType as PbMediaType, post as pb_post};
 
-use jfn_platform_abi::cursor::{CT_NONE, CT_POINTER};
+use jfn_platform_abi::cursor::CursorShape;
 
 use jfn_mpv::api::JfnMpvLoadOptions;
 
@@ -411,7 +411,15 @@ fn handle_message(message: BrowserMessage) -> bool {
         }),
         "setCursorVisible" => with_args(args, |a| {
             let visible = a.bool(0) != 0;
-            jfn_platform_abi::get().set_cursor(if visible { CT_POINTER } else { CT_NONE });
+            let shape = if visible {
+                CursorShape::Pointer
+            } else {
+                CursorShape::None
+            };
+            let inner = INSTANCE.lock().as_ref().map(|s| Arc::clone(&s.layer));
+            if let Some(inner) = inner {
+                inner.emit_cursor(shape);
+            }
         }),
         "appExit" => {
             jfn_shutdown_initiate();

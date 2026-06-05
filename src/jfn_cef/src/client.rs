@@ -28,6 +28,9 @@ use std::time::Instant;
 
 use crate::ipc::BrowserMessage;
 use crate::platform_ops;
+use crate::sink_routing::Handle;
+
+use jfn_platform_abi::cursor::CursorShape;
 
 use jfn_playback::ingest_driver::jfn_playback_display_hz;
 use jfn_playback::shutdown::jfn_shutting_down;
@@ -119,6 +122,8 @@ pub(crate) struct Inner {
     // once even if `OnBeforeClose` were ever re-entered, and prevents a
     // double-free of the registry entry.
     layer_ptr: AtomicPtr<JfnCefLayer>,
+
+    cursor_handle: OnceLock<Handle>,
 }
 
 // Typed closure signatures stored in each callback slot. `*mut c_void` args
@@ -186,6 +191,7 @@ impl Inner {
             context_menu_builder: Mutex::new(None),
             context_menu_dispatcher: Mutex::new(None),
             layer_ptr: AtomicPtr::new(std::ptr::null_mut()),
+            cursor_handle: OnceLock::new(),
         })
     }
 
@@ -203,6 +209,14 @@ impl Inner {
     /// capturing the raw ptr into the closure.
     pub(crate) fn layer_ptr(&self) -> *mut JfnCefLayer {
         self.layer_ptr.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set_cursor_handle(&self, handle: Handle) {
+        let _ = self.cursor_handle.set(handle);
+    }
+
+    pub(crate) fn cursor_handle(&self) -> Option<Handle> {
+        self.cursor_handle.get().copied()
     }
 
     fn surface_ptr(&self) -> *mut c_void {
@@ -706,9 +720,9 @@ impl Inner {
         }
     }
 
-    pub(crate) fn on_cursor_change(&self, cursor_type: c_int) {
-        if let Some(p) = platform_ops::ops() {
-            p.set_cursor(cursor_type);
+    pub(crate) fn emit_cursor(&self, shape: CursorShape) {
+        if let Some(handle) = self.cursor_handle() {
+            crate::browsers::route_cursor(handle, shape);
         }
     }
 

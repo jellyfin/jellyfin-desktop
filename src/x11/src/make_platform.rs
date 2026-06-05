@@ -67,6 +67,7 @@ unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<DmabufFrame> {
     })
 }
 
+use jfn_platform_abi::cursor::CursorShape;
 pub use jfn_platform_abi::{
     DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
     SurfaceSize, WindowDecorations, WindowGeometry, WindowPos,
@@ -247,8 +248,8 @@ impl Platform for X11Platform {
         }
     }
 
-    fn set_cursor(&self, t: c_int) {
-        crate::input_lifecycle::set_cursor_active(t as u32);
+    fn set_cursor(&self, shape: CursorShape) {
+        crate::input_lifecycle::set_cursor_active(shape);
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
