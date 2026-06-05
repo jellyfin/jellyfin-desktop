@@ -13,6 +13,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::input::{Callbacks, JfnInputWayland};
+use jfn_platform_abi::cursor::CursorShape;
 
 use jfn_input::{
     jfn_input_dispatch_char, jfn_input_dispatch_history_nav, jfn_input_dispatch_key_raw,
@@ -51,9 +52,9 @@ pub fn lifecycle_cleanup() {
     }
 }
 
-pub fn set_cursor_active(cef_cursor_type: u32) {
+pub fn set_cursor_active(shape: CursorShape) {
     let ptr = G_CTX.load(Ordering::Acquire);
     if !ptr.is_null() {
-        unsafe { crate::input::jfn_input_wayland_set_cursor(ptr, cef_cursor_type) };
+        unsafe { crate::input::jfn_input_wayland_set_cursor(ptr, shape.as_raw() as u32) };
     }
 }

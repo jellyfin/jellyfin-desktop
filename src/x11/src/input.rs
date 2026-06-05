@@ -14,7 +14,7 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::resource_manager::new_from_default;
 use x11rb::rust_connection::RustConnection;
-use xcb::{XidNew, x};
+use xcb::{Xid, XidNew, x};
 use xkbcommon::xkb::{self, x11 as xkb_x11};
 
 use jfn_input::{
@@ -28,9 +28,10 @@ use jfn_playback::wake_event::{
     jfn_wake_event_signal,
 };
 
+use cursor_icon::CursorIcon;
 use jfn_input::buttons;
 use jfn_input::xkb::to_cef_mods;
-use jfn_platform_abi::cursor::*;
+use jfn_platform_abi::cursor::CursorShape;
 use jfn_platform_abi::event_flags::{
     EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
 };
@@ -40,7 +41,7 @@ const XKB_KEY_XF86FORWARD: u32 = 0x1008ff27;
 
 #[derive(Copy, Clone)]
 enum CursorReq {
-    Set(u32),
+    Set(CursorShape),
 }
 
 pub struct CursorMailbox {
@@ -62,20 +63,21 @@ impl CursorMailbox {
         let wake = jfn_wake_event_new();
         Self {
             queue: Mutex::new(Vec::new()),
-            latest_type: AtomicU32::new(CT_POINTER as u32),
+            latest_type: AtomicU32::new(CursorShape::Pointer.as_raw() as u32),
             shutdown: std::sync::atomic::AtomicBool::new(false),
             wake,
         }
     }
     fn push(&self, req: CursorReq) {
         match req {
-            CursorReq::Set(t) => self.latest_type.store(t, Ordering::Release),
+            CursorReq::Set(t) => self.latest_type.store(t.as_raw() as u32, Ordering::Release),
         }
         self.queue.lock().push(req);
         unsafe { jfn_wake_event_signal(self.wake) };
     }
-    fn latest_type(&self) -> u32 {
-        self.latest_type.load(Ordering::Acquire)
+    fn latest_type(&self) -> CursorShape {
+        CursorShape::from_cef(self.latest_type.load(Ordering::Acquire) as i32)
+            .unwrap_or(CursorShape::Pointer)
     }
     fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
@@ -241,43 +243,43 @@ struct State {
 
 unsafe impl Send for State {}
 
-fn cef_cursor_to_name(t: u32) -> &'static str {
-    match t as c_int {
-        CT_CROSS => "crosshair",
-        CT_HAND => "pointer",
-        CT_IBEAM => "text",
-        CT_WAIT => "wait",
-        CT_HELP => "help",
-        CT_EASTRESIZE => "e-resize",
-        CT_NORTHRESIZE => "n-resize",
-        CT_NORTHEASTRESIZE => "ne-resize",
-        CT_NORTHWESTRESIZE => "nw-resize",
-        CT_SOUTHRESIZE => "s-resize",
-        CT_SOUTHEASTRESIZE => "se-resize",
-        CT_SOUTHWESTRESIZE => "sw-resize",
-        CT_WESTRESIZE => "w-resize",
-        CT_NORTHSOUTHRESIZE => "ns-resize",
-        CT_EASTWESTRESIZE => "ew-resize",
-        CT_NORTHEASTSOUTHWESTRESIZE => "nesw-resize",
-        CT_NORTHWESTSOUTHEASTRESIZE => "nwse-resize",
-        CT_COLUMNRESIZE => "col-resize",
-        CT_ROWRESIZE => "row-resize",
-        CT_MIDDLEPANNING | CT_MIDDLE_PANNING_VERTICAL | CT_MIDDLE_PANNING_HORIZONTAL => {
-            "all-scroll"
-        }
-        CT_MOVE => "move",
-        CT_VERTICALTEXT => "vertical-text",
-        CT_CELL => "cell",
-        CT_CONTEXTMENU => "context-menu",
-        CT_ALIAS => "alias",
-        CT_PROGRESS => "progress",
-        CT_NODROP => "no-drop",
-        CT_NOTALLOWED => "not-allowed",
-        CT_ZOOMIN => "zoom-in",
-        CT_ZOOMOUT => "zoom-out",
-        CT_GRAB => "grab",
-        CT_GRABBING => "grabbing",
-        _ => "default",
+fn cef_cursor_to_icon(shape: CursorShape) -> CursorIcon {
+    use CursorShape::*;
+    match shape {
+        Cross => CursorIcon::Crosshair,
+        Hand => CursorIcon::Pointer,
+        IBeam => CursorIcon::Text,
+        Wait => CursorIcon::Wait,
+        Help => CursorIcon::Help,
+        EastResize => CursorIcon::EResize,
+        NorthResize => CursorIcon::NResize,
+        NorthEastResize => CursorIcon::NeResize,
+        NorthWestResize => CursorIcon::NwResize,
+        SouthResize => CursorIcon::SResize,
+        SouthEastResize => CursorIcon::SeResize,
+        SouthWestResize => CursorIcon::SwResize,
+        WestResize => CursorIcon::WResize,
+        NorthSouthResize => CursorIcon::NsResize,
+        EastWestResize => CursorIcon::EwResize,
+        NorthEastSouthWestResize => CursorIcon::NeswResize,
+        NorthWestSouthEastResize => CursorIcon::NwseResize,
+        ColumnResize => CursorIcon::ColResize,
+        RowResize => CursorIcon::RowResize,
+        MiddlePanning | MiddlePanningVertical | MiddlePanningHorizontal => CursorIcon::AllScroll,
+        Move => CursorIcon::Move,
+        VerticalText => CursorIcon::VerticalText,
+        Cell => CursorIcon::Cell,
+        ContextMenu => CursorIcon::ContextMenu,
+        Alias => CursorIcon::Alias,
+        Progress => CursorIcon::Progress,
+        NoDrop => CursorIcon::NoDrop,
+        Copy => CursorIcon::Copy,
+        NotAllowed => CursorIcon::NotAllowed,
+        ZoomIn => CursorIcon::ZoomIn,
+        ZoomOut => CursorIcon::ZoomOut,
+        Grab => CursorIcon::Grab,
+        Grabbing => CursorIcon::Grabbing,
+        _ => CursorIcon::Default,
     }
 }
 
@@ -536,53 +538,73 @@ fn handle_xkb_state_notify(st: &mut State, ev: &xcb::xkb::StateNotifyEvent) {
 struct CursorState {
     conn: Arc<RustConnection>,
     window: u32,
-    current_cursor: u32,
+    // Never freed: `load_cursor` caches by name and hands back the same id, so
+    // freeing leaves a dangling id the next lookup would re-hand out.
+    cache: std::collections::HashMap<CursorShape, u32>,
     cursor_handle: Option<X11rbCursorHandle>,
 }
 
 unsafe impl Send for CursorState {}
 
-fn apply_cursor(st: &mut CursorState, t: u32) {
+fn live_overlay_windows() -> Vec<u32> {
+    let g = crate::x11_state::MUT.lock();
+    g.as_ref()
+        .map(|m| {
+            crate::lifecycle::snapshot_live_overlays_locked(m)
+                .into_iter()
+                .map(|s| s.window)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn apply_cursor(st: &mut CursorState, shape: CursorShape) {
     let conn = &st.conn;
+    // Pointer sits over the grabbed overlay windows, so the cursor must be set on
+    // them, not the mpv window beneath.
+    let windows = live_overlay_windows();
+    if windows.is_empty() {
+        return;
+    }
 
-    if t as c_int == CT_NONE {
-        let Ok(pix) = conn.generate_id() else {
-            return;
-        };
-        let _ = conn.create_pixmap(1, pix, st.window, 1, 1);
-        let Ok(blank) = conn.generate_id() else {
-            let _ = conn.free_pixmap(pix);
-            return;
-        };
-        let _ = conn.create_cursor(blank, pix, pix, 0, 0, 0, 0, 0, 0, 0, 0);
-        let aux = X11rbChangeWindowAttributesAux::new().cursor(blank);
-        let _ = conn.change_window_attributes(st.window, &aux);
-        let _ = conn.flush();
-        if st.current_cursor != 0 {
-            let _ = conn.free_cursor(st.current_cursor);
+    let cursor_id = match st.cache.get(&shape) {
+        Some(&id) => id,
+        None => {
+            let id = if shape == CursorShape::None {
+                let Ok(pix) = conn.generate_id() else {
+                    return;
+                };
+                let _ = conn.create_pixmap(1, pix, st.window, 1, 1);
+                let Ok(blank) = conn.generate_id() else {
+                    let _ = conn.free_pixmap(pix);
+                    return;
+                };
+                let _ = conn.create_cursor(blank, pix, pix, 0, 0, 0, 0, 0, 0, 0, 0);
+                let _ = conn.free_pixmap(pix);
+                blank
+            } else {
+                let Some(cursor_handle) = st.cursor_handle.as_ref() else {
+                    return;
+                };
+                let name = cef_cursor_to_icon(shape).name();
+                let Ok(id) = cursor_handle.load_cursor(&**conn, name) else {
+                    return;
+                };
+                if id == 0 {
+                    return;
+                }
+                id
+            };
+            st.cache.insert(shape, id);
+            id
         }
-        st.current_cursor = blank;
-        let _ = conn.free_pixmap(pix);
-        return;
-    }
+    };
 
-    let Some(cursor_handle) = st.cursor_handle.as_ref() else {
-        return;
-    };
-    let name = cef_cursor_to_name(t);
-    let Ok(cursor_id) = cursor_handle.load_cursor(&**conn, name) else {
-        return;
-    };
-    if cursor_id == 0 {
-        return;
+    for w in &windows {
+        let aux = X11rbChangeWindowAttributesAux::new().cursor(cursor_id);
+        let _ = conn.change_window_attributes(*w, &aux);
     }
-    let aux = X11rbChangeWindowAttributesAux::new().cursor(cursor_id);
-    let _ = conn.change_window_attributes(st.window, &aux);
     let _ = conn.flush();
-    if st.current_cursor != 0 && st.current_cursor != cursor_id {
-        let _ = conn.free_cursor(st.current_cursor);
-    }
-    st.current_cursor = cursor_id;
 }
 
 fn drain_cursor_requests(st: &mut CursorState, mailbox: &CursorMailbox) {
@@ -684,7 +706,7 @@ fn cursor_thread_body(screen_num: i32, window: u32, mailbox: Arc<CursorMailbox>)
     let mut st = CursorState {
         conn,
         window,
-        current_cursor: 0,
+        cache: std::collections::HashMap::new(),
         cursor_handle,
     };
 
@@ -711,11 +733,6 @@ fn cursor_thread_body(screen_num: i32, window: u32, mailbox: Arc<CursorMailbox>)
             break;
         }
         drain_cursor_requests(&mut st, &mailbox);
-    }
-
-    if st.current_cursor != 0 {
-        let _ = st.conn.free_cursor(st.current_cursor);
-        let _ = st.conn.flush();
     }
 }
 
@@ -859,6 +876,39 @@ pub fn start(screen_num: i32, parent: u32) -> Option<Handle> {
     })
 }
 
-pub fn set_cursor(handle: &Handle, t: u32) {
-    handle.mailbox.push(CursorReq::Set(t));
+/// Capture pointer input directly on a WM-managed overlay.
+///
+/// Buttons go through a *passive grab* (`GrabButton`), not event selection,
+/// because only one client may select `ButtonPress` on a window and the WM may
+/// already hold it — a grab is independent of selection and cannot conflict.
+/// Must use the same xcb connection the input thread polls.
+pub fn grab_overlay_input(window: u32) {
+    let Some(conn) = crate::x11_state::xcb_conn() else {
+        return;
+    };
+    let w = x::Window::new(window);
+    let mask =
+        x::EventMask::POINTER_MOTION | x::EventMask::ENTER_WINDOW | x::EventMask::LEAVE_WINDOW;
+    conn.send_request(&x::ChangeWindowAttributes {
+        window: w,
+        value_list: &[x::Cw::EventMask(mask)],
+    });
+    conn.send_request(&x::GrabButton {
+        owner_events: true,
+        grab_window: w,
+        event_mask: x::EventMask::BUTTON_PRESS
+            | x::EventMask::BUTTON_RELEASE
+            | x::EventMask::POINTER_MOTION,
+        pointer_mode: x::GrabMode::Async,
+        keyboard_mode: x::GrabMode::Async,
+        confine_to: x::Window::none(),
+        cursor: x::Cursor::none(),
+        button: x::ButtonIndex::Any,
+        modifiers: x::ModMask::ANY,
+    });
+    let _ = conn.flush();
+}
+
+pub fn set_cursor(handle: &Handle, shape: CursorShape) {
+    handle.mailbox.push(CursorReq::Set(shape));
 }

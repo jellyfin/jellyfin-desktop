@@ -5,6 +5,7 @@
 //! any thread.
 
 use crate::input::{Handle, set_cursor, start as start_thread};
+use jfn_platform_abi::cursor::CursorShape;
 use parking_lot::Mutex;
 
 static G: Mutex<Option<Handle>> = Mutex::new(None);
@@ -26,9 +27,9 @@ pub fn cleanup() {
     *g = None;
 }
 
-pub fn set_cursor_active(cef_cursor_type: u32) {
+pub fn set_cursor_active(shape: CursorShape) {
     let g = G.lock();
     if let Some(h) = g.as_ref() {
-        set_cursor(h, cef_cursor_type);
+        set_cursor(h, shape);
     }
 }

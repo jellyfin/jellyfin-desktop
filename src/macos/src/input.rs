@@ -32,7 +32,7 @@ extern_class!(
 
 use jfn_input::buttons::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use jfn_input::scroll::ScrollAccum;
-use jfn_platform_abi::cursor::*;
+use jfn_platform_abi::cursor::CursorShape;
 use jfn_platform_abi::event_flags::{
     EVENTFLAG_ALT_DOWN, EVENTFLAG_COMMAND_DOWN, EVENTFLAG_CONTROL_DOWN,
     EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
@@ -205,40 +205,42 @@ fn ns_keycode_to_vkey(kc: u16) -> i32 {
 static G_CURSOR_HIDDEN: AtomicBool = AtomicBool::new(false);
 static G_MOUSE_INSIDE: AtomicBool = AtomicBool::new(false);
 /// Pending cursor type from CEF. Updated from any thread; applied on main.
-static G_PENDING_CURSOR: AtomicI32 = AtomicI32::new(0); // CT_POINTER
+static G_PENDING_CURSOR: AtomicI32 = AtomicI32::new(CursorShape::Pointer.as_raw());
 /// Mouse-button bits to OR into modifier masks (so CEF sees the buttons
 /// held during drags). Touched only from the main thread.
 static G_MOUSE_BUTTON_MODIFIERS: AtomicU32 = AtomicU32::new(0);
 
-unsafe fn ns_cursor_for(ct: i32) -> *mut AnyObject {
+unsafe fn ns_cursor_for(shape: CursorShape) -> *mut AnyObject {
+    use CursorShape::*;
     let cls = objc2::class!(NSCursor);
-    let sel: Sel = match ct {
-        CT_CROSS => sel!(crosshairCursor),
-        CT_HAND => sel!(pointingHandCursor),
-        CT_IBEAM => sel!(IBeamCursor),
-        CT_VERTICALTEXT => sel!(IBeamCursorForVerticalLayout),
-        CT_EASTRESIZE => sel!(resizeRightCursor),
-        CT_WESTRESIZE => sel!(resizeLeftCursor),
-        CT_NORTHRESIZE => sel!(resizeUpCursor),
-        CT_SOUTHRESIZE => sel!(resizeDownCursor),
-        CT_NORTHSOUTHRESIZE | CT_ROWRESIZE => sel!(resizeUpDownCursor),
-        CT_EASTWESTRESIZE | CT_COLUMNRESIZE => sel!(resizeLeftRightCursor),
-        CT_MOVE | CT_GRAB => sel!(openHandCursor),
-        CT_GRABBING => sel!(closedHandCursor),
-        CT_NODROP | CT_NOTALLOWED => sel!(operationNotAllowedCursor),
-        CT_COPY => sel!(dragCopyCursor),
-        CT_ALIAS => sel!(dragLinkCursor),
-        CT_CONTEXTMENU => sel!(contextualMenuCursor),
+    let sel: Sel = match shape {
+        Cross => sel!(crosshairCursor),
+        Hand => sel!(pointingHandCursor),
+        IBeam => sel!(IBeamCursor),
+        VerticalText => sel!(IBeamCursorForVerticalLayout),
+        EastResize => sel!(resizeRightCursor),
+        WestResize => sel!(resizeLeftCursor),
+        NorthResize => sel!(resizeUpCursor),
+        SouthResize => sel!(resizeDownCursor),
+        NorthSouthResize | RowResize => sel!(resizeUpDownCursor),
+        EastWestResize | ColumnResize => sel!(resizeLeftRightCursor),
+        Move | Grab => sel!(openHandCursor),
+        Grabbing => sel!(closedHandCursor),
+        NoDrop | NotAllowed => sel!(operationNotAllowedCursor),
+        Copy => sel!(dragCopyCursor),
+        Alias => sel!(dragLinkCursor),
+        ContextMenu => sel!(contextualMenuCursor),
         _ => sel!(arrowCursor),
     };
     unsafe { msg_send![cls, performSelector: sel] }
 }
 
 unsafe fn apply_cursor_state() {
-    let pending = G_PENDING_CURSOR.load(Ordering::SeqCst);
+    let pending = CursorShape::from_cef(G_PENDING_CURSOR.load(Ordering::SeqCst))
+        .unwrap_or(CursorShape::Pointer);
     let inside = G_MOUSE_INSIDE.load(Ordering::SeqCst);
     let cls = objc2::class!(NSCursor);
-    if pending == CT_NONE && inside {
+    if pending == CursorShape::None && inside {
         if !G_CURSOR_HIDDEN.load(Ordering::SeqCst) {
             let _: () = unsafe { msg_send![cls, hide] };
             G_CURSOR_HIDDEN.store(true, Ordering::SeqCst);
@@ -248,7 +250,7 @@ unsafe fn apply_cursor_state() {
             let _: () = unsafe { msg_send![cls, unhide] };
             G_CURSOR_HIDDEN.store(false, Ordering::SeqCst);
         }
-        if inside && pending != CT_NONE {
+        if inside && pending != CursorShape::None {
             let cur = unsafe { ns_cursor_for(pending) };
             if !cur.is_null() {
                 let _: () = unsafe { msg_send![cur, set] };

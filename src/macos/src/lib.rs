@@ -714,8 +714,8 @@ impl Platform for MacosPlatform {
         macos_wake_main_loop();
     }
 
-    fn set_cursor(&self, t: c_int) {
-        jfn_input_macos_set_cursor(t);
+    fn set_cursor(&self, shape: jfn_platform_abi::cursor::CursorShape) {
+        jfn_input_macos_set_cursor(shape.as_raw());
     }
 
     fn set_idle_inhibit(&self, level: IdleInhibitLevel) {
