@@ -152,6 +152,12 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     let ph = if m.ph > 0 { m.ph as u32 } else { 1 };
 
     let win = create_overlay_window(&x11_conn, m, px, py, pw, ph);
+    // grab_overlay_input runs on a separate connection; round-trip first so the
+    // window exists server-side, else its requests hit a silently-dropped
+    // BadWindow and the overlay gets no input.
+    if let Ok(cookie) = x11_conn.get_input_focus() {
+        let _ = cookie.reply();
+    }
     crate::input::grab_overlay_input(win);
     let gc = x11_conn.generate_id().unwrap_or(0);
     let _ = x11_conn.create_gc(gc, win, &CreateGCAux::new());

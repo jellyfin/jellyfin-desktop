@@ -938,11 +938,11 @@ pub fn grab_overlay_input(window: u32) {
     let w = x::Window::new(window);
     let mask =
         x::EventMask::POINTER_MOTION | x::EventMask::ENTER_WINDOW | x::EventMask::LEAVE_WINDOW;
-    conn.send_request(&x::ChangeWindowAttributes {
+    let attr_cookie = conn.send_request_checked(&x::ChangeWindowAttributes {
         window: w,
         value_list: &[x::Cw::EventMask(mask)],
     });
-    conn.send_request(&x::GrabButton {
+    let grab_cookie = conn.send_request_checked(&x::GrabButton {
         owner_events: true,
         grab_window: w,
         event_mask: x::EventMask::BUTTON_PRESS
@@ -955,7 +955,12 @@ pub fn grab_overlay_input(window: u32) {
         button: x::ButtonIndex::Any,
         modifiers: x::ModMask::ANY,
     });
-    let _ = conn.flush();
+    if let Err(e) = conn.check_request(attr_cookie) {
+        tracing::error!(target: "x11::input", "grab_overlay_input: select events on 0x{window:x} failed: {e:?}");
+    }
+    if let Err(e) = conn.check_request(grab_cookie) {
+        tracing::error!(target: "x11::input", "grab_overlay_input: GrabButton on 0x{window:x} failed: {e:?}");
+    }
 }
 
 pub fn set_cursor(handle: &Handle, shape: CursorShape) {
