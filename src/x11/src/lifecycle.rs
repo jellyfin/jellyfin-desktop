@@ -85,6 +85,7 @@ pub(crate) struct OverlaySnap {
     /// False on the dmabuf tier once a worker exists: the GPU worker sizes the
     /// window in lockstep, so the geometry thread must not drive size too.
     pub send_size: bool,
+    pub state: crate::overlay_fsm::OverlayState,
 }
 
 pub(crate) fn snapshot_live_overlays_locked(m: &Mutable) -> Vec<OverlaySnap> {
@@ -97,8 +98,28 @@ pub(crate) fn snapshot_live_overlays_locked(m: &Mutable) -> Vec<OverlaySnap> {
             window: s.window,
             visible: s.visible,
             send_size: !(m.use_dmabuf && s.gpu_paint_worker.is_some()),
+            state: s.fsm_state.unwrap_or_else(|| {
+                crate::overlay_fsm::OverlayState::new_mapped(m.parent_fullscreen)
+            }),
         })
         .collect()
+}
+
+pub(crate) fn store_overlay_state_locked(
+    m: &Mutable,
+    window: u32,
+    state: crate::overlay_fsm::OverlayState,
+) {
+    for &s_ptr in &m.live {
+        if s_ptr.is_null() {
+            continue;
+        }
+        let s = unsafe { &mut *s_ptr };
+        if s.window == window {
+            s.fsm_state = Some(state);
+            return;
+        }
+    }
 }
 
 pub(crate) fn set_parent_geometry_locked(m: &mut Mutable, px: i32, py: i32, pw: i32, ph: i32) {
