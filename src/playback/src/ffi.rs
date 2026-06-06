@@ -38,7 +38,10 @@ fn with_coord<F: FnOnce(&PlaybackCoordinator)>(f: F) {
 pub fn jfn_playback_init() {
     let mut guard = coord_slot().lock();
     if guard.is_none() {
-        let mut c = PlaybackCoordinator::new();
+        let Some(mut c) = PlaybackCoordinator::new() else {
+            eprintln!("[playback] failed to create coordinator (wake eventfd)");
+            return;
+        };
         register_builtin_sinks(&c);
         c.start();
         *guard = Some(c);

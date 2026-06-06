@@ -13,8 +13,8 @@
 //! the manager, which then calls `jfn_shutdown_fanout` to wake every
 //! subsystem thread that registered via `jfn_shutdown_register_waker`.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use crate::wake_event::WakeEvent;
 
@@ -49,14 +49,14 @@ pub fn jfn_shutdown_set_handler(handler: Option<fn()>) {
 /// `ev` must remain live for the rest of the process.
 pub fn jfn_shutdown_register_waker(ev: &'static WakeEvent) {
     let addr = ev as *const WakeEvent as usize;
-    let mut w = WAKERS.lock().unwrap();
+    let mut w = WAKERS.lock().unwrap_or_else(PoisonError::into_inner);
     w.push(addr);
 }
 
 /// Signal every registered waker. Called from the manager once it observes
 /// shutdown — never from a signal handler (this locks a mutex).
 pub fn jfn_shutdown_fanout() {
-    let w = WAKERS.lock().unwrap();
+    let w = WAKERS.lock().unwrap_or_else(PoisonError::into_inner);
     for addr in w.iter() {
         let ev = *addr as *const WakeEvent;
         unsafe { crate::wake_event::jfn_wake_event_signal(ev) };

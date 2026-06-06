@@ -27,7 +27,7 @@ impl EventLoop {
     /// Spawn the drain thread. Returns the loop owner and a [`Receiver`]
     /// for typed events. The wakeup callback on `handle` is left untouched —
     /// `mpv_wait_event(-1)` blocks until libmpv has something to deliver.
-    pub fn spawn(handle: Arc<Handle>) -> (Self, Receiver<Event>) {
+    pub fn spawn(handle: Arc<Handle>) -> std::io::Result<(Self, Receiver<Event>)> {
         let (tx, rx) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let thread = {
@@ -35,17 +35,16 @@ impl EventLoop {
             let stop = Arc::clone(&stop);
             thread::Builder::new()
                 .name("jfn-mpv-events".into())
-                .spawn(move || drain(handle, stop, tx))
-                .expect("spawn jfn-mpv-events thread")
+                .spawn(move || drain(handle, stop, tx))?
         };
-        (
+        Ok((
             Self {
                 handle,
                 stop,
                 thread: Some(thread),
             },
             rx,
-        )
+        ))
     }
 
     /// Signal the loop to exit and wake `mpv_wait_event` so the next

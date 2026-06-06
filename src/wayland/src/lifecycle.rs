@@ -182,10 +182,13 @@ pub fn jfn_wl_lifecycle_init() -> bool {
         }
     }
 
-    if explicit && requested != Some(resolved) {
+    if explicit
+        && let Some(req) = requested
+        && req != resolved
+    {
         tracing::warn!(
             "--platform-paint={} unavailable; using {}",
-            paint_name(requested.unwrap()),
+            paint_name(req),
             paint_name(resolved)
         );
     }

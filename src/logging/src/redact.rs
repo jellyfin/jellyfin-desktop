@@ -96,7 +96,7 @@ mod tests {
     fn censor_str(s: &str) -> String {
         let mut bytes = s.as_bytes().to_vec();
         censor(&mut bytes);
-        String::from_utf8(bytes).unwrap()
+        String::from_utf8_lossy(&bytes).into_owned()
     }
 
     #[test]

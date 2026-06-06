@@ -261,7 +261,7 @@ pub fn build_device_profile(
     profile.insert("ContainerProfiles".to_string(), Value::Array(Vec::new()));
     profile.insert("CodecProfiles".to_string(), Value::Array(Vec::new()));
 
-    serde_json::to_string(&Value::Object(profile)).expect("serde_json::to_string on owned Value")
+    serde_json::to_string(&Value::Object(profile)).unwrap_or_default()
 }
 
 // ---- URL helpers ----
@@ -328,8 +328,10 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    fn parse(s: &str) -> Value {
-        serde_json::from_str(s).expect("valid JSON")
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn parse(s: &str) -> Result<Value, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_str(s)?)
     }
 
     fn codec(name: &str, kind: MediaKind) -> Codec {
@@ -340,43 +342,56 @@ mod tests {
     }
 
     #[test]
-    fn empty_capabilities_emits_photo_only_direct_play() {
+    fn empty_capabilities_emits_photo_only_direct_play() -> TestResult {
         let s = build_device_profile(&[], &[], "dev", "1.0", false);
-        let v = parse(&s);
-        let dp = v["DirectPlayProfiles"].as_array().unwrap();
+        let v = parse(&s)?;
+        let dp = v["DirectPlayProfiles"].as_array().ok_or("expected array")?;
         assert_eq!(dp.len(), 1);
         assert_eq!(dp[0]["Type"], "Photo");
+        Ok(())
     }
 
     #[test]
-    fn force_transcode_empties_codec_csvs_and_drops_fmp4() {
+    fn force_transcode_empties_codec_csvs_and_drops_fmp4() -> TestResult {
         let decoders = vec![
             codec("h264", MediaKind::Video),
             codec("aac", MediaKind::Audio),
         ];
         let s = build_device_profile(&decoders, &["matroska".into()], "dev", "1.0", true);
-        let v = parse(&s);
-        let dp = v["DirectPlayProfiles"].as_array().unwrap();
-        let video = dp.iter().find(|e| e["Type"] == "Video").unwrap();
+        let v = parse(&s)?;
+        let dp = v["DirectPlayProfiles"].as_array().ok_or("expected array")?;
+        let video = dp
+            .iter()
+            .find(|e| e["Type"] == "Video")
+            .ok_or("no Video entry")?;
         assert_eq!(video["VideoCodec"], "");
         assert_eq!(video["AudioCodec"], "");
-        let audio = dp.iter().find(|e| e["Type"] == "Audio").unwrap();
+        let audio = dp
+            .iter()
+            .find(|e| e["Type"] == "Audio")
+            .ok_or("no Audio entry")?;
         assert_eq!(audio["AudioCodec"], "");
 
-        let tp = v["TranscodingProfiles"].as_array().unwrap();
+        let tp = v["TranscodingProfiles"]
+            .as_array()
+            .ok_or("expected array")?;
         // Audio + Video (ts) + Photo. No fmp4 entry under force_transcode.
         assert!(!tp.iter().any(|e| e["Container"] == "mp4"));
+        Ok(())
     }
 
     #[test]
-    fn container_rename_expands_and_dedupes() {
+    fn container_rename_expands_and_dedupes() -> TestResult {
         // Container CSV is only emitted when there are video/audio decoders.
         let decoders = vec![codec("h264", MediaKind::Video)];
         let s = build_device_profile(&decoders, &["matroska,webm".into()], "dev", "1.0", false);
-        let v = parse(&s);
-        let dp = v["DirectPlayProfiles"].as_array().unwrap();
-        let video = dp.iter().find(|e| e["Type"] == "Video").unwrap();
-        let container = video["Container"].as_str().unwrap();
+        let v = parse(&s)?;
+        let dp = v["DirectPlayProfiles"].as_array().ok_or("expected array")?;
+        let video = dp
+            .iter()
+            .find(|e| e["Type"] == "Video")
+            .ok_or("no Video entry")?;
+        let container = video["Container"].as_str().ok_or("expected string")?;
         let parts: Vec<&str> = container.split(',').collect();
         assert!(parts.contains(&"matroska"));
         assert!(parts.contains(&"webm"));
@@ -386,15 +401,19 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), parts.len());
+        Ok(())
     }
 
     #[test]
-    fn subtitle_rename_emits_both_methods() {
+    fn subtitle_rename_emits_both_methods() -> TestResult {
         let decoders = vec![codec("subrip", MediaKind::Subtitle)];
         let s = build_device_profile(&decoders, &[], "dev", "1.0", false);
-        let v = parse(&s);
-        let sp = v["SubtitleProfiles"].as_array().unwrap();
-        let formats: Vec<&str> = sp.iter().map(|e| e["Format"].as_str().unwrap()).collect();
+        let v = parse(&s)?;
+        let sp = v["SubtitleProfiles"].as_array().ok_or("expected array")?;
+        let formats: Vec<&str> = sp
+            .iter()
+            .map(|e| e["Format"].as_str().unwrap_or_default())
+            .collect();
         assert!(formats.contains(&"subrip"));
         assert!(formats.contains(&"srt"));
         // Each format appears with both Embed and External.
@@ -402,15 +421,16 @@ mod tests {
             let methods: Vec<&str> = sp
                 .iter()
                 .filter(|e| e["Format"] == fmt)
-                .map(|e| e["Method"].as_str().unwrap())
+                .map(|e| e["Method"].as_str().unwrap_or_default())
                 .collect();
             assert!(methods.contains(&"Embed"));
             assert!(methods.contains(&"External"));
         }
+        Ok(())
     }
 
     #[test]
-    fn transcode_audio_csv_uses_curated_order_not_decoder_order() {
+    fn transcode_audio_csv_uses_curated_order_not_decoder_order() -> TestResult {
         let decoders = vec![
             codec("h264", MediaKind::Video),
             codec("mp3", MediaKind::Audio),
@@ -418,13 +438,16 @@ mod tests {
             codec("opus", MediaKind::Audio),
         ];
         let s = build_device_profile(&decoders, &["matroska".into()], "dev", "1.0", false);
-        let v = parse(&s);
-        let tp = v["TranscodingProfiles"].as_array().unwrap();
+        let v = parse(&s)?;
+        let tp = v["TranscodingProfiles"]
+            .as_array()
+            .ok_or("expected array")?;
         let fmp4 = tp
             .iter()
             .find(|e| e["Container"] == "mp4")
-            .expect("fmp4 entry");
+            .ok_or("no fmp4 entry")?;
         assert_eq!(fmp4["AudioCodec"], "opus,aac,mp3");
+        Ok(())
     }
 
     #[test]
@@ -657,10 +680,10 @@ mod tests {
     }
 
     #[test]
-    fn top_level_keys_in_expected_order() {
+    fn top_level_keys_in_expected_order() -> TestResult {
         let s = build_device_profile(&[], &[], "dev", "1.0", false);
-        let v: Value = parse(&s);
-        let obj = v.as_object().unwrap();
+        let v: Value = parse(&s)?;
+        let obj = v.as_object().ok_or("expected object")?;
         let keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
         assert_eq!(
             keys,
@@ -677,5 +700,6 @@ mod tests {
                 "CodecProfiles",
             ]
         );
+        Ok(())
     }
 }

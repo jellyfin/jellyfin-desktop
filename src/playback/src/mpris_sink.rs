@@ -152,48 +152,45 @@ fn diff_view(prev: &View, next: &View) -> Vec<&'static str> {
     out
 }
 
+fn insert_value(m: &mut HashMap<String, OwnedValue>, key: &str, v: Value<'_>) {
+    match OwnedValue::try_from(v) {
+        Ok(ov) => {
+            m.insert(key.to_string(), ov);
+        }
+        Err(e) => eprintln!("mpris: encode {key}: {e}"),
+    }
+}
+
 fn metadata_to_dict(meta: &MediaMetadata) -> HashMap<String, OwnedValue> {
     let mut m = HashMap::new();
     // mpris:trackid is required by spec.
-    let track_id = ObjectPath::try_from("/org/jellyfin/track/1").unwrap();
-    m.insert(
-        "mpris:trackid".into(),
-        OwnedValue::try_from(Value::from(track_id)).unwrap(),
-    );
+    if let Ok(track_id) = ObjectPath::try_from("/org/jellyfin/track/1") {
+        insert_value(&mut m, "mpris:trackid", Value::from(track_id));
+    }
     if meta.duration_us > 0 {
-        m.insert(
-            "mpris:length".into(),
-            OwnedValue::try_from(Value::from(meta.duration_us)).unwrap(),
-        );
+        insert_value(&mut m, "mpris:length", Value::from(meta.duration_us));
     }
     if !meta.title.is_empty() {
-        m.insert(
-            "xesam:title".into(),
-            OwnedValue::try_from(Value::from(meta.title.as_str())).unwrap(),
-        );
+        insert_value(&mut m, "xesam:title", Value::from(meta.title.as_str()));
     }
     if !meta.artist.is_empty() {
-        m.insert(
-            "xesam:artist".into(),
-            OwnedValue::try_from(Value::from(vec![meta.artist.as_str()])).unwrap(),
+        insert_value(
+            &mut m,
+            "xesam:artist",
+            Value::from(vec![meta.artist.as_str()]),
         );
     }
     if !meta.album.is_empty() {
-        m.insert(
-            "xesam:album".into(),
-            OwnedValue::try_from(Value::from(meta.album.as_str())).unwrap(),
-        );
+        insert_value(&mut m, "xesam:album", Value::from(meta.album.as_str()));
     }
     if meta.track_number > 0 {
-        m.insert(
-            "xesam:trackNumber".into(),
-            OwnedValue::try_from(Value::from(meta.track_number)).unwrap(),
-        );
+        insert_value(&mut m, "xesam:trackNumber", Value::from(meta.track_number));
     }
     if !meta.art_data_uri.is_empty() {
-        m.insert(
-            "mpris:artUrl".into(),
-            OwnedValue::try_from(Value::from(meta.art_data_uri.as_str())).unwrap(),
+        insert_value(
+            &mut m,
+            "mpris:artUrl",
+            Value::from(meta.art_data_uri.as_str()),
         );
     }
     m
@@ -550,7 +547,9 @@ fn emit_properties_changed(conn: &Connection, names: &[&str], view: &View) {
         return;
     }
     let invalidated: Vec<&str> = Vec::new();
-    let iface_name = InterfaceName::try_from("org.mpris.MediaPlayer2.Player").unwrap();
+    let Ok(iface_name) = InterfaceName::try_from("org.mpris.MediaPlayer2.Player") else {
+        return;
+    };
     if let Err(e) = conn.emit_signal(
         None::<&str>,
         MPRIS_PATH,
@@ -585,10 +584,16 @@ pub unsafe fn jfn_mpris_sink_start(service_suffix: *const c_char) {
             .into_owned()
     };
     let (tx, rx) = channel::<Msg>();
-    let join = thread::Builder::new()
+    let join = match thread::Builder::new()
         .name("mpris-sink".into())
         .spawn(move || worker(rx, suffix))
-        .expect("spawn mpris-sink");
+    {
+        Ok(join) => join,
+        Err(e) => {
+            eprintln!("mpris: spawn mpris-sink thread: {e}");
+            return;
+        }
+    };
     *slot = Some(Sink {
         tx,
         join: Some(join),

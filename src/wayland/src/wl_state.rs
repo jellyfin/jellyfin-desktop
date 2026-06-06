@@ -193,6 +193,8 @@ pub(crate) fn try_state() -> Option<&'static Mutex<WlState>> {
     STATE.get()
 }
 
+// Post-init accessor; `try_state()` is the fallible sibling for early paths.
+#[allow(clippy::expect_used)] // boot invariant: init runs before any lock()
 pub(crate) fn lock() -> MutexGuard<'static, WlState> {
     STATE.get().expect("wl_state used before init").lock()
 }
@@ -312,7 +314,7 @@ pub(crate) unsafe fn init(
         present_mode: PresentMode::Attach,
         // SAFETY: caller guaranteed `display_ptr` is a live
         // `*mut wl_display`.
-        display_ptr: NonNull::new(display_ptr).expect("display_ptr is non-null"),
+        display_ptr: NonNull::new(display_ptr).ok_or_else(|| "display_ptr is null".to_string())?,
         gpu_ctx: None,
         use_gpu_paint: false,
     };

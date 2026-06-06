@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use jfn_gpu_paint::{DirtyRect, GpuContext, GpuPainter, PixelFrame, WindowTarget};
@@ -59,14 +59,14 @@ impl WaylandGpuPaintWorker {
             return;
         }
         let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
         state.target_size = size;
         cv.notify_one();
     }
 
     pub(crate) fn set_visible(&self, visible: bool) {
         let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
         state.visible = visible;
         cv.notify_one();
     }
@@ -93,7 +93,7 @@ impl WaylandGpuPaintWorker {
             stride,
         };
         let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
         // Latest-frame only: replace any frame the presenter has not consumed.
         state.pending = Some(frame);
         cv.notify_one();
@@ -102,7 +102,7 @@ impl WaylandGpuPaintWorker {
     pub(crate) fn shutdown(mut self) {
         let (lock, cv) = &*self.shared;
         {
-            let mut state = lock.lock().unwrap();
+            let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
             state.shutdown = true;
             state.pending = None;
             cv.notify_one();
@@ -130,9 +130,9 @@ fn run_worker(
     loop {
         let (frame, visible, target_size, shutdown) = {
             let (lock, cv) = &*shared;
-            let mut state = lock.lock().unwrap();
+            let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
             while state.pending.is_none() && !state.shutdown {
-                state = cv.wait(state).unwrap();
+                state = cv.wait(state).unwrap_or_else(PoisonError::into_inner);
             }
             (
                 state.pending.take(),
@@ -163,7 +163,9 @@ fn run_worker(
             }
         }
 
-        let painter = painter.as_mut().unwrap();
+        let Some(painter) = painter.as_mut() else {
+            continue;
+        };
         painter.set_visible(visible);
         painter.resize(target_size);
         let pixel_frame = PixelFrame {

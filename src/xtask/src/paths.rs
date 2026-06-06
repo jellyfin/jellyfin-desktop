@@ -1,12 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub fn repo_root() -> &'static PathBuf {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     ROOT.get_or_init(|| {
-        // src/xtask/Cargo.toml → src/xtask → src → repo_root
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        manifest.parent().unwrap().parent().unwrap().to_path_buf()
+        // src/xtask → src → repo_root. Falls back to the cwd, which is the
+        // repo root under the usual `cargo xtask` invocation.
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
     })
 }
 

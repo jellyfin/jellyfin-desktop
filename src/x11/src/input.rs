@@ -644,13 +644,14 @@ fn drain_cursor_requests(st: &mut CursorState, mailbox: &CursorMailbox) {
 /// alongside xcb + the cursor mailbox.
 pub(crate) fn x11_shutdown_waker() -> *const jfn_playback::WakeEvent {
     use std::sync::OnceLock;
-    static EV: OnceLock<&'static jfn_playback::WakeEvent> = OnceLock::new();
-    *EV.get_or_init(|| {
-        let raw = jfn_playback::WakeEvent::new().expect("x11 shutdown waker allocation");
+    static EV: OnceLock<Option<&'static jfn_playback::WakeEvent>> = OnceLock::new();
+    EV.get_or_init(|| {
+        let raw = jfn_playback::WakeEvent::new()?;
         let leaked: &'static jfn_playback::WakeEvent = Box::leak(Box::new(raw));
         jfn_shutdown_register_waker(leaked);
-        leaked
-    }) as *const _
+        Some(leaked)
+    })
+    .map_or(std::ptr::null(), |e| e as *const _)
 }
 
 fn input_thread_body(mut st: State) {
@@ -881,21 +882,39 @@ pub fn start(screen_num: i32, parent: u32) -> Option<Handle> {
     };
 
     let input_thread_mailbox = input_mailbox.clone();
-    let input_join = std::thread::Builder::new()
+    let input_join = match std::thread::Builder::new()
         .name("jfn-x11-input-dispatch".into())
         .spawn(move || input_dispatch_thread_body(input_thread_mailbox))
-        .expect("spawn x11 input dispatch thread");
+    {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[x11] failed to spawn input dispatch thread: {e}");
+            return None;
+        }
+    };
 
     let cursor_mailbox = mailbox.clone();
-    let cursor_join = std::thread::Builder::new()
+    let cursor_join = match std::thread::Builder::new()
         .name("jfn-x11-cursor".into())
         .spawn(move || cursor_thread_body(screen_num, parent, cursor_mailbox))
-        .expect("spawn x11 cursor thread");
+    {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[x11] failed to spawn cursor thread: {e}");
+            return None;
+        }
+    };
 
-    let join = std::thread::Builder::new()
+    let join = match std::thread::Builder::new()
         .name("jfn-x11-input".into())
         .spawn(move || input_thread_body(st))
-        .expect("spawn x11 input thread");
+    {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[x11] failed to spawn input thread: {e}");
+            return None;
+        }
+    };
 
     Some(Handle {
         join: Some(join),

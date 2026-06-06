@@ -15,7 +15,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", windows))]
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 const APP_DIR_NAME: &str = "jellyfin-desktop";
 const LOG_FILE_NAME: &str = "jellyfin-desktop.log";
@@ -28,24 +28,27 @@ struct Overrides {
 
 static OVERRIDES: OnceLock<Mutex<Overrides>> = OnceLock::new();
 
-fn overrides() -> &'static Mutex<Overrides> {
-    OVERRIDES.get_or_init(|| Mutex::new(Overrides::default()))
+fn overrides() -> MutexGuard<'static, Overrides> {
+    OVERRIDES
+        .get_or_init(|| Mutex::new(Overrides::default()))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 pub fn set_config_dir_override(path: PathBuf) {
-    overrides().lock().unwrap().config_dir = Some(path);
+    overrides().config_dir = Some(path);
 }
 
 pub fn set_cache_dir_override(path: PathBuf) {
-    overrides().lock().unwrap().cache_dir = Some(path);
+    overrides().cache_dir = Some(path);
 }
 
 fn config_override() -> Option<PathBuf> {
-    overrides().lock().unwrap().config_dir.clone()
+    overrides().config_dir.clone()
 }
 
 fn cache_override() -> Option<PathBuf> {
-    overrides().lock().unwrap().cache_dir.clone()
+    overrides().cache_dir.clone()
 }
 
 fn env_or(var: &str, fallback: &str) -> String {

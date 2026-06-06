@@ -47,7 +47,9 @@ pub fn set(level: u32) {
             }
         }
     }
-    let bus = state.bus.as_ref().unwrap();
+    let Some(bus) = state.bus.as_ref() else {
+        return;
+    };
 
     let reply = bus.call_method(
         Some("org.freedesktop.login1"),

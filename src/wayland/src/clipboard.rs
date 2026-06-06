@@ -374,8 +374,7 @@ fn worker_loop(
             if revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
                 done = true;
             }
-            if done {
-                let (_, cb, buf) = active.take().unwrap();
+            if done && let Some((_, cb, buf)) = active.take() {
                 fire(cb, &buf);
             }
         }

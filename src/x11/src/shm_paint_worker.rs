@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use x11rb::connection::Connection;
@@ -68,7 +68,7 @@ impl X11ShmPaintWorker {
 
     pub(crate) fn set_visible(&self, visible: bool) {
         let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
         state.visible = visible;
         if !visible {
             state.pending = None;
@@ -106,7 +106,7 @@ impl X11ShmPaintWorker {
         }
 
         let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
         state.pending = Some(PendingFrame {
             rects,
             width,
@@ -119,7 +119,7 @@ impl X11ShmPaintWorker {
     pub(crate) fn shutdown(mut self) {
         let (lock, cv) = &*self.shared;
         {
-            let mut state = lock.lock().unwrap();
+            let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
             state.shutdown = true;
             state.pending = None;
             cv.notify_one();
@@ -189,9 +189,9 @@ fn run_worker(
     loop {
         let (frame, visible, shutdown) = {
             let (lock, cv) = &*shared;
-            let mut state = lock.lock().unwrap();
+            let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
             while state.pending.is_none() && !state.shutdown {
-                state = cv.wait(state).unwrap();
+                state = cv.wait(state).unwrap_or_else(PoisonError::into_inner);
             }
             (state.pending.take(), state.visible, state.shutdown)
         };

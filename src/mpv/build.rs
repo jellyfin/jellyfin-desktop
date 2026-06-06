@@ -11,15 +11,18 @@
 //! `cargo:rustc-link-lib=mpv` always emitted.
 
 use std::env;
+use std::error::Error;
 use std::path::PathBuf;
 
-fn main() {
+type BuildResult<T> = Result<T, Box<dyn Error>>;
+
+fn main() -> BuildResult<()> {
     println!("cargo:rerun-if-env-changed=JFN_MPV_INCLUDE_DIR");
     println!("cargo:rerun-if-env-changed=JFN_MPV_LIB_DIR");
     println!("cargo:rerun-if-env-changed=EXTERNAL_MPV_DIR");
 
-    let (include_dirs, linked_via_pkgconfig) = resolve_paths();
-    let header = locate_header(&include_dirs);
+    let (include_dirs, linked_via_pkgconfig) = resolve_paths()?;
+    let header = locate_header(&include_dirs)?;
     println!("cargo:rerun-if-changed={}", header.display());
 
     if !linked_via_pkgconfig {
@@ -58,16 +61,13 @@ fn main() {
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
 
-    let bindings = builder
-        .generate()
-        .expect("failed to generate libmpv bindings");
+    let bindings = builder.generate()?;
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
-    bindings
-        .write_to_file(&out_path)
-        .expect("failed to write bindings.rs");
+    let out_path = PathBuf::from(env::var("OUT_DIR")?).join("bindings.rs");
+    bindings.write_to_file(&out_path)?;
 
-    generate_avcodec_bindings();
+    generate_avcodec_bindings()?;
+    Ok(())
 }
 
 /// Narrow libavcodec bindings: only the four symbols `capabilities`
@@ -79,7 +79,7 @@ fn main() {
 ///   2. `EXTERNAL_MPV_DIR` env override (Windows ships ffmpeg headers
 ///      under the same prefix — see `dev/windows/build_mpv_source.ps1`).
 ///   3. pkg-config `libavcodec`.
-fn generate_avcodec_bindings() {
+fn generate_avcodec_bindings() -> BuildResult<()> {
     println!("cargo:rerun-if-env-changed=EXTERNAL_AVCODEC_DIR");
 
     let mut include_dirs: Vec<PathBuf> = Vec::new();
@@ -106,9 +106,7 @@ fn generate_avcodec_bindings() {
     }
 
     if include_dirs.is_empty() {
-        let lib = pkg_config::Config::new()
-            .probe("libavcodec")
-            .expect("libavcodec via pkg-config");
+        let lib = pkg_config::Config::new().probe("libavcodec")?;
         include_dirs.extend(lib.include_paths.iter().cloned());
         linked_via_pkgconfig = true;
     }
@@ -118,14 +116,14 @@ fn generate_avcodec_bindings() {
         .iter()
         .find(|p| p.join("libavcodec/avcodec.h").exists())
         .cloned()
-        .unwrap_or_else(|| {
-            panic!(
+        .ok_or_else(|| {
+            format!(
                 "could not locate libavcodec/avcodec.h in any of: {:?}\n\
                  Set EXTERNAL_AVCODEC_DIR, EXTERNAL_MPV_DIR (with ffmpeg \
                  headers under include/), or install libavcodec via pkg-config.",
                 include_dirs
             )
-        });
+        })?;
     let header = header_dir.join("libavcodec/avcodec.h");
     println!("cargo:rerun-if-changed={}", header.display());
 
@@ -148,17 +146,14 @@ fn generate_avcodec_bindings() {
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
 
-    let bindings = builder
-        .generate()
-        .expect("failed to generate libavcodec bindings");
+    let bindings = builder.generate()?;
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("avcodec_bindings.rs");
-    bindings
-        .write_to_file(&out_path)
-        .expect("failed to write avcodec_bindings.rs");
+    let out_path = PathBuf::from(env::var("OUT_DIR")?).join("avcodec_bindings.rs");
+    bindings.write_to_file(&out_path)?;
+    Ok(())
 }
 
-fn resolve_paths() -> (Vec<PathBuf>, bool) {
+fn resolve_paths() -> BuildResult<(Vec<PathBuf>, bool)> {
     let mut includes: Vec<PathBuf> = Vec::new();
     let mut linked = false;
 
@@ -188,25 +183,26 @@ fn resolve_paths() -> (Vec<PathBuf>, bool) {
     }
 
     // Vendored fallback (header-only — does not configure linkage).
-    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let vendored = manifest.join("../../third_party/mpv/include");
     if vendored.exists() {
         includes.push(vendored);
     }
 
-    (includes, linked)
+    Ok((includes, linked))
 }
 
-fn locate_header(include_dirs: &[PathBuf]) -> PathBuf {
+fn locate_header(include_dirs: &[PathBuf]) -> BuildResult<PathBuf> {
     for dir in include_dirs {
         let candidate = dir.join("mpv").join("client.h");
         if candidate.exists() {
-            return candidate;
+            return Ok(candidate);
         }
     }
-    panic!(
+    Err(format!(
         "could not locate mpv/client.h in any of: {:?}\n\
          Set JFN_MPV_INCLUDE_DIR, EXTERNAL_MPV_DIR, or install libmpv via pkg-config.",
         include_dirs
-    );
+    )
+    .into())
 }

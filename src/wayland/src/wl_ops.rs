@@ -439,7 +439,9 @@ fn queue_shm_present(
         ));
     }
 
-    let worker = s.shm_paint_worker.as_ref().unwrap();
+    let Some(worker) = s.shm_paint_worker.as_ref() else {
+        return false;
+    };
     worker.set_visible(s.visible);
     worker.resize(s.lw, s.lh, s.pw, s.ph);
     worker.submit_frame(pixels, w, h, dirty)
@@ -501,7 +503,9 @@ pub(crate) fn surface_present_software(
             s.visible,
         ));
     }
-    let worker = s.gpu_paint_worker.as_ref().unwrap();
+    let Some(worker) = s.gpu_paint_worker.as_ref() else {
+        return false;
+    };
     worker.set_visible(s.visible);
     worker.resize(painter_size);
     let dirty = dirty
@@ -550,7 +554,9 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
         vp.set_source(0.0, 0.0, vw as f64, vh as f64);
         vp.set_destination(lw, lh);
     }
-    let popup = s.popup_surface.as_ref().unwrap();
+    let Some(popup) = s.popup_surface.as_ref() else {
+        return;
+    };
     popup.attach(Some(&buf), 0, 0);
     popup.damage_buffer(0, 0, vw, vh);
     // Commit parent first so subsurface state lands in the same frame.
@@ -588,7 +594,9 @@ pub(crate) fn popup_present_software(
         vp.set_source(0.0, 0.0, pw as f64, ph as f64);
         vp.set_destination(lw, lh);
     }
-    let popup = s.popup_surface.as_ref().unwrap();
+    let Some(popup) = s.popup_surface.as_ref() else {
+        return;
+    };
     popup.attach(Some(&buf), 0, 0);
     popup.damage_buffer(0, 0, pw, ph);
     if let Some(parent) = s.surface.as_ref() {
@@ -617,7 +625,9 @@ fn attach_and_commit_locked(
     s.placeholder = false;
     s.null_attached = false;
     set_viewport_for_buffer_locked(s, w, h);
-    let surface = s.surface.as_ref().expect("attach without surface");
+    let Some(surface) = s.surface.as_ref() else {
+        return;
+    };
     surface.attach(Some(&buf), 0, 0);
     surface.damage_buffer(0, 0, w, h);
     surface.commit();

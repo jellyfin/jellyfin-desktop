@@ -44,15 +44,24 @@ static MAIN_PARK: MainPark = MainPark {
 /// signal already fired (latched), so a wake racing ahead of the wait is
 /// not lost.
 pub fn main_park_wait() {
-    let mut woken = MAIN_PARK.woken.lock().unwrap();
+    let mut woken = MAIN_PARK
+        .woken
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     while !*woken {
-        woken = MAIN_PARK.cv.wait(woken).unwrap();
+        woken = MAIN_PARK
+            .cv
+            .wait(woken)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
     }
 }
 
 /// Release [`main_park_wait`]. Idempotent and safe from any thread.
 pub fn main_park_signal() {
-    let mut woken = MAIN_PARK.woken.lock().unwrap();
+    let mut woken = MAIN_PARK
+        .woken
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     *woken = true;
     MAIN_PARK.cv.notify_all();
 }
@@ -401,6 +410,7 @@ static PLATFORM: OnceLock<&'static dyn Platform> = OnceLock::new();
 /// Install the platform backend. Must be called exactly once during boot,
 /// before any other code dispatches through [`get`]. Panics if called
 /// twice — there is no "swap backend at runtime" path.
+#[allow(clippy::expect_used)] // boot invariant: install exactly once
 pub fn install(p: Box<dyn Platform>) {
     let leaked: &'static dyn Platform = Box::leak(p);
     PLATFORM
@@ -428,6 +438,7 @@ fn ozone_platform_set(name: &str) {
 
 /// Returns the installed platform backend. Panics if [`install`] hasn't
 /// been called yet — every call site is post-boot.
+#[allow(clippy::expect_used)] // every call site is post-boot
 pub fn get() -> &'static dyn Platform {
     *PLATFORM
         .get()
@@ -488,6 +499,7 @@ pub trait BrowserBridge: Send + Sync {
 
 static BROWSER_BRIDGE: OnceLock<&'static dyn BrowserBridge> = OnceLock::new();
 
+#[allow(clippy::expect_used)] // boot invariant: install exactly once
 pub fn install_browser_bridge(b: Box<dyn BrowserBridge>) {
     let leaked: &'static dyn BrowserBridge = Box::leak(b);
     BROWSER_BRIDGE

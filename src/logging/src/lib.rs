@@ -822,16 +822,15 @@ mod tests {
     }
 
     #[test]
-    fn redact_make_writer_censors_before_forwarding() {
+    fn redact_make_writer_censors_before_forwarding() -> io::Result<()> {
         let sink = VecSink(Arc::new(StdMutex::new(Vec::new())));
         let make = RedactMake(sink.clone());
         {
             let mut w = make.make_writer();
-            w.write_all(b"GET /Items?api_key=abc123secret&x=1\n")
-                .unwrap();
+            w.write_all(b"GET /Items?api_key=abc123secret&x=1\n")?;
         }
         let bytes = sink.0.lock().clone();
-        let text = String::from_utf8(bytes).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
         assert!(
             !text.contains("abc123secret"),
             "secret leaked through redactor: {text}"
@@ -840,17 +839,19 @@ mod tests {
             text.contains("api_key=xxx"),
             "expected censored bytes: {text}"
         );
+        Ok(())
     }
 
     #[test]
-    fn redact_make_writer_passes_clean_bytes() {
+    fn redact_make_writer_passes_clean_bytes() -> io::Result<()> {
         let sink = VecSink(Arc::new(StdMutex::new(Vec::new())));
         let make = RedactMake(sink.clone());
         {
             let mut w = make.make_writer();
-            w.write_all(b"[mpv] hello\n").unwrap();
+            w.write_all(b"[mpv] hello\n")?;
         }
         assert_eq!(&*sink.0.lock(), b"[mpv] hello\n");
+        Ok(())
     }
 
     #[test]
@@ -941,7 +942,7 @@ mod tests {
             tracing::event!(target: "mpv", tracing::Level::ERROR, "boom");
         });
         let bytes = sink.0.lock().clone();
-        String::from_utf8(bytes).unwrap()
+        String::from_utf8_lossy(&bytes).into_owned()
     }
 
     #[test]

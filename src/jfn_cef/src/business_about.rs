@@ -8,7 +8,6 @@
 //! tracks open/closed status via `OPEN`.
 
 use cef::{ImplBrowser, ImplBrowserHost};
-use std::ffi::CString;
 use std::os::raw::c_void;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,14 +31,14 @@ pub fn jfn_about_open() {
         return;
     }
 
-    let kind = CString::new("about").unwrap();
+    let kind = c"about";
     let layer = unsafe { jfn_browsers_create(kind.as_ptr()) };
     if layer.is_null() {
         OPEN.store(false, Ordering::Release);
         return;
     }
 
-    let name = CString::new("about").unwrap();
+    let name = c"about";
     unsafe { jfn_cef_layer_set_name(layer, name.as_ptr()) };
 
     let l = unsafe { &*layer };

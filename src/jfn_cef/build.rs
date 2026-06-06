@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or("CARGO_MANIFEST_DIR has no grandparent")?;
 
     // `env!` (not std::env::var) so rustc records the dep and re-runs this
     // script when the workspace version bumps.
@@ -35,10 +38,11 @@ fn main() {
     track_git_refs(repo_root);
 
     let web_dir = repo_root.join("src").join("web");
-    for entry in std::fs::read_dir(&web_dir).expect("read src/web").flatten() {
+    for entry in std::fs::read_dir(&web_dir)?.flatten() {
         let p = entry.path();
         println!("cargo:rerun-if-changed={}", p.display());
     }
+    Ok(())
 }
 
 /// Fallback for bare `cargo build` (no xtask). Empty hash when there is no repo.

@@ -206,11 +206,11 @@ mod tests {
     }
 
     #[test]
-    fn map_decodes_keys_and_values() {
+    fn map_decodes_keys_and_values() -> Result<(), std::ffi::NulError> {
         // { "w": 1920, "h": 1080 }
         let mut values = vec![raw_int(1920), raw_int(1080)];
-        let key_w = CString::new("w").unwrap();
-        let key_h = CString::new("h").unwrap();
+        let key_w = CString::new("w")?;
+        let key_h = CString::new("h")?;
         let mut keys: Vec<*mut std::os::raw::c_char> =
             vec![key_w.as_ptr() as *mut _, key_h.as_ptr() as *mut _];
         let list = sys::mpv_node_list {
@@ -226,10 +226,11 @@ mod tests {
         assert_eq!(n.get("w").and_then(|v| v.as_int()), Some(1920));
         assert_eq!(n.get("h").and_then(|v| v.as_int()), Some(1080));
         assert!(n.get("missing").is_none());
+        Ok(())
     }
 
     #[test]
-    fn array_decodes_in_order() {
+    fn array_decodes_in_order() -> Result<(), Box<dyn std::error::Error>> {
         let mut values = vec![raw_int(1), raw_int(2), raw_int(3)];
         let list = sys::mpv_node_list {
             num: 3,
@@ -241,10 +242,11 @@ mod tests {
         root.u.list = &list as *const _ as *mut _;
 
         let n = unsafe { Node::from_raw(&root) };
-        let arr = n.as_array().unwrap();
+        let arr = n.as_array().ok_or("expected array")?;
         assert_eq!(arr.len(), 3);
         assert_eq!(arr[0].as_int(), Some(1));
         assert_eq!(arr[2].as_int(), Some(3));
+        Ok(())
     }
 
     #[test]

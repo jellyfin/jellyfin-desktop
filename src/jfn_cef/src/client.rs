@@ -155,7 +155,9 @@ unsafe impl Sync for Inner {}
 
 impl Inner {
     fn new() -> Arc<Self> {
-        let paint_scheduler = PAINT_MODE.get().unwrap().make_scheduler();
+        let paint_scheduler = PAINT_MODE
+            .get_or_init(|| PaintMode::new(false))
+            .make_scheduler();
         Arc::new(Self {
             name: Mutex::new(String::new()),
             closed: AtomicBool::new(false),
@@ -300,7 +302,9 @@ impl Inner {
         // WindowInfo: windowless OSR. shared_texture_enabled comes from the
         // process-wide flag set by Browsers ctor; external_begin_frame is on
         // macOS only (CVDisplayLink drives BeginFrames there).
-        let shared = PAINT_MODE.get().unwrap().shared_textures();
+        let shared = PAINT_MODE
+            .get_or_init(|| PaintMode::new(false))
+            .shared_textures();
         let parent: sys::cef_window_handle_t = unsafe { std::mem::zeroed() };
         let mut wi = WindowInfo::default().set_as_windowless(parent);
         wi.shared_texture_enabled = if shared { 1 } else { 0 };
