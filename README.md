@@ -33,12 +33,28 @@ This project uses [just](https://github.com/casey/just) as a command runner.
 
 ```
 Available recipes:
+    [package]
+    appimage ...    # [linux] build AppImage
+    flatpak ...     # [linux] build Flatpak bundle
+    dmg             # [macos] build Apple Disk Image (.dmg)
+
+    [maintenance]
     clean         # Remove build artifacts
+
+    [test]
     test          # Run tests
+
+    [lint]
+    fmt           # Format workspace
+    fmt-check     # Check formatting
+    clippy        # Run clippy
     lint          # Lint workspace
+    strict-lint   # Strict lint workspace
+
+    [build]
     build         # Build the app
+
+    [run]
     run *args     # Run the app
     run-mpv *args # Run the mpv CLI
-    appimage ...
-    flatpak ...
 ```

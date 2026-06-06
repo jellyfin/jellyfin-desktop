@@ -8,6 +8,7 @@ default:
     @just --list flatpak
 
 # Build Flatpak bundle
+[group('package')]
 [linux]
 build: linux_common::deps
     ./dev/linux/flatpak/build.sh

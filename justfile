@@ -13,6 +13,7 @@ list:
     @just --list --unsorted
 
 # Remove build artifacts
+[group('maintenance')]
 [macos]
 [linux]
 clean:
@@ -20,6 +21,7 @@ clean:
     cargo clean --manifest-path src/Cargo.toml
 
 # Remove build artifacts
+[group('maintenance')]
 [windows]
 clean:
     if (Test-Path build) { Remove-Item -Recurse -Force build }
@@ -27,11 +29,43 @@ clean:
     cargo clean --manifest-path src/Cargo.toml
 
 # Run tests
+[group('test')]
 test: build
     cargo test --manifest-path src/Cargo.toml --workspace
 
+# Format workspace
+[group('lint')]
+fmt:
+    cargo fmt --manifest-path src/Cargo.toml --all
+
+# Check formatting
+[group('lint')]
+fmt-check:
+    cargo fmt --manifest-path src/Cargo.toml --all -- --check
+
+# Run clippy
+[group('lint')]
+clippy:
+    JFN_MPV_INCLUDE_DIR=third_party/mpv/include \
+        cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets -- \
+        -D warnings \
+        -D clippy::unwrap_used \
+        -D clippy::expect_used \
+        -D clippy::panic
+
 # Lint workspace
-lint:
+[group('lint')]
+lint: fmt-check clippy
+
+# Strict lint workspace
+[group('lint')]
+strict-lint:
     cargo fmt --manifest-path src/Cargo.toml --all -- --check
     JFN_MPV_INCLUDE_DIR=third_party/mpv/include \
-        cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets
+        cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets -- \
+        -D warnings \
+        -D clippy::pedantic \
+        -D clippy::nursery \
+        -D clippy::unwrap_used \
+        -D clippy::expect_used \
+        -D clippy::panic

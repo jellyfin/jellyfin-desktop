@@ -1,6 +1,7 @@
 set working-directory := '../..'
 
 # Ensure submodules and CEF are present
+[group('deps')]
 [linux]
 deps:
     #!/bin/sh
