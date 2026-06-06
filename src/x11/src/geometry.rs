@@ -1,4 +1,9 @@
-//! X11 geometry watcher thread.
+//! X11 geometry watcher thread: the executor for [`crate::overlay_fsm`].
+//!
+//! It blocks in `poll(-1)` with no timer. Running timer-free is only safe
+//! because every change class emits an event on a window we watch:
+//! `STRUCTURE_NOTIFY | PROPERTY_CHANGE` on the parent and its frame, plus
+//! `STRUCTURE_NOTIFY` on each overlay so a WM clamp re-triggers a reconcile.
 
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
@@ -9,22 +14,16 @@ use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConfigureWindowAux,
-    ConnectionExt as _, EventMask, PropMode, Window,
+    ConnectionExt as _, EventMask, StackMode, Window,
 };
 use x11rb::rust_connection::RustConnection;
-use x11rb::wrapper::ConnectionExt as _;
 
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use jfn_playback::wake_event::{jfn_wake_event_drain, jfn_wake_event_fd, jfn_wake_event_signal};
 
 use crate::input::x11_shutdown_waker;
-use crate::lifecycle::OverlaySnap;
+use crate::overlay_fsm::{self, Effect, Geom};
 use crate::x11_state::MUT;
-
-/// Settle poll interval. Catches the final position-only frame move after
-/// fullscreen/maximize exit, which can arrive with no ConfigureNotify of its
-/// own.
-const TICK_MS: i32 = 16;
 
 pub struct Handle {
     join: Option<std::thread::JoinHandle<()>>,
@@ -60,6 +59,8 @@ pub fn request_resync() {
     unsafe { jfn_wake_event_signal(x11_geometry_resync_waker()) };
 }
 
+/// The mpv fullscreen callback. It only *triggers* a reconcile; the authority
+/// for overlay fullscreen state is the parent's `_NET_WM_STATE`, read each pass.
 pub fn set_parent_fullscreen(fs: bool) {
     {
         let mut g = MUT.lock();
@@ -114,8 +115,8 @@ fn find_frame(conn: &RustConnection, mut w: Window, root: Window) -> Window {
     }
 }
 
-fn watch_structure(conn: &RustConnection, window: Window) {
-    let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY);
+fn watch_window(conn: &RustConnection, window: Window, mask: EventMask) {
+    let aux = ChangeWindowAttributesAux::new().event_mask(mask);
     let _ = conn.change_window_attributes(window, &aux);
 }
 
@@ -146,11 +147,7 @@ fn watch_compositor(conn: &RustConnection, root: Window) {
 }
 
 /// Query a window's absolute screen position + size. Returns None on protocol failure.
-fn query_geometry(
-    conn: &RustConnection,
-    window: Window,
-    root: Window,
-) -> Option<(i32, i32, i32, i32)> {
+fn query_geometry(conn: &RustConnection, window: Window, root: Window) -> Option<Geom> {
     let geo = conn.get_geometry(window).ok()?.reply().ok()?;
     let trans = conn
         .translate_coordinates(window, root, 0, 0)
@@ -165,87 +162,81 @@ fn query_geometry(
     ))
 }
 
-fn reposition_overlays(
-    conn: &RustConnection,
-    px: i32,
-    py: i32,
-    pw: i32,
-    ph: i32,
-    snaps: &[OverlaySnap],
-) {
-    for s in snaps {
-        if !s.visible {
-            continue;
-        }
-        let mut aux = ConfigureWindowAux::new().x(px).y(py);
-        if s.send_size {
-            aux = aux.width(pw as u32).height(ph as u32);
-        }
-        let _ = conn.configure_window(s.window, &aux);
+fn window_has_fullscreen(conn: &RustConnection, win: Window) -> bool {
+    let (net_wm_state, fullscreen) = {
+        let g = MUT.lock();
+        let Some(m) = g.as_ref() else { return false };
+        (m.atoms.net_wm_state, m.atoms.net_wm_state_fullscreen)
+    };
+    if let Ok(Ok(reply)) = conn
+        .get_property(false, win, net_wm_state, AtomEnum::ATOM, 0, 64)
+        .map(|c| c.reply())
+        && let Some(mut vals) = reply.value32()
+    {
+        return vals.any(|a| a == fullscreen);
     }
-    let _ = conn.flush();
+    false
 }
 
-/// Per EWMH a mapped window's `_NET_WM_STATE` changes via a root client message;
-/// an unmapped one's via a property rewrite, read by the WM on its next map.
-fn apply_fullscreen_state(conn: &RustConnection, root: Window, snaps: &[OverlaySnap], fs: bool) {
-    let (net_wm_state, skip_taskbar, skip_pager, fullscreen) = {
+/// The geometric fallback covers WMs that fullscreen the parent before
+/// publishing `_NET_WM_STATE`, so the overlays don't lag a frame behind.
+fn read_parent_fullscreen(conn: &RustConnection, parent: Window, root: Window, geom: Geom) -> bool {
+    if window_has_fullscreen(conn, parent) {
+        return true;
+    }
+    if let Ok(Ok(rgeo)) = conn.get_geometry(root).map(|c| c.reply()) {
+        return geom.2 >= rgeo.width as i32 && geom.3 >= rgeo.height as i32;
+    }
+    false
+}
+
+fn overlay_mapped(conn: &RustConnection, win: Window) -> Option<bool> {
+    let r = conn.get_window_attributes(win).ok()?.reply().ok()?;
+    Some(r.map_state != x11rb::protocol::xproto::MapState::UNMAPPED)
+}
+
+fn raise_above(conn: &RustConnection, parent: Window, win: Window) {
+    let aux = ConfigureWindowAux::new()
+        .sibling(parent)
+        .stack_mode(StackMode::ABOVE);
+    let _ = conn.configure_window(win, &aux);
+}
+
+fn apply_effects(conn: &RustConnection, parent: Window, win: Window, effects: &[Effect]) {
+    for e in effects {
+        match *e {
+            Effect::Poke { x, y } => {
+                let aux = ConfigureWindowAux::new().x(x).y(y);
+                let _ = conn.configure_window(win, &aux);
+            }
+            Effect::SetSize { w, h } => {
+                let aux = ConfigureWindowAux::new().width(w as u32).height(h as u32);
+                let _ = conn.configure_window(win, &aux);
+            }
+            Effect::SetOverrideRedirect(v) => {
+                let _ = conn.unmap_window(win);
+                let aux = ChangeWindowAttributesAux::new().override_redirect(u32::from(v));
+                let _ = conn.change_window_attributes(win, &aux);
+            }
+            Effect::MapAndRaise => {
+                let _ = conn.map_window(win);
+                // The passive button grab may not survive the remap — re-grab.
+                crate::input::grab_overlay_input(win);
+                raise_above(conn, parent, win);
+            }
+            Effect::Unmap => {
+                let _ = conn.unmap_window(win);
+            }
+        }
+    }
+}
+
+fn activate_parent(conn: &RustConnection, root: Window, parent: Window) {
+    let net_active_window = {
         let g = MUT.lock();
         let Some(m) = g.as_ref() else { return };
-        (
-            m.atoms.net_wm_state,
-            m.atoms.net_wm_state_skip_taskbar,
-            m.atoms.net_wm_state_skip_pager,
-            m.atoms.net_wm_state_fullscreen,
-        )
+        m.atoms.net_active_window
     };
-    let action = u32::from(fs);
-    let mut prop = vec![skip_taskbar, skip_pager];
-    if fs {
-        prop.push(fullscreen);
-    }
-    for s in snaps {
-        if s.visible {
-            let ev = ClientMessageEvent::new(
-                32,
-                s.window,
-                net_wm_state,
-                ClientMessageData::from([action, fullscreen, 0, 1, 0]),
-            );
-            let _ = conn.send_event(
-                false,
-                root,
-                EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
-                ev,
-            );
-        } else {
-            let _ = conn.change_property32(
-                PropMode::REPLACE,
-                s.window,
-                net_wm_state,
-                u32::from(AtomEnum::ATOM),
-                &prop,
-            );
-        }
-    }
-    let _ = conn.flush();
-}
-
-fn map_overlays(conn: &RustConnection, snaps: &[OverlaySnap]) {
-    for s in snaps.iter().filter(|s| s.visible) {
-        let _ = conn.map_window(s.window);
-    }
-    let _ = conn.flush();
-}
-
-fn unmap_overlays(conn: &RustConnection, snaps: &[OverlaySnap]) {
-    for s in snaps {
-        let _ = conn.unmap_window(s.window);
-    }
-    let _ = conn.flush();
-}
-
-fn activate_parent(conn: &RustConnection, root: Window, parent: Window, net_active_window: u32) {
     let ev = ClientMessageEvent::new(
         32,
         parent,
@@ -261,14 +252,110 @@ fn activate_parent(conn: &RustConnection, root: Window, parent: Window, net_acti
     let _ = conn.flush();
 }
 
+/// Snapshot parent truth once, then derive every overlay's placement from that
+/// one snapshot. Re-querying the parent per overlay would tear placement across
+/// overlays when the parent changes mid-pass. `reassert_stack` is set for events
+/// that can have restacked the parent (parent/frame changes, mpv activation) so
+/// an unmanaged overlay is raised back over mpv; it is off for an overlay's own
+/// events, which would otherwise feed a raise→notify→raise loop.
+fn reconcile(
+    conn: &RustConnection,
+    parent: Window,
+    root: Window,
+    parent_mapped: bool,
+    reassert_stack: bool,
+) {
+    let Some(parent_geom) = query_geometry(conn, parent, root) else {
+        return;
+    };
+    let parent_fs = read_parent_fullscreen(conn, parent, root, parent_geom);
+
+    let snaps = {
+        let mut g = MUT.lock();
+        let Some(m) = g.as_mut() else { return };
+        crate::lifecycle::set_parent_geometry_locked(
+            m,
+            parent_geom.0,
+            parent_geom.1,
+            parent_geom.2,
+            parent_geom.3,
+        );
+        m.parent_fullscreen = parent_fs;
+        crate::lifecycle::snapshot_live_overlays_locked(m)
+    };
+
+    let mut updates = Vec::with_capacity(snaps.len());
+    for snap in &snaps {
+        // Round-trip first: proves the window exists server-side (created on the
+        // control connection) before we select input on it, and gives the real
+        // map state so the FSM can recover from a WM withdraw.
+        let observed = query_geometry(conn, snap.window, root);
+        if observed.is_some() {
+            watch_window(conn, snap.window, EventMask::STRUCTURE_NOTIFY);
+        }
+        let observed_mapped = overlay_mapped(conn, snap.window);
+        let mut state = snap.state;
+        let inputs = overlay_fsm::Inputs {
+            parent_geom,
+            parent_fullscreen: parent_fs,
+            want_visible: snap.visible && parent_mapped,
+            owns_size: snap.send_size,
+            observed,
+            observed_mapped,
+        };
+        let effects = overlay_fsm::step(&mut state, &inputs);
+        apply_effects(conn, parent, snap.window, &effects);
+        // The WM does not stack an unmanaged window, so when an external event
+        // may have raised mpv, raise the overlay back over it.
+        if reassert_stack && state.unmanaged && state.mapped {
+            raise_above(conn, parent, snap.window);
+        }
+        updates.push((snap.window, state));
+    }
+    let _ = conn.flush();
+
+    let g = MUT.lock();
+    if let Some(m) = g.as_ref() {
+        for (win, state) in updates {
+            crate::lifecycle::store_overlay_state_locked(m, win, state);
+        }
+    }
+}
+
+fn hide_overlays(conn: &RustConnection) {
+    let snaps = {
+        let g = MUT.lock();
+        g.as_ref()
+            .map(crate::lifecycle::snapshot_live_overlays_locked)
+    };
+    if let Some(snaps) = snaps {
+        for s in &snaps {
+            let _ = conn.unmap_window(s.window);
+        }
+        let _ = conn.flush();
+    }
+    jfn_playback::lifecycle::jfn_lifecycle_set_visible(false);
+}
+
+enum Trigger {
+    Ignore,
+    /// Parent/frame change — may have restacked mpv, so re-assert overlay stacking.
+    External,
+    /// An overlay's own event (e.g. the WM withdrawing it during a flip). Reconcile
+    /// to recover, but do NOT re-raise — that would feed a raise→notify→raise loop.
+    Overlay,
+    ParentMap,
+    ParentUnmap,
+}
+
 fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window) {
-    // A frame move emits no ConfigureNotify on the client, so without also
-    // watching the frame the overlays never learn the window's new position
-    // after fullscreen/maximize exit.
-    watch_structure(&conn, parent);
+    // A frame move emits no client ConfigureNotify but does emit one on the
+    // frame, so watch the frame too; PROPERTY_CHANGE delivers `_NET_WM_STATE`.
+    let watch_mask = EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE;
+    watch_window(&conn, parent, watch_mask);
     let mut frame = find_frame(&conn, parent, root);
     if frame != parent {
-        watch_structure(&conn, frame);
+        watch_window(&conn, frame, watch_mask);
     }
     watch_compositor(&conn, root);
     let _ = conn.flush();
@@ -295,12 +382,11 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
         },
     ];
 
-    let mut settling = false;
-    let mut applied_fs = false;
+    let mut parent_mapped = true;
+    reconcile(&conn, parent, root, parent_mapped, true);
 
     loop {
-        let timeout = if settling { TICK_MS } else { -1 };
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 3, timeout) };
+        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 3, -1) };
         if rc < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
@@ -310,155 +396,58 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
         }
 
         if fds[1].revents & libc::POLLIN != 0 {
-            set_visibility(&conn, parent, root, false);
+            hide_overlays(&conn);
             break;
         }
         if fds[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
-            set_visibility(&conn, parent, root, false);
+            hide_overlays(&conn);
             break;
         }
 
+        let mut wake = false;
+        let mut reassert = false;
+        let mut activate = false;
         if fds[2].revents & libc::POLLIN != 0 {
             unsafe { jfn_wake_event_drain(x11_geometry_resync_waker()) };
-            resync_and_track_fullscreen(&conn, parent, root, &mut applied_fs);
-            if !settling {
-                settling = true;
-                tracing::debug!(target: "x11::settle", "settle started (layer created)");
-            }
+            // A new overlay or an mpv fullscreen toggle drove the resync — both
+            // can change parent stacking.
+            wake = true;
+            reassert = true;
         }
 
-        let mut geometry_changed = false;
         while let Ok(Some(ev)) = conn.poll_for_event() {
-            geometry_changed |= handle_event(&conn, parent, root, &mut frame, ev);
-        }
-        if geometry_changed {
-            resync_and_track_fullscreen(&conn, parent, root, &mut applied_fs);
-            if !settling {
-                settling = true;
-                tracing::debug!(target: "x11::settle", "settle started (geometry changed)");
+            match handle_event(&conn, parent, root, &mut frame, ev) {
+                Trigger::Ignore => {}
+                Trigger::External => {
+                    wake = true;
+                    reassert = true;
+                }
+                Trigger::Overlay => wake = true,
+                Trigger::ParentMap => {
+                    parent_mapped = true;
+                    jfn_playback::lifecycle::jfn_lifecycle_set_visible(true);
+                    wake = true;
+                    reassert = true;
+                    activate = true;
+                }
+                Trigger::ParentUnmap => {
+                    parent_mapped = false;
+                    jfn_playback::lifecycle::jfn_lifecycle_set_visible(false);
+                    wake = true;
+                }
             }
         }
 
-        if settling && rc == 0 {
-            let (matched, mpv, samples) = settle_tick(&conn, parent, root);
-            for (win, overlay) in &samples {
-                tracing::debug!(
-                    target: "x11::settle",
-                    "compare overlay=0x{win:x} overlay_geom={overlay:?} mpv={mpv:?} match={}",
-                    *overlay == Some(mpv)
-                );
-            }
-            if matched {
-                settling = false;
-                tracing::debug!(target: "x11::settle", "settled: all overlays match mpv={mpv:?}");
-            }
-        }
-    }
-}
-
-type Geom = (i32, i32, i32, i32);
-fn settle_tick(
-    conn: &RustConnection,
-    parent: Window,
-    root: Window,
-) -> (bool, Geom, Vec<(u32, Option<Geom>)>) {
-    let geo = query_geometry(conn, parent, root);
-
-    let (mpv, snaps) = {
-        let mut g = MUT.lock();
-        let Some(m) = g.as_mut() else {
-            return (true, (0, 0, 0, 0), Vec::new());
-        };
-        if let Some((px, py, pw, ph)) = geo {
-            crate::lifecycle::set_parent_geometry_locked(m, px, py, pw, ph);
-        }
-        let mpv = (m.parent_x, m.parent_y, m.pw, m.ph);
-        (mpv, crate::lifecycle::snapshot_live_overlays_locked(m))
-    };
-
-    reposition_overlays(conn, mpv.0, mpv.1, mpv.2, mpv.3, &snaps);
-
-    let mut all_match = true;
-    let mut samples = Vec::new();
-    for s in &snaps {
-        if !s.visible {
-            continue;
-        }
-        let overlay = query_geometry(conn, s.window, root);
-        all_match &= overlay == Some(mpv);
-        samples.push((s.window, overlay));
-    }
-
-    (all_match, mpv, samples)
-}
-
-fn resync_overlays(
-    conn: &RustConnection,
-    parent: Window,
-    root: Window,
-) -> Option<(Vec<OverlaySnap>, bool)> {
-    let (px, py, pw, ph) = query_geometry(conn, parent, root)?;
-    let (snaps, fullscreen) = {
-        let mut g = MUT.lock();
-        let m = g.as_mut()?;
-        crate::lifecycle::set_parent_geometry_locked(m, px, py, pw, ph);
-        (
-            crate::lifecycle::snapshot_live_overlays_locked(m),
-            m.parent_fullscreen,
-        )
-    };
-    reposition_overlays(conn, px, py, pw, ph, &snaps);
-    Some((snaps, fullscreen))
-}
-
-/// Resync fires on every ConfigureNotify; only re-emit the state on a real flip.
-fn resync_and_track_fullscreen(
-    conn: &RustConnection,
-    parent: Window,
-    root: Window,
-    applied_fs: &mut bool,
-) {
-    if let Some((snaps, fs)) = resync_overlays(conn, parent, root)
-        && fs != *applied_fs
-    {
-        apply_fullscreen_state(conn, root, &snaps, fs);
-        *applied_fs = fs;
-    }
-}
-
-fn set_visibility(conn: &RustConnection, parent: Window, root: Window, visible: bool) {
-    if visible {
-        if let Some((px, py, pw, ph)) = query_geometry(conn, parent, root) {
-            let snapshot = {
-                let mut g = MUT.lock();
-                g.as_mut().map(|m| {
-                    crate::lifecycle::set_parent_geometry_locked(m, px, py, pw, ph);
-                    (
-                        crate::lifecycle::snapshot_live_overlays_locked(m),
-                        m.atoms.net_active_window,
-                    )
-                })
-            };
-            if let Some((snaps, net_active_window)) = snapshot {
-                reposition_overlays(conn, px, py, pw, ph, &snaps);
-                map_overlays(conn, &snaps);
+        if wake {
+            reconcile(&conn, parent, root, parent_mapped, reassert);
+            if activate {
                 // Re-mapping the transient overlays on top of the parent can
                 // displace the WM's active window off mpv, stalling the
                 // taskbar's minimize/activate toggle; re-assert it.
-                activate_parent(conn, root, parent, net_active_window);
+                activate_parent(&conn, root, parent);
             }
         }
-    } else {
-        let snaps = {
-            let mut g = MUT.lock();
-            g.as_mut()
-                .map(|m| crate::lifecycle::snapshot_live_overlays_locked(m))
-        };
-        if let Some(snaps) = snaps {
-            unmap_overlays(conn, &snaps);
-        }
     }
-    jfn_playback::lifecycle::jfn_lifecycle_set_visible(visible);
 }
 
 fn is_wm_delete(e: &ClientMessageEvent) -> bool {
@@ -475,38 +464,70 @@ fn handle_event(
     root: Window,
     frame: &mut Window,
     ev: Event,
-) -> bool {
+) -> Trigger {
+    let is_parentish = |w: Window| w == parent || w == *frame;
     match ev {
-        Event::ConfigureNotify(e) => e.window == parent || e.window == *frame,
+        // Parent/frame move or restack → external. An overlay's own ConfigureNotify
+        // (e.g. from our own raise, or the WM withdrawing it) → Overlay, so it
+        // reconciles without re-raising.
+        Event::ConfigureNotify(e) => {
+            if is_parentish(e.window) {
+                Trigger::External
+            } else {
+                Trigger::Overlay
+            }
+        }
         // A WM/pager that restacks via XCirculateSubwindows emits CirculateNotify
-        // instead of ConfigureNotify; treat it as a geometry change so the
-        // settle re-asserts overlay stacking.
-        Event::CirculateNotify(e) => e.window == parent || e.window == *frame,
+        // instead of ConfigureNotify.
+        Event::CirculateNotify(e) => {
+            if is_parentish(e.window) {
+                Trigger::External
+            } else {
+                Trigger::Overlay
+            }
+        }
+        // A fullscreen flip can land as a parent `_NET_WM_STATE` change with no
+        // accompanying ConfigureNotify.
+        Event::PropertyNotify(e) => {
+            if e.window == parent {
+                Trigger::External
+            } else {
+                Trigger::Ignore
+            }
+        }
         // The WM swaps the client into a different frame on fullscreen/maximize
         // toggles; re-resolve and re-watch the new frame.
         Event::ReparentNotify(e) => {
             if e.window == parent {
                 let new_frame = find_frame(conn, parent, root);
                 if new_frame != parent {
-                    watch_structure(conn, new_frame);
+                    watch_window(
+                        conn,
+                        new_frame,
+                        EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE,
+                    );
                 }
                 *frame = new_frame;
                 let _ = conn.flush();
-                return true;
+                return Trigger::External;
             }
-            false
+            Trigger::Ignore
         }
         Event::MapNotify(e) => {
             if e.window == parent {
-                set_visibility(conn, parent, root, true);
+                Trigger::ParentMap
+            } else {
+                Trigger::Ignore
             }
-            false
         }
+        // An overlay's UnmapNotify is the WM withdrawing it during the flip;
+        // reconcile so the FSM re-maps it (the withdraw happens only once).
         Event::UnmapNotify(e) => {
             if e.window == parent {
-                set_visibility(conn, parent, root, false);
+                Trigger::ParentUnmap
+            } else {
+                Trigger::Overlay
             }
-            false
         }
         // Only the client window's destruction is the teardown signal. A stale
         // frame we still hold STRUCTURE_NOTIFY on (never un-watched after a
@@ -516,23 +537,23 @@ fn handle_event(
             if e.window == parent {
                 jfn_shutdown_initiate();
             }
-            false
+            Trigger::Ignore
         }
         Event::ClientMessage(e) => {
             if e.window == parent && is_wm_delete(&e) {
                 jfn_shutdown_initiate();
             }
-            false
+            Trigger::Ignore
         }
         Event::XfixesSelectionNotify(e) => {
             if e.owner != x11rb::NONE {
                 tracing::debug!(target: "Platform", "{}", crate::lifecycle::COMPOSITOR_DETECTED_MSG);
-                request_resync();
+                Trigger::External
             } else {
                 tracing::error!(target: "Platform", "{}", crate::lifecycle::COMPOSITOR_NOT_DETECTED_MSG);
+                Trigger::Ignore
             }
-            false
         }
-        _ => false,
+        _ => Trigger::Ignore,
     }
 }

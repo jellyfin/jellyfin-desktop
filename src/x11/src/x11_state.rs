@@ -60,6 +60,7 @@ pub struct PlatformSurface {
     /// when a [`GpuContext`] is available. Falls back to SHM if init or
     /// present fails.
     pub(crate) gpu_paint_worker: Option<X11GpuPaintWorker>,
+    pub(crate) fsm_state: Option<crate::overlay_fsm::OverlayState>,
 }
 
 unsafe impl Send for PlatformSurface {}
@@ -80,6 +81,7 @@ impl PlatformSurface {
             pw: 0,
             ph: 0,
             gpu_paint_worker: None,
+            fsm_state: None,
         }
     }
 }

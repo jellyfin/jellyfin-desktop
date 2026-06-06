@@ -44,8 +44,10 @@ fn create_overlay_window(
     let aux = CreateWindowAux::new()
         .background_pixel(0)
         .border_pixel(0)
-        // No override_redirect: the WM must stack the overlay with its transient
-        // parent. override_redirect forces reactive restacking, which flickers.
+        // Managed transient when windowed (the WM stacks/positions it without
+        // flicker); unmanaged only when born into fullscreen, where the WM would
+        // otherwise strut-clamp it below the panel.
+        .override_redirect(u32::from(m.parent_fullscreen))
         .event_mask(EventMask::EXPOSURE)
         .colormap(m.colormap);
     let _ = x11_conn.create_window(
@@ -80,22 +82,15 @@ fn create_overlay_window(
             u32::from(AtomEnum::ATOM),
             &[m.atoms.net_wm_window_type_normal],
         );
-        // The geometry thread only emits the state on a flip, so an overlay born
-        // mid-fullscreen must carry it in its initial property or it never escapes
-        // the strut-reserved area.
-        let mut wm_state = vec![
-            m.atoms.net_wm_state_skip_taskbar,
-            m.atoms.net_wm_state_skip_pager,
-        ];
-        if m.parent_fullscreen {
-            wm_state.push(m.atoms.net_wm_state_fullscreen);
-        }
         let _ = x11_conn.change_property32(
             PropMode::REPLACE,
             win_id,
             m.atoms.net_wm_state,
             u32::from(AtomEnum::ATOM),
-            &wm_state,
+            &[
+                m.atoms.net_wm_state_skip_taskbar,
+                m.atoms.net_wm_state_skip_pager,
+            ],
         );
 
         // Motif hints: flags=MWM_HINTS_DECORATIONS, decorations=0.
@@ -168,8 +163,19 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
         (*s).pw = pw as i32;
         (*s).ph = ph as i32;
         (*s).visible = true;
+        (*s).fsm_state = Some(crate::overlay_fsm::OverlayState::new_mapped(
+            m.parent_fullscreen,
+        ));
     }
     let _ = x11_conn.map_window(win);
+    // An override_redirect overlay (born fullscreen) is not stacked by the WM;
+    // raise it above the parent ourselves.
+    if m.parent_fullscreen {
+        let aux = ConfigureWindowAux::new()
+            .sibling(m.parent)
+            .stack_mode(StackMode::ABOVE);
+        let _ = x11_conn.configure_window(win, &aux);
+    }
     let _ = x11_conn.flush();
 
     m.live.push(s);
