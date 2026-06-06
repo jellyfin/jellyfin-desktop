@@ -273,7 +273,9 @@ pub unsafe fn jfn_x11_surface_present_dmabuf(s: *mut PlatformSurface, frame: Dma
         ));
     }
 
-    let worker = surf.gpu_paint_worker.as_ref().unwrap();
+    let Some(worker) = surf.gpu_paint_worker.as_ref() else {
+        return false;
+    };
     worker.set_visible(surf.visible);
     worker.submit_dmabuf(frame)
 }
@@ -338,7 +340,9 @@ fn queue_gpu_present(
         })
         .collect();
 
-    let worker = surf.gpu_paint_worker.as_ref().unwrap();
+    let Some(worker) = surf.gpu_paint_worker.as_ref() else {
+        return false;
+    };
     worker.set_visible(surf.visible);
     worker.resize(size);
     worker.submit_frame(bgra, w as u32, h as u32, owned)
@@ -365,7 +369,9 @@ fn queue_shm_present(
         ));
     }
 
-    let worker = surf.shm_paint_worker.as_ref().unwrap();
+    let Some(worker) = surf.shm_paint_worker.as_ref() else {
+        return false;
+    };
     worker.set_visible(surf.visible);
     worker.submit_frame(buffer, w, h, dirty, dirty_len)
 }

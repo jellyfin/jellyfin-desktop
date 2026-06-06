@@ -299,7 +299,7 @@ pub fn jfn_mpv_stop() {
     cmd(&[c"stop"]);
 }
 pub fn jfn_mpv_seek_absolute(secs: f64) {
-    let s = CString::new(format!("{}", secs)).unwrap();
+    let s = CString::new(format!("{}", secs)).unwrap_or_default();
     cmd(&[c"seek", &s, c"absolute"]);
 }
 pub fn jfn_mpv_set_volume(v: f64) {
@@ -328,9 +328,9 @@ const TRACK_DISABLE: i64 = 0;
 
 fn track_to_mpv_str(id: i64) -> CString {
     if id == TRACK_DISABLE {
-        CString::new("no").unwrap()
+        CString::new("no").unwrap_or_default()
     } else {
-        CString::new(id.to_string()).unwrap()
+        CString::new(id.to_string()).unwrap_or_default()
     }
 }
 
@@ -444,7 +444,7 @@ pub unsafe fn jfn_mpv_load_file(path: *const c_char, opts: *const JfnMpvLoadOpti
         // explicitly write `sid=no` after FILE_LOADED to keep subs off.
         opts_str.push_str(",track-auto-selection=yes");
     }
-    let opts_c = CString::new(opts_str).unwrap();
+    let opts_c = CString::new(opts_str).unwrap_or_default();
     cmd(&[c"loadfile", path_c, c"replace", c"-1", &opts_c]);
 }
 
@@ -480,12 +480,16 @@ pub fn jfn_mpv_apply_pending_track_selection_and_play() {
     let sid_s = track_to_mpv_str(sid);
     unsafe { set_str(c"sid", &sid_s) };
     if !ext_audio.is_empty() {
-        let u = CString::new(ext_audio).unwrap();
-        cmd(&[c"audio-add", &u, c"select"]);
+        match CString::new(ext_audio) {
+            Ok(u) => cmd(&[c"audio-add", &u, c"select"]),
+            Err(e) => tracing::warn!("ext audio path has interior NUL: {e}"),
+        }
     }
     if !ext_sub.is_empty() {
-        let u = CString::new(ext_sub).unwrap();
-        cmd(&[c"sub-add", &u, c"select"]);
+        match CString::new(ext_sub) {
+            Ok(u) => cmd(&[c"sub-add", &u, c"select"]),
+            Err(e) => tracing::warn!("ext sub path has interior NUL: {e}"),
+        }
     }
     unsafe { set_flag(c"pause", false) };
 }

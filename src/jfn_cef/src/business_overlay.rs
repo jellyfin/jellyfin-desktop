@@ -13,7 +13,6 @@
 
 use cef::*;
 use parking_lot::Mutex;
-use std::ffi::CString;
 use std::os::raw::c_void;
 use std::sync::Arc;
 
@@ -44,13 +43,13 @@ pub fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
         return;
     }
 
-    let kind = CString::new("overlay").unwrap();
+    let kind = c"overlay";
     let layer = unsafe { jfn_browsers_create(kind.as_ptr()) };
     if layer.is_null() {
         return;
     }
 
-    let name = CString::new("overlay").unwrap();
+    let name = c"overlay";
     unsafe { jfn_cef_layer_set_name(layer, name.as_ptr()) };
 
     let inner = unsafe { jfn_cef_layer_inner(layer) };

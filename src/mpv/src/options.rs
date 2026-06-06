@@ -12,10 +12,7 @@ static HWDEC_LIST: &[&CStr] = &[c"auto", c"no", c"d3d11va", c"nvdec", c"vulkan"]
 static HWDEC_LIST: &[&CStr] = &[c"auto", c"no", c"videotoolbox", c"vulkan"];
 
 pub fn hwdec_options() -> Vec<&'static str> {
-    HWDEC_LIST
-        .iter()
-        .map(|s| s.to_str().expect("hwdec entries are ASCII"))
-        .collect()
+    HWDEC_LIST.iter().filter_map(|s| s.to_str().ok()).collect()
 }
 
 pub fn is_valid_hwdec(value: &str) -> bool {

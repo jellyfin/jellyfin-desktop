@@ -69,6 +69,7 @@ struct Manager {
     wake: WakeEvent,
 }
 
+#[allow(clippy::expect_used)] // boot invariant: wake eventfd alloc is fatal if it fails
 fn manager() -> &'static Manager {
     static M: OnceLock<&'static Manager> = OnceLock::new();
     M.get_or_init(|| {
@@ -84,6 +85,7 @@ fn manager() -> &'static Manager {
 /// `run_with_cef`. Also installs the lifecycle dispatchers so platform
 /// layers can post visibility / suspend / resume events without a direct
 /// dep on this crate.
+#[allow(clippy::expect_used)] // boot invariant: control-plane thread spawn is fatal if it fails
 pub fn jfn_manager_start() -> JoinHandle<()> {
     // Materialize the singleton so its wake event exists before any producer
     // (shutdown handler / sender) signals it.

@@ -305,8 +305,7 @@ impl Handle {
     }
 
     pub fn request_log_messages(&self, level: LogLevel) -> Result<()> {
-        let token = CString::new(level.as_token()).unwrap();
-        check(unsafe { sys::mpv_request_log_messages(self.raw, token.as_ptr()) })
+        check(unsafe { sys::mpv_request_log_messages(self.raw, level.as_token().as_ptr()) })
     }
 }
 

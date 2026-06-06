@@ -214,7 +214,9 @@ impl GpuPainter {
         }
 
         self.ensure_upload(frame.width, frame.height);
-        let upload = self.upload.as_ref().unwrap();
+        let Some(upload) = self.upload.as_ref() else {
+            return Ok(());
+        };
 
         if frame.dirty.is_empty() {
             write_rect(
@@ -237,7 +239,7 @@ impl GpuPainter {
             }
         }
 
-        let bind_group = &self.upload.as_ref().unwrap().bind_group;
+        let bind_group = &upload.bind_group;
         self.draw_and_present(bind_group, None)
     }
 

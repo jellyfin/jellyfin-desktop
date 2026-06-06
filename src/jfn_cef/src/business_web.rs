@@ -12,7 +12,7 @@
 use cef::{ImplListValue, ListValue};
 use parking_lot::Mutex;
 use serde_json::Value;
-use std::ffi::{CString, c_char};
+use std::ffi::c_char;
 use std::os::raw::c_void;
 use std::sync::Arc;
 
@@ -68,7 +68,7 @@ pub fn jfn_web_init(layer: *mut JfnCefLayer) {
         return;
     }
 
-    let name = CString::new("web").unwrap();
+    let name = c"web";
     unsafe { jfn_cef_layer_set_name(layer, name.as_ptr()) };
 
     let inner = unsafe { jfn_cef_layer_inner(layer) };

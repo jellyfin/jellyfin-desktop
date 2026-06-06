@@ -48,11 +48,12 @@ static G: Mutex<Option<Handle>> = Mutex::new(None);
 /// signalling this waker re-mirrors the parent geometry onto the overlays.
 fn x11_geometry_resync_waker() -> *const jfn_playback::WakeEvent {
     use std::sync::OnceLock;
-    static EV: OnceLock<&'static jfn_playback::WakeEvent> = OnceLock::new();
-    *EV.get_or_init(|| {
-        let raw = jfn_playback::WakeEvent::new().expect("x11 geometry resync waker allocation");
-        Box::leak(Box::new(raw))
-    }) as *const _
+    static EV: OnceLock<Option<&'static jfn_playback::WakeEvent>> = OnceLock::new();
+    EV.get_or_init(|| {
+        let raw = jfn_playback::WakeEvent::new()?;
+        Some(Box::leak(Box::new(raw)))
+    })
+    .map_or(std::ptr::null(), |e| e as *const _)
 }
 
 pub fn request_resync() {
@@ -76,10 +77,16 @@ pub fn start(parent: u32, root: u32) {
             return;
         }
     };
-    let join = std::thread::Builder::new()
+    let join = match std::thread::Builder::new()
         .name("jfn-x11-geometry".into())
         .spawn(move || geometry_thread_body(conn, parent, root))
-        .expect("spawn x11 geometry thread");
+    {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[x11] failed to spawn geometry thread: {e}");
+            return;
+        }
+    };
     *G.lock() = Some(Handle { join: Some(join) });
 }
 

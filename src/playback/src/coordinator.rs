@@ -69,18 +69,13 @@ pub struct PlaybackCoordinator {
     join: Option<JoinHandle<()>>,
 }
 
-impl Default for PlaybackCoordinator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl PlaybackCoordinator {
-    pub fn new() -> Self {
-        Self {
+    /// Returns `None` if the wake eventfd can't be created (fd exhaustion).
+    pub fn new() -> Option<Self> {
+        Some(Self {
             shared: Arc::new(Shared {
                 queue: Mutex::new(VecDeque::new()),
-                wake: WakeEvent::new().expect("WakeEvent::new"),
+                wake: WakeEvent::new()?,
                 running: AtomicBool::new(false),
                 snapshot: Mutex::new(PlaybackSnapshot::fresh()),
                 event_sinks: Mutex::new(Vec::new()),
@@ -89,7 +84,7 @@ impl PlaybackCoordinator {
                 builtin_action_sinks: Mutex::new(Vec::new()),
             }),
             join: None,
-        }
+        })
     }
 
     pub fn start(&mut self) {
@@ -289,7 +284,7 @@ mod tests {
 
     #[test]
     fn snapshot_starts_fresh() {
-        let coord = PlaybackCoordinator::new();
+        let coord = PlaybackCoordinator::new().unwrap();
         let s = coord.snapshot();
         assert_eq!(s.presence, PlayerPresence::None);
         assert_eq!(s.phase, PlaybackPhase::Stopped);
@@ -298,7 +293,7 @@ mod tests {
 
     #[test]
     fn worker_updates_snapshot_after_input() {
-        let mut coord = PlaybackCoordinator::new();
+        let mut coord = PlaybackCoordinator::new().unwrap();
         coord.start();
         // Register a sink BEFORE enqueuing so the first dispatched batch
         // signals the channel. Sinks fire on the worker thread after the

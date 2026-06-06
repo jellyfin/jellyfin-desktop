@@ -1,5 +1,5 @@
 use std::os::fd::AsFd;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use memmap2::MmapOptions;
@@ -87,14 +87,14 @@ impl WaylandShmPaintWorker {
 
     pub(crate) fn resize(&self, lw: i32, lh: i32, pw: i32, ph: i32) {
         let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
         state.viewport = ViewportState { lw, lh, pw, ph };
         cv.notify_one();
     }
 
     pub(crate) fn set_visible(&self, visible: bool) {
         let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
         state.visible = visible;
         if !visible {
             state.pending = None;
@@ -122,7 +122,7 @@ impl WaylandShmPaintWorker {
 
         let needs_full_copy = {
             let (lock, _) = &*self.shared;
-            let state = lock.lock().unwrap();
+            let state = lock.lock().unwrap_or_else(PoisonError::into_inner);
             state.frame_size != (width, height)
                 || state
                     .pending
@@ -150,7 +150,7 @@ impl WaylandShmPaintWorker {
         }
 
         let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
         state.frame_size = (width, height);
         state.pending = Some(PendingFrame {
             rects,
@@ -165,7 +165,7 @@ impl WaylandShmPaintWorker {
     pub(crate) fn shutdown(mut self) {
         let (lock, cv) = &*self.shared;
         {
-            let mut state = lock.lock().unwrap();
+            let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
             state.shutdown = true;
             state.pending = None;
             cv.notify_one();
@@ -237,9 +237,9 @@ fn run_worker(
     loop {
         let (frame, viewport_state, visible, shutdown) = {
             let (lock, cv) = &*shared;
-            let mut state = lock.lock().unwrap();
+            let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
             while state.pending.is_none() && !state.shutdown {
-                state = cv.wait(state).unwrap();
+                state = cv.wait(state).unwrap_or_else(PoisonError::into_inner);
             }
             (
                 state.pending.take(),

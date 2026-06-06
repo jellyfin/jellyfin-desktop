@@ -364,9 +364,13 @@ pub fn jfn_browsers_set_hidden_all(hidden: bool) {
 pub fn jfn_browsers_close_all_blocking() {
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<Inner>>>(1);
     crate::client::jfn_cef_post_close_and_collect(tx);
-    let inners = rx
-        .recv()
-        .expect("CloseAndCollectTask ran and sent the wait set");
+    let inners = match rx.recv() {
+        Ok(inners) => inners,
+        Err(e) => {
+            eprintln!("[cef] close-all wait set never arrived: {e}");
+            return;
+        }
+    };
     for i in inners {
         i.wait_for_close();
     }

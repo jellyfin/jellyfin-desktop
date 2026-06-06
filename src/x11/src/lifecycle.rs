@@ -247,10 +247,13 @@ pub fn init() -> bool {
         tracing::info!("paint: using SHM");
         (None, jfn_gpu_paint::Capabilities::NONE, false, Req::Shm)
     };
-    if explicit && requested != Some(resolved) {
+    if explicit
+        && let Some(req) = requested
+        && req != resolved
+    {
         tracing::warn!(
             "--platform-paint={} unavailable; using {}",
-            paint_name(requested.unwrap()),
+            paint_name(req),
             paint_name(resolved)
         );
     }

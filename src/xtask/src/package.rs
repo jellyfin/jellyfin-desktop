@@ -25,8 +25,14 @@ pub fn run(args: &PackageArgs) -> Result<()> {
         let name = format!("JellyfinDesktop-{}-macos-{}", ver.full, arch);
         let out = dist.join(format!("{name}.zip"));
         let _ = std::fs::remove_file(&out);
-        let app_parent = prefix.parent().unwrap();
-        let app_dirname = prefix.file_name().unwrap().to_string_lossy().into_owned();
+        let app_parent = prefix
+            .parent()
+            .with_context(|| format!("{} has no parent directory", prefix.display()))?;
+        let app_dirname = prefix
+            .file_name()
+            .with_context(|| format!("{} has no file name", prefix.display()))?
+            .to_string_lossy()
+            .into_owned();
         zip_dir_with_root(app_parent, &app_dirname, &out)?;
         println!("Wrote {}", out.display());
     } else {

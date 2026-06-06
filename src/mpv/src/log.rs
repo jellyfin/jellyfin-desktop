@@ -24,16 +24,16 @@ pub enum LogLevel {
 
 impl LogLevel {
     /// Token accepted by `mpv_request_log_messages`.
-    pub fn as_token(self) -> &'static str {
+    pub fn as_token(self) -> &'static std::ffi::CStr {
         match self {
-            LogLevel::Off => "no",
-            LogLevel::Fatal => "fatal",
-            LogLevel::Error => "error",
-            LogLevel::Warn => "warn",
-            LogLevel::Info => "info",
-            LogLevel::Verbose => "v",
-            LogLevel::Debug => "debug",
-            LogLevel::Trace => "trace",
+            LogLevel::Off => c"no",
+            LogLevel::Fatal => c"fatal",
+            LogLevel::Error => c"error",
+            LogLevel::Warn => c"warn",
+            LogLevel::Info => c"info",
+            LogLevel::Verbose => c"v",
+            LogLevel::Debug => c"debug",
+            LogLevel::Trace => c"trace",
         }
     }
 

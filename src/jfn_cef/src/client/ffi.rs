@@ -81,7 +81,9 @@ pub(crate) fn jfn_cef_set_default_frame_rate(hz: c_int) {
 }
 
 pub(crate) fn jfn_cef_set_use_shared_textures(enable: bool) {
-    PAINT_MODE.set(PaintMode::new(enable)).unwrap();
+    if PAINT_MODE.set(PaintMode::new(enable)).is_err() {
+        eprintln!("[cef] paint mode already initialized; ignoring re-init");
+    }
 }
 
 /// Set the injection-profile kind for this layer ("web" / "overlay" /

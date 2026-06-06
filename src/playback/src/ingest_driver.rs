@@ -390,10 +390,16 @@ pub fn jfn_playback_start_mpv_event_thread() -> bool {
     let raw_addr = raw as usize;
     let stop = std::sync::Arc::new(AtomicBool::new(false));
     let stop_thread = std::sync::Arc::clone(&stop);
-    let join = thread::Builder::new()
+    let join = match thread::Builder::new()
         .name("jfn-mpv-events".into())
         .spawn(move || event_loop(raw_addr, stop_thread))
-        .expect("spawn jfn-mpv-events thread");
+    {
+        Ok(join) => join,
+        Err(e) => {
+            eprintln!("[playback] failed to spawn jfn-mpv-events thread: {e}");
+            return false;
+        }
+    };
     *guard = Some(EventThread {
         stop,
         join: Some(join),
