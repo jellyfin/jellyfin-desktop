@@ -44,7 +44,11 @@ fn mpv_prop_intptr(name: &CStr) -> Option<usize> {
 // These requried properties are non-upstream
 // Use https://github.com/andrewrabert/mpv/tree/cef-mpv
 fn nonupstream_wayland_hooks_present() -> bool {
-    const HOOKS: [&CStr; 3] = [c"wayland-display", c"wayland-surface", c"wayland-close-cb-ptr"];
+    const HOOKS: [&CStr; 3] = [
+        c"wayland-display",
+        c"wayland-surface",
+        c"wayland-close-cb-ptr",
+    ];
     let mut missing: Vec<&str> = Vec::new();
     for name in HOOKS {
         let mut v: i64 = 0;
