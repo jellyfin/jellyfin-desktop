@@ -244,12 +244,14 @@ impl State {
 
     fn apply_cursor_legacy(&mut self, shape: CursorShape, qh: &QueueHandle<Self>) {
         let serial = self.pointer_serial;
-        if self.cursor_theme.is_none() {
-            if let (Some(conn), Some(shm)) = (&self.conn, self.shm.clone()) {
-                self.cursor_theme = CursorTheme::load(conn, shm, 24).ok();
-            }
+        if self.cursor_theme.is_none()
+            && let (Some(conn), Some(shm)) = (&self.conn, self.shm.clone())
+        {
+            self.cursor_theme = CursorTheme::load(conn, shm, 24).ok();
         }
-        let Some(theme) = &mut self.cursor_theme else { return };
+        let Some(theme) = &mut self.cursor_theme else {
+            return;
+        };
         // get_cursor takes &mut self (for caching), so find the name in a
         // separate pass then do one final lookup to avoid overlapping borrows.
         let mut chosen_name = "";
@@ -262,19 +264,23 @@ impl State {
         if chosen_name.is_empty() {
             return;
         }
-        let Some(cursor) = theme.get_cursor(chosen_name) else { return };
+        let Some(cursor) = theme.get_cursor(chosen_name) else {
+            return;
+        };
         if cursor.image_count() == 0 {
             return;
         }
         let image = &cursor[0];
         let (hx, hy) = image.hotspot();
 
-        if self.cursor_surface.is_none() {
-            if let Some(compositor) = &self.compositor {
-                self.cursor_surface = Some(compositor.create_surface(qh, ()));
-            }
+        if self.cursor_surface.is_none()
+            && let Some(compositor) = &self.compositor
+        {
+            self.cursor_surface = Some(compositor.create_surface(qh, ()));
         }
-        let Some(surface) = &self.cursor_surface else { return };
+        let Some(surface) = &self.cursor_surface else {
+            return;
+        };
         surface.attach(Some(&**image), 0, 0);
         surface.damage(0, 0, i32::MAX, i32::MAX);
         surface.commit();
