@@ -3,18 +3,25 @@
 ## Build / Run
 All app code is Rust; the cargo workspace lives in `src/` and produces the `jellyfin-desktop` binary. Everything is driven through `just` — recipes are OS-gated via `[macos]`/`[linux]`/`[windows]` attributes, so the same command works everywhere:
 ```
-just deps     # one-time: submodules, CEF download, macOS brew packages
-just build    # build + stage a runnable tree in build/ (+ .app bundle on macOS)
-just test     # run the workspace test suite
-just run      # run with debug logging → logs to build/run.log
-just run-mpv  # run the bundled mpv CLI directly (mpv-only debugging)
-just clean    # remove build/ and dist/ (keeps CEF SDK)
-just lint     # format check + lints across crates
-just dmg      # [macos] build app bundle + distributable DMG
+just deps      # one-time: submodules, CEF download, macOS brew packages
+just build     # build + stage a runnable tree in build/ (+ .app bundle on macOS)
+just test      # run the workspace test suite (depends on build)
+just run       # run with debug logging → logs to build/run.log
+just run-mpv   # run the bundled mpv CLI directly (mpv-only debugging)
+just clean     # remove build/ and dist/, cargo clean
+just fmt        # format the workspace (cargo fmt)
+just fmt-check  # check formatting without writing
+just clippy     # clippy with -D warnings + unwrap/expect/panic denies
+just lint       # fmt-check + clippy
+just strict-lint # lint + clippy pedantic/nursery
 just appimage build # [linux] build AppImage
 just flatpak build  # [linux] build Flatpak bundle
+just dmg            # [macos] build Apple Disk Image (.dmg)
 ```
 Platform-specific entry points live in `dev/linux/`, `dev/macos/`, `dev/windows/`, imported by the top-level justfile.
+
+## Before Committing
+Run `just fmt` and `just lint` before every commit; both must pass clean (lint runs `fmt-check` + `clippy`, and CI rejects unformatted or lint-failing code).
 
 ## Architecture
 - **CEF** (Chromium Embedded Framework) — hosts jellyfin-web as an embedded browser; handles JS-to-Rust IPC for player control commands and renders the UI as an overlay texture above the video layer. Multi-process: browser process (main app, owns CefBrowser), renderer process (V8/Blink), GPU process. IPC via `CefProcessMessage`. Bindings via `cef-dll-sys`; project glue lives in `src/jfn_cef`.
