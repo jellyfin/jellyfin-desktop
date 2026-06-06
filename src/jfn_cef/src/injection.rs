@@ -46,7 +46,6 @@ pub(crate) enum NativeFunction {
     SetSettingValue,
     ThemeColor,
     SetOsdVisible,
-    SetCursorVisible,
     ToggleFullscreen,
     GetSavedServerUrl,
     NavigateMain,
@@ -97,7 +96,6 @@ impl NativeFunction {
             "setSettingValue" => Self::SetSettingValue,
             "themeColor" => Self::ThemeColor,
             "setOsdVisible" => Self::SetOsdVisible,
-            "setCursorVisible" => Self::SetCursorVisible,
             "toggleFullscreen" => Self::ToggleFullscreen,
             "getSavedServerUrl" => Self::GetSavedServerUrl,
             "navigateMain" => Self::NavigateMain,
@@ -149,7 +147,6 @@ impl NativeFunction {
             Self::SetSettingValue => "setSettingValue",
             Self::ThemeColor => "themeColor",
             Self::SetOsdVisible => "setOsdVisible",
-            Self::SetCursorVisible => "setCursorVisible",
             Self::ToggleFullscreen => "toggleFullscreen",
             Self::GetSavedServerUrl => "getSavedServerUrl",
             Self::NavigateMain => "navigateMain",
@@ -244,7 +241,6 @@ const WEB_FUNCTIONS: &[NativeFunction] = &[
     NativeFunction::SetSettingValue,
     NativeFunction::ThemeColor,
     NativeFunction::SetOsdVisible,
-    NativeFunction::SetCursorVisible,
     NativeFunction::ToggleFullscreen,
 ];
 

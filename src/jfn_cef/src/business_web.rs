@@ -33,8 +33,6 @@ use jfn_playback::ingest_driver::jfn_playback_fullscreen;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use jfn_playback::{Input as PbInput, MediaType as PbMediaType, post as pb_post};
 
-use jfn_platform_abi::cursor::CursorShape;
-
 use jfn_mpv::api::JfnMpvLoadOptions;
 
 // MediaType matching jfn-playback's enum: Unknown=0, Audio=1, Video=2.
@@ -408,18 +406,6 @@ fn handle_message(message: BrowserMessage) -> bool {
         }
         "notifySeek" => with_args(args, |a| {
             pb_post(PbInput::Seeked(list_int(a, 0) as i64 * 1000));
-        }),
-        "setCursorVisible" => with_args(args, |a| {
-            let visible = a.bool(0) != 0;
-            let shape = if visible {
-                CursorShape::Pointer
-            } else {
-                CursorShape::None
-            };
-            let inner = INSTANCE.lock().as_ref().map(|s| Arc::clone(&s.layer));
-            if let Some(inner) = inner {
-                inner.emit_cursor(shape);
-            }
         }),
         "appExit" => {
             jfn_shutdown_initiate();
