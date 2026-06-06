@@ -87,6 +87,13 @@ pub fn jfn_cef_set_platform_switches(backend: DisplayBackend) {
                 "disable-features",
                 "WaylandFractionalScaleV1",
             ));
+            // Merge the GPU process into the browser process so there is no
+            // separate GPU process Wayland/EGL connection. Without this, the
+            // GPU process holds an EGL wl_surface that it destroys when it
+            // exits during shutdown, triggering a mutter SIGSEGV (use-after-
+            // free in the compositor's surface cleanup path) that crashes the
+            // GNOME session and drops the user back to the login screen.
+            c.pending_switches.push(state::PendingSwitch::flag("in-process-gpu"));
         }
         DisplayBackend::X11 => {
             c.pending_switches
