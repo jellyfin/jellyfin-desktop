@@ -10,6 +10,7 @@ pub fn get(name: &str) -> Option<&'static str> {
         "client-settings.js" => include_str!("../../web/client-settings.js"),
         "context-menu.js" => include_str!("../../web/context-menu.js"),
         "csd.js" => include_str!("../../web/csd.js"),
+        "select-menu.js" => include_str!("../../web/select-menu.js"),
         _ => return None,
     })
 }
