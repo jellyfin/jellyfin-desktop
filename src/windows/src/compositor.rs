@@ -655,9 +655,9 @@ pub fn win_surface_set_visible(s: *mut c_void, visible: bool) {
 // =====================================================================
 
 fn begin_transition_locked(st: &mut State) {
-    // Capture the pre-resize physical size; the present path ends the
-    // transition once a frame arrives at a different size.
-    st.gate.begin_capturing((st.mpv_pw, st.mpv_ph));
+    if !st.gate.begin_capturing_if_idle((st.mpv_pw, st.mpv_ph)) {
+        return;
+    }
     st.pending_lw = 0;
     st.pending_lh = 0;
 
@@ -718,12 +718,9 @@ pub fn jfn_win_update_surface_size(lw: c_int, lh: c_int, pw: c_int, ph: c_int, f
     if st.gate.in_transition() {
         st.pending_lw = lw;
         st.pending_lh = lh;
-        // The captured size is the pre-resize size, so a differing physical
-        // size means the resize we were holding frames for has landed — end
-        // the transition and let the OSD present again. `force_end` covers a
-        // settled fullscreen edge whose physical size didn't change.
-        if force_end || st.gate.captured() != Some((pw, ph)) {
-            end_transition_locked(&mut st);
+        if st.gate.note_window_size((pw, ph), force_end) {
+            st.pending_lw = 0;
+            st.pending_lh = 0;
         }
     }
     st.mpv_pw = pw;

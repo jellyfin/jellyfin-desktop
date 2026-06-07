@@ -13,15 +13,17 @@
 //!   [`in_transition`], [`set_expected`], [`note_present_size`]. It never
 //!   captures a pre-resize size.
 //! - **Windows** (`G_TRANSITIONING` + `transition_pw/ph` + `expected_w/h`):
-//!   [`begin_capturing`], [`end`], [`in_transition`], [`set_expected`],
-//!   [`main_present_decision`].
+//!   [`begin_capturing_if_idle`], [`end`], [`in_transition`],
+//!   [`set_expected`], [`note_window_size`], [`main_present_decision`].
 //!
 //! [`begin`]: TransitionGate::begin
 //! [`begin_capturing`]: TransitionGate::begin_capturing
+//! [`begin_capturing_if_idle`]: TransitionGate::begin_capturing_if_idle
 //! [`end`]: TransitionGate::end
 //! [`in_transition`]: TransitionGate::in_transition
 //! [`set_expected`]: TransitionGate::set_expected
 //! [`note_present_size`]: TransitionGate::note_present_size
+//! [`note_window_size`]: TransitionGate::note_window_size
 //! [`main_present_decision`]: TransitionGate::main_present_decision
 
 /// What the Windows main-surface present path should do with an incoming
@@ -96,6 +98,14 @@ impl TransitionGate {
         self.captured = Some(captured_phys);
     }
 
+    pub fn begin_capturing_if_idle(&mut self, captured_phys: (i32, i32)) -> bool {
+        if self.in_transition {
+            return false;
+        }
+        self.begin_capturing(captured_phys);
+        true
+    }
+
     /// Clear all transition state.
     pub fn end(&mut self) {
         self.in_transition = false;
@@ -133,17 +143,24 @@ impl TransitionGate {
         false
     }
 
-    /// Windows main-surface present decision. Mirrors `win_surface_present`:
-    /// while transitioning, reject every frame until one arrives whose size
-    /// differs from the captured pre-resize size *and* an expected size has
-    /// been armed; at that point end the transition and present.
+    pub fn note_window_size(&mut self, size: (i32, i32), force_end: bool) -> bool {
+        if !self.in_transition || size.0 <= 0 || size.1 <= 0 {
+            return false;
+        }
+        if force_end || self.captured != Some(size) {
+            self.end();
+            return true;
+        }
+        false
+    }
+
+    /// Deliberately does not gate on `set_expected` (never armed on Windows);
+    /// re-adding that condition strands the detached main visual blank.
     pub fn main_present_decision(&mut self, frame: (i32, i32)) -> PresentDecision {
         if !self.in_transition {
             return PresentDecision::Present;
         }
-        // `expected_w <= 0` in the original = "no expected size armed yet".
-        let no_expected = self.expected.is_none_or(|(w, _h)| w <= 0);
-        if no_expected || self.captured == Some(frame) {
+        if frame.0 <= 0 || frame.1 <= 0 || self.captured == Some(frame) {
             return PresentDecision::Reject;
         }
         self.end();
@@ -201,27 +218,32 @@ mod tests {
     // ---- Windows model ----------------------------------------------
 
     #[test]
-    fn windows_rejects_until_expected_armed() {
+    fn windows_present_recovers_without_expected_armed() {
         let mut g = TransitionGate::new();
         g.begin_capturing((1280, 720));
-        // No expected size armed yet → reject regardless of frame.
         assert_eq!(
             g.main_present_decision((1920, 1080)),
-            PresentDecision::Reject
+            PresentDecision::EndTransitionThenPresent
         );
-        assert!(g.in_transition());
+        assert!(!g.in_transition());
     }
 
     #[test]
     fn windows_rejects_frame_matching_captured_size() {
         let mut g = TransitionGate::new();
         g.begin_capturing((1280, 720));
-        g.set_expected((1920, 1080));
-        // A frame still at the pre-resize size is rejected.
         assert_eq!(
             g.main_present_decision((1280, 720)),
             PresentDecision::Reject
         );
+        assert!(g.in_transition());
+    }
+
+    #[test]
+    fn windows_rejects_non_positive_frame_during_transition() {
+        let mut g = TransitionGate::new();
+        g.begin_capturing((1280, 720));
+        assert_eq!(g.main_present_decision((0, 1080)), PresentDecision::Reject);
         assert!(g.in_transition());
     }
 
@@ -236,17 +258,55 @@ mod tests {
     }
 
     #[test]
-    fn windows_ends_transition_when_resize_lands() {
+    fn windows_matching_post_resize_frame_ends_then_presents() {
         let mut g = TransitionGate::new();
         g.begin_capturing((1280, 720));
         g.set_expected((1920, 1080));
-        // A frame at a new size ends the transition and presents.
         assert_eq!(
             g.main_present_decision((1920, 1080)),
             PresentDecision::EndTransitionThenPresent
         );
         assert!(!g.in_transition());
         assert_eq!(g.expected(), None);
+    }
+
+    #[test]
+    fn windows_double_begin_does_not_recapture_and_strand_gate() {
+        let mut g = TransitionGate::new();
+        assert!(g.begin_capturing_if_idle((1280, 720)));
+        g.set_expected((1920, 1080));
+
+        assert!(!g.begin_capturing_if_idle((1920, 1080)));
+        assert_eq!(g.captured(), Some((1280, 720)));
+        assert!(g.note_window_size((1920, 1080), false));
+        assert!(!g.in_transition());
+    }
+
+    #[test]
+    fn windows_wm_size_can_end_without_expected_size() {
+        let mut g = TransitionGate::new();
+        g.begin_capturing((1280, 720));
+        assert_eq!(g.expected(), None);
+        assert!(g.note_window_size((1920, 1080), false));
+        assert!(!g.in_transition());
+    }
+
+    #[test]
+    fn windows_same_size_style_edge_force_ends() {
+        let mut g = TransitionGate::new();
+        g.begin_capturing((1920, 1080));
+        assert!(!g.note_window_size((1920, 1080), false));
+        assert!(g.in_transition());
+        assert!(g.note_window_size((1920, 1080), true));
+        assert!(!g.in_transition());
+    }
+
+    #[test]
+    fn windows_wm_size_ignores_non_positive_size() {
+        let mut g = TransitionGate::new();
+        g.begin_capturing((1280, 720));
+        assert!(!g.note_window_size((0, 720), true));
+        assert!(g.in_transition());
     }
 
     #[test]
