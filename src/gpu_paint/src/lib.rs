@@ -13,7 +13,7 @@ mod error;
 mod painter;
 mod types;
 
-pub use context::{Capabilities, GpuContext};
+pub use context::{Capabilities, GpuContext, GpuTarget};
 pub use error::GpuPaintError;
 pub use painter::GpuPainter;
 pub use types::{DirtyRect, DmabufFormat, DmabufFrame, DmabufPlane, PixelFrame, WindowTarget};

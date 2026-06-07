@@ -24,6 +24,13 @@ fn cef_dmabuf_producer_ok() -> bool {
     unsafe { jfn_linux_util::dmabuf_probe::jfn_wl_dmabuf_probe(ozone, std::ptr::null_mut()) }
 }
 
+fn cef_producer_target() -> jfn_gpu_paint::GpuTarget {
+    let ozone = jfn_platform_abi::get().cef_ozone_platform();
+    let drm_render =
+        unsafe { jfn_linux_util::dmabuf_probe::cef_render_node(ozone, std::ptr::null_mut()) };
+    jfn_gpu_paint::GpuTarget { drm_render }
+}
+
 /// Find a 32-bit TrueColor visual.
 fn find_argb_visual(screen: &Screen) -> Option<u32> {
     screen
@@ -240,14 +247,19 @@ pub fn init() -> bool {
     let want_gpu = !matches!(requested, Some(Req::Shm));
     let want_dmabuf = matches!(requested, None | Some(Req::Dmabuf));
     let (gpu_ctx, gpu_caps, use_dmabuf, resolved) = if want_gpu {
-        let caps = jfn_gpu_paint::GpuContext::probe();
+        let target = cef_producer_target();
+        let caps = jfn_gpu_paint::GpuContext::probe(target);
         if caps.gpu_available {
-            match jfn_gpu_paint::GpuContext::new() {
+            match jfn_gpu_paint::GpuContext::new(target) {
                 Ok(c) => {
                     let caps = c.capabilities();
                     // caps.dmabuf_import only proves our Vulkan side can consume;
                     // also probe CEF's producer, broken on NVIDIA proprietary X11.
-                    if want_dmabuf && caps.dmabuf_import && cef_dmabuf_producer_ok() {
+                    if want_dmabuf
+                        && caps.dmabuf_import
+                        && caps.dmabuf_device_matched
+                        && cef_dmabuf_producer_ok()
+                    {
                         tracing::info!("paint: dmabuf import");
                         (Some(c), caps, true, Req::Dmabuf)
                     } else {

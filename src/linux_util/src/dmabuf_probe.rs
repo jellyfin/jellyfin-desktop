@@ -9,7 +9,7 @@
 
 use crate::egl_dyn as egl;
 use libloading::Library;
-use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 use std::os::fd::RawFd;
 use std::ptr;
 
@@ -378,7 +378,7 @@ impl GbmFns {
     }
 }
 
-fn find_drm_node(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<RawFd> {
+fn find_drm_node_path(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<CString> {
     let query_display_ptr = egl.get_proc("eglQueryDisplayAttribEXT")?;
     let query_device_str_ptr = egl.get_proc("eglQueryDeviceStringEXT")?;
     let query_display: FnEglQueryDisplayAttribExt =
@@ -396,7 +396,11 @@ fn find_drm_node(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<RawFd> {
     if node_ptr.is_null() {
         return None;
     }
-    let node = unsafe { CStr::from_ptr(node_ptr) };
+    Some(unsafe { CStr::from_ptr(node_ptr) }.to_owned())
+}
+
+fn find_drm_node(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<RawFd> {
+    let node = find_drm_node_path(egl, display)?;
     let fd = unsafe { libc::open(node.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
     if fd >= 0 {
         tracing::info!("dmabuf probe using render node: {}", node.to_string_lossy());
@@ -404,6 +408,53 @@ fn find_drm_node(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<RawFd> {
     } else {
         None
     }
+}
+
+/// # Safety
+/// Same contract as [`jfn_wl_dmabuf_probe`].
+pub unsafe fn cef_render_node(
+    ozone_platform: *const c_char,
+    wayland_egl_dpy: *mut c_void,
+) -> Option<(i64, i64)> {
+    let ozone = if ozone_platform.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(ozone_platform) }
+            .to_str()
+            .unwrap_or_default()
+    };
+    match render_node(ozone, wayland_egl_dpy) {
+        Ok(node) => node,
+        Err(msg) => {
+            tracing::warn!("cef render node: {}", msg);
+            None
+        }
+    }
+}
+
+fn render_node(ozone: &str, wayland_egl_dpy: *mut c_void) -> Result<Option<(i64, i64)>, String> {
+    let egl_lib = unsafe { Library::new("libEGL.so.1") }
+        .map_err(|e| format!("libEGL not available: {}", e))?;
+    let egl = egl::Egl::load_from(egl_lib).map_err(|e| format!("EGL load failed: {}", e))?;
+
+    let (display, owns_display, _x11_state) = acquire_display(&egl, ozone, wayland_egl_dpy)?;
+    let path = find_drm_node_path(&egl, display);
+    if owns_display {
+        unsafe { (egl.terminate)(display) };
+    }
+    Ok(path.as_deref().and_then(node_major_minor))
+}
+
+fn node_major_minor(path: &CStr) -> Option<(i64, i64)> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::stat(path.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    // glibc dev_t encoding; the plain POSIX major/minor split decodes wrong.
+    let rdev = st.st_rdev as u64;
+    let major = ((rdev >> 8) & 0xfff) | ((rdev >> 32) & !0xfff_u64);
+    let minor = (rdev & 0xff) | ((rdev >> 12) & !0xff_u64);
+    Some((major as i64, minor as i64))
 }
 
 fn open_legacy_node() -> Option<RawFd> {
