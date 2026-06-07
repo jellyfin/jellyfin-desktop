@@ -34,11 +34,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDC_SIZEWE, IDC_WAIT, KF_EXTENDED, LoadCursorW, MSG, PostMessageW, PostThreadMessageW,
     RegisterClassExW, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetCursor,
     SetWindowPos, TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APPCOMMAND,
-    WM_CHAR, WM_CLOSE, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR,
-    WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW,
-    WS_CHILD, WS_VISIBLE, XBUTTON2,
+    WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_QUIT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW, WS_CHILD, WS_VISIBLE,
+    XBUTTON2,
 };
 use windows::core::{PCWSTR, w};
 
@@ -63,6 +63,7 @@ use jfn_input::{
     jfn_input_dispatch_keyboard_focus, jfn_input_dispatch_mouse_button,
     jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
 };
+use jfn_playback::shutdown::jfn_shutdown_initiate;
 
 // =====================================================================
 // Shared state. `set_cursor` is invoked from the CEF UI thread; the
@@ -72,14 +73,12 @@ use jfn_input::{
 // =====================================================================
 
 struct State {
-    mpv_hwnd_raw: usize,
     input_hwnd_raw: usize,
     thread_id: u32,
     cursor_type: i32,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
-    mpv_hwnd_raw: 0,
     input_hwnd_raw: 0,
     thread_id: 0,
     cursor_type: CursorShape::Pointer.as_raw(),
@@ -385,13 +384,8 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 
         WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
             let vk = wp.0 as u16;
-            // Alt+F4: mpv-hosted child HWND never gets WM_CLOSE from DefWindowProc, so synthesize.
             if vk == VK_F4.0 && msg == WM_SYSKEYDOWN && is_key_down(VK_MENU.0) {
-                let mpv_hwnd_raw = STATE.lock().mpv_hwnd_raw;
-                if mpv_hwnd_raw != 0 {
-                    let mpv = HWND(mpv_hwnd_raw as *mut _);
-                    let _ = unsafe { PostMessageW(Some(mpv), WM_CLOSE, WPARAM(0), LPARAM(0)) };
-                }
+                jfn_shutdown_initiate();
                 return LRESULT(0);
             }
             // Browser nav keystrokes (some IR drivers).
@@ -454,7 +448,6 @@ pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
 
     {
         let mut s = STATE.lock();
-        s.mpv_hwnd_raw = mpv_hwnd as usize;
         s.thread_id = tid;
     }
 
