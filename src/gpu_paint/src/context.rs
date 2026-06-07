@@ -13,13 +13,20 @@ pub struct Capabilities {
     /// Reserved for v1 (wgpu-hal Vulkan backdoor + dmabuf import).
     /// v0 always reports false.
     pub dmabuf_import: bool,
+    pub dmabuf_device_matched: bool,
 }
 
 impl Capabilities {
     pub const NONE: Self = Self {
         gpu_available: false,
         dmabuf_import: false,
+        dmabuf_device_matched: false,
     };
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct GpuTarget {
+    pub drm_render: Option<(i64, i64)>,
 }
 
 pub struct GpuContext {
@@ -33,10 +40,10 @@ pub struct GpuContext {
 impl GpuContext {
     /// Cheap probe: enumerate Vulkan adapters and pick one. Does not
     /// create a `Device` and does not need a surface.
-    pub fn probe() -> Capabilities {
+    pub fn probe(target: GpuTarget) -> Capabilities {
         let instance = build_instance();
-        match pick_adapter(&instance) {
-            Some(adapter) => {
+        match pick_adapter(&instance, target) {
+            Some((adapter, dmabuf_device_matched)) => {
                 let info = adapter.get_info();
                 let dmabuf_import = probe_dmabuf_import(&adapter);
                 tracing::info!(
@@ -44,11 +51,13 @@ impl GpuContext {
                     backend = ?info.backend,
                     device_type = ?info.device_type,
                     dmabuf_import,
+                    dmabuf_device_matched,
                     "gpu_paint: probe found Vulkan adapter"
                 );
                 Capabilities {
                     gpu_available: true,
                     dmabuf_import,
+                    dmabuf_device_matched,
                 }
             }
             None => {
@@ -58,9 +67,10 @@ impl GpuContext {
         }
     }
 
-    pub fn new() -> Result<Arc<Self>, GpuPaintError> {
+    pub fn new(target: GpuTarget) -> Result<Arc<Self>, GpuPaintError> {
         let instance = build_instance();
-        let adapter = pick_adapter(&instance).ok_or(GpuPaintError::NoAdapter)?;
+        let (adapter, dmabuf_device_matched) =
+            pick_adapter(&instance, target).ok_or(GpuPaintError::NoAdapter)?;
         let info = adapter.get_info();
         let limits = adapter.limits();
 
@@ -126,6 +136,7 @@ impl GpuContext {
             adapter = %info.name,
             backend = ?info.backend,
             dmabuf_import,
+            dmabuf_device_matched,
             "gpu_paint: device created"
         );
 
@@ -137,6 +148,7 @@ impl GpuContext {
             caps: Capabilities {
                 gpu_available: true,
                 dmabuf_import,
+                dmabuf_device_matched,
             },
         }))
     }
@@ -168,23 +180,46 @@ fn probe_dmabuf_import(adapter: &wgpu::Adapter) -> bool {
     }
 }
 
-fn pick_adapter(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
-    let adapters: Vec<_> = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN))
-        .into_iter()
-        .filter(|a| {
-            !matches!(
-                a.get_info().device_type,
-                wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
-            )
-        })
-        .collect();
+fn pick_adapter(instance: &wgpu::Instance, target: GpuTarget) -> Option<(wgpu::Adapter, bool)> {
+    let mut adapters: Vec<_> =
+        pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN))
+            .into_iter()
+            .filter(|a| {
+                !matches!(
+                    a.get_info().device_type,
+                    wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
+                )
+            })
+            .collect();
 
-    adapters
+    if adapters.is_empty() {
+        return None;
+    }
+
+    if let Some(want) = target.drm_render
+        && let Some(pos) = adapters
+            .iter()
+            .position(|a| adapter_render_node(a) == Some(want))
+    {
+        return Some((adapters.swap_remove(pos), true));
+    }
+
+    let chosen = adapters
         .into_iter()
         .max_by_key(|a| match a.get_info().device_type {
             wgpu::DeviceType::DiscreteGpu => 3,
             wgpu::DeviceType::IntegratedGpu => 2,
             wgpu::DeviceType::VirtualGpu => 1,
             _ => 0,
-        })
+        })?;
+    Some((chosen, target.drm_render.is_none()))
+}
+
+fn adapter_render_node(adapter: &wgpu::Adapter) -> Option<(i64, i64)> {
+    unsafe { adapter.as_hal::<vulkan::Api>() }.and_then(|hal| {
+        dmabuf_import::drm_render_node(
+            hal.shared_instance().raw_instance(),
+            hal.raw_physical_device(),
+        )
+    })
 }

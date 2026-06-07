@@ -171,7 +171,7 @@ pub fn jfn_wl_lifecycle_init() -> bool {
     }
 
     if want_gpu_paint {
-        match jfn_gpu_paint::GpuContext::new() {
+        match jfn_gpu_paint::GpuContext::new(jfn_gpu_paint::GpuTarget::default()) {
             Ok(ctx) => {
                 crate::wl_state::install_gpu_paint(ctx);
             }

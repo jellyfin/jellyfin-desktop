@@ -52,6 +52,23 @@ pub(crate) fn extra_device_extensions(
         .collect()
 }
 
+pub(crate) fn drm_render_node(
+    instance: &ash::Instance,
+    phys: vk::PhysicalDevice,
+) -> Option<(i64, i64)> {
+    let available = device_extensions(instance, phys);
+    if !available
+        .iter()
+        .any(|p| ext_name(p) == ext::physical_device_drm::NAME)
+    {
+        return None;
+    }
+    let mut drm = vk::PhysicalDeviceDrmPropertiesEXT::default();
+    let mut props2 = vk::PhysicalDeviceProperties2::default().push_next(&mut drm);
+    unsafe { instance.get_physical_device_properties2(phys, &mut props2) };
+    (drm.has_render == vk::TRUE).then_some((drm.render_major, drm.render_minor))
+}
+
 /// Whether the device advertises every extension the import path needs.
 fn required_extensions_present(instance: &ash::Instance, phys: vk::PhysicalDevice) -> bool {
     let available = device_extensions(instance, phys);
