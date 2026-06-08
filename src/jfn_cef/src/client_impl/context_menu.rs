@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::app::userfree_to_string;
 use crate::client::Inner;
+use crate::platform_ops::{self, DisplayBackend, JfnContextMenuRequest, JfnMenuItem};
 
 const STRIP_ACCEL_KEEP: u8 = b'&';
 
@@ -82,7 +83,51 @@ wrap_context_menu_handler! {
                 callback.cancel();
                 return 1;
             }
+            let Some(session) = crate::browsers::jfn_browsers_menu_open() else {
+                callback.cancel();
+                return 1;
+            };
             self.inner.store_pending_menu_callback(callback.clone());
+
+            let native = platform_ops::ops()
+                .map(|p| p.display() == DisplayBackend::X11)
+                .unwrap_or(false);
+            if native {
+                let mut items = Vec::with_capacity(model.count());
+                for i in 0..model.count() {
+                    let t: sys::cef_menu_item_type_t = model.type_at(i).into();
+                    if t == sys::cef_menu_item_type_t::MENUITEMTYPE_SEPARATOR {
+                        items.push(JfnMenuItem {
+                            id: 0,
+                            label: String::new(),
+                            enabled: false,
+                            separator: true,
+                        });
+                    } else {
+                        let raw_label = userfree_to_string(&model.label_at(i));
+                        items.push(JfnMenuItem {
+                            id: model.command_id_at(i),
+                            label: strip_accelerator(&raw_label),
+                            enabled: model.is_enabled_at(i) != 0,
+                            separator: false,
+                        });
+                    }
+                }
+                if let Some(p) = platform_ops::ops() {
+                    p.context_menu_show(
+                        std::ptr::null_mut(),
+                        JfnContextMenuRequest {
+                            x: params.xcoord(),
+                            y: params.ycoord(),
+                            items,
+                            on_selected: Some(self.inner.native_menu_callback(session)),
+                        },
+                    );
+                }
+                return 1;
+            }
+
+            self.inner.store_pending_menu_session(session);
 
             // Serialize menu model via CEF's value/list/json APIs (never hand-rolled).
             let Some(arr) = list_value_create() else { return 1 };

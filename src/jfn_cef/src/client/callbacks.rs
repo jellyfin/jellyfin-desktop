@@ -1,20 +1,18 @@
+use cef::rc::Rc;
 use cef::{
-    Browser, ImplBrowser, ImplFrame, ImplRunContextMenuCallback, MenuId, RunContextMenuCallback,
+    Browser, ImplBrowser, ImplFrame, ImplRunContextMenuCallback, ImplTask, MenuId,
+    RunContextMenuCallback, Task, ThreadId, WrapTask, post_task, wrap_task,
 };
 use std::os::raw::{c_int, c_void};
+use std::sync::Arc;
 
 use crate::ipc::BrowserMessage;
+use crate::sink_routing::Handle;
 
 use super::Inner;
 
 impl Inner {
     pub(crate) fn handle_menu_item_selected(&self, cmd: c_int, browser: Option<&mut Browser>) {
-        {
-            let mut g = self.pending_menu_callback.lock();
-            if let Some(cb) = g.take() {
-                cb.cancel();
-            }
-        }
         let Some(b) = browser else { return };
         let frame = b.focused_frame().or_else(|| b.main_frame());
         let menu_back = MenuId::BACK.get_raw() as c_int;
@@ -67,11 +65,53 @@ impl Inner {
         }
     }
 
-    pub(crate) fn handle_menu_dismissed(&self) {
+    pub(crate) fn native_menu_callback(
+        self: &Arc<Self>,
+        session: Handle,
+    ) -> Box<dyn FnOnce(c_int) + Send> {
+        let inner = Arc::clone(self);
+        Box::new(move |id| {
+            let mut task = DispatchNativeMenuTask::new(inner, session, id);
+            let _ = post_task(ThreadId::UI, Some(&mut task));
+        })
+    }
+
+    fn dispatch_native_menu_result(self: &Arc<Self>, session: Handle, id: c_int) {
+        if !crate::browsers::jfn_browsers_menu_resolve(session) {
+            return;
+        }
+        self.close_pending_menu();
+        if id < 0 {
+            return;
+        }
+        let inner = Arc::clone(self);
+        let mut task = DispatchMenuCommandTask::new(inner, id);
+        let _ = post_task(ThreadId::UI, Some(&mut task));
+    }
+
+    fn dispatch_menu_command(&self, id: c_int) {
+        let mut browser = self.browser_clone();
+        self.handle_menu_item_selected(id, browser.as_mut());
+    }
+
+    pub(crate) fn store_pending_menu_session(&self, h: Handle) {
+        *self.pending_menu_session.lock() = Some(h);
+    }
+
+    pub(crate) fn resolve_pending_menu_session(&self) -> bool {
+        let h = self.pending_menu_session.lock().take();
+        h.is_some_and(crate::browsers::jfn_browsers_menu_resolve)
+    }
+
+    pub(crate) fn close_pending_menu(&self) {
         let mut g = self.pending_menu_callback.lock();
         if let Some(cb) = g.take() {
             cb.cancel();
         }
+    }
+
+    pub(crate) fn handle_menu_dismissed(&self) {
+        self.close_pending_menu();
     }
 
     pub(crate) fn store_pending_menu_callback(&self, cb: RunContextMenuCallback) {
@@ -101,5 +141,31 @@ impl Inner {
     fn invoke_context_menu_dispatcher(&self, command_id: c_int) -> bool {
         let g = self.context_menu_dispatcher.lock();
         g.as_ref().map(|f| f(command_id)).unwrap_or(false)
+    }
+}
+
+wrap_task! {
+    struct DispatchNativeMenuTask {
+        inner: Arc<Inner>,
+        session: Handle,
+        id: c_int,
+    }
+    impl Task {
+        fn execute(&self) {
+            self.inner
+                .dispatch_native_menu_result(self.session, self.id);
+        }
+    }
+}
+
+wrap_task! {
+    struct DispatchMenuCommandTask {
+        inner: Arc<Inner>,
+        id: c_int,
+    }
+    impl Task {
+        fn execute(&self) {
+            self.inner.dispatch_menu_command(self.id);
+        }
     }
 }
