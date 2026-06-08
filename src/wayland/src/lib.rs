@@ -11,6 +11,7 @@ pub mod kde_palette;
 pub mod lifecycle;
 pub mod make_platform;
 pub mod paint_override;
+pub(crate) mod popup;
 pub mod proxy;
 pub mod scale_probe;
 pub(crate) mod scene;

@@ -211,7 +211,7 @@ impl Platform for WaylandPlatform {
             })
             .collect();
         let cb = req.on_selected.unwrap_or_else(|| Box::new(|_| {}));
-        crate::scene::show_menu(items, req.x, req.y, cb);
+        crate::popup::show(items, req.x, req.y, cb);
     }
 
     fn popup_hide(&self, s: SurfaceHandle) {

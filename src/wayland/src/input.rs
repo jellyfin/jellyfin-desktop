@@ -133,6 +133,10 @@ struct State {
 
     // Latest desired cursor (re-applied on pointer enter).
     cursor_type: Arc<AtomicU32>,
+
+    // True while the pointer is over the context-menu popup surface, so its
+    // events route into the menu FSM (menu-local coords) instead of CEF.
+    menu_focus: bool,
 }
 
 impl State {
@@ -221,14 +225,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         match event {
             Event::Enter {
                 serial,
+                surface,
                 surface_x,
                 surface_y,
-                ..
             } => {
                 state.pointer_serial = serial;
-                state.apply_cursor(qh);
+                state.menu_focus = crate::popup::surface_matches(surface.id().protocol_id());
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
+                if state.menu_focus {
+                    crate::popup::handle_motion(surface_x as i32, surface_y as i32);
+                    return;
+                }
+                state.apply_cursor(qh);
                 if let Some(f) = state.cb.mouse_move {
                     f(
                         state.ptr_x as i32,
@@ -239,6 +248,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 }
             }
             Event::Leave { .. } => {
+                if state.menu_focus {
+                    state.menu_focus = false;
+                    return;
+                }
                 if let Some(f) = state.cb.mouse_move {
                     f(
                         state.ptr_x as i32,
@@ -255,9 +268,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             } => {
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
-                if crate::scene::active()
-                    && crate::scene::handle_motion(state.ptr_x as i32, state.ptr_y as i32)
-                {
+                if crate::popup::active() {
+                    if state.menu_focus {
+                        crate::popup::handle_motion(surface_x as i32, surface_y as i32);
+                    }
                     return;
                 }
                 if let Some(f) = state.cb.mouse_move {
@@ -273,9 +287,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 button, state: bs, ..
             } => {
                 let pressed = matches!(bs, WEnum::Value(wl_pointer::ButtonState::Pressed));
-                if crate::scene::active()
-                    && crate::scene::handle_button(state.ptr_x as i32, state.ptr_y as i32, pressed)
-                {
+                if crate::popup::active() {
+                    if state.menu_focus {
+                        crate::popup::handle_button(
+                            state.ptr_x as i32,
+                            state.ptr_y as i32,
+                            pressed,
+                        );
+                    }
                     return;
                 }
                 if button == BTN_SIDE
@@ -416,8 +435,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 }
             }
             Event::Leave { .. } => {
-                // No grab on Wayland; losing keyboard focus dismisses the menu.
-                crate::scene::dismiss();
+                // The xdg_popup grab owns keyboard focus while a menu is open, so
+                // focus loss no longer implies dismissal (the compositor drives
+                // that via popup_done).
                 if let Some(f) = state.cb.kb_focus {
                     f(0);
                 }
@@ -427,7 +447,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 let kc: xkb::Keycode = (key + 8).into();
                 let sym = st.key_get_one_sym(kc);
                 let pressed = matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
-                if crate::scene::active() && crate::scene::handle_key(sym.into(), pressed) {
+                if crate::popup::active() {
+                    crate::popup::handle_key(sym.into(), pressed);
                     return;
                 }
                 if let Some(f) = state.cb.key {
@@ -632,6 +653,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
         xkb_st: None,
         modifiers: 0,
         cursor_type: cursor_type.clone(),
+        menu_focus: false,
     };
 
     let stop = Arc::new(AtomicBool::new(false));

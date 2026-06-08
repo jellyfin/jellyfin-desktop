@@ -16,7 +16,8 @@ use crate::wl_ops;
 
 use jfn_playback::ingest_driver::jfn_playback_post_osd_pixels;
 use jfn_wlproxy::{
-    jfn_wlproxy_set_configure_callback, jfn_wlproxy_set_scale_callback,
+    jfn_wlproxy_set_configure_callback, jfn_wlproxy_set_popup_done_callback,
+    jfn_wlproxy_set_popup_ready_callback, jfn_wlproxy_set_scale_callback,
     jfn_wlproxy_set_suspended_callback,
 };
 
@@ -79,8 +80,18 @@ extern "C" fn on_suspended(suspended: c_int) {
     jfn_playback::lifecycle::jfn_lifecycle_set_visible(suspended == 0);
 }
 
+extern "C" fn on_popup_ready() {
+    crate::popup::on_ready();
+}
+
+extern "C" fn on_popup_done() {
+    crate::popup::on_done();
+}
+
 pub fn jfn_wl_register_proxy_callbacks() {
     jfn_wlproxy_set_configure_callback(on_configure);
     jfn_wlproxy_set_scale_callback(on_scale);
     jfn_wlproxy_set_suspended_callback(on_suspended);
+    jfn_wlproxy_set_popup_ready_callback(on_popup_ready);
+    jfn_wlproxy_set_popup_done_callback(on_popup_done);
 }

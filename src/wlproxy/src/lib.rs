@@ -62,6 +62,10 @@ use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatHandler};
 use wl_proxy::protocols::wayland::wl_subcompositor::WlSubcompositor;
 use wl_proxy::protocols::wayland::wl_subsurface::WlSubsurface;
 use wl_proxy::protocols::wayland::wl_surface::WlSurface;
+use wl_proxy::protocols::xdg_shell::xdg_popup::{XdgPopup, XdgPopupHandler};
+use wl_proxy::protocols::xdg_shell::xdg_positioner::{
+    XdgPositioner, XdgPositionerAnchor, XdgPositionerConstraintAdjustment, XdgPositionerGravity,
+};
 use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
 use wl_proxy::protocols::xdg_shell::xdg_toplevel::{
     XdgToplevel, XdgToplevelHandler, XdgToplevelResizeEdge, XdgToplevelState,
@@ -77,12 +81,23 @@ pub struct Proxy {
 type ConfigureCb = extern "C" fn(c_int, c_int, c_int);
 type ScaleCb = extern "C" fn(c_int);
 type SuspendedCb = extern "C" fn(c_int);
+type PopupReadyCb = extern "C" fn();
+type PopupDoneCb = extern "C" fn();
 
 // Single proxy per process — callbacks are global. Fire from the per-client
 // proxy thread; the C side guards against thread-safety with its own mutex.
 static CONFIGURE_CB: Mutex<Option<ConfigureCb>> = Mutex::new(None);
 static SCALE_CB: Mutex<Option<ScaleCb>> = Mutex::new(None);
 static SUSPENDED_CB: Mutex<Option<SuspendedCb>> = Mutex::new(None);
+// Popup (context menu) lifecycle: READY fires once the menu surface's
+// xdg_surface is first configured (host then attaches its rendered buffer);
+// DONE fires on xdg_popup.popup_done (compositor-driven dismiss).
+static POPUP_READY_CB: Mutex<Option<PopupReadyCb>> = Mutex::new(None);
+static POPUP_DONE_CB: Mutex<Option<PopupDoneCb>> = Mutex::new(None);
+
+/// Wire object id of the host-created `wl_surface` to be given the xdg_popup
+/// role for the context menu. 0 = none registered.
+static POPUP_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
 // Last reported suspended state to suppress no-op edges (the compositor
 // repeats the state on every configure).
 static LAST_SUSPENDED: Mutex<c_int> = Mutex::new(0);
@@ -93,6 +108,15 @@ enum HostCommand {
     SetMinimized,
     Move,
     Resize(u32),
+    /// Create the context-menu xdg_popup at (x, y) logical with logical size
+    /// (w, h), anchored in the root window's geometry.
+    ShowPopup {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
+    HidePopup,
 }
 
 static COMMANDS: Mutex<VecDeque<HostCommand>> = Mutex::new(VecDeque::new());
@@ -108,6 +132,13 @@ static HOST_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
 /// placeholder. Idempotent; call once after creating the surface.
 pub fn jfn_wlproxy_set_host_surface(id: u32) {
     HOST_SURFACE_ID.store(id, Ordering::Release);
+}
+
+/// Register the host-created `wl_surface` (by wire/protocol object id) to be
+/// re-roled as the context-menu xdg_popup. Set just before queueing
+/// [`jfn_wlproxy_show_popup`].
+pub fn jfn_wlproxy_set_popup_surface(id: u32) {
+    POPUP_SURFACE_ID.store(id, Ordering::Release);
 }
 
 thread_local! {
@@ -161,6 +192,12 @@ struct Shell {
     host_surface: Option<Rc<WlSurface>>,
     host_subsurface: Option<Rc<WlSubsurface>>,
     host_viewport: Option<Rc<WpViewport>>,
+    // Context-menu popup: the host-owned menu surface re-roled as an xdg_popup
+    // of the root. The host owns the buffer/paint; the proxy owns the role +
+    // grab + lifecycle.
+    popup_surface: Option<Rc<WlSurface>>,
+    popup_xdg_surface: Option<Rc<XdgSurface>>,
+    popup: Option<Rc<XdgPopup>>,
     // Last logical size from the root's toplevel.configure (states wire bytes too).
     cur_w: i32,
     cur_h: i32,
@@ -194,6 +231,9 @@ impl Shell {
             host_surface: None,
             host_subsurface: None,
             host_viewport: None,
+            popup_surface: None,
+            popup_xdg_surface: None,
+            popup: None,
             cur_w: 0,
             cur_h: 0,
             cur_states: Vec::new(),
@@ -374,6 +414,37 @@ pub fn jfn_wlproxy_clear_callbacks() {
     *CONFIGURE_CB.lock() = None;
     *SCALE_CB.lock() = None;
     *SUSPENDED_CB.lock() = None;
+    *POPUP_READY_CB.lock() = None;
+    *POPUP_DONE_CB.lock() = None;
+}
+
+/// Register the popup-ready callback: fires (on the proxy client thread) once
+/// the menu surface's xdg_surface receives its first configure, signalling the
+/// host to attach its rendered menu buffer and commit.
+pub fn jfn_wlproxy_set_popup_ready_callback(cb: PopupReadyCb) {
+    *POPUP_READY_CB.lock() = Some(cb);
+}
+
+/// Register the popup-done callback: fires on xdg_popup.popup_done (the
+/// compositor dismissed the menu, e.g. click-outside / Escape), so the host can
+/// tear down its menu state and report no selection.
+pub fn jfn_wlproxy_set_popup_done_callback(cb: PopupDoneCb) {
+    *POPUP_DONE_CB.lock() = Some(cb);
+}
+
+/// Queue creation of the context-menu xdg_popup. Register the menu surface via
+/// [`jfn_wlproxy_set_popup_surface`] first. (x, y) and (w, h) are logical,
+/// relative to the root window's geometry.
+pub fn jfn_wlproxy_show_popup(x: c_int, y: c_int, w: c_int, h: c_int) {
+    COMMANDS
+        .lock()
+        .push_back(HostCommand::ShowPopup { x, y, w, h });
+}
+
+/// Queue teardown of the context-menu xdg_popup (host-driven dismiss, e.g. an
+/// item was selected).
+pub fn jfn_wlproxy_hide_popup() {
+    COMMANDS.lock().push_back(HostCommand::HidePopup);
 }
 
 /// Queue an xdg_toplevel.set_fullscreen / unset_fullscreen request. Applied
@@ -523,7 +594,129 @@ fn drain_host_commands() {
                     );
                 }
             }),
+            HostCommand::ShowPopup { x, y, w, h } => create_popup(x, y, w, h),
+            HostCommand::HidePopup => destroy_popup(),
         }
+    }
+}
+
+/// Fire the popup-ready callback (menu surface's xdg_surface first-configured).
+fn fire_popup_ready() {
+    if let Some(cb) = *POPUP_READY_CB.lock() {
+        cb();
+    }
+}
+
+/// Fire the popup-done callback (compositor-driven dismiss).
+fn fire_popup_done() {
+    if let Some(cb) = *POPUP_DONE_CB.lock() {
+        cb();
+    }
+}
+
+/// Find the host-registered popup `wl_surface` among the client's objects.
+fn find_popup_surface() -> Option<Rc<WlSurface>> {
+    let id = POPUP_SURFACE_ID.load(Ordering::Acquire);
+    if id == 0 {
+        return None;
+    }
+    let client = with_shell(|sh| sh.client.clone())?;
+    let mut objs = Vec::new();
+    client.objects(&mut objs);
+    objs.into_iter().find_map(|o| {
+        let s = o.try_downcast::<WlSurface>()?;
+        (s.client_id() == Some(id)).then_some(s)
+    })
+}
+
+/// Re-role the host's registered menu surface as an xdg_popup of the root and
+/// grab it. The compositor constrains it on-screen and routes input to it; the
+/// host paints into the same surface once [`fire_popup_ready`] fires.
+fn create_popup(x: i32, y: i32, w: i32, h: i32) {
+    // One menu at a time: drop any stale popup first.
+    if with_shell(|sh| sh.popup.is_some()) {
+        destroy_popup();
+    }
+    let Some(menu_surface) = find_popup_surface() else {
+        eprintln!("wlproxy: show_popup but no popup surface registered");
+        return;
+    };
+    let Some((wm_base, root_xdg)) =
+        with_shell(|sh| Some((sh.wm_base.clone()?, sh.root_xdg_surface.clone()?)))
+    else {
+        return;
+    };
+    let (ww, hh) = (w.max(1), h.max(1));
+
+    let positioner = wm_base.create_child::<XdgPositioner>();
+    wm_base.send_create_positioner(&positioner);
+    positioner.send_set_size(ww, hh);
+    // 1x1 anchor rect at the click point in the root's window geometry.
+    positioner.send_set_anchor_rect(x, y, 1, 1);
+    positioner.send_set_anchor(XdgPositionerAnchor::TOP_LEFT);
+    positioner.send_set_gravity(XdgPositionerGravity::BOTTOM_RIGHT);
+    positioner.send_set_constraint_adjustment(XdgPositionerConstraintAdjustment(
+        XdgPositionerConstraintAdjustment::FLIP_X.0
+            | XdgPositionerConstraintAdjustment::FLIP_Y.0
+            | XdgPositionerConstraintAdjustment::SLIDE_X.0
+            | XdgPositionerConstraintAdjustment::SLIDE_Y.0,
+    ));
+
+    let xdg = wm_base.create_child::<XdgSurface>();
+    xdg.set_handler(PopupXdgSurfaceH);
+    wm_base.send_get_xdg_surface(&xdg, &menu_surface);
+
+    let popup = xdg.create_child::<XdgPopup>();
+    popup.set_handler(PopupH);
+    xdg.send_get_popup(&popup, Some(&root_xdg), &positioner);
+    positioner.send_destroy();
+
+    // Grab with the latest pointer-button serial so click-outside dismisses and
+    // keyboard focus moves to the menu.
+    SEAT.with(|s| {
+        if let Some(seat) = s.borrow().as_ref() {
+            popup.send_grab(seat, LAST_SERIAL.with(|c| c.get()));
+        }
+    });
+
+    // Roleless commit (no buffer) to elicit the first xdg_surface.configure.
+    menu_surface.send_commit();
+
+    with_shell(|sh| {
+        sh.popup_surface = Some(menu_surface);
+        sh.popup_xdg_surface = Some(xdg);
+        sh.popup = Some(popup);
+    });
+}
+
+/// Tear down the popup's proxy-owned role objects. The host owns and destroys
+/// the underlying `wl_surface` itself.
+fn destroy_popup() {
+    let (popup, xdg) = with_shell(|sh| (sh.popup.take(), sh.popup_xdg_surface.take()));
+    with_shell(|sh| sh.popup_surface = None);
+    POPUP_SURFACE_ID.store(0, Ordering::Release);
+    if let Some(p) = popup {
+        p.send_destroy();
+    }
+    if let Some(x) = xdg {
+        x.send_destroy();
+    }
+}
+
+struct PopupXdgSurfaceH;
+impl XdgSurfaceHandler for PopupXdgSurfaceH {
+    fn handle_configure(&mut self, slf: &Rc<XdgSurface>, serial: u32) {
+        slf.send_ack_configure(serial);
+        // Host attaches its rendered menu buffer + commits on this signal.
+        fire_popup_ready();
+    }
+}
+
+struct PopupH;
+impl XdgPopupHandler for PopupH {
+    fn handle_popup_done(&mut self, _slf: &Rc<XdgPopup>) {
+        fire_popup_done();
+        destroy_popup();
     }
 }
 

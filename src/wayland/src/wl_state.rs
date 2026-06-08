@@ -179,13 +179,13 @@ pub(crate) struct WlState {
     /// gpu_paint surface.
     pub use_gpu_paint: bool,
 
-    /// Single source of truth for the surface tree (layer order, visibility,
-    /// menu). Mutated only via `crate::scene::reduce`; effects applied by
+    /// Single source of truth for the surface tree's layer stacking order.
+    /// Mutated only via `crate::scene::reduce`; effects applied by
     /// `crate::scene::sink`.
     pub scene: crate::scene::Scene,
-    /// IO resources backing the menu effects (fonts, wl objects, pending
-    /// selection callback). Persists across dispatches.
-    pub menu_io: crate::scene::sink::MenuIo,
+    /// Context-menu state (fonts, live `xdg_popup` surface, selection callback).
+    /// Persists across dispatches. See [`crate::popup`].
+    pub menu_io: crate::popup::MenuIo,
 }
 
 // Raw pointers in `stack` are only ever dereferenced under the Mutex
@@ -324,7 +324,7 @@ pub(crate) unsafe fn init(
         gpu_ctx: None,
         use_gpu_paint: false,
         scene: crate::scene::Scene::default(),
-        menu_io: crate::scene::sink::MenuIo::default(),
+        menu_io: crate::popup::MenuIo::default(),
     };
 
     STATE
