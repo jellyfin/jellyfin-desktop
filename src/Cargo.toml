@@ -13,6 +13,7 @@ members = [
     "logging",
     "macos",
     "macos_sink",
+    "menu",
     "mpv",
     "paths",
     "platform_abi",

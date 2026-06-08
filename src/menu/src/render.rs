@@ -4,7 +4,7 @@
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 use tiny_skia::{Color as SkColor, FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
 
-use super::MenuItem;
+use crate::MenuItem;
 
 // Logical (unscaled) metrics; multiplied by the display scale at layout time.
 const FONT_PX: f32 = 13.0;
@@ -49,13 +49,9 @@ pub struct Layout {
 }
 
 impl Layout {
-    #[cfg(test)]
-    pub(crate) fn for_test(
-        width: i32,
-        height: i32,
-        rows: Vec<Row>,
-        selectable: Vec<usize>,
-    ) -> Self {
+    /// Build a layout from explicit rows without rasterizing — for tests and
+    /// for callers that drive the interaction FSM headlessly.
+    pub fn for_test(width: i32, height: i32, rows: Vec<Row>, selectable: Vec<usize>) -> Self {
         Self {
             width,
             height,
@@ -63,6 +59,12 @@ impl Layout {
             selectable,
             scale: 1.0,
         }
+    }
+
+    /// Display scale the layout was computed at; backends divide physical
+    /// dimensions by this to recover logical (compositor) sizes.
+    pub fn scale(&self) -> f32 {
+        self.scale
     }
 
     pub fn contains(&self, x: i32, y: i32) -> bool {

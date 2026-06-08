@@ -2,9 +2,7 @@
 //! window driven by a grabbed pointer/keyboard loop on a dedicated thread with
 //! its own X11 connection. Selection or dismiss flows back via `on_selected`.
 
-mod interaction_fsm;
 mod lifecycle_fsm;
-mod render;
 
 use std::sync::OnceLock;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -20,16 +18,11 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::shm::{shm_alloc, shm_free};
 use crate::x11_state::{MUT, ShmBuffer};
-use interaction_fsm::{MenuEffect, MenuEvent, MenuState};
+use jfn_menu::interaction_fsm::{self, MenuEffect, MenuEvent, MenuState};
+use jfn_menu::render::{self, Fonts, Layout};
 use lifecycle_fsm::{Life, LifeEffect, LifeEvent};
-use render::{Fonts, Layout};
 
-pub struct MenuItem {
-    pub id: i32,
-    pub label: String,
-    pub enabled: bool,
-    pub separator: bool,
-}
+pub use jfn_menu::MenuItem;
 
 pub struct MenuRequest {
     /// CEF view (logical) coordinates of the click.

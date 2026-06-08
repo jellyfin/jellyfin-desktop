@@ -31,6 +31,7 @@ use std::ffi::CString;
 use std::os::fd::OwnedFd;
 use std::os::raw::{c_char, c_int};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -38,19 +39,28 @@ use std::time::Duration;
 use error_reporter::Report;
 use wl_proxy::acceptor::Acceptor;
 use wl_proxy::baseline::Baseline;
-use wl_proxy::client::ClientHandler;
+use wl_proxy::client::{Client, ClientHandler};
 use wl_proxy::object::{ConcreteObject, Object, ObjectCoreApi, ObjectRcUtils};
+use wl_proxy::protocols::ObjectInterface;
 use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::{
     WpFractionalScaleManagerV1, WpFractionalScaleManagerV1Handler,
 };
 use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
     WpFractionalScaleV1, WpFractionalScaleV1Handler,
 };
+use wl_proxy::protocols::single_pixel_buffer_v1::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
+use wl_proxy::protocols::viewporter::wp_viewport::{WpViewport, WpViewportHandler};
+use wl_proxy::protocols::viewporter::wp_viewporter::{WpViewporter, WpViewporterHandler};
+use wl_proxy::protocols::wayland::wl_buffer::WlBuffer;
+use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
+use wl_proxy::protocols::wayland::wl_compositor::WlCompositor;
 use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
-use wl_proxy::protocols::wayland::wl_output::WlOutput;
 use wl_proxy::protocols::wayland::wl_pointer::{WlPointer, WlPointerButtonState, WlPointerHandler};
+use wl_proxy::protocols::wayland::wl_region::WlRegion;
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
 use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatHandler};
+use wl_proxy::protocols::wayland::wl_subcompositor::WlSubcompositor;
+use wl_proxy::protocols::wayland::wl_subsurface::WlSubsurface;
 use wl_proxy::protocols::wayland::wl_surface::WlSurface;
 use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
 use wl_proxy::protocols::xdg_shell::xdg_toplevel::{
@@ -87,21 +97,118 @@ enum HostCommand {
 
 static COMMANDS: Mutex<VecDeque<HostCommand>> = Mutex::new(VecDeque::new());
 
+/// Wire object id of the host-created `wl_surface` the host wants to own the
+/// toplevel (Phase 1). 0 = unset (proxy uses its own placeholder root). Set by
+/// the host via [`jfn_wlproxy_set_host_surface`] after it creates the surface.
+static HOST_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
+
+/// Register the host's toplevel `wl_surface` (by wire/protocol object id). The
+/// proxy adopts that surface as the real root window — giving it the xdg role,
+/// mapping it, and demoting mpv's video underneath — instead of its own
+/// placeholder. Idempotent; call once after creating the surface.
+pub fn jfn_wlproxy_set_host_surface(id: u32) {
+    HOST_SURFACE_ID.store(id, Ordering::Release);
+}
+
 thread_local! {
-    // Per-client thread stores the XdgToplevel it manages so the command
-    // drain (which runs on the same thread) can issue requests on it.
-    static TOPLEVEL: RefCell<Option<Rc<XdgToplevel>>> = const { RefCell::new(None) };
-    // Parent XdgSurface of the toplevel. We inject xdg_surface.set_window_geometry
-    // on every configure since mpv doesn't and the compositor otherwise falls
-    // back to the surface bounding box, which can leave window placement
-    // ambiguous on restore (e.g. Mutter unmaximize landing under the top bar).
-    static XDG_SURFACE: RefCell<Option<Rc<XdgSurface>>> = const { RefCell::new(None) };
     // The compositor-facing wl_seat and the most recent pointer-button serial,
     // captured by snooping forwarded input. xdg_toplevel.move requires both,
     // and the serial must come from THIS connection (the toplevel's), not the
     // mpv-side input subsystem's serial namespace.
     static SEAT: RefCell<Option<Rc<WlSeat>>> = const { RefCell::new(None) };
     static LAST_SERIAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+
+    // Window-ownership inversion: this client (mpv) no longer owns a toplevel.
+    // The proxy owns a placeholder toplevel and demotes mpv's surface to a
+    // subsurface of it, synthesizing mpv's xdg shell. See [`Shell`].
+    static SHELL: RefCell<Shell> = const { RefCell::new(Shell::new()) };
+}
+
+/// Per-client state for the toplevel-ownership inversion (Phase 0 spike).
+///
+/// mpv's `get_xdg_surface`/`get_toplevel` are swallowed (never reach the
+/// compositor); its surface is re-roled as a subsurface of a proxy-owned
+/// placeholder toplevel. The proxy synthesizes `xdg_surface.configure` +
+/// `xdg_toplevel.configure` back to mpv from the placeholder's real configure.
+struct Shell {
+    display: Option<Rc<WlDisplay>>,
+    client: Option<Rc<Client>>,
+    // Proxy-owned globals, bound via a dedicated registry roundtrip.
+    compositor: Option<Rc<WlCompositor>>,
+    subcompositor: Option<Rc<WlSubcompositor>>,
+    wm_base: Option<Rc<XdgWmBase>>,
+    spbm: Option<Rc<WpSinglePixelBufferManagerV1>>,
+    viewporter: Option<Rc<WpViewporter>>,
+    globals_ready: bool,
+    roundtrip_started: bool,
+    // Proxy-owned placeholder root toplevel.
+    root_surface: Option<Rc<WlSurface>>,
+    root_xdg_surface: Option<Rc<XdgSurface>>,
+    root_toplevel: Option<Rc<XdgToplevel>>,
+    root_viewport: Option<Rc<WpViewport>>,
+    root_mapped: bool,
+    // mpv's swallowed shell objects (client-facing; we synthesize events to them).
+    mpv_surface: Option<Rc<WlSurface>>,
+    mpv_xdg_surface: Option<Rc<XdgSurface>>,
+    mpv_toplevel: Option<Rc<XdgToplevel>>,
+    mpv_subsurface: Option<Rc<WlSubsurface>>,
+    demote_pending: bool,
+    // Host-owned overlay-parent surface (Phase 1): a subsurface of the root,
+    // stacked above mpv's video. The host parents its CEF overlays to it, so it
+    // no longer needs mpv's surface. The proxy gives it a transparent backdrop
+    // buffer (via viewport) so its overlay children map.
+    host_adopted: bool,
+    host_surface: Option<Rc<WlSurface>>,
+    host_subsurface: Option<Rc<WlSubsurface>>,
+    host_viewport: Option<Rc<WpViewport>>,
+    // Last logical size from the root's toplevel.configure (states wire bytes too).
+    cur_w: i32,
+    cur_h: i32,
+    cur_states: Vec<u8>,
+    serial: u32,
+}
+
+impl Shell {
+    const fn new() -> Self {
+        Self {
+            display: None,
+            client: None,
+            compositor: None,
+            subcompositor: None,
+            wm_base: None,
+            spbm: None,
+            viewporter: None,
+            globals_ready: false,
+            roundtrip_started: false,
+            root_surface: None,
+            root_xdg_surface: None,
+            root_toplevel: None,
+            root_viewport: None,
+            root_mapped: false,
+            mpv_surface: None,
+            mpv_xdg_surface: None,
+            mpv_toplevel: None,
+            mpv_subsurface: None,
+            demote_pending: false,
+            host_adopted: false,
+            host_surface: None,
+            host_subsurface: None,
+            host_viewport: None,
+            cur_w: 0,
+            cur_h: 0,
+            cur_states: Vec::new(),
+            serial: 0,
+        }
+    }
+
+    fn next_serial(&mut self) -> u32 {
+        self.serial = self.serial.wrapping_add(1);
+        self.serial
+    }
+}
+
+fn with_shell<R>(f: impl FnOnce(&mut Shell) -> R) -> R {
+    SHELL.with(|s| f(&mut s.borrow_mut()))
 }
 
 // Pending state for configure synthesis. We own the scale tracking via
@@ -258,6 +365,17 @@ pub fn jfn_wlproxy_set_suspended_callback(cb: SuspendedCb) {
     *SUSPENDED_CB.lock() = Some(cb);
 }
 
+/// Clear all host callbacks. Called at shutdown so the per-client dispatch
+/// thread stops re-entering host code (which takes a `WlState` lock that a
+/// terminating CEF paint thread may have orphaned). Keeping the thread out of
+/// that lock lets it keep servicing mpv's connection — required so mpv's VO
+/// teardown roundtrip completes instead of deadlocking the shutdown.
+pub fn jfn_wlproxy_clear_callbacks() {
+    *CONFIGURE_CB.lock() = None;
+    *SCALE_CB.lock() = None;
+    *SUSPENDED_CB.lock() = None;
+}
+
 /// Queue an xdg_toplevel.set_fullscreen / unset_fullscreen request. Applied
 /// from the proxy's per-client thread on its next dispatch iteration.
 pub extern "C" fn jfn_wlproxy_set_fullscreen(enable: c_int) {
@@ -355,6 +473,7 @@ fn run_client(socket: OwnedFd, upstream: Option<String>) {
     };
     client.set_handler(NoopClient);
     client.display().set_handler(DisplayH);
+    with_shell(|sh| sh.client = Some(client.clone()));
 
     // Dispatch with a short timeout so the loop also services the host
     // command queue (set_fullscreen / set_maximized) within ~16ms even when
@@ -369,46 +488,43 @@ fn run_client(socket: OwnedFd, upstream: Option<String>) {
             }
         }
         drain_host_commands();
+        maybe_build_root();
     }
 }
 
 fn drain_host_commands() {
-    // Only the client thread that owns the toplevel may consume commands.
-    // WAYLAND_DISPLAY points every client in the process (mpv AND CEF's GPU
-    // helper) at this proxy, so multiple per-client threads run this drain.
-    // Since COMMANDS is process-global but TOPLEVEL is thread-local, a thread
-    // without the toplevel must NOT drain — otherwise it pops the command and
-    // drops it, racing the owning thread.
-    TOPLEVEL.with(|t| {
-        let tl_ref = t.borrow();
-        let Some(tl) = tl_ref.as_ref() else {
-            return;
-        };
-        let cmds: Vec<HostCommand> = COMMANDS.lock().drain(..).collect();
-        for cmd in cmds {
-            match cmd {
-                HostCommand::SetFullscreen(true) => tl.send_set_fullscreen(None),
-                HostCommand::SetFullscreen(false) => tl.send_unset_fullscreen(),
-                HostCommand::SetMaximized(true) => tl.send_set_maximized(),
-                HostCommand::SetMaximized(false) => tl.send_unset_maximized(),
-                HostCommand::SetMinimized => tl.send_set_minimized(),
-                HostCommand::Move => SEAT.with(|s| {
-                    if let Some(seat) = s.borrow().as_ref() {
-                        tl.send_move(seat, LAST_SERIAL.with(|c| c.get()));
-                    }
-                }),
-                HostCommand::Resize(edge) => SEAT.with(|s| {
-                    if let Some(seat) = s.borrow().as_ref() {
-                        tl.send_resize(
-                            seat,
-                            LAST_SERIAL.with(|c| c.get()),
-                            XdgToplevelResizeEdge(edge),
-                        );
-                    }
-                }),
-            }
+    // Host window-state commands now act on the proxy-owned ROOT toplevel (the
+    // real window since the ownership inversion), not mpv's swallowed toplevel.
+    // Only the client thread that built the root drains — COMMANDS is
+    // process-global but the root lives in this thread's SHELL, so a thread
+    // without a root must NOT drain (else it pops and drops, racing the owner).
+    let Some(tl) = with_shell(|sh| sh.root_toplevel.clone()) else {
+        return;
+    };
+    let cmds: Vec<HostCommand> = COMMANDS.lock().drain(..).collect();
+    for cmd in cmds {
+        match cmd {
+            HostCommand::SetFullscreen(true) => tl.send_set_fullscreen(None),
+            HostCommand::SetFullscreen(false) => tl.send_unset_fullscreen(),
+            HostCommand::SetMaximized(true) => tl.send_set_maximized(),
+            HostCommand::SetMaximized(false) => tl.send_unset_maximized(),
+            HostCommand::SetMinimized => tl.send_set_minimized(),
+            HostCommand::Move => SEAT.with(|s| {
+                if let Some(seat) = s.borrow().as_ref() {
+                    tl.send_move(seat, LAST_SERIAL.with(|c| c.get()));
+                }
+            }),
+            HostCommand::Resize(edge) => SEAT.with(|s| {
+                if let Some(seat) = s.borrow().as_ref() {
+                    tl.send_resize(
+                        seat,
+                        LAST_SERIAL.with(|c| c.get()),
+                        XdgToplevelResizeEdge(edge),
+                    );
+                }
+            }),
         }
-    });
+    }
 }
 
 // =========================================================================
@@ -423,6 +539,13 @@ impl ClientHandler for NoopClient {
 struct DisplayH;
 impl WlDisplayHandler for DisplayH {
     fn handle_get_registry(&mut self, slf: &Rc<WlDisplay>, registry: &Rc<WlRegistry>) {
+        // Stash the client display so we can later open our OWN registry +
+        // roundtrip to bind proxy-owned globals for the placeholder root.
+        with_shell(|sh| {
+            if sh.display.is_none() {
+                sh.display = Some(slf.clone());
+            }
+        });
         registry.set_handler(RegistryH);
         slf.send_get_registry(registry);
     }
@@ -444,9 +567,41 @@ impl WlRegistryHandler for RegistryH {
                 seat.set_handler(SeatH);
                 SEAT.with(|s| *s.borrow_mut() = Some(seat.clone()));
             }
+            WpViewporter::INTERFACE => {
+                id.downcast::<WpViewporter>().set_handler(ClientViewporterH);
+            }
             _ => {}
         }
         slf.send_bind(name, id);
+    }
+}
+
+struct ClientViewporterH;
+impl WpViewporterHandler for ClientViewporterH {
+    fn handle_get_viewport(
+        &mut self,
+        slf: &Rc<WpViewporter>,
+        id: &Rc<WpViewport>,
+        surface: &Rc<WlSurface>,
+    ) {
+        id.set_handler(ClientViewportH);
+        slf.send_get_viewport(id, surface);
+    }
+}
+
+struct ClientViewportH;
+impl WpViewportHandler for ClientViewportH {
+    fn handle_set_destination(&mut self, slf: &Rc<WpViewport>, width: i32, height: i32) {
+        // Virtualizing mpv's shell means it can size a viewport before it has a
+        // real geometry, emitting a transient set_destination(0,0) — an instant
+        // protocol error that would kill the shared connection. Drop non-positive
+        // destinations (the unset form is -1,-1); mpv re-sizes once it has
+        // geometry from our synthesized configure.
+        let unset = width == -1 && height == -1;
+        if !unset && (width <= 0 || height <= 0) {
+            return;
+        }
+        slf.send_set_destination(width, height);
     }
 }
 
@@ -504,64 +659,323 @@ impl WlPointerHandler for PointerH {
     }
 }
 
+const STATE_SUSPENDED: u32 = 9;
+
+// =========================================================================
+// mpv's shell — swallowed and re-roled as a subsurface of the proxy root.
+// =========================================================================
+
 struct WmBaseH;
 impl XdgWmBaseHandler for WmBaseH {
     fn handle_get_xdg_surface(
         &mut self,
-        slf: &Rc<XdgWmBase>,
+        _slf: &Rc<XdgWmBase>,
         id: &Rc<XdgSurface>,
         surface: &Rc<WlSurface>,
     ) {
-        id.set_handler(SurfaceH);
-        slf.send_get_xdg_surface(id, surface);
+        // SWALLOW: mpv's surface must stay role-free at the compositor so we
+        // can give it the subsurface role. We never forward get_xdg_surface;
+        // instead the proxy synthesizes the xdg shell back to mpv.
+        id.set_forward_to_server(false);
+        id.set_handler(MpvSurfaceH);
+        with_shell(|sh| {
+            sh.mpv_surface = Some(surface.clone());
+            sh.mpv_xdg_surface = Some(id.clone());
+        });
     }
 }
 
-struct SurfaceH;
-impl XdgSurfaceHandler for SurfaceH {
-    fn handle_get_toplevel(&mut self, slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
-        id.set_handler(ToplevelH);
-        TOPLEVEL.with(|t| *t.borrow_mut() = Some(id.clone()));
-        XDG_SURFACE.with(|s| *s.borrow_mut() = Some(slf.clone()));
-        slf.send_get_toplevel(id);
+struct MpvSurfaceH;
+impl XdgSurfaceHandler for MpvSurfaceH {
+    fn handle_get_toplevel(&mut self, _slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
+        // SWALLOW mpv's toplevel; its requests stay local (forward_to_server
+        // off → default handlers no-op). We drive its configure ourselves.
+        id.set_forward_to_server(false);
+        id.set_handler(MpvToplevelH);
+        with_shell(|sh| {
+            sh.mpv_toplevel = Some(id.clone());
+            sh.demote_pending = true;
+            if sh.cur_w == 0 || sh.cur_h == 0 {
+                sh.cur_w = 1280;
+                sh.cur_h = 720;
+            }
+        });
+        // Hand mpv an immediate initial configure so its geometry is non-zero
+        // before it sizes its viewports. Building the real root + its compositor
+        // configure is async (registry roundtrip), and mpv's preferred_scale /
+        // viewport sizing fires first — a 0 geometry there yields an invalid
+        // wp_viewport.set_destination(0,0). The root configure refreshes this.
+        let (w, h) = with_shell(|sh| (sh.cur_w, sh.cur_h));
+        synth_mpv_configure(w, h, &[]);
+        ensure_root();
     }
+    // ack_configure / set_window_geometry / get_popup fall through to the
+    // defaults, which no-op because forward_to_server is off.
+}
 
-    // Eat mpv's window-geometry hint. The host is the sole authority for
-    // window state on Wayland; mpv shouldn't be telling the compositor
-    // anything about geometry.
-    fn handle_set_window_geometry(
+struct MpvToplevelH;
+impl XdgToplevelHandler for MpvToplevelH {
+    // All requests no-op (forward_to_server off). The proxy synthesizes
+    // configure/close events to mpv directly via send_*.
+}
+
+// =========================================================================
+// Proxy-owned placeholder root: real toplevel, mpv's surface as its child.
+// =========================================================================
+
+/// Kick off (once) a dedicated registry roundtrip to bind the proxy-owned
+/// globals needed to build the root, then build it. If globals are already
+/// bound, build immediately.
+fn ensure_root() {
+    // Only kicks off the global-binding roundtrip; the actual root build is
+    // driven by `maybe_build_root` from the dispatch loop, so it can wait for
+    // the host to register its toplevel surface (Phase 1) before committing.
+    let (started, display) = with_shell(|sh| (sh.roundtrip_started, sh.display.clone()));
+    if started {
+        return;
+    }
+    let Some(display) = display else {
+        eprintln!("wlproxy: no display captured; cannot build root");
+        return;
+    };
+    with_shell(|sh| sh.roundtrip_started = true);
+    let registry = display.create_child::<WlRegistry>();
+    registry.set_handler(ProxyRegistryH);
+    display.send_get_registry(&registry);
+    let sync = display.create_child::<WlCallback>();
+    sync.set_handler(RoundtripCb);
+    display.send_sync(&sync);
+}
+
+/// Find the host-registered toplevel `wl_surface` among the client's objects.
+fn find_host_surface() -> Option<Rc<WlSurface>> {
+    let host_id = HOST_SURFACE_ID.load(Ordering::Acquire);
+    if host_id == 0 {
+        return None;
+    }
+    let client = with_shell(|sh| sh.client.clone())?;
+    let mut objs = Vec::new();
+    client.objects(&mut objs);
+    objs.into_iter().find_map(|o| {
+        let s = o.try_downcast::<WlSurface>()?;
+        (s.client_id() == Some(host_id)).then_some(s)
+    })
+}
+
+/// Build the root once globals are ready, a demote is pending, and the host has
+/// registered its toplevel surface. The host always owns the toplevel (Phase 1),
+/// so we wait for it rather than racing a proxy-owned placeholder.
+fn maybe_build_root() {
+    let (ready, pending, built, adopted) = with_shell(|sh| {
+        (
+            sh.globals_ready,
+            sh.demote_pending,
+            sh.root_surface.is_some(),
+            sh.host_adopted,
+        )
+    });
+    if !ready || !pending {
+        return;
+    }
+    // Build the root immediately so mpv's window becomes ready and the host's
+    // `wait_for_vo_window` unblocks (it can't create its own surface until after
+    // that). On a later tick, once the host has registered its overlay-parent
+    // surface, adopt it into the tree above mpv.
+    if !built {
+        build_root();
+        return;
+    }
+    if !adopted && let Some(host) = find_host_surface() {
+        adopt_host_surface(host);
+    }
+}
+
+/// Attach the host's overlay-parent surface as a subsurface of the (proxy-
+/// owned) root, stacked above mpv's video, with a transparent backdrop buffer
+/// so its overlay children map. The proxy keeps owning the toplevel — giving
+/// the host surface an xdg role would collide with the host's own commits on
+/// it. This lets the host parent overlays to its own surface (dropping the
+/// dependency on mpv's surface) without owning the window's xdg lifecycle.
+fn adopt_host_surface(host: Rc<WlSurface>) {
+    let objs = with_shell(|sh| {
+        if sh.host_adopted {
+            return None;
+        }
+        Some((
+            sh.subcompositor.clone()?,
+            sh.spbm.clone()?,
+            sh.viewporter.clone()?,
+            sh.root_surface.clone()?,
+            sh.cur_w.max(1),
+            sh.cur_h.max(1),
+        ))
+    });
+    let Some((subcompositor, spbm, viewporter, root, w, h)) = objs else {
+        return;
+    };
+
+    // Host surface becomes a subsurface of the root, above mpv (created later
+    // than mpv's subsurface, so on top by default).
+    let sub = subcompositor.create_child::<WlSubsurface>();
+    subcompositor.send_get_subsurface(&sub, &host, &root);
+    sub.send_set_desync();
+    sub.send_set_position(0, 0);
+
+    // Transparent backdrop buffer scaled to the window, so overlay children map.
+    let vp = viewporter.create_child::<WpViewport>();
+    viewporter.send_get_viewport(&vp, &host);
+    vp.send_set_destination(w, h);
+    let buf = spbm.create_child::<WlBuffer>();
+    spbm.send_create_u32_rgba_buffer(&buf, 0, 0, 0, 0);
+    host.send_attach(Some(&buf), 0, 0);
+    host.send_commit();
+    // Adding the subsurface only takes effect on the parent's next commit; the
+    // root otherwise commits only on a compositor configure, so map it now.
+    root.send_commit();
+
+    with_shell(|sh| {
+        sh.host_surface = Some(host);
+        sh.host_subsurface = Some(sub);
+        sh.host_viewport = Some(vp);
+        sh.host_adopted = true;
+    });
+}
+
+struct ProxyRegistryH;
+impl WlRegistryHandler for ProxyRegistryH {
+    fn handle_global(
         &mut self,
-        _slf: &Rc<XdgSurface>,
-        _x: i32,
-        _y: i32,
-        _width: i32,
-        _height: i32,
+        slf: &Rc<WlRegistry>,
+        name: u32,
+        interface: ObjectInterface,
+        version: u32,
     ) {
+        let state = slf.state();
+        match interface {
+            WlCompositor::INTERFACE => {
+                let o = state.create_object::<WlCompositor>(version.min(6));
+                slf.send_bind(name, o.clone());
+                with_shell(|sh| sh.compositor = Some(o));
+            }
+            WlSubcompositor::INTERFACE => {
+                let o = state.create_object::<WlSubcompositor>(version.min(1));
+                slf.send_bind(name, o.clone());
+                with_shell(|sh| sh.subcompositor = Some(o));
+            }
+            XdgWmBase::INTERFACE => {
+                let o = state.create_object::<XdgWmBase>(version.min(6));
+                o.set_handler(ProxyWmBaseH);
+                slf.send_bind(name, o.clone());
+                with_shell(|sh| sh.wm_base = Some(o));
+            }
+            WpSinglePixelBufferManagerV1::INTERFACE => {
+                let o = state.create_object::<WpSinglePixelBufferManagerV1>(version.min(1));
+                slf.send_bind(name, o.clone());
+                with_shell(|sh| sh.spbm = Some(o));
+            }
+            WpViewporter::INTERFACE => {
+                let o = state.create_object::<WpViewporter>(version.min(1));
+                slf.send_bind(name, o.clone());
+                with_shell(|sh| sh.viewporter = Some(o));
+            }
+            _ => {}
+        }
     }
 }
 
-struct ToplevelH;
-impl XdgToplevelHandler for ToplevelH {
-    // ===== Eat mpv's state-change requests =====
-    // The host drives all window state via jfn_wlproxy_set_fullscreen /
-    // set_maximized (which fire send_* from the proxy directly). mpv's
-    // outgoing state requests are dropped so they can't race the host.
+struct ProxyWmBaseH;
+impl XdgWmBaseHandler for ProxyWmBaseH {
+    fn handle_ping(&mut self, slf: &Rc<XdgWmBase>, serial: u32) {
+        // The compositor pings our own wm_base; mpv can't pong it, so we must.
+        slf.send_pong(serial);
+    }
+}
 
-    fn handle_set_fullscreen(&mut self, _slf: &Rc<XdgToplevel>, _output: Option<&Rc<WlOutput>>) {}
-    fn handle_unset_fullscreen(&mut self, _slf: &Rc<XdgToplevel>) {}
-    fn handle_set_maximized(&mut self, _slf: &Rc<XdgToplevel>) {}
-    fn handle_unset_maximized(&mut self, _slf: &Rc<XdgToplevel>) {}
-    fn handle_set_minimized(&mut self, _slf: &Rc<XdgToplevel>) {}
-    fn handle_set_min_size(&mut self, _slf: &Rc<XdgToplevel>, _w: i32, _h: i32) {}
-    fn handle_set_max_size(&mut self, _slf: &Rc<XdgToplevel>, _w: i32, _h: i32) {}
+struct RoundtripCb;
+impl WlCallbackHandler for RoundtripCb {
+    fn handle_done(&mut self, _slf: &Rc<WlCallback>, _data: u32) {
+        let ok = with_shell(|sh| {
+            sh.globals_ready = true;
+            sh.compositor.is_some()
+                && sh.subcompositor.is_some()
+                && sh.wm_base.is_some()
+                && sh.spbm.is_some()
+                && sh.viewporter.is_some()
+        });
+        if !ok {
+            eprintln!(
+                "wlproxy: missing globals for root (need compositor, subcompositor, xdg_wm_base, single_pixel_buffer, viewporter)"
+            );
+        }
+        // Building is poll-driven from the dispatch loop (waits for the host
+        // surface); just mark globals ready here.
+    }
+}
 
-    fn handle_configure(&mut self, slf: &Rc<XdgToplevel>, width: i32, height: i32, states: &[u8]) {
-        // states is a wire-encoded wl_array of uint32 XdgToplevelState values
-        // in native byte order. Scan for FULLSCREEN + SUSPENDED; ignore other
-        // states. SUSPENDED (xdg-shell v6) signals the toplevel is occluded
-        // such that updates have no user-visible effect — the host treats it
-        // as a hide-equivalent and frees CEF GPU resources.
-        const STATE_SUSPENDED: u32 = 9;
+/// Build the proxy-owned placeholder root toplevel and demote mpv's video under
+/// it as a subsurface. This is the real window; the host later attaches its
+/// overlay surface as another subsurface (see [`adopt_host_surface`]).
+/// Idempotent: only runs once a demote is pending and the root has not been
+/// created.
+fn build_root() {
+    let objs = with_shell(|sh| {
+        if !sh.demote_pending || sh.root_surface.is_some() {
+            return None;
+        }
+        Some((
+            sh.compositor.clone()?,
+            sh.subcompositor.clone()?,
+            sh.wm_base.clone()?,
+            sh.mpv_surface.clone()?,
+        ))
+    });
+    let Some((compositor, subcompositor, wm_base, mpv_surface)) = objs else {
+        return;
+    };
+
+    let root_surface = {
+        let s = compositor.create_child::<WlSurface>();
+        compositor.send_create_surface(&s);
+        s
+    };
+
+    let root_xdg = wm_base.create_child::<XdgSurface>();
+    root_xdg.set_handler(RootXdgSurfaceH);
+    wm_base.send_get_xdg_surface(&root_xdg, &root_surface);
+
+    let root_tl = root_xdg.create_child::<XdgToplevel>();
+    root_tl.set_handler(RootToplevelH);
+    root_xdg.send_get_toplevel(&root_tl);
+
+    // Initial no-buffer commit to elicit the first configure.
+    root_surface.send_commit();
+
+    // Re-role mpv's surface as a child of the root.
+    let sub = subcompositor.create_child::<WlSubsurface>();
+    subcompositor.send_get_subsurface(&sub, &mpv_surface, &root_surface);
+    sub.send_set_desync();
+    sub.send_set_position(0, 0);
+
+    // Empty input region on mpv's surface: the host owns input on its own
+    // overlay surface (stacked above), so mpv's video must never be a seat
+    // target. Applied on mpv's next commit; makes mpv's `input-*` opt-outs
+    // redundant. (Phase 2.)
+    let region = compositor.create_child::<WlRegion>();
+    compositor.send_create_region(&region);
+    mpv_surface.send_set_input_region(Some(&region));
+    region.send_destroy();
+
+    with_shell(|sh| {
+        sh.root_surface = Some(root_surface);
+        sh.root_xdg_surface = Some(root_xdg);
+        sh.root_toplevel = Some(root_tl);
+        sh.mpv_subsurface = Some(sub);
+    });
+}
+
+struct RootToplevelH;
+impl XdgToplevelHandler for RootToplevelH {
+    fn handle_configure(&mut self, _slf: &Rc<XdgToplevel>, width: i32, height: i32, states: &[u8]) {
         let mut fullscreen: c_int = 0;
         let mut suspended: c_int = 0;
         for chunk in states.chunks_exact(4) {
@@ -572,26 +986,106 @@ impl XdgToplevelHandler for ToplevelH {
                 suspended = 1;
             }
         }
+        // Compositor 0,0 = "client picks size"; pick a sane default once.
+        let w = if width > 0 { width } else { 1280 };
+        let h = if height > 0 { height } else { 720 };
         {
             let mut p = PENDING.lock();
             p.have_configure = true;
-            p.logical_w = width;
-            p.logical_h = height;
+            p.logical_w = w;
+            p.logical_h = h;
             p.fullscreen = fullscreen;
         }
         fire_configure();
         fire_suspended(suspended);
-        // Tell compositor the logical window rect explicitly so unmaximize /
-        // restore placement isn't computed from the surface bounding box.
-        // Skip the 0,0 "client picks size" form — geometry must match the
-        // buffer that will be committed.
-        if width > 0 && height > 0 {
-            XDG_SURFACE.with(|s| {
-                if let Some(xs) = s.borrow().as_ref() {
-                    xs.send_set_window_geometry(0, 0, width, height);
-                }
-            });
+        with_shell(|sh| {
+            sh.cur_w = w;
+            sh.cur_h = h;
+            sh.cur_states = states.to_vec();
+        });
+    }
+
+    fn handle_close(&mut self, _slf: &Rc<XdgToplevel>) {
+        // Window-manager close → propagate to mpv so the app shuts down.
+        if let Some(tl) = with_shell(|sh| sh.mpv_toplevel.clone()) {
+            tl.send_close();
         }
-        slf.send_configure(width, height, states);
+    }
+}
+
+struct RootXdgSurfaceH;
+impl XdgSurfaceHandler for RootXdgSurfaceH {
+    fn handle_configure(&mut self, slf: &Rc<XdgSurface>, serial: u32) {
+        slf.send_ack_configure(serial);
+
+        let (w, h, states) =
+            with_shell(|sh| (sh.cur_w.max(1), sh.cur_h.max(1), sh.cur_states.clone()));
+
+        // Map (first configure) or resize the root: a 1x1 transparent buffer
+        // scaled to the window size via a viewport. mpv's subsurface provides
+        // the visible content; the root is just the mapped window container.
+        let (surface, viewport, need_map) = with_shell(|sh| {
+            (
+                sh.root_surface.clone(),
+                sh.root_viewport.clone(),
+                !sh.root_mapped,
+            )
+        });
+        let Some(surface) = surface else { return };
+
+        // Window geometry = logical window rect (placement on restore).
+        slf.send_set_window_geometry(0, 0, w, h);
+
+        let viewport = match viewport {
+            Some(vp) => vp,
+            None => {
+                let Some((viewporter, spbm)) =
+                    with_shell(|sh| Some((sh.viewporter.clone()?, sh.spbm.clone()?)))
+                else {
+                    return;
+                };
+                let vp = viewporter.create_child::<WpViewport>();
+                viewporter.send_get_viewport(&vp, &surface);
+                let buffer = spbm.create_child::<WlBuffer>();
+                spbm.send_create_u32_rgba_buffer(&buffer, 0, 0, 0, 0);
+                surface.send_attach(Some(&buffer), 0, 0);
+                with_shell(|sh| sh.root_viewport = Some(vp.clone()));
+                vp
+            }
+        };
+        viewport.send_set_destination(w, h);
+        surface.send_commit();
+
+        if need_map {
+            with_shell(|sh| sh.root_mapped = true);
+        }
+
+        // Keep the host overlay surface's backdrop sized to the window too.
+        if let (Some(hv), Some(hs)) =
+            with_shell(|sh| (sh.host_viewport.clone(), sh.host_surface.clone()))
+        {
+            hv.send_set_destination(w, h);
+            hs.send_commit();
+        }
+
+        // Hand mpv a matching configure so it renders its video at this size.
+        synth_mpv_configure(w, h, &states);
+    }
+}
+
+/// Synthesize an xdg shell configure to mpv's swallowed toplevel/xdg_surface.
+fn synth_mpv_configure(w: i32, h: i32, states: &[u8]) {
+    let (tl, xs, serial) = with_shell(|sh| {
+        (
+            sh.mpv_toplevel.clone(),
+            sh.mpv_xdg_surface.clone(),
+            sh.next_serial(),
+        )
+    });
+    if let Some(tl) = tl {
+        tl.send_configure(w, h, states);
+    }
+    if let Some(xs) = xs {
+        xs.send_configure(serial);
     }
 }

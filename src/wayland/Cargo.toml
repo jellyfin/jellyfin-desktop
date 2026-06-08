@@ -22,6 +22,7 @@ jfn-gpu-paint = { path = "../gpu_paint" }
 jfn-input = { path = "../input" }
 jfn-linux-util = { path = "../linux_util" }
 jfn-platform-abi = { path = "../platform_abi" }
+jfn-menu = { path = "../menu" }
 jfn-mpv = { path = "../mpv" }
 jfn-playback = { path = "../playback" }
 jfn-wlproxy = { path = "../wlproxy" }

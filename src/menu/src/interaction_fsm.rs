@@ -1,7 +1,7 @@
 //! Pure decision logic for the context menu's modal loop.
 
-use super::MenuItem;
-use super::render::Layout;
+use crate::MenuItem;
+use crate::render::Layout;
 
 pub const XK_ESCAPE: u32 = 0xff1b;
 pub const XK_RETURN: u32 = 0xff0d;
@@ -92,7 +92,7 @@ pub fn step(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::menu::render::Row;
+    use crate::render::Row;
 
     fn item(id: i32) -> MenuItem {
         MenuItem {
