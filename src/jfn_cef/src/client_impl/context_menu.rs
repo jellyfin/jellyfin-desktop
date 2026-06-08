@@ -89,9 +89,10 @@ wrap_context_menu_handler! {
             };
             self.inner.store_pending_menu_callback(callback.clone());
 
-            let native = platform_ops::ops()
-                .map(|p| p.display() == DisplayBackend::X11)
-                .unwrap_or(false);
+            let native = matches!(
+                platform_ops::ops().map(|p| p.display()),
+                Some(DisplayBackend::X11 | DisplayBackend::Wayland)
+            );
             if native {
                 let mut items = Vec::with_capacity(model.count());
                 for i in 0..model.count() {

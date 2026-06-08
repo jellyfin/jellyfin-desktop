@@ -255,6 +255,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             } => {
                 state.ptr_x = surface_x;
                 state.ptr_y = surface_y;
+                if crate::scene::active()
+                    && crate::scene::handle_motion(state.ptr_x as i32, state.ptr_y as i32)
+                {
+                    return;
+                }
                 if let Some(f) = state.cb.mouse_move {
                     f(
                         state.ptr_x as i32,
@@ -268,6 +273,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 button, state: bs, ..
             } => {
                 let pressed = matches!(bs, WEnum::Value(wl_pointer::ButtonState::Pressed));
+                if crate::scene::active()
+                    && crate::scene::handle_button(state.ptr_x as i32, state.ptr_y as i32, pressed)
+                {
+                    return;
+                }
                 if button == BTN_SIDE
                     || button == BTN_EXTRA
                     || button == BTN_BACK
@@ -406,6 +416,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 }
             }
             Event::Leave { .. } => {
+                // No grab on Wayland; losing keyboard focus dismisses the menu.
+                crate::scene::dismiss();
                 if let Some(f) = state.cb.kb_focus {
                     f(0);
                 }
@@ -415,6 +427,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 let kc: xkb::Keycode = (key + 8).into();
                 let sym = st.key_get_one_sym(kc);
                 let pressed = matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                if crate::scene::active() && crate::scene::handle_key(sym.into(), pressed) {
+                    return;
+                }
                 if let Some(f) = state.cb.key {
                     f(
                         sym.into(),

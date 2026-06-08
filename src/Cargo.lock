@@ -2369,6 +2369,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jfn-menu"
+version = "3.0.0-dev"
+dependencies = [
+ "cosmic-text",
+ "tiny-skia",
+]
+
+[[package]]
 name = "jfn-mpv"
 version = "3.0.0-dev"
 dependencies = [
@@ -2447,6 +2455,7 @@ dependencies = [
  "jfn-gpu-paint",
  "jfn-input",
  "jfn-linux-util",
+ "jfn-menu",
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
@@ -2506,18 +2515,17 @@ name = "jfn-x11"
 version = "3.0.0-dev"
 dependencies = [
  "cef",
- "cosmic-text",
  "cursor-icon",
  "jfn-compositor-core",
  "jfn-gpu-paint",
  "jfn-input",
  "jfn-linux-util",
+ "jfn-menu",
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
  "libc",
  "parking_lot",
- "tiny-skia",
  "tracing",
  "x11rb",
  "xcb",

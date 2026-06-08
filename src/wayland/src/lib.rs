@@ -13,6 +13,7 @@ pub mod make_platform;
 pub mod paint_override;
 pub mod proxy;
 pub mod scale_probe;
+pub(crate) mod scene;
 pub(crate) mod shm_paint_worker;
 pub mod wl_ffi;
 pub mod wl_ops;

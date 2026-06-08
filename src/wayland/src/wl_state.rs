@@ -30,7 +30,7 @@ use crate::gpu_paint_worker::WaylandGpuPaintWorker;
 use crate::shm_paint_worker::WaylandShmPaintWorker;
 
 use memmap2::MmapOptions;
-use wayland_backend::client::{Backend, ObjectId};
+use wayland_backend::client::Backend;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{
     wl_buffer::WlBuffer,
@@ -178,6 +178,14 @@ pub(crate) struct WlState {
     /// `wl_surface.attach`/`viewport.set_destination` work for the
     /// gpu_paint surface.
     pub use_gpu_paint: bool,
+
+    /// Single source of truth for the surface tree (layer order, visibility,
+    /// menu). Mutated only via `crate::scene::reduce`; effects applied by
+    /// `crate::scene::sink`.
+    pub scene: crate::scene::Scene,
+    /// IO resources backing the menu effects (fonts, wl objects, pending
+    /// selection callback). Persists across dispatches.
+    pub menu_io: crate::scene::sink::MenuIo,
 }
 
 // Raw pointers in `stack` are only ever dereferenced under the Mutex
@@ -288,15 +296,13 @@ pub(crate) unsafe fn init(
     let dmabuf: Option<ZwpLinuxDmabufV1> = globals.bind(&qh, 1..=4, ()).ok();
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
 
-    // Wrap mpv's parent surface as a Proxy. Foreign object — never
-    // destroyed on our side (Drop on a non-rust-managed ObjectId is a
-    // no-op in wayland-backend).
-    let parent_id = unsafe {
-        ObjectId::from_ptr(WlSurface::interface(), parent_surface_ptr.cast())
-            .map_err(|_| "parent surface interface mismatch")?
-    };
-    let parent = WlSurface::from_id(&conn, parent_id)
-        .map_err(|_| "parent surface from_id failed".to_string())?;
+    // Phase 1: the host owns the toplevel. Create our own root surface and
+    // register it with the proxy, which re-parents mpv's video under it as a
+    // subsurface and gives it the xdg role. mpv's own surface
+    // (`parent_surface_ptr`) is no longer used as our parent.
+    let _ = parent_surface_ptr;
+    let parent = compositor.create_surface(&qh, ());
+    jfn_wlproxy::jfn_wlproxy_set_host_surface(parent.id().protocol_id());
 
     let state = WlState {
         conn,
@@ -317,6 +323,8 @@ pub(crate) unsafe fn init(
         display_ptr: NonNull::new(display_ptr).ok_or_else(|| "display_ptr is null".to_string())?,
         gpu_ctx: None,
         use_gpu_paint: false,
+        scene: crate::scene::Scene::default(),
+        menu_io: crate::scene::sink::MenuIo::default(),
     };
 
     STATE

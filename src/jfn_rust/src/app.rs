@@ -535,6 +535,14 @@ fn shutdown_runtime(manager_thread: std::thread::JoinHandle<()>) {
     // any teardown so no posted task outlives the layer free below.
     let _ = manager_thread.join();
 
+    // Sever the wlproxy→host callbacks before CEF teardown. A CEF paint thread
+    // can be terminated by `jfn_cef_shutdown` while holding the WlState lock,
+    // orphaning it; if the proxy's mpv-connection thread then runs `on_configure`
+    // it parks on that lock forever and can no longer forward mpv's VO-teardown
+    // roundtrip, deadlocking the whole shutdown when video was playing.
+    #[cfg(target_os = "linux")]
+    jfn_wlproxy::jfn_wlproxy_clear_callbacks();
+
     jfn_color::theme::jfn_theme_color_shutdown();
     #[cfg(target_os = "macos")]
     jfn_macos_sink::jfn_macos_sink_stop();

@@ -20,8 +20,8 @@ use crate::wl_ops::{self, JfnDmabufFrame};
 
 use jfn_platform_abi::cursor::CursorShape;
 pub use jfn_platform_abi::{
-    DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
-    SurfaceSize, WindowDecorations,
+    DisplayBackend, IdleInhibitLevel, JfnContextMenuRequest, JfnPopupRequest, JfnRect, Platform,
+    SurfaceHandle, SurfaceSize, WindowDecorations,
 };
 
 // =====================================================================
@@ -197,6 +197,21 @@ impl Platform for WaylandPlatform {
         );
         // Dropping `req.on_selected` here is the cancel path — CEF
         // dispatches selection itself on this backend.
+    }
+
+    fn context_menu_show(&self, _s: SurfaceHandle, req: JfnContextMenuRequest) {
+        let items = req
+            .items
+            .into_iter()
+            .map(|i| jfn_menu::MenuItem {
+                id: i.id,
+                label: i.label,
+                enabled: i.enabled,
+                separator: i.separator,
+            })
+            .collect();
+        let cb = req.on_selected.unwrap_or_else(|| Box::new(|_| {}));
+        crate::scene::show_menu(items, req.x, req.y, cb);
     }
 
     fn popup_hide(&self, s: SurfaceHandle) {
