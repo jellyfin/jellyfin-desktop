@@ -24,6 +24,9 @@ fn main() {
         // Permit later DT_NEEDED libraries (libcef.so) to resolve symbols
         // they don't list explicitly.
         println!("cargo:rustc-link-arg-bins=-Wl,--disable-new-dtags");
+        // ELF symbol preemption needs our `wl_display_connect` interposer in the
+        // dynamic symbol table to shadow libwayland's for libmpv.
+        println!("cargo:rustc-link-arg-bins=-Wl,--export-dynamic");
 
         // Additional rpath entries for system / out-of-tree library
         // installs (e.g. Arch's `cef` package puts libcef.so in

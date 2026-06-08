@@ -264,18 +264,13 @@ noop_dispatch!(
 // remains mpv's responsibility.
 // =====================================================================
 
-/// SAFETY: `display_ptr` must be a live `*mut wl_display` owned by an
-/// external party (mpv); `parent_surface_ptr` must be a live
-/// `*mut wl_proxy` referring to a `wl_surface` on that display.
-pub(crate) unsafe fn init(
-    display_ptr: *mut c_void,
-    parent_surface_ptr: *mut c_void,
-) -> Result<(), String> {
+/// SAFETY: `display_ptr` must be a live `*mut wl_display` owned by mpv.
+pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
     if STATE.get().is_some() {
         return Err("wl_state already initialised".into());
     }
-    if display_ptr.is_null() || parent_surface_ptr.is_null() {
-        return Err("null display or parent surface".into());
+    if display_ptr.is_null() {
+        return Err("null display".into());
     }
 
     let backend = unsafe { Backend::from_foreign_display(display_ptr.cast()) };
@@ -296,11 +291,6 @@ pub(crate) unsafe fn init(
     let dmabuf: Option<ZwpLinuxDmabufV1> = globals.bind(&qh, 1..=4, ()).ok();
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
 
-    // Phase 1: the host owns the toplevel. Create our own root surface and
-    // register it with the proxy, which re-parents mpv's video under it as a
-    // subsurface and gives it the xdg role. mpv's own surface
-    // (`parent_surface_ptr`) is no longer used as our parent.
-    let _ = parent_surface_ptr;
     let parent = compositor.create_surface(&qh, ());
     jfn_wlproxy::jfn_wlproxy_set_host_surface(parent.id().protocol_id());
 

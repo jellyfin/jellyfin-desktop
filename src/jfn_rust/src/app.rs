@@ -637,7 +637,10 @@ fn sync_cef_window_metrics(
     }
     jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
 
-    let scale = if display_hidpi_scale > 0.0 {
+    let wayland_scale = cfg!(target_os = "linux") && plat().display() == DisplayBackend::Wayland;
+    let scale = if wayland_scale {
+        plat().get_scale()
+    } else if display_hidpi_scale > 0.0 {
         display_hidpi_scale as f32
     } else {
         plat().get_scale()
@@ -951,6 +954,12 @@ unsafe fn start_wlproxy() {
         return;
     }
     tracing::info!(target: "Main", "wlproxy listening on {disp}");
+    let deco_mode = match jfn_config::window_decorations_mode() {
+        jfn_platform_abi::WindowDecorations::Csd => 1,
+        jfn_platform_abi::WindowDecorations::Server => 2,
+        jfn_platform_abi::WindowDecorations::ServerThemed => 3,
+    };
+    jfn_wlproxy::jfn_wlproxy_set_decoration_mode(deco_mode);
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &disp) };
     // Register the configure intercept BEFORE mpv_create so the first
     // compositor configure (which arrives shortly after mpv_initialize) is
@@ -1042,6 +1051,19 @@ fn current_macos_logical_size() -> Option<(i32, i32)> {
     }
 }
 
+/// Boot-time window size: the compositor (via the proxy) on Wayland, mpv's OSD
+/// dims elsewhere.
+fn boot_window_size() -> Option<(i32, i32)> {
+    #[cfg(target_os = "linux")]
+    if plat().display() == DisplayBackend::Wayland {
+        return jfn_wayland::proxy::jfn_wl_window_size_known()
+            .then(jfn_wayland::proxy::jfn_wl_window_size);
+    }
+    let pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
+    let ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
+    (pw > 0 && ph > 0).then_some((pw, ph))
+}
+
 fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max: &mut bool) {
     let scale_raw = plat().get_scale();
     let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
@@ -1056,25 +1078,20 @@ fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max
     {
         *need_max = false;
     }
-    let pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
-    let ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
-    if pw > 0 && ph > 0 {
-        *mw = pw;
-        *mh = ph;
+    if let Some((w, h)) = boot_window_size() {
+        *mw = w;
+        *mh = h;
     }
 }
 
-/// Boot-time VO readiness gate: OSD pixels reported, maximize state
-/// matches request (if requested), Wayland scale known (if applicable).
-/// Reads OSD pixels directly from the ingest layer (rather than the
-/// caller's running `mw`) so a value that landed via the wlproxy synthetic
-/// path before the loop entered is still observed.
+/// Boot-time VO readiness gate: window size known, maximize state matches
+/// request (if requested), Wayland scale known (if applicable).
+/// Re-reads `boot_window_size()` rather than the caller's `mw` so a size that
+/// landed before the loop entered is still observed.
 fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool, wait_for_scale: bool) -> bool {
-    let pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
-    let ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
-    if pw > 0 && ph > 0 {
-        *mw = pw;
-        *mh = ph;
+    if let Some((w, h)) = boot_window_size() {
+        *mw = w;
+        *mh = h;
     }
     #[cfg(target_os = "linux")]
     let scale_ready = !wait_for_scale || jfn_wayland::proxy::jfn_wl_scale_known();

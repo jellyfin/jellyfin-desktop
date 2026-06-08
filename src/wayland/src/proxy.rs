@@ -10,18 +10,23 @@
 //! "scale unknown" — same semantics as the C++ `cached_scale = 0.0f` flag.
 
 use std::ffi::c_int;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::wl_ops;
 
 use jfn_playback::ingest_driver::jfn_playback_post_osd_pixels;
 use jfn_wlproxy::{
-    jfn_wlproxy_set_configure_callback, jfn_wlproxy_set_popup_done_callback,
-    jfn_wlproxy_set_popup_ready_callback, jfn_wlproxy_set_scale_callback,
-    jfn_wlproxy_set_suspended_callback,
+    jfn_wlproxy_set_close_callback, jfn_wlproxy_set_configure_callback,
+    jfn_wlproxy_set_popup_done_callback, jfn_wlproxy_set_popup_ready_callback,
+    jfn_wlproxy_set_scale_callback, jfn_wlproxy_set_suspended_callback,
 };
 
 static CACHED_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
+
+// Latest compositor-reported physical window size, packed `(w<<32)|h`. Zero is
+// the "size unknown" sentinel, safe because on_configure rejects non-positive
+// dimensions.
+static CACHED_WINDOW_SIZE: AtomicU64 = AtomicU64::new(0);
 
 fn store_scale(s: f32) {
     CACHED_SCALE_BITS.store(s.to_bits(), Ordering::Release);
@@ -29,6 +34,11 @@ fn store_scale(s: f32) {
 
 fn load_scale() -> f32 {
     f32::from_bits(CACHED_SCALE_BITS.load(Ordering::Acquire))
+}
+
+fn store_window_size(w: c_int, h: c_int) {
+    let packed = ((w as u32 as u64) << 32) | (h as u32 as u64);
+    CACHED_WINDOW_SIZE.store(packed, Ordering::Release);
 }
 
 extern "C" fn on_scale(scale_120: c_int) {
@@ -50,6 +60,15 @@ pub fn jfn_wl_get_cached_scale() -> f32 {
     if s > 0.0 { s } else { 1.0 }
 }
 
+pub fn jfn_wl_window_size_known() -> bool {
+    CACHED_WINDOW_SIZE.load(Ordering::Acquire) != 0
+}
+
+pub fn jfn_wl_window_size() -> (c_int, c_int) {
+    let packed = CACHED_WINDOW_SIZE.load(Ordering::Acquire);
+    (((packed >> 32) as u32) as c_int, (packed as u32) as c_int)
+}
+
 // xdg_toplevel.configure intercept — fires on the wl-proxy per-client thread
 // for every configure from the compositor. Authoritative size source on
 // Wayland. Forwards into `wl_ops::on_configure` (which is a no-op until
@@ -59,6 +78,7 @@ extern "C" fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_i
     if physical_w <= 0 || physical_h <= 0 {
         return;
     }
+    store_window_size(physical_w, physical_h);
     let scale = if crate::wl_state::try_state().is_some() {
         let s = load_scale();
         if s > 0.0 { s } else { 1.0 }
@@ -80,6 +100,10 @@ extern "C" fn on_suspended(suspended: c_int) {
     jfn_playback::lifecycle::jfn_lifecycle_set_visible(suspended == 0);
 }
 
+extern "C" fn on_close() {
+    jfn_playback::shutdown::jfn_shutdown_initiate();
+}
+
 extern "C" fn on_popup_ready() {
     crate::popup::on_ready();
 }
@@ -94,4 +118,5 @@ pub fn jfn_wl_register_proxy_callbacks() {
     jfn_wlproxy_set_suspended_callback(on_suspended);
     jfn_wlproxy_set_popup_ready_callback(on_popup_ready);
     jfn_wlproxy_set_popup_done_callback(on_popup_done);
+    jfn_wlproxy_set_close_callback(on_close);
 }

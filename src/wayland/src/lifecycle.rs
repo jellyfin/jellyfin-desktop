@@ -16,7 +16,6 @@ use jfn_linux_util::egl_dyn as egl;
 
 use jfn_linux_util::dmabuf_probe::jfn_wl_dmabuf_probe;
 use jfn_mpv::api::jfn_mpv_get_property_int;
-use jfn_playback::shutdown::jfn_shutdown_initiate;
 
 // =====================================================================
 // Helpers
@@ -41,45 +40,18 @@ fn mpv_prop_intptr(name: &CStr) -> Option<usize> {
     }
 }
 
-// These requried properties are non-upstream
-// Use https://github.com/andrewrabert/mpv/tree/cef-mpv
-fn nonupstream_wayland_hooks_present() -> bool {
-    const HOOKS: [&CStr; 3] = [
-        c"wayland-display",
-        c"wayland-surface",
-        c"wayland-close-cb-ptr",
-    ];
-    let mut missing: Vec<&str> = Vec::new();
-    for name in HOOKS {
-        let mut v: i64 = 0;
-        let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut v) };
-        if rc == jfn_mpv::sys::mpv_error::MPV_ERROR_PROPERTY_NOT_FOUND.0 {
-            missing.push(name.to_str().unwrap_or("?"));
-        }
+/// The `wl_display*` captured by the binary's `wl_display_connect` interposer
+/// for mpv's VO connection, identified by the proxy's same-process accept
+/// index. `None` if interposition hasn't recorded it (timing / not active).
+fn vo_captured_display() -> Option<*mut c_void> {
+    let idx = jfn_wlproxy::jfn_wlproxy_vo_connection_index();
+    let count = jfn_linux_util::wl_display_registry::connect_count();
+    tracing::info!(target: "WlInterpose", "vo_captured_display: vo_index={idx} captured_count={count}");
+    if idx < 0 {
+        return None;
     }
-    if missing.is_empty() {
-        return true;
-    }
-    tracing::error!(?missing, "non-upstream mpv Wayland embedding hooks absent");
-    false
-}
-
-// Installs `cb` into mpv's wayland-close-cb-ptr slot (a
-// `void(**)(void*)` followed by a `void**` data slot, packed by libmpv).
-// Passing `None` clears the slot.
-unsafe fn write_close_cb(slot: usize, cb: Option<unsafe extern "C" fn(*mut c_void)>) {
-    let fn_slot = slot as *mut Option<unsafe extern "C" fn(*mut c_void)>;
-    let data_slot = (slot + std::mem::size_of::<usize>()) as *mut *mut c_void;
-    unsafe {
-        *fn_slot = cb;
-        if cb.is_some() {
-            *data_slot = std::ptr::null_mut();
-        }
-    }
-}
-
-unsafe extern "C" fn close_cb_trampoline(_: *mut c_void) {
-    jfn_shutdown_initiate();
+    let d = jfn_linux_util::wl_display_registry::captured_display(idx as usize);
+    (!d.is_null()).then_some(d)
 }
 
 // =====================================================================
@@ -87,18 +59,32 @@ unsafe extern "C" fn close_cb_trampoline(_: *mut c_void) {
 // =====================================================================
 
 pub fn jfn_wl_lifecycle_init() -> bool {
-    if !nonupstream_wayland_hooks_present() {
-        tracing::error!("Wayland embedding hooks missing");
-        return false;
-    }
+    // The host adopts mpv's Wayland connection. The interposer capture is
+    // authoritative; the forked-mpv `wayland-display` property is read only as
+    // a cross-check and fallback.
+    let captured = vo_captured_display();
+    let prop = mpv_prop_intptr(c"wayland-display").map(|p| p as *mut c_void);
+    tracing::info!(
+        target: "WlInterpose",
+        "vo display: captured={:?} wayland-display={:?} match={}",
+        captured,
+        prop,
+        captured.is_some() && captured == prop
+    );
 
-    let Some(display) = mpv_prop_intptr(c"wayland-display").map(|p| p as *mut c_void) else {
-        tracing::error!("Failed to get Wayland display from mpv");
-        return false;
-    };
-    let Some(parent) = mpv_prop_intptr(c"wayland-surface").map(|p| p as *mut c_void) else {
-        tracing::error!("Failed to get Wayland surface from mpv");
-        return false;
+    let display = match (captured, prop) {
+        (Some(d), _) => d,
+        (None, Some(d)) => {
+            tracing::warn!(
+                target: "WlInterpose",
+                "interposer capture unavailable; falling back to wayland-display property"
+            );
+            d
+        }
+        (None, None) => {
+            tracing::error!("Failed to get Wayland display (no capture, no property)");
+            return false;
+        }
     };
 
     // Seed Rust state with mpv's current fullscreen — first configure
@@ -111,16 +97,9 @@ pub fn jfn_wl_lifecycle_init() -> bool {
     // any seat_caps wires up keyboard listeners that need xkb.
     crate::input_lifecycle::lifecycle_init(display);
 
-    if !unsafe { crate::wl_ffi::jfn_wl_core_init(display, parent) } {
+    if !unsafe { crate::wl_ffi::jfn_wl_core_init(display) } {
         tracing::error!("jfn_wl_core_init failed");
         return false;
-    }
-
-    // Register close callback — intercepts xdg_toplevel close before mpv
-    // sees it. mpv exposes the slot as a `(fn-ptr, data-ptr)` pair packed
-    // at the address it returns through `wayland-close-cb-ptr`.
-    if let Some(slot) = mpv_prop_intptr(c"wayland-close-cb-ptr") {
-        unsafe { write_close_cb(slot, Some(close_cb_trampoline)) };
     }
 
     use crate::paint_override::WlPaintOverride as Req;
@@ -194,9 +173,7 @@ pub fn jfn_wl_lifecycle_init() -> bool {
     }
 
     #[cfg(feature = "kde-palette")]
-    unsafe {
-        crate::kde_palette::jfn_wl_kde_palette_attach(display, parent)
-    };
+    crate::kde_palette::jfn_wl_kde_palette_init();
 
     crate::input_lifecycle::lifecycle_start();
 
@@ -209,11 +186,6 @@ pub fn jfn_wl_lifecycle_init() -> bool {
 }
 
 pub fn jfn_wl_lifecycle_cleanup() {
-    // Null the close trampoline before tearing down state it would read.
-    if let Some(slot) = mpv_prop_intptr(c"wayland-close-cb-ptr") {
-        unsafe { write_close_cb(slot, None) };
-    }
-
     // KDE palette: KWin atomically drops the palette object with the
     // window. The scheme file is unlinked separately via
     // jfn_wl_kde_palette_post_window_cleanup after mpv tears down the

@@ -2427,6 +2427,7 @@ dependencies = [
  "jfn-color",
  "jfn-config",
  "jfn-jellyfin",
+ "jfn-linux-util",
  "jfn-logging",
  "jfn-macos",
  "jfn-macos-sink",
@@ -2506,6 +2507,7 @@ name = "jfn-wlproxy"
 version = "3.0.0-dev"
 dependencies = [
  "error_reporter",
+ "libc",
  "parking_lot",
  "wl-proxy",
 ]
