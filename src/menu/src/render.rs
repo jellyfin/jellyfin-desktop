@@ -32,6 +32,7 @@ const TEXT: Color = Color::rgb(0xe0, 0xe0, 0xe0);
 const TEXT_DISABLED: Color = Color::rgb(0x66, 0x66, 0x66);
 
 /// One laid-out row, in physical pixels relative to the menu's top-left.
+#[derive(Clone)]
 pub struct Row {
     pub item: usize,
     pub y: i32,
@@ -40,6 +41,7 @@ pub struct Row {
     pub enabled: bool,
 }
 
+#[derive(Clone)]
 pub struct Layout {
     pub width: i32,
     pub height: i32,

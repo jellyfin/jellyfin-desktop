@@ -12,6 +12,7 @@ pub use render::{Fonts, Layout, layout, paint};
 
 /// One context-menu row. A separator has `separator = true`; its other fields
 /// are ignored.
+#[derive(Clone)]
 pub struct MenuItem {
     pub id: i32,
     pub label: String,
