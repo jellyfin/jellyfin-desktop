@@ -23,10 +23,10 @@ use crate::ipc::{BrowserMessage, list_int, list_string};
 use jfn_color::jfn_cef_parse_color;
 use jfn_color::theme::{jfn_theme_color_on_color, jfn_theme_color_set_video_mode};
 use jfn_mpv::api::{
-    jfn_mpv_audio_add, jfn_mpv_load_file, jfn_mpv_pause, jfn_mpv_play, jfn_mpv_seek_absolute,
-    jfn_mpv_set_aspect_mode, jfn_mpv_set_audio_delay, jfn_mpv_set_audio_track, jfn_mpv_set_muted,
-    jfn_mpv_set_speed, jfn_mpv_set_subtitle_delay, jfn_mpv_set_subtitle_track, jfn_mpv_set_volume,
-    jfn_mpv_stop, jfn_mpv_sub_add,
+    jfn_mpv_audio_add, jfn_mpv_load_file, jfn_mpv_pause, jfn_mpv_play, jfn_mpv_reload_config_file,
+    jfn_mpv_seek_absolute, jfn_mpv_set_aspect_mode, jfn_mpv_set_audio_delay,
+    jfn_mpv_set_audio_track, jfn_mpv_set_muted, jfn_mpv_set_speed, jfn_mpv_set_subtitle_delay,
+    jfn_mpv_set_subtitle_track, jfn_mpv_set_volume, jfn_mpv_stop, jfn_mpv_sub_add,
 };
 use jfn_mpv::boot::jfn_mpv_handle_get;
 use jfn_playback::ingest_driver::jfn_playback_fullscreen;
@@ -261,7 +261,10 @@ fn handle_player_load(args: &ListValue) {
         external_sub_url: ext_sub_c.as_ptr(),
         is_infinite_stream,
     };
-    unsafe { jfn_mpv_load_file(url_c.as_ptr(), &opts) };
+    unsafe {
+        jfn_mpv_reload_config_file();
+        jfn_mpv_load_file(url_c.as_ptr(), &opts)
+    };
 }
 
 /// Run `f` if the IPC arrived with an args list. Always returns `true` —

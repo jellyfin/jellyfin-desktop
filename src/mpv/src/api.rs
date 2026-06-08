@@ -320,6 +320,13 @@ pub fn jfn_mpv_set_subtitle_delay(s: f64) {
 pub fn jfn_mpv_set_start_position(s: f64) {
     unsafe { set_double(c"start", s) };
 }
+pub fn jfn_mpv_reload_config_file() {
+    let mpv_config_path = jfn_paths::mpv_home().join("mpv.conf");
+    cmd(&[
+        c"load-config-file",
+        &CString::new(mpv_config_path.to_str().unwrap()).unwrap_or_default()
+    ]);
+}
 
 /// Track id sentinel: 0 = disabled. >=1 = explicit mpv track id.
 /// Mpv's auto-track-selection is globally disabled (boot applies

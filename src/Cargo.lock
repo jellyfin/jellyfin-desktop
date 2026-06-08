@@ -2285,6 +2285,7 @@ version = "3.0.0-dev"
 dependencies = [
  "bindgen",
  "jfn-color",
+ "jfn-paths",
  "libc",
  "objc2",
  "parking_lot",
