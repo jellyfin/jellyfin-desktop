@@ -68,6 +68,7 @@ pub(crate) struct Inner {
     // Pending RunContextMenuCallback — held while the JS-rendered menu is
     // open. Cleared on menuItemSelected / menuDismissed IPC.
     pending_menu_callback: Mutex<Option<RunContextMenuCallback>>,
+    pending_menu_session: Mutex<Option<crate::sink_routing::Handle>>,
     // Injection-profile kind ("web" / "overlay" / "about") — looked up at
     // browser-create time to build the extra_info DictionaryValue.
     injection_kind: Mutex<String>,
@@ -164,6 +165,7 @@ impl Inner {
             load_cv: Condvar::new(),
             browser: Mutex::new(None),
             pending_menu_callback: Mutex::new(None),
+            pending_menu_session: Mutex::new(None),
             injection_kind: Mutex::new(String::new()),
             surface: Mutex::new(std::ptr::null_mut()),
             width: AtomicI32::new(0),

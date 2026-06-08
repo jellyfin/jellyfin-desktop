@@ -1,6 +1,9 @@
 //! Thin re-export shim over [`jfn_platform_abi`].
 
-pub use jfn_platform_abi::{JfnPopupRequest, JfnRect, Platform, SurfaceSize};
+pub use jfn_platform_abi::{
+    DisplayBackend, JfnContextMenuRequest, JfnMenuItem, JfnPopupRequest, JfnRect, Platform,
+    SurfaceSize,
+};
 
 /// Returns the installed platform backend, or `None` if no backend has
 /// been installed yet (e.g. early CEF helper-process boot before

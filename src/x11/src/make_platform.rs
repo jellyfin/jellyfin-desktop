@@ -69,8 +69,8 @@ unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<DmabufFrame> {
 
 use jfn_platform_abi::cursor::CursorShape;
 pub use jfn_platform_abi::{
-    DisplayBackend, IdleInhibitLevel, JfnPopupRequest, JfnRect, Platform, SurfaceHandle,
-    SurfaceSize, WindowDecorations, WindowGeometry, WindowPos,
+    DisplayBackend, IdleInhibitLevel, JfnContextMenuRequest, JfnPopupRequest, JfnRect, Platform,
+    SurfaceHandle, SurfaceSize, WindowDecorations, WindowGeometry, WindowPos,
 };
 
 use jfn_mpv::api::{jfn_mpv_set_fullscreen, jfn_mpv_toggle_fullscreen};
@@ -171,7 +171,26 @@ impl Platform for X11Platform {
     }
 
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {
-        // CEF dispatches selection itself on X11; drop the closure.
+        // CEF dispatches <select> selection itself on X11; drop the closure.
+    }
+
+    fn context_menu_show(&self, _s: SurfaceHandle, req: JfnContextMenuRequest) {
+        let items = req
+            .items
+            .into_iter()
+            .map(|i| crate::menu::MenuItem {
+                id: i.id,
+                label: i.label,
+                enabled: i.enabled,
+                separator: i.separator,
+            })
+            .collect();
+        crate::menu::show(crate::menu::MenuRequest {
+            x: req.x,
+            y: req.y,
+            items,
+            on_selected: req.on_selected,
+        });
     }
 
     fn begin_transition(&self) {

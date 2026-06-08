@@ -33,14 +33,19 @@ pub(super) fn on_process_message_received(
             1
         }
         "menuItemSelected" => {
-            if let Some(args) = args {
+            if inner.resolve_pending_menu_session()
+                && let Some(args) = args
+            {
                 let cmd = args.int(0);
+                inner.close_pending_menu();
                 inner.handle_menu_item_selected(cmd, browser);
             }
             1
         }
         "menuDismissed" => {
-            inner.handle_menu_dismissed();
+            if inner.resolve_pending_menu_session() {
+                inner.handle_menu_dismissed();
+            }
             1
         }
         // Window controls (CSD) are handled centrally for every layer,

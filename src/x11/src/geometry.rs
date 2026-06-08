@@ -195,14 +195,12 @@ fn overlay_mapped(conn: &RustConnection, win: Window) -> Option<bool> {
     Some(r.map_state != x11rb::protocol::xproto::MapState::UNMAPPED)
 }
 
-fn raise_above(conn: &RustConnection, parent: Window, win: Window) {
-    let aux = ConfigureWindowAux::new()
-        .sibling(parent)
-        .stack_mode(StackMode::ABOVE);
+fn raise_to_top(conn: &RustConnection, win: Window) {
+    let aux = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
     let _ = conn.configure_window(win, &aux);
 }
 
-fn apply_effects(conn: &RustConnection, parent: Window, win: Window, effects: &[Effect]) {
+fn apply_effects(conn: &RustConnection, win: Window, effects: &[Effect]) {
     for e in effects {
         match *e {
             Effect::Poke { x, y } => {
@@ -222,7 +220,7 @@ fn apply_effects(conn: &RustConnection, parent: Window, win: Window, effects: &[
                 let _ = conn.map_window(win);
                 // The passive button grab may not survive the remap — re-grab.
                 crate::input::grab_overlay_input(win);
-                raise_above(conn, parent, win);
+                raise_to_top(conn, win);
             }
             Effect::Unmap => {
                 let _ = conn.unmap_window(win);
@@ -304,11 +302,11 @@ fn reconcile(
             observed_mapped,
         };
         let effects = overlay_fsm::step(&mut state, &inputs);
-        apply_effects(conn, parent, snap.window, &effects);
+        apply_effects(conn, snap.window, &effects);
         // The WM does not stack an unmanaged window, so when an external event
         // may have raised mpv, raise the overlay back over it.
         if reassert_stack && state.unmanaged && state.mapped {
-            raise_above(conn, parent, snap.window);
+            raise_to_top(conn, snap.window);
         }
         updates.push((snap.window, state));
     }

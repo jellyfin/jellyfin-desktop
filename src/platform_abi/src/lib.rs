@@ -224,6 +224,23 @@ pub struct JfnPopupRequest {
     pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
 }
 
+pub struct JfnMenuItem {
+    pub id: c_int,
+    pub label: String,
+    pub enabled: bool,
+    pub separator: bool,
+}
+
+pub struct JfnContextMenuRequest {
+    /// Logical (CEF view) coordinates of the click, not physical pixels.
+    pub x: c_int,
+    pub y: c_int,
+    pub items: Vec<JfnMenuItem>,
+    /// Fires on the backend's thread with the chosen item id, or `-1` when
+    /// the menu is dismissed.
+    pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
+}
+
 /// Idle-inhibit level.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum IdleInhibitLevel {
@@ -290,6 +307,8 @@ pub trait Platform: Send + Sync {
 
     // Popup
     fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {}
+
+    fn context_menu_show(&self, _s: SurfaceHandle, _req: JfnContextMenuRequest) {}
     fn popup_hide(&self, _s: SurfaceHandle) {}
     fn popup_present(&self, _s: SurfaceHandle, _info: *const c_void, _lw: c_int, _lh: c_int) {}
     fn popup_present_software(

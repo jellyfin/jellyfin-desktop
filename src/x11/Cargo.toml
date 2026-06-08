@@ -15,6 +15,7 @@ parking_lot.workspace = true
 # elsewhere and the workspace builds uniformly on every platform.
 [target.'cfg(target_os = "linux")'.dependencies]
 cef.workspace = true
+cosmic-text = "0.12"
 cursor-icon = "1"
 jfn-compositor-core = { path = "../compositor_core" }
 jfn-gpu-paint = { path = "../gpu_paint" }
@@ -24,6 +25,7 @@ jfn-mpv = { path = "../mpv" }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
 libc.workspace = true
+tiny-skia = "0.11"
 tracing.workspace = true
 xcb = { version = "1.7", features = ["xkb", "as-raw-xcb-connection"] }
 x11rb = { version = "0.13", features = ["cursor", "resource_manager", "shape", "shm", "xfixes"] }

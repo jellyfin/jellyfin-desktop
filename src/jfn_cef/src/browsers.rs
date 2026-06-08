@@ -26,6 +26,7 @@ use crate::client::{
     jfn_cef_layer_set_injection_profile_kind, jfn_cef_layer_set_refresh_rate,
     jfn_cef_layer_set_surface, jfn_cef_set_default_frame_rate, jfn_cef_set_use_shared_textures,
 };
+use crate::menu_ownership::MenuOwnership;
 use crate::sink_routing::{Handle, Router, Sink};
 
 // Runs inside `route_cursor`'s `INSTANCE` critical section, so `emit` MUST NOT
@@ -47,6 +48,7 @@ struct Browsers {
     /// top auto-regains focus.
     active_stack: Vec<*mut JfnCefLayer>,
     cursor_router: Router<CursorShape, CursorSink>,
+    menu: MenuOwnership,
     lw: i32,
     lh: i32,
     pw: i32,
@@ -77,6 +79,7 @@ pub fn jfn_browsers_init(
         layers: Vec::new(),
         active_stack: Vec::new(),
         cursor_router: Router::new(CursorSink),
+        menu: MenuOwnership::default(),
         lw,
         lh,
         pw,
@@ -227,6 +230,18 @@ pub(crate) fn route_cursor(handle: Handle, shape: CursorShape) {
     }
 }
 
+pub(crate) fn jfn_browsers_menu_open() -> Option<Handle> {
+    INSTANCE.lock().as_mut().and_then(|b| b.menu.open())
+}
+
+pub(crate) fn jfn_browsers_menu_resolve(h: Handle) -> bool {
+    INSTANCE
+        .lock()
+        .as_mut()
+        .map(|b| b.menu.resolve(h))
+        .unwrap_or(false)
+}
+
 pub fn jfn_browsers_active() -> *mut JfnCefLayer {
     INSTANCE
         .lock()
@@ -295,10 +310,12 @@ pub fn jfn_browsers_set_refresh_rate(hz: f64) {
 /// `handle_on_before_close`) can re-take the lock without deadlocking.
 pub(crate) fn jfn_browsers_close_and_snapshot() -> Vec<Arc<Inner>> {
     let inners: Vec<Arc<Inner>> = {
-        let g = INSTANCE.lock();
-        let Some(b) = g.as_ref() else {
+        let mut g = INSTANCE.lock();
+        let Some(b) = g.as_mut() else {
             return Vec::new();
         };
+        // A browser dying mid-menu must not strand the slot.
+        b.menu.reset();
         b.layers
             .iter()
             .map(|l| unsafe { jfn_cef_layer_inner(*l) })

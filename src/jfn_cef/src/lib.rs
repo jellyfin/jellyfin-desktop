@@ -14,6 +14,7 @@ mod embedded_js;
 pub mod ffi;
 pub mod injection;
 mod ipc;
+mod menu_ownership;
 mod paint_scheduler;
 pub mod platform_ops;
 #[cfg(target_os = "macos")]
