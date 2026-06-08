@@ -627,6 +627,9 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let qh = queue.handle();
 
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=8, ()).ok()?;
+    // Mark this as the host's input seat so the proxy forwards its devices and
+    // swallows mpv's — registered before the bind is flushed (see wlproxy).
+    jfn_wlproxy::jfn_wlproxy_set_input_seat(seat.id().protocol_id());
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
 
     let cursor_type = Arc::new(AtomicU32::new(CursorShape::Pointer.as_raw() as u32));

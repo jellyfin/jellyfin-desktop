@@ -1,110 +1,27 @@
 //! KDE/KWin per-window titlebar color support.
 //!
-//! Owns both the on-disk color-scheme files written under
-//! `$XDG_RUNTIME_DIR/jellyfin-desktop/` *and* the wire-side
-//! `org_kde_kwin_server_decoration_palette_manager` /
-//! `org_kde_kwin_server_decoration_palette` protocol bindings. KWin reads
-//! the file referenced by the most recent `set_palette` request and applies
-//! the colors to the server-side decoration.
-//!
-//! The protocol bindings are generated from the vendored
-//! `protocols/server-decoration-palette.xml` via `build.rs`; there is no
-//! upstream Rust crate for this KDE-specific protocol.
-//!
-//! Lifecycle:
-//!   1. `jfn_wl_kde_palette_attach(display, parent)` — opens a short-lived
-//!      Wayland registry pass on the supplied (mpv-owned) display, binds
-//!      the palette manager, creates the per-window palette object, and
-//!      seeds the colors directory. Returns `false` if the compositor is
-//!      not KWin or the protocol is not advertised.
-//!   2. `jfn_wl_kde_palette_set_color(r,g,b,hex)` — writes a scheme file
-//!      and dispatches `set_palette(path)` on the palette object. Safe to
-//!      call from any thread.
-//!   3. `jfn_wl_kde_palette_post_window_cleanup()` — unlinks the active
-//!      scheme file after mpv has destroyed the parent surface. The
-//!      palette object itself is dropped atomically by KWin when the
-//!      window goes away.
+//! Writes the on-disk color-scheme files under
+//! `$XDG_RUNTIME_DIR/jellyfin-desktop/` and forwards their path to the
+//! wlproxy, which owns the `org_kde_kwin_server_decoration_palette` object on
+//! the real (proxy-owned) toplevel. KWin reads the file referenced by the most
+//! recent `set_palette` request and applies the colors to the server-side
+//! decoration.
 
 use parking_lot::Mutex;
-use std::ffi::{CString, c_char, c_void};
+use std::ffi::{CString, c_char};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use wayland_backend::client::{Backend, ObjectId};
-use wayland_client::globals::{GlobalListContents, registry_queue_init};
-use wayland_client::protocol::{wl_registry, wl_surface::WlSurface};
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
-
-mod proto {
-    #![allow(dead_code, non_camel_case_types, unused_unsafe, unused_variables)]
-    #![allow(non_upper_case_globals, non_snake_case)]
-    #![allow(missing_docs, clippy::all)]
-    use wayland_client;
-    use wayland_client::protocol::*;
-    pub mod __interfaces {
-        use wayland_client::protocol::__interfaces::*;
-        wayland_scanner::generate_interfaces!("protocols/server-decoration-palette.xml");
-    }
-    use self::__interfaces::*;
-    wayland_scanner::generate_client_code!("protocols/server-decoration-palette.xml");
-}
-
-use proto::org_kde_kwin_server_decoration_palette::OrgKdeKwinServerDecorationPalette;
-use proto::org_kde_kwin_server_decoration_palette_manager::OrgKdeKwinServerDecorationPaletteManager;
-
 const COLOR_SCHEME_TEMPLATE: &str = include_str!("kde_palette_template.ini");
 
 struct PaletteState {
-    conn: Connection,
-    palette: OrgKdeKwinServerDecorationPalette,
     colors_dir: PathBuf,
     current_path: Option<CString>,
 }
 
 static STATE: Mutex<Option<PaletteState>> = Mutex::new(None);
-
-// Dispatch sinks. The palette protocol has no client-side events, and we
-// only do a single roundtrip against the registry to discover the manager
-// global. No state needs to persist across dispatch.
-struct RegistrySink;
-
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for RegistrySink {
-    fn event(
-        _: &mut Self,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
-        _: &GlobalListContents,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<OrgKdeKwinServerDecorationPaletteManager, ()> for RegistrySink {
-    fn event(
-        _: &mut Self,
-        _: &OrgKdeKwinServerDecorationPaletteManager,
-        _: <OrgKdeKwinServerDecorationPaletteManager as Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<OrgKdeKwinServerDecorationPalette, ()> for RegistrySink {
-    fn event(
-        _: &mut Self,
-        _: &OrgKdeKwinServerDecorationPalette,
-        _: <OrgKdeKwinServerDecorationPalette as Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
 
 fn write_color_scheme(r: u8, g: u8, b: u8, path: &std::path::Path) -> std::io::Result<()> {
     let bg = format!("{},{},{}", r, g, b);
@@ -139,86 +56,26 @@ fn make_colors_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
-/// Attach to the mpv-owned display, discover the KDE palette manager, and
-/// create a palette object bound to `parent_surface`. Returns `false` if
-/// the protocol is not advertised (non-KWin compositor) or any wire step
-/// fails. Safe to call once during wl_init.
-///
-/// # Safety
-/// `display` must be a live `*mut wl_display`; `parent_surface` must be
-/// a live `*mut wl_proxy` referring to a `wl_surface` on it.
-pub unsafe fn jfn_wl_kde_palette_attach(display: *mut c_void, parent_surface: *mut c_void) -> bool {
-    if display.is_null() || parent_surface.is_null() {
-        return false;
-    }
+/// Prepare the color-scheme directory. Returns `false` if `$XDG_RUNTIME_DIR`
+/// is unusable.
+pub fn jfn_wl_kde_palette_init() -> bool {
     if STATE.lock().is_some() {
-        tracing::warn!("kde_palette: attach called twice");
-        return false;
+        return true;
     }
-
-    let backend = unsafe { Backend::from_foreign_display(display.cast()) };
-    let conn = Connection::from_backend(backend);
-
-    let (globals, mut queue) = match registry_queue_init::<RegistrySink>(&conn) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!("kde_palette: registry init: {e}");
-            return false;
-        }
+    let Some(colors_dir) = make_colors_dir() else {
+        return false;
     };
-    let qh = queue.handle();
-
-    let manager: OrgKdeKwinServerDecorationPaletteManager = match globals.bind(&qh, 1..=1, ()) {
-        Ok(m) => m,
-        Err(_) => {
-            tracing::info!("kde_palette: protocol not advertised; skipping titlebar colors");
-            return false;
-        }
-    };
-
-    // Wrap mpv's parent surface as a foreign Proxy.
-    let parent_id =
-        match unsafe { ObjectId::from_ptr(WlSurface::interface(), parent_surface.cast()) } {
-            Ok(id) => id,
-            Err(_) => {
-                tracing::warn!("kde_palette: parent surface interface mismatch");
-                return false;
-            }
-        };
-    let parent = match WlSurface::from_id(&conn, parent_id) {
-        Ok(p) => p,
-        Err(_) => {
-            tracing::warn!("kde_palette: parent surface from_id failed");
-            return false;
-        }
-    };
-
-    let palette = manager.create(&parent, &qh, ());
-    let _ = conn.flush();
-    let mut sink = RegistrySink;
-    let _ = queue.roundtrip(&mut sink);
-    drop(manager);
-
-    let colors_dir = match make_colors_dir() {
-        Some(d) => d,
-        None => return false,
-    };
-
     *STATE.lock() = Some(PaletteState {
-        conn,
-        palette,
         colors_dir,
         current_path: None,
     });
-
-    tracing::info!("KDE decoration palette ready");
     true
 }
 
-/// Set the current titlebar color. Writes a scheme file (idempotent — no
-/// wire traffic if the color hasn't changed) and dispatches `set_palette`
-/// pointing at it. `hex` is `Color::hex` — a 7-byte NUL-terminated
-/// `"#RRGGBB"` used only for the filename.
+/// Set the current titlebar color. Writes a scheme file (idempotent — no work
+/// if the color hasn't changed) and forwards its path to the proxy's palette.
+/// `hex` is `Color::hex` — a 7-byte NUL-terminated `"#RRGGBB"` used only for
+/// the filename.
 ///
 /// # Safety
 /// `hex` must be a valid NUL-terminated UTF-8 pointer.
@@ -258,9 +115,7 @@ pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_ch
         let _ = fs::remove_file(old_path);
     }
 
-    let path_str = new_path.to_string_lossy().into_owned();
-    state.palette.set_palette(path_str);
-    let _ = state.conn.flush();
+    unsafe { jfn_wlproxy::jfn_wlproxy_set_titlebar_palette(new_path_c.as_ptr()) };
     state.current_path = Some(new_path_c);
 }
 

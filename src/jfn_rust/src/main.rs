@@ -14,5 +14,8 @@ fn main() {
         default_hook(info);
     }));
 
+    #[cfg(target_os = "linux")]
+    jfn_rust::wl_interpose::ensure_linked();
+
     std::process::exit(jfn_rust::app::jfn_app_main());
 }

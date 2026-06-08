@@ -305,12 +305,15 @@ impl Platform for WaylandPlatform {
         jfn_linux_util::idle_inhibit::set(level as u32);
     }
 
-    fn set_theme_color(&self, _rgb: u32) {
+    fn set_theme_color(&self, rgb: u32) {
+        let r = ((rgb >> 16) & 0xFF) as u8;
+        let g = ((rgb >> 8) & 0xFF) as u8;
+        let b = (rgb & 0xFF) as u8;
+
+        jfn_wlproxy::jfn_wlproxy_set_background_color(r, g, b);
+
         #[cfg(feature = "kde-palette")]
         {
-            let r = ((_rgb >> 16) & 0xFF) as u8;
-            let g = ((_rgb >> 8) & 0xFF) as u8;
-            let b = (_rgb & 0xFF) as u8;
             // hex string "#RRGGBB\0".
             let mut hex: [u8; 8] = [0; 8];
             hex[0] = b'#';

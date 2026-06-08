@@ -27,8 +27,8 @@ fn cast(handle: *mut c_void) -> *mut PlatformSurface {
 // Lifecycle
 // =====================================================================
 
-pub unsafe fn jfn_wl_core_init(display: *mut c_void, parent_surface: *mut c_void) -> bool {
-    match unsafe { crate::wl_state::init(display, parent_surface) } {
+pub unsafe fn jfn_wl_core_init(display: *mut c_void) -> bool {
+    match unsafe { crate::wl_state::init(display) } {
         Ok(()) => true,
         Err(e) => {
             tracing::error!("jfn_wl_core_init: {e}");

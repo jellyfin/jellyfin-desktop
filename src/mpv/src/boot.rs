@@ -157,21 +157,22 @@ fn apply_defaults(
     // Input: we own all devices and route through CEF.
     set("input-default-bindings", "no")?;
     set("input-vo-keyboard", "no")?;
-    set("input-vo-cursor", "no")?;
     set("input-cursor", "no")?;
+    set("cursor-autohide", "no")?;
 
-    // X11's WM_DELETE_WINDOW routes through mpv's input system as
-    // CLOSE_WIN — input-keyboard=no there drops it, breaking the
-    // close button. Keep input-keyboard enabled only on X11.
-    #[cfg(target_os = "windows")]
-    let disable_input_keyboard = true;
-    #[cfg(target_os = "macos")]
-    let disable_input_keyboard = true;
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let disable_input_keyboard = display == DisplayBackend::Wayland;
-    if disable_input_keyboard {
+    // non-upstream (https://github.com/andrewrabert/mpv)
+    #[cfg(not(target_os = "linux"))]
+    {
+        set("input-vo-cursor", "no")?;
         set("input-keyboard", "no")?;
     }
+
+    // Disable mpv's clipboard so it keeps a single wl_display connection.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if display == DisplayBackend::Wayland {
+        set("clipboard-backends", "")?;
+    }
+
     let _ = display; // referenced under cfg above; silence on other targets
 
     // Window behavior.

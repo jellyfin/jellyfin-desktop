@@ -31,7 +31,7 @@ use std::ffi::CString;
 use std::os::fd::OwnedFd;
 use std::os::raw::{c_char, c_int};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -48,6 +48,8 @@ use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::{
 use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
     WpFractionalScaleV1, WpFractionalScaleV1Handler,
 };
+use wl_proxy::protocols::org_kde_kwin_server_decoration_palette_v1::org_kde_kwin_server_decoration_palette::OrgKdeKwinServerDecorationPalette;
+use wl_proxy::protocols::org_kde_kwin_server_decoration_palette_v1::org_kde_kwin_server_decoration_palette_manager::OrgKdeKwinServerDecorationPaletteManager;
 use wl_proxy::protocols::single_pixel_buffer_v1::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
 use wl_proxy::protocols::viewporter::wp_viewport::{WpViewport, WpViewportHandler};
 use wl_proxy::protocols::viewporter::wp_viewporter::{WpViewporter, WpViewporterHandler};
@@ -55,6 +57,7 @@ use wl_proxy::protocols::wayland::wl_buffer::WlBuffer;
 use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
 use wl_proxy::protocols::wayland::wl_compositor::WlCompositor;
 use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
+use wl_proxy::protocols::wayland::wl_keyboard::WlKeyboard;
 use wl_proxy::protocols::wayland::wl_pointer::{WlPointer, WlPointerButtonState, WlPointerHandler};
 use wl_proxy::protocols::wayland::wl_region::WlRegion;
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
@@ -62,6 +65,11 @@ use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatHandler};
 use wl_proxy::protocols::wayland::wl_subcompositor::WlSubcompositor;
 use wl_proxy::protocols::wayland::wl_subsurface::WlSubsurface;
 use wl_proxy::protocols::wayland::wl_surface::WlSurface;
+use wl_proxy::protocols::wayland::wl_touch::WlTouch;
+use wl_proxy::protocols::xdg_decoration_unstable_v1::zxdg_decoration_manager_v1::ZxdgDecorationManagerV1;
+use wl_proxy::protocols::xdg_decoration_unstable_v1::zxdg_toplevel_decoration_v1::{
+    ZxdgToplevelDecorationV1, ZxdgToplevelDecorationV1Mode,
+};
 use wl_proxy::protocols::xdg_shell::xdg_popup::{XdgPopup, XdgPopupHandler};
 use wl_proxy::protocols::xdg_shell::xdg_positioner::{
     XdgPositioner, XdgPositionerAnchor, XdgPositionerConstraintAdjustment, XdgPositionerGravity,
@@ -83,6 +91,7 @@ type ScaleCb = extern "C" fn(c_int);
 type SuspendedCb = extern "C" fn(c_int);
 type PopupReadyCb = extern "C" fn();
 type PopupDoneCb = extern "C" fn();
+type CloseCb = extern "C" fn();
 
 // Single proxy per process — callbacks are global. Fire from the per-client
 // proxy thread; the C side guards against thread-safety with its own mutex.
@@ -94,6 +103,7 @@ static SUSPENDED_CB: Mutex<Option<SuspendedCb>> = Mutex::new(None);
 // DONE fires on xdg_popup.popup_done (compositor-driven dismiss).
 static POPUP_READY_CB: Mutex<Option<PopupReadyCb>> = Mutex::new(None);
 static POPUP_DONE_CB: Mutex<Option<PopupDoneCb>> = Mutex::new(None);
+static CLOSE_CB: Mutex<Option<CloseCb>> = Mutex::new(None);
 
 /// Wire object id of the host-created `wl_surface` to be given the xdg_popup
 /// role for the context menu. 0 = none registered.
@@ -117,14 +127,92 @@ enum HostCommand {
         h: i32,
     },
     HidePopup,
+    SetBackground,
+    SetTitlebarPalette,
 }
 
 static COMMANDS: Mutex<VecDeque<HostCommand>> = Mutex::new(VecDeque::new());
+
+const DECO_CSD: u32 = 1;
+const DECO_SERVER_THEMED: u32 = 3;
+
+/// 0 = unset (treated as plain server-side); otherwise [`DECO_CSD`] /
+/// `2` (server) / [`DECO_SERVER_THEMED`]. Must be set before the root is built.
+static DECORATION_MODE: AtomicU32 = AtomicU32::new(0);
+
+static BACKGROUND_RGBA: AtomicU32 = AtomicU32::new(0);
+
+static PENDING_PALETTE: Mutex<Option<CString>> = Mutex::new(None);
 
 /// Wire object id of the host-created `wl_surface` the host wants to own the
 /// toplevel (Phase 1). 0 = unset (proxy uses its own placeholder root). Set by
 /// the host via [`jfn_wlproxy_set_host_surface`] after it creates the surface.
 static HOST_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
+
+/// Wire object id of the host's own input `wl_seat`. 0 = unset. The host
+/// registers it (via [`jfn_wlproxy_set_input_seat`]) right after binding, so
+/// the proxy can forward input devices for that seat while swallowing every
+/// other seat's (mpv's) — keeping mpv's VO from ever receiving keyboard/touch.
+static HOST_INPUT_SEAT_ID: AtomicU32 = AtomicU32::new(0);
+
+/// Monotonic counter assigning each in-process (same-pid) client its
+/// connect-order index; mirrors the binary's `wl_display_connect` interposer
+/// counter so a same-process index maps to a captured `wl_display*`.
+static SAME_PROC_SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// Same-process index of the client that took an xdg_toplevel — i.e. mpv's
+/// video output. `-1` until detected; updated if a new VO toplevel appears
+/// (mpv restart). The host reads it via [`jfn_wlproxy_vo_connection_index`] to
+/// pick which captured display is the current VO's.
+static VO_CONNECTION_INDEX: AtomicI32 = AtomicI32::new(-1);
+
+/// Same-process index of mpv's VO connection (`-1` if unknown). Pairs with
+/// `jfn_linux_util::wl_display_registry::captured_display`.
+pub extern "C" fn jfn_wlproxy_vo_connection_index() -> c_int {
+    VO_CONNECTION_INDEX.load(Ordering::Acquire)
+}
+
+thread_local! {
+    // Set while the proxy opens its OWN upstream connection to the real
+    // compositor (one per client `State`). The binary's `wl_display_connect`
+    // interposer queries this (same thread, synchronous) to skip recording the
+    // proxy's upstream displays — so the capture registry holds only genuine
+    // downstream in-process clients and its index aligns with `SAME_PROC_SEQ`.
+    static IN_UPSTREAM_CONNECT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn jfn_wlproxy_in_upstream_connect() -> bool {
+    IN_UPSTREAM_CONNECT.with(std::cell::Cell::get)
+}
+
+struct UpstreamConnectGuard;
+impl UpstreamConnectGuard {
+    fn enter() -> Self {
+        IN_UPSTREAM_CONNECT.with(|c| c.set(true));
+        Self
+    }
+}
+impl Drop for UpstreamConnectGuard {
+    fn drop(&mut self) {
+        IN_UPSTREAM_CONNECT.with(|c| c.set(false));
+    }
+}
+
+/// Peer pid of a connected client socket via `SO_PEERCRED`, or `None` on error.
+fn socket_peer_pid(fd: std::os::fd::RawFd) -> Option<i32> {
+    let mut cred = std::mem::MaybeUninit::<libc::ucred>::uninit();
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            cred.as_mut_ptr().cast(),
+            &mut len,
+        )
+    };
+    (rc == 0).then(|| unsafe { cred.assume_init() }.pid)
+}
 
 /// Register the host's toplevel `wl_surface` (by wire/protocol object id). The
 /// proxy adopts that surface as the real root window — giving it the xdg role,
@@ -132,6 +220,37 @@ static HOST_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
 /// placeholder. Idempotent; call once after creating the surface.
 pub fn jfn_wlproxy_set_host_surface(id: u32) {
     HOST_SURFACE_ID.store(id, Ordering::Release);
+}
+
+/// Set the decoration mode the root toplevel requests, before the root is
+/// built. Values match [`DECO_CSD`] / `2` (server) / [`DECO_SERVER_THEMED`].
+pub extern "C" fn jfn_wlproxy_set_decoration_mode(mode: c_int) {
+    DECORATION_MODE.store(mode as u32, Ordering::Release);
+}
+
+pub extern "C" fn jfn_wlproxy_set_background_color(r: u8, g: u8, b: u8) {
+    let rgb = (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
+    BACKGROUND_RGBA.store(rgb, Ordering::Release);
+    COMMANDS.lock().push_back(HostCommand::SetBackground);
+}
+
+/// # Safety
+/// `path` must be null or a valid NUL-terminated C string.
+pub unsafe extern "C" fn jfn_wlproxy_set_titlebar_palette(path: *const c_char) {
+    if path.is_null() {
+        return;
+    }
+    let owned = unsafe { std::ffi::CStr::from_ptr(path) }.to_owned();
+    *PENDING_PALETTE.lock() = Some(owned);
+    COMMANDS.lock().push_back(HostCommand::SetTitlebarPalette);
+}
+
+/// Register the host's own input `wl_seat` (by wire/protocol object id). The
+/// proxy forwards pointer/keyboard/touch for this seat and swallows them for
+/// every other seat (mpv's), so mpv's VO never receives input. Call right after
+/// binding the seat, before the bind request is flushed.
+pub fn jfn_wlproxy_set_input_seat(id: u32) {
+    HOST_INPUT_SEAT_ID.store(id, Ordering::Release);
 }
 
 /// Register the host-created `wl_surface` (by wire/protocol object id) to be
@@ -170,12 +289,17 @@ struct Shell {
     wm_base: Option<Rc<XdgWmBase>>,
     spbm: Option<Rc<WpSinglePixelBufferManagerV1>>,
     viewporter: Option<Rc<WpViewporter>>,
+    decoration_manager: Option<Rc<ZxdgDecorationManagerV1>>,
+    palette_manager: Option<Rc<OrgKdeKwinServerDecorationPaletteManager>>,
     globals_ready: bool,
     roundtrip_started: bool,
     // Proxy-owned placeholder root toplevel.
     root_surface: Option<Rc<WlSurface>>,
     root_xdg_surface: Option<Rc<XdgSurface>>,
     root_toplevel: Option<Rc<XdgToplevel>>,
+    root_decoration: Option<Rc<ZxdgToplevelDecorationV1>>,
+    root_palette: Option<Rc<OrgKdeKwinServerDecorationPalette>>,
+    root_buffer: Option<Rc<WlBuffer>>,
     root_viewport: Option<Rc<WpViewport>>,
     root_mapped: bool,
     // mpv's swallowed shell objects (client-facing; we synthesize events to them).
@@ -203,6 +327,12 @@ struct Shell {
     cur_h: i32,
     cur_states: Vec<u8>,
     serial: u32,
+    // Same-process accept index: set when this client connected from our own
+    // process (peer pid == our pid), `None` for out-of-process clients (CEF
+    // subprocesses). It enumerates the in-process Wayland connections in the
+    // same order the binary's `wl_display_connect` interposer captured them, so
+    // it correlates this client to its captured `wl_display*`.
+    same_proc_index: Option<u32>,
 }
 
 impl Shell {
@@ -215,11 +345,16 @@ impl Shell {
             wm_base: None,
             spbm: None,
             viewporter: None,
+            decoration_manager: None,
+            palette_manager: None,
             globals_ready: false,
             roundtrip_started: false,
             root_surface: None,
             root_xdg_surface: None,
             root_toplevel: None,
+            root_decoration: None,
+            root_palette: None,
+            root_buffer: None,
             root_viewport: None,
             root_mapped: false,
             mpv_surface: None,
@@ -238,6 +373,7 @@ impl Shell {
             cur_h: 0,
             cur_states: Vec::new(),
             serial: 0,
+            same_proc_index: None,
         }
     }
 
@@ -416,6 +552,13 @@ pub fn jfn_wlproxy_clear_callbacks() {
     *SUSPENDED_CB.lock() = None;
     *POPUP_READY_CB.lock() = None;
     *POPUP_DONE_CB.lock() = None;
+    *CLOSE_CB.lock() = None;
+}
+
+/// Register the window-close callback: fires on the root toplevel's
+/// `xdg_toplevel.close` so the host can begin shutdown.
+pub fn jfn_wlproxy_set_close_callback(cb: CloseCb) {
+    *CLOSE_CB.lock() = Some(cb);
 }
 
 /// Register the popup-ready callback: fires (on the proxy client thread) once
@@ -524,15 +667,27 @@ fn run_listener(tx: mpsc::SyncSender<Result<CString, String>>, upstream: Option<
 }
 
 fn run_client(socket: OwnedFd, upstream: Option<String>) {
+    use std::os::fd::AsRawFd;
+    // Same-process clients (mpv's VO, in-process) get a connect-order index
+    // matching the interposer's capture order; out-of-process clients (CEF) do
+    // not. Read before `socket` is moved into the State.
+    let same_proc_index = (socket_peer_pid(socket.as_raw_fd()) == Some(std::process::id() as i32))
+        .then(|| SAME_PROC_SEQ.fetch_add(1, Ordering::AcqRel));
+
     let mut builder = State::builder(Baseline::ALL_OF_THEM).with_log_prefix("jfn");
     if let Some(name) = &upstream {
         builder = builder.with_server_display_name(name);
     }
-    let state = match builder.build() {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("wlproxy: State::build: {}", Report::new(e));
-            return;
+    let state = {
+        // build() opens the upstream connection — guard it so the interposer
+        // skips that display (not a VO candidate).
+        let _guard = UpstreamConnectGuard::enter();
+        match builder.build() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("wlproxy: State::build: {}", Report::new(e));
+                return;
+            }
         }
     };
     let client = match state.add_client(&Rc::new(socket)) {
@@ -544,7 +699,10 @@ fn run_client(socket: OwnedFd, upstream: Option<String>) {
     };
     client.set_handler(NoopClient);
     client.display().set_handler(DisplayH);
-    with_shell(|sh| sh.client = Some(client.clone()));
+    with_shell(|sh| {
+        sh.client = Some(client.clone());
+        sh.same_proc_index = same_proc_index;
+    });
 
     // Dispatch with a short timeout so the loop also services the host
     // command queue (set_fullscreen / set_maximized) within ~16ms even when
@@ -596,6 +754,8 @@ fn drain_host_commands() {
             }),
             HostCommand::ShowPopup { x, y, w, h } => create_popup(x, y, w, h),
             HostCommand::HidePopup => destroy_popup(),
+            HostCommand::SetBackground => refill_root_background(),
+            HostCommand::SetTitlebarPalette => apply_titlebar_palette(),
         }
     }
 }
@@ -757,8 +917,15 @@ impl WlRegistryHandler for RegistryH {
             }
             WlSeat::INTERFACE => {
                 let seat = id.downcast::<WlSeat>();
-                seat.set_handler(SeatH);
-                SEAT.with(|s| *s.borrow_mut() = Some(seat.clone()));
+                // The host's own input seat forwards devices (and is the one used
+                // for move/resize/popup grab); every other seat is mpv's and gets
+                // its input devices swallowed.
+                if seat.client_id() == Some(HOST_INPUT_SEAT_ID.load(Ordering::Acquire)) {
+                    seat.set_handler(ForwardSeatH);
+                    SEAT.with(|s| *s.borrow_mut() = Some(seat.clone()));
+                } else {
+                    seat.set_handler(BlockSeatH);
+                }
             }
             WpViewporter::INTERFACE => {
                 id.downcast::<WpViewporter>().set_handler(ClientViewporterH);
@@ -823,15 +990,37 @@ impl WpFractionalScaleV1Handler for FracScaleH {
     }
 }
 
-// Snoop the seat→pointer chain only to cache the latest button-press serial
-// (needed by xdg_toplevel.move). Every event is forwarded unchanged; we set
-// no policy. Other seat/pointer requests/events fall through to the default
-// forwarding impls.
-struct SeatH;
-impl WlSeatHandler for SeatH {
+// The host's own input seat: forward pointer/keyboard/touch unchanged. The
+// pointer is additionally snooped (PointerH) to cache the latest button-press
+// serial needed by xdg_toplevel.move/resize and popup grab.
+struct ForwardSeatH;
+impl WlSeatHandler for ForwardSeatH {
     fn handle_get_pointer(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlPointer>) {
         id.set_handler(PointerH);
         slf.send_get_pointer(id);
+    }
+    fn handle_get_keyboard(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlKeyboard>) {
+        slf.send_get_keyboard(id);
+    }
+    fn handle_get_touch(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlTouch>) {
+        slf.send_get_touch(id);
+    }
+}
+
+// Every other seat is mpv's: swallow its input-device getters so the compositor
+// never creates server-side pointer/keyboard/touch for mpv. mpv's VO therefore
+// receives no input (the empty input region only blocks pointer; this closes the
+// keyboard/touch hole).
+struct BlockSeatH;
+impl WlSeatHandler for BlockSeatH {
+    fn handle_get_pointer(&mut self, _slf: &Rc<WlSeat>, id: &Rc<WlPointer>) {
+        id.set_forward_to_server(false);
+    }
+    fn handle_get_keyboard(&mut self, _slf: &Rc<WlSeat>, id: &Rc<WlKeyboard>) {
+        id.set_forward_to_server(false);
+    }
+    fn handle_get_touch(&mut self, _slf: &Rc<WlSeat>, id: &Rc<WlTouch>) {
+        id.set_forward_to_server(false);
     }
 }
 
@@ -891,6 +1080,12 @@ impl XdgSurfaceHandler for MpvSurfaceH {
             if sh.cur_w == 0 || sh.cur_h == 0 {
                 sh.cur_w = 1280;
                 sh.cur_h = 720;
+            }
+            // This client owns the video toplevel → it's mpv's VO. Publish its
+            // same-process index so the host can adopt the matching captured
+            // wl_display.
+            if let Some(idx) = sh.same_proc_index {
+                VO_CONNECTION_INDEX.store(idx as i32, Ordering::Release);
             }
         });
         // Hand mpv an immediate initial configure so its geometry is non-zero
@@ -1071,6 +1266,17 @@ impl WlRegistryHandler for ProxyRegistryH {
                 slf.send_bind(name, o.clone());
                 with_shell(|sh| sh.viewporter = Some(o));
             }
+            ZxdgDecorationManagerV1::INTERFACE => {
+                let o = state.create_object::<ZxdgDecorationManagerV1>(version.min(1));
+                slf.send_bind(name, o.clone());
+                with_shell(|sh| sh.decoration_manager = Some(o));
+            }
+            OrgKdeKwinServerDecorationPaletteManager::INTERFACE => {
+                let o =
+                    state.create_object::<OrgKdeKwinServerDecorationPaletteManager>(version.min(1));
+                slf.send_bind(name, o.clone());
+                with_shell(|sh| sh.palette_manager = Some(o));
+            }
             _ => {}
         }
     }
@@ -1140,6 +1346,30 @@ fn build_root() {
     root_tl.set_handler(RootToplevelH);
     root_xdg.send_get_toplevel(&root_tl);
 
+    let mode = DECORATION_MODE.load(Ordering::Acquire);
+    // Create the object even for Csd: KWin defaults an undecorated toplevel to
+    // server-side, so CLIENT_SIDE must be requested to suppress its titlebar.
+    let root_decoration = with_shell(|sh| sh.decoration_manager.clone()).map(|mgr| {
+        let dec = mgr.create_child::<ZxdgToplevelDecorationV1>();
+        mgr.send_get_toplevel_decoration(&dec, &root_tl);
+        let wire_mode = if mode == DECO_CSD {
+            ZxdgToplevelDecorationV1Mode::CLIENT_SIDE
+        } else {
+            ZxdgToplevelDecorationV1Mode::SERVER_SIDE
+        };
+        dec.send_set_mode(wire_mode);
+        dec
+    });
+
+    let root_palette = (mode == DECO_SERVER_THEMED)
+        .then(|| with_shell(|sh| sh.palette_manager.clone()))
+        .flatten()
+        .map(|mgr| {
+            let pal = mgr.create_child::<OrgKdeKwinServerDecorationPalette>();
+            mgr.send_create(&pal, &root_surface);
+            pal
+        });
+
     // Initial no-buffer commit to elicit the first configure.
     root_surface.send_commit();
 
@@ -1162,8 +1392,74 @@ fn build_root() {
         sh.root_surface = Some(root_surface);
         sh.root_xdg_surface = Some(root_xdg);
         sh.root_toplevel = Some(root_tl);
+        sh.root_decoration = root_decoration;
+        sh.root_palette = root_palette;
         sh.mpv_subsurface = Some(sub);
     });
+}
+
+fn single_pixel_rgba(rgb: u32) -> (u32, u32, u32, u32) {
+    let chan = |c: u32| (c & 0xFF) * 0x0101_0101;
+    (chan(rgb >> 16), chan(rgb >> 8), chan(rgb), 0xFFFF_FFFF)
+}
+
+fn fill_root(w: i32, h: i32) {
+    let Some((compositor, spbm, viewporter, surface)) = with_shell(|sh| {
+        Some((
+            sh.compositor.clone()?,
+            sh.spbm.clone()?,
+            sh.viewporter.clone()?,
+            sh.root_surface.clone()?,
+        ))
+    }) else {
+        return;
+    };
+    let (w, h) = (w.max(1), h.max(1));
+
+    let viewport = match with_shell(|sh| sh.root_viewport.clone()) {
+        Some(vp) => vp,
+        None => {
+            let vp = viewporter.create_child::<WpViewport>();
+            viewporter.send_get_viewport(&vp, &surface);
+            with_shell(|sh| sh.root_viewport = Some(vp.clone()));
+            vp
+        }
+    };
+    viewport.send_set_destination(w, h);
+
+    let (r, g, b, a) = single_pixel_rgba(BACKGROUND_RGBA.load(Ordering::Acquire));
+    let buffer = spbm.create_child::<WlBuffer>();
+    spbm.send_create_u32_rgba_buffer(&buffer, r, g, b, a);
+    surface.send_attach(Some(&buffer), 0, 0);
+
+    let region = compositor.create_child::<WlRegion>();
+    compositor.send_create_region(&region);
+    region.send_add(0, 0, w, h);
+    surface.send_set_opaque_region(Some(&region));
+    region.send_destroy();
+
+    surface.send_commit();
+
+    if let Some(old) = with_shell(|sh| sh.root_buffer.replace(buffer)) {
+        old.send_destroy();
+    }
+}
+
+fn refill_root_background() {
+    let (w, h) = with_shell(|sh| (sh.cur_w, sh.cur_h));
+    if w > 0 && h > 0 {
+        fill_root(w, h);
+    }
+}
+
+fn apply_titlebar_palette() {
+    let Some(pal) = with_shell(|sh| sh.root_palette.clone()) else {
+        return;
+    };
+    let guard = PENDING_PALETTE.lock();
+    if let Some(path) = guard.as_ref().and_then(|p| p.to_str().ok()) {
+        pal.send_set_palette(path);
+    }
 }
 
 struct RootToplevelH;
@@ -1199,9 +1495,8 @@ impl XdgToplevelHandler for RootToplevelH {
     }
 
     fn handle_close(&mut self, _slf: &Rc<XdgToplevel>) {
-        // Window-manager close → propagate to mpv so the app shuts down.
-        if let Some(tl) = with_shell(|sh| sh.mpv_toplevel.clone()) {
-            tl.send_close();
+        if let Some(cb) = *CLOSE_CB.lock() {
+            cb();
         }
     }
 }
@@ -1214,40 +1509,10 @@ impl XdgSurfaceHandler for RootXdgSurfaceH {
         let (w, h, states) =
             with_shell(|sh| (sh.cur_w.max(1), sh.cur_h.max(1), sh.cur_states.clone()));
 
-        // Map (first configure) or resize the root: a 1x1 transparent buffer
-        // scaled to the window size via a viewport. mpv's subsurface provides
-        // the visible content; the root is just the mapped window container.
-        let (surface, viewport, need_map) = with_shell(|sh| {
-            (
-                sh.root_surface.clone(),
-                sh.root_viewport.clone(),
-                !sh.root_mapped,
-            )
-        });
-        let Some(surface) = surface else { return };
+        let need_map = with_shell(|sh| !sh.root_mapped);
 
-        // Window geometry = logical window rect (placement on restore).
         slf.send_set_window_geometry(0, 0, w, h);
-
-        let viewport = match viewport {
-            Some(vp) => vp,
-            None => {
-                let Some((viewporter, spbm)) =
-                    with_shell(|sh| Some((sh.viewporter.clone()?, sh.spbm.clone()?)))
-                else {
-                    return;
-                };
-                let vp = viewporter.create_child::<WpViewport>();
-                viewporter.send_get_viewport(&vp, &surface);
-                let buffer = spbm.create_child::<WlBuffer>();
-                spbm.send_create_u32_rgba_buffer(&buffer, 0, 0, 0, 0);
-                surface.send_attach(Some(&buffer), 0, 0);
-                with_shell(|sh| sh.root_viewport = Some(vp.clone()));
-                vp
-            }
-        };
-        viewport.send_set_destination(w, h);
-        surface.send_commit();
+        fill_root(w, h);
 
         if need_map {
             with_shell(|sh| sh.root_mapped = true);

@@ -4,3 +4,5 @@ pub mod manager;
 #[cfg(unix)]
 pub mod signal_guard;
 mod single_instance;
+#[cfg(target_os = "linux")]
+pub mod wl_interpose;

@@ -17,6 +17,7 @@ parking_lot.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 wl-proxy = { git = "https://github.com/mahkoh/wl-proxy", features = ["all-protocols"] }
 error_reporter = "1.0.0"
+libc.workspace = true
 
 [lints]
 workspace = true
