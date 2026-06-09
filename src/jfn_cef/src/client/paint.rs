@@ -45,8 +45,6 @@ impl Inner {
         if !self.should_present_paint() {
             return;
         }
-        // CEF hands the dirty rects as a raw `RectList` pointer; reborrow as a
-        // slice here, the single boundary point, so the platform ABI stays safe.
         let dirty: &[platform_ops::JfnRect] = if dirty.is_null() || n == 0 {
             &[]
         } else {

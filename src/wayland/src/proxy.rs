@@ -23,9 +23,8 @@ use jfn_wlproxy::{
 
 static CACHED_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
 
-// Latest compositor-reported physical window size, packed `(w<<32)|h`. Zero is
-// the "size unknown" sentinel, safe because on_configure rejects non-positive
-// dimensions.
+// Packed `(w<<32)|h`. Zero is the "size unknown" sentinel, safe only because
+// on_configure rejects non-positive dimensions.
 static CACHED_WINDOW_SIZE: AtomicU64 = AtomicU64::new(0);
 
 fn store_scale(s: f32) {

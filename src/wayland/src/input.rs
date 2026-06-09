@@ -134,8 +134,6 @@ struct State {
     // Latest desired cursor (re-applied on pointer enter).
     cursor_type: Arc<AtomicU32>,
 
-    // True while the pointer is over the context-menu popup surface, so its
-    // events route into the menu FSM (menu-local coords) instead of CEF.
     menu_focus: bool,
 }
 
@@ -435,9 +433,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 }
             }
             Event::Leave { .. } => {
-                // The xdg_popup grab owns keyboard focus while a menu is open, so
-                // focus loss no longer implies dismissal (the compositor drives
-                // that via popup_done).
                 if let Some(f) = state.cb.kb_focus {
                     f(0);
                 }
@@ -627,8 +622,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let qh = queue.handle();
 
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=8, ()).ok()?;
-    // Mark this as the host's input seat so the proxy forwards its devices and
-    // swallows mpv's — registered before the bind is flushed (see wlproxy).
+    // Register before the bind is flushed so the proxy claims this seat (see wlproxy).
     jfn_wlproxy::jfn_wlproxy_set_input_seat(seat.id().protocol_id());
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
 

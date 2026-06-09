@@ -16,14 +16,11 @@ fn strip_accelerator(s: &str) -> String {
             out.push(b as char);
         }
     }
-    // Above only works for ASCII '&'; non-ASCII chars round-trip via str chars
     if s.is_ascii() {
         return out;
     }
     s.chars().filter(|c| *c != '&').collect()
 }
-
-// ----- ContextMenuHandler --------------------------------------------------
 
 wrap_context_menu_handler! {
     pub struct JfnContextMenuHandlerBuilder {
@@ -45,7 +42,6 @@ wrap_context_menu_handler! {
             if m.index_of(reload_id) < 0 {
                 m.add_item(reload_id, Some(&CefString::from("Reload")));
             }
-            // Trim trailing separators left after removals.
             loop {
                 let n = m.count();
                 if n == 0 {
@@ -130,7 +126,6 @@ wrap_context_menu_handler! {
 
             self.inner.store_pending_menu_session(session);
 
-            // Serialize menu model via CEF's value/list/json APIs (never hand-rolled).
             let Some(arr) = list_value_create() else { return 1 };
             for i in 0..model.count() {
                 let Some(item) = dictionary_value_create() else { continue };

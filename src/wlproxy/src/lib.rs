@@ -98,15 +98,10 @@ type CloseCb = extern "C" fn();
 static CONFIGURE_CB: Mutex<Option<ConfigureCb>> = Mutex::new(None);
 static SCALE_CB: Mutex<Option<ScaleCb>> = Mutex::new(None);
 static SUSPENDED_CB: Mutex<Option<SuspendedCb>> = Mutex::new(None);
-// Popup (context menu) lifecycle: READY fires once the menu surface's
-// xdg_surface is first configured (host then attaches its rendered buffer);
-// DONE fires on xdg_popup.popup_done (compositor-driven dismiss).
 static POPUP_READY_CB: Mutex<Option<PopupReadyCb>> = Mutex::new(None);
 static POPUP_DONE_CB: Mutex<Option<PopupDoneCb>> = Mutex::new(None);
 static CLOSE_CB: Mutex<Option<CloseCb>> = Mutex::new(None);
 
-/// Wire object id of the host-created `wl_surface` to be given the xdg_popup
-/// role for the context menu. 0 = none registered.
 static POPUP_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
 // Last reported suspended state to suppress no-op edges (the compositor
 // repeats the state on every configure).
@@ -118,14 +113,7 @@ enum HostCommand {
     SetMinimized,
     Move,
     Resize(u32),
-    /// Create the context-menu xdg_popup at (x, y) logical with logical size
-    /// (w, h), anchored in the root window's geometry.
-    ShowPopup {
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-    },
+    ShowPopup { x: i32, y: i32, w: i32, h: i32 },
     HidePopup,
     SetBackground,
     SetTitlebarPalette,
@@ -136,48 +124,31 @@ static COMMANDS: Mutex<VecDeque<HostCommand>> = Mutex::new(VecDeque::new());
 const DECO_CSD: u32 = 1;
 const DECO_SERVER_THEMED: u32 = 3;
 
-/// 0 = unset (treated as plain server-side); otherwise [`DECO_CSD`] /
-/// `2` (server) / [`DECO_SERVER_THEMED`]. Must be set before the root is built.
 static DECORATION_MODE: AtomicU32 = AtomicU32::new(0);
 
 static BACKGROUND_RGBA: AtomicU32 = AtomicU32::new(0);
 
 static PENDING_PALETTE: Mutex<Option<CString>> = Mutex::new(None);
 
-/// Wire object id of the host-created `wl_surface` the host wants to own the
-/// toplevel (Phase 1). 0 = unset (proxy uses its own placeholder root). Set by
-/// the host via [`jfn_wlproxy_set_host_surface`] after it creates the surface.
 static HOST_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
 
-/// Wire object id of the host's own input `wl_seat`. 0 = unset. The host
-/// registers it (via [`jfn_wlproxy_set_input_seat`]) right after binding, so
-/// the proxy can forward input devices for that seat while swallowing every
-/// other seat's (mpv's) — keeping mpv's VO from ever receiving keyboard/touch.
 static HOST_INPUT_SEAT_ID: AtomicU32 = AtomicU32::new(0);
 
-/// Monotonic counter assigning each in-process (same-pid) client its
-/// connect-order index; mirrors the binary's `wl_display_connect` interposer
-/// counter so a same-process index maps to a captured `wl_display*`.
+// Connect-order index per in-process client must stay in lockstep with the
+// binary's `wl_display_connect` interposer counter, so an index maps to a
+// captured `wl_display*`.
 static SAME_PROC_SEQ: AtomicU32 = AtomicU32::new(0);
 
-/// Same-process index of the client that took an xdg_toplevel — i.e. mpv's
-/// video output. `-1` until detected; updated if a new VO toplevel appears
-/// (mpv restart). The host reads it via [`jfn_wlproxy_vo_connection_index`] to
-/// pick which captured display is the current VO's.
 static VO_CONNECTION_INDEX: AtomicI32 = AtomicI32::new(-1);
 
-/// Same-process index of mpv's VO connection (`-1` if unknown). Pairs with
-/// `jfn_linux_util::wl_display_registry::captured_display`.
 pub extern "C" fn jfn_wlproxy_vo_connection_index() -> c_int {
     VO_CONNECTION_INDEX.load(Ordering::Acquire)
 }
 
 thread_local! {
-    // Set while the proxy opens its OWN upstream connection to the real
-    // compositor (one per client `State`). The binary's `wl_display_connect`
-    // interposer queries this (same thread, synchronous) to skip recording the
-    // proxy's upstream displays — so the capture registry holds only genuine
-    // downstream in-process clients and its index aligns with `SAME_PROC_SEQ`.
+    // Set while the proxy opens its OWN upstream connection. The interposer
+    // checks this to skip recording the proxy's upstream displays, else the
+    // capture index would misalign with `SAME_PROC_SEQ`.
     static IN_UPSTREAM_CONNECT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -198,7 +169,6 @@ impl Drop for UpstreamConnectGuard {
     }
 }
 
-/// Peer pid of a connected client socket via `SO_PEERCRED`, or `None` on error.
 fn socket_peer_pid(fd: std::os::fd::RawFd) -> Option<i32> {
     let mut cred = std::mem::MaybeUninit::<libc::ucred>::uninit();
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
@@ -214,16 +184,10 @@ fn socket_peer_pid(fd: std::os::fd::RawFd) -> Option<i32> {
     (rc == 0).then(|| unsafe { cred.assume_init() }.pid)
 }
 
-/// Register the host's toplevel `wl_surface` (by wire/protocol object id). The
-/// proxy adopts that surface as the real root window — giving it the xdg role,
-/// mapping it, and demoting mpv's video underneath — instead of its own
-/// placeholder. Idempotent; call once after creating the surface.
 pub fn jfn_wlproxy_set_host_surface(id: u32) {
     HOST_SURFACE_ID.store(id, Ordering::Release);
 }
 
-/// Set the decoration mode the root toplevel requests, before the root is
-/// built. Values match [`DECO_CSD`] / `2` (server) / [`DECO_SERVER_THEMED`].
 pub extern "C" fn jfn_wlproxy_set_decoration_mode(mode: c_int) {
     DECORATION_MODE.store(mode as u32, Ordering::Release);
 }
@@ -245,45 +209,26 @@ pub unsafe extern "C" fn jfn_wlproxy_set_titlebar_palette(path: *const c_char) {
     COMMANDS.lock().push_back(HostCommand::SetTitlebarPalette);
 }
 
-/// Register the host's own input `wl_seat` (by wire/protocol object id). The
-/// proxy forwards pointer/keyboard/touch for this seat and swallows them for
-/// every other seat (mpv's), so mpv's VO never receives input. Call right after
-/// binding the seat, before the bind request is flushed.
 pub fn jfn_wlproxy_set_input_seat(id: u32) {
     HOST_INPUT_SEAT_ID.store(id, Ordering::Release);
 }
 
-/// Register the host-created `wl_surface` (by wire/protocol object id) to be
-/// re-roled as the context-menu xdg_popup. Set just before queueing
-/// [`jfn_wlproxy_show_popup`].
 pub fn jfn_wlproxy_set_popup_surface(id: u32) {
     POPUP_SURFACE_ID.store(id, Ordering::Release);
 }
 
 thread_local! {
-    // The compositor-facing wl_seat and the most recent pointer-button serial,
-    // captured by snooping forwarded input. xdg_toplevel.move requires both,
-    // and the serial must come from THIS connection (the toplevel's), not the
-    // mpv-side input subsystem's serial namespace.
+    // xdg_toplevel.move/resize requires a serial from THIS connection (the
+    // toplevel's), not the mpv-side input subsystem's serial namespace.
     static SEAT: RefCell<Option<Rc<WlSeat>>> = const { RefCell::new(None) };
     static LAST_SERIAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 
-    // Window-ownership inversion: this client (mpv) no longer owns a toplevel.
-    // The proxy owns a placeholder toplevel and demotes mpv's surface to a
-    // subsurface of it, synthesizing mpv's xdg shell. See [`Shell`].
     static SHELL: RefCell<Shell> = const { RefCell::new(Shell::new()) };
 }
 
-/// Per-client state for the toplevel-ownership inversion (Phase 0 spike).
-///
-/// mpv's `get_xdg_surface`/`get_toplevel` are swallowed (never reach the
-/// compositor); its surface is re-roled as a subsurface of a proxy-owned
-/// placeholder toplevel. The proxy synthesizes `xdg_surface.configure` +
-/// `xdg_toplevel.configure` back to mpv from the placeholder's real configure.
 struct Shell {
     display: Option<Rc<WlDisplay>>,
     client: Option<Rc<Client>>,
-    // Proxy-owned globals, bound via a dedicated registry roundtrip.
     compositor: Option<Rc<WlCompositor>>,
     subcompositor: Option<Rc<WlSubcompositor>>,
     wm_base: Option<Rc<XdgWmBase>>,
@@ -293,7 +238,6 @@ struct Shell {
     palette_manager: Option<Rc<OrgKdeKwinServerDecorationPaletteManager>>,
     globals_ready: bool,
     roundtrip_started: bool,
-    // Proxy-owned placeholder root toplevel.
     root_surface: Option<Rc<WlSurface>>,
     root_xdg_surface: Option<Rc<XdgSurface>>,
     root_toplevel: Option<Rc<XdgToplevel>>,
@@ -302,36 +246,22 @@ struct Shell {
     root_buffer: Option<Rc<WlBuffer>>,
     root_viewport: Option<Rc<WpViewport>>,
     root_mapped: bool,
-    // mpv's swallowed shell objects (client-facing; we synthesize events to them).
     mpv_surface: Option<Rc<WlSurface>>,
     mpv_xdg_surface: Option<Rc<XdgSurface>>,
     mpv_toplevel: Option<Rc<XdgToplevel>>,
     mpv_subsurface: Option<Rc<WlSubsurface>>,
     demote_pending: bool,
-    // Host-owned overlay-parent surface (Phase 1): a subsurface of the root,
-    // stacked above mpv's video. The host parents its CEF overlays to it, so it
-    // no longer needs mpv's surface. The proxy gives it a transparent backdrop
-    // buffer (via viewport) so its overlay children map.
     host_adopted: bool,
     host_surface: Option<Rc<WlSurface>>,
     host_subsurface: Option<Rc<WlSubsurface>>,
     host_viewport: Option<Rc<WpViewport>>,
-    // Context-menu popup: the host-owned menu surface re-roled as an xdg_popup
-    // of the root. The host owns the buffer/paint; the proxy owns the role +
-    // grab + lifecycle.
     popup_surface: Option<Rc<WlSurface>>,
     popup_xdg_surface: Option<Rc<XdgSurface>>,
     popup: Option<Rc<XdgPopup>>,
-    // Last logical size from the root's toplevel.configure (states wire bytes too).
     cur_w: i32,
     cur_h: i32,
     cur_states: Vec<u8>,
     serial: u32,
-    // Same-process accept index: set when this client connected from our own
-    // process (peer pid == our pid), `None` for out-of-process clients (CEF
-    // subprocesses). It enumerates the in-process Wayland connections in the
-    // same order the binary's `wl_display_connect` interposer captured them, so
-    // it correlates this client to its captured `wl_display*`.
     same_proc_index: Option<u32>,
 }
 
@@ -440,10 +370,6 @@ fn fire_configure() {
     }
 }
 
-// =========================================================================
-// FFI
-// =========================================================================
-
 /// Start the proxy. Spawns a listener thread that owns the `Acceptor` (which
 /// is `!Send` because it holds `Rc` internally, so it must be constructed
 /// inside the thread). The thread hands the listening socket name back via a
@@ -541,11 +467,9 @@ pub fn jfn_wlproxy_set_suspended_callback(cb: SuspendedCb) {
     *SUSPENDED_CB.lock() = Some(cb);
 }
 
-/// Clear all host callbacks. Called at shutdown so the per-client dispatch
-/// thread stops re-entering host code (which takes a `WlState` lock that a
-/// terminating CEF paint thread may have orphaned). Keeping the thread out of
-/// that lock lets it keep servicing mpv's connection — required so mpv's VO
-/// teardown roundtrip completes instead of deadlocking the shutdown.
+/// Clear all host callbacks at shutdown. The dispatch thread must stop
+/// re-entering host code, which takes a `WlState` lock a terminating CEF paint
+/// thread may have orphaned; otherwise mpv's VO teardown roundtrip deadlocks.
 pub fn jfn_wlproxy_clear_callbacks() {
     *CONFIGURE_CB.lock() = None;
     *SCALE_CB.lock() = None;
@@ -555,37 +479,24 @@ pub fn jfn_wlproxy_clear_callbacks() {
     *CLOSE_CB.lock() = None;
 }
 
-/// Register the window-close callback: fires on the root toplevel's
-/// `xdg_toplevel.close` so the host can begin shutdown.
 pub fn jfn_wlproxy_set_close_callback(cb: CloseCb) {
     *CLOSE_CB.lock() = Some(cb);
 }
 
-/// Register the popup-ready callback: fires (on the proxy client thread) once
-/// the menu surface's xdg_surface receives its first configure, signalling the
-/// host to attach its rendered menu buffer and commit.
 pub fn jfn_wlproxy_set_popup_ready_callback(cb: PopupReadyCb) {
     *POPUP_READY_CB.lock() = Some(cb);
 }
 
-/// Register the popup-done callback: fires on xdg_popup.popup_done (the
-/// compositor dismissed the menu, e.g. click-outside / Escape), so the host can
-/// tear down its menu state and report no selection.
 pub fn jfn_wlproxy_set_popup_done_callback(cb: PopupDoneCb) {
     *POPUP_DONE_CB.lock() = Some(cb);
 }
 
-/// Queue creation of the context-menu xdg_popup. Register the menu surface via
-/// [`jfn_wlproxy_set_popup_surface`] first. (x, y) and (w, h) are logical,
-/// relative to the root window's geometry.
 pub fn jfn_wlproxy_show_popup(x: c_int, y: c_int, w: c_int, h: c_int) {
     COMMANDS
         .lock()
         .push_back(HostCommand::ShowPopup { x, y, w, h });
 }
 
-/// Queue teardown of the context-menu xdg_popup (host-driven dismiss, e.g. an
-/// item was selected).
 pub fn jfn_wlproxy_hide_popup() {
     COMMANDS.lock().push_back(HostCommand::HidePopup);
 }
@@ -624,10 +535,6 @@ pub fn jfn_wlproxy_window_move() {
 pub fn jfn_wlproxy_window_resize(edge: c_int) {
     COMMANDS.lock().push_back(HostCommand::Resize(edge as u32));
 }
-
-// =========================================================================
-// Listener / per-client thread
-// =========================================================================
 
 fn run_listener(tx: mpsc::SyncSender<Result<CString, String>>, upstream: Option<String>) {
     let acceptor = match Acceptor::new(1000, false) {
@@ -668,9 +575,8 @@ fn run_listener(tx: mpsc::SyncSender<Result<CString, String>>, upstream: Option<
 
 fn run_client(socket: OwnedFd, upstream: Option<String>) {
     use std::os::fd::AsRawFd;
-    // Same-process clients (mpv's VO, in-process) get a connect-order index
-    // matching the interposer's capture order; out-of-process clients (CEF) do
-    // not. Read before `socket` is moved into the State.
+    // Only same-process clients (mpv's VO) get a connect-order index matching
+    // the interposer's capture order; out-of-process clients (CEF) do not.
     let same_proc_index = (socket_peer_pid(socket.as_raw_fd()) == Some(std::process::id() as i32))
         .then(|| SAME_PROC_SEQ.fetch_add(1, Ordering::AcqRel));
 
@@ -722,8 +628,6 @@ fn run_client(socket: OwnedFd, upstream: Option<String>) {
 }
 
 fn drain_host_commands() {
-    // Host window-state commands now act on the proxy-owned ROOT toplevel (the
-    // real window since the ownership inversion), not mpv's swallowed toplevel.
     // Only the client thread that built the root drains — COMMANDS is
     // process-global but the root lives in this thread's SHELL, so a thread
     // without a root must NOT drain (else it pops and drops, racing the owner).
@@ -760,21 +664,18 @@ fn drain_host_commands() {
     }
 }
 
-/// Fire the popup-ready callback (menu surface's xdg_surface first-configured).
 fn fire_popup_ready() {
     if let Some(cb) = *POPUP_READY_CB.lock() {
         cb();
     }
 }
 
-/// Fire the popup-done callback (compositor-driven dismiss).
 fn fire_popup_done() {
     if let Some(cb) = *POPUP_DONE_CB.lock() {
         cb();
     }
 }
 
-/// Find the host-registered popup `wl_surface` among the client's objects.
 fn find_popup_surface() -> Option<Rc<WlSurface>> {
     let id = POPUP_SURFACE_ID.load(Ordering::Acquire);
     if id == 0 {
@@ -789,11 +690,7 @@ fn find_popup_surface() -> Option<Rc<WlSurface>> {
     })
 }
 
-/// Re-role the host's registered menu surface as an xdg_popup of the root and
-/// grab it. The compositor constrains it on-screen and routes input to it; the
-/// host paints into the same surface once [`fire_popup_ready`] fires.
 fn create_popup(x: i32, y: i32, w: i32, h: i32) {
-    // One menu at a time: drop any stale popup first.
     if with_shell(|sh| sh.popup.is_some()) {
         destroy_popup();
     }
@@ -811,7 +708,6 @@ fn create_popup(x: i32, y: i32, w: i32, h: i32) {
     let positioner = wm_base.create_child::<XdgPositioner>();
     wm_base.send_create_positioner(&positioner);
     positioner.send_set_size(ww, hh);
-    // 1x1 anchor rect at the click point in the root's window geometry.
     positioner.send_set_anchor_rect(x, y, 1, 1);
     positioner.send_set_anchor(XdgPositionerAnchor::TOP_LEFT);
     positioner.send_set_gravity(XdgPositionerGravity::BOTTOM_RIGHT);
@@ -831,8 +727,6 @@ fn create_popup(x: i32, y: i32, w: i32, h: i32) {
     xdg.send_get_popup(&popup, Some(&root_xdg), &positioner);
     positioner.send_destroy();
 
-    // Grab with the latest pointer-button serial so click-outside dismisses and
-    // keyboard focus moves to the menu.
     SEAT.with(|s| {
         if let Some(seat) = s.borrow().as_ref() {
             popup.send_grab(seat, LAST_SERIAL.with(|c| c.get()));
@@ -849,8 +743,8 @@ fn create_popup(x: i32, y: i32, w: i32, h: i32) {
     });
 }
 
-/// Tear down the popup's proxy-owned role objects. The host owns and destroys
-/// the underlying `wl_surface` itself.
+// Tear down only the proxy-owned role objects; the host owns and destroys the
+// underlying `wl_surface` itself.
 fn destroy_popup() {
     let (popup, xdg) = with_shell(|sh| (sh.popup.take(), sh.popup_xdg_surface.take()));
     with_shell(|sh| sh.popup_surface = None);
@@ -867,7 +761,6 @@ struct PopupXdgSurfaceH;
 impl XdgSurfaceHandler for PopupXdgSurfaceH {
     fn handle_configure(&mut self, slf: &Rc<XdgSurface>, serial: u32) {
         slf.send_ack_configure(serial);
-        // Host attaches its rendered menu buffer + commits on this signal.
         fire_popup_ready();
     }
 }
@@ -880,10 +773,6 @@ impl XdgPopupHandler for PopupH {
     }
 }
 
-// =========================================================================
-// Handler chain: WlDisplay → WlRegistry → XdgWmBase → XdgSurface → XdgToplevel
-// =========================================================================
-
 struct NoopClient;
 impl ClientHandler for NoopClient {
     fn disconnected(self: Box<Self>) {}
@@ -892,8 +781,6 @@ impl ClientHandler for NoopClient {
 struct DisplayH;
 impl WlDisplayHandler for DisplayH {
     fn handle_get_registry(&mut self, slf: &Rc<WlDisplay>, registry: &Rc<WlRegistry>) {
-        // Stash the client display so we can later open our OWN registry +
-        // roundtrip to bind proxy-owned globals for the placeholder root.
         with_shell(|sh| {
             if sh.display.is_none() {
                 sh.display = Some(slf.clone());
@@ -917,9 +804,6 @@ impl WlRegistryHandler for RegistryH {
             }
             WlSeat::INTERFACE => {
                 let seat = id.downcast::<WlSeat>();
-                // The host's own input seat forwards devices (and is the one used
-                // for move/resize/popup grab); every other seat is mpv's and gets
-                // its input devices swallowed.
                 if seat.client_id() == Some(HOST_INPUT_SEAT_ID.load(Ordering::Acquire)) {
                     seat.set_handler(ForwardSeatH);
                     SEAT.with(|s| *s.borrow_mut() = Some(seat.clone()));
@@ -990,9 +874,6 @@ impl WpFractionalScaleV1Handler for FracScaleH {
     }
 }
 
-// The host's own input seat: forward pointer/keyboard/touch unchanged. The
-// pointer is additionally snooped (PointerH) to cache the latest button-press
-// serial needed by xdg_toplevel.move/resize and popup grab.
 struct ForwardSeatH;
 impl WlSeatHandler for ForwardSeatH {
     fn handle_get_pointer(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlPointer>) {
@@ -1043,10 +924,6 @@ impl WlPointerHandler for PointerH {
 
 const STATE_SUSPENDED: u32 = 9;
 
-// =========================================================================
-// mpv's shell — swallowed and re-roled as a subsurface of the proxy root.
-// =========================================================================
-
 struct WmBaseH;
 impl XdgWmBaseHandler for WmBaseH {
     fn handle_get_xdg_surface(
@@ -1055,9 +932,8 @@ impl XdgWmBaseHandler for WmBaseH {
         id: &Rc<XdgSurface>,
         surface: &Rc<WlSurface>,
     ) {
-        // SWALLOW: mpv's surface must stay role-free at the compositor so we
-        // can give it the subsurface role. We never forward get_xdg_surface;
-        // instead the proxy synthesizes the xdg shell back to mpv.
+        // mpv's surface must stay role-free at the compositor so we can give it
+        // the subsurface role; never forward get_xdg_surface.
         id.set_forward_to_server(false);
         id.set_handler(MpvSurfaceH);
         with_shell(|sh| {
@@ -1070,8 +946,6 @@ impl XdgWmBaseHandler for WmBaseH {
 struct MpvSurfaceH;
 impl XdgSurfaceHandler for MpvSurfaceH {
     fn handle_get_toplevel(&mut self, _slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
-        // SWALLOW mpv's toplevel; its requests stay local (forward_to_server
-        // off → default handlers no-op). We drive its configure ourselves.
         id.set_forward_to_server(false);
         id.set_handler(MpvToplevelH);
         with_shell(|sh| {
@@ -1081,9 +955,6 @@ impl XdgSurfaceHandler for MpvSurfaceH {
                 sh.cur_w = 1280;
                 sh.cur_h = 720;
             }
-            // This client owns the video toplevel → it's mpv's VO. Publish its
-            // same-process index so the host can adopt the matching captured
-            // wl_display.
             if let Some(idx) = sh.same_proc_index {
                 VO_CONNECTION_INDEX.store(idx as i32, Ordering::Release);
             }
@@ -1097,27 +968,12 @@ impl XdgSurfaceHandler for MpvSurfaceH {
         synth_mpv_configure(w, h, &[]);
         ensure_root();
     }
-    // ack_configure / set_window_geometry / get_popup fall through to the
-    // defaults, which no-op because forward_to_server is off.
 }
 
 struct MpvToplevelH;
-impl XdgToplevelHandler for MpvToplevelH {
-    // All requests no-op (forward_to_server off). The proxy synthesizes
-    // configure/close events to mpv directly via send_*.
-}
+impl XdgToplevelHandler for MpvToplevelH {}
 
-// =========================================================================
-// Proxy-owned placeholder root: real toplevel, mpv's surface as its child.
-// =========================================================================
-
-/// Kick off (once) a dedicated registry roundtrip to bind the proxy-owned
-/// globals needed to build the root, then build it. If globals are already
-/// bound, build immediately.
 fn ensure_root() {
-    // Only kicks off the global-binding roundtrip; the actual root build is
-    // driven by `maybe_build_root` from the dispatch loop, so it can wait for
-    // the host to register its toplevel surface (Phase 1) before committing.
     let (started, display) = with_shell(|sh| (sh.roundtrip_started, sh.display.clone()));
     if started {
         return;
@@ -1135,7 +991,6 @@ fn ensure_root() {
     display.send_sync(&sync);
 }
 
-/// Find the host-registered toplevel `wl_surface` among the client's objects.
 fn find_host_surface() -> Option<Rc<WlSurface>> {
     let host_id = HOST_SURFACE_ID.load(Ordering::Acquire);
     if host_id == 0 {
@@ -1150,9 +1005,6 @@ fn find_host_surface() -> Option<Rc<WlSurface>> {
     })
 }
 
-/// Build the root once globals are ready, a demote is pending, and the host has
-/// registered its toplevel surface. The host always owns the toplevel (Phase 1),
-/// so we wait for it rather than racing a proxy-owned placeholder.
 fn maybe_build_root() {
     let (ready, pending, built, adopted) = with_shell(|sh| {
         (
@@ -1165,10 +1017,9 @@ fn maybe_build_root() {
     if !ready || !pending {
         return;
     }
-    // Build the root immediately so mpv's window becomes ready and the host's
-    // `wait_for_vo_window` unblocks (it can't create its own surface until after
-    // that). On a later tick, once the host has registered its overlay-parent
-    // surface, adopt it into the tree above mpv.
+    // Build the root before adopting the host surface: the host's
+    // `wait_for_vo_window` can't create its overlay surface until mpv's window
+    // is ready.
     if !built {
         build_root();
         return;
@@ -1178,12 +1029,8 @@ fn maybe_build_root() {
     }
 }
 
-/// Attach the host's overlay-parent surface as a subsurface of the (proxy-
-/// owned) root, stacked above mpv's video, with a transparent backdrop buffer
-/// so its overlay children map. The proxy keeps owning the toplevel — giving
-/// the host surface an xdg role would collide with the host's own commits on
-/// it. This lets the host parent overlays to its own surface (dropping the
-/// dependency on mpv's surface) without owning the window's xdg lifecycle.
+// The host surface stays a subsurface, not an xdg role: an xdg role would
+// collide with the host's own commits on it.
 fn adopt_host_surface(host: Rc<WlSurface>) {
     let objs = with_shell(|sh| {
         if sh.host_adopted {
@@ -1202,8 +1049,7 @@ fn adopt_host_surface(host: Rc<WlSurface>) {
         return;
     };
 
-    // Host surface becomes a subsurface of the root, above mpv (created later
-    // than mpv's subsurface, so on top by default).
+    // Created after mpv's subsurface, so it stacks above mpv by default.
     let sub = subcompositor.create_child::<WlSubsurface>();
     subcompositor.send_get_subsurface(&sub, &host, &root);
     sub.send_set_desync();
@@ -1306,16 +1152,9 @@ impl WlCallbackHandler for RoundtripCb {
                 "wlproxy: missing globals for root (need compositor, subcompositor, xdg_wm_base, single_pixel_buffer, viewporter)"
             );
         }
-        // Building is poll-driven from the dispatch loop (waits for the host
-        // surface); just mark globals ready here.
     }
 }
 
-/// Build the proxy-owned placeholder root toplevel and demote mpv's video under
-/// it as a subsurface. This is the real window; the host later attaches its
-/// overlay surface as another subsurface (see [`adopt_host_surface`]).
-/// Idempotent: only runs once a demote is pending and the root has not been
-/// created.
 fn build_root() {
     let objs = with_shell(|sh| {
         if !sh.demote_pending || sh.root_surface.is_some() {
@@ -1373,16 +1212,13 @@ fn build_root() {
     // Initial no-buffer commit to elicit the first configure.
     root_surface.send_commit();
 
-    // Re-role mpv's surface as a child of the root.
     let sub = subcompositor.create_child::<WlSubsurface>();
     subcompositor.send_get_subsurface(&sub, &mpv_surface, &root_surface);
     sub.send_set_desync();
     sub.send_set_position(0, 0);
 
-    // Empty input region on mpv's surface: the host owns input on its own
-    // overlay surface (stacked above), so mpv's video must never be a seat
-    // target. Applied on mpv's next commit; makes mpv's `input-*` opt-outs
-    // redundant. (Phase 2.)
+    // Empty input region so mpv's video is never a pointer target; the host
+    // owns input on its overlay surface stacked above.
     let region = compositor.create_child::<WlRegion>();
     compositor.send_create_region(&region);
     mpv_surface.send_set_input_region(Some(&region));
@@ -1518,7 +1354,6 @@ impl XdgSurfaceHandler for RootXdgSurfaceH {
             with_shell(|sh| sh.root_mapped = true);
         }
 
-        // Keep the host overlay surface's backdrop sized to the window too.
         if let (Some(hv), Some(hs)) =
             with_shell(|sh| (sh.host_viewport.clone(), sh.host_surface.clone()))
         {
@@ -1526,12 +1361,10 @@ impl XdgSurfaceHandler for RootXdgSurfaceH {
             hs.send_commit();
         }
 
-        // Hand mpv a matching configure so it renders its video at this size.
         synth_mpv_configure(w, h, &states);
     }
 }
 
-/// Synthesize an xdg shell configure to mpv's swallowed toplevel/xdg_surface.
 fn synth_mpv_configure(w: i32, h: i32, states: &[u8]) {
     let (tl, xs, serial) = with_shell(|sh| {
         (

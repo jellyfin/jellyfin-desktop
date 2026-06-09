@@ -1,6 +1,3 @@
-//! Menu layout + rasterization: tiny-skia draws the chrome, cosmic-text
-//! shapes and rasterizes the labels into the same premultiplied pixmap.
-
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 use tiny_skia::{Color as SkColor, FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
 
@@ -31,7 +28,7 @@ fn sep() -> SkColor {
 const TEXT: Color = Color::rgb(0xe0, 0xe0, 0xe0);
 const TEXT_DISABLED: Color = Color::rgb(0x66, 0x66, 0x66);
 
-/// One laid-out row, in physical pixels relative to the menu's top-left.
+/// Geometry in physical pixels relative to the menu's top-left.
 #[derive(Clone)]
 pub struct Row {
     pub item: usize,
@@ -51,8 +48,6 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// Build a layout from explicit rows without rasterizing — for tests and
-    /// for callers that drive the interaction FSM headlessly.
     pub fn for_test(width: i32, height: i32, rows: Vec<Row>, selectable: Vec<usize>) -> Self {
         Self {
             width,
@@ -63,8 +58,8 @@ impl Layout {
         }
     }
 
-    /// Display scale the layout was computed at; backends divide physical
-    /// dimensions by this to recover logical (compositor) sizes.
+    /// Backends divide physical dimensions by this to recover logical
+    /// (compositor) sizes.
     pub fn scale(&self) -> f32 {
         self.scale
     }
@@ -320,8 +315,7 @@ fn blend_coverage(
             let idx = (py * pw + px) as usize;
             let dst = pixels[idx];
             let inv = 255 - a;
-            // Source is opaque text premultiplied by coverage; dst is already
-            // premultiplied. Standard src-over with src alpha == coverage.
+            // Both src and dst are premultiplied; src alpha == glyph coverage.
             let nr = (cr * a + dst.red() as u32 * inv) / 255;
             let ng = (cg * a + dst.green() as u32 * inv) / 255;
             let nb = (cb * a + dst.blue() as u32 * inv) / 255;

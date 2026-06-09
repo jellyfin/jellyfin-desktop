@@ -21,9 +21,6 @@ impl Inner {
         }
         let now = now_ns();
         self.last_was_resized_ns.store(now, Ordering::Release);
-        // WasResized retargets the renderer; any stable-size streak (possibly
-        // accumulated against the old dims while this apply was pending) must
-        // be invalidated.
         self.paint_scheduler.during_resize(self, || {
             self.notify_screen_info_changed();
             self.cef_was_resized();
@@ -36,8 +33,8 @@ impl Inner {
         self.physical_w.store(pw, Ordering::Release);
         self.physical_h.store(ph, Ordering::Release);
 
-        // Wayland viewport must update on every configure to avoid stale
-        // src/dst — runs immediately.
+        // Wayland viewport must update on every configure (not debounced) or
+        // src/dst go stale.
         let surface = self.surface_ptr();
         if !surface.is_null()
             && let Some(p) = platform_ops::ops()
@@ -53,14 +50,10 @@ impl Inner {
             );
         }
 
-        // Defer kick until the browser exists; OnAfterCreated will fire it.
         if !self.browser_alive() {
             return;
         }
 
-        // Debounce the CEF host notify (re-layout) to one display-refresh
-        // period. Drag fires many configures per frame; coalescing them
-        // saves N-1 wasted re-layouts.
         let now = now_ns();
         let hz = jfn_playback_display_hz();
         let period_ns = if hz > 0.0 {
@@ -76,8 +69,6 @@ impl Inner {
                 self.cef_was_resized();
                 return;
             }
-            // Within the debounce window — schedule a single deferred apply if
-            // one isn't already pending. Latest width/height get picked up.
             if self
                 .resize_scheduled
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -99,8 +90,6 @@ impl Inner {
 
     pub(super) fn apply_set_refresh(&self, target: i32) {
         self.frame_rate.store(target, Ordering::Release);
-        // If a nudge-loop boost is active, just update what we'll restore to
-        // and let the boost rate keep running. Otherwise apply now.
         if !self.paint_scheduler.refresh_rate_changed(target) {
             self.set_frame_rate(target);
         }

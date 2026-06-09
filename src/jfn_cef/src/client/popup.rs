@@ -33,9 +33,6 @@ impl Inner {
             }
             return;
         }
-        // Ask the renderer to walk the focused <select> and ship the option
-        // list back via the "popupOptions" IPC. Reply lands in OnProcessMessage
-        // which calls jfn_cef_layer_set_popup_options.
         self.send_process_message_named("getPopupOptions");
     }
 

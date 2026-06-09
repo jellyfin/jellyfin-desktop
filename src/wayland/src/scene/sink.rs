@@ -1,8 +1,4 @@
 //! Effect interpreters for [`super::reduce`].
-//!
-//! [`SceneSink`] is the seam: production uses [`WlSink`] (real Wayland IO);
-//! tests use [`RecordingSink`] to assert the effect stream a driver would
-//! execute, with no compositor.
 
 use wayland_client::protocol::wl_subsurface::WlSubsurface;
 use wayland_client::protocol::wl_surface::WlSurface;
@@ -10,13 +6,10 @@ use wayland_client::protocol::wl_surface::WlSurface;
 use super::{Above, Effect, LayerId};
 use crate::wl_state::{PlatformSurface, WlState};
 
-/// Applies a stream of [`Effect`]s. Production performs Wayland IO; the test
-/// double records.
 pub trait SceneSink {
     fn apply(&mut self, effect: &Effect);
 }
 
-/// Test double: records effects in order.
 #[cfg(test)]
 #[derive(Default)]
 pub struct RecordingSink {
@@ -34,7 +27,6 @@ fn layer_ptr(id: LayerId) -> *mut PlatformSurface {
     id.0 as *mut PlatformSurface
 }
 
-/// Clone the (subsurface, surface) proxies for a layer id, if live.
 fn layer_objs(id: LayerId) -> Option<(WlSubsurface, WlSurface)> {
     let p = layer_ptr(id);
     if p.is_null() {
@@ -87,8 +79,6 @@ mod tests {
     use super::super::{Above, Effect, LayerId, Scene, SceneEvent, reduce};
     use super::{RecordingSink, SceneSink};
 
-    /// The driver feeds reduce's effects into a sink unchanged; with a
-    /// RecordingSink we can assert the exact IO sequence headlessly.
     #[test]
     fn recording_sink_captures_add_sequence() {
         let mut scene = Scene::default();
@@ -104,13 +94,11 @@ mod tests {
         assert_eq!(
             sink.effects,
             vec![
-                // LayerAdded(1): stack + commit.
                 Effect::PlaceAbove {
                     layer: LayerId(1),
                     above: Above::Parent
                 },
                 Effect::CommitParent,
-                // LayerAdded(2): full rebuild + commit.
                 Effect::PlaceAbove {
                     layer: LayerId(1),
                     above: Above::Parent

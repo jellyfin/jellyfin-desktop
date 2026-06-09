@@ -5,8 +5,6 @@ use std::sync::Arc;
 use crate::app::userfree_to_string;
 use crate::client::Inner;
 
-// ----- LoadHandler ---------------------------------------------------------
-
 wrap_load_handler! {
     pub struct JfnLoadHandlerBuilder {
         inner: Arc<Inner>,

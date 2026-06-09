@@ -20,9 +20,7 @@ impl Inner {
     }
 
     pub(crate) fn on_console_message(&self, level: c_int, msg: &str, src: &str, line: c_int) {
-        // CEF severities: VERBOSE/DEBUG share LOGSEVERITY_VERBOSE; DEFAULT=0
-        // treated as INFO. Numeric values mirror cef_log_severity_t.
-        const LOGSEVERITY_VERBOSE: c_int = 1; // and DEBUG
+        const LOGSEVERITY_VERBOSE: c_int = 1;
         const LOGSEVERITY_INFO: c_int = 2;
         const LOGSEVERITY_WARNING: c_int = 3;
         const LOGSEVERITY_ERROR: c_int = 4;
@@ -76,9 +74,6 @@ impl Inner {
         );
     }
 
-    /// OnPreKeyEvent paste intercept. Caller has already matched the
-    /// platform paste shortcut. Returns true if a platform clipboard read
-    /// was triggered (CEF should swallow the key); false otherwise.
     pub(crate) fn set_visible(&self, visible: bool) {
         let surface = self.surface_ptr();
         if surface.is_null() {

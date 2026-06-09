@@ -1,5 +1,3 @@
-//! Pure decision logic for the context menu's modal loop.
-
 use crate::MenuItem;
 use crate::render::Layout;
 
@@ -11,7 +9,6 @@ pub const XK_UP: u32 = 0xff52;
 pub const XK_DOWN: u32 = 0xff54;
 pub const XK_SPACE: u32 = 0x0020;
 
-/// Highlighted row, as an item index; `-1` means nothing is hovered.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct MenuState {
     pub active: i32,
@@ -34,7 +31,6 @@ pub enum MenuEvent {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuEffect {
     Redraw,
-    /// Command id of the chosen item, or `-1` to dismiss.
     Close(i32),
 }
 

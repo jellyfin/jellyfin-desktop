@@ -1,8 +1,3 @@
-//! Registry of `wl_display*` pointers captured by the binary's
-//! `wl_display_connect` interposer. Lives here (not in the binary) so
-//! `jfn-wayland` can read captured pointers back without depending on the
-//! binary.
-//!
 //! Connects append in order with a monotonic index, so a restarted VO appends
 //! rather than overwrites; the proxy's accept-order index
 //! (`jfn_wlproxy_vo_connection_index`) selects the current VO's display.
@@ -20,8 +15,6 @@ pub fn record_connect(display: *mut c_void) -> usize {
     v.len() - 1
 }
 
-/// The captured `wl_display*` for a given connect index, or null if out of
-/// range / not yet recorded.
 pub fn captured_display(index: usize) -> *mut c_void {
     CAPTURED
         .lock()

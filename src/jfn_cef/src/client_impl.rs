@@ -1,10 +1,3 @@
-//! `cef::Client` impl + CEF handler impls for `CefLayer`.
-//!
-//! Routes CEF callbacks into `client::Inner` methods. Browser ownership lives
-//! here too: `LifeSpanHandler::on_after_created` stashes the `cef::Browser`
-//! into Inner so subsequent host/frame ops dispatch via cef-rs instead of an
-//! FFI vtable. Larger handler groups are split into submodules.
-
 use cef::*;
 use std::os::raw::c_int;
 use std::sync::Arc;

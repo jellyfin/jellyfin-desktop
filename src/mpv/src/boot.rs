@@ -160,7 +160,6 @@ fn apply_defaults(
     set("input-cursor", "no")?;
     set("cursor-autohide", "no")?;
 
-    // non-upstream (https://github.com/andrewrabert/mpv)
     #[cfg(not(target_os = "linux"))]
     {
         set("input-vo-cursor", "no")?;
