@@ -10,7 +10,7 @@
 //! "scale unknown" — same semantics as the C++ `cached_scale = 0.0f` flag.
 
 use std::ffi::c_int;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::wl_ops;
 
@@ -21,28 +21,45 @@ use jfn_wlproxy::{
     jfn_wlproxy_set_scale_callback, jfn_wlproxy_set_suspended_callback,
 };
 
-static CACHED_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
-
-// Packed `(w<<32)|h`. Zero is the "size unknown" sentinel, safe only because
-// on_configure rejects non-positive dimensions.
-static CACHED_WINDOW_SIZE: AtomicU64 = AtomicU64::new(0);
-
-fn store_scale(s: f32) {
-    CACHED_SCALE_BITS.store(s.to_bits(), Ordering::Release);
+/// Compositor-reported window state, fed by the configure + scale intercepts
+/// and read by the host's `WindowSource`. `scale_bits`/`size` use 0 as the
+/// "unknown" sentinel — safe because the intercepts reject non-positive values.
+struct WlWindowState {
+    scale_bits: AtomicU32,
+    size: AtomicU64,
+    maximized: AtomicBool,
+    fullscreen: AtomicBool,
 }
 
-fn load_scale() -> f32 {
-    f32::from_bits(CACHED_SCALE_BITS.load(Ordering::Acquire))
-}
+static WINDOW_STATE: WlWindowState = WlWindowState {
+    scale_bits: AtomicU32::new(0),
+    size: AtomicU64::new(0),
+    maximized: AtomicBool::new(false),
+    fullscreen: AtomicBool::new(false),
+};
 
-fn store_window_size(w: c_int, h: c_int) {
-    let packed = ((w as u32 as u64) << 32) | (h as u32 as u64);
-    CACHED_WINDOW_SIZE.store(packed, Ordering::Release);
+impl WlWindowState {
+    fn set_scale(&self, s: f32) {
+        self.scale_bits.store(s.to_bits(), Ordering::Release);
+    }
+    fn scale(&self) -> f32 {
+        f32::from_bits(self.scale_bits.load(Ordering::Acquire))
+    }
+    fn set_size(&self, w: c_int, h: c_int) {
+        self.size.store(
+            ((w as u32 as u64) << 32) | (h as u32 as u64),
+            Ordering::Release,
+        );
+    }
+    fn size(&self) -> (c_int, c_int) {
+        let packed = self.size.load(Ordering::Acquire);
+        (((packed >> 32) as u32) as c_int, (packed as u32) as c_int)
+    }
 }
 
 extern "C" fn on_scale(scale_120: c_int) {
     if scale_120 > 0 {
-        store_scale(scale_120 as f32 / 120.0);
+        WINDOW_STATE.set_scale(scale_120 as f32 / 120.0);
         // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait
         // loop in `jfn_rust::app`) so it re-checks the scale-known gate
         // event-driven rather than via a polling timeout.
@@ -51,21 +68,28 @@ extern "C" fn on_scale(scale_120: c_int) {
 }
 
 pub fn jfn_wl_scale_known() -> bool {
-    load_scale() > 0.0
+    WINDOW_STATE.scale() > 0.0
 }
 
 pub fn jfn_wl_get_cached_scale() -> f32 {
-    let s = load_scale();
+    let s = WINDOW_STATE.scale();
     if s > 0.0 { s } else { 1.0 }
 }
 
 pub fn jfn_wl_window_size_known() -> bool {
-    CACHED_WINDOW_SIZE.load(Ordering::Acquire) != 0
+    WINDOW_STATE.size.load(Ordering::Acquire) != 0
 }
 
 pub fn jfn_wl_window_size() -> (c_int, c_int) {
-    let packed = CACHED_WINDOW_SIZE.load(Ordering::Acquire);
-    (((packed >> 32) as u32) as c_int, (packed as u32) as c_int)
+    WINDOW_STATE.size()
+}
+
+pub fn jfn_wl_window_maximized() -> bool {
+    WINDOW_STATE.maximized.load(Ordering::Acquire)
+}
+
+pub fn jfn_wl_window_fullscreen() -> bool {
+    WINDOW_STATE.fullscreen.load(Ordering::Acquire)
 }
 
 // xdg_toplevel.configure intercept — fires on the wl-proxy per-client thread
@@ -73,13 +97,25 @@ pub fn jfn_wl_window_size() -> (c_int, c_int) {
 // Wayland. Forwards into `wl_ops::on_configure` (which is a no-op until
 // `jfn_wl_core_init` has run; see jfn_wl_on_configure) and posts synthetic
 // OSD-dim pixels through the playback coordinator.
-extern "C" fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_int) {
+extern "C" fn on_configure(
+    physical_w: c_int,
+    physical_h: c_int,
+    fullscreen: c_int,
+    maximized: c_int,
+) {
     if physical_w <= 0 || physical_h <= 0 {
         return;
     }
-    store_window_size(physical_w, physical_h);
+    WINDOW_STATE.set_size(physical_w, physical_h);
+    WINDOW_STATE
+        .maximized
+        .store(maximized != 0, Ordering::Release);
+    WINDOW_STATE
+        .fullscreen
+        .store(fullscreen != 0, Ordering::Release);
+    crate::wl_ffi::sync_maximized_command_state(maximized != 0);
     let scale = if crate::wl_state::try_state().is_some() {
-        let s = load_scale();
+        let s = WINDOW_STATE.scale();
         if s > 0.0 { s } else { 1.0 }
     } else {
         1.0

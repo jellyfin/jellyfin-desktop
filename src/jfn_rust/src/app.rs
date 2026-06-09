@@ -7,7 +7,9 @@ use std::sync::OnceLock;
 
 use clap::Parser;
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
-use jfn_platform_abi::{DisplayBackend, IdleInhibitLevel, Platform, WindowGeometry};
+use jfn_platform_abi::{
+    DisplayBackend, IdleInhibitLevel, LogicalSize, Platform, Scale, WindowGeometry,
+};
 
 use crate::cli;
 
@@ -510,6 +512,11 @@ fn start_playback_coordination() -> bool {
 }
 
 fn shutdown_runtime(manager_thread: std::thread::JoinHandle<()>) {
+    // Persist before the joins below: they can block on a VO-teardown
+    // roundtrip, and a hang there must not cost the window geometry.
+    crate::window_geometry::controller().persist();
+    jfn_config::settings_save();
+
     // Join before any teardown so no posted task outlives the layer free below.
     let _ = manager_thread.join();
 
@@ -531,8 +538,6 @@ fn shutdown_runtime(manager_thread: std::thread::JoinHandle<()>) {
 
     jfn_playback::ingest_driver::jfn_playback_stop_mpv_event_thread();
 
-    save_window_geometry_on_exit();
-    jfn_config::settings_save();
     jfn_config::settings_shutdown_save_worker();
 
     jfn_cef::browsers::jfn_browsers_shutdown();
@@ -593,11 +598,14 @@ fn sync_cef_window_metrics(
         && saved.scale > 0.0
         && (display_hidpi_scale - saved.scale as f64).abs() >= 0.01
     {
-        let new_pw = (saved.logical_width as f64 * display_hidpi_scale).round() as c_int;
-        let new_ph = (saved.logical_height as f64 * display_hidpi_scale).round() as c_int;
+        let physical = LogicalSize {
+            w: saved.logical_width,
+            h: saved.logical_height,
+        }
+        .to_physical(Scale(display_hidpi_scale as f32));
         let clamped = plat().clamp_window_geometry(WindowGeometry {
-            w: new_pw,
-            h: new_ph,
+            w: physical.w,
+            h: physical.h,
             x: -1,
             y: -1,
         });
@@ -722,6 +730,8 @@ pub fn jfn_app_main() -> c_int {
     #[cfg(target_os = "linux")]
     install_linux_platform(opts.platform, opts.platform_paint);
 
+    let _ = crate::window_geometry::controller();
+
     install_signal_handler();
 
     if !init_single_instance() {
@@ -730,18 +740,19 @@ pub fn jfn_app_main() -> c_int {
 
     setup_mpv_environment();
 
-    // mpv's --geometry takes physical pixels (see m_geometry_apply in
-    // third_party/mpv/options/m_option.c).
-    let (boot_geometry, boot_force_position, boot_window_max) = compute_boot_geometry();
+    let boot = crate::window_geometry::controller().boot();
+    plat().apply_boot_geometry(&boot);
 
     let mpv_log_level = mpv_log_level_from_filter();
 
+    // mpv's --geometry takes physical pixels (see m_geometry_apply in
+    // third_party/mpv/options/m_option.c).
     let backend_byte: u8 = plat().display() as u8;
     let raw = init_mpv_handle(MpvInitOptions {
         backend_byte,
-        boot_geometry: &boot_geometry,
-        boot_force_position,
-        boot_window_max,
+        boot_geometry: &boot.mpv_geometry_string(),
+        boot_force_position: boot.force_position(),
+        boot_window_max: boot.maximized,
         hwdec: &opts.hwdec,
         audio_passthrough: &opts.audio_passthrough,
         audio_exclusive: opts.audio_exclusive,
@@ -904,42 +915,6 @@ unsafe fn start_wlproxy() {
 // mpv boot helpers + VO wait loop
 // =====================================================================
 
-const DEFAULT_LOGICAL_WIDTH: i32 = 1600;
-const DEFAULT_LOGICAL_HEIGHT: i32 = 900;
-
-fn compute_boot_geometry() -> (String, bool, bool) {
-    let g = jfn_config::window_geometry();
-    let mut x = g.x;
-    let mut y = g.y;
-    let scale = plat().get_display_scale(x, y);
-    let scale_f = if scale > 0.0 { scale } else { 1.0 };
-    let (mut w, mut h) = if g.logical_width > 0 && g.logical_height > 0 {
-        (
-            (g.logical_width as f32 * scale_f).round() as i32,
-            (g.logical_height as f32 * scale_f).round() as i32,
-        )
-    } else if g.width > 0 && g.height > 0 {
-        (g.width, g.height)
-    } else {
-        (
-            (DEFAULT_LOGICAL_WIDTH as f32 * scale_f).round() as i32,
-            (DEFAULT_LOGICAL_HEIGHT as f32 * scale_f).round() as i32,
-        )
-    };
-    tracing::debug!(target: "Main", "initial scale: {scale_f} -> {w}x{h}");
-    let clamped = plat().clamp_window_geometry(WindowGeometry { w, h, x, y });
-    w = clamped.w;
-    h = clamped.h;
-    x = clamped.x;
-    y = clamped.y;
-    let mut s = format!("{w}x{h}");
-    let force_position = x >= 0 && y >= 0;
-    if force_position {
-        s.push_str(&format!("+{x}+{y}"));
-    }
-    (s, force_position, g.maximized)
-}
-
 const LOG_MPV: u8 = 1;
 const LEVEL_TRACE: u8 = 0;
 const LEVEL_DEBUG: u8 = 1;
@@ -984,14 +959,10 @@ fn current_macos_logical_size() -> Option<(i32, i32)> {
 }
 
 fn boot_window_size() -> Option<(i32, i32)> {
-    #[cfg(target_os = "linux")]
-    if plat().display() == DisplayBackend::Wayland {
-        return jfn_wayland::proxy::jfn_wl_window_size_known()
-            .then(jfn_wayland::proxy::jfn_wl_window_size);
-    }
-    let pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
-    let ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
-    (pw > 0 && ph > 0).then_some((pw, ph))
+    crate::window_geometry::controller()
+        .source()
+        .size()
+        .map(|s| (s.w, s.h))
 }
 
 fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max: &mut bool) {
@@ -1183,48 +1154,6 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
 static PLATFORM_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static CEF_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static COORD_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-fn save_window_geometry_on_exit() {
-    let fs = jfn_playback::ingest_driver::jfn_playback_fullscreen();
-    let max = jfn_playback::ingest_driver::jfn_playback_window_maximized();
-
-    let saved = jfn_config::window_geometry();
-
-    if fs {
-        let mut g = saved;
-        g.maximized = jfn_playback::browser_sink::jfn_playback_was_maximized_before_fullscreen();
-        jfn_config::set_window_geometry(g);
-    } else if max {
-        let mut g = saved;
-        g.maximized = true;
-        jfn_config::set_window_geometry(g);
-    } else {
-        let mut pw = jfn_playback::ingest_driver::jfn_playback_window_pw();
-        let mut ph = jfn_playback::ingest_driver::jfn_playback_window_ph();
-        if pw <= 0 || ph <= 0 {
-            pw = jfn_playback::ingest_driver::jfn_playback_osd_pw();
-            ph = jfn_playback::ingest_driver::jfn_playback_osd_ph();
-        }
-        if pw > 0 && ph > 0 {
-            let scale_raw = plat().get_scale();
-            let win_scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
-            let pos = plat().query_window_position();
-            let wx = pos.map_or(-1, |p| p.x);
-            let wy = pos.map_or(-1, |p| p.y);
-            let g = jfn_config::JfnWindowGeometry {
-                width: pw,
-                height: ph,
-                scale: win_scale,
-                logical_width: (pw as f32 / win_scale).round() as i32,
-                logical_height: (ph as f32 / win_scale).round() as i32,
-                maximized: false,
-                x: wx,
-                y: wy,
-            };
-            jfn_config::set_window_geometry(g);
-        }
-    }
-}
 
 /// Tear down boot-owned resources at process exit (wlproxy,
 /// single-instance listener).

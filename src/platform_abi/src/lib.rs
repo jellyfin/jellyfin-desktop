@@ -16,7 +16,9 @@ use std::sync::OnceLock;
 
 pub mod geometry;
 
-pub use geometry::{SurfaceSize, WindowGeometry, WindowPos};
+pub use geometry::{
+    BootGeometry, LogicalSize, PhysicalSize, Scale, SurfaceSize, WindowGeometry, WindowPos,
+};
 
 // =====================================================================
 // Main-thread park (non-macOS default for run_main_loop/wake_main_loop)
@@ -351,6 +353,11 @@ pub trait Platform: Send + Sync {
     fn get_display_scale(&self, _x: c_int, _y: c_int) -> f32 {
         1.0
     }
+
+    /// Seed the window owner with the restored boot geometry. Backends that
+    /// own their toplevel (Wayland) size it here; mpv-backed backends rely on
+    /// mpv's `--geometry` instead and keep the no-op default.
+    fn apply_boot_geometry(&self, _g: &BootGeometry) {}
 
     /// Current window position, or `None` if it can't be determined.
     fn query_window_position(&self) -> Option<WindowPos> {
