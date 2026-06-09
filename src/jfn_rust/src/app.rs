@@ -99,7 +99,6 @@ fn init_single_instance() -> bool {
     if !ok {
         tracing::warn!(target: "Main", "Single-instance listener failed to start");
     }
-    // Stop on process exit. Held in a Drop guard via static slot below.
     install_listener_guard();
     true
 }
@@ -204,15 +203,12 @@ fn install_mpv_close_binding(raw: *mut jfn_mpv::sys::mpv_handle) {
 }
 
 fn setup_mpv_environment() {
-    // Export MPV_HOME so libmpv reads our packaged config dir.
     let mpv_home = jfn_paths::mpv_home();
     unsafe {
         std::env::set_var("MPV_HOME", &mpv_home);
     }
     let _ = mpv_home;
 
-    // Linux/Wayland: start the wl-proxy that intercepts xdg_toplevel
-    // configure + fractional-scale events for the mpv subwindow.
     #[cfg(target_os = "linux")]
     {
         if plat().display() == DisplayBackend::Wayland {
@@ -238,7 +234,6 @@ struct StartupOptions {
 }
 
 fn resolve_startup_options(cli: cli::Cli) -> StartupOptions {
-    // Seed CLI defaults from saved settings.
     let saved_hwdec = jfn_config::hwdec();
     let saved_pass = jfn_config::audio_passthrough();
     let saved_chans = jfn_config::audio_channels();
@@ -287,12 +282,10 @@ fn resolve_startup_options(cli: cli::Cli) -> StartupOptions {
         remote_debugging_port = p;
     }
 
-    // Validate hwdec.
     if !jfn_mpv::is_valid_hwdec(&hwdec) {
         hwdec = mpv_hwdec_default;
     }
 
-    // Normalize audio_passthrough (dts-hd subsumes dts).
     if !audio_passthrough.is_empty() {
         audio_passthrough = normalize_passthrough(&audio_passthrough);
     }
@@ -422,8 +415,6 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
 
     #[cfg(target_os = "macos")]
     {
-        // Drop the boot-time wakeup callback now that the VO is ready —
-        // the regular event-loop thread set up later does its own drain.
         jfn_mpv::api::jfn_mpv_clear_wakeup_callback();
     }
 
@@ -531,8 +522,7 @@ fn start_playback_coordination() -> bool {
 }
 
 fn shutdown_runtime(manager_thread: std::thread::JoinHandle<()>) {
-    // Manager woke us, so its orchestration loop has returned. Join it before
-    // any teardown so no posted task outlives the layer free below.
+    // Join before any teardown so no posted task outlives the layer free below.
     let _ = manager_thread.join();
 
     // Sever the wlproxy→host callbacks before CEF teardown. A CEF paint thread
@@ -608,8 +598,6 @@ fn sync_cef_window_metrics(
     tracing::info!(target: "Main",
         "[FLOW] display-hidpi-scale={display_hidpi_scale} fullscreen={fs_flag} display-hz={hz}");
 
-    // Scale-correct the window size when live display scale differs from
-    // saved. Skip while the compositor has the surface locked.
     let saved = jfn_config::window_geometry();
     let locked = fs_flag != 0 || jfn_playback::ingest_driver::jfn_playback_window_maximized();
     if !locked
@@ -619,7 +607,6 @@ fn sync_cef_window_metrics(
     {
         let new_pw = (saved.logical_width as f64 * display_hidpi_scale).round() as c_int;
         let new_ph = (saved.logical_height as f64 * display_hidpi_scale).round() as c_int;
-        // Only the size matters here; x/y are unused on the return.
         let clamped = plat().clamp_window_geometry(WindowGeometry {
             w: new_pw,
             h: new_ph,
@@ -659,8 +646,8 @@ fn init_main_browser(
     hz: f64,
     use_shared_textures: bool,
 ) -> (std::thread::JoinHandle<()>, *mut jfn_cef::JfnCefLayer) {
-    // Theme color init — must exist before main browser create (the
-    // pre-loaded page fires its initial theme-color IPC at DOMContentLoaded).
+    // Must run before main browser create: the pre-loaded page fires its
+    // initial theme-color IPC at DOMContentLoaded.
     let titlebar_themed = jfn_config::titlebar_theme_color();
     unsafe {
         jfn_color::theme::jfn_theme_color_init(
@@ -675,8 +662,6 @@ fn init_main_browser(
     jfn_color::theme::jfn_theme_color_set_video_bg(video_bg_get());
 
     jfn_cef::browsers::jfn_browsers_init(lw, lh, mw, mh, hz, use_shared_textures);
-    // Headless control-plane thread. Owns shutdown orchestration (close/drain
-    // off the main thread + TID_UI) and is the seam for future routed work.
     let manager_thread = crate::manager::jfn_manager_start();
     jfn_playback::jfn_shutdown_set_handler(Some(h_shutdown_wake_manager));
 
@@ -703,11 +688,9 @@ fn init_main_browser(
     (manager_thread, main_layer)
 }
 
-/// Subprocess dispatch + early-boot (settings/CLI/logging).
 pub fn jfn_app_main() -> c_int {
-    // Windows/macOS use a fixed display backend so the Platform must be
-    // installed before CefExecuteProcess (subprocesses bail out of the
-    // browser-process flow but may still query the platform).
+    // Platform must be installed before CefExecuteProcess: subprocesses bail
+    // out of the browser-process flow but may still query the platform.
     #[cfg(target_os = "windows")]
     {
         let p = jfn_windows::make_windows_platform();
@@ -721,8 +704,6 @@ pub fn jfn_app_main() -> c_int {
         jfn_platform_abi::install(p);
     }
 
-    // 1. CEF subprocess dispatch: returns >= 0 in renderer/GPU/utility
-    //    subprocesses (subprocess exit code), -1 in the browser process.
     let rc = jfn_cef::ffi::jfn_cef_start();
     if rc >= 0 {
         return rc;
@@ -742,48 +723,31 @@ pub fn jfn_app_main() -> c_int {
         jfn_paths::set_cache_dir_override(path.into());
     }
 
-    // 3. Settings init + load.
     let settings_path = jfn_paths::config_dir().join("settings.json");
     jfn_config::settings_init(&settings_path);
     jfn_config::settings_load();
 
-    // 4-6. Resolve settings-backed runtime options and CLI overrides.
     let opts = resolve_startup_options(cli);
 
-    // 7. Resolve logging defaults and initialise tracing output.
     init_logging(opts.log_file, &opts.log_level);
 
-    // 9. Linux: pick display backend, populate g_platform, run early_init,
-    //    register the platform-ops vtable with the Rust-side jfn-cef.
-    //    Windows/macOS: g_platform was populated by main() before jfn_app_main
-    //    returned (we ran before CefExecuteProcess on those platforms).
     #[cfg(target_os = "linux")]
     install_linux_platform(opts.platform, opts.platform_paint);
 
-    // 10. Install signal handler (Unix) / Windows ConsoleCtrl handler.
     install_signal_handler();
 
-    // 11. Single-instance check.
     if !init_single_instance() {
         return 0;
     }
 
-    // 12-13. Configure mpv env and Linux/Wayland proxy before mpv init.
     setup_mpv_environment();
 
-    // 14. Compute boot geometry from saved window geometry. mpv's
-    //     --geometry takes physical pixels (see m_geometry_apply in
-    //     third_party/mpv/options/m_option.c). The post-CEF resize block
-    //     in run_with_cef corrects scale drift once display-hidpi-scale
-    //     is known.
+    // mpv's --geometry takes physical pixels (see m_geometry_apply in
+    // third_party/mpv/options/m_option.c).
     let (boot_geometry, boot_force_position, boot_window_max) = compute_boot_geometry();
 
-    // 15. Pick libmpv log subscription level matching what jfn-logging
-    //     would actually surface for LOG_MPV. mpv's "v" maps to Debug;
-    //     "debug" maps to Trace. Cap at "debug".
     let mpv_log_level = mpv_log_level_from_filter();
 
-    // 16. Initialise the mpv handle via the Rust boot path.
     let backend_byte: u8 = plat().display() as u8;
     let raw = init_mpv_handle(MpvInitOptions {
         backend_byte,
@@ -801,15 +765,13 @@ pub fn jfn_app_main() -> c_int {
         return 1;
     }
 
-    // 17. Register Rust ingest-layer property observations.
     if !jfn_playback::ingest_driver::jfn_playback_observe_mpv_properties(backend_byte) {
         tracing::error!(target: "Main", "observe_mpv_properties failed");
         return 1;
     }
 
-    // 18. Capture user's mpv.conf bg, force startup color.
-    //     force-window=yes (not "immediate") defers VO creation so the
-    //     user's color never flashes before the override.
+    // force-window=yes (not "immediate") defers VO creation so the user's
+    // mpv.conf color never flashes before this override is applied.
     let user_bg = jfn_mpv::api::jfn_mpv_get_background_color();
     video_bg_set(user_bg);
     {
@@ -819,33 +781,18 @@ pub fn jfn_app_main() -> c_int {
     let startup_bg = cs("#101010");
     unsafe { jfn_mpv::api::jfn_mpv_set_background_color_hex(startup_bg.as_ptr()) };
 
-    // 19. Log mpv-version + ffmpeg-version.
     log_mpv_versions();
 
-    // 20. Re-bind CLOSE_WIN -> quit. input-default-bindings=no removes
-    //     all builtin bindings including this one; the WM close button
-    //     needs it back.
+    // input-default-bindings=no drops the builtin CLOSE_WIN -> quit binding;
+    // the WM close button needs it back.
     install_mpv_close_binding(raw);
 
-    // 21. Wait for the VO window. Event-driven: drain mpv's queued events
-    //     into the ingest layer, re-check the readiness gate (OSD pixels
-    //     non-zero, maximize state matches request, Wayland scale known),
-    //     and block until the next wakeup if not ready.
-    //
-    //     macOS pumps NSEvents + CFRunLoop sources between drains, because
-    //     the main thread must service AppKit while waiting. A mpv wakeup
-    //     callback dispatches a no-op block onto the main queue so the
-    //     CFRunLoop returns when libmpv has new events. Linux/Windows can
-    //     simply block in `mpv_wait_event(-1.0)`; the Wayland scale-known
-    //     path posts `mpv_wakeup` from the wl-proxy thread to unblock.
     let Some((mw, mh)) = wait_for_vo_window() else {
         return 0;
     };
 
     store_vo_size(mw, mh);
 
-    // 22. run_with_cef body + post-run mpv terminate. From here on
-    //     jfn_app_main fully owns the rest of the process lifetime.
     let boot_args = BootArgs {
         ozone_platform: opts.ozone_platform,
         disable_gpu_compositing: opts.disable_gpu_compositing,
@@ -856,10 +803,8 @@ pub fn jfn_app_main() -> c_int {
         return rc;
     }
 
-    // 23. mpv terminate.
     terminate_mpv_handle();
 
-    // 24. Boot-resource teardown + platform post-window cleanup.
     jfn_app_teardown();
     plat().post_window_cleanup();
 
@@ -1051,8 +996,6 @@ fn current_macos_logical_size() -> Option<(i32, i32)> {
     }
 }
 
-/// Boot-time window size: the compositor (via the proxy) on Wayland, mpv's OSD
-/// dims elsewhere.
 fn boot_window_size() -> Option<(i32, i32)> {
     #[cfg(target_os = "linux")]
     if plat().display() == DisplayBackend::Wayland {
@@ -1084,10 +1027,6 @@ fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max
     }
 }
 
-/// Boot-time VO readiness gate: window size known, maximize state matches
-/// request (if requested), Wayland scale known (if applicable).
-/// Re-reads `boot_window_size()` rather than the caller's `mw` so a size that
-/// landed before the loop entered is still observed.
 fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool, wait_for_scale: bool) -> bool {
     if let Some((w, h)) = boot_window_size() {
         *mw = w;
@@ -1222,10 +1161,8 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         return 1;
     }
 
-    // 6-7. Read display-hidpi-scale/fullscreen state and sync CEF window metrics.
     let metrics = sync_cef_window_metrics(mpv_raw, mw, mh);
 
-    // 8-9. Theme setup, browser registry, manager, main browser, overlay/web init.
     let (manager_thread, main_layer) = init_main_browser(
         metrics.lw,
         metrics.lh,
@@ -1235,7 +1172,6 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         use_shared_textures,
     );
 
-    // 10-13. Playback coordinator, media sink, handlers, and mpv event thread.
     if !start_playback_coordination() {
         return 1;
     }
@@ -1259,7 +1195,6 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
     plat().run_main_loop();
     tracing::info!(target: "Main", "[FLOW] run_main_loop returned — browsers drained, running teardown");
 
-    // 16-21. Shutdown drain and runtime teardown.
     shutdown_runtime(manager_thread);
 
     0

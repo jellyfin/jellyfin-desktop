@@ -1,27 +1,19 @@
-//! Pure model of the Wayland surface tree: layer stacking order — mutated only
-//! through [`reduce`], which returns [`Effect`]s for the IO layer ([`sink`]) to
-//! apply.
+//! Pure model of the Wayland surface tree's layer stacking order.
 //!
-//! Determinism by construction: every transition that changes on-screen state
-//! emits the explicit effect that makes it land (notably a [`Effect::CommitParent`]
-//! after any stacking change — Wayland subsurface placement is parent-double-
-//! buffered, so without this the z-order silently never applies). The reducer is
-//! the single writer; it holds no Wayland handles and no threads, so the whole
-//! surface-tree logic is unit-testable headlessly by asserting the effect stream.
-//!
-//! The context menu lives in [`crate::popup`] (a real `xdg_popup`), not here.
+//! Wayland subsurface placement is parent-double-buffered: every stacking
+//! change must be followed by a [`Effect::CommitParent`] or the new z-order
+//! silently never applies.
 
 pub mod sink;
 
 use crate::wl_state::WlState;
 use sink::SceneSink;
 
-/// Opaque layer identity. In production this is a `*mut PlatformSurface`
-/// address; the reducer only ever compares ids.
+/// Opaque layer identity; in production a `*mut PlatformSurface` address, only
+/// ever compared, never dereferenced by the reducer.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct LayerId(pub usize);
 
-/// What a layer's subsurface stacks directly above.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Above {
     Parent,
@@ -51,9 +43,6 @@ impl Scene {
         self.order.contains(&id)
     }
 
-    /// Re-emit the full bottom-to-top `place_above` chain plus the single
-    /// trailing `CommitParent` that makes it land. No-op when the order has not
-    /// changed since it was last applied.
     fn restack_effects(&mut self) -> Vec<Effect> {
         if self.order == self.applied {
             return Vec::new();
@@ -89,7 +78,6 @@ pub fn reduce(scene: &mut Scene, ev: SceneEvent) -> Vec<Effect> {
             scene.restack_effects()
         }
         SceneEvent::Restack(order) => {
-            // Keep only currently-known layers, preserving the requested order.
             let known: Vec<LayerId> = order.into_iter().filter(|id| scene.has(*id)).collect();
             scene.order = known;
             scene.restack_effects()
@@ -97,12 +85,6 @@ pub fn reduce(scene: &mut Scene, ev: SceneEvent) -> Vec<Effect> {
     }
 }
 
-// =====================================================================
-// IO driver
-// =====================================================================
-
-/// Reduce `ev` and apply its effects via the real Wayland sink. Caller holds
-/// the wl_state lock. The single writer for the surface tree.
 pub(crate) fn dispatch(st: &mut WlState, ev: SceneEvent) {
     let effects = reduce(&mut st.scene, ev);
     {
@@ -162,8 +144,8 @@ mod tests {
         );
     }
 
-    /// Regression lock: any event that changes the order MUST end in exactly one
-    /// CommitParent — this is the invariant whose absence made About invisible.
+    /// Any event that changes the order must end in exactly one CommitParent,
+    /// else the new z-order never applies (parent-double-buffered placement).
     #[test]
     fn every_order_change_ends_in_single_commit_parent() {
         let mut s = Scene::default();

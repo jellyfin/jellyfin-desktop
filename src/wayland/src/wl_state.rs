@@ -179,12 +179,7 @@ pub(crate) struct WlState {
     /// gpu_paint surface.
     pub use_gpu_paint: bool,
 
-    /// Single source of truth for the surface tree's layer stacking order.
-    /// Mutated only via `crate::scene::reduce`; effects applied by
-    /// `crate::scene::sink`.
     pub scene: crate::scene::Scene,
-    /// Context-menu state (fonts, live `xdg_popup` surface, selection callback).
-    /// Persists across dispatches. See [`crate::popup`].
     pub menu_io: crate::popup::MenuIo,
 }
 

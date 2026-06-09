@@ -1,9 +1,6 @@
-//! `wl_display_connect` interposer.
-//!
 //! Must live in the executable: ELF symbol preemption requires the definition
 //! in the dynamic symbol table (`-Wl,--export-dynamic`) to shadow libwayland's
-//! for libmpv. Calls the real symbol via `dlsym(RTLD_NEXT, …)` and records the
-//! returned `wl_display*` so the host can adopt mpv's connection.
+//! for libmpv.
 
 #![cfg(target_os = "linux")]
 

@@ -236,8 +236,7 @@ pub struct JfnContextMenuRequest {
     pub x: c_int,
     pub y: c_int,
     pub items: Vec<JfnMenuItem>,
-    /// Fires on the backend's thread with the chosen item id, or `-1` when
-    /// the menu is dismissed.
+    /// Called with the chosen item id, or `-1` when the menu is dismissed.
     pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
 }
 

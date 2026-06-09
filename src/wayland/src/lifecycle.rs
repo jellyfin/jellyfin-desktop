@@ -40,9 +40,6 @@ fn mpv_prop_intptr(name: &CStr) -> Option<usize> {
     }
 }
 
-/// The `wl_display*` captured by the binary's `wl_display_connect` interposer
-/// for mpv's VO connection, identified by the proxy's same-process accept
-/// index. `None` if interposition hasn't recorded it (timing / not active).
 fn vo_captured_display() -> Option<*mut c_void> {
     let idx = jfn_wlproxy::jfn_wlproxy_vo_connection_index();
     let count = jfn_linux_util::wl_display_registry::connect_count();
@@ -59,9 +56,6 @@ fn vo_captured_display() -> Option<*mut c_void> {
 // =====================================================================
 
 pub fn jfn_wl_lifecycle_init() -> bool {
-    // The host adopts mpv's Wayland connection. The interposer capture is
-    // authoritative; the forked-mpv `wayland-display` property is read only as
-    // a cross-check and fallback.
     let captured = vo_captured_display();
     let prop = mpv_prop_intptr(c"wayland-display").map(|p| p as *mut c_void);
     tracing::info!(

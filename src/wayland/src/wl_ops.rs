@@ -103,9 +103,8 @@ pub(crate) fn free_surface(ptr: *mut PlatformSurface) {
         // Drop from stack if still present.
         st.stack.retain(|p| *p != ptr);
 
-        // Update the scene before tearing down wl objects: this dismisses the
-        // menu if it was anchored here (while this layer's surface is still
-        // alive) and re-stacks the survivors.
+        // Update the scene before tearing down wl objects: dismissing a menu
+        // anchored here requires this layer's surface to still be alive.
         crate::scene::dispatch(
             &mut st,
             crate::scene::SceneEvent::LayerRemoved(crate::scene::LayerId(ptr as usize)),
@@ -141,9 +140,6 @@ pub(crate) fn restack(ordered: &[*mut PlatformSurface]) {
         .filter(|p| !p.is_null())
         .map(|p| crate::scene::LayerId(*p as usize))
         .collect();
-    // The reducer emits the place_above chain AND the trailing CommitParent
-    // that makes it land — without that commit a layer added while mpv is idle
-    // never gets its z-order.
     crate::scene::dispatch(&mut st, crate::scene::SceneEvent::Restack(order));
 }
 

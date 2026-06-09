@@ -1,11 +1,4 @@
 //! KDE/KWin per-window titlebar color support.
-//!
-//! Writes the on-disk color-scheme files under
-//! `$XDG_RUNTIME_DIR/jellyfin-desktop/` and forwards their path to the
-//! wlproxy, which owns the `org_kde_kwin_server_decoration_palette` object on
-//! the real (proxy-owned) toplevel. KWin reads the file referenced by the most
-//! recent `set_palette` request and applies the colors to the server-side
-//! decoration.
 
 use parking_lot::Mutex;
 use std::ffi::{CString, c_char};
@@ -56,8 +49,6 @@ fn make_colors_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
-/// Prepare the color-scheme directory. Returns `false` if `$XDG_RUNTIME_DIR`
-/// is unusable.
 pub fn jfn_wl_kde_palette_init() -> bool {
     if STATE.lock().is_some() {
         return true;
@@ -72,11 +63,6 @@ pub fn jfn_wl_kde_palette_init() -> bool {
     true
 }
 
-/// Set the current titlebar color. Writes a scheme file (idempotent — no work
-/// if the color hasn't changed) and forwards its path to the proxy's palette.
-/// `hex` is `Color::hex` — a 7-byte NUL-terminated `"#RRGGBB"` used only for
-/// the filename.
-///
 /// # Safety
 /// `hex` must be a valid NUL-terminated UTF-8 pointer.
 pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_char) {

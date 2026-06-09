@@ -4,8 +4,6 @@ use std::sync::Arc;
 
 use crate::client::Inner;
 
-// ----- LifeSpanHandler -----------------------------------------------------
-
 wrap_life_span_handler! {
     pub struct JfnLifeSpanHandlerBuilder {
         inner: Arc<Inner>,

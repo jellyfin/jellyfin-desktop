@@ -12,8 +12,6 @@ type CursorHandle = *mut u8;
 #[cfg(target_os = "windows")]
 type CursorHandle = sys::HCURSOR;
 
-// ----- DisplayHandler ------------------------------------------------------
-
 wrap_display_handler! {
     pub struct JfnDisplayHandlerBuilder {
         inner: Arc<Inner>,

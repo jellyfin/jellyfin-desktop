@@ -1,29 +1,10 @@
 //! Context menu as a real `xdg_popup`.
 //!
-//! The host renders the menu (via [`jfn_menu`]) into a persistent `wl_surface`
-//! and registers it with the proxy; the proxy re-roles that surface as an
-//! `xdg_popup` of the root toplevel, grabs it, and drives its lifecycle. The
-//! compositor then constrains the menu on-screen and delivers input to it even
-//! where it overhangs the window edge — the thing the old subsurface menu (with
-//! its empty input region + coordinate matching on the main surface) could not
-//! do.
-//!
-//! Split of ownership:
-//!   * host (here): the menu surface, its buffer, [`jfn_menu`] layout/paint/FSM,
-//!     the selection callback, and routing real seat events into the FSM.
-//!   * proxy: positioner, xdg_surface, xdg_popup, grab, and the ready/popup_done
-//!     lifecycle events bridged back via FFI callbacks.
-//!
 //! The menu `wl_surface` is **persistent** — created once and re-roled for each
 //! menu. Destroying it would race the proxy's teardown of its role objects
 //! across the two connection hops (a `wl_surface`-destroyed-before-its-role
-//! protocol error); reusing it sidesteps that entirely. Each show clears its
-//! buffer first so the surface is role-free and buffer-free when the proxy
-//! re-roles it.
-//!
-//! All state lives in [`MenuIo`] inside `WlState`, so every entry point (the
-//! CEF UI thread via `context_menu_show`, the input thread, and the proxy
-//! callback thread) serialises on the single `WlState` lock.
+//! protocol error); reusing it sidesteps that. Each show clears its buffer
+//! first so the surface is role-free and buffer-free when the proxy re-roles it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -38,11 +19,8 @@ use jfn_menu::render::{self, Fonts, Layout};
 
 use crate::wl_state::{WlState, create_shm_buffer, lock, try_state};
 
-/// Cheap gate so the input thread can skip menu routing without locking.
 static MENU_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// Persistent menu IO, owned by `WlState`. Holds the shared font cache, the
-/// persistent menu surface, and the live menu model (when shown).
 #[derive(Default)]
 pub struct MenuIo {
     fonts: Option<Fonts>,
@@ -56,17 +34,12 @@ struct Menu {
     items: Vec<MenuItem>,
     layout: Layout,
     fsm: FsmState,
-    /// Physical (rendered) and logical (compositor) size.
     pw: i32,
     ph: i32,
     scale: f32,
     cb: Option<Box<dyn FnOnce(i32) + Send>>,
     mapped: bool,
 }
-
-// =====================================================================
-// Paint helpers (BGRA premultiplied for wl_shm Argb8888)
-// =====================================================================
 
 fn to_bgra(rgba: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; rgba.len()];
@@ -99,17 +72,9 @@ fn paint_bgra(
     Some(to_bgra(pm.data()))
 }
 
-// =====================================================================
-// Show / lifecycle
-// =====================================================================
-
-/// Build + show a context menu anchored at logical (x, y) in the window. The
-/// (persistent) menu surface is cleared and registered now; the proxy re-roles
-/// it as a popup and the buffer is attached once [`on_ready`] fires.
 pub fn show(items: Vec<MenuItem>, x: i32, y: i32, cb: Box<dyn FnOnce(i32) + Send>) {
     let mut st = lock();
 
-    // Replace any in-flight menu deterministically (no selection reported).
     if st.menu_io.menu.is_some() {
         clear_menu_locked(&mut st);
         jfn_wlproxy::jfn_wlproxy_hide_popup();
@@ -125,9 +90,8 @@ pub fn show(items: Vec<MenuItem>, x: i32, y: i32, cb: Box<dyn FnOnce(i32) + Send
     let lw = logical_dim(pw, scale);
     let lh = logical_dim(ph, scale);
 
-    // Create the persistent surface on first use; otherwise reuse it. Clear any
-    // prior buffer so it is role-free AND buffer-free before the proxy re-roles
-    // it (xdg forbids a buffer committed before the first configure).
+    // Clear any prior buffer so the surface is buffer-free before the proxy
+    // re-roles it (xdg forbids a buffer committed before the first configure).
     let surface_id = ensure_surface_locked(&mut st);
 
     st.menu_io.menu = Some(Menu {
@@ -143,12 +107,10 @@ pub fn show(items: Vec<MenuItem>, x: i32, y: i32, cb: Box<dyn FnOnce(i32) + Send
     MENU_ACTIVE.store(true, Ordering::Release);
     drop(st);
 
-    // Hand the surface to the proxy and ask it to create the popup.
     jfn_wlproxy::jfn_wlproxy_set_popup_surface(surface_id);
     jfn_wlproxy::jfn_wlproxy_show_popup(x, y, lw, lh);
 }
 
-/// Create (once) and clear the persistent menu surface; returns its protocol id.
 fn ensure_surface_locked(st: &mut WlState) -> u32 {
     if st.menu_io.surface.is_none() {
         let surface = st.compositor.create_surface(&st.qh, ());
@@ -159,7 +121,6 @@ fn ensure_surface_locked(st: &mut WlState) -> u32 {
         st.menu_io.surface = Some(surface);
         st.menu_io.viewport = viewport;
     }
-    // Detach any prior buffer so re-roling sees a buffer-free surface.
     if let Some(old) = st.menu_io.buffer.take() {
         old.destroy();
     }
@@ -175,8 +136,6 @@ fn ensure_surface_locked(st: &mut WlState) -> u32 {
         .unwrap_or(0)
 }
 
-/// Proxy callback: the menu's xdg_surface was configured. Attach the rendered
-/// buffer and commit so the popup maps. Runs on the proxy client thread.
 pub(crate) fn on_ready() {
     let Some(state) = try_state() else { return };
     let mut st = state.lock();
@@ -190,9 +149,6 @@ pub(crate) fn on_ready() {
     }
 }
 
-/// Proxy callback: the compositor dismissed the popup (click-outside / Escape).
-/// Report no selection and drop the menu model. The proxy has already torn down
-/// its role objects. Runs on the proxy client thread.
 pub(crate) fn on_done() {
     let Some(state) = try_state() else { return };
     let mut st = state.lock();
@@ -200,16 +156,10 @@ pub(crate) fn on_done() {
     clear_menu_locked(&mut st);
 }
 
-// =====================================================================
-// Input routing (called from input.rs while a menu is active)
-// =====================================================================
-
-/// Cheap active check for the input thread's fast path.
 pub fn active() -> bool {
     MENU_ACTIVE.load(Ordering::Acquire)
 }
 
-/// True if `surface_id` is the menu surface's protocol id.
 pub fn surface_matches(surface_id: u32) -> bool {
     let Some(state) = try_state() else {
         return false;
@@ -223,7 +173,6 @@ pub fn surface_matches(surface_id: u32) -> bool {
             .is_some_and(|s| s.id().protocol_id() == surface_id)
 }
 
-/// Pointer motion in menu-surface-local logical coords.
 pub fn handle_motion(local_x: i32, local_y: i32) {
     let mut st = lock();
     let Some(menu) = st.menu_io.menu.as_ref() else {
@@ -236,7 +185,6 @@ pub fn handle_motion(local_x: i32, local_y: i32) {
     step_locked(&mut st, MenuEvent::Motion { x: px, y: py });
 }
 
-/// Pointer button in menu-surface-local logical coords.
 pub fn handle_button(local_x: i32, local_y: i32, pressed: bool) {
     if !pressed {
         return;
@@ -252,7 +200,6 @@ pub fn handle_button(local_x: i32, local_y: i32, pressed: bool) {
     step_locked(&mut st, MenuEvent::Press { x: px, y: py });
 }
 
-/// Keyboard key (xkb keysym) while the menu is focused.
 pub fn handle_key(keysym: u32, pressed: bool) {
     if !pressed {
         return;
@@ -263,10 +210,6 @@ pub fn handle_key(keysym: u32, pressed: bool) {
     }
     step_locked(&mut st, MenuEvent::Key(keysym));
 }
-
-// =====================================================================
-// Internals (all run under the WlState lock)
-// =====================================================================
 
 fn step_locked(st: &mut WlState, ev: MenuEvent) {
     let Some(menu) = st.menu_io.menu.as_mut() else {
@@ -290,8 +233,6 @@ fn step_locked(st: &mut WlState, ev: MenuEvent) {
     }
 }
 
-/// Paint the current menu at its active row and attach the buffer to the
-/// persistent surface (maps it on first call, updates highlight after).
 fn paint_and_attach_locked(st: &mut WlState) {
     let Some(menu) = st.menu_io.menu.as_ref() else {
         return;
@@ -333,8 +274,6 @@ fn fire_locked(st: &mut WlState, id: i32) {
     }
 }
 
-/// Drop the per-show menu model. The persistent surface is kept (cleared on the
-/// next show); only the proxy tears down the popup's role objects.
 fn clear_menu_locked(st: &mut WlState) {
     MENU_ACTIVE.store(false, Ordering::Release);
     st.menu_io.menu = None;

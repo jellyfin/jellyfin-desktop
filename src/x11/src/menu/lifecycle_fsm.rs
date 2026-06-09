@@ -1,10 +1,3 @@
-//! Pure state machine for the context menu's open sequence.
-//!
-//! [`LifeEffect::Fire`] is emitted on exactly one transition into
-//! [`Phase::Closed`]. This covers only the exit paths inside `run_menu`; the
-//! pre-dispatch failures in `show()` happen before any [`Life`] exists and fire
-//! their callback directly.
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Phase {
     Idle,
@@ -21,7 +14,6 @@ pub enum LifeEvent {
     BuildFail,
     GrabOk,
     GrabFail,
-    /// Result from the interaction loop: command id, or `-1` to dismiss.
     Result(i32),
 }
 

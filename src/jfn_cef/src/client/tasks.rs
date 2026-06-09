@@ -46,8 +46,8 @@ wrap_task! {
     }
     impl Task {
         fn execute(&self) {
-            // CefShutdown drains pending tasks; creating a browser here would
-            // race with the shutdown teardown and cause a hang.
+            // Creating a browser during shutdown races CefShutdown teardown
+            // and hangs.
             if jfn_shutting_down() {
                 return;
             }
@@ -88,11 +88,6 @@ wrap_task! {
     }
     impl Task {
         fn execute(&self) {
-            // Single snapshot: take Arc<Inner> + force-close every layer
-            // under one INSTANCE lock, on TID_UI. Holding the lock across
-            // close_browser_force is safe — that call only schedules close;
-            // OnBeforeClose → jfn_browsers_remove fires later on TID_UI
-            // after this task unwinds, so no reentrant INSTANCE.lock().
             let inners = crate::browsers::jfn_browsers_close_and_snapshot();
             if let Some(tx) = self.tx.lock().take() {
                 let _ = tx.send(inners);
@@ -101,11 +96,6 @@ wrap_task! {
     }
 }
 
-/// Post a single-snapshot close-and-collect onto TID_UI. The posted task
-/// closes every layer's browser and ships the corresponding `Arc<Inner>`
-/// list back via `tx`, so the caller can wait on exactly the set that was
-/// closed (no second-snapshot race). Asserts the post: this site is
-/// load-bearing for shutdown — silent post loss = process hang.
 pub(crate) fn jfn_cef_post_close_and_collect(tx: SyncSender<Vec<Arc<Inner>>>) {
     let mut task = CloseAndCollectTask::new(Arc::new(Mutex::new(Some(tx))));
     assert!(
@@ -125,9 +115,6 @@ wrap_task! {
     }
 }
 
-/// Post a task onto TID_UI that calls `WasHidden(hidden)` on every live
-/// layer's BrowserHost. Caller-agnostic — any thread can request a
-/// visibility change; CEF requires the call on TID_UI.
 pub(crate) fn jfn_cef_post_set_hidden_all(hidden: bool) {
     let mut task = SetHiddenAllTask::new(hidden);
     let _ = post_task(ThreadId::UI, Some(&mut task));

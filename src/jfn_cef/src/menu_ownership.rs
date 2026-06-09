@@ -1,6 +1,3 @@
-//! Single-owner arbitration for the context menu: at most one session owns the
-//! menu, and a superseded session's late result resolves to a no-op.
-
 use crate::sink_routing::Handle;
 use slotmap::SlotMap;
 

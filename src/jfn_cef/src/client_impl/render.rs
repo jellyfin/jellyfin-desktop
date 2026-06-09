@@ -5,8 +5,6 @@ use std::sync::Arc;
 use crate::client::Inner;
 use crate::platform_ops;
 
-// ----- RenderHandler -------------------------------------------------------
-
 wrap_render_handler! {
     pub struct JfnRenderHandlerBuilder {
         inner: Arc<Inner>,

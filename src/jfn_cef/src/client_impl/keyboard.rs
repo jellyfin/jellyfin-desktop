@@ -35,8 +35,6 @@ fn is_paste_shortcut(e: &KeyEvent) -> bool {
     e.windows_key_code == b'V' as i32
 }
 
-// ----- KeyboardHandler -----------------------------------------------------
-
 wrap_keyboard_handler! {
     pub struct JfnKeyboardHandlerBuilder {
         inner: Arc<Inner>,

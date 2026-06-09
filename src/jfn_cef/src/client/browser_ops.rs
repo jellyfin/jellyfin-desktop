@@ -19,9 +19,6 @@ impl Inner {
         self.browser_clone().and_then(|b| b.host())
     }
 
-    /// Force-close this layer's CefBrowser. No-op when no browser is alive.
-    /// Operates only on `Arc<Inner>` so callers don't need to keep a raw
-    /// `*mut JfnCefLayer` ptr live across this call.
     pub(crate) fn close_browser_force(&self) {
         if let Some(host) = self.host() {
             host.close_browser(1);
@@ -93,9 +90,6 @@ impl Inner {
     }
 
     pub(super) fn cef_create_browser(self: &Arc<Self>, url: &str) {
-        // WindowInfo: windowless OSR. shared_texture_enabled comes from the
-        // process-wide flag set by Browsers ctor; external_begin_frame is on
-        // macOS only (CVDisplayLink drives BeginFrames there).
         let shared = PAINT_MODE
             .get_or_init(|| PaintMode::new(false))
             .shared_textures();

@@ -1,7 +1,3 @@
-//! Native X11 right-click context menu: a standalone override-redirect ARGB
-//! window driven by a grabbed pointer/keyboard loop on a dedicated thread with
-//! its own X11 connection. Selection or dismiss flows back via `on_selected`.
-
 mod lifecycle_fsm;
 
 use std::sync::OnceLock;
@@ -25,7 +21,7 @@ use lifecycle_fsm::{Life, LifeEffect, LifeEvent};
 pub use jfn_menu::MenuItem;
 
 pub struct MenuRequest {
-    /// CEF view (logical) coordinates of the click.
+    /// CEF view (logical, unscaled) coordinates of the click.
     pub x: i32,
     pub y: i32,
     pub items: Vec<MenuItem>,
