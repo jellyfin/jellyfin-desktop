@@ -220,9 +220,9 @@ pub struct JfnPopupRequest {
     pub options: Vec<String>,
     pub initial_highlight: c_int,
     /// Fires on the platform backend's thread when the user picks an
-    /// option (or `-1` for cancel). Native-menu backends (macOS) call
-    /// it; compositor backends (Wayland / X11 / Windows) drop the
-    /// closure without firing — CEF dispatches selection itself.
+    /// option (or `-1` for cancel). Native-menu backends (macOS / Wayland)
+    /// call it; compositor-rendered backends (X11 / Windows) drop the closure
+    /// without firing — CEF dispatches selection itself.
     pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
 }
 

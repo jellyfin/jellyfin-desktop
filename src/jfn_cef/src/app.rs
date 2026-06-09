@@ -254,41 +254,35 @@ wrap_render_process_handler! {
                     1
                 }
                 "getPopupOptions" => {
-                    let (options, selected) = collect_popup_options(frame);
+                    let popup = collect_popup_options(frame);
                     let Some(mut reply) = process_message_create(Some(&CefString::from("popupOptions")))
                     else { return 1 };
                     if let Some(reply_args) = reply.argument_list() {
                         if let Some(mut list) = list_value_create() {
-                            for (i, opt) in options.iter().enumerate() {
+                            for (i, opt) in popup.options.iter().enumerate() {
                                 list.set_string(i, Some(&CefString::from(opt.as_str())));
                             }
                             reply_args.set_list(0, Some(&mut list));
                         }
-                        reply_args.set_int(1, selected);
+                        reply_args.set_int(1, popup.selected);
+                        if let Some(mut sel_list) = list_value_create() {
+                            for (i, idx) in popup.selectable.iter().enumerate() {
+                                sel_list.set_int(i, *idx);
+                            }
+                            reply_args.set_list(2, Some(&mut sel_list));
+                        }
+                        if let Some((ax, ay)) = popup.anchor {
+                            reply_args.set_int(3, ax);
+                            reply_args.set_int(4, ay);
+                            reply_args.set_int(5, 1);
+                        } else {
+                            reply_args.set_int(5, 0);
+                        }
                     }
                     frame.send_process_message(
                         ProcessId::from(sys::cef_process_id_t::PID_BROWSER),
                         Some(&mut reply),
                     );
-                    1
-                }
-                "applyPopupSelection" => {
-                    let Some(args) = args else { return 1 };
-                    let idx = args.int(0);
-                    if idx >= 0 {
-                        let js = format!(
-                            "(function(){{var el=document.activeElement;\
-                             if(el&&el.tagName==='SELECT'){{\
-                             el.selectedIndex={idx};\
-                             el.dispatchEvent(new Event('input',{{bubbles:true}}));\
-                             el.dispatchEvent(new Event('change',{{bubbles:true}}));\
-                             }}}})();",
-                        );
-                        let code = CefString::from(js.as_str());
-                        let url_uf = frame.url();
-                        let url = CefString::from(&url_uf);
-                        frame.execute_java_script(Some(&code), Some(&url), 0);
-                    }
                     1
                 }
                 _ => 0,
@@ -336,65 +330,171 @@ impl Drop for ContextExit<'_> {
     }
 }
 
-fn collect_popup_options(frame: &Frame) -> (Vec<String>, i32) {
+struct PopupOptions {
+    options: Vec<String>,
+    selected: i32,
+    selectable: Vec<i32>,
+    anchor: Option<(i32, i32)>,
+}
+
+fn collect_popup_options(frame: &Frame) -> PopupOptions {
     let mut options = Vec::new();
     let mut selected = -1;
+    let mut selectable = Vec::new();
+    let mut anchor = None;
     let Some(ctx) = frame.v8_context() else {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     };
     if ctx.enter() != 1 {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     }
     let _drop = ContextExit(&ctx);
     let Some(global) = ctx.global() else {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     };
     let doc_key = CefString::from("document");
     let Some(doc) = global.value_bykey(Some(&doc_key)) else {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     };
     let active_key = CefString::from("activeElement");
-    let Some(el) = doc.value_bykey(Some(&active_key)) else {
-        return (options, selected);
+    let Some(mut el) = doc.value_bykey(Some(&active_key)) else {
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     };
     if el.is_object() != 1 {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     }
     let tag_key = CefString::from("tagName");
     let Some(tag) = el.value_bykey(Some(&tag_key)) else {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     };
     if tag.is_string() != 1 {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     }
     if userfree_to_string(&tag.string_value()) != "SELECT" {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
+    }
+    let rect_key = CefString::from("getBoundingClientRect");
+    if let Some(get_rect) = el.value_bykey(Some(&rect_key))
+        && get_rect.is_function() == 1
+        && let Some(rect) = get_rect.execute_function(Some(&mut el), Some(&[]))
+        && rect.is_object() == 1
+    {
+        let read = |name: &str| -> Option<f64> {
+            let key = CefString::from(name);
+            rect.value_bykey(Some(&key))
+                .filter(|v| v.is_double() == 1 || v.is_int() == 1)
+                .map(|v| v.double_value())
+        };
+        if let (Some(left), Some(bottom)) = (read("left"), read("bottom")) {
+            anchor = Some((left.round() as i32, bottom.round() as i32));
+        }
     }
     let opts_key = CefString::from("options");
     let Some(opts) = el.value_bykey(Some(&opts_key)) else {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     };
     let len_key = CefString::from("length");
     let Some(len_val) = opts.value_bykey(Some(&len_key)) else {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     };
     if opts.is_object() != 1 || len_val.is_int() != 1 {
-        return (options, selected);
+        return PopupOptions {
+            options,
+            selected,
+            selectable,
+            anchor,
+        };
     }
     let len = len_val.int_value();
+    let text_key = CefString::from("text");
+    let disabled_key = CefString::from("disabled");
+    let parent_key = CefString::from("parentNode");
+    let tagname_key = CefString::from("tagName");
+    let read_disabled = |o: &V8Value| -> bool {
+        o.value_bykey(Some(&disabled_key))
+            .is_some_and(|d| d.is_bool() == 1 && d.bool_value() != 0)
+    };
     for i in 0..len {
         let Some(opt) = opts.value_byindex(i) else {
             options.push(String::new());
             continue;
         };
         let mut s = String::new();
+        let mut disabled = false;
         if opt.is_object() == 1 {
-            let text_key = CefString::from("text");
             if let Some(t) = opt.value_bykey(Some(&text_key))
                 && t.is_string() == 1
             {
                 s = userfree_to_string(&t.string_value());
             }
+            disabled = read_disabled(&opt);
+            if !disabled
+                && let Some(parent) = opt.value_bykey(Some(&parent_key))
+                && parent.is_object() == 1
+                && let Some(ptag) = parent.value_bykey(Some(&tagname_key))
+                && ptag.is_string() == 1
+                && userfree_to_string(&ptag.string_value()) == "OPTGROUP"
+            {
+                disabled = read_disabled(&parent);
+            }
+        }
+        if !disabled {
+            selectable.push(i);
         }
         options.push(s);
     }
@@ -404,7 +504,12 @@ fn collect_popup_options(frame: &Frame) -> (Vec<String>, i32) {
     {
         selected = sel.int_value();
     }
-    (options, selected)
+    PopupOptions {
+        options,
+        selected,
+        selectable,
+        anchor,
+    }
 }
 
 fn inject_jmp_native(browser: &mut Browser, profile: &ExtraInfo, context: &mut V8Context) {

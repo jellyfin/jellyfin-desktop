@@ -139,12 +139,12 @@ extern "C" fn on_close() {
     jfn_playback::shutdown::jfn_shutdown_initiate();
 }
 
-extern "C" fn on_popup_ready() {
-    crate::popup::on_ready();
+extern "C" fn on_popup_ready(generation: u32) {
+    crate::popup::on_ready(generation);
 }
 
-extern "C" fn on_popup_done() {
-    crate::popup::on_done();
+extern "C" fn on_popup_done(generation: u32) {
+    crate::popup::on_done(generation);
 }
 
 pub fn jfn_wl_register_proxy_callbacks() {
