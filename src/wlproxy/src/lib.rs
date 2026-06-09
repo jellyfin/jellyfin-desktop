@@ -89,8 +89,8 @@ pub struct Proxy {
 type ConfigureCb = extern "C" fn(c_int, c_int, c_int, c_int);
 type ScaleCb = extern "C" fn(c_int);
 type SuspendedCb = extern "C" fn(c_int);
-type PopupReadyCb = extern "C" fn();
-type PopupDoneCb = extern "C" fn();
+type PopupReadyCb = extern "C" fn(u32);
+type PopupDoneCb = extern "C" fn(u32);
 type CloseCb = extern "C" fn();
 
 // Single proxy per process — callbacks are global. Fire from the per-client
@@ -113,8 +113,19 @@ enum HostCommand {
     SetMinimized,
     Move,
     Resize(u32),
-    ShowPopup { x: i32, y: i32, w: i32, h: i32 },
-    RepositionPopup { x: i32, y: i32, w: i32, h: i32 },
+    ShowPopup {
+        generation: u32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
+    RepositionPopup {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
     HidePopup,
     SetBackground,
     SetTitlebarPalette,
@@ -522,10 +533,14 @@ pub fn jfn_wlproxy_set_popup_done_callback(cb: PopupDoneCb) {
     *POPUP_DONE_CB.lock() = Some(cb);
 }
 
-pub fn jfn_wlproxy_show_popup(x: c_int, y: c_int, w: c_int, h: c_int) {
-    COMMANDS
-        .lock()
-        .push_back(HostCommand::ShowPopup { x, y, w, h });
+pub fn jfn_wlproxy_show_popup(generation: u32, x: c_int, y: c_int, w: c_int, h: c_int) {
+    COMMANDS.lock().push_back(HostCommand::ShowPopup {
+        generation,
+        x,
+        y,
+        w,
+        h,
+    });
 }
 
 pub fn jfn_wlproxy_reposition_popup(x: c_int, y: c_int, w: c_int, h: c_int) {
@@ -693,7 +708,13 @@ fn drain_host_commands() {
                     );
                 }
             }),
-            HostCommand::ShowPopup { x, y, w, h } => create_popup(x, y, w, h),
+            HostCommand::ShowPopup {
+                generation,
+                x,
+                y,
+                w,
+                h,
+            } => create_popup(generation, x, y, w, h),
             HostCommand::RepositionPopup { x, y, w, h } => reposition_popup(x, y, w, h),
             HostCommand::HidePopup => destroy_popup(),
             HostCommand::SetBackground => refill_root_background(),
@@ -702,15 +723,15 @@ fn drain_host_commands() {
     }
 }
 
-fn fire_popup_ready() {
+fn fire_popup_ready(generation: u32) {
     if let Some(cb) = *POPUP_READY_CB.lock() {
-        cb();
+        cb(generation);
     }
 }
 
-fn fire_popup_done() {
+fn fire_popup_done(generation: u32) {
     if let Some(cb) = *POPUP_DONE_CB.lock() {
-        cb();
+        cb(generation);
     }
 }
 
@@ -762,7 +783,7 @@ fn reposition_popup(x: i32, y: i32, w: i32, h: i32) {
     positioner.send_destroy();
 }
 
-fn create_popup(x: i32, y: i32, w: i32, h: i32) {
+fn create_popup(generation: u32, x: i32, y: i32, w: i32, h: i32) {
     if with_shell(|sh| sh.popup.is_some()) {
         destroy_popup();
     }
@@ -778,11 +799,11 @@ fn create_popup(x: i32, y: i32, w: i32, h: i32) {
     let positioner = build_menu_positioner(&wm_base, x, y, w, h);
 
     let xdg = wm_base.create_child::<XdgSurface>();
-    xdg.set_handler(PopupXdgSurfaceH);
+    xdg.set_handler(PopupXdgSurfaceH { generation });
     wm_base.send_get_xdg_surface(&xdg, &menu_surface);
 
     let popup = xdg.create_child::<XdgPopup>();
-    popup.set_handler(PopupH);
+    popup.set_handler(PopupH { generation });
     xdg.send_get_popup(&popup, Some(&root_xdg), &positioner);
     positioner.send_destroy();
 
@@ -805,8 +826,13 @@ fn create_popup(x: i32, y: i32, w: i32, h: i32) {
 // Tear down only the proxy-owned role objects; the host owns and destroys the
 // underlying `wl_surface` itself.
 fn destroy_popup() {
-    let (popup, xdg) = with_shell(|sh| (sh.popup.take(), sh.popup_xdg_surface.take()));
-    with_shell(|sh| sh.popup_surface = None);
+    let (popup_surface, popup, xdg) = with_shell(|sh| {
+        (
+            sh.popup_surface.take(),
+            sh.popup.take(),
+            sh.popup_xdg_surface.take(),
+        )
+    });
     // Leave POPUP_SURFACE_ID set: the menu wl_surface is persistent, and
     // create_popup destroys the prior role via this fn before re-finding the
     // surface — zeroing here would make that lookup fail on replacement.
@@ -816,20 +842,34 @@ fn destroy_popup() {
     if let Some(x) = xdg {
         x.send_destroy();
     }
-}
-
-struct PopupXdgSurfaceH;
-impl XdgSurfaceHandler for PopupXdgSurfaceH {
-    fn handle_configure(&mut self, slf: &Rc<XdgSurface>, serial: u32) {
-        slf.send_ack_configure(serial);
-        fire_popup_ready();
+    // The host-side menu surface is intentionally persistent, but xdg-shell
+    // requires a wl_surface to have no buffer attached when it is assigned a
+    // new xdg_surface role. Do the unmap on the proxy's upstream connection as
+    // part of role teardown so the next show_popup cannot race ahead of the
+    // host connection's attach(None) and try to re-role a still-buffered
+    // surface after the first close/dismiss cycle.
+    if let Some(surface) = popup_surface {
+        surface.send_attach(None, 0, 0);
+        surface.send_commit();
     }
 }
 
-struct PopupH;
+struct PopupXdgSurfaceH {
+    generation: u32,
+}
+impl XdgSurfaceHandler for PopupXdgSurfaceH {
+    fn handle_configure(&mut self, slf: &Rc<XdgSurface>, serial: u32) {
+        slf.send_ack_configure(serial);
+        fire_popup_ready(self.generation);
+    }
+}
+
+struct PopupH {
+    generation: u32,
+}
 impl XdgPopupHandler for PopupH {
     fn handle_popup_done(&mut self, _slf: &Rc<XdgPopup>) {
-        fire_popup_done();
+        fire_popup_done(self.generation);
         destroy_popup();
     }
 }

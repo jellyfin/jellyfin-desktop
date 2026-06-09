@@ -141,6 +141,11 @@ struct PopupState {
     visible: bool,
     options: Vec<String>,
     selected_idx: i32,
+    // Option indices an arrow key can land on (disabled/optgroup-disabled
+    // excluded). Used to drive CEF's own popup to the chosen row.
+    selectable: Vec<i32>,
+    // Bottom-left corner of the <select> element in view coordinates.
+    anchor: Option<(i32, i32)>,
     size_received: bool,
     options_received: bool,
 }

@@ -17,18 +17,29 @@ pub(super) fn on_process_message_received(
     match name.as_str() {
         "popupOptions" => {
             if let Some(args) = args {
-                let list = args.list(0);
-                let (opts, selected) = if let Some(list) = list {
+                let opts = if let Some(list) = args.list(0) {
                     let n = list.size();
                     let mut v = Vec::with_capacity(n);
                     for i in 0..n {
                         v.push(userfree_to_string(&list.string(i)));
                     }
-                    (v, args.int(1))
+                    v
                 } else {
-                    (Vec::new(), args.int(1))
+                    Vec::new()
                 };
-                inner.set_popup_options(opts, selected);
+                let selected = args.int(1);
+                let selectable = if let Some(list) = args.list(2) {
+                    let n = list.size();
+                    let mut v = Vec::with_capacity(n);
+                    for i in 0..n {
+                        v.push(list.int(i));
+                    }
+                    v
+                } else {
+                    Vec::new()
+                };
+                let anchor = (args.int(5) != 0).then(|| (args.int(3), args.int(4)));
+                inner.set_popup_options(opts, selected, selectable, anchor);
             }
             1
         }

@@ -187,16 +187,24 @@ impl Platform for WaylandPlatform {
         wl_ops::restack(typed);
     }
 
-    fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
-        wl_ops::popup_show(
-            s as *mut crate::wl_state::PlatformSurface,
-            req.x,
-            req.y,
-            req.lw,
-            req.lh,
-        );
-        // Dropping `req.on_selected` here is the cancel path — CEF
-        // dispatches selection itself on this backend.
+    fn popup_show(&self, _s: SurfaceHandle, req: JfnPopupRequest) {
+        // Render `<select>` dropdowns with our own menu code (as a grabbed
+        // xdg_popup), matching the context menu. CEF still spins up its own OSR
+        // popup underneath; its pixels are suppressed (see popup_present*) and
+        // its widget is cancelled when on_selected fires.
+        let items = req
+            .options
+            .into_iter()
+            .enumerate()
+            .map(|(i, label)| jfn_menu::MenuItem {
+                id: i as c_int,
+                label,
+                enabled: true,
+                separator: false,
+            })
+            .collect();
+        let cb = req.on_selected.unwrap_or_else(|| Box::new(|_| {}));
+        crate::popup::show_highlighted(items, req.x, req.y, req.lw, req.initial_highlight, cb);
     }
 
     fn context_menu_show(&self, _s: SurfaceHandle, req: JfnContextMenuRequest) {
@@ -214,42 +222,26 @@ impl Platform for WaylandPlatform {
         crate::popup::show(items, req.x, req.y, cb);
     }
 
-    fn popup_hide(&self, s: SurfaceHandle) {
-        wl_ops::popup_hide(s as *mut crate::wl_state::PlatformSurface);
+    fn popup_hide(&self, _s: SurfaceHandle) {
+        // CEF hid its `<select>` widget — tear down our native menu too.
+        crate::popup::hide();
     }
 
-    fn popup_present(&self, s: SurfaceHandle, info: *const c_void, lw: c_int, lh: c_int) {
-        let Some(frame) = (unsafe { to_dmabuf_frame(info) }) else {
-            return;
-        };
-        wl_ops::popup_present(s as *mut crate::wl_state::PlatformSurface, &frame, lw, lh);
+    fn popup_present(&self, _s: SurfaceHandle, _info: *const c_void, _lw: c_int, _lh: c_int) {
+        // `<select>` is rendered natively (popup_show); CEF's own popup pixels
+        // are dropped.
     }
 
     fn popup_present_software(
         &self,
-        s: SurfaceHandle,
-        buffer: *const c_void,
-        pw: c_int,
-        ph: c_int,
-        lw: c_int,
-        lh: c_int,
+        _s: SurfaceHandle,
+        _buffer: *const c_void,
+        _pw: c_int,
+        _ph: c_int,
+        _lw: c_int,
+        _lh: c_int,
     ) {
-        if buffer.is_null() || pw <= 0 || ph <= 0 {
-            return;
-        }
-        let len = (pw as usize)
-            .checked_mul(ph as usize)
-            .and_then(|n| n.checked_mul(4));
-        let Some(len) = len else { return };
-        let pixels = unsafe { std::slice::from_raw_parts(buffer as *const u8, len) };
-        wl_ops::popup_present_software(
-            s as *mut crate::wl_state::PlatformSurface,
-            pixels,
-            pw,
-            ph,
-            lw,
-            lh,
-        );
+        // See popup_present — CEF's popup pixels are dropped.
     }
 
     fn set_fullscreen(&self, v: bool) {
