@@ -90,10 +90,6 @@ pub struct Cli {
     #[arg(long, action = ArgAction::SetTrue)]
     pub disable_gpu_compositing: bool,
 
-    /// CEF ozone platform (default: follows --platform).
-    #[arg(long)]
-    pub ozone_platform: Option<String>,
-
     /// Force the display backend (Linux only).
     #[cfg(target_os = "linux")]
     #[arg(long, value_enum)]
@@ -240,7 +236,6 @@ mod tests {
         assert!(a.log_file.is_none());
         assert!(a.config_dir.is_none());
         assert!(a.cache_dir.is_none());
-        assert!(a.ozone_platform.is_none());
         assert!(!a.audio_exclusive);
         assert!(!a.disable_gpu_compositing);
         assert!(a.remote_debug_port.is_none());
@@ -286,8 +281,6 @@ mod tests {
             "5.1",
             "--remote-debug-port",
             "9222",
-            "--ozone-platform",
-            "wayland",
         ]);
         assert_eq!(a.hwdec.as_deref(), Some("vaapi"));
         assert_eq!(a.log_level.as_deref(), Some("debug"));
@@ -297,7 +290,6 @@ mod tests {
         assert_eq!(a.audio_passthrough.as_deref(), Some("ac3,dts-hd"));
         assert_eq!(a.audio_channels.as_deref(), Some("5.1"));
         assert_eq!(a.remote_debug_port, Some(9222));
-        assert_eq!(a.ozone_platform.as_deref(), Some("wayland"));
     }
 
     #[test]

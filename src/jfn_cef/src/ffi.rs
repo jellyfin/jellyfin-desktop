@@ -9,6 +9,8 @@ use std::os::raw::c_int;
 #[cfg(not(target_os = "windows"))]
 use std::sync::OnceLock;
 
+use jfn_platform_abi::DisplayBackend;
+
 use crate::app::{JfnApp, JfnAppBuilder};
 use crate::state;
 
@@ -22,7 +24,7 @@ use crate::state;
 //   forwarded to `execute_process` so CEF can dispatch on `--type=`.
 //
 // Every Chromium switch jfn wants set is pushed by an explicit setter
-// (`jfn_cef_set_ozone_platform`, `jfn_cef_set_disable_gpu_compositing`,
+// (`jfn_cef_set_platform_switches`, `jfn_cef_set_disable_gpu_compositing`,
 // …) onto `state::pending_switches`, then drained into the browser's
 // `CefCommandLine` by `on_before_command_line_processing`. The setter
 // is the only mapping between jfn's CLI namespace and Chromium's switch
@@ -79,25 +81,33 @@ pub fn jfn_cef_set_disable_gpu_compositing(disable: bool) {
     }
 }
 
-/// Linux only — Ozone platform selection. Empty string is a no-op.
-/// When set to "wayland", also disables the fractional-scale protocol so
-/// OSR's GetScreenInfo device_scale_factor is honored.
-#[cfg(target_os = "linux")]
-pub fn jfn_cef_set_ozone_platform(platform: &str) {
-    if platform.is_empty() {
-        return;
-    }
-    state::with_config(|c| {
-        c.pending_switches.push(state::PendingSwitch {
-            name: "ozone-platform".to_string(),
-            value: Some(platform.to_string()),
-        });
-        if platform == "wayland" {
-            c.pending_switches.push(state::PendingSwitch {
-                name: "disable-features".to_string(),
-                value: Some("WaylandFractionalScaleV1".to_string()),
-            });
+pub fn jfn_cef_set_platform_switches(backend: DisplayBackend) {
+    state::with_config(|c| match backend {
+        DisplayBackend::Wayland => {
+            c.pending_switches.push(state::PendingSwitch::with_value(
+                "ozone-platform",
+                "wayland",
+            ));
+            // OSR honors GetScreenInfo device_scale_factor only without the
+            // fractional-scale protocol.
+            c.pending_switches.push(state::PendingSwitch::with_value(
+                "disable-features",
+                "WaylandFractionalScaleV1",
+            ));
         }
+        DisplayBackend::X11 => {
+            c.pending_switches
+                .push(state::PendingSwitch::with_value("ozone-platform", "x11"));
+        }
+        DisplayBackend::MacOS => {
+            c.pending_switches
+                .push(state::PendingSwitch::flag("single-process"));
+            c.pending_switches
+                .push(state::PendingSwitch::flag("use-mock-keychain"));
+            c.pending_switches
+                .push(state::PendingSwitch::with_value("password-store", "basic"));
+        }
+        DisplayBackend::Windows => {}
     });
 }
 

@@ -112,16 +112,6 @@ wrap_app! {
                     }
                 }
             }
-
-            #[cfg(target_os = "macos")]
-            {
-                cl.append_switch(Some(&CefString::from("single-process")));
-                cl.append_switch(Some(&CefString::from("use-mock-keychain")));
-                cl.append_switch_with_value(
-                    Some(&CefString::from("password-store")),
-                    Some(&CefString::from("basic")),
-                );
-            }
         }
 
         fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
