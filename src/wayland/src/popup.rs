@@ -5,6 +5,12 @@
 //! across the two connection hops (a `wl_surface`-destroyed-before-its-role
 //! protocol error); reusing it sidesteps that. Each show clears its buffer
 //! first so the surface is role-free and buffer-free when the proxy re-roles it.
+//!
+//! `xdg_popup.grab` is only honored in response to the triggering input event,
+//! with that event's serial — but CEF hands us the menu model later, via an
+//! async callback. So [`arm`] creates+grabs the popup at the press (valid
+//! serial) and leaves it unmapped (grab inert); [`show`] maps a 1×1 placeholder
+//! (xdg_popup.reposition requires a mapped popup) then grows it to the menu.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,6 +27,16 @@ use crate::wl_state::{WlState, create_shm_buffer, lock, try_state};
 
 static MENU_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    #[default]
+    Idle,
+    AwaitPlaceholder,
+    Placeholder,
+    AwaitMenu,
+    Shown,
+}
+
 #[derive(Default)]
 pub struct MenuIo {
     fonts: Option<Fonts>,
@@ -28,6 +44,7 @@ pub struct MenuIo {
     viewport: Option<WpViewport>,
     buffer: Option<WlBuffer>,
     menu: Option<Menu>,
+    phase: Phase,
 }
 
 struct Menu {
@@ -39,6 +56,7 @@ struct Menu {
     scale: f32,
     cb: Option<Box<dyn FnOnce(i32) + Send>>,
     mapped: bool,
+    anchor: (i32, i32),
 }
 
 fn to_bgra(rgba: &[u8]) -> Vec<u8> {
@@ -72,13 +90,19 @@ fn paint_bgra(
     Some(to_bgra(pm.data()))
 }
 
+pub fn arm(x: i32, y: i32) {
+    let mut st = lock();
+    clear_menu_locked(&mut st);
+    let surface_id = ensure_surface_locked(&mut st);
+    st.menu_io.phase = Phase::AwaitPlaceholder;
+    drop(st);
+
+    jfn_wlproxy::jfn_wlproxy_set_popup_surface(surface_id);
+    jfn_wlproxy::jfn_wlproxy_show_popup(x, y, 1, 1);
+}
+
 pub fn show(items: Vec<MenuItem>, x: i32, y: i32, cb: Box<dyn FnOnce(i32) + Send>) {
     let mut st = lock();
-
-    if st.menu_io.menu.is_some() {
-        clear_menu_locked(&mut st);
-        jfn_wlproxy::jfn_wlproxy_hide_popup();
-    }
 
     let scale = crate::proxy::jfn_wl_get_cached_scale();
     let layout = {
@@ -87,12 +111,8 @@ pub fn show(items: Vec<MenuItem>, x: i32, y: i32, cb: Box<dyn FnOnce(i32) + Send
     };
     let pw = layout.width;
     let ph = layout.height;
-    let lw = logical_dim(pw, scale);
-    let lh = logical_dim(ph, scale);
 
-    // Clear any prior buffer so the surface is buffer-free before the proxy
-    // re-roles it (xdg forbids a buffer committed before the first configure).
-    let surface_id = ensure_surface_locked(&mut st);
+    let phase = st.menu_io.phase;
 
     st.menu_io.menu = Some(Menu {
         items,
@@ -103,12 +123,36 @@ pub fn show(items: Vec<MenuItem>, x: i32, y: i32, cb: Box<dyn FnOnce(i32) + Send
         scale,
         cb: Some(cb),
         mapped: false,
+        anchor: (x, y),
     });
-    MENU_ACTIVE.store(true, Ordering::Release);
-    drop(st);
 
-    jfn_wlproxy::jfn_wlproxy_set_popup_surface(surface_id);
-    jfn_wlproxy::jfn_wlproxy_show_popup(x, y, lw, lh);
+    match phase {
+        Phase::Placeholder => {
+            let repos = begin_menu_locked(&mut st);
+            drop(st);
+            if let Some((x, y, lw, lh)) = repos {
+                jfn_wlproxy::jfn_wlproxy_reposition_popup(x, y, lw, lh);
+            }
+        }
+        // on_ready() starts the menu once the popup is configured.
+        Phase::AwaitPlaceholder => {
+            drop(st);
+        }
+        // Not armed by a triggering press: no grab popup exists, so create one
+        // at full size now (its grab serial may be stale on this path).
+        Phase::Idle => {
+            let lw = logical_dim(pw, scale);
+            let lh = logical_dim(ph, scale);
+            let surface_id = ensure_surface_locked(&mut st);
+            st.menu_io.phase = Phase::AwaitMenu;
+            drop(st);
+            jfn_wlproxy::jfn_wlproxy_set_popup_surface(surface_id);
+            jfn_wlproxy::jfn_wlproxy_show_popup(x, y, lw, lh);
+        }
+        Phase::AwaitMenu | Phase::Shown => {
+            drop(st);
+        }
+    }
 }
 
 fn ensure_surface_locked(st: &mut WlState) -> u32 {
@@ -136,16 +180,63 @@ fn ensure_surface_locked(st: &mut WlState) -> u32 {
         .unwrap_or(0)
 }
 
+fn begin_menu_locked(st: &mut WlState) -> Option<(i32, i32, i32, i32)> {
+    paint_placeholder_locked(st);
+    MENU_ACTIVE.store(true, Ordering::Release);
+    let menu = st.menu_io.menu.as_ref()?;
+    let (x, y) = menu.anchor;
+    let lw = logical_dim(menu.pw, menu.scale);
+    let lh = logical_dim(menu.ph, menu.scale);
+    st.menu_io.phase = Phase::AwaitMenu;
+    Some((x, y, lw, lh))
+}
+
+fn paint_placeholder_locked(st: &mut WlState) {
+    let pixels = [0u8; 4]; // 1×1 transparent BGRA — maps the popup invisibly.
+    let Some(buf) = create_shm_buffer(st, &pixels, 1, 1) else {
+        return;
+    };
+    let Some(surface) = st.menu_io.surface.clone() else {
+        return;
+    };
+    if let Some(vp) = st.menu_io.viewport.as_ref() {
+        vp.set_source(0.0, 0.0, 1.0, 1.0);
+        vp.set_destination(1, 1);
+    }
+    surface.attach(Some(&buf), 0, 0);
+    surface.damage_buffer(0, 0, 1, 1);
+    surface.commit();
+    if let Some(old) = st.menu_io.buffer.replace(buf) {
+        old.destroy();
+    }
+    st.flush();
+}
+
 pub(crate) fn on_ready() {
     let Some(state) = try_state() else { return };
     let mut st = state.lock();
-    match st.menu_io.menu.as_ref() {
-        Some(m) if !m.mapped => {}
-        _ => return,
-    }
-    paint_and_attach_locked(&mut st);
-    if let Some(menu) = st.menu_io.menu.as_mut() {
-        menu.mapped = true;
+    match st.menu_io.phase {
+        Phase::AwaitPlaceholder => {
+            if st.menu_io.menu.is_some() {
+                let repos = begin_menu_locked(&mut st);
+                drop(st);
+                if let Some((x, y, lw, lh)) = repos {
+                    jfn_wlproxy::jfn_wlproxy_reposition_popup(x, y, lw, lh);
+                }
+            } else {
+                // Stay unmapped until the model arrives — the grab is inert while
+                // unmapped, so mapping now would grab input with nothing to show.
+                st.menu_io.phase = Phase::Placeholder;
+            }
+        }
+        Phase::AwaitMenu => {
+            paint_and_attach_locked(&mut st);
+            if let Some(menu) = st.menu_io.menu.as_mut() {
+                menu.mapped = true;
+            }
+            st.menu_io.phase = Phase::Shown;
+        }
+        _ => {}
     }
 }
 
@@ -175,7 +266,7 @@ pub fn surface_matches(surface_id: u32) -> bool {
 
 pub fn handle_motion(local_x: i32, local_y: i32) {
     let mut st = lock();
-    let Some(menu) = st.menu_io.menu.as_ref() else {
+    let Some(menu) = st.menu_io.menu.as_ref().filter(|m| m.mapped) else {
         return;
     };
     let (px, py) = (
@@ -190,7 +281,7 @@ pub fn handle_button(local_x: i32, local_y: i32, pressed: bool) {
         return;
     }
     let mut st = lock();
-    let Some(menu) = st.menu_io.menu.as_ref() else {
+    let Some(menu) = st.menu_io.menu.as_ref().filter(|m| m.mapped) else {
         return;
     };
     let (px, py) = (
@@ -200,12 +291,20 @@ pub fn handle_button(local_x: i32, local_y: i32, pressed: bool) {
     step_locked(&mut st, MenuEvent::Press { x: px, y: py });
 }
 
+pub fn handle_outside_press() {
+    let mut st = lock();
+    if st.menu_io.menu.as_ref().filter(|m| m.mapped).is_none() {
+        return;
+    }
+    step_locked(&mut st, MenuEvent::Dismiss);
+}
+
 pub fn handle_key(keysym: u32, pressed: bool) {
     if !pressed {
         return;
     }
     let mut st = lock();
-    if st.menu_io.menu.is_none() {
+    if st.menu_io.menu.as_ref().filter(|m| m.mapped).is_none() {
         return;
     }
     step_locked(&mut st, MenuEvent::Key(keysym));
@@ -277,4 +376,5 @@ fn fire_locked(st: &mut WlState, id: i32) {
 fn clear_menu_locked(st: &mut WlState) {
     MENU_ACTIVE.store(false, Ordering::Release);
     st.menu_io.menu = None;
+    st.menu_io.phase = Phase::Idle;
 }

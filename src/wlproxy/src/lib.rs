@@ -57,7 +57,7 @@ use wl_proxy::protocols::wayland::wl_buffer::WlBuffer;
 use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
 use wl_proxy::protocols::wayland::wl_compositor::WlCompositor;
 use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
-use wl_proxy::protocols::wayland::wl_keyboard::WlKeyboard;
+use wl_proxy::protocols::wayland::wl_keyboard::{WlKeyboard, WlKeyboardHandler, WlKeyboardKeyState};
 use wl_proxy::protocols::wayland::wl_pointer::{WlPointer, WlPointerButtonState, WlPointerHandler};
 use wl_proxy::protocols::wayland::wl_region::WlRegion;
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
@@ -114,6 +114,7 @@ enum HostCommand {
     Move,
     Resize(u32),
     ShowPopup { x: i32, y: i32, w: i32, h: i32 },
+    RepositionPopup { x: i32, y: i32, w: i32, h: i32 },
     HidePopup,
     SetBackground,
     SetTitlebarPalette,
@@ -527,6 +528,12 @@ pub fn jfn_wlproxy_show_popup(x: c_int, y: c_int, w: c_int, h: c_int) {
         .push_back(HostCommand::ShowPopup { x, y, w, h });
 }
 
+pub fn jfn_wlproxy_reposition_popup(x: c_int, y: c_int, w: c_int, h: c_int) {
+    COMMANDS
+        .lock()
+        .push_back(HostCommand::RepositionPopup { x, y, w, h });
+}
+
 pub fn jfn_wlproxy_hide_popup() {
     COMMANDS.lock().push_back(HostCommand::HidePopup);
 }
@@ -687,6 +694,7 @@ fn drain_host_commands() {
                 }
             }),
             HostCommand::ShowPopup { x, y, w, h } => create_popup(x, y, w, h),
+            HostCommand::RepositionPopup { x, y, w, h } => reposition_popup(x, y, w, h),
             HostCommand::HidePopup => destroy_popup(),
             HostCommand::SetBackground => refill_root_background(),
             HostCommand::SetTitlebarPalette => apply_titlebar_palette(),
@@ -720,6 +728,40 @@ fn find_popup_surface() -> Option<Rc<WlSurface>> {
     })
 }
 
+fn build_menu_positioner(
+    wm_base: &Rc<XdgWmBase>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) -> Rc<XdgPositioner> {
+    let positioner = wm_base.create_child::<XdgPositioner>();
+    wm_base.send_create_positioner(&positioner);
+    positioner.send_set_size(w.max(1), h.max(1));
+    positioner.send_set_anchor_rect(x, y, 1, 1);
+    positioner.send_set_anchor(XdgPositionerAnchor::TOP_LEFT);
+    positioner.send_set_gravity(XdgPositionerGravity::BOTTOM_RIGHT);
+    positioner.send_set_constraint_adjustment(XdgPositionerConstraintAdjustment(
+        XdgPositionerConstraintAdjustment::FLIP_X.0
+            | XdgPositionerConstraintAdjustment::FLIP_Y.0
+            | XdgPositionerConstraintAdjustment::SLIDE_X.0
+            | XdgPositionerConstraintAdjustment::SLIDE_Y.0,
+    ));
+    positioner
+}
+
+// reposition keeps the popup's grab; destroying and recreating at the new size
+// would drop it. Requires the popup to already be mapped.
+fn reposition_popup(x: i32, y: i32, w: i32, h: i32) {
+    let Some((wm_base, popup)) = with_shell(|sh| Some((sh.wm_base.clone()?, sh.popup.clone()?)))
+    else {
+        return;
+    };
+    let positioner = build_menu_positioner(&wm_base, x, y, w, h);
+    popup.send_reposition(&positioner, 0);
+    positioner.send_destroy();
+}
+
 fn create_popup(x: i32, y: i32, w: i32, h: i32) {
     if with_shell(|sh| sh.popup.is_some()) {
         destroy_popup();
@@ -733,20 +775,7 @@ fn create_popup(x: i32, y: i32, w: i32, h: i32) {
     else {
         return;
     };
-    let (ww, hh) = (w.max(1), h.max(1));
-
-    let positioner = wm_base.create_child::<XdgPositioner>();
-    wm_base.send_create_positioner(&positioner);
-    positioner.send_set_size(ww, hh);
-    positioner.send_set_anchor_rect(x, y, 1, 1);
-    positioner.send_set_anchor(XdgPositionerAnchor::TOP_LEFT);
-    positioner.send_set_gravity(XdgPositionerGravity::BOTTOM_RIGHT);
-    positioner.send_set_constraint_adjustment(XdgPositionerConstraintAdjustment(
-        XdgPositionerConstraintAdjustment::FLIP_X.0
-            | XdgPositionerConstraintAdjustment::FLIP_Y.0
-            | XdgPositionerConstraintAdjustment::SLIDE_X.0
-            | XdgPositionerConstraintAdjustment::SLIDE_Y.0,
-    ));
+    let positioner = build_menu_positioner(&wm_base, x, y, w, h);
 
     let xdg = wm_base.create_child::<XdgSurface>();
     xdg.set_handler(PopupXdgSurfaceH);
@@ -778,7 +807,9 @@ fn create_popup(x: i32, y: i32, w: i32, h: i32) {
 fn destroy_popup() {
     let (popup, xdg) = with_shell(|sh| (sh.popup.take(), sh.popup_xdg_surface.take()));
     with_shell(|sh| sh.popup_surface = None);
-    POPUP_SURFACE_ID.store(0, Ordering::Release);
+    // Leave POPUP_SURFACE_ID set: the menu wl_surface is persistent, and
+    // create_popup destroys the prior role via this fn before re-finding the
+    // surface — zeroing here would make that lookup fail on replacement.
     if let Some(p) = popup {
         p.send_destroy();
     }
@@ -911,10 +942,30 @@ impl WlSeatHandler for ForwardSeatH {
         slf.send_get_pointer(id);
     }
     fn handle_get_keyboard(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlKeyboard>) {
+        id.set_handler(KeyboardH);
         slf.send_get_keyboard(id);
     }
     fn handle_get_touch(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlTouch>) {
         slf.send_get_touch(id);
+    }
+}
+
+// Records the serial of key presses so a keyboard-triggered menu grabs with a
+// valid serial, mirroring PointerH for buttons.
+struct KeyboardH;
+impl WlKeyboardHandler for KeyboardH {
+    fn handle_key(
+        &mut self,
+        slf: &Rc<WlKeyboard>,
+        serial: u32,
+        time: u32,
+        key: u32,
+        state: WlKeyboardKeyState,
+    ) {
+        if state == WlKeyboardKeyState::PRESSED {
+            LAST_SERIAL.with(|c| c.set(serial));
+        }
+        slf.send_key(serial, time, key, state);
     }
 }
 
