@@ -20,8 +20,8 @@ use crate::wl_ops::{self, JfnDmabufFrame};
 
 use jfn_platform_abi::cursor::CursorShape;
 pub use jfn_platform_abi::{
-    DisplayBackend, IdleInhibitLevel, JfnContextMenuRequest, JfnPopupRequest, JfnRect, Platform,
-    SurfaceHandle, SurfaceSize, WindowDecorations,
+    BootGeometry, DisplayBackend, IdleInhibitLevel, JfnContextMenuRequest, JfnPopupRequest,
+    JfnRect, Platform, SurfaceHandle, SurfaceSize, WindowDecorations,
 };
 
 // =====================================================================
@@ -295,6 +295,11 @@ impl Platform for WaylandPlatform {
     fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
         let s = jfn_wayland_scale_probe(x, y);
         if s > 0.0 { s as f32 } else { 1.0 }
+    }
+
+    fn apply_boot_geometry(&self, g: &BootGeometry) {
+        jfn_wlproxy::jfn_wlproxy_set_initial_size(g.logical.w, g.logical.h);
+        jfn_wlproxy::jfn_wlproxy_set_initial_maximized(g.maximized);
     }
 
     fn set_cursor(&self, shape: CursorShape) {

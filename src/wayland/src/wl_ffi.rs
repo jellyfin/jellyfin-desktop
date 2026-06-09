@@ -184,9 +184,6 @@ pub fn jfn_wl_toggle_fullscreen() {
 // Window controls (client-side decorations)
 // =====================================================================
 
-// Maximized state is tracked here because the configure interception only
-// reports fullscreen. The bar's max/restore button and double-click both
-// route through this toggle, so the common path stays consistent.
 static MAXIMIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn jfn_wl_window_minimize() {
@@ -198,6 +195,13 @@ pub fn jfn_wl_window_toggle_maximize() {
     let next = !MAXIMIZED.load(Ordering::Relaxed);
     MAXIMIZED.store(next, Ordering::Relaxed);
     jfn_wlproxy_set_maximized(next as std::os::raw::c_int);
+}
+
+/// Mirror the compositor's maximized state into the toggle's command atomic;
+/// without it a compositor-initiated maximize desyncs the toggle button.
+pub fn sync_maximized_command_state(maximized: bool) {
+    use std::sync::atomic::Ordering;
+    MAXIMIZED.store(maximized, Ordering::Relaxed);
 }
 
 pub fn jfn_wl_window_start_move() {

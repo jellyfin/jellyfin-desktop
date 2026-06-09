@@ -8,6 +8,81 @@
 
 use std::ffi::c_int;
 
+/// HiDPI scale factor (physical pixels per logical pixel).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Scale(pub f32);
+
+impl Scale {
+    /// Replace a non-positive (unknown) scale with 1.0.
+    pub fn or_one(self) -> Self {
+        if self.0 > 0.0 { self } else { Scale(1.0) }
+    }
+}
+
+/// Window size in logical (DIP) pixels — the coordinate space the compositor
+/// uses for the toplevel; the display scale maps it to physical pixels.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LogicalSize {
+    pub w: c_int,
+    pub h: c_int,
+}
+
+/// Window size in physical (backing) pixels — what mpv's `--geometry` takes and
+/// what gets persisted as `windowWidth/Height`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PhysicalSize {
+    pub w: c_int,
+    pub h: c_int,
+}
+
+impl LogicalSize {
+    pub fn to_physical(self, s: Scale) -> PhysicalSize {
+        let s = s.or_one().0;
+        PhysicalSize {
+            w: (self.w as f32 * s).round() as c_int,
+            h: (self.h as f32 * s).round() as c_int,
+        }
+    }
+}
+
+impl PhysicalSize {
+    pub fn to_logical(self, s: Scale) -> LogicalSize {
+        let s = s.or_one().0;
+        LogicalSize {
+            w: (self.w as f32 / s).round() as c_int,
+            h: (self.h as f32 / s).round() as c_int,
+        }
+    }
+}
+
+/// Fully-resolved boot geometry: one typed value computed once from saved
+/// config, consumed by `Platform::apply_boot_geometry` (logical) and mpv's
+/// `--geometry` (physical).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BootGeometry {
+    pub logical: LogicalSize,
+    pub physical: PhysicalSize,
+    pub scale: Scale,
+    /// `None` ⇒ let the window center (Wayland ignores position entirely).
+    pub position: Option<WindowPos>,
+    pub maximized: bool,
+}
+
+impl BootGeometry {
+    /// mpv `--geometry`: `"<W>x<H>"` or `"<W>x<H>+<X>+<Y>"`, physical pixels.
+    pub fn mpv_geometry_string(&self) -> String {
+        let mut s = format!("{}x{}", self.physical.w, self.physical.h);
+        if let Some(p) = self.position {
+            s.push_str(&format!("+{}+{}", p.x, p.y));
+        }
+        s
+    }
+
+    pub fn force_position(&self) -> bool {
+        self.position.is_some()
+    }
+}
+
 /// Working-area dimensions — excludes the menu bar / dock / taskbar — in the
 /// same pixel space (backing pixels) as the geometry being clamped.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -84,6 +159,66 @@ pub fn clamp_to_bounds(g: &mut WindowGeometry, bounds: Bounds) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logical_physical_round_trip() {
+        for (logical, scale, physical) in [
+            (
+                LogicalSize { w: 1280, h: 720 },
+                1.0,
+                PhysicalSize { w: 1280, h: 720 },
+            ),
+            (
+                LogicalSize { w: 1280, h: 720 },
+                1.25,
+                PhysicalSize { w: 1600, h: 900 },
+            ),
+            (
+                LogicalSize { w: 1600, h: 900 },
+                1.5,
+                PhysicalSize { w: 2400, h: 1350 },
+            ),
+            (
+                LogicalSize { w: 1280, h: 720 },
+                2.0,
+                PhysicalSize { w: 2560, h: 1440 },
+            ),
+        ] {
+            assert_eq!(logical.to_physical(Scale(scale)), physical);
+            assert_eq!(physical.to_logical(Scale(scale)), logical);
+        }
+    }
+
+    #[test]
+    fn scale_or_one_guards_nonpositive() {
+        assert_eq!(Scale(0.0).or_one(), Scale(1.0));
+        assert_eq!(Scale(-2.0).or_one(), Scale(1.0));
+        assert_eq!(Scale(1.5).or_one(), Scale(1.5));
+        assert_eq!(
+            LogicalSize { w: 800, h: 600 }.to_physical(Scale(0.0)),
+            PhysicalSize { w: 800, h: 600 }
+        );
+    }
+
+    #[test]
+    fn mpv_geometry_string_with_and_without_position() {
+        let base = BootGeometry {
+            logical: LogicalSize { w: 1280, h: 720 },
+            physical: PhysicalSize { w: 1600, h: 900 },
+            scale: Scale(1.25),
+            position: None,
+            maximized: false,
+        };
+        assert_eq!(base.mpv_geometry_string(), "1600x900");
+        assert!(!base.force_position());
+
+        let positioned = BootGeometry {
+            position: Some(WindowPos { x: 100, y: 50 }),
+            ..base
+        };
+        assert_eq!(positioned.mpv_geometry_string(), "1600x900+100+50");
+        assert!(positioned.force_position());
+    }
 
     const SCREEN: Bounds = Bounds { w: 1920, h: 1080 };
 

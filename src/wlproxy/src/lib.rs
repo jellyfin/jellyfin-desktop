@@ -31,7 +31,7 @@ use std::ffi::CString;
 use std::os::fd::OwnedFd;
 use std::os::raw::{c_char, c_int};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -86,7 +86,7 @@ pub struct Proxy {
     _thread: thread::JoinHandle<()>,
 }
 
-type ConfigureCb = extern "C" fn(c_int, c_int, c_int);
+type ConfigureCb = extern "C" fn(c_int, c_int, c_int, c_int);
 type ScaleCb = extern "C" fn(c_int);
 type SuspendedCb = extern "C" fn(c_int);
 type PopupReadyCb = extern "C" fn();
@@ -141,8 +141,34 @@ static SAME_PROC_SEQ: AtomicU32 = AtomicU32::new(0);
 
 static VO_CONNECTION_INDEX: AtomicI32 = AtomicI32::new(-1);
 
+static INITIAL_W: AtomicI32 = AtomicI32::new(1280);
+static INITIAL_H: AtomicI32 = AtomicI32::new(720);
+static INITIAL_MAXIMIZED: AtomicBool = AtomicBool::new(false);
+
 pub extern "C" fn jfn_wlproxy_vo_connection_index() -> c_int {
     VO_CONNECTION_INDEX.load(Ordering::Acquire)
+}
+
+/// Must be called before mpv connects: root construction reads this once.
+pub fn jfn_wlproxy_set_initial_size(w: c_int, h: c_int) {
+    if w > 0 && h > 0 {
+        INITIAL_W.store(w, Ordering::Release);
+        INITIAL_H.store(h, Ordering::Release);
+    }
+}
+
+/// Must be called before mpv connects: requested on the root toplevel as part
+/// of its initial map, so a restored-maximized window comes up maximized with
+/// no unmaximized flash.
+pub fn jfn_wlproxy_set_initial_maximized(maximized: bool) {
+    INITIAL_MAXIMIZED.store(maximized, Ordering::Release);
+}
+
+fn initial_size() -> (c_int, c_int) {
+    (
+        INITIAL_W.load(Ordering::Acquire),
+        INITIAL_H.load(Ordering::Acquire),
+    )
 }
 
 thread_local! {
@@ -331,6 +357,7 @@ struct PendingConfigure {
     logical_w: i32,
     logical_h: i32,
     fullscreen: c_int,
+    maximized: c_int,
     scale_120: u32,
 }
 
@@ -339,6 +366,7 @@ static PENDING: Mutex<PendingConfigure> = Mutex::new(PendingConfigure {
     logical_w: 0,
     logical_h: 0,
     fullscreen: 0,
+    maximized: 0,
     scale_120: 120,
 });
 
@@ -364,9 +392,10 @@ fn fire_configure() {
     let pw = ((p.logical_w as i64 * p.scale_120 as i64 + 60) / 120) as c_int;
     let ph = ((p.logical_h as i64 * p.scale_120 as i64 + 60) / 120) as c_int;
     let fs = p.fullscreen;
+    let max = p.maximized;
     drop(p);
     if let Some(cb) = *CONFIGURE_CB.lock() {
-        cb(pw, ph, fs);
+        cb(pw, ph, fs, max);
     }
 }
 
@@ -438,10 +467,11 @@ pub unsafe fn jfn_wlproxy_stop(p: *mut Proxy) {
 /// Register the xdg_toplevel.configure interception callback.
 ///
 /// Fires from the proxy's per-client thread whenever the compositor sends an
-/// `xdg_toplevel.configure` event. Arguments are `(width, height, fullscreen)`
-/// — fullscreen is 1 if the configure's states[] array contains
-/// `XDG_TOPLEVEL_STATE_FULLSCREEN`, 0 otherwise. width/height are physical
-/// pixels (scaled by the current `scale_120 / 120` factor).
+/// `xdg_toplevel.configure` event. Arguments are
+/// `(width, height, fullscreen, maximized)` — fullscreen/maximized are 1 if the
+/// configure's states[] array contains `XDG_TOPLEVEL_STATE_FULLSCREEN` /
+/// `_MAXIMIZED`, 0 otherwise. width/height are physical pixels (scaled by the
+/// current `scale_120 / 120` factor).
 ///
 /// The event still forwards to mpv after the callback runs.
 pub fn jfn_wlproxy_set_configure_callback(cb: ConfigureCb) {
@@ -952,8 +982,9 @@ impl XdgSurfaceHandler for MpvSurfaceH {
             sh.mpv_toplevel = Some(id.clone());
             sh.demote_pending = true;
             if sh.cur_w == 0 || sh.cur_h == 0 {
-                sh.cur_w = 1280;
-                sh.cur_h = 720;
+                let (w, h) = initial_size();
+                sh.cur_w = w;
+                sh.cur_h = h;
             }
             if let Some(idx) = sh.same_proc_index {
                 VO_CONNECTION_INDEX.store(idx as i32, Ordering::Release);
@@ -1185,6 +1216,10 @@ fn build_root() {
     root_tl.set_handler(RootToplevelH);
     root_xdg.send_get_toplevel(&root_tl);
 
+    if INITIAL_MAXIMIZED.load(Ordering::Acquire) {
+        root_tl.send_set_maximized();
+    }
+
     let mode = DECORATION_MODE.load(Ordering::Acquire);
     // Create the object even for Csd: KWin defaults an undecorated toplevel to
     // server-side, so CLIENT_SIDE must be requested to suppress its titlebar.
@@ -1302,24 +1337,28 @@ struct RootToplevelH;
 impl XdgToplevelHandler for RootToplevelH {
     fn handle_configure(&mut self, _slf: &Rc<XdgToplevel>, width: i32, height: i32, states: &[u8]) {
         let mut fullscreen: c_int = 0;
+        let mut maximized: c_int = 0;
         let mut suspended: c_int = 0;
         for chunk in states.chunks_exact(4) {
             let v = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             if XdgToplevelState(v) == XdgToplevelState::FULLSCREEN {
                 fullscreen = 1;
+            } else if XdgToplevelState(v) == XdgToplevelState::MAXIMIZED {
+                maximized = 1;
             } else if v == STATE_SUSPENDED {
                 suspended = 1;
             }
         }
-        // Compositor 0,0 = "client picks size"; pick a sane default once.
-        let w = if width > 0 { width } else { 1280 };
-        let h = if height > 0 { height } else { 720 };
+        let (init_w, init_h) = initial_size();
+        let w = if width > 0 { width } else { init_w };
+        let h = if height > 0 { height } else { init_h };
         {
             let mut p = PENDING.lock();
             p.have_configure = true;
             p.logical_w = w;
             p.logical_h = h;
             p.fullscreen = fullscreen;
+            p.maximized = maximized;
         }
         fire_configure();
         fire_suspended(suspended);
