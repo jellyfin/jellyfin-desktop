@@ -29,9 +29,17 @@ use jfn_input::buttons::{
 };
 use jfn_platform_abi::event_flags::{
     EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,
+    EVENTFLAG_SHIFT_DOWN,
 };
 
 use jfn_platform_abi::cursor::CursorShape;
+
+const XK_MENU: u32 = 0xff67;
+const XK_F10: u32 = 0xffc7;
+
+fn is_context_menu_key(sym: u32, mods: u32) -> bool {
+    sym == XK_MENU || (sym == XK_F10 && mods & EVENTFLAG_SHIFT_DOWN != 0)
+}
 
 fn cef_to_wl_shape(shape: CursorShape) -> u32 {
     use CursorShape::*;
@@ -292,6 +300,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                             state.ptr_y as i32,
                             pressed,
                         );
+                    } else if pressed {
+                        // Click on our own window outside the menu: the popup grab
+                        // won't dismiss same-client clicks, so do it ourselves.
+                        crate::popup::handle_outside_press();
                     }
                     return;
                 }
@@ -314,6 +326,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     BTN_MIDDLE => EVENTFLAG_MIDDLE_MOUSE_BUTTON,
                     _ => return,
                 };
+                // Grab must be requested now, while this press's implicit grab is
+                // live; the menu model only arrives later via CEF's async callback.
+                if button == BTN_RIGHT && pressed {
+                    crate::popup::arm(state.ptr_x as i32, state.ptr_y as i32);
+                }
                 if pressed {
                     state.mouse_button_modifiers |= flag;
                 } else {
@@ -445,6 +462,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 if crate::popup::active() {
                     crate::popup::handle_key(sym.into(), pressed);
                     return;
+                }
+                if pressed && is_context_menu_key(sym.into(), state.modifiers) {
+                    crate::popup::arm(state.ptr_x as i32, state.ptr_y as i32);
                 }
                 if let Some(f) = state.cb.key {
                     f(

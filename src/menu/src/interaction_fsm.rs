@@ -26,6 +26,7 @@ pub enum MenuEvent {
     Motion { x: i32, y: i32 },
     Press { x: i32, y: i32 },
     Key(u32),
+    Dismiss,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -42,6 +43,7 @@ pub fn step(
 ) -> Vec<MenuEffect> {
     match *ev {
         MenuEvent::Expose => vec![MenuEffect::Redraw],
+        MenuEvent::Dismiss => vec![MenuEffect::Close(-1)],
         MenuEvent::Motion { x, y } => {
             let hit = layout.row_at(x, y).map_or(-1, |i| i as i32);
             if hit != s.active {
@@ -191,6 +193,12 @@ mod tests {
     #[test]
     fn press_outside_dismisses() {
         let (_, e) = run(0, MenuEvent::Press { x: 9999, y: 0 });
+        assert_eq!(e, vec![MenuEffect::Close(-1)]);
+    }
+
+    #[test]
+    fn dismiss_closes_cancelled() {
+        let (_, e) = run(1, MenuEvent::Dismiss);
         assert_eq!(e, vec![MenuEffect::Close(-1)]);
     }
 
