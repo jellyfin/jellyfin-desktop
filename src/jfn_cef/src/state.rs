@@ -1,5 +1,5 @@
 //! Process-lifetime state for the browser process. The configuration
-//! setters (log_severity, ozone_platform, etc.) write here between
+//! setters (log_severity, platform_switches, etc.) write here between
 //! `Start()` and `Initialize()`; the App handlers read here.
 
 use parking_lot::Mutex;
@@ -7,6 +7,22 @@ use parking_lot::Mutex;
 pub struct PendingSwitch {
     pub name: String,
     pub value: Option<String>,
+}
+
+impl PendingSwitch {
+    pub fn flag(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            value: None,
+        }
+    }
+
+    pub fn with_value(name: &str, value: &str) -> Self {
+        Self {
+            name: name.into(),
+            value: Some(value.into()),
+        }
+    }
 }
 
 #[derive(Default)]

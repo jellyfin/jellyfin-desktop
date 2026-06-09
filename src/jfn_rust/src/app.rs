@@ -31,7 +31,6 @@ fn video_bg_get() -> u32 {
 pub(crate) const DEFAULT_LOG_FILTER: &str = "info";
 
 struct BootArgs {
-    ozone_platform: String,
     disable_gpu_compositing: bool,
     remote_debugging_port: c_int,
 }
@@ -223,7 +222,6 @@ struct StartupOptions {
     audio_exclusive: bool,
     audio_channels: String,
     log_level: String,
-    ozone_platform: String,
     log_file: Option<String>,
     disable_gpu_compositing: bool,
     remote_debugging_port: c_int,
@@ -252,7 +250,6 @@ fn resolve_startup_options(cli: cli::Cli) -> StartupOptions {
     let mut audio_channels = saved_chans;
     let mut log_level = saved_log_level;
 
-    let mut ozone_platform = String::new();
     let log_file = cli.log_file;
     let mut disable_gpu_compositing = false;
     let mut remote_debugging_port: c_int = 0;
@@ -268,9 +265,6 @@ fn resolve_startup_options(cli: cli::Cli) -> StartupOptions {
     }
     if let Some(v) = cli.log_level {
         log_level = v;
-    }
-    if let Some(v) = cli.ozone_platform {
-        ozone_platform = v;
     }
     if cli.audio_exclusive {
         audio_exclusive = true;
@@ -296,7 +290,6 @@ fn resolve_startup_options(cli: cli::Cli) -> StartupOptions {
         audio_exclusive,
         audio_channels,
         log_level,
-        ozone_platform,
         log_file,
         disable_gpu_compositing,
         remote_debugging_port,
@@ -452,16 +445,11 @@ fn publish_device_profile(mpv_raw: *mut jfn_mpv::sys::mpv_handle) {
     }
 }
 
-fn initialize_cef(ba: &BootArgs, ozone_platform: &str, use_shared_textures: bool) -> bool {
+fn initialize_cef(ba: &BootArgs, use_shared_textures: bool) -> bool {
     jfn_cef::ffi::jfn_cef_set_log_severity(cef_severity_for_cef_filter());
     jfn_cef::ffi::jfn_cef_set_remote_debugging_port(ba.remote_debugging_port);
     jfn_cef::ffi::jfn_cef_set_disable_gpu_compositing(!use_shared_textures);
-    #[cfg(target_os = "linux")]
-    {
-        if !ozone_platform.is_empty() {
-            jfn_cef::ffi::jfn_cef_set_ozone_platform(ozone_platform);
-        }
-    }
+    jfn_cef::ffi::jfn_cef_set_platform_switches(plat().display());
     tracing::info!(target: "Main", "[FLOW] calling CefInitialize...");
     if !jfn_cef::ffi::jfn_cef_initialize() {
         tracing::error!(target: "Main", "CefInitialize failed");
@@ -794,7 +782,6 @@ pub fn jfn_app_main() -> c_int {
     store_vo_size(mw, mh);
 
     let boot_args = BootArgs {
-        ozone_platform: opts.ozone_platform,
         disable_gpu_compositing: opts.disable_gpu_compositing,
         remote_debugging_port: opts.remote_debugging_port,
     };
@@ -1118,22 +1105,13 @@ fn h_shutdown_wake_manager() {
 
 /// Owns the run_with_cef body — invoked once by `jfn_app_main`.
 unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
-    // 1. Resolve final ozone_platform + write into g_platform.cef_ozone_platform.
+    // Feeds the dmabuf probe, not CEF's ozone switch (jfn_cef_set_platform_switches).
     #[cfg(target_os = "linux")]
-    let ozone_platform = {
-        let mut p = ba.ozone_platform.clone();
-        if p.is_empty() {
-            p = if plat().display() == DisplayBackend::Wayland {
-                "wayland".to_string()
-            } else {
-                "x11".to_string()
-            };
-        }
-        p
-    };
-    #[cfg(not(target_os = "linux"))]
-    let ozone_platform = ba.ozone_platform.clone();
-    plat().set_cef_ozone_platform(&ozone_platform);
+    plat().set_cef_ozone_platform(if plat().display() == DisplayBackend::Wayland {
+        "wayland"
+    } else {
+        "x11"
+    });
 
     // 2. Platform init (PlatformScope). Cleanup happens in jfn_app_teardown.
     let mpv_raw = jfn_mpv::boot::jfn_mpv_handle_get();
@@ -1157,7 +1135,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
 
     // 5. CEF init flags + initialise.
     let use_shared_textures = plat().shared_texture_supported() && !ba.disable_gpu_compositing;
-    if !initialize_cef(ba, &ozone_platform, use_shared_textures) {
+    if !initialize_cef(ba, use_shared_textures) {
         return 1;
     }
 
@@ -1171,6 +1149,8 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         metrics.hz,
         use_shared_textures,
     );
+    #[cfg(target_os = "macos")]
+    let _ = main_layer;
 
     if !start_playback_coordination() {
         return 1;
