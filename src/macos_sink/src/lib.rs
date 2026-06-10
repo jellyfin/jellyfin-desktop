@@ -13,7 +13,7 @@ use std::ffi::{CStr, c_int, c_void};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use jfn_playback::sink_core::{self, MediaCommand, MediaSink, Phase, map_kind_to_phase};
+use jfn_playback::sink_core::{self, MediaCommand, Phase, QueuedSink, map_kind_to_phase};
 use jfn_playback::{MediaMetadata, MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
@@ -58,7 +58,7 @@ struct MacosSink {
     last_position_update: Option<Instant>,
 }
 
-impl MediaSink for MacosSink {
+impl QueuedSink for MacosSink {
     fn init(&mut self) {
         init_remote_command_center();
     }

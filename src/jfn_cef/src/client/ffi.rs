@@ -241,7 +241,6 @@ pub unsafe fn jfn_cef_layer_create(h: *const JfnCefLayer, url_utf8: *const c_cha
     unsafe { arc(h) }.create(&url);
 }
 
-#[cfg(target_os = "macos")]
 pub(crate) unsafe fn jfn_cef_layer_send_external_begin_frame(h: *const JfnCefLayer) {
     unsafe { arc(h) }.send_external_begin_frame();
 }

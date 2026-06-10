@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [features]
 default = ["kde-palette"]
-kde-palette = ["jfn-cef/kde-palette", "jfn-wayland/kde-palette"]
+kde-palette = ["jfn-wayland/kde-palette"]
 
 [dependencies]
 tracing.workspace = true
@@ -37,11 +37,9 @@ libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 jfn-macos = { path = "../macos" }
-jfn-macos-sink = { path = "../macos_sink" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 jfn-windows = { path = "../windows" }
-jfn-windows-sink = { path = "../windows_sink" }
 windows-sys = { workspace = true, features = [
     "Win32_System_Threading",
     "Win32_System_Pipes",

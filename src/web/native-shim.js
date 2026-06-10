@@ -153,12 +153,12 @@
 
     // Window decorations (Linux): how the titlebar is drawn. Replaces separate
     // client-side-decoration and titlebar-theme-color toggles.
-    if (__CSD_SUPPORTED__) {
+    if (__WINDOW_DECORATIONS_SUPPORTED__) {
         const decorationOptions = [
             { value: 'csd', title: 'In-app (client-side)' },
             { value: 'server', title: 'System (server-side)' }
         ];
-        if (__KDE_PALETTE_SUPPORTED__) {
+        if (__THEME_COLOR_SUPPORTED__) {
             decorationOptions.push({ value: 'serverThemed', title: 'System, themed (KDE)' });
         }
         jmpInfo.settingsDescriptions.advanced.unshift({

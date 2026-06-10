@@ -130,8 +130,7 @@ pub fn jfn_wl_lifecycle_init() -> bool {
                 Err(_) => std::ptr::null_mut(),
             };
 
-            let ozone = jfn_platform_abi::get().cef_ozone_platform();
-            if unsafe { jfn_wl_dmabuf_probe(ozone, egl_dpy) } {
+            if unsafe { jfn_wl_dmabuf_probe(c"wayland".as_ptr(), egl_dpy) } {
                 tracing::info!("paint: EGL/GBM dmabuf shared texture");
                 resolved = Req::Dmabuf;
             } else {

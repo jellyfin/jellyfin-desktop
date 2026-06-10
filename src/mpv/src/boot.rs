@@ -15,35 +15,6 @@ use std::sync::OnceLock;
 use crate::handle::Handle;
 use crate::sys;
 
-/// Whether the system's Metal device advertises the Mac2 GPU family.
-///
-/// MoltenVK's MTLHeap (placement-heap) path requires Mac2-class features.
-/// Legacy Intel GPUs — e.g. the Iris Pro 5200, which reports only "Metal
-/// GPUFamily macOS 1" — lack them, and the Apple driver aborts on the
-/// first libplacebo GPU upload when MoltenVK tries to use heaps there.
-/// Probing the live device (rather than matching model names) keeps the
-/// workaround tied to the actual capability. Returns `true` when no Metal
-/// device is present, so a machine we cannot probe keeps the fast path.
-#[cfg(target_os = "macos")]
-fn metal_has_mac2_family() -> bool {
-    use objc2::runtime::AnyObject;
-    // MTLGPUFamilyMac2, from <Metal/MTLDevice.h>.
-    const MTL_GPU_FAMILY_MAC2: isize = 2002;
-    #[link(name = "Metal", kind = "framework")]
-    unsafe extern "C" {
-        fn MTLCreateSystemDefaultDevice() -> *mut AnyObject;
-    }
-    unsafe {
-        let device = MTLCreateSystemDefaultDevice();
-        if device.is_null() {
-            return true;
-        }
-        let has_mac2: bool = objc2::msg_send![device, supportsFamily: MTL_GPU_FAMILY_MAC2];
-        let _: () = objc2::msg_send![device, release];
-        has_mac2
-    }
-}
-
 /// Display backend in use for this process.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -160,19 +131,15 @@ fn apply_defaults(
     set("input-cursor", "no")?;
     set("cursor-autohide", "no")?;
 
-    #[cfg(not(target_os = "linux"))]
-    {
+    if display == DisplayBackend::Other {
         set("input-vo-cursor", "no")?;
         set("input-keyboard", "no")?;
     }
 
     // Disable mpv's clipboard so it keeps a single wl_display connection.
-    #[cfg(all(unix, not(target_os = "macos")))]
     if display == DisplayBackend::Wayland {
         set("clipboard-backends", "")?;
     }
-
-    let _ = display; // referenced under cfg above; silence on other targets
 
     // Window behavior.
     set("stop-screensaver", "no")?;
@@ -192,50 +159,6 @@ fn apply_defaults(
     // while the main thread is blocked in init.
     set("force-window", "yes")?;
     set("idle", "yes")?;
-
-    #[cfg(target_os = "macos")]
-    unsafe {
-        // Used by mpv's macOS Cocoa Common to locate the bundle.
-        let key = c"MPVBUNDLE";
-        let val = c"true";
-        libc::setenv(key.as_ptr(), val.as_ptr(), 1);
-
-        // MoltenVK's MTLHeap path crashes on legacy Metal GPUs: the Apple
-        // Intel driver (e.g. Iris Pro 5200, which reports only "Metal
-        // GPUFamily macOS 1") rejects the heap descriptor and aborts on the
-        // first frame in libplacebo's GPU upload. Placement heaps require
-        // the Mac2 feature set, so disable MoltenVK heaps only where Mac2 is
-        // absent — Apple Silicon and Metal-3-class Intel keep the fast path.
-        // The per-resource MTLBuffer/MTLTexture fallback is correct on every
-        // GPU; the cost is negligible.
-        if metal_has_mac2_family() {
-            tracing::debug!(
-                target: "mpv",
-                "Metal Mac2 family present; keeping MoltenVK MTLHeap path"
-            );
-        } else {
-            let key = c"MVK_CONFIG_USE_MTLHEAP";
-            let val = c"0";
-            libc::setenv(key.as_ptr(), val.as_ptr(), 1);
-            tracing::info!(
-                target: "mpv",
-                "legacy Metal GPU without Mac2 family; disabled MoltenVK MTLHeap (MVK_CONFIG_USE_MTLHEAP=0)"
-            );
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // Tell mpv to load the window icon from our exe resources.
-        unsafe extern "C" {
-            fn _putenv_s(name: *const c_char, value: *const c_char) -> i32;
-        }
-        let key = c"MPV_WINDOW_ICON";
-        let val = c"IDI_ICON1";
-        unsafe {
-            _putenv_s(key.as_ptr(), val.as_ptr());
-        }
-    }
 
     Ok(())
 }

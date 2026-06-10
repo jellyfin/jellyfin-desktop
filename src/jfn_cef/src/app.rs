@@ -156,10 +156,9 @@ wrap_browser_process_handler! {
         }
 
         fn on_schedule_message_pump_work(&self, delay_ms: i64) {
-            #[cfg(target_os = "macos")]
-            crate::pump::on_schedule(delay_ms);
-            #[cfg(not(target_os = "macos"))]
-            let _ = delay_ms;
+            if let Some(host) = jfn_platform_abi::try_get().and_then(|p| p.cef_host()) {
+                host.pump_schedule(delay_ms);
+            }
         }
     }
 }
@@ -567,8 +566,8 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
     replace_first(
         &mut code,
-        "__KDE_PALETTE_SUPPORTED__",
-        if cfg!(all(target_os = "linux", feature = "kde-palette")) {
+        "__THEME_COLOR_SUPPORTED__",
+        if profile.theme_color_supported() {
             "true"
         } else {
             "false"
@@ -576,8 +575,8 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
     );
     replace_first(
         &mut code,
-        "__CSD_SUPPORTED__",
-        if cfg!(target_os = "linux") {
+        "__WINDOW_DECORATIONS_SUPPORTED__",
+        if profile.window_decorations_supported() {
             "true"
         } else {
             "false"

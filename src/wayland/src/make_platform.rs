@@ -72,6 +72,19 @@ pub(crate) unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFra
 // Backend
 // =====================================================================
 
+/// MPRIS-backed [`jfn_platform_abi::MediaSink`].
+struct MprisSink;
+
+impl jfn_platform_abi::MediaSink for MprisSink {
+    fn start(&self) {
+        unsafe { jfn_playback::mpris_sink::jfn_mpris_sink_start(c"".as_ptr()) };
+    }
+
+    fn stop(&self) {
+        jfn_playback::mpris_sink::jfn_mpris_sink_stop();
+    }
+}
+
 pub struct WaylandPlatform {
     shared_texture: AtomicBool,
     clipboard: AtomicBool,
@@ -110,6 +123,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn post_window_cleanup(&self) {
+        crate::wlproxy_host::stop_wlproxy();
         #[cfg(feature = "kde-palette")]
         jfn_wl_kde_palette_post_window_cleanup();
     }
@@ -195,6 +209,18 @@ impl Platform for WaylandPlatform {
         crate::context_menu::backend()
     }
 
+    fn mpv_host(&self) -> &dyn jfn_platform_abi::MpvHost {
+        &crate::wlproxy_host::WlproxyMpvHost
+    }
+
+    fn media_session(&self) -> &dyn jfn_platform_abi::MediaSink {
+        &MprisSink
+    }
+
+    fn window_source(&self) -> Option<&'static dyn jfn_platform_abi::WindowSource> {
+        Some(&crate::window_source::WaylandWindowSource)
+    }
+
     fn set_fullscreen(&self, v: bool) {
         crate::wl_ffi::jfn_wl_set_fullscreen(v);
     }
@@ -233,6 +259,10 @@ impl Platform for WaylandPlatform {
 
     fn get_scale(&self) -> f32 {
         jfn_wl_get_cached_scale()
+    }
+
+    fn effective_scale(&self, _mpv_display_hidpi_scale: f64) -> f32 {
+        self.get_scale()
     }
 
     fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
@@ -279,6 +309,14 @@ impl Platform for WaylandPlatform {
         }
     }
 
+    fn window_decorations_supported(&self) -> bool {
+        true
+    }
+
+    fn theme_color_supported(&self) -> bool {
+        cfg!(feature = "kde-palette")
+    }
+
     fn shared_texture_supported(&self) -> bool {
         self.shared_texture.load(Ordering::Acquire)
     }
@@ -305,6 +343,12 @@ impl Platform for WaylandPlatform {
 
     fn open_external_url(&self, url: &str) {
         jfn_linux_util::open_url::open(url);
+    }
+
+    fn open_path(&self, path: &std::path::Path) {
+        // xdg-open opens filesystem paths too; reuse the shared launcher so
+        // the spawn-and-reap logic lives in one place.
+        jfn_linux_util::open_url::open(&path.to_string_lossy());
     }
 }
 

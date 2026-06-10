@@ -7,9 +7,7 @@ use std::sync::OnceLock;
 
 use clap::Parser;
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
-use jfn_platform_abi::{
-    DisplayBackend, IdleInhibitLevel, LogicalSize, Platform, Scale, WindowGeometry,
-};
+use jfn_platform_abi::{IdleInhibitLevel, LogicalSize, Platform, Scale, WindowGeometry};
 
 use crate::cli;
 
@@ -104,48 +102,6 @@ fn init_single_instance() -> bool {
     true
 }
 
-#[cfg(target_os = "linux")]
-fn install_linux_platform(platform: Option<cli::PlatformArg>, platform_paint: Option<cli::Paint>) {
-    let backend = match platform {
-        Some(cli::PlatformArg::Wayland) => DisplayBackend::Wayland,
-        Some(cli::PlatformArg::X11) => DisplayBackend::X11,
-        None => {
-            let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
-            let has_display = std::env::var_os("DISPLAY").is_some();
-            if has_wayland || !has_display {
-                DisplayBackend::Wayland
-            } else {
-                DisplayBackend::X11
-            }
-        }
-    };
-    if let Some(p) = platform_paint {
-        match backend {
-            DisplayBackend::Wayland => jfn_wayland::set_paint_override(match p {
-                cli::Paint::Dmabuf => jfn_wayland::WlPaintOverride::Dmabuf,
-                cli::Paint::Gpu => jfn_wayland::WlPaintOverride::Gpu,
-                cli::Paint::Shm => jfn_wayland::WlPaintOverride::Shm,
-            }),
-            DisplayBackend::X11 => jfn_x11::set_paint_override(match p {
-                cli::Paint::Dmabuf => jfn_x11::X11PaintOverride::Dmabuf,
-                cli::Paint::Gpu => jfn_x11::X11PaintOverride::Gpu,
-                cli::Paint::Shm => jfn_x11::X11PaintOverride::Shm,
-            }),
-            _ => {}
-        }
-    }
-
-    let p: Box<dyn Platform> = match backend {
-        DisplayBackend::Wayland => jfn_wayland::make_platform::make_wayland_platform(),
-        DisplayBackend::X11 => jfn_x11::make_platform::make_x11_platform(),
-        _ => unreachable!(),
-    };
-    p.early_init();
-    jfn_platform_abi::install(p);
-    tracing::info!(target: "Main", "Display backend: {}",
-        if backend == DisplayBackend::Wayland { "wayland" } else { "x11" });
-}
-
 fn log_mpv_versions() {
     for prop in ["mpv-version", "ffmpeg-version"] {
         let pc = cs(prop);
@@ -161,40 +117,6 @@ fn log_mpv_versions() {
     }
 }
 
-fn terminate_mpv_handle() {
-    // macOS needs to run TerminateDestroy off the main thread (mpv's VO uninit
-    // does DispatchQueue.main.sync), so we spawn a side thread and pump CFRunLoop here.
-    #[cfg(target_os = "macos")]
-    unsafe {
-        unsafe extern "C" {
-            fn signal(signum: c_int, handler: unsafe extern "C" fn(c_int)) -> usize;
-            fn CFRunLoopWakeUp(rl: *const std::ffi::c_void);
-            fn CFRunLoopGetMain() -> *const std::ffi::c_void;
-            fn CFRunLoopRunInMode(
-                mode: *const std::ffi::c_void,
-                seconds: f64,
-                returnAfterSourceHandled: i32,
-            ) -> i32;
-            static kCFRunLoopDefaultMode: *const std::ffi::c_void;
-        }
-        unsafe extern "C" fn sigalrm_noop(_: c_int) {}
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let d2 = done.clone();
-        let t = std::thread::spawn(move || {
-            signal(libc::SIGALRM as c_int, sigalrm_noop);
-            jfn_mpv::boot::jfn_mpv_handle_terminate();
-            d2.store(true, std::sync::atomic::Ordering::Release);
-            CFRunLoopWakeUp(CFRunLoopGetMain());
-        });
-        while !done.load(std::sync::atomic::Ordering::Acquire) {
-            CFRunLoopRunInMode(kCFRunLoopDefaultMode, f64::MAX, 1);
-        }
-        let _ = t.join();
-    }
-    #[cfg(not(target_os = "macos"))]
-    jfn_mpv::boot::jfn_mpv_handle_terminate();
-}
-
 fn install_mpv_close_binding(raw: *mut jfn_mpv::sys::mpv_handle) {
     let kb = cs("keybind");
     let name = cs("CLOSE_WIN");
@@ -208,14 +130,10 @@ fn setup_mpv_environment() {
     unsafe {
         std::env::set_var("MPV_HOME", &mpv_home);
     }
-    let _ = mpv_home;
 
-    #[cfg(target_os = "linux")]
-    {
-        if plat().display() == DisplayBackend::Wayland {
-            unsafe { start_wlproxy() };
-        }
-    }
+    plat()
+        .mpv_host()
+        .prepare(jfn_config::window_decorations_mode());
 }
 
 struct StartupOptions {
@@ -227,13 +145,9 @@ struct StartupOptions {
     log_file: Option<String>,
     disable_gpu_compositing: bool,
     remote_debugging_port: c_int,
-    #[cfg(target_os = "linux")]
-    platform: Option<cli::PlatformArg>,
-    #[cfg(target_os = "linux")]
-    platform_paint: Option<cli::Paint>,
 }
 
-fn resolve_startup_options(cli: cli::Cli) -> StartupOptions {
+fn resolve_startup_options(cli: &cli::Cli) -> StartupOptions {
     let saved_hwdec = jfn_config::hwdec();
     let saved_pass = jfn_config::audio_passthrough();
     let saved_chans = jfn_config::audio_channels();
@@ -252,20 +166,20 @@ fn resolve_startup_options(cli: cli::Cli) -> StartupOptions {
     let mut audio_channels = saved_chans;
     let mut log_level = saved_log_level;
 
-    let log_file = cli.log_file;
+    let log_file = cli.log_file.clone();
     let mut disable_gpu_compositing = false;
     let mut remote_debugging_port: c_int = 0;
 
-    if let Some(v) = cli.hwdec {
+    if let Some(v) = cli.hwdec.clone() {
         hwdec = v;
     }
-    if let Some(v) = cli.audio_passthrough {
+    if let Some(v) = cli.audio_passthrough.clone() {
         audio_passthrough = v;
     }
-    if let Some(v) = cli.audio_channels {
+    if let Some(v) = cli.audio_channels.clone() {
         audio_channels = v;
     }
-    if let Some(v) = cli.log_level {
+    if let Some(v) = cli.log_level.clone() {
         log_level = v;
     }
     if cli.audio_exclusive {
@@ -295,10 +209,6 @@ fn resolve_startup_options(cli: cli::Cli) -> StartupOptions {
         log_file,
         disable_gpu_compositing,
         remote_debugging_port,
-        #[cfg(target_os = "linux")]
-        platform: cli.platform,
-        #[cfg(target_os = "linux")]
-        platform_paint: cli.platform_paint,
     }
 }
 
@@ -350,24 +260,20 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
         let g = jfn_config::window_geometry();
         g.maximized
     };
-    let wait_for_scale = cfg!(target_os = "linux") && plat().display() == DisplayBackend::Wayland;
     tracing::info!(target: "Main", "Waiting for mpv window...");
-
-    #[cfg(target_os = "macos")]
-    unsafe {
-        jfn_mpv::api::jfn_mpv_set_wakeup_callback(
-            jfn_macos::macos_mpv_wakeup_cb,
-            std::ptr::null_mut(),
-        );
-    }
 
     let mut mw: i32 = 0;
     let mut mh: i32 = 0;
     let mut need_max = want_max;
-    'wait: loop {
-        // Drain everything mpv has queued without blocking. consume_vo_event
-        // folds property changes into the ingest layer; if any drain step
-        // observes a fatal event we bail out of jfn_app_main.
+    let mut fatal = false;
+
+    // The platform owns the wait strategy; this pump owns all mpv event
+    // handling. It drains everything mpv has queued without blocking —
+    // consume_vo_event folds property changes into the ingest layer; a
+    // fatal event bails out of jfn_app_main — then, when the platform's
+    // strategy is the generic blocking wait (`may_block`), parks in mpv
+    // until the next wakeup.
+    plat().mpv_host().run_vo_wait(&mut |may_block| {
         loop {
             match jfn_mpv::api::wait_event_owned(0.0) {
                 jfn_mpv::api::WaitEvent::None => {
@@ -379,40 +285,39 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
                 }
                 jfn_mpv::api::WaitEvent::Event(
                     jfn_mpv::Event::Shutdown | jfn_mpv::Event::EndFile(_),
-                ) => return None,
+                ) => {
+                    fatal = true;
+                    return false;
+                }
                 jfn_mpv::api::WaitEvent::Event(event) => {
                     consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
                 }
             }
         }
-        if vo_ready(&mut mw, &mut mh, &need_max, wait_for_scale) {
-            break 'wait;
+        if vo_ready(&mut mw, &mut mh, &need_max) {
+            return false;
         }
-        // Block until the next mpv wakeup (or, on macOS, until the main
-        // run loop services a source — e.g. the dispatch block posted by
-        // the wakeup callback).
-        #[cfg(target_os = "macos")]
-        jfn_macos::macos_pump_block(60.0);
-        #[cfg(not(target_os = "macos"))]
-        {
+        if may_block {
             match jfn_mpv::api::wait_event_owned(-1.0) {
                 jfn_mpv::api::WaitEvent::None => {}
                 jfn_mpv::api::WaitEvent::LogMessage(m) => jfn_mpv::forward_log_to_tracing(&m),
                 jfn_mpv::api::WaitEvent::Event(
                     jfn_mpv::Event::Shutdown | jfn_mpv::Event::EndFile(_),
-                ) => return None,
+                ) => {
+                    fatal = true;
+                    return false;
+                }
                 jfn_mpv::api::WaitEvent::Event(event) => {
                     consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
                 }
             }
         }
-    }
+        true
+    });
 
-    #[cfg(target_os = "macos")]
-    {
-        jfn_mpv::api::jfn_mpv_clear_wakeup_callback();
+    if fatal {
+        return None;
     }
-
     Some((mw, mh))
 }
 
@@ -476,15 +381,7 @@ fn start_playback_coordination() -> bool {
         h_browsers_set_refresh_rate,
     ));
 
-    #[cfg(target_os = "linux")]
-    {
-        let empty = cs("");
-        unsafe { jfn_playback::mpris_sink::jfn_mpris_sink_start(empty.as_ptr()) };
-    }
-    #[cfg(target_os = "macos")]
-    jfn_macos_sink::jfn_macos_sink_start();
-    #[cfg(target_os = "windows")]
-    jfn_windows_sink::jfn_windows_sink_start();
+    plat().media_session().start();
 
     jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(|s| {
         if s > 0.0 {
@@ -520,21 +417,12 @@ fn shutdown_runtime(manager_thread: std::thread::JoinHandle<()>) {
     // Join before any teardown so no posted task outlives the layer free below.
     let _ = manager_thread.join();
 
-    // Sever the wlproxy→host callbacks before CEF teardown. A CEF paint thread
-    // can be terminated by `jfn_cef_shutdown` while holding the WlState lock,
-    // orphaning it; if the proxy's mpv-connection thread then runs `on_configure`
-    // it parks on that lock forever and can no longer forward mpv's VO-teardown
-    // roundtrip, deadlocking the whole shutdown when video was playing.
-    #[cfg(target_os = "linux")]
-    jfn_wlproxy::jfn_wlproxy_clear_callbacks();
+    // Sever host↔mpv links (e.g. wlproxy→host callbacks) that could
+    // deadlock the teardown below once CEF threads start dying.
+    plat().mpv_host().detach();
 
     jfn_color::theme::jfn_theme_color_shutdown();
-    #[cfg(target_os = "macos")]
-    jfn_macos_sink::jfn_macos_sink_stop();
-    #[cfg(target_os = "windows")]
-    jfn_windows_sink::jfn_windows_sink_stop();
-    #[cfg(target_os = "linux")]
-    jfn_playback::mpris_sink::jfn_mpris_sink_stop();
+    plat().media_session().stop();
 
     jfn_playback::ingest_driver::jfn_playback_stop_mpv_event_thread();
 
@@ -620,14 +508,7 @@ fn sync_cef_window_metrics(
     }
     jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
 
-    let wayland_scale = cfg!(target_os = "linux") && plat().display() == DisplayBackend::Wayland;
-    let scale = if wayland_scale {
-        plat().get_scale()
-    } else if display_hidpi_scale > 0.0 {
-        display_hidpi_scale as f32
-    } else {
-        plat().get_scale()
-    };
+    let scale = plat().effective_scale(display_hidpi_scale);
     let lw = (mw as f32 / scale) as c_int;
     let lh = (mh as f32 / scale) as c_int;
 
@@ -685,20 +566,7 @@ fn init_main_browser(
 }
 
 pub fn jfn_app_main() -> c_int {
-    // Platform must be installed before CefExecuteProcess: subprocesses bail
-    // out of the browser-process flow but may still query the platform.
-    #[cfg(target_os = "windows")]
-    {
-        let p = jfn_windows::make_windows_platform();
-        p.early_init();
-        jfn_platform_abi::install(p);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let p = jfn_macos::make_macos_platform();
-        p.early_init();
-        jfn_platform_abi::install(p);
-    }
+    crate::platform_install::install_early();
 
     let rc = jfn_cef::ffi::jfn_cef_start();
     if rc >= 0 {
@@ -723,12 +591,11 @@ pub fn jfn_app_main() -> c_int {
     jfn_config::settings_init(&settings_path);
     jfn_config::settings_load();
 
-    let opts = resolve_startup_options(cli);
+    let opts = resolve_startup_options(&cli);
 
     init_logging(opts.log_file, &opts.log_level);
 
-    #[cfg(target_os = "linux")]
-    install_linux_platform(opts.platform, opts.platform_paint);
+    crate::platform_install::install_from_cli(&cli);
 
     let _ = crate::window_geometry::controller();
 
@@ -801,16 +668,17 @@ pub fn jfn_app_main() -> c_int {
         return rc;
     }
 
-    terminate_mpv_handle();
+    // macOS must run TerminateDestroy off the main thread (mpv's VO uninit
+    // does DispatchQueue.main.sync); run_blocking keeps main pumping.
+    plat().run_blocking(Box::new(jfn_mpv::boot::jfn_mpv_handle_terminate));
 
-    jfn_app_teardown();
     plat().post_window_cleanup();
 
     0
 }
 
 // =====================================================================
-// Signal handler + listener guard + wlproxy lifetime
+// Signal handler + listener guard
 // =====================================================================
 
 #[cfg(unix)]
@@ -860,57 +728,6 @@ fn install_listener_guard() {
     let _ = LISTENER_GUARD.set(ListenerGuardSlot);
 }
 
-#[cfg(target_os = "linux")]
-use jfn_wayland::proxy::jfn_wl_register_proxy_callbacks;
-#[cfg(target_os = "linux")]
-use jfn_wlproxy::{jfn_wlproxy_display_name, jfn_wlproxy_start, jfn_wlproxy_stop};
-
-#[cfg(target_os = "linux")]
-static WLPROXY: OnceLock<WlproxySlot> = OnceLock::new();
-
-#[cfg(target_os = "linux")]
-struct WlproxySlot(*mut jfn_wlproxy::Proxy);
-#[cfg(target_os = "linux")]
-unsafe impl Send for WlproxySlot {}
-#[cfg(target_os = "linux")]
-unsafe impl Sync for WlproxySlot {}
-
-#[cfg(target_os = "linux")]
-unsafe fn start_wlproxy() {
-    let p = jfn_wlproxy_start();
-    if p.is_null() {
-        tracing::error!(target: "Main", "wlproxy start failed; continuing without proxy");
-        return;
-    }
-    let disp_p = unsafe { jfn_wlproxy_display_name(p) };
-    if disp_p.is_null() {
-        tracing::error!(target: "Main", "wlproxy display name empty; aborting proxy");
-        unsafe { jfn_wlproxy_stop(p) };
-        return;
-    }
-    let disp = unsafe { CStr::from_ptr(disp_p) }
-        .to_string_lossy()
-        .into_owned();
-    if disp.is_empty() {
-        tracing::error!(target: "Main", "wlproxy display name empty; aborting proxy");
-        unsafe { jfn_wlproxy_stop(p) };
-        return;
-    }
-    tracing::info!(target: "Main", "wlproxy listening on {disp}");
-    let deco_mode = match jfn_config::window_decorations_mode() {
-        jfn_platform_abi::WindowDecorations::Csd => 1,
-        jfn_platform_abi::WindowDecorations::Server => 2,
-        jfn_platform_abi::WindowDecorations::ServerThemed => 3,
-    };
-    jfn_wlproxy::jfn_wlproxy_set_decoration_mode(deco_mode);
-    unsafe { std::env::set_var("WAYLAND_DISPLAY", &disp) };
-    // Register the configure intercept BEFORE mpv_create so the first
-    // compositor configure (which arrives shortly after mpv_initialize) is
-    // captured.
-    jfn_wl_register_proxy_callbacks();
-    let _ = WLPROXY.set(WlproxySlot(p));
-}
-
 // =====================================================================
 // mpv boot helpers + VO wait loop
 // =====================================================================
@@ -941,23 +758,6 @@ fn mpv_log_level_from_filter() -> &'static str {
 
 const JFN_OBSERVE_WINDOW_MAX: u64 = 11;
 
-fn current_macos_logical_size() -> Option<(i32, i32)> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut w: c_int = 0;
-        let mut h: c_int = 0;
-        if jfn_macos::jfn_macos_query_logical_content_size(&mut w, &mut h) {
-            Some((w, h))
-        } else {
-            None
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
-
 fn boot_window_size() -> Option<(i32, i32)> {
     crate::window_geometry::controller()
         .source()
@@ -971,7 +771,7 @@ fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max
     jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event_owned(
         event,
         scale,
-        current_macos_logical_size(),
+        plat().mpv_host().logical_content_size(),
     );
     if let jfn_mpv::Event::PropertyChange { id, .. } = event
         && *id == JFN_OBSERVE_WINDOW_MAX
@@ -985,19 +785,12 @@ fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max
     }
 }
 
-fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool, wait_for_scale: bool) -> bool {
+fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool) -> bool {
     if let Some((w, h)) = boot_window_size() {
         *mw = w;
         *mh = h;
     }
-    #[cfg(target_os = "linux")]
-    let scale_ready = !wait_for_scale || jfn_wayland::proxy::jfn_wl_scale_known();
-    #[cfg(not(target_os = "linux"))]
-    let scale_ready = {
-        let _ = wait_for_scale;
-        true
-    };
-    *mw > 0 && !*need_max && scale_ready
+    *mw > 0 && !*need_max && plat().mpv_host().host_ready()
 }
 
 static VO_SIZE: OnceLock<(i32, i32)> = OnceLock::new();
@@ -1076,15 +869,7 @@ fn h_shutdown_wake_manager() {
 
 /// Owns the run_with_cef body — invoked once by `jfn_app_main`.
 unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
-    // Feeds the dmabuf probe, not CEF's ozone switch (jfn_cef_set_platform_switches).
-    #[cfg(target_os = "linux")]
-    plat().set_cef_ozone_platform(if plat().display() == DisplayBackend::Wayland {
-        "wayland"
-    } else {
-        "x11"
-    });
-
-    // 2. Platform init (PlatformScope). Cleanup happens in jfn_app_teardown.
+    // 2. Platform init (PlatformScope). Cleanup happens in shutdown_runtime.
     let mpv_raw = jfn_mpv::boot::jfn_mpv_handle_get();
     let platform_ok = plat().init(mpv_raw as *mut std::ffi::c_void);
     if !platform_ok {
@@ -1120,18 +905,17 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         metrics.hz,
         use_shared_textures,
     );
-    #[cfg(target_os = "macos")]
-    let _ = main_layer;
 
     if !start_playback_coordination() {
         return 1;
     }
 
-    // 14. Wait for the main browser to finish loading (non-macOS).
-    #[cfg(not(target_os = "macos"))]
-    unsafe {
-        jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer)
-    };
+    // 14. Wait for the main browser to finish loading. Skipped when the
+    //     platform pumps CEF itself (external pump on the main thread):
+    //     blocking main here would starve the pump and never load.
+    if plat().cef_host().is_none() {
+        unsafe { jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer) };
+    }
     tracing::info!(target: "Main", "Main browser loaded");
 
     tracing::info!(target: "Main", "[FLOW] Running — about to enter run_main_loop");
@@ -1155,16 +939,7 @@ static PLATFORM_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 static CEF_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static COORD_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Tear down boot-owned resources at process exit (wlproxy,
-/// single-instance listener).
-pub fn jfn_app_teardown() {
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(slot) = WLPROXY.get() {
-            unsafe { jfn_wlproxy_stop(slot.0) };
-        }
-    }
-    // Single-instance listener is dropped via the OnceLock at process exit;
-    // no explicit teardown call needed here. SignalGuard slot stays until
-    // exit and restores the original disposition via its Drop impl.
-}
+// Single-instance listener is dropped via its OnceLock at process exit; the
+// SignalGuard slot stays until exit and restores the original disposition
+// via its Drop impl. wlproxy teardown lives in the Wayland backend's
+// `post_window_cleanup`.

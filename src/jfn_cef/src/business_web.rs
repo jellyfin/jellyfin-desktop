@@ -417,7 +417,9 @@ fn handle_message(message: BrowserMessage) -> bool {
                 jfn_logging::LEVEL_INFO,
                 "Opening mpv home directory",
             );
-            jfn_paths::open_mpv_home();
+            if let Some(p) = crate::platform_ops::ops() {
+                p.open_path(&jfn_paths::mpv_home());
+            }
             true
         }
         _ => false,

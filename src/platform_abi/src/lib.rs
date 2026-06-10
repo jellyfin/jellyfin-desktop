@@ -11,13 +11,19 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{c_int, c_void};
+use std::path::Path;
 use std::sync::OnceLock;
 
+pub mod cef_host;
 pub mod context_menu;
 pub mod dropdown;
 pub mod geometry;
+pub mod media_sink;
+pub mod mpv_host;
+pub mod window_source;
 
+pub use cef_host::CefHost;
 pub use context_menu::{
     ContextMenuBackend, ContextMenuScript, ContextMenuStyle, JfnContextMenuRequest, JfnMenuItem,
     JsMenuChannel, JsMenuContextMenu, MenuSelectionFn, context_menu_style,
@@ -28,6 +34,9 @@ pub use dropdown::{
 pub use geometry::{
     BootGeometry, LogicalSize, PhysicalSize, Scale, SurfaceSize, WindowGeometry, WindowPos,
 };
+pub use media_sink::MediaSink;
+pub use mpv_host::{DefaultMpvHost, MpvHost};
+pub use window_source::WindowSource;
 
 // =====================================================================
 // Main-thread park (non-macOS default for run_main_loop/wake_main_loop)
@@ -289,6 +298,22 @@ pub trait Platform: Send + Sync {
 
     fn context_menu_backend(&self) -> &'static dyn ContextMenuBackend;
 
+    /// How this platform hosts mpv's lifecycle (env prep, VO wait,
+    /// teardown detach). Default: mpv needs nothing from the platform.
+    fn mpv_host(&self) -> &dyn MpvHost {
+        &DefaultMpvHost
+    }
+
+    /// `Some` when the platform drives CEF's message loop itself
+    /// (external pump); `None` runs CEF's multi-threaded message loop.
+    fn cef_host(&self) -> Option<&dyn CefHost> {
+        None
+    }
+
+    /// OS media-session integration. Non-optional — every platform has a
+    /// sink.
+    fn media_session(&self) -> &dyn MediaSink;
+
     // Fullscreen
     fn set_fullscreen(&self, _v: bool) {}
     fn toggle_fullscreen(&self) {}
@@ -320,6 +345,18 @@ pub trait Platform: Send + Sync {
         1.0
     }
 
+    /// Scale used to convert physical window pixels to CEF logical size.
+    /// Default trusts mpv's `display-hidpi-scale` when known; Wayland
+    /// overrides to always use the compositor scale (mpv runs behind
+    /// wlproxy there, so its value isn't authoritative).
+    fn effective_scale(&self, mpv_display_hidpi_scale: f64) -> f32 {
+        if mpv_display_hidpi_scale > 0.0 {
+            mpv_display_hidpi_scale as f32
+        } else {
+            self.get_scale()
+        }
+    }
+
     /// Seed the window owner with the restored boot geometry. Backends that
     /// own their toplevel (Wayland) size it here; mpv-backed backends rely on
     /// mpv's `--geometry` instead and keep the no-op default.
@@ -327,6 +364,13 @@ pub trait Platform: Send + Sync {
 
     /// Current window position, or `None` if it can't be determined.
     fn query_window_position(&self) -> Option<WindowPos> {
+        None
+    }
+
+    /// Native live-window-geometry source, for backends that own their
+    /// toplevel (Wayland). `None` ⇒ the caller falls back to the generic
+    /// mpv-backed source.
+    fn window_source(&self) -> Option<&'static dyn WindowSource> {
         None
     }
     /// Clamp saved geometry to stay on-screen. Backends that don't constrain
@@ -353,22 +397,23 @@ pub trait Platform: Send + Sync {
     fn set_idle_inhibit(&self, _level: IdleInhibitLevel) {}
     fn set_theme_color(&self, _rgb: u32) {}
 
+    /// Whether the window-decorations setting (client-side vs server-side
+    /// titlebar) applies on this platform. Gates the settings UI entry.
+    fn window_decorations_supported(&self) -> bool {
+        false
+    }
+    /// Whether [`Platform::set_theme_color`] actually themes the server
+    /// decorations. Gates the "System, themed" decorations option.
+    fn theme_color_supported(&self) -> bool {
+        false
+    }
+
     fn shared_texture_supported(&self) -> bool {
         true
     }
     /// Set during init by Wayland backend (dmabuf probe) when GPU lacks the
     /// shared-texture path.
     fn set_shared_texture_unsupported(&self) {}
-
-    /// CEF ozone platform name (e.g. "wayland" / "x11"). Stored in the
-    /// shared `OZONE_PLATFORM` cell below — the default impls cover every
-    /// backend; no backend needs to override these.
-    fn cef_ozone_platform(&self) -> *const c_char {
-        ozone_platform_get()
-    }
-    fn set_cef_ozone_platform(&self, name: &str) {
-        ozone_platform_set(name);
-    }
 
     /// Whether [`clipboard_read_text_async`] will actually invoke the
     /// backend clipboard. Wayland clears this in `wl_init` when no data
@@ -387,6 +432,17 @@ pub trait Platform: Send + Sync {
     fn clear_clipboard_handler(&self) {}
 
     fn open_external_url(&self, _url: &str) {}
+
+    /// Open a filesystem path in the OS file manager.
+    fn open_path(&self, _path: &Path) {}
+
+    /// Run `f` to completion without deadlocking work that needs the
+    /// main thread (e.g. mpv's VO uninit doing `DispatchQueue.main.sync`).
+    /// Default runs `f` inline; macOS runs it on a side thread while main
+    /// pumps its run loop.
+    fn run_blocking(&self, f: Box<dyn FnOnce() + Send>) {
+        f();
+    }
 }
 
 // =====================================================================
@@ -408,23 +464,6 @@ pub fn install(p: Box<dyn Platform>) {
         .set(leaked)
         .map_err(|_| ())
         .expect("install() called twice");
-}
-
-// CEF ozone platform name (NUL-terminated). Set once by jfn_app_main
-// before `Platform::init`; read by the Wayland dmabuf probe.
-static OZONE_PLATFORM: OnceLock<CString> = OnceLock::new();
-
-fn ozone_platform_get() -> *const c_char {
-    match OZONE_PLATFORM.get() {
-        Some(cs) => cs.as_ptr(),
-        None => c"".as_ptr(),
-    }
-}
-
-fn ozone_platform_set(name: &str) {
-    let cs = CString::new(name).unwrap_or_default();
-    // Best-effort: silently ignore a second set so callers can stay simple.
-    let _ = OZONE_PLATFORM.set(cs);
 }
 
 /// Returns the installed platform backend. Panics if [`install`] hasn't

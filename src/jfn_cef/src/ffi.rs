@@ -39,18 +39,11 @@ use crate::state;
 /// Returns -1 in the browser process (continue startup); returns the
 /// subprocess exit code otherwise.
 pub fn jfn_cef_start() -> c_int {
-    // macOS distributes CEF as a framework loaded at runtime via a thunk table
-    // in libcef_dll_wrapper (`cef_load_library` populates it). Without this,
-    // every CEF call dispatches through a NULL pointer.
-    #[cfg(target_os = "macos")]
-    {
-        static LOADER: OnceLock<cef::library_loader::LibraryLoader> = OnceLock::new();
-        LOADER.get_or_init(|| {
-            let exe = std::env::current_exe().expect("current_exe");
-            let loader = cef::library_loader::LibraryLoader::new(&exe, false);
-            assert!(loader.load(), "failed to load Chromium Embedded Framework");
-            loader
-        });
+    // Platform hook before the FIRST CEF API call (macOS loads the CEF
+    // framework here). `try_get`: Linux installs its platform after this
+    // runs, and CEF helper subprocesses never install one.
+    if let Some(host) = jfn_platform_abi::try_get().and_then(|p| p.cef_host()) {
+        host.before_start();
     }
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     let args = args::Args::new();
@@ -141,22 +134,21 @@ pub fn jfn_cef_initialize() -> bool {
         root_cache_path: CefString::from(jfn_paths::cache_dir().to_string_lossy().as_ref()),
         ..Settings::default()
     };
-    #[cfg(target_os = "macos")]
-    {
+    let cef_host = jfn_platform_abi::try_get().and_then(|p| p.cef_host());
+    if cef_host.is_some() {
         settings.external_message_pump = 1;
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
+    } else {
         settings.multi_threaded_message_loop = 1;
     }
 
     fill_paths(&mut settings);
 
-    // macOS external pump must install its CFRunLoopSource + CFRunLoopTimer
-    // before CefInitialize so the first OnScheduleMessagePumpWork (fired
+    // An external pump must install its run-loop hooks before
+    // CefInitialize so the first OnScheduleMessagePumpWork (fired
     // synchronously during init) finds them ready.
-    #[cfg(target_os = "macos")]
-    crate::pump::init();
+    if let Some(host) = cef_host {
+        host.pump_init();
+    }
 
     // chrome/browser/chrome_browser_main_posix.cc installs SIGINT/SIGTERM
     // handlers during CefInitialize and that path is not gated by
@@ -216,8 +208,9 @@ fn browser_main_args() -> MainArgs {
 
 pub fn jfn_cef_shutdown() {
     // Gate further external-pump dispatches before tearing down CEF state.
-    #[cfg(target_os = "macos")]
-    crate::pump::shutdown();
+    if let Some(host) = jfn_platform_abi::try_get().and_then(|p| p.cef_host()) {
+        host.pump_shutdown();
+    }
     shutdown();
 }
 

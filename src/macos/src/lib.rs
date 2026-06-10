@@ -298,7 +298,6 @@ pub fn macos_surface_present_software(
 
 // macos_early_init / macos_init / macos_cleanup + jfn_macos_get_input_view
 // now live in src/macos/src/init.rs.
-pub use crate::init::jfn_macos_query_logical_content_size;
 use crate::init::{macos_cleanup, macos_early_init, macos_init};
 
 // jfn_input_macos_set_cursor lives in src/macos/src/input.rs (Rust).
@@ -331,7 +330,7 @@ pub fn macos_toggle_fullscreen() {
 // Message pump / NSApplication run loop / wake.
 // =====================================================================
 
-type CFRunLoopRef = *const c_void;
+type CFRunLoopRef = *mut c_void;
 
 unsafe extern "C" {
     fn CFRunLoopRunInMode(mode: CFStringRef, seconds: f64, return_after_source_handled: i32)
@@ -476,6 +475,29 @@ pub fn macos_wake_main_loop() {
     }
 }
 
+/// Run `f` on a side thread while the main thread pumps CFRunLoop until
+/// it completes. Work that does `DispatchQueue.main.sync` (e.g. mpv's VO
+/// uninit during TerminateDestroy) finishes without deadlocking main.
+pub fn macos_run_blocking(f: Box<dyn FnOnce() + Send>) {
+    unsafe extern "C" fn sigalrm_noop(_: std::ffi::c_int) {}
+    unsafe extern "C" {
+        fn signal(signum: std::ffi::c_int, handler: unsafe extern "C" fn(std::ffi::c_int))
+        -> usize;
+    }
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let d2 = done.clone();
+    let t = std::thread::spawn(move || {
+        unsafe { signal(libc::SIGALRM, sigalrm_noop) };
+        f();
+        d2.store(true, Ordering::Release);
+        unsafe { CFRunLoopWakeUp(CFRunLoopGetMain()) };
+    });
+    while !done.load(Ordering::Acquire) {
+        unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, f64::MAX, 1) };
+    }
+    let _ = t.join();
+}
+
 // =====================================================================
 // Clipboard (NSPasteboard) — read only; writes go through CEF's own
 // frame->Copy() path which works correctly on macOS. NSPasteboard reads
@@ -571,10 +593,13 @@ pub fn macos_open_external_url(url: &str) {
 // convention. CAMetalLayer.colorspace is set from the IOSurface's
 // kIOSurfaceColorSpace tag (falls back to sRGB).
 // =====================================================================
+mod cef_host;
+mod cef_pump;
 mod compositor;
 mod dropdown;
 mod init;
 mod input;
+mod mpv_host;
 use compositor::{
     macos_alloc_surface, macos_free_surface, macos_restack, macos_set_expected_size,
     macos_surface_present, macos_surface_resize, macos_surface_set_visible,
@@ -585,6 +610,19 @@ use compositor::{
 // =====================================================================
 
 use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle, SurfaceSize, WindowGeometry, WindowPos};
+
+/// MPNowPlaying-backed [`jfn_platform_abi::MediaSink`].
+struct NowPlayingSink;
+
+impl jfn_platform_abi::MediaSink for NowPlayingSink {
+    fn start(&self) {
+        jfn_macos_sink::jfn_macos_sink_start();
+    }
+
+    fn stop(&self) {
+        jfn_macos_sink::jfn_macos_sink_stop();
+    }
+}
 
 pub struct MacosPlatform;
 
@@ -656,6 +694,18 @@ impl Platform for MacosPlatform {
 
     fn context_menu_backend(&self) -> &'static dyn jfn_platform_abi::ContextMenuBackend {
         &jfn_platform_abi::JsMenuContextMenu
+    }
+
+    fn mpv_host(&self) -> &dyn jfn_platform_abi::MpvHost {
+        &mpv_host::MacosMpvHost
+    }
+
+    fn cef_host(&self) -> Option<&dyn jfn_platform_abi::CefHost> {
+        Some(&cef_host::MacosCefHost)
+    }
+
+    fn media_session(&self) -> &dyn jfn_platform_abi::MediaSink {
+        &NowPlayingSink
     }
 
     fn set_fullscreen(&self, v: bool) {
@@ -735,6 +785,14 @@ impl Platform for MacosPlatform {
 
     fn open_external_url(&self, url: &str) {
         macos_open_external_url(url);
+    }
+
+    fn open_path(&self, path: &std::path::Path) {
+        let _ = std::process::Command::new("open").arg(path).spawn();
+    }
+
+    fn run_blocking(&self, f: Box<dyn FnOnce() + Send>) {
+        macos_run_blocking(f);
     }
 }
 

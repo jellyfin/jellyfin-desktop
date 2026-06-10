@@ -8,8 +8,6 @@
 //! The wedge-recovery heuristic is preserved verbatim because it's tied to
 //! a specific CEF version's `WorkDeduplicator` internals.
 
-#![cfg(target_os = "macos")]
-
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::time::Instant;

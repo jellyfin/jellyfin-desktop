@@ -14,6 +14,7 @@ jfn-input = { path = "../input" }
 jfn-mpv = { path = "../mpv" }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
+jfn-windows-sink = { path = "../windows_sink" }
 cef.workspace = true
 tracing.workspace = true
 windows = { workspace = true, features = [
