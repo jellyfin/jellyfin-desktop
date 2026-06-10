@@ -325,6 +325,19 @@ define_class!(
         #[unsafe(method(isOpaque))]
         fn is_opaque(&self) -> Bool { Bool::NO }
 
+        #[unsafe(method(hitTest:))]
+        fn hit_test(&self, point_in_super: NSPoint) -> *mut AnyObject {
+            // Makes the title-bar overlay strip click-through so AppKit's frame view receives the
+            // clicks and natively handles window-drag and double-click-to-zoom.
+            unsafe {
+                let window: *mut AnyObject = msg_send![self, window];
+                if !window.is_null() && point_is_in_titlebar(window, point_in_super) {
+                    return std::ptr::null_mut();
+                }
+                msg_send![super(self), hitTest: point_in_super]
+            }
+        }
+
         #[unsafe(method(updateTrackingAreas))]
         fn update_tracking_areas(&self) {
             unsafe {
@@ -550,6 +563,13 @@ fn mouse_loc_in_view(view: &InputView, event: &AnyObject) -> NSPoint {
     unsafe {
         let p: NSPoint = msg_send![event, locationInWindow];
         msg_send![view, convertPoint: p, fromView: std::ptr::null_mut::<AnyObject>()]
+    }
+}
+
+fn point_is_in_titlebar(window: *mut AnyObject, point_in_window: NSPoint) -> bool {
+    unsafe {
+        let content_layout: NSRect = msg_send![window, contentLayoutRect];
+        point_in_window.y > content_layout.origin.y + content_layout.size.height
     }
 }
 
