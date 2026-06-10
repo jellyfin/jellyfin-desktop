@@ -11,7 +11,7 @@ crate-type = ["rlib"]
 # The whole crate is `#![cfg(target_os = "linux")]`, so it's an empty rlib
 # elsewhere and the workspace builds uniformly on every platform.
 [target.'cfg(target_os = "linux")'.dependencies]
-cosmic-text = "0.12"
+cosmic-text = "0.19"
 tiny-skia = "0.12"
 
 [lints]
