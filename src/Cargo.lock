@@ -2320,6 +2320,7 @@ dependencies = [
 name = "jfn-linux-util"
 version = "3.0.0-dev"
 dependencies = [
+ "clap",
  "jfn-input",
  "jfn-platform-abi",
  "libc",
@@ -2420,6 +2421,8 @@ name = "jfn-platform-abi"
 version = "3.0.0-dev"
 dependencies = [
  "cef",
+ "libc",
+ "parking_lot",
 ]
 
 [[package]]

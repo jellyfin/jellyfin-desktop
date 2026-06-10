@@ -83,13 +83,17 @@ fn init_logging(log_file: Option<String>, log_level: &str) {
 }
 
 fn init_single_instance() -> bool {
-    if crate::single_instance::try_signal_existing() {
+    let id = crate::instance_id::instance_id();
+    if plat().single_instance_try_signal(&id) {
         tracing::info!(target: "Main", "Signaled existing instance, exiting");
         return false;
     }
-    let ok = crate::single_instance::start_listener(|_token: &str| {
-        // TODO: raise window via xdg-activation
-    });
+    let ok = plat().single_instance_start_listener(
+        &id,
+        Box::new(|_token: &str| {
+            // TODO: raise window via xdg-activation
+        }),
+    );
     if !ok {
         tracing::warn!(target: "Main", "Single-instance listener failed to start");
     }
@@ -594,7 +598,7 @@ pub fn jfn_app_main() -> c_int {
 
     let _ = crate::window_geometry::controller();
 
-    install_signal_handler();
+    plat().install_shutdown_handler(jfn_playback::jfn_shutdown_initiate);
 
     if !init_single_instance() {
         return 0;
@@ -673,47 +677,15 @@ pub fn jfn_app_main() -> c_int {
 }
 
 // =====================================================================
-// Signal handler + listener guard
+// Single-instance listener guard
 // =====================================================================
-
-#[cfg(unix)]
-static SIGNAL_GUARD: OnceLock<crate::signal_guard::SignalGuard> = OnceLock::new();
-
-#[cfg(unix)]
-unsafe extern "C" fn on_shutdown_signal(_sig: c_int) {
-    jfn_playback::jfn_shutdown_initiate();
-}
-
-#[cfg(windows)]
-unsafe extern "system" fn console_ctrl_handler(_t: u32) -> i32 {
-    jfn_playback::jfn_shutdown_initiate();
-    1
-}
-
-fn install_signal_handler() {
-    #[cfg(unix)]
-    {
-        let g = unsafe { crate::signal_guard::install(on_shutdown_signal) };
-        let _ = SIGNAL_GUARD.set(g);
-    }
-    #[cfg(windows)]
-    {
-        unsafe extern "system" {
-            fn SetConsoleCtrlHandler(
-                handler: unsafe extern "system" fn(u32) -> i32,
-                add: i32,
-            ) -> i32;
-        }
-        unsafe { SetConsoleCtrlHandler(console_ctrl_handler, 1) };
-    }
-}
 
 static LISTENER_GUARD: OnceLock<ListenerGuardSlot> = OnceLock::new();
 
 struct ListenerGuardSlot;
 impl Drop for ListenerGuardSlot {
     fn drop(&mut self) {
-        crate::single_instance::stop_listener();
+        plat().single_instance_stop(&crate::instance_id::instance_id());
     }
 }
 unsafe impl Send for ListenerGuardSlot {}
@@ -934,7 +906,6 @@ static PLATFORM_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 static CEF_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static COORD_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-// Single-instance listener is dropped via its OnceLock at process exit; the
-// SignalGuard slot stays until exit and restores the original disposition
-// via its Drop impl. wlproxy teardown lives in the Wayland backend's
-// `post_window_cleanup`.
+// Single-instance listener is dropped via its OnceLock at process exit;
+// signal-disposition restore lives in `shutdown_signal`. wlproxy teardown
+// lives in the Wayland backend's `post_window_cleanup`.

@@ -21,6 +21,7 @@ pub mod dropdown;
 pub mod geometry;
 pub mod media_sink;
 pub mod mpv_host;
+mod process_unix;
 pub mod window_source;
 
 pub use cef_host::CefHost;
@@ -242,6 +243,10 @@ pub enum IdleInhibitLevel {
 /// in-crate; callers only ever hold the raw pointer.
 pub type SurfaceHandle = *mut c_void;
 
+/// Single-instance listener callback; the `&str` is the activation token
+/// (empty on Windows / when none).
+pub type Callback = Box<dyn Fn(&str) + Send>;
+
 /// Process-wide platform handle. Optional methods have no-op defaults so
 /// backends only override what they care about.
 ///
@@ -442,6 +447,47 @@ pub trait Platform: Send + Sync {
     /// pumps its run loop.
     fn run_blocking(&self, f: Box<dyn FnOnce() + Send>) {
         f();
+    }
+
+    /// `on_shutdown` must be async-signal-safe.
+    fn install_shutdown_handler(&self, on_shutdown: fn()) {
+        #[cfg(unix)]
+        process_unix::install_shutdown(on_shutdown);
+        #[cfg(not(unix))]
+        let _ = on_shutdown;
+    }
+
+    /// Returns `true` if an existing instance was reached (caller should exit).
+    fn single_instance_try_signal(&self, instance_id: &str) -> bool {
+        #[cfg(unix)]
+        {
+            process_unix::try_signal_existing(instance_id)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = instance_id;
+            false
+        }
+    }
+
+    /// `cb` runs on the listener thread with the activation token.
+    fn single_instance_start_listener(&self, instance_id: &str, cb: Callback) -> bool {
+        #[cfg(unix)]
+        {
+            process_unix::start_listener(instance_id, cb)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (instance_id, cb);
+            false
+        }
+    }
+
+    fn single_instance_stop(&self, instance_id: &str) {
+        #[cfg(unix)]
+        process_unix::stop_listener(instance_id);
+        #[cfg(not(unix))]
+        let _ = instance_id;
     }
 }
 
