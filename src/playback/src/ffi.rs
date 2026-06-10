@@ -66,11 +66,6 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
     c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
         crate::theme_color_sink::deliver(ev);
     }));
-
-    #[cfg(target_os = "linux")]
-    c.add_builtin_event_sink(Box::new(|ev: &PlaybackEvent| {
-        crate::mpris_sink::deliver(ev.clone());
-    }));
 }
 
 pub fn jfn_playback_shutdown() {

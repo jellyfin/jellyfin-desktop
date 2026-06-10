@@ -72,19 +72,6 @@ pub(crate) unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFra
 // Backend
 // =====================================================================
 
-/// MPRIS-backed [`jfn_platform_abi::MediaSink`].
-struct MprisSink;
-
-impl jfn_platform_abi::MediaSink for MprisSink {
-    fn start(&self) {
-        unsafe { jfn_playback::mpris_sink::jfn_mpris_sink_start(c"".as_ptr()) };
-    }
-
-    fn stop(&self) {
-        jfn_playback::mpris_sink::jfn_mpris_sink_stop();
-    }
-}
-
 pub struct WaylandPlatform {
     shared_texture: AtomicBool,
     clipboard: AtomicBool,
@@ -214,7 +201,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn media_session(&self) -> &dyn jfn_platform_abi::MediaSink {
-        &MprisSink
+        &jfn_mpris::MprisSink
     }
 
     fn window_source(&self) -> Option<&'static dyn jfn_platform_abi::WindowSource> {
@@ -346,8 +333,6 @@ impl Platform for WaylandPlatform {
     }
 
     fn open_path(&self, path: &std::path::Path) {
-        // xdg-open opens filesystem paths too; reuse the shared launcher so
-        // the spawn-and-reap logic lives in one place.
         jfn_linux_util::open_url::open(&path.to_string_lossy());
     }
 }

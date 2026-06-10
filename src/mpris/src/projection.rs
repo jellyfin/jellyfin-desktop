@@ -1,20 +1,17 @@
-//! MPRIS Player projection rules.
-//!
-//! Encodes every derived-field rule that today drives MprisBackend setters
-//! and prop_get_* getters:
+//! MPRIS Player projection rules — every derived-field rule behind the
+//! sink's property getters and PropertiesChanged diffs:
 //!   - PlaybackStatus from playback.phase
 //!   - CanPlay/CanPause/CanSeek/CanControl from phase + duration
 //!   - Metadata cleared while phase==Stopped (caller substitutes empty
-//!     metadata when `metadata_active` is false; lets the C++ wrapper hold
-//!     onto the MediaMetadata struct so it isn't shipped through FFI).
+//!     metadata when `metadata_active` is false)
 //!   - Rate locked to 0 while seeking|buffering|Starting
 //!
 //! Pass-through fields (volume, can_go_next, can_go_previous, metadata
-//! itself) are NOT computed here — they live in the caller's MprisContent
-//! and copy straight into the view. The diff over those is trivial bool /
+//! itself) are NOT computed here — they live in the sink's Content and
+//! copy straight into the view. The diff over those is trivial bool /
 //! double / struct equality and is handled by the caller.
 
-use crate::types::PlaybackPhase;
+use jfn_playback::PlaybackPhase;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

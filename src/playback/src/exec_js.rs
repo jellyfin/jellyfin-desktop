@@ -1,5 +1,5 @@
 //! Reverse-FFI exec_js callback. C++ installs a single global handler;
-//! Rust-side sinks (browser_sink, mpris_sink) call it to forward JS into
+//! Rust-side sinks (browser_sink, the jfn-mpris sink) call it to forward JS into
 //! the embedded web view.
 
 use parking_lot::Mutex;

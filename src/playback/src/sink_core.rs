@@ -5,8 +5,8 @@
 //! platform supplies only a [`QueuedSink`] whose `deliver` drives its
 //! native transport.
 //!
-//! The Linux MPRIS sink ([`crate::mpris_sink`]) has its own zbus-reactor
-//! thread and does not use [`run_sink`], but it shares [`MediaCommand`] /
+//! The Linux MPRIS sink (jfn-mpris) has its own zbus-reactor thread and
+//! does not use [`run_sink`], but it shares [`MediaCommand`] /
 //! [`seek_to_ms`] so transport command semantics live in one place.
 
 // =====================================================================
