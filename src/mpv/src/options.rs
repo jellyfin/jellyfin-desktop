@@ -1,22 +1,34 @@
-//! Port of `src/mpv/options.h` — hwdec mode list.
-
-use std::ffi::CStr;
+//! Hwdec mode policy: which mpv hardware-decode backends each OS offers.
 
 pub const HWDEC_DEFAULT: &str = "no";
 
-#[cfg(target_os = "linux")]
-static HWDEC_LIST: &[&CStr] = &[c"auto", c"no", c"vaapi", c"nvdec", c"vulkan"];
-#[cfg(target_os = "windows")]
-static HWDEC_LIST: &[&CStr] = &[c"auto", c"no", c"d3d11va", c"nvdec", c"vulkan"];
-#[cfg(target_os = "macos")]
-static HWDEC_LIST: &[&CStr] = &[c"auto", c"no", c"videotoolbox", c"vulkan"];
+#[expect(
+    dead_code,
+    reason = "every OS row stays compiled; only CURRENT_OS's variant is constructed"
+)]
+enum TargetOs {
+    Linux,
+    Windows,
+    Macos,
+}
 
-pub fn hwdec_options() -> Vec<&'static str> {
-    HWDEC_LIST.iter().filter_map(|s| s.to_str().ok()).collect()
+#[cfg(target_os = "linux")]
+const CURRENT_OS: TargetOs = TargetOs::Linux;
+#[cfg(target_os = "windows")]
+const CURRENT_OS: TargetOs = TargetOs::Windows;
+#[cfg(target_os = "macos")]
+const CURRENT_OS: TargetOs = TargetOs::Macos;
+
+pub fn hwdec_options() -> &'static [&'static str] {
+    match CURRENT_OS {
+        TargetOs::Linux => &["auto", "no", "vaapi", "nvdec", "vulkan"],
+        TargetOs::Windows => &["auto", "no", "d3d11va", "nvdec", "vulkan"],
+        TargetOs::Macos => &["auto", "no", "videotoolbox", "vulkan"],
+    }
 }
 
 pub fn is_valid_hwdec(value: &str) -> bool {
-    HWDEC_LIST.iter().any(|s| s.to_bytes() == value.as_bytes())
+    hwdec_options().contains(&value)
 }
 
 #[cfg(test)]

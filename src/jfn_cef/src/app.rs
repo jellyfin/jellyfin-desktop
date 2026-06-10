@@ -561,7 +561,7 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
     replace_first(
         &mut code,
         "__SETTINGS_JSON__",
-        &jfn_config::cli_json(&platform_device_name(), &hwdec_options()),
+        &jfn_config::cli_json(&platform_device_name(), jfn_mpv::hwdec_options()),
     );
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
     replace_first(
@@ -620,17 +620,6 @@ pub(crate) fn userfree_to_string(s: &CefStringUserfreeUtf16) -> String {
         }
     })
     .unwrap_or_default()
-}
-
-fn hwdec_options() -> Vec<&'static str> {
-    let mut v: Vec<&'static str> = vec!["auto", "no"];
-    #[cfg(target_os = "linux")]
-    v.extend_from_slice(&["vaapi", "nvdec", "vulkan"]);
-    #[cfg(target_os = "windows")]
-    v.extend_from_slice(&["d3d11va", "nvdec", "vulkan"]);
-    #[cfg(target_os = "macos")]
-    v.extend_from_slice(&["videotoolbox", "vulkan"]);
-    v
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
