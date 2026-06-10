@@ -11,5 +11,9 @@ crate-type = ["rlib"]
 [dependencies]
 cef.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+parking_lot.workspace = true
+
 [lints]
 workspace = true

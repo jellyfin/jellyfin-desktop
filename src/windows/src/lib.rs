@@ -13,6 +13,7 @@ mod dropdown;
 mod input;
 mod mpv_host;
 mod platform;
+mod process;
 pub use compositor::{
     jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
     jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
@@ -483,6 +484,26 @@ impl Platform for WindowsPlatform {
             .map(|c| if c == '/' { '\\' } else { c })
             .collect();
         let _ = std::process::Command::new("explorer").arg(native).spawn();
+    }
+
+    fn install_shutdown_handler(&self, on_shutdown: fn()) {
+        process::install_shutdown(on_shutdown);
+    }
+
+    fn single_instance_try_signal(&self, instance_id: &str) -> bool {
+        process::try_signal_existing(instance_id)
+    }
+
+    fn single_instance_start_listener(
+        &self,
+        instance_id: &str,
+        cb: jfn_platform_abi::Callback,
+    ) -> bool {
+        process::start_listener(instance_id, cb)
+    }
+
+    fn single_instance_stop(&self, instance_id: &str) {
+        process::stop_listener(instance_id);
     }
 }
 
