@@ -9,7 +9,6 @@
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::ffi::c_char;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -19,8 +18,8 @@ use zbus::interface;
 use zbus::names::InterfaceName;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
-use crate::mpris;
-use crate::types::{MediaMetadata, PlaybackEvent, PlaybackEventKind, PlaybackSnapshot};
+use crate::projection;
+use jfn_playback::{MediaMetadata, PlaybackEvent, PlaybackEventKind, PlaybackSnapshot};
 
 const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
 const BASE_SERVICE_NAME: &str = "org.mpris.MediaPlayer2.JellyfinDesktop";
@@ -81,16 +80,16 @@ impl Default for View {
     }
 }
 
-fn status_name(s: mpris::MprisStatus) -> &'static str {
+fn status_name(s: projection::MprisStatus) -> &'static str {
     match s {
-        mpris::MprisStatus::Playing => "Playing",
-        mpris::MprisStatus::Paused => "Paused",
-        mpris::MprisStatus::Stopped => "Stopped",
+        projection::MprisStatus::Playing => "Playing",
+        projection::MprisStatus::Paused => "Paused",
+        projection::MprisStatus::Stopped => "Stopped",
     }
 }
 
 fn project_view(snap: &PlaybackSnapshot, content: &Content) -> View {
-    let d = mpris::project(&mpris::ProjectInput {
+    let d = projection::project(&projection::ProjectInput {
         phase: snap.phase,
         seeking: snap.seeking,
         buffering: snap.buffering,
@@ -217,7 +216,7 @@ impl State {
     }
 }
 
-use crate::sink_core;
+use jfn_playback::sink_core;
 
 // ============================================================================
 // D-Bus interface impls
@@ -377,7 +376,7 @@ fn sink_slot() -> &'static Mutex<Option<Sink>> {
 }
 
 /// Push a PlaybackEvent into the running MPRIS sink. No-op if not started.
-/// Called by the playback coordinator's builtin event-sink closure.
+/// Called by the event-sink closure registered in [`start`].
 pub(crate) fn deliver(ev: PlaybackEvent) {
     if let Some(s) = sink_slot().lock().as_ref() {
         let _ = s.tx.send(Msg::Event(Box::new(ev)));
@@ -562,27 +561,18 @@ fn emit_properties_changed(conn: &Connection, names: &[&str], view: &View) {
 }
 
 // ============================================================================
-// FFI: start / stop
+// start / stop
 // ============================================================================
 
 /// Spawn the MPRIS sink thread. `service_suffix` is appended to the base
-/// service name (`org.mpris.MediaPlayer2.JellyfinDesktop<suffix>`) — pass
-/// an empty NUL-terminated string for none. No-op if already running.
-///
-/// # Safety
-/// `service_suffix` must be NUL-terminated or null.
-pub unsafe fn jfn_mpris_sink_start(service_suffix: *const c_char) {
+/// service name (`org.mpris.MediaPlayer2.JellyfinDesktop<suffix>`).
+/// No-op if already running.
+pub(crate) fn start(service_suffix: &str) {
     let mut slot = sink_slot().lock();
     if slot.is_some() {
         return;
     }
-    let suffix = if service_suffix.is_null() {
-        String::new()
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(service_suffix) }
-            .to_string_lossy()
-            .into_owned()
-    };
+    let suffix = service_suffix.to_owned();
     let (tx, rx) = channel::<Msg>();
     let join = match thread::Builder::new()
         .name("mpris-sink".into())
@@ -598,9 +588,18 @@ pub unsafe fn jfn_mpris_sink_start(service_suffix: *const c_char) {
         tx,
         join: Some(join),
     });
+    drop(slot);
+
+    // Once, not a resettable flag: a second start() must not double-register.
+    static REGISTER: std::sync::Once = std::sync::Once::new();
+    REGISTER.call_once(|| {
+        jfn_playback::register_event_sink(Box::new(|ev: &PlaybackEvent| {
+            deliver(ev.clone());
+        }));
+    });
 }
 
-pub fn jfn_mpris_sink_stop() {
+pub(crate) fn stop() {
     let mut slot = sink_slot().lock();
     let Some(mut s) = slot.take() else {
         return;

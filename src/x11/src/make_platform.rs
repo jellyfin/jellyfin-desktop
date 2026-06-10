@@ -77,19 +77,6 @@ use jfn_mpv::api::{jfn_mpv_set_fullscreen, jfn_mpv_toggle_fullscreen};
 use jfn_mpv::boot::jfn_mpv_handle_get;
 use jfn_playback::ingest_driver::{jfn_playback_display_scale, jfn_playback_fullscreen};
 
-/// MPRIS-backed [`jfn_platform_abi::MediaSink`].
-struct MprisSink;
-
-impl jfn_platform_abi::MediaSink for MprisSink {
-    fn start(&self) {
-        unsafe { jfn_playback::mpris_sink::jfn_mpris_sink_start(c"".as_ptr()) };
-    }
-
-    fn stop(&self) {
-        jfn_playback::mpris_sink::jfn_mpris_sink_stop();
-    }
-}
-
 pub struct X11Platform;
 
 impl Platform for X11Platform {
@@ -192,7 +179,7 @@ impl Platform for X11Platform {
     }
 
     fn media_session(&self) -> &dyn jfn_platform_abi::MediaSink {
-        &MprisSink
+        &jfn_mpris::MprisSink
     }
 
     fn window_decorations_supported(&self) -> bool {
@@ -316,8 +303,6 @@ impl Platform for X11Platform {
     }
 
     fn open_path(&self, path: &std::path::Path) {
-        // xdg-open opens filesystem paths too; reuse the shared launcher so
-        // the spawn-and-reap logic lives in one place.
         jfn_linux_util::open_url::open(&path.to_string_lossy());
     }
 }

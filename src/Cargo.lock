@@ -2384,6 +2384,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jfn-mpris"
+version = "3.0.0-dev"
+dependencies = [
+ "jfn-mpv",
+ "jfn-platform-abi",
+ "jfn-playback",
+ "parking_lot",
+ "zbus",
+]
+
+[[package]]
 name = "jfn-mpv"
 version = "3.0.0-dev"
 dependencies = [
@@ -2418,7 +2429,6 @@ dependencies = [
  "parking_lot",
  "serde_json",
  "windows-sys 0.61.2",
- "zbus",
 ]
 
 [[package]]
@@ -2460,6 +2470,7 @@ dependencies = [
  "jfn-input",
  "jfn-linux-util",
  "jfn-menu",
+ "jfn-mpris",
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
@@ -2527,6 +2538,7 @@ dependencies = [
  "jfn-input",
  "jfn-linux-util",
  "jfn-menu",
+ "jfn-mpris",
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
