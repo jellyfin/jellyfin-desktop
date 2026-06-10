@@ -44,7 +44,7 @@ const BG_R: u8 = 0x10;
 const BG_G: u8 = 0x10;
 const BG_B: u8 = 0x10;
 
-unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFrame> {
+pub(crate) unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFrame> {
     let info = info as *const cef::sys::_cef_accelerated_paint_info_t;
     if info.is_null() {
         return None;
@@ -187,61 +187,12 @@ impl Platform for WaylandPlatform {
         wl_ops::restack(typed);
     }
 
-    fn popup_show(&self, _s: SurfaceHandle, req: JfnPopupRequest) {
-        // Render `<select>` dropdowns with our own menu code (as a grabbed
-        // xdg_popup), matching the context menu. CEF still spins up its own OSR
-        // popup underneath; its pixels are suppressed (see popup_present*) and
-        // its widget is cancelled when on_selected fires.
-        let items = req
-            .options
-            .into_iter()
-            .enumerate()
-            .map(|(i, label)| jfn_menu::MenuItem {
-                id: i as c_int,
-                label,
-                enabled: true,
-                separator: false,
-            })
-            .collect();
-        let cb = req.on_selected.unwrap_or_else(|| Box::new(|_| {}));
-        crate::popup::show_highlighted(items, req.x, req.y, req.lw, req.initial_highlight, cb);
+    fn dropdown_backend(&self) -> &'static dyn jfn_platform_abi::DropdownBackend {
+        crate::dropdown::backend()
     }
 
-    fn context_menu_show(&self, _s: SurfaceHandle, req: JfnContextMenuRequest) {
-        let items = req
-            .items
-            .into_iter()
-            .map(|i| jfn_menu::MenuItem {
-                id: i.id,
-                label: i.label,
-                enabled: i.enabled,
-                separator: i.separator,
-            })
-            .collect();
-        let cb = req.on_selected.unwrap_or_else(|| Box::new(|_| {}));
-        crate::popup::show(items, req.x, req.y, cb);
-    }
-
-    fn popup_hide(&self, _s: SurfaceHandle) {
-        // CEF hid its `<select>` widget — tear down our native menu too.
-        crate::popup::hide();
-    }
-
-    fn popup_present(&self, _s: SurfaceHandle, _info: *const c_void, _lw: c_int, _lh: c_int) {
-        // `<select>` is rendered natively (popup_show); CEF's own popup pixels
-        // are dropped.
-    }
-
-    fn popup_present_software(
-        &self,
-        _s: SurfaceHandle,
-        _buffer: *const c_void,
-        _pw: c_int,
-        _ph: c_int,
-        _lw: c_int,
-        _lh: c_int,
-    ) {
-        // See popup_present — CEF's popup pixels are dropped.
+    fn context_menu_backend(&self) -> &'static dyn jfn_platform_abi::ContextMenuBackend {
+        crate::context_menu::backend()
     }
 
     fn set_fullscreen(&self, v: bool) {

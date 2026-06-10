@@ -33,10 +33,8 @@ impl Inner {
         }
         if !show {
             let surface = self.surface_ptr();
-            if !surface.is_null()
-                && let Some(p) = platform_ops::ops()
-            {
-                p.popup_hide(surface);
+            if !surface.is_null() {
+                self.dropdown.hide(surface);
             }
             return;
         }
@@ -97,8 +95,6 @@ impl Inner {
         if surface.is_null() {
             return;
         }
-        let Some(p) = platform_ops::ops() else { return };
-
         let inner = Arc::clone(self);
         let req = platform_ops::JfnPopupRequest {
             x,
@@ -107,15 +103,12 @@ impl Inner {
             lh: h,
             options: opts,
             initial_highlight: selected,
-            // Native-menu backends (macOS, Wayland) fire this with the chosen
-            // option index (or -1 to cancel); X11/Windows drop it and let CEF
-            // dispatch selection itself.
             on_selected: Some(Box::new(move |idx| {
                 let mut task = DispatchPopupTask::new(inner, idx, selected, selectable.clone());
                 let _ = post_task(ThreadId::UI, Some(&mut task));
             })),
         };
-        p.popup_show(surface, req);
+        self.dropdown.show(surface, req);
     }
 
     pub(super) fn on_deactivated(&self) {
@@ -135,9 +128,7 @@ impl Inner {
         if surface.is_null() {
             return;
         }
-        if let Some(p) = platform_ops::ops() {
-            p.popup_hide(surface);
-        }
+        self.dropdown.hide(surface);
     }
 
     pub(super) fn popup_rect(&self) -> (i32, i32) {

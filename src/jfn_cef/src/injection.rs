@@ -11,7 +11,9 @@ use cef::{
     CefString, CefStringUserfreeUtf16, DictionaryValue, ImplDictionaryValue, ImplListValue,
     dictionary_value_create, list_value_create, sys,
 };
-use jfn_platform_abi::{DisplayBackend, WindowDecorations};
+use jfn_platform_abi::{
+    ContextMenuBackend, ContextMenuScript, DropdownBackend, DropdownScript, WindowDecorations,
+};
 use std::os::raw::c_char;
 use std::sync::OnceLock;
 
@@ -209,6 +211,18 @@ impl InjectedScript {
             Self::SelectMenu => "select-menu.js",
         }
     }
+
+    fn from_dropdown(script: DropdownScript) -> Self {
+        match script {
+            DropdownScript::SelectMenu => Self::SelectMenu,
+        }
+    }
+
+    fn from_context_menu(script: ContextMenuScript) -> Self {
+        match script {
+            ContextMenuScript::ContextMenu => Self::ContextMenu,
+        }
+    }
 }
 
 const WEB_FUNCTIONS: &[NativeFunction] = &[
@@ -252,7 +266,6 @@ const WEB_SCRIPTS: &[InjectedScript] = &[
     InjectedScript::InputPlugin,
     InjectedScript::ClientSettings,
 ];
-
 const OVERLAY_FUNCTIONS: &[NativeFunction] = &[
     NativeFunction::GetSavedServerUrl,
     NativeFunction::SaveServerUrl,
@@ -445,6 +458,7 @@ fn build_extra_info(
     add_ctx_menu: bool,
     add_window: bool,
     shared_textures_enabled: bool,
+    ctx_menu: &'static dyn ContextMenuBackend,
 ) -> ExtraInfo {
     let mut functions = functions.to_vec();
     if add_window {
@@ -462,7 +476,13 @@ fn build_extra_info(
         scripts.push(InjectedScript::Csd);
     }
     if add_ctx_menu {
-        scripts.push(InjectedScript::ContextMenu);
+        scripts.extend(
+            ctx_menu
+                .scripts()
+                .iter()
+                .copied()
+                .map(InjectedScript::from_context_menu),
+        );
     }
 
     ExtraInfo {
@@ -478,6 +498,8 @@ pub(crate) fn build_for_kind(
     kind: &str,
     add_ctx_menu: bool,
     shared_textures_enabled: bool,
+    dropdown: &'static dyn DropdownBackend,
+    ctx_menu: &'static dyn ContextMenuBackend,
 ) -> Option<ExtraInfo> {
     match kind {
         "web" => {
@@ -487,6 +509,7 @@ pub(crate) fn build_for_kind(
                 add_ctx_menu,
                 true,
                 shared_textures_enabled,
+                ctx_menu,
             );
             if let Some(json) = DEVICE_PROFILE_JSON.get()
                 && !json.is_empty()
@@ -494,9 +517,13 @@ pub(crate) fn build_for_kind(
                 extra_info.device_profile_json = Some(json.clone());
             }
             extra_info.window_decorations = Some(jfn_config::window_decorations_mode());
-            if jfn_platform_abi::get().display() == DisplayBackend::X11 {
-                extra_info.scripts.push(InjectedScript::SelectMenu);
-            }
+            extra_info.scripts.extend(
+                dropdown
+                    .scripts()
+                    .iter()
+                    .copied()
+                    .map(InjectedScript::from_dropdown),
+            );
             Some(extra_info)
         }
         "overlay" => Some(build_extra_info(
@@ -505,6 +532,7 @@ pub(crate) fn build_for_kind(
             add_ctx_menu,
             true,
             shared_textures_enabled,
+            ctx_menu,
         )),
         "about" => Some(build_extra_info(
             ABOUT_FUNCTIONS,
@@ -512,6 +540,7 @@ pub(crate) fn build_for_kind(
             add_ctx_menu,
             true,
             shared_textures_enabled,
+            ctx_menu,
         )),
         _ => None,
     }

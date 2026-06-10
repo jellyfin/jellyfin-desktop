@@ -65,18 +65,18 @@ impl Inner {
         }
     }
 
-    pub(crate) fn native_menu_callback(
+    pub(crate) fn menu_selection_callback(
         self: &Arc<Self>,
         session: Handle,
     ) -> Box<dyn FnOnce(c_int) + Send> {
         let inner = Arc::clone(self);
         Box::new(move |id| {
-            let mut task = DispatchNativeMenuTask::new(inner, session, id);
+            let mut task = DispatchMenuResultTask::new(inner, session, id);
             let _ = post_task(ThreadId::UI, Some(&mut task));
         })
     }
 
-    fn dispatch_native_menu_result(self: &Arc<Self>, session: Handle, id: c_int) {
+    fn dispatch_menu_result(self: &Arc<Self>, session: Handle, id: c_int) {
         if !crate::browsers::jfn_browsers_menu_resolve(session) {
             return;
         }
@@ -94,13 +94,12 @@ impl Inner {
         self.handle_menu_item_selected(id, browser.as_mut());
     }
 
-    pub(crate) fn store_pending_menu_session(&self, h: Handle) {
-        *self.pending_menu_session.lock() = Some(h);
+    pub(crate) fn park_menu_selection(&self, cb: Box<dyn FnOnce(c_int) + Send>) {
+        *self.pending_menu_on_selected.lock() = Some(cb);
     }
 
-    pub(crate) fn resolve_pending_menu_session(&self) -> bool {
-        let h = self.pending_menu_session.lock().take();
-        h.is_some_and(crate::browsers::jfn_browsers_menu_resolve)
+    pub(crate) fn take_parked_menu_selection(&self) -> Option<Box<dyn FnOnce(c_int) + Send>> {
+        self.pending_menu_on_selected.lock().take()
     }
 
     pub(crate) fn close_pending_menu(&self) {
@@ -108,10 +107,6 @@ impl Inner {
         if let Some(cb) = g.take() {
             cb.cancel();
         }
-    }
-
-    pub(crate) fn handle_menu_dismissed(&self) {
-        self.close_pending_menu();
     }
 
     pub(crate) fn store_pending_menu_callback(&self, cb: RunContextMenuCallback) {
@@ -145,15 +140,14 @@ impl Inner {
 }
 
 wrap_task! {
-    struct DispatchNativeMenuTask {
+    struct DispatchMenuResultTask {
         inner: Arc<Inner>,
         session: Handle,
         id: c_int,
     }
     impl Task {
         fn execute(&self) {
-            self.inner
-                .dispatch_native_menu_result(self.session, self.id);
+            self.inner.dispatch_menu_result(self.session, self.id);
         }
     }
 }

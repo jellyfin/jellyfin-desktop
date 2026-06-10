@@ -170,27 +170,12 @@ impl Platform for X11Platform {
         };
     }
 
-    fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {
-        // CEF dispatches <select> selection itself on X11; drop the closure.
+    fn dropdown_backend(&self) -> &'static dyn jfn_platform_abi::DropdownBackend {
+        &jfn_platform_abi::JsMenuDropdown
     }
 
-    fn context_menu_show(&self, _s: SurfaceHandle, req: JfnContextMenuRequest) {
-        let items = req
-            .items
-            .into_iter()
-            .map(|i| crate::menu::MenuItem {
-                id: i.id,
-                label: i.label,
-                enabled: i.enabled,
-                separator: i.separator,
-            })
-            .collect();
-        crate::menu::show(crate::menu::MenuRequest {
-            x: req.x,
-            y: req.y,
-            items,
-            on_selected: req.on_selected,
-        });
+    fn context_menu_backend(&self) -> &'static dyn jfn_platform_abi::ContextMenuBackend {
+        crate::context_menu::backend()
     }
 
     fn begin_transition(&self) {

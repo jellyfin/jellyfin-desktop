@@ -14,8 +14,17 @@
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::OnceLock;
 
+pub mod context_menu;
+pub mod dropdown;
 pub mod geometry;
 
+pub use context_menu::{
+    ContextMenuBackend, ContextMenuScript, ContextMenuStyle, JfnContextMenuRequest, JfnMenuItem,
+    JsMenuChannel, JsMenuContextMenu, MenuSelectionFn, context_menu_style,
+};
+pub use dropdown::{
+    DropdownBackend, DropdownScript, DropdownStyle, JfnPopupRequest, JsMenuDropdown, dropdown_style,
+};
 pub use geometry::{
     BootGeometry, LogicalSize, PhysicalSize, Scale, SurfaceSize, WindowGeometry, WindowPos,
 };
@@ -212,36 +221,6 @@ pub struct JfnRect {
     pub h: c_int,
 }
 
-pub struct JfnPopupRequest {
-    pub x: c_int,
-    pub y: c_int,
-    pub lw: c_int,
-    pub lh: c_int,
-    pub options: Vec<String>,
-    pub initial_highlight: c_int,
-    /// Fires on the platform backend's thread when the user picks an
-    /// option (or `-1` for cancel). Native-menu backends (macOS / Wayland)
-    /// call it; compositor-rendered backends (X11 / Windows) drop the closure
-    /// without firing — CEF dispatches selection itself.
-    pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
-}
-
-pub struct JfnMenuItem {
-    pub id: c_int,
-    pub label: String,
-    pub enabled: bool,
-    pub separator: bool,
-}
-
-pub struct JfnContextMenuRequest {
-    /// Logical (CEF view) coordinates of the click, not physical pixels.
-    pub x: c_int,
-    pub y: c_int,
-    pub items: Vec<JfnMenuItem>,
-    /// Called with the chosen item id, or `-1` when the menu is dismissed.
-    pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
-}
-
 /// Idle-inhibit level.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum IdleInhibitLevel {
@@ -306,22 +285,9 @@ pub trait Platform: Send + Sync {
     fn surface_set_visible(&self, _s: SurfaceHandle, _visible: bool) {}
     fn restack(&self, _ordered: &[SurfaceHandle]) {}
 
-    // Popup
-    fn popup_show(&self, _s: SurfaceHandle, _req: JfnPopupRequest) {}
+    fn dropdown_backend(&self) -> &'static dyn DropdownBackend;
 
-    fn context_menu_show(&self, _s: SurfaceHandle, _req: JfnContextMenuRequest) {}
-    fn popup_hide(&self, _s: SurfaceHandle) {}
-    fn popup_present(&self, _s: SurfaceHandle, _info: *const c_void, _lw: c_int, _lh: c_int) {}
-    fn popup_present_software(
-        &self,
-        _s: SurfaceHandle,
-        _buffer: *const c_void,
-        _pw: c_int,
-        _ph: c_int,
-        _lw: c_int,
-        _lh: c_int,
-    ) {
-    }
+    fn context_menu_backend(&self) -> &'static dyn ContextMenuBackend;
 
     // Fullscreen
     fn set_fullscreen(&self, _v: bool) {}

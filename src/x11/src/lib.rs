@@ -2,6 +2,7 @@
 
 #![cfg(target_os = "linux")]
 
+pub(crate) mod context_menu;
 pub mod geometry;
 pub(crate) mod gpu_paint_worker;
 pub(crate) mod input;

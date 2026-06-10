@@ -1,4 +1,4 @@
-//! NSMenu-based popup for `<select>` widgets. Replaces CEF's Alloy OSR
+//! macOS `<select>` dropdown: NSMenu-based. Replaces CEF's Alloy OSR
 //! popup widget which renders hover/selection highlights as opaque black
 //! on macOS. CEF's popup widget runs invisibly in the background; we
 //! display a native NSMenu in its place. The selected index (or -1 for
@@ -13,9 +13,17 @@ use objc2::runtime::AnyObject;
 use objc2::{AnyThread, DefinedClass, define_class, msg_send};
 use objc2_foundation::{NSObject, NSPoint, NSString};
 
-use jfn_platform_abi::JfnPopupRequest;
+use jfn_platform_abi::{DropdownBackend, JfnPopupRequest, SurfaceHandle};
 
 use crate::init::{jfn_macos_get_input_view, jfn_macos_get_window};
+
+pub(crate) struct NsMenuDropdown;
+
+impl DropdownBackend for NsMenuDropdown {
+    fn show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
+        macos_popup_show(s, req);
+    }
+}
 
 /// The `on_selected` callback: receives the chosen index (or -1 on cancel).
 type SelectedCb = Box<dyn FnOnce(c_int) + Send>;
@@ -174,7 +182,7 @@ unsafe fn show_menu_on_main(run: PopupRun) {
 /// `macos_popup_show` — anchored in the input NSView (isFlipped == YES)
 /// so (x, y) are layout coordinates that map directly to AppKit menu
 /// placement. Schedules the actual NSMenu work onto the main queue.
-pub fn macos_popup_show(_s: *mut c_void, req: JfnPopupRequest) {
+fn macos_popup_show(_s: *mut c_void, req: JfnPopupRequest) {
     let cb = std::sync::Arc::new(PopupCb::new(req.on_selected));
     if req.options.is_empty() {
         // Drop cb → never fires on_selected (cancel path).

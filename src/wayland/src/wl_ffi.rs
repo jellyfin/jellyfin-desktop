@@ -107,46 +107,6 @@ pub unsafe fn jfn_wl_surface_present_software(
     wl_ops::surface_present_software(cast(handle), &[], pixels, w, h)
 }
 
-pub unsafe fn jfn_wl_popup_show(handle: *mut c_void, x: i32, y: i32, lw: i32, lh: i32) {
-    wl_ops::popup_show(cast(handle), x, y, lw, lh);
-}
-
-pub unsafe fn jfn_wl_popup_hide(handle: *mut c_void) {
-    wl_ops::popup_hide(cast(handle));
-}
-
-pub unsafe fn jfn_wl_popup_present(
-    handle: *mut c_void,
-    frame: *const JfnDmabufFrame,
-    lw: i32,
-    lh: i32,
-) {
-    if frame.is_null() {
-        return;
-    }
-    let frame = unsafe { &*frame };
-    wl_ops::popup_present(cast(handle), frame, lw, lh);
-}
-
-pub unsafe fn jfn_wl_popup_present_software(
-    handle: *mut c_void,
-    pixels: *const u8,
-    pw: i32,
-    ph: i32,
-    lw: i32,
-    lh: i32,
-) {
-    if pixels.is_null() || pw <= 0 || ph <= 0 {
-        return;
-    }
-    let len = (pw as usize)
-        .checked_mul(ph as usize)
-        .and_then(|n| n.checked_mul(4));
-    let Some(len) = len else { return };
-    let pixels = unsafe { slice::from_raw_parts(pixels, len) };
-    wl_ops::popup_present_software(cast(handle), pixels, pw, ph, lw, lh);
-}
-
 // =====================================================================
 // Fullscreen / transition
 // =====================================================================
