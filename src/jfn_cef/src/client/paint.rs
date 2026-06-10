@@ -36,12 +36,13 @@ impl Inner {
         if surface.is_null() {
             return;
         }
-        let Some(p) = platform_ops::ops() else { return };
         if is_popup {
             let (pw, ph) = self.popup_rect();
-            p.popup_present_software(surface, buffer, w, h, pw, ph);
+            self.dropdown
+                .present_software(surface, buffer, w, h, pw, ph);
             return;
         }
+        let Some(p) = platform_ops::ops() else { return };
         if !self.should_present_paint() {
             return;
         }
@@ -58,12 +59,12 @@ impl Inner {
         if surface.is_null() || info.is_null() {
             return;
         }
-        let Some(p) = platform_ops::ops() else { return };
         if is_popup {
             let (pw, ph) = self.popup_rect();
-            p.popup_present(surface, info, pw, ph);
+            self.dropdown.present(surface, info, pw, ph);
             return;
         }
+        let Some(p) = platform_ops::ops() else { return };
         if !self.should_present_paint() {
             return;
         }

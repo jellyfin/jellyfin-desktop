@@ -572,14 +572,13 @@ pub fn macos_open_external_url(url: &str) {
 // kIOSurfaceColorSpace tag (falls back to sRGB).
 // =====================================================================
 mod compositor;
+mod dropdown;
 mod init;
 mod input;
-mod popup;
 use compositor::{
     macos_alloc_surface, macos_free_surface, macos_restack, macos_set_expected_size,
     macos_surface_present, macos_surface_resize, macos_surface_set_visible,
 };
-use popup::macos_popup_show;
 
 // =====================================================================
 // Backend impl
@@ -651,8 +650,12 @@ impl Platform for MacosPlatform {
         macos_restack(ordered.as_ptr(), ordered.len());
     }
 
-    fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
-        macos_popup_show(s, req);
+    fn dropdown_backend(&self) -> &'static dyn jfn_platform_abi::DropdownBackend {
+        &dropdown::NsMenuDropdown
+    }
+
+    fn context_menu_backend(&self) -> &'static dyn jfn_platform_abi::ContextMenuBackend {
+        &jfn_platform_abi::JsMenuContextMenu
     }
 
     fn set_fullscreen(&self, v: bool) {

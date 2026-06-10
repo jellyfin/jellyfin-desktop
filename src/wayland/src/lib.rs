@@ -3,6 +3,8 @@
 #![cfg(target_os = "linux")]
 
 pub mod clipboard;
+pub(crate) mod context_menu;
+pub(crate) mod dropdown;
 pub(crate) mod gpu_paint_worker;
 pub mod input;
 pub mod input_lifecycle;

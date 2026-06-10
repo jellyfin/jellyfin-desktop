@@ -65,10 +65,11 @@ pub(crate) struct Inner {
     // All CEF host/frame ops on TID_UI route through this; dropped on
     // OnBeforeClose.
     browser: Mutex<Option<Browser>>,
-    // Pending RunContextMenuCallback — held while the JS-rendered menu is
-    // open. Cleared on menuItemSelected / menuDismissed IPC.
+    // Pending RunContextMenuCallback — held while a context menu is open.
     pending_menu_callback: Mutex<Option<RunContextMenuCallback>>,
-    pending_menu_session: Mutex<Option<crate::sink_routing::Handle>>,
+    // Selection callback parked by the JS-rendered context-menu backend;
+    // fired by the menuItemSelected / menuDismissed IPC (-1 = dismissed).
+    pending_menu_on_selected: Mutex<Option<jfn_platform_abi::MenuSelectionFn>>,
     // Injection-profile kind ("web" / "overlay" / "about") — looked up at
     // browser-create time to build the extra_info DictionaryValue.
     injection_kind: Mutex<String>,
@@ -97,6 +98,8 @@ pub(crate) struct Inner {
     // arrives via OnPopupSize, options via the "popupOptions" renderer IPC;
     // try_show_popup fires when popup_visible + size_received + options_received.
     popup: Mutex<PopupState>,
+    dropdown: &'static dyn jfn_platform_abi::DropdownBackend,
+    pub(crate) context_menu: &'static dyn jfn_platform_abi::ContextMenuBackend,
 
     // lifecycle / reset state machine (slice 5)
     state: AtomicI32,
@@ -170,7 +173,7 @@ impl Inner {
             load_cv: Condvar::new(),
             browser: Mutex::new(None),
             pending_menu_callback: Mutex::new(None),
-            pending_menu_session: Mutex::new(None),
+            pending_menu_on_selected: Mutex::new(None),
             injection_kind: Mutex::new(String::new()),
             surface: Mutex::new(std::ptr::null_mut()),
             width: AtomicI32::new(0),
@@ -186,6 +189,8 @@ impl Inner {
                 selected_idx: -1,
                 ..PopupState::default()
             }),
+            dropdown: jfn_platform_abi::get().dropdown_backend(),
+            context_menu: jfn_platform_abi::get().context_menu_backend(),
             state: AtomicI32::new(STATE_NORMAL),
             pending_url: Mutex::new(String::new()),
             has_browser: AtomicBool::new(false),

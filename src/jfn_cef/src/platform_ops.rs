@@ -1,8 +1,8 @@
 //! Thin re-export shim over [`jfn_platform_abi`].
 
 pub use jfn_platform_abi::{
-    DisplayBackend, JfnContextMenuRequest, JfnMenuItem, JfnPopupRequest, JfnRect, Platform,
-    SurfaceSize,
+    DisplayBackend, JfnContextMenuRequest, JfnMenuItem, JfnPopupRequest, JfnRect, JsMenuChannel,
+    Platform, SurfaceSize,
 };
 
 /// Returns the installed platform backend, or `None` if no backend has

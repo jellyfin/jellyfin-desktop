@@ -9,15 +9,15 @@ use std::sync::atomic::Ordering;
 pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform, WindowDecorations};
 
 mod compositor;
+mod dropdown;
 mod input;
 mod platform;
 pub use compositor::{
     jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
     jfn_win_update_surface_size, jfn_win_wndproc_begin_transition_locked,
     jfn_win_wndproc_end_transition_locked, win_alloc_surface, win_end_transition, win_free_surface,
-    win_popup_hide, win_popup_present, win_popup_present_software, win_popup_show, win_restack,
-    win_set_expected_size, win_surface_present, win_surface_present_software, win_surface_resize,
-    win_surface_set_visible,
+    win_restack, win_set_expected_size, win_surface_present, win_surface_present_software,
+    win_surface_resize, win_surface_set_visible,
 };
 pub use input::{
     jfn_input_windows_resize_to_parent, jfn_input_windows_run_input_thread,
@@ -374,29 +374,12 @@ impl Platform for WindowsPlatform {
         win_restack(ordered.as_ptr(), ordered.len());
     }
 
-    fn popup_show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
-        win_popup_show(s, req.x, req.y);
-        // CEF dispatches selection itself on Windows; drop the closure.
+    fn dropdown_backend(&self) -> &'static dyn jfn_platform_abi::DropdownBackend {
+        &dropdown::CompositorDropdown
     }
 
-    fn popup_hide(&self, s: SurfaceHandle) {
-        win_popup_hide(s);
-    }
-
-    fn popup_present(&self, s: SurfaceHandle, info: *const c_void, lw: c_int, lh: c_int) {
-        win_popup_present(s, info, lw, lh);
-    }
-
-    fn popup_present_software(
-        &self,
-        s: SurfaceHandle,
-        buffer: *const c_void,
-        pw: c_int,
-        ph: c_int,
-        lw: c_int,
-        lh: c_int,
-    ) {
-        win_popup_present_software(s, buffer, pw, ph, lw, lh);
+    fn context_menu_backend(&self) -> &'static dyn jfn_platform_abi::ContextMenuBackend {
+        &jfn_platform_abi::JsMenuContextMenu
     }
 
     fn set_fullscreen(&self, v: bool) {

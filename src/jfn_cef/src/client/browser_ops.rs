@@ -116,7 +116,13 @@ impl Inner {
 
         let kind = self.injection_kind.lock().clone();
         let add_ctx_menu = self.context_menu_builder.lock().is_some();
-        let extra = crate::injection::build_for_kind(&kind, add_ctx_menu, shared);
+        let extra = crate::injection::build_for_kind(
+            &kind,
+            add_ctx_menu,
+            shared,
+            self.dropdown,
+            self.context_menu,
+        );
 
         let mut client = crate::client_impl::make_client(Arc::clone(self));
         let url_cef = CefString::from(url);

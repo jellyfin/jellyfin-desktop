@@ -44,18 +44,14 @@ pub(super) fn on_process_message_received(
             1
         }
         "menuItemSelected" => {
-            if inner.resolve_pending_menu_session()
-                && let Some(args) = args
-            {
-                let cmd = args.int(0);
-                inner.close_pending_menu();
-                inner.handle_menu_item_selected(cmd, browser);
+            if let Some(cb) = inner.take_parked_menu_selection() {
+                cb(args.map_or(-1, |a| a.int(0)));
             }
             1
         }
         "menuDismissed" => {
-            if inner.resolve_pending_menu_session() {
-                inner.handle_menu_dismissed();
+            if let Some(cb) = inner.take_parked_menu_selection() {
+                cb(-1);
             }
             1
         }
