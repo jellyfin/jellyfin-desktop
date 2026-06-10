@@ -108,12 +108,12 @@ impl Fonts {
 
     fn shape(&mut self, text: &str, font_px: f32) -> Buffer {
         let mut buf = Buffer::new(&mut self.system, Metrics::new(font_px, font_px * 1.3));
-        buf.set_size(&mut self.system, None, None);
+        buf.set_size(None, None);
         buf.set_text(
-            &mut self.system,
             text,
-            Attrs::new().family(Family::SansSerif),
+            &Attrs::new().family(Family::SansSerif),
             Shaping::Advanced,
+            None,
         );
         buf.shape_until_scroll(&mut self.system, false);
         buf
