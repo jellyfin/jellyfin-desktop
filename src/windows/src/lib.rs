@@ -11,6 +11,7 @@ pub use jfn_platform_abi::{DisplayBackend, JfnPopupRequest, JfnRect, Platform, W
 mod compositor;
 mod dropdown;
 mod input;
+mod mpv_host;
 mod platform;
 pub use compositor::{
     jfn_win_begin_transition_locked, jfn_win_cleanup_compositor, jfn_win_init_compositor,
@@ -310,6 +311,19 @@ pub fn win_open_external_url(url: &str) {
 
 use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle, SurfaceSize, WindowGeometry, WindowPos};
 
+/// SMTC-backed [`jfn_platform_abi::MediaSink`].
+struct SmtcSink;
+
+impl jfn_platform_abi::MediaSink for SmtcSink {
+    fn start(&self) {
+        jfn_windows_sink::jfn_windows_sink_start();
+    }
+
+    fn stop(&self) {
+        jfn_windows_sink::jfn_windows_sink_stop();
+    }
+}
+
 pub struct WindowsPlatform;
 
 impl Platform for WindowsPlatform {
@@ -382,6 +396,14 @@ impl Platform for WindowsPlatform {
         &jfn_platform_abi::JsMenuContextMenu
     }
 
+    fn mpv_host(&self) -> &dyn jfn_platform_abi::MpvHost {
+        &mpv_host::WindowsMpvHost
+    }
+
+    fn media_session(&self) -> &dyn jfn_platform_abi::MediaSink {
+        &SmtcSink
+    }
+
     fn set_fullscreen(&self, v: bool) {
         win_set_fullscreen(v);
     }
@@ -451,6 +473,16 @@ impl Platform for WindowsPlatform {
 
     fn open_external_url(&self, url: &str) {
         win_open_external_url(url);
+    }
+
+    fn open_path(&self, path: &std::path::Path) {
+        // explorer.exe wants native backslash-separated paths.
+        let native: String = path
+            .to_string_lossy()
+            .chars()
+            .map(|c| if c == '/' { '\\' } else { c })
+            .collect();
+        let _ = std::process::Command::new("explorer").arg(native).spawn();
     }
 }
 

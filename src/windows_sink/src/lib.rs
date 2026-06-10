@@ -13,7 +13,7 @@
 
 use std::time::Instant;
 
-use jfn_playback::sink_core::{self, MediaCommand, MediaSink, Phase, map_kind_to_phase};
+use jfn_playback::sink_core::{self, MediaCommand, Phase, QueuedSink, map_kind_to_phase};
 use jfn_playback::{MediaMetadata, MediaType as PbMediaType, PlaybackEvent, PlaybackEventKind};
 use windows::Foundation::TimeSpan;
 use windows::Media::{
@@ -84,7 +84,7 @@ impl WindowsSink {
     }
 }
 
-impl MediaSink for WindowsSink {
+impl QueuedSink for WindowsSink {
     fn init(&mut self) {
         self.smtc = init_smtc(self.hwnd_raw);
     }

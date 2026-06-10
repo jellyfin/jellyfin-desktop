@@ -13,8 +13,6 @@ use std::fs;
 use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(any(target_os = "macos", windows))]
-use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 const APP_DIR_NAME: &str = "jellyfin-desktop";
@@ -183,28 +181,4 @@ pub fn mpv_home() -> PathBuf {
 
 pub fn log_path() -> PathBuf {
     log_dir().join(LOG_FILE_NAME)
-}
-
-pub fn open_mpv_home() {
-    let path = mpv_home();
-    #[cfg(target_os = "linux")]
-    {
-        // xdg-open opens filesystem paths too; reuse the shared launcher so
-        // the spawn-and-reap logic lives in one place.
-        jfn_linux_util::open_url::open(&path.to_string_lossy());
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = Command::new("open").arg(&path).spawn();
-    }
-    #[cfg(windows)]
-    {
-        // explorer.exe wants native backslash-separated paths.
-        let native: String = path
-            .to_string_lossy()
-            .chars()
-            .map(|c| if c == '/' { '\\' } else { c })
-            .collect();
-        let _ = Command::new("explorer").arg(native).spawn();
-    }
 }

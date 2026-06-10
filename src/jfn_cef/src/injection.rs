@@ -292,6 +292,8 @@ const SCRIPTS_KEY: &str = "scripts";
 const DEVICE_PROFILE_JSON_KEY: &str = "device_profile_json";
 const SHARED_TEXTURES_ENABLED_KEY: &str = "shared_textures_enabled";
 const WINDOW_DECORATIONS_KEY: &str = "window_decorations";
+const WINDOW_DECORATIONS_SUPPORTED_KEY: &str = "window_decorations_supported";
+const THEME_COLOR_SUPPORTED_KEY: &str = "theme_color_supported";
 
 static DEVICE_PROFILE_JSON: OnceLock<String> = OnceLock::new();
 
@@ -302,6 +304,8 @@ pub(crate) struct ExtraInfo {
     device_profile_json: Option<String>,
     shared_textures_enabled: bool,
     window_decorations: Option<WindowDecorations>,
+    window_decorations_supported: bool,
+    theme_color_supported: bool,
 }
 
 impl ExtraInfo {
@@ -314,6 +318,8 @@ impl ExtraInfo {
             window_decorations: read_string(&dict, WINDOW_DECORATIONS_KEY)
                 .as_deref()
                 .and_then(WindowDecorations::parse),
+            window_decorations_supported: read_bool(&dict, WINDOW_DECORATIONS_SUPPORTED_KEY),
+            theme_color_supported: read_bool(&dict, THEME_COLOR_SUPPORTED_KEY),
         }
     }
 
@@ -324,6 +330,18 @@ impl ExtraInfo {
         dict.set_bool(
             Some(&CefString::from(SHARED_TEXTURES_ENABLED_KEY)),
             if self.shared_textures_enabled { 1 } else { 0 },
+        );
+        dict.set_bool(
+            Some(&CefString::from(WINDOW_DECORATIONS_SUPPORTED_KEY)),
+            if self.window_decorations_supported {
+                1
+            } else {
+                0
+            },
+        );
+        dict.set_bool(
+            Some(&CefString::from(THEME_COLOR_SUPPORTED_KEY)),
+            if self.theme_color_supported { 1 } else { 0 },
         );
         if let Some(json) = self.device_profile_json {
             dict.set_string(
@@ -358,6 +376,14 @@ impl ExtraInfo {
 
     pub(crate) fn window_decorations(&self) -> Option<&'static str> {
         self.window_decorations.map(WindowDecorations::as_str)
+    }
+
+    pub(crate) fn window_decorations_supported(&self) -> bool {
+        self.window_decorations_supported
+    }
+
+    pub(crate) fn theme_color_supported(&self) -> bool {
+        self.theme_color_supported
     }
 }
 
@@ -491,6 +517,8 @@ fn build_extra_info(
         device_profile_json: None,
         shared_textures_enabled,
         window_decorations: None,
+        window_decorations_supported: false,
+        theme_color_supported: false,
     }
 }
 
@@ -517,6 +545,12 @@ pub(crate) fn build_for_kind(
                 extra_info.device_profile_json = Some(json.clone());
             }
             extra_info.window_decorations = Some(jfn_config::window_decorations_mode());
+            // Resolved here, browser-side: the renderer process never has a
+            // Platform installed on Linux.
+            if let Some(p) = jfn_platform_abi::try_get() {
+                extra_info.window_decorations_supported = p.window_decorations_supported();
+                extra_info.theme_color_supported = p.theme_color_supported();
+            }
             extra_info.scripts.extend(
                 dropdown
                     .scripts()

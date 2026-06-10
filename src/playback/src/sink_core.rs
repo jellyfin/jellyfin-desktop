@@ -2,7 +2,7 @@
 //! MPNowPlayingInfoCenter, Windows SMTC). Both platforms drove an
 //! identical queue + consumer-thread harness and the same
 //! kind→phase / command-dispatch logic; that lives here once. Each
-//! platform supplies only a [`MediaSink`] whose `deliver` drives its
+//! platform supplies only a [`QueuedSink`] whose `deliver` drives its
 //! native transport.
 //!
 //! The Linux MPRIS sink ([`crate::mpris_sink`]) has its own zbus-reactor
@@ -52,7 +52,6 @@ pub fn seek_to_ms(ms: i64) {
 // Linux MPRIS sink runs its own zbus thread.
 // =====================================================================
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod harness {
     use parking_lot::{Condvar, Mutex};
     use std::collections::VecDeque;
@@ -90,7 +89,7 @@ mod harness {
     /// thread — only the `build` closure crosses the thread boundary. This
     /// lets backends hold thread-affine handles (e.g. Windows COM SMTC
     /// interfaces) directly.
-    pub trait MediaSink {
+    pub trait QueuedSink {
         /// Called once on the consumer thread before draining begins.
         fn init(&mut self);
         /// Called for every queued event, in order.
@@ -135,11 +134,11 @@ mod harness {
     }
 
     /// Start the process-wide media sink. `build` constructs the platform
-    /// [`MediaSink`] on the consumer thread (so native transport handles are
+    /// [`QueuedSink`] on the consumer thread (so native transport handles are
     /// created there). No-op if already running.
     pub fn run_sink<S, F>(thread_name: &str, build: F)
     where
-        S: MediaSink,
+        S: QueuedSink,
         F: FnOnce() -> S + Send + 'static,
     {
         let inner = inner();
@@ -149,10 +148,14 @@ mod harness {
 
         crate::ffi::register_event_sink(Box::new(on_event));
 
-        std::thread::Builder::new()
+        let thread_inner = inner.clone();
+        if let Err(e) = std::thread::Builder::new()
             .name(thread_name.to_owned())
-            .spawn(move || consumer_thread(inner, build))
-            .expect("spawn media-sink thread");
+            .spawn(move || consumer_thread(thread_inner, build))
+        {
+            inner.running.store(false, Ordering::Release);
+            eprintln!("[playback] failed to spawn media-sink thread: {e}");
+        }
     }
 
     /// Signal the consumer thread to exit at its next wake. No-op if not
@@ -168,7 +171,7 @@ mod harness {
         inner.cv.notify_all();
     }
 
-    fn consumer_thread<S: MediaSink>(inner: Arc<Inner>, build: impl FnOnce() -> S) {
+    fn consumer_thread<S: QueuedSink>(inner: Arc<Inner>, build: impl FnOnce() -> S) {
         let mut sink = build();
         sink.init();
 
@@ -189,5 +192,4 @@ mod harness {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-pub use harness::{MediaSink, Phase, map_kind_to_phase, run_sink, stop};
+pub use harness::{Phase, QueuedSink, map_kind_to_phase, run_sink, stop};

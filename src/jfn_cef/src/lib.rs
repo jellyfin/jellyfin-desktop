@@ -17,8 +17,6 @@ mod ipc;
 mod menu_ownership;
 mod paint_scheduler;
 pub mod platform_ops;
-#[cfg(target_os = "macos")]
-mod pump;
 mod resource;
 pub mod sink_routing;
 mod state;

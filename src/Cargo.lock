@@ -2349,9 +2349,12 @@ dependencies = [
  "jfn-cef",
  "jfn-compositor-core",
  "jfn-input",
+ "jfn-logging",
+ "jfn-macos-sink",
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
+ "libc",
  "objc2",
  "objc2-foundation",
  "parking_lot",
@@ -2387,7 +2390,6 @@ dependencies = [
  "bindgen",
  "jfn-color",
  "libc",
- "objc2",
  "parking_lot",
  "pkg-config",
  "tracing",
@@ -2397,7 +2399,6 @@ dependencies = [
 name = "jfn-paths"
 version = "3.0.0-dev"
 dependencies = [
- "jfn-linux-util",
  "tempfile",
 ]
 
@@ -2434,14 +2435,12 @@ dependencies = [
  "jfn-linux-util",
  "jfn-logging",
  "jfn-macos",
- "jfn-macos-sink",
  "jfn-mpv",
  "jfn-paths",
  "jfn-platform-abi",
  "jfn-playback",
  "jfn-wayland",
  "jfn-windows",
- "jfn-windows-sink",
  "jfn-wlproxy",
  "jfn-x11",
  "libc",
@@ -2488,6 +2487,7 @@ dependencies = [
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
+ "jfn-windows-sink",
  "parking_lot",
  "tracing",
  "windows",

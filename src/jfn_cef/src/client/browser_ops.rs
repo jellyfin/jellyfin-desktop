@@ -48,7 +48,8 @@ impl Inner {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    /// Dead on platforms whose `CefHost` doesn't enable external
+    /// BeginFrame — callers gate on it.
     pub(crate) fn send_external_begin_frame(&self) {
         if let Some(h) = self.host() {
             h.send_external_begin_frame();
@@ -96,14 +97,10 @@ impl Inner {
         let parent: sys::cef_window_handle_t = unsafe { std::mem::zeroed() };
         let mut wi = WindowInfo::default().set_as_windowless(parent);
         wi.shared_texture_enabled = if shared { 1 } else { 0 };
-        #[cfg(target_os = "macos")]
-        {
-            wi.external_begin_frame_enabled = 1;
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            wi.external_begin_frame_enabled = 0;
-        }
+        let external_bf = jfn_platform_abi::try_get()
+            .and_then(|p| p.cef_host())
+            .is_some_and(|h| h.external_begin_frame());
+        wi.external_begin_frame_enabled = if external_bf { 1 } else { 0 };
 
         let fr_layer = self.frame_rate.load(Ordering::Acquire);
         let fr_default = DEFAULT_FRAME_RATE.load(Ordering::Acquire);

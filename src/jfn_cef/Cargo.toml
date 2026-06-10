@@ -8,10 +8,6 @@ publish.workspace = true
 name = "jfn_cef"
 crate-type = ["rlib"]
 
-[features]
-default = ["kde-palette"]
-kde-palette = []
-
 [dependencies]
 parking_lot.workspace = true
 cef = { workspace = true }

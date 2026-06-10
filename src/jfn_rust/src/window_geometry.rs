@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 use jfn_platform_abi::{
     BootGeometry, LogicalSize, PhysicalSize, Platform, Scale, WindowGeometry, WindowPos,
+    WindowSource,
 };
 
 use jfn_config::JfnWindowGeometry;
@@ -15,15 +16,6 @@ const DEFAULT_LOGICAL: LogicalSize = LogicalSize { w: 1600, h: 900 };
 
 fn plat() -> &'static dyn Platform {
     jfn_platform_abi::get()
-}
-
-/// Live window geometry, sourced from whichever component owns the window.
-pub trait WindowSource: Send + Sync {
-    fn size(&self) -> Option<PhysicalSize>;
-    fn maximized(&self) -> bool;
-    fn fullscreen(&self) -> bool;
-    fn position(&self) -> Option<WindowPos>;
-    fn scale(&self) -> Scale;
 }
 
 struct MpvWindowSource;
@@ -56,63 +48,22 @@ impl WindowSource for MpvWindowSource {
     }
 }
 
-#[cfg(target_os = "linux")]
-struct WaylandWindowSource;
-
-#[cfg(target_os = "linux")]
-impl WindowSource for WaylandWindowSource {
-    fn size(&self) -> Option<PhysicalSize> {
-        jfn_wayland::proxy::jfn_wl_window_size_known().then(|| {
-            let (w, h) = jfn_wayland::proxy::jfn_wl_window_size();
-            PhysicalSize { w, h }
-        })
-    }
-
-    fn maximized(&self) -> bool {
-        jfn_wayland::proxy::jfn_wl_window_maximized()
-    }
-
-    fn fullscreen(&self) -> bool {
-        jfn_wayland::proxy::jfn_wl_window_fullscreen()
-    }
-
-    fn position(&self) -> Option<WindowPos> {
-        None
-    }
-
-    fn scale(&self) -> Scale {
-        Scale(plat().get_scale())
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn make_source() -> Box<dyn WindowSource> {
-    if plat().display() == jfn_platform_abi::DisplayBackend::Wayland {
-        Box::new(WaylandWindowSource)
-    } else {
-        Box::new(MpvWindowSource)
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn make_source() -> Box<dyn WindowSource> {
-    Box::new(MpvWindowSource)
-}
+static MPV_SOURCE: MpvWindowSource = MpvWindowSource;
 
 /// Owns the boot→live→persist lifecycle for window geometry.
 pub struct WindowGeometryController {
-    source: Box<dyn WindowSource>,
+    source: &'static dyn WindowSource,
 }
 
 impl WindowGeometryController {
     fn new() -> Self {
         Self {
-            source: make_source(),
+            source: plat().window_source().unwrap_or(&MPV_SOURCE),
         }
     }
 
     pub fn source(&self) -> &dyn WindowSource {
-        self.source.as_ref()
+        self.source
     }
 
     /// Resolve saved config into typed boot geometry, sourcing the display

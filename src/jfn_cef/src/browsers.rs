@@ -331,10 +331,10 @@ pub(crate) fn jfn_browsers_close_and_snapshot() -> Vec<Arc<Inner>> {
     inners
 }
 
-/// Drive an external BeginFrame on every layer. Called from the macOS
-/// CADisplayLink tick at the display's real refresh rate so CEF produces
-/// frames only when its compositor has invalidation.
-#[cfg(target_os = "macos")]
+/// Drive an external BeginFrame on every layer. Entry point for the
+/// platform's frame driver (macOS CADisplayLink tick at the display's
+/// real refresh rate) so CEF produces frames only when its compositor
+/// has invalidation. Dead on platforms without external BeginFrame.
 pub fn jfn_browsers_send_external_begin_frame_all() {
     let snapshot: Vec<*mut JfnCefLayer> = INSTANCE
         .lock()

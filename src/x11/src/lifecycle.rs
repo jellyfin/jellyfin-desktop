@@ -20,14 +20,15 @@ fn paint_name(mode: crate::paint_override::X11PaintOverride) -> &'static str {
 }
 
 fn cef_dmabuf_producer_ok() -> bool {
-    let ozone = jfn_platform_abi::get().cef_ozone_platform();
-    unsafe { jfn_linux_util::dmabuf_probe::jfn_wl_dmabuf_probe(ozone, std::ptr::null_mut()) }
+    unsafe {
+        jfn_linux_util::dmabuf_probe::jfn_wl_dmabuf_probe(c"x11".as_ptr(), std::ptr::null_mut())
+    }
 }
 
 fn cef_producer_target() -> jfn_gpu_paint::GpuTarget {
-    let ozone = jfn_platform_abi::get().cef_ozone_platform();
-    let drm_render =
-        unsafe { jfn_linux_util::dmabuf_probe::cef_render_node(ozone, std::ptr::null_mut()) };
+    let drm_render = unsafe {
+        jfn_linux_util::dmabuf_probe::cef_render_node(c"x11".as_ptr(), std::ptr::null_mut())
+    };
     jfn_gpu_paint::GpuTarget { drm_render }
 }
 

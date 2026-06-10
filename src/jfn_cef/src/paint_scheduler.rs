@@ -257,8 +257,12 @@ fn active_invalidate_tick(scheduler: PaintScheduler, state: &PaintState, inner: 
     }
     if inner.browser_alive() {
         inner.invalidate_view();
-        #[cfg(target_os = "macos")]
-        inner.send_external_begin_frame();
+        let external_bf = jfn_platform_abi::try_get()
+            .and_then(|p| p.cef_host())
+            .is_some_and(|h| h.external_begin_frame());
+        if external_bf {
+            inner.send_external_begin_frame();
+        }
     }
     let fps = inner.frame_rate.load(Ordering::Acquire);
     if fps <= 0 {

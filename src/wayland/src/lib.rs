@@ -18,8 +18,10 @@ pub mod proxy;
 pub mod scale_probe;
 pub(crate) mod scene;
 pub(crate) mod shm_paint_worker;
+pub(crate) mod window_source;
 pub mod wl_ffi;
 pub mod wl_ops;
 pub mod wl_state;
+pub(crate) mod wlproxy_host;
 
 pub use paint_override::{WlPaintOverride, paint_override, set_paint_override};
