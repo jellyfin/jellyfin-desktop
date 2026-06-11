@@ -53,6 +53,14 @@ pub(crate) fn js_cstr_or_warn(label: &str, s: &str) -> Option<CString> {
 pub(crate) fn apply_setting_value(_section: &str, key: &str, value: &str) {
     match key {
         "hwdec" => jfn_config::set_hwdec(value),
+        "startupWindowMode" => match jfn_config::StartupWindowMode::parse(value) {
+            Some(mode) => jfn_config::set_startup_window_mode(mode),
+            None => jfn_logging::log(
+                jfn_logging::CATEGORY_CEF,
+                jfn_logging::LEVEL_WARN,
+                &format!("Unknown startupWindowMode value: {value}"),
+            ),
+        },
         "audioPassthrough" => jfn_config::set_audio_passthrough(value),
         "audioExclusive" => jfn_config::set_audio_exclusive(value == "true"),
         "audioChannels" => jfn_config::set_audio_channels(value),

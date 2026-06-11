@@ -44,10 +44,38 @@ impl Default for JfnWindowGeometry {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StartupWindowMode {
+    #[default]
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
+impl StartupWindowMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Windowed => "windowed",
+            Self::Maximized => "maximized",
+            Self::Fullscreen => "fullscreen",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "windowed" => Some(Self::Windowed),
+            "maximized" => Some(Self::Maximized),
+            "fullscreen" => Some(Self::Fullscreen),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct SettingsData {
     server_url: String,
     hwdec: String,
+    startup_window_mode: StartupWindowMode,
     audio_passthrough: String,
     audio_channels: String,
     log_level: String,
@@ -66,6 +94,7 @@ impl Default for SettingsData {
         Self {
             server_url: String::new(),
             hwdec: String::new(),
+            startup_window_mode: StartupWindowMode::default(),
             audio_passthrough: String::new(),
             audio_channels: String::new(),
             log_level: String::new(),
@@ -91,6 +120,13 @@ impl SettingsData {
         }
         if let Some(s) = v.get("hwdec").and_then(Value::as_str) {
             self.hwdec = s.into();
+        }
+        if let Some(mode) = v
+            .get("startupWindowMode")
+            .and_then(Value::as_str)
+            .and_then(StartupWindowMode::parse)
+        {
+            self.startup_window_mode = mode;
         }
         if let Some(s) = v.get("audioPassthrough").and_then(Value::as_str) {
             self.audio_passthrough = s.into();
@@ -184,6 +220,12 @@ impl SettingsData {
         if !self.hwdec.is_empty() && self.hwdec != HWDEC_DEFAULT {
             o.insert("hwdec".into(), Value::String(self.hwdec.clone()));
         }
+        if self.startup_window_mode.as_str() != StartupWindowMode::default().as_str() {
+            o.insert(
+                "startupWindowMode".into(),
+                Value::String(self.startup_window_mode.as_str().to_string()),
+            );
+        }
         if !self.audio_passthrough.is_empty() {
             o.insert(
                 "audioPassthrough".into(),
@@ -226,7 +268,7 @@ impl SettingsData {
         Value::Object(o)
     }
 
-    fn cli_json(&self, hwdec_opts: &[String]) -> String {
+    fn cli_json(&self, hwdec_opts: &[String], display_backend: &str) -> String {
         let mut o = Map::new();
         if !self.hwdec.is_empty() {
             o.insert("hwdec".into(), Value::String(self.hwdec.clone()));
@@ -274,6 +316,14 @@ impl SettingsData {
             .map(|s| Value::String(s.clone()))
             .collect();
         o.insert("hwdecOptions".into(), Value::Array(opts));
+        o.insert(
+            "startupWindowMode".into(),
+            Value::String(self.startup_window_mode.as_str().to_string()),
+        );
+        o.insert(
+            "displayBackend".into(),
+            Value::String(display_backend.to_string()),
+        );
         serde_json::to_string(&Value::Object(o)).unwrap_or_default()
     }
 }
@@ -474,6 +524,15 @@ macro_rules! bool_accessors {
 
 string_accessors!(server_url, set_server_url, server_url);
 string_accessors!(hwdec, set_hwdec, hwdec);
+
+pub fn startup_window_mode() -> StartupWindowMode {
+    state().lock().data.startup_window_mode
+}
+
+pub fn set_startup_window_mode(v: StartupWindowMode) {
+    state().lock().data.startup_window_mode = v;
+}
+
 string_accessors!(audio_passthrough, set_audio_passthrough, audio_passthrough);
 string_accessors!(audio_channels, set_audio_channels, audio_channels);
 string_accessors!(log_level, set_log_level, log_level);
@@ -556,10 +615,10 @@ pub fn set_window_geometry(g: JfnWindowGeometry) {
     state().lock().data.window = g;
 }
 
-pub fn cli_json(hwdec_opts: &[&str]) -> String {
+pub fn cli_json(hwdec_opts: &[&str], display_backend: &str) -> String {
     let snap = state().lock().data.clone();
     let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
-    snap.cli_json(&opts)
+    snap.cli_json(&opts, display_backend)
 }
 
 fn normalize_device_name(raw: &str, platform_default: &str) -> String {
