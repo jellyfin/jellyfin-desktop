@@ -1,8 +1,6 @@
 //! Unix defaults for the `Platform` process-lifecycle methods: SIGINT/SIGTERM
 //! shutdown handlers and the AF_UNIX single-instance gate.
 
-#![cfg(unix)]
-
 use std::sync::OnceLock;
 
 // =====================================================================
