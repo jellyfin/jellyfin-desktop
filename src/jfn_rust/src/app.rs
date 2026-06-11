@@ -254,11 +254,7 @@ fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
     unsafe { jfn_mpv::boot::jfn_mpv_handle_init(&boot as *const _) }
 }
 
-fn wait_for_vo_window() -> Option<(i32, i32)> {
-    let want_max = {
-        let g = jfn_config::window_geometry();
-        g.maximized
-    };
+fn wait_for_vo_window(want_max: bool) -> Option<(i32, i32)> {
     tracing::info!(target: "Main", "Waiting for mpv window...");
 
     let mut mw: i32 = 0;
@@ -652,7 +648,7 @@ pub fn jfn_app_main() -> c_int {
     // the WM close button needs it back.
     install_mpv_close_binding(raw);
 
-    let Some((mw, mh)) = wait_for_vo_window() else {
+    let Some((mw, mh)) = wait_for_vo_window(boot.maximized) else {
         return 0;
     };
 
@@ -872,6 +868,15 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         metrics.hz,
         use_shared_textures,
     );
+
+    // Apply startup fullscreen after CEF surfaces exist. On Windows the
+    // WndProc resize fires on mpv's window thread as soon as the command
+    // is processed; surfaces must be present or the resize is lost. On
+    // macOS the transition is deferred to [NSApp run], so the timing is
+    // naturally safe there too.
+    if jfn_config::startup_window_mode() == jfn_config::StartupWindowMode::Fullscreen {
+        plat().set_fullscreen(true);
+    }
 
     if !start_playback_coordination() {
         return 1;
