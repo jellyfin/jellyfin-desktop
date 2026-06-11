@@ -2,6 +2,7 @@ set dotenv-load := true
 
 export JELLYFIN_DESKTOP_LOG_LEVEL := env_var_or_default("JELLYFIN_DESKTOP_LOG_LEVEL", "debug")
 export JELLYFIN_DESKTOP_LOG_FILE := env_var_or_default("JELLYFIN_DESKTOP_LOG_FILE", "build/run.log")
+export JFN_MPV_INCLUDE_DIR := "third_party/mpv/include"
 
 import 'dev/linux/linux.just'
 import 'dev/macos/macos.just'
@@ -46,8 +47,7 @@ fmt-check:
 # Run clippy
 [group('lint')]
 clippy:
-    JFN_MPV_INCLUDE_DIR=third_party/mpv/include \
-        cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets -- \
+    cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets -- \
         -D warnings \
         -D clippy::unwrap_used \
         -D clippy::expect_used \
@@ -61,8 +61,7 @@ lint: fmt-check clippy
 [group('lint')]
 strict-lint:
     cargo fmt --manifest-path src/Cargo.toml --all -- --check
-    JFN_MPV_INCLUDE_DIR=third_party/mpv/include \
-        cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets -- \
+    cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets -- \
         -D warnings \
         -D clippy::pedantic \
         -D clippy::nursery \
