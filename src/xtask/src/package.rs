@@ -6,6 +6,28 @@ use std::fs::File;
 use std::io::{BufWriter, Read, Seek, Write};
 use std::path::Path;
 
+struct Target {
+    os_slug: &'static str,
+    ext: &'static str,
+}
+
+const TARGET: Target = if cfg!(target_os = "windows") {
+    Target {
+        os_slug: "windows",
+        ext: "zip",
+    }
+} else if cfg!(target_os = "macos") {
+    Target {
+        os_slug: "macos",
+        ext: "zip",
+    }
+} else {
+    Target {
+        os_slug: "linux",
+        ext: "tar.gz",
+    }
+};
+
 pub fn run(args: &PackageArgs) -> Result<()> {
     let ver = version::read()?;
     let dist = std::path::absolute(&args.dist)?;
@@ -14,17 +36,18 @@ pub fn run(args: &PackageArgs) -> Result<()> {
     let prefix = install::run(&args.install)?;
 
     let arch = current_arch();
-    if cfg!(target_os = "windows") {
-        let name = format!("JellyfinDesktop-{}-windows-{}", ver.full, arch);
-        let out = dist.join(format!("{name}.zip"));
-        let _ = std::fs::remove_file(&out);
-        zip_dir(&prefix, &out)?;
-        println!("Wrote {}", out.display());
-    } else if cfg!(target_os = "macos") {
-        // For macOS, `prefix` is the .app path returned by install::run.
-        let name = format!("JellyfinDesktop-{}-macos-{}", ver.full, arch);
-        let out = dist.join(format!("{name}.zip"));
-        let _ = std::fs::remove_file(&out);
+    let name = format!("JellyfinDesktop-{}-{}-{}", ver.full, TARGET.os_slug, arch);
+    let out = dist.join(format!("{name}.{}", TARGET.ext));
+    let _ = std::fs::remove_file(&out);
+    write_archive(&prefix, &out)?;
+    println!("Wrote {}", out.display());
+    Ok(())
+}
+
+fn write_archive(prefix: &Path, out: &Path) -> Result<()> {
+    if cfg!(target_os = "macos") {
+        // `prefix` is the .app bundle here (install::run is OS-specific); zip it
+        // under its own dir name so the bundle, not its contents, is the root.
         let app_parent = prefix
             .parent()
             .with_context(|| format!("{} has no parent directory", prefix.display()))?;
@@ -33,16 +56,12 @@ pub fn run(args: &PackageArgs) -> Result<()> {
             .with_context(|| format!("{} has no file name", prefix.display()))?
             .to_string_lossy()
             .into_owned();
-        zip_dir_with_root(app_parent, &app_dirname, &out)?;
-        println!("Wrote {}", out.display());
+        zip_dir_with_root(app_parent, &app_dirname, out)
+    } else if cfg!(target_os = "windows") {
+        zip_dir(prefix, out)
     } else {
-        let name = format!("JellyfinDesktop-{}-linux-{}", ver.full, arch);
-        let out = dist.join(format!("{name}.tar.gz"));
-        let _ = std::fs::remove_file(&out);
-        tar_gz_dir(&prefix, &out)?;
-        println!("Wrote {}", out.display());
+        tar_gz_dir(prefix, out)
     }
-    Ok(())
 }
 
 fn current_arch() -> &'static str {

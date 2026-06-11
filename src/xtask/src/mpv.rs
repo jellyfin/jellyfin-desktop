@@ -7,6 +7,22 @@ pub struct Mpv {
     pub build_dir: PathBuf,
 }
 
+const LINK_NAME: &str = if cfg!(target_os = "macos") {
+    "libmpv.dylib"
+} else if cfg!(target_os = "windows") {
+    "mpv.lib"
+} else {
+    "libmpv.so"
+};
+
+const RUNTIME_NAME: &str = if cfg!(target_os = "macos") {
+    "libmpv.2.dylib"
+} else if cfg!(target_os = "windows") {
+    "libmpv-2.dll"
+} else {
+    "libmpv.so.2"
+};
+
 pub fn build(out: &Path, cplayer: bool) -> Result<Mpv> {
     let src = paths::mpv_source_dir();
     let build_dir = paths::mpv_build_dir(out);
@@ -59,13 +75,7 @@ pub fn build(out: &Path, cplayer: bool) -> Result<Mpv> {
 }
 
 pub fn external(dir: &Path) -> Result<Mpv> {
-    let library = if cfg!(target_os = "macos") {
-        dir.join("lib").join("libmpv.dylib")
-    } else if cfg!(target_os = "windows") {
-        dir.join("lib").join("mpv.lib")
-    } else {
-        dir.join("lib").join("libmpv.so")
-    };
+    let library = dir.join("lib").join(LINK_NAME);
     if !library.exists() {
         bail!("mpv library not found at {}", library.display());
     }
@@ -75,22 +85,10 @@ pub fn external(dir: &Path) -> Result<Mpv> {
 }
 
 pub fn library_path(build_dir: &Path) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        build_dir.join("libmpv.dylib")
-    } else if cfg!(target_os = "windows") {
-        build_dir.join("mpv.lib")
-    } else {
-        build_dir.join("libmpv.so")
-    }
+    build_dir.join(LINK_NAME)
 }
 
 /// The shared library filename used at runtime (with SONAME).
 pub fn runtime_library_name() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "libmpv.2.dylib"
-    } else if cfg!(target_os = "windows") {
-        "libmpv-2.dll"
-    } else {
-        "libmpv.so.2"
-    }
+    RUNTIME_NAME
 }

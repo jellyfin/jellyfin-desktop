@@ -11,6 +11,13 @@ mod install;
 mod mpv;
 mod package;
 mod paths;
+#[cfg_attr(target_os = "macos", path = "platform_macos.rs")]
+#[cfg_attr(target_os = "windows", path = "platform_windows.rs")]
+#[cfg_attr(
+    all(not(target_os = "macos"), not(target_os = "windows")),
+    path = "platform_linux.rs"
+)]
+mod platform;
 #[cfg(target_os = "macos")]
 mod template;
 mod version;
