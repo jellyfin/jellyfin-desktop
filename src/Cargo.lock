@@ -2280,6 +2280,7 @@ version = "3.0.0-dev"
 dependencies = [
  "jfn-paths",
  "jfn-platform-abi",
+ "libc",
  "parking_lot",
  "serde_json",
 ]

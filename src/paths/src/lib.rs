@@ -182,3 +182,14 @@ pub fn mpv_home() -> PathBuf {
 pub fn log_path() -> PathBuf {
     log_dir().join(LOG_FILE_NAME)
 }
+
+/// Where logs go when no log file was requested explicitly. Linux: `None` —
+/// stderr/journalctl is the norm. macOS/Windows: GUI processes have no
+/// user-visible stderr, so default to the platform log file.
+pub fn default_log_file() -> Option<PathBuf> {
+    if cfg!(target_os = "linux") {
+        None
+    } else {
+        Some(log_path())
+    }
+}

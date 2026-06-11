@@ -561,7 +561,7 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
     replace_first(
         &mut code,
         "__SETTINGS_JSON__",
-        &jfn_config::cli_json(&platform_device_name(), jfn_mpv::hwdec_options()),
+        &jfn_config::cli_json(jfn_mpv::hwdec_options()),
     );
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
     replace_first(
@@ -620,24 +620,4 @@ pub(crate) fn userfree_to_string(s: &CefStringUserfreeUtf16) -> String {
         }
     })
     .unwrap_or_default()
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn platform_device_name() -> String {
-    let mut buf = [0u8; 256];
-    let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len()) };
-    if rc != 0 {
-        return String::new();
-    }
-    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    let mut s = String::from_utf8_lossy(&buf[..len]).into_owned();
-    s.truncate(64);
-    s
-}
-
-#[cfg(target_os = "windows")]
-fn platform_device_name() -> String {
-    let mut s = std::env::var("COMPUTERNAME").unwrap_or_default();
-    s.truncate(64);
-    s
 }

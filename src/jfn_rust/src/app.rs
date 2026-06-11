@@ -62,15 +62,10 @@ fn print_version() {
 }
 
 fn init_logging(log_file: Option<String>, log_level: &str) {
-    // Linux: stderr/journalctl is the norm; only activate file logging when
-    // --log-file was passed explicitly. macOS/Windows: GUI processes have no
-    // user-visible stderr, so default to a platform log file when unset.
     let log_path = log_file.unwrap_or_else(|| {
-        if cfg!(target_os = "linux") {
-            String::new()
-        } else {
-            jfn_paths::log_path().to_string_lossy().into_owned()
-        }
+        jfn_paths::default_log_file()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
     });
 
     let filter = if log_level.is_empty() {

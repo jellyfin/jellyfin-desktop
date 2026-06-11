@@ -226,7 +226,7 @@ impl SettingsData {
         Value::Object(o)
     }
 
-    fn cli_json(&self, platform_default: &str, hwdec_opts: &[String]) -> String {
+    fn cli_json(&self, hwdec_opts: &[String]) -> String {
         let mut o = Map::new();
         if !self.hwdec.is_empty() {
             o.insert("hwdec".into(), Value::String(self.hwdec.clone()));
@@ -267,7 +267,7 @@ impl SettingsData {
         }
         o.insert(
             "deviceNameDefault".into(),
-            Value::String(platform_default.into()),
+            Value::String(default_device_name()),
         );
         let opts: Vec<Value> = hwdec_opts
             .iter()
@@ -482,6 +482,26 @@ pub fn device_name() -> String {
     state().lock().data.device_name.clone()
 }
 
+#[cfg(unix)]
+pub fn default_device_name() -> String {
+    let mut buf = [0u8; 256];
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len()) };
+    if rc != 0 {
+        return String::new();
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    let mut s = String::from_utf8_lossy(&buf[..len]).into_owned();
+    s.truncate(DEVICE_NAME_MAX);
+    s
+}
+
+#[cfg(windows)]
+pub fn default_device_name() -> String {
+    let mut s = std::env::var("COMPUTERNAME").unwrap_or_default();
+    s.truncate(DEVICE_NAME_MAX);
+    s
+}
+
 /// Setter for device_name. Trims and collapses whitespace, truncates to the
 /// server's 64-char DeviceName column limit, and clears the override when the
 /// result matches `platform_default` (so hostname changes propagate
@@ -536,10 +556,10 @@ pub fn set_window_geometry(g: JfnWindowGeometry) {
     state().lock().data.window = g;
 }
 
-pub fn cli_json(platform_default: &str, hwdec_opts: &[&str]) -> String {
+pub fn cli_json(hwdec_opts: &[&str]) -> String {
     let snap = state().lock().data.clone();
     let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
-    snap.cli_json(platform_default, &opts)
+    snap.cli_json(&opts)
 }
 
 fn normalize_device_name(raw: &str, platform_default: &str) -> String {
