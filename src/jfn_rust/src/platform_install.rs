@@ -13,6 +13,8 @@ use jfn_platform_abi::{DisplayBackend, Platform};
 /// bail out of the browser-process flow but may still query the
 /// platform. No-op on Linux ([`install_from_cli`] runs there instead).
 pub fn install_early() {
+    #[cfg(target_os = "linux")]
+    crate::wl_interpose::ensure_linked();
     #[cfg(target_os = "windows")]
     {
         let p = jfn_windows::make_windows_platform();
@@ -34,9 +36,9 @@ pub fn install_early() {
 pub fn install_from_cli(cli: &crate::cli::Cli) {
     #[cfg(target_os = "linux")]
     {
-        let backend = match cli.platform {
-            Some(crate::cli::PlatformArg::Wayland) => DisplayBackend::Wayland,
-            Some(crate::cli::PlatformArg::X11) => DisplayBackend::X11,
+        let backend = match cli.linux.platform {
+            Some(jfn_linux_util::cli::PlatformArg::Wayland) => DisplayBackend::Wayland,
+            Some(jfn_linux_util::cli::PlatformArg::X11) => DisplayBackend::X11,
             None => {
                 let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
                 let has_display = std::env::var_os("DISPLAY").is_some();
@@ -47,17 +49,17 @@ pub fn install_from_cli(cli: &crate::cli::Cli) {
                 }
             }
         };
-        if let Some(p) = cli.platform_paint {
+        if let Some(p) = cli.linux.platform_paint {
             match backend {
                 DisplayBackend::Wayland => jfn_wayland::set_paint_override(match p {
-                    crate::cli::Paint::Dmabuf => jfn_wayland::WlPaintOverride::Dmabuf,
-                    crate::cli::Paint::Gpu => jfn_wayland::WlPaintOverride::Gpu,
-                    crate::cli::Paint::Shm => jfn_wayland::WlPaintOverride::Shm,
+                    jfn_linux_util::cli::Paint::Dmabuf => jfn_wayland::WlPaintOverride::Dmabuf,
+                    jfn_linux_util::cli::Paint::Gpu => jfn_wayland::WlPaintOverride::Gpu,
+                    jfn_linux_util::cli::Paint::Shm => jfn_wayland::WlPaintOverride::Shm,
                 }),
                 DisplayBackend::X11 => jfn_x11::set_paint_override(match p {
-                    crate::cli::Paint::Dmabuf => jfn_x11::X11PaintOverride::Dmabuf,
-                    crate::cli::Paint::Gpu => jfn_x11::X11PaintOverride::Gpu,
-                    crate::cli::Paint::Shm => jfn_x11::X11PaintOverride::Shm,
+                    jfn_linux_util::cli::Paint::Dmabuf => jfn_x11::X11PaintOverride::Dmabuf,
+                    jfn_linux_util::cli::Paint::Gpu => jfn_x11::X11PaintOverride::Gpu,
+                    jfn_linux_util::cli::Paint::Shm => jfn_x11::X11PaintOverride::Shm,
                 }),
                 _ => {}
             }

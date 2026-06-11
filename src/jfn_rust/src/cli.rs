@@ -3,7 +3,7 @@
 //! version probe the version string needs only fires when `--version` is
 //! actually requested.
 
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{ArgAction, Parser};
 
 const ENV_LOG_LEVEL: &str = "JELLYFIN_DESKTOP_LOG_LEVEL";
 const ENV_LOG_FILE: &str = "JELLYFIN_DESKTOP_LOG_FILE";
@@ -12,26 +12,6 @@ const ENV_CACHE_DIR: &str = "JELLYFIN_DESKTOP_CACHE_DIR";
 
 #[cfg(test)]
 const ENV_BACKED: &[&str] = &[ENV_LOG_LEVEL, ENV_LOG_FILE, ENV_CONFIG_DIR, ENV_CACHE_DIR];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Paint {
-    /// Zero-copy dmabuf shared-texture path: EGL/GBM subsurface on
-    /// Wayland, Vulkan external-memory import on X11. Falls back to gpu
-    /// then shm if the device can't import dmabufs.
-    Dmabuf,
-    /// Vulkan pixel-upload via `jfn_gpu_paint`. Falls back to shm when no
-    /// Vulkan adapter is usable.
-    Gpu,
-    /// CPU upload (`wl_shm` / MIT-SHM). The floor of the fallback chain.
-    Shm,
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum PlatformArg {
-    Wayland,
-    X11,
-}
 
 /// jellyfin-desktop — Jellyfin native desktop client.
 ///
@@ -90,16 +70,9 @@ pub struct Cli {
     #[arg(long, action = ArgAction::SetTrue)]
     pub disable_gpu_compositing: bool,
 
-    /// Force the display backend (Linux only).
     #[cfg(target_os = "linux")]
-    #[arg(long, value_enum)]
-    pub platform: Option<PlatformArg>,
-
-    /// Preferred paint path (Linux only); falls back dmabuf→gpu→shm.
-    /// Values not available on the active backend degrade gracefully.
-    #[cfg(target_os = "linux")]
-    #[arg(long, value_enum)]
-    pub platform_paint: Option<Paint>,
+    #[command(flatten)]
+    pub linux: jfn_linux_util::cli::LinuxArgs,
 }
 
 #[cfg(test)]
@@ -241,8 +214,8 @@ mod tests {
         assert!(a.remote_debug_port.is_none());
         #[cfg(target_os = "linux")]
         {
-            assert!(a.platform.is_none());
-            assert!(a.platform_paint.is_none());
+            assert!(a.linux.platform.is_none());
+            assert!(a.linux.platform_paint.is_none());
         }
     }
 
@@ -311,72 +284,6 @@ mod tests {
     fn duplicate_flag_last_wins() {
         let a = ok(&["app", "--log-level=info", "--log-level", "debug"]);
         assert_eq!(a.log_level.as_deref(), Some("debug"));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn platform_values() {
-        assert_eq!(
-            ok(&["app", "--platform", "x11"]).platform,
-            Some(PlatformArg::X11)
-        );
-        assert_eq!(
-            ok(&["app", "--platform", "wayland"]).platform,
-            Some(PlatformArg::Wayland)
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn platform_unknown_value_errors() {
-        assert_eq!(
-            err_kind(&["app", "--platform=bogus"]),
-            ErrorKind::InvalidValue
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn paint_values() {
-        assert_eq!(
-            ok(&["app", "--platform-paint=dmabuf"]).platform_paint,
-            Some(Paint::Dmabuf)
-        );
-        assert_eq!(
-            ok(&["app", "--platform-paint=gpu"]).platform_paint,
-            Some(Paint::Gpu)
-        );
-        assert_eq!(
-            ok(&["app", "--platform-paint", "shm"]).platform_paint,
-            Some(Paint::Shm)
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn paint_unknown_value_errors() {
-        assert_eq!(
-            err_kind(&["app", "--platform-paint=bogus"]),
-            ErrorKind::InvalidValue
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn paint_last_wins() {
-        assert_eq!(
-            ok(&["app", "--platform-paint=dmabuf", "--platform-paint", "shm"]).platform_paint,
-            Some(Paint::Shm)
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn wid_is_rejected() {
-        assert_eq!(
-            err_kind(&["app", "--wid", "1234"]),
-            ErrorKind::UnknownArgument
-        );
     }
 
     #[cfg(not(target_os = "linux"))]
