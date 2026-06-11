@@ -24,6 +24,9 @@ pub mod mpv_host;
 #[cfg_attr(unix, path = "process_unix.rs")]
 #[cfg_attr(not(unix), path = "process_other.rs")]
 mod process;
+#[cfg_attr(unix, path = "signal_unix.rs")]
+#[cfg_attr(not(unix), path = "signal_other.rs")]
+mod signal;
 pub mod window_source;
 
 pub use cef_host::CefHost;
@@ -40,6 +43,15 @@ pub use geometry::{
 pub use media_sink::MediaSink;
 pub use mpv_host::{DefaultMpvHost, MpvHost};
 pub use window_source::WindowSource;
+
+/// Preserves the process's SIGINT/SIGTERM dispositions across a scope.
+///
+/// `chrome/browser/chrome_browser_main_posix.cc` installs SIGINT/SIGTERM
+/// handlers during `CefInitialize`, and that path is NOT gated by
+/// `disable_signal_handlers`. Snapshot the caller's handlers on
+/// construction and restore them on drop, confining Chromium's installs to
+/// the guarded window. No-op off unix.
+pub use signal::SignalGuard;
 
 // =====================================================================
 // Main-thread park (non-macOS default for run_main_loop/wake_main_loop)
@@ -498,62 +510,6 @@ pub trait Platform: Send + Sync {
 
     fn single_instance_stop(&self, instance_id: &str) {
         process::stop_listener(instance_id);
-    }
-}
-
-/// Preserves the process's SIGINT/SIGTERM dispositions across a scope.
-///
-/// `chrome/browser/chrome_browser_main_posix.cc` installs SIGINT/SIGTERM
-/// handlers during `CefInitialize`, and that path is NOT gated by
-/// `disable_signal_handlers`. Snapshot the caller's handlers on
-/// construction and restore them on drop, confining Chromium's installs to
-/// the guarded window. No-op off unix.
-#[cfg(unix)]
-pub struct SignalGuard {
-    int_act: libc::sigaction,
-    term_act: libc::sigaction,
-}
-
-#[cfg(unix)]
-impl Default for SignalGuard {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(unix)]
-impl SignalGuard {
-    #[must_use]
-    pub fn new() -> Self {
-        let mut int_act: libc::sigaction = unsafe { std::mem::zeroed() };
-        let mut term_act: libc::sigaction = unsafe { std::mem::zeroed() };
-        unsafe {
-            libc::sigaction(libc::SIGINT, std::ptr::null(), &mut int_act);
-            libc::sigaction(libc::SIGTERM, std::ptr::null(), &mut term_act);
-        }
-        Self { int_act, term_act }
-    }
-}
-
-#[cfg(unix)]
-impl Drop for SignalGuard {
-    fn drop(&mut self) {
-        unsafe {
-            libc::sigaction(libc::SIGINT, &self.int_act, std::ptr::null_mut());
-            libc::sigaction(libc::SIGTERM, &self.term_act, std::ptr::null_mut());
-        }
-    }
-}
-
-#[cfg(not(unix))]
-#[derive(Default)]
-pub struct SignalGuard;
-
-#[cfg(not(unix))]
-impl SignalGuard {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
     }
 }
 
