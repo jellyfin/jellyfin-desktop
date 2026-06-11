@@ -2425,10 +2425,9 @@ name = "jfn-playback"
 version = "3.0.0-dev"
 dependencies = [
  "jfn-mpv",
- "libc",
+ "jfn-wake-event",
  "parking_lot",
  "serde_json",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2449,6 +2448,7 @@ dependencies = [
  "jfn-paths",
  "jfn-platform-abi",
  "jfn-playback",
+ "jfn-wake-event",
  "jfn-wayland",
  "jfn-windows",
  "jfn-wlproxy",
@@ -2458,6 +2458,14 @@ dependencies = [
  "serde_json",
  "tracing",
  "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "jfn-wake-event"
+version = "3.0.0-dev"
+dependencies = [
+ "libc",
  "windows-sys 0.61.2",
 ]
 
@@ -2542,6 +2550,7 @@ dependencies = [
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
+ "jfn-wake-event",
  "libc",
  "parking_lot",
  "tracing",

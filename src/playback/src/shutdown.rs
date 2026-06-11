@@ -16,14 +16,11 @@
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use crate::wake_event::WakeEvent;
+use jfn_wake_event::WakeEvent;
 
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 static HANDLER: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-// Addresses of `&'static WakeEvent`s registered for fan-out. `usize` lets a
-// plain static Mutex hold them without unsafe Send/Sync gymnastics; the
-// caller's `&'static` reference proves the pointer is live for the process.
-static WAKERS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+static WAKERS: Mutex<Vec<&'static WakeEvent>> = Mutex::new(Vec::new());
 
 /// Returns true if [`jfn_shutdown_initiate`] has been called at least once.
 pub fn jfn_shutting_down() -> bool {
@@ -48,18 +45,16 @@ pub fn jfn_shutdown_set_handler(handler: Option<fn()>) {
 ///
 /// `ev` must remain live for the rest of the process.
 pub fn jfn_shutdown_register_waker(ev: &'static WakeEvent) {
-    let addr = ev as *const WakeEvent as usize;
     let mut w = WAKERS.lock().unwrap_or_else(PoisonError::into_inner);
-    w.push(addr);
+    w.push(ev);
 }
 
 /// Signal every registered waker. Called from the manager once it observes
 /// shutdown — never from a signal handler (this locks a mutex).
 pub fn jfn_shutdown_fanout() {
     let w = WAKERS.lock().unwrap_or_else(PoisonError::into_inner);
-    for addr in w.iter() {
-        let ev = *addr as *const WakeEvent;
-        unsafe { crate::wake_event::jfn_wake_event_signal(ev) };
+    for ev in w.iter() {
+        ev.signal();
     }
 }
 

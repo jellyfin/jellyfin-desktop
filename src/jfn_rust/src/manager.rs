@@ -25,8 +25,8 @@ use std::collections::VecDeque;
 use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
 
-use jfn_playback::WakeEvent;
 use jfn_playback::shutdown::jfn_shutting_down;
+use jfn_wake_event::WakeEvent;
 
 /// Work routed to the manager thread. Producers post via `jfn_manager_send`
 /// (platform threads) or the signal-handler bridge `jfn_manager_notify_shutdown`
