@@ -170,7 +170,7 @@ impl State {
 
     fn refresh_modifiers(&mut self) {
         self.modifiers = match &self.xkb_st {
-            Some(st) => jfn_input::xkb::to_cef_mods(st),
+            Some(st) => jfn_linux_util::xkb::to_cef_mods(st),
             None => 0,
         };
     }

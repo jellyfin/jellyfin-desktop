@@ -1,7 +1,4 @@
-//! Linux-only platform helpers shared by the X11 and Wayland backends:
-//! systemd-logind idle inhibition and external-URL launching. Merged from
-//! the former `jfn-idle-inhibit-linux` / `jfn-open-url-linux` crates so the
-//! two single-function helpers live in one place.
+//! Linux-only platform helpers shared by the X11 and Wayland backends.
 //!
 //! The whole crate is `#![cfg(target_os = "linux")]`, so it's an empty rlib
 //! elsewhere and the workspace builds uniformly on every platform.
@@ -11,8 +8,11 @@
 pub mod dmabuf_probe;
 pub mod egl_dyn;
 pub mod idle_inhibit;
+pub mod input;
+mod keysym;
 pub mod open_url;
 pub mod wl_display_registry;
+pub mod xkb;
 
 use jfn_platform_abi::WindowDecorations;
 

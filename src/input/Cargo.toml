@@ -13,8 +13,5 @@ parking_lot.workspace = true
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-xkbcommon = "0.9"
-
 [lints]
 workspace = true

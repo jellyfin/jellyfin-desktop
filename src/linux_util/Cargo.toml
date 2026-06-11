@@ -14,10 +14,12 @@ parking_lot.workspace = true
 # The whole crate is `#![cfg(target_os = "linux")]`, so it's an empty rlib
 # elsewhere and the workspace builds uniformly on every platform.
 [target.'cfg(target_os = "linux")'.dependencies]
+jfn-input = { path = "../input" }
 jfn-platform-abi = { path = "../platform_abi" }
 libc.workspace = true
 libloading = "0.9"
 tracing.workspace = true
+xkbcommon = "0.9"
 zbus.workspace = true
 
 [lints]
