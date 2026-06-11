@@ -3,14 +3,8 @@ use std::os::raw::c_int;
 use std::sync::Arc;
 
 use crate::client::Inner;
+use crate::client_impl::os_ffi::CursorHandle;
 use jfn_platform_abi::cursor::CursorShape;
-
-#[cfg(target_os = "linux")]
-type CursorHandle = std::os::raw::c_ulong;
-#[cfg(target_os = "macos")]
-type CursorHandle = *mut u8;
-#[cfg(target_os = "windows")]
-type CursorHandle = sys::HCURSOR;
 
 wrap_display_handler! {
     pub struct JfnDisplayHandlerBuilder {

@@ -708,6 +708,33 @@ impl Platform for MacosPlatform {
         &NowPlayingSink
     }
 
+    fn cef_paths(&self) -> jfn_platform_abi::CefPaths {
+        use std::path::PathBuf;
+        let mut buf = vec![0u8; 4096];
+        let mut size = buf.len() as u32;
+        unsafe {
+            // _NSGetExecutablePath signature: (char* buf, uint32_t* bufsize) -> i32
+            unsafe extern "C" {
+                fn _NSGetExecutablePath(buf: *mut c_char, size: *mut u32) -> i32;
+            }
+            _NSGetExecutablePath(buf.as_mut_ptr() as *mut _, &mut size);
+        }
+        let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        let exe = std::fs::canonicalize(PathBuf::from(
+            std::str::from_utf8(&buf[..nul]).unwrap_or(""),
+        ))
+        .unwrap_or_default();
+        let app_contents = exe.parent().and_then(|p| p.parent()).unwrap_or(&exe);
+        let framework = app_contents
+            .join("Frameworks")
+            .join("Chromium Embedded Framework.framework");
+        jfn_platform_abi::CefPaths {
+            framework_dir_path: Some(framework),
+            browser_subprocess_path: Some(exe),
+            ..Default::default()
+        }
+    }
+
     fn set_fullscreen(&self, v: bool) {
         macos_set_fullscreen(v);
     }

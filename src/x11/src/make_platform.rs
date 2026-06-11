@@ -182,6 +182,10 @@ impl Platform for X11Platform {
         &jfn_mpris::MprisSink
     }
 
+    fn cef_paths(&self) -> jfn_platform_abi::CefPaths {
+        jfn_linux_util::cef_paths()
+    }
+
     fn window_decorations_supported(&self) -> bool {
         true
     }

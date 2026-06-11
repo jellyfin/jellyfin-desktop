@@ -9,6 +9,7 @@ mod display;
 mod keyboard;
 mod lifespan;
 mod load;
+mod os_ffi;
 mod process_message;
 mod render;
 use context_menu::JfnContextMenuHandlerBuilder;

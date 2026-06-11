@@ -1,12 +1,12 @@
 //! CEF process bootstrap.
 
 use cef::*;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(windows))]
 use std::ffi::CString;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(windows))]
 use std::os::raw::c_char;
 use std::os::raw::c_int;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(windows))]
 use std::sync::OnceLock;
 
 use jfn_platform_abi::DisplayBackend;
@@ -154,13 +154,26 @@ pub fn jfn_cef_initialize() -> bool {
     // handlers during CefInitialize and that path is not gated by
     // disable_signal_handlers. Snapshot the caller's handlers and restore
     // afterward so Chromium's installs are confined to the init window.
-    let _sig_guard = SignalGuard::new();
+    let _sig_guard = jfn_platform_abi::SignalGuard::new();
 
     let mut app = JfnAppBuilder::new(JfnApp::new());
-    #[cfg(not(target_os = "windows"))]
-    let main_args = browser_main_args();
-    #[cfg(target_os = "windows")]
-    let main_args = args::Args::new().as_main_args().clone();
+    let full_argv =
+        jfn_platform_abi::try_get().is_some_and(|p| p.display().cef_full_browser_argv());
+    let main_args = if full_argv {
+        args::Args::new().as_main_args().clone()
+    } else {
+        // Windows `MainArgs` carries an HINSTANCE, not argv, and always
+        // takes the `full_argv` path above — `browser_main_args` is
+        // unbuildable there.
+        #[cfg(not(windows))]
+        {
+            browser_main_args()
+        }
+        #[cfg(windows)]
+        {
+            args::Args::new().as_main_args().clone()
+        }
+    };
     initialize(
         Some(&main_args),
         Some(&settings),
@@ -173,7 +186,7 @@ pub fn jfn_cef_initialize() -> bool {
 // CString + pointer Vec are leaked into process-lifetime statics because
 // CEF retains the raw pointers past the `initialize()` call (and across
 // the lifetime of the run loop on some code paths).
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(windows))]
 fn browser_main_args() -> MainArgs {
     struct CleanArgv {
         argc: c_int,
@@ -223,92 +236,20 @@ fn log_severity_from_int(v: c_int) -> LogSeverity {
     LogSeverity::from(raw)
 }
 
-#[cfg(target_os = "macos")]
 fn fill_paths(settings: &mut Settings) {
-    use std::path::PathBuf;
-    let mut buf = vec![0u8; 4096];
-    let mut size = buf.len() as u32;
-    unsafe {
-        // _NSGetExecutablePath signature: (char* buf, uint32_t* bufsize) -> i32
-        unsafe extern "C" {
-            fn _NSGetExecutablePath(buf: *mut c_char, size: *mut u32) -> i32;
+    let Some(paths) = jfn_platform_abi::try_get().map(|p| p.cef_paths()) else {
+        return;
+    };
+    let set = |dst: &mut CefString, v: Option<std::path::PathBuf>| {
+        if let Some(v) = v {
+            *dst = CefString::from(v.to_string_lossy().as_ref());
         }
-        _NSGetExecutablePath(buf.as_mut_ptr() as *mut _, &mut size);
-    }
-    let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    let exe = std::fs::canonicalize(PathBuf::from(
-        std::str::from_utf8(&buf[..nul]).unwrap_or(""),
-    ))
-    .unwrap_or_default();
-    let app_contents = exe.parent().and_then(|p| p.parent()).unwrap_or(&exe);
-    let fw = app_contents
-        .join("Frameworks")
-        .join("Chromium Embedded Framework.framework");
-    settings.framework_dir_path = CefString::from(fw.to_string_lossy().as_ref());
-    settings.browser_subprocess_path = CefString::from(exe.to_string_lossy().as_ref());
-}
-
-#[cfg(target_os = "windows")]
-fn fill_paths(settings: &mut Settings) {
-    let exe = std::env::current_exe()
-        .and_then(std::fs::canonicalize)
-        .unwrap_or_default();
-    let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    settings.browser_subprocess_path = CefString::from(exe.to_string_lossy().as_ref());
-    settings.resources_dir_path = CefString::from(dir.to_string_lossy().as_ref());
-    settings.locales_dir_path = CefString::from(dir.join("locales").to_string_lossy().as_ref());
-}
-
-#[cfg(target_os = "linux")]
-fn fill_paths(settings: &mut Settings) {
-    let exe = std::fs::canonicalize("/proc/self/exe").unwrap_or_default();
-    settings.browser_subprocess_path = CefString::from(exe.to_string_lossy().as_ref());
-
-    let res_dir = option_env!("CEF_RESOURCES_DIR")
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            exe.parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        });
-    settings.resources_dir_path = CefString::from(res_dir.as_str());
-    settings.locales_dir_path = CefString::from(format!("{res_dir}/locales").as_str());
-}
-
-#[cfg(not(target_os = "windows"))]
-struct SignalGuard {
-    int_act: libc::sigaction,
-    term_act: libc::sigaction,
-}
-
-#[cfg(not(target_os = "windows"))]
-impl SignalGuard {
-    fn new() -> Self {
-        let mut int_act: libc::sigaction = unsafe { std::mem::zeroed() };
-        let mut term_act: libc::sigaction = unsafe { std::mem::zeroed() };
-        unsafe {
-            libc::sigaction(libc::SIGINT, std::ptr::null(), &mut int_act);
-            libc::sigaction(libc::SIGTERM, std::ptr::null(), &mut term_act);
-        }
-        Self { int_act, term_act }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-impl Drop for SignalGuard {
-    fn drop(&mut self) {
-        unsafe {
-            libc::sigaction(libc::SIGINT, &self.int_act, std::ptr::null_mut());
-            libc::sigaction(libc::SIGTERM, &self.term_act, std::ptr::null_mut());
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-struct SignalGuard;
-#[cfg(target_os = "windows")]
-impl SignalGuard {
-    fn new() -> Self {
-        Self
-    }
+    };
+    set(
+        &mut settings.browser_subprocess_path,
+        paths.browser_subprocess_path,
+    );
+    set(&mut settings.framework_dir_path, paths.framework_dir_path);
+    set(&mut settings.resources_dir_path, paths.resources_dir_path);
+    set(&mut settings.locales_dir_path, paths.locales_dir_path);
 }

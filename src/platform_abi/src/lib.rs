@@ -12,7 +12,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{c_int, c_void};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub mod cef_host;
@@ -194,6 +194,34 @@ pub enum DisplayBackend {
     MacOS,
 }
 
+impl DisplayBackend {
+    /// The modifier that means "application action" in keyboard shortcuts.
+    pub fn action_modifier_flag(self) -> u32 {
+        match self {
+            DisplayBackend::MacOS => event_flags::EVENTFLAG_COMMAND_DOWN,
+            _ => event_flags::EVENTFLAG_CONTROL_DOWN,
+        }
+    }
+
+    /// Whether CEF's browser-process `MainArgs` carries the full argv for
+    /// Chromium to parse. When false the caller hands CEF a clean
+    /// `[argv[0]]` and pushes switches explicitly instead.
+    pub fn cef_full_browser_argv(self) -> bool {
+        matches!(self, DisplayBackend::Windows)
+    }
+}
+
+/// Filesystem locations CEF needs written into `Settings` before
+/// `CefInitialize`, resolved per platform. Each `None` field is left at
+/// CEF's own default rather than cleared.
+#[derive(Default)]
+pub struct CefPaths {
+    pub browser_subprocess_path: Option<PathBuf>,
+    pub framework_dir_path: Option<PathBuf>,
+    pub resources_dir_path: Option<PathBuf>,
+    pub locales_dir_path: Option<PathBuf>,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum WindowDecorations {
     /// Client-side: the app draws its own titlebar in-page.
@@ -318,6 +346,8 @@ pub trait Platform: Send + Sync {
     /// OS media-session integration. Non-optional — every platform has a
     /// sink.
     fn media_session(&self) -> &dyn MediaSink;
+
+    fn cef_paths(&self) -> CefPaths;
 
     // Fullscreen
     fn set_fullscreen(&self, _v: bool) {}
@@ -488,6 +518,62 @@ pub trait Platform: Send + Sync {
         process_unix::stop_listener(instance_id);
         #[cfg(not(unix))]
         let _ = instance_id;
+    }
+}
+
+/// Preserves the process's SIGINT/SIGTERM dispositions across a scope.
+///
+/// `chrome/browser/chrome_browser_main_posix.cc` installs SIGINT/SIGTERM
+/// handlers during `CefInitialize`, and that path is NOT gated by
+/// `disable_signal_handlers`. Snapshot the caller's handlers on
+/// construction and restore them on drop, confining Chromium's installs to
+/// the guarded window. No-op off unix.
+#[cfg(unix)]
+pub struct SignalGuard {
+    int_act: libc::sigaction,
+    term_act: libc::sigaction,
+}
+
+#[cfg(unix)]
+impl Default for SignalGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(unix)]
+impl SignalGuard {
+    #[must_use]
+    pub fn new() -> Self {
+        let mut int_act: libc::sigaction = unsafe { std::mem::zeroed() };
+        let mut term_act: libc::sigaction = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::sigaction(libc::SIGINT, std::ptr::null(), &mut int_act);
+            libc::sigaction(libc::SIGTERM, std::ptr::null(), &mut term_act);
+        }
+        Self { int_act, term_act }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SignalGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::sigaction(libc::SIGINT, &self.int_act, std::ptr::null_mut());
+            libc::sigaction(libc::SIGTERM, &self.term_act, std::ptr::null_mut());
+        }
+    }
+}
+
+#[cfg(not(unix))]
+#[derive(Default)]
+pub struct SignalGuard;
+
+#[cfg(not(unix))]
+impl SignalGuard {
+    #[must_use]
+    pub fn new() -> Self {
+        Self
     }
 }
 

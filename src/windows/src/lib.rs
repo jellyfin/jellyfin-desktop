@@ -405,6 +405,19 @@ impl Platform for WindowsPlatform {
         &SmtcSink
     }
 
+    fn cef_paths(&self) -> jfn_platform_abi::CefPaths {
+        let exe = std::env::current_exe()
+            .and_then(std::fs::canonicalize)
+            .unwrap_or_default();
+        let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        jfn_platform_abi::CefPaths {
+            browser_subprocess_path: Some(exe),
+            resources_dir_path: Some(dir.clone()),
+            locales_dir_path: Some(dir.join("locales")),
+            ..Default::default()
+        }
+    }
+
     fn set_fullscreen(&self, v: bool) {
         win_set_fullscreen(v);
     }

@@ -204,6 +204,10 @@ impl Platform for WaylandPlatform {
         &jfn_mpris::MprisSink
     }
 
+    fn cef_paths(&self) -> jfn_platform_abi::CefPaths {
+        jfn_linux_util::cef_paths()
+    }
+
     fn window_source(&self) -> Option<&'static dyn jfn_platform_abi::WindowSource> {
         Some(&crate::window_source::WaylandWindowSource)
     }
