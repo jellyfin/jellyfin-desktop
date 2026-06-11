@@ -69,7 +69,20 @@ impl WindowGeometryController {
     /// Resolve saved config into typed boot geometry, sourcing the display
     /// scale + clamp from the platform.
     pub fn boot(&self) -> BootGeometry {
-        let g = jfn_config::window_geometry();
+        let mut g = jfn_config::window_geometry();
+
+        match jfn_config::startup_window_mode() {
+            jfn_config::StartupWindowMode::Windowed => {
+                g.maximized = false;
+            }
+            jfn_config::StartupWindowMode::Maximized => {
+                g.maximized = true;
+            }
+            jfn_config::StartupWindowMode::Fullscreen => {
+                g.maximized = false;
+            }
+        }
+
         let scale = Scale(plat().get_display_scale(g.x, g.y));
         resolve_boot(g, scale, |w| plat().clamp_window_geometry(w))
     }
