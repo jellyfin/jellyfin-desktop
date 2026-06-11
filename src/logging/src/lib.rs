@@ -17,8 +17,6 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
-use std::thread::{self, JoinHandle};
 
 use time::OffsetDateTime;
 use time::format_description::FormatItem;
@@ -154,96 +152,233 @@ impl Write for RotatingFile {
 }
 
 // =====================================================================
-// Direct stderr Write — bypasses Rust's BufWriter so each record reaches
-// the terminal immediately.
+// Per-OS console writer + stderr capture
 // =====================================================================
 
 #[cfg(unix)]
-struct StderrWriter {
-    fd: libc::c_int,
-}
+mod imp {
+    use super::{CATEGORY_CEF, Level, emit};
+    use std::io::{self, Write};
+    use std::thread::{self, JoinHandle};
 
-#[cfg(unix)]
-impl Write for StderrWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let n = unsafe { libc::write(self.fd, buf.as_ptr() as *const _, buf.len()) };
-        if n < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(n as usize)
+    // Holds a dup of the original stderr taken before StderrCapture's
+    // dup2 redirect; writing via io::stderr() here would feed each log
+    // line back into the capture pipe.
+    pub(super) struct StderrWriter {
+        fd: libc::c_int,
+    }
+
+    impl Write for StderrWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let n = unsafe { libc::write(self.fd, buf.as_ptr() as *const _, buf.len()) };
+            if n < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(n as usize)
+            }
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
     }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 
-#[cfg(unix)]
-impl Drop for StderrWriter {
-    fn drop(&mut self) {
-        if self.fd >= 0 {
-            unsafe { libc::close(self.fd) };
+    impl Drop for StderrWriter {
+        fn drop(&mut self) {
+            if self.fd >= 0 {
+                unsafe { libc::close(self.fd) };
+            }
         }
     }
-}
 
-#[cfg(unix)]
-fn make_console_writer() -> (StderrWriter, bool) {
-    let fd = unsafe { libc::dup(libc::STDERR_FILENO) };
-    let is_tty = fd >= 0 && unsafe { libc::isatty(fd) } == 1;
-    (StderrWriter { fd }, is_tty)
+    pub(super) fn make_console_writer() -> (StderrWriter, bool) {
+        let fd = unsafe { libc::dup(libc::STDERR_FILENO) };
+        let is_tty = fd >= 0 && unsafe { libc::isatty(fd) } == 1;
+        (StderrWriter { fd }, is_tty)
+    }
+
+    pub(super) struct StderrCapture {
+        original_fd: libc::c_int,
+        signal_write: libc::c_int,
+        join: Option<JoinHandle<()>>,
+    }
+
+    impl StderrCapture {
+        pub(super) fn start() -> Option<Self> {
+            unsafe {
+                let original = libc::dup(libc::STDERR_FILENO);
+                if original < 0 {
+                    return None;
+                }
+
+                let mut pipe_fds = [0; 2];
+                if libc::pipe(pipe_fds.as_mut_ptr()) < 0 {
+                    libc::close(original);
+                    return None;
+                }
+                let pipe_read = pipe_fds[0];
+                let pipe_write = pipe_fds[1];
+
+                let mut signal_fds = [0; 2];
+                if libc::pipe(signal_fds.as_mut_ptr()) < 0 {
+                    libc::close(original);
+                    libc::close(pipe_read);
+                    libc::close(pipe_write);
+                    return None;
+                }
+                let signal_read = signal_fds[0];
+                let signal_write = signal_fds[1];
+
+                if libc::dup2(pipe_write, libc::STDERR_FILENO) < 0 {
+                    libc::close(original);
+                    libc::close(pipe_read);
+                    libc::close(pipe_write);
+                    libc::close(signal_read);
+                    libc::close(signal_write);
+                    return None;
+                }
+                libc::close(pipe_write);
+
+                let join = thread::spawn(move || capture_loop(pipe_read, signal_read));
+
+                Some(StderrCapture {
+                    original_fd: original,
+                    signal_write,
+                    join: Some(join),
+                })
+            }
+        }
+
+        pub(super) fn stop(&mut self) {
+            // Order: restore STDERR FIRST (so any concurrent writer drains to
+            // the real fd from now on), THEN wake the capture thread via the
+            // signal pipe, THEN join, THEN close the signal write end. Joining
+            // before closing signal_write avoids a window where the capture
+            // thread races a close on its read end.
+            unsafe {
+                if self.original_fd >= 0 {
+                    libc::dup2(self.original_fd, libc::STDERR_FILENO);
+                    libc::close(self.original_fd);
+                    self.original_fd = -1;
+                }
+                let buf = b"x";
+                libc::write(self.signal_write, buf.as_ptr() as *const _, 1);
+            }
+            if let Some(h) = self.join.take()
+                && let Err(e) = h.join()
+            {
+                eprintln!("[logging] stderr capture thread panicked: {e:?}");
+            }
+            unsafe {
+                libc::close(self.signal_write);
+            }
+            self.signal_write = -1;
+        }
+    }
+
+    fn capture_loop(pipe_read: libc::c_int, signal_read: libc::c_int) {
+        let mut buf = [0u8; 4096];
+        let mut partial = Vec::<u8>::new();
+        unsafe {
+            loop {
+                let mut pfds = [
+                    libc::pollfd {
+                        fd: pipe_read,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    },
+                    libc::pollfd {
+                        fd: signal_read,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    },
+                ];
+                let rc = libc::poll(pfds.as_mut_ptr(), 2, -1);
+                if rc < 0 {
+                    break;
+                }
+                if pfds[1].revents & libc::POLLIN != 0 {
+                    break;
+                }
+                if pfds[0].revents & libc::POLLIN != 0 {
+                    let n = libc::read(pipe_read, buf.as_mut_ptr() as *mut _, buf.len());
+                    if n <= 0 {
+                        break;
+                    }
+                    partial.extend_from_slice(&buf[..n as usize]);
+                    while let Some(pos) = partial.iter().position(|&b| b == b'\n') {
+                        let line: Vec<u8> = partial.drain(..=pos).take(pos).collect();
+                        if !line.is_empty() {
+                            let msg = String::from_utf8_lossy(&line).into_owned();
+                            emit(CATEGORY_CEF, Level::Debug, &msg);
+                        }
+                    }
+                }
+            }
+            libc::close(pipe_read);
+            libc::close(signal_read);
+        }
+    }
 }
 
 #[cfg(windows)]
-fn enable_vt_mode() {
-    // Best-effort: tell conhost to honor ANSI SGR escapes on stderr.
-    // Win10+ supports ENABLE_VIRTUAL_TERMINAL_PROCESSING; older builds
-    // silently fail and we render with no color.
-    const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
-    const STD_ERROR_HANDLE: u32 = 0xFFFFFFF4; // (DWORD)-12
-    type HANDLE = *mut std::ffi::c_void;
-    type DWORD = u32;
-    type BOOL = i32;
-    unsafe extern "system" {
-        fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
-        fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: *mut DWORD) -> BOOL;
-        fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
-    }
-    unsafe {
-        let h = GetStdHandle(STD_ERROR_HANDLE);
-        if h.is_null() || (h as isize) == -1 {
-            return;
+mod imp {
+    use std::io::{self, Write};
+
+    fn enable_vt_mode() {
+        // Best-effort: tell conhost to honor ANSI SGR escapes on stderr.
+        // Win10+ supports ENABLE_VIRTUAL_TERMINAL_PROCESSING; older builds
+        // silently fail and we render with no color.
+        const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
+        const STD_ERROR_HANDLE: u32 = 0xFFFFFFF4; // (DWORD)-12
+        type Handle = *mut std::ffi::c_void;
+        type Dword = u32;
+        type Bool = i32;
+        unsafe extern "system" {
+            fn GetStdHandle(nStdHandle: Dword) -> Handle;
+            fn GetConsoleMode(hConsoleHandle: Handle, lpMode: *mut Dword) -> Bool;
+            fn SetConsoleMode(hConsoleHandle: Handle, dwMode: Dword) -> Bool;
         }
-        let mut mode: DWORD = 0;
-        if GetConsoleMode(h, &mut mode) == 0 {
-            return;
+        unsafe {
+            let h = GetStdHandle(STD_ERROR_HANDLE);
+            if h.is_null() || (h as isize) == -1 {
+                return;
+            }
+            let mut mode: Dword = 0;
+            if GetConsoleMode(h, &mut mode) == 0 {
+                return;
+            }
+            SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
         }
-        SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
     }
-}
 
-#[cfg(windows)]
-struct StderrWriter;
+    pub(super) struct StderrWriter;
 
-#[cfg(windows)]
-impl Write for StderrWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        io::stderr().write(buf)
+    impl Write for StderrWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            io::stderr().write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            io::stderr().flush()
+        }
     }
-    fn flush(&mut self) -> io::Result<()> {
-        io::stderr().flush()
-    }
-}
 
-#[cfg(windows)]
-fn make_console_writer() -> (StderrWriter, bool) {
-    // io::stderr().is_terminal() handles MSYS/conhost/etc. correctly.
-    use std::io::IsTerminal;
-    let is_tty = io::stderr().is_terminal();
-    if is_tty {
-        enable_vt_mode();
+    pub(super) fn make_console_writer() -> (StderrWriter, bool) {
+        use std::io::IsTerminal;
+        let is_tty = io::stderr().is_terminal();
+        if is_tty {
+            enable_vt_mode();
+        }
+        (StderrWriter, is_tty)
     }
-    (StderrWriter, is_tty)
+
+    pub(super) struct StderrCapture;
+
+    impl StderrCapture {
+        pub(super) fn start() -> Option<Self> {
+            None
+        }
+        pub(super) fn stop(&mut self) {}
+    }
 }
 
 // =====================================================================
@@ -254,7 +389,7 @@ struct State {
     active_log_path: String,
     _console_guard: WorkerGuard,
     _file_guard: Option<WorkerGuard>,
-    stderr_capture: Option<StderrCapture>,
+    stderr_capture: Option<imp::StderrCapture>,
 }
 
 static STATE: OnceLock<Mutex<Option<State>>> = OnceLock::new();
@@ -347,147 +482,6 @@ fn directive_contains_trace(filter: &str) -> bool {
 }
 
 // =====================================================================
-// stderr capture
-// =====================================================================
-
-#[cfg(unix)]
-struct StderrCapture {
-    original_fd: libc::c_int,
-    signal_write: libc::c_int,
-    join: Option<JoinHandle<()>>,
-}
-
-#[cfg(unix)]
-impl StderrCapture {
-    fn start() -> Option<Self> {
-        unsafe {
-            let original = libc::dup(libc::STDERR_FILENO);
-            if original < 0 {
-                return None;
-            }
-
-            let mut pipe_fds = [0; 2];
-            if libc::pipe(pipe_fds.as_mut_ptr()) < 0 {
-                libc::close(original);
-                return None;
-            }
-            let pipe_read = pipe_fds[0];
-            let pipe_write = pipe_fds[1];
-
-            let mut signal_fds = [0; 2];
-            if libc::pipe(signal_fds.as_mut_ptr()) < 0 {
-                libc::close(original);
-                libc::close(pipe_read);
-                libc::close(pipe_write);
-                return None;
-            }
-            let signal_read = signal_fds[0];
-            let signal_write = signal_fds[1];
-
-            if libc::dup2(pipe_write, libc::STDERR_FILENO) < 0 {
-                libc::close(original);
-                libc::close(pipe_read);
-                libc::close(pipe_write);
-                libc::close(signal_read);
-                libc::close(signal_write);
-                return None;
-            }
-            libc::close(pipe_write);
-
-            let join = thread::spawn(move || capture_loop(pipe_read, signal_read));
-
-            Some(StderrCapture {
-                original_fd: original,
-                signal_write,
-                join: Some(join),
-            })
-        }
-    }
-
-    fn stop(&mut self) {
-        // Order: restore STDERR FIRST (so any concurrent writer drains to
-        // the real fd from now on), THEN wake the capture thread via the
-        // signal pipe, THEN join, THEN close the signal write end. Joining
-        // before closing signal_write avoids a window where the capture
-        // thread races a close on its read end.
-        unsafe {
-            if self.original_fd >= 0 {
-                libc::dup2(self.original_fd, libc::STDERR_FILENO);
-                libc::close(self.original_fd);
-                self.original_fd = -1;
-            }
-            let buf = b"x";
-            libc::write(self.signal_write, buf.as_ptr() as *const _, 1);
-        }
-        if let Some(h) = self.join.take()
-            && let Err(e) = h.join()
-        {
-            eprintln!("[logging] stderr capture thread panicked: {e:?}");
-        }
-        unsafe {
-            libc::close(self.signal_write);
-        }
-        self.signal_write = -1;
-    }
-}
-
-#[cfg(windows)]
-struct StderrCapture;
-
-#[cfg(windows)]
-impl StderrCapture {
-    fn start() -> Option<Self> {
-        None
-    }
-    fn stop(&mut self) {}
-}
-
-#[cfg(unix)]
-fn capture_loop(pipe_read: libc::c_int, signal_read: libc::c_int) {
-    let mut buf = [0u8; 4096];
-    let mut partial = Vec::<u8>::new();
-    unsafe {
-        loop {
-            let mut pfds = [
-                libc::pollfd {
-                    fd: pipe_read,
-                    events: libc::POLLIN,
-                    revents: 0,
-                },
-                libc::pollfd {
-                    fd: signal_read,
-                    events: libc::POLLIN,
-                    revents: 0,
-                },
-            ];
-            let rc = libc::poll(pfds.as_mut_ptr(), 2, -1);
-            if rc < 0 {
-                break;
-            }
-            if pfds[1].revents & libc::POLLIN != 0 {
-                break;
-            }
-            if pfds[0].revents & libc::POLLIN != 0 {
-                let n = libc::read(pipe_read, buf.as_mut_ptr() as *mut _, buf.len());
-                if n <= 0 {
-                    break;
-                }
-                partial.extend_from_slice(&buf[..n as usize]);
-                while let Some(pos) = partial.iter().position(|&b| b == b'\n') {
-                    let line: Vec<u8> = partial.drain(..=pos).take(pos).collect();
-                    if !line.is_empty() {
-                        let msg = String::from_utf8_lossy(&line).into_owned();
-                        emit(CATEGORY_CEF, Level::Debug, &msg);
-                    }
-                }
-            }
-        }
-        libc::close(pipe_read);
-        libc::close(signal_read);
-    }
-}
-
-// =====================================================================
 // Emit
 // =====================================================================
 
@@ -544,7 +538,7 @@ pub fn jfn_log_init(path: &str, filter: &str) {
     // Capture a dup of stderr now so console writes survive the later
     // dup2() redirect installed by StderrCapture, and aren't fed back into
     // the capture pipe.
-    let (console_writer, is_tty) = make_console_writer();
+    let (console_writer, is_tty) = imp::make_console_writer();
     let color = is_tty && std::env::var_os("NO_COLOR").is_none();
     let (console_nb, console_guard) = NonBlockingBuilder::default()
         .lossy(true)
@@ -594,7 +588,7 @@ pub fn jfn_log_init(path: &str, filter: &str) {
 
     prime_enabled_table();
 
-    let stderr_capture = StderrCapture::start();
+    let stderr_capture = imp::StderrCapture::start();
 
     let mut guard = state().lock();
     *guard = Some(State {

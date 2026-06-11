@@ -11,7 +11,7 @@
 //!   `/SUBSYSTEM:WINDOWS` link arg so the binary launches without a
 //!   spawned console window.
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=build.rs");
 
     // Linux: bundle libcef.so / libmpv.so / libEGL.so etc. into a single
@@ -50,20 +50,22 @@ fn main() {
         use std::path::PathBuf;
 
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .ok_or("CARGO_MANIFEST_DIR has no grandparent")?;
         let rc_template = repo_root
             .join("resources")
             .join("win")
             .join("iconres.rc.in");
         println!("cargo:rerun-if-changed={}", rc_template.display());
 
-        let template =
-            std::fs::read_to_string(&rc_template).expect("read resources/win/iconres.rc.in");
+        let template = std::fs::read_to_string(&rc_template)?;
 
         // `env!` (not std::env::var) so rustc re-runs this script on a bump.
         println!("cargo:rerun-if-changed=../Cargo.toml");
         let version = env!("CARGO_PKG_VERSION").to_string();
-        let numeric: Vec<&str> = version.splitn(2, '-').next().unwrap().split('.').collect();
+        let numeric: Vec<&str> = version.split('-').next().unwrap_or("").split('.').collect();
         let mut major: u32 = numeric.first().and_then(|s| s.parse().ok()).unwrap_or(0);
         let mut minor: u32 = numeric.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
         let mut patch: u32 = numeric.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -107,19 +109,19 @@ fn main() {
             .replace("@APP_VERSION_FULL@", &version_full)
             .replace("@CMAKE_SOURCE_DIR@", &cmake_source_dir);
 
-        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
         let rc_out = out_dir.join("iconres.rc");
-        std::fs::write(&rc_out, expanded).expect("write iconres.rc");
+        std::fs::write(&rc_out, expanded)?;
 
-        embed_resource::compile(&rc_out, embed_resource::NONE)
-            .manifest_required()
-            .expect("embed iconres.rc");
+        embed_resource::compile(&rc_out, embed_resource::NONE).manifest_required()?;
 
         // Hide the console window for GUI launches. `/SUBSYSTEM:WINDOWS`
         // pairs with a `main`-style entrypoint via mainCRTStartup.
         println!("cargo:rustc-link-arg-bins=/SUBSYSTEM:WINDOWS");
         println!("cargo:rustc-link-arg-bins=/ENTRY:mainCRTStartup");
     }
+
+    Ok(())
 }
 
 /// Fallback for bare `cargo build` (no xtask). Empty hash when there is no repo.

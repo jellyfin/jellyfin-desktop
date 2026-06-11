@@ -2459,7 +2459,6 @@ dependencies = [
  "serde_json",
  "tracing",
  "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2512,6 +2511,7 @@ dependencies = [
  "tracing",
  "windows",
  "windows-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
