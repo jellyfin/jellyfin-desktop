@@ -25,6 +25,7 @@ jfn-mpris = { path = "../mpris" }
 jfn-mpv = { path = "../mpv" }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
+jfn-wake-event = { path = "../wake_event" }
 libc.workspace = true
 tracing.workspace = true
 xcb = { version = "1.7", features = ["xkb", "as-raw-xcb-connection"] }

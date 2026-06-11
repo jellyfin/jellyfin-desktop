@@ -1,0 +1,21 @@
+[package]
+name = "jfn-wake-event"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "jfn_wake_event"
+crate-type = ["rlib"]
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
+[lints]
+workspace = true

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
-use crate::wake_event::WakeEvent;
+use jfn_wake_event::WakeEvent;
 
 use crate::ffi::{ActionSink, EventSink};
 use crate::state_machine::PlaybackStateMachine;
@@ -151,7 +151,7 @@ fn worker(shared: Arc<Shared>) {
         };
 
         if work.is_empty() {
-            wait_for_wake(&shared.wake);
+            shared.wake.wait();
             shared.wake.drain();
             continue;
         }
@@ -198,26 +198,6 @@ fn worker(shared: Arc<Shared>) {
                 sink(a);
             }
         }
-    }
-}
-
-#[cfg(unix)]
-fn wait_for_wake(w: &WakeEvent) {
-    let mut pfd = libc::pollfd {
-        fd: w.fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    unsafe {
-        libc::poll(&mut pfd, 1, -1);
-    }
-}
-
-#[cfg(windows)]
-fn wait_for_wake(w: &WakeEvent) {
-    use windows_sys::Win32::System::Threading::WaitForSingleObject;
-    unsafe {
-        WaitForSingleObject(w.handle(), u32::MAX);
     }
 }
 

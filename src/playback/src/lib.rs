@@ -19,7 +19,6 @@ pub mod sink_core;
 mod state_machine;
 pub mod theme_color_sink;
 mod types;
-pub mod wake_event;
 
 pub use coordinator::PlaybackCoordinator;
 pub use ffi::*;
@@ -27,4 +26,3 @@ pub use hotkey::*;
 pub use shutdown::*;
 pub use state_machine::PlaybackStateMachine;
 pub use types::*;
-pub use wake_event::WakeEvent;

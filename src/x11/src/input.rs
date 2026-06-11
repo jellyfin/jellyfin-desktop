@@ -23,10 +23,7 @@ use jfn_input::{
 };
 use jfn_playback::ingest_driver::jfn_playback_display_scale;
 use jfn_playback::shutdown::jfn_shutdown_register_waker;
-use jfn_playback::wake_event::{
-    jfn_wake_event_drain, jfn_wake_event_fd, jfn_wake_event_free, jfn_wake_event_new,
-    jfn_wake_event_signal,
-};
+use jfn_wake_event::WakeEvent;
 
 use cursor_icon::CursorIcon;
 use jfn_input::buttons;
@@ -48,24 +45,16 @@ pub struct CursorMailbox {
     queue: Mutex<Vec<CursorReq>>,
     latest_type: AtomicU32,
     shutdown: std::sync::atomic::AtomicBool,
-    // SAFETY: the underlying `WakeEvent` (kernel eventfd / pipe) is safe to
-    // signal/drain from any thread. `Drop` frees it; freeing only happens
-    // when the last `Arc<CursorMailbox>` is dropped, which by ownership
-    // discipline outlives every signaller (producers hold an `Arc` clone).
-    wake: *mut jfn_playback::WakeEvent,
+    wake: Option<WakeEvent>,
 }
-
-unsafe impl Send for CursorMailbox {}
-unsafe impl Sync for CursorMailbox {}
 
 impl CursorMailbox {
     fn new() -> Self {
-        let wake = jfn_wake_event_new();
         Self {
             queue: Mutex::new(Vec::new()),
             latest_type: AtomicU32::new(CursorShape::Pointer.as_raw() as u32),
             shutdown: std::sync::atomic::AtomicBool::new(false),
-            wake,
+            wake: WakeEvent::new(),
         }
     }
     fn push(&self, req: CursorReq) {
@@ -73,7 +62,7 @@ impl CursorMailbox {
             CursorReq::Set(t) => self.latest_type.store(t.as_raw() as u32, Ordering::Release),
         }
         self.queue.lock().push(req);
-        unsafe { jfn_wake_event_signal(self.wake) };
+        self.signal_wake();
     }
     fn latest_type(&self) -> CursorShape {
         CursorShape::from_cef(self.latest_type.load(Ordering::Acquire) as i32)
@@ -81,22 +70,19 @@ impl CursorMailbox {
     }
     fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
-        unsafe { jfn_wake_event_signal(self.wake) };
+        self.signal_wake();
     }
     fn should_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Acquire)
     }
+    fn signal_wake(&self) {
+        if let Some(w) = &self.wake {
+            w.signal();
+        }
+    }
     fn drain(&self) -> Vec<CursorReq> {
         let mut q = self.queue.lock();
         std::mem::take(&mut *q)
-    }
-}
-
-impl Drop for CursorMailbox {
-    fn drop(&mut self) {
-        if !self.wake.is_null() {
-            unsafe { jfn_wake_event_free(self.wake) };
-        }
     }
 }
 
@@ -135,7 +121,9 @@ impl Drop for Handle {
         // Signal the shutdown waker so the input thread exits its `poll`,
         // then join. Without this, dropping a Handle mid-run leaves the
         // input thread detached and polling xcb forever.
-        unsafe { jfn_wake_event_signal(x11_shutdown_waker()) };
+        if let Some(ev) = x11_shutdown_waker() {
+            ev.signal();
+        }
         self.join();
     }
 }
@@ -180,46 +168,41 @@ enum QueuedInputEvent {
 pub struct InputMailbox {
     queue: Mutex<Vec<QueuedInputEvent>>,
     shutdown: std::sync::atomic::AtomicBool,
-    wake: *mut jfn_playback::WakeEvent,
+    wake: Option<WakeEvent>,
 }
-
-unsafe impl Send for InputMailbox {}
-unsafe impl Sync for InputMailbox {}
 
 impl InputMailbox {
     fn new() -> Self {
         Self {
             queue: Mutex::new(Vec::new()),
             shutdown: std::sync::atomic::AtomicBool::new(false),
-            wake: jfn_wake_event_new(),
+            wake: WakeEvent::new(),
         }
     }
 
     fn push(&self, ev: QueuedInputEvent) {
         self.queue.lock().push(ev);
-        unsafe { jfn_wake_event_signal(self.wake) };
+        self.signal_wake();
     }
 
     fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
-        unsafe { jfn_wake_event_signal(self.wake) };
+        self.signal_wake();
     }
 
     fn should_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Acquire)
     }
 
+    fn signal_wake(&self) {
+        if let Some(w) = &self.wake {
+            w.signal();
+        }
+    }
+
     fn drain(&self) -> Vec<QueuedInputEvent> {
         let mut q = self.queue.lock();
         std::mem::take(&mut *q)
-    }
-}
-
-impl Drop for InputMailbox {
-    fn drop(&mut self) {
-        if !self.wake.is_null() {
-            unsafe { jfn_wake_event_free(self.wake) };
-        }
     }
 }
 
@@ -642,16 +625,14 @@ fn drain_cursor_requests(st: &mut CursorState, mailbox: &CursorMailbox) {
 /// Per-process X11 shutdown waker. Allocated on first use and registered
 /// with the shutdown fan-out so the input thread can `poll()` its fd
 /// alongside xcb + the cursor mailbox.
-pub(crate) fn x11_shutdown_waker() -> *const jfn_playback::WakeEvent {
+pub(crate) fn x11_shutdown_waker() -> Option<&'static WakeEvent> {
     use std::sync::OnceLock;
-    static EV: OnceLock<Option<&'static jfn_playback::WakeEvent>> = OnceLock::new();
-    EV.get_or_init(|| {
-        let raw = jfn_playback::WakeEvent::new()?;
-        let leaked: &'static jfn_playback::WakeEvent = Box::leak(Box::new(raw));
+    static EV: OnceLock<Option<&'static WakeEvent>> = OnceLock::new();
+    *EV.get_or_init(|| {
+        let leaked: &'static WakeEvent = Box::leak(Box::new(WakeEvent::new()?));
         jfn_shutdown_register_waker(leaked);
         Some(leaked)
     })
-    .map_or(std::ptr::null(), |e| e as *const _)
 }
 
 fn input_thread_body(mut st: State) {
@@ -676,8 +657,8 @@ fn input_thread_body(mut st: State) {
     let _ = st.conn.flush();
 
     let xcb_fd = st.conn.as_raw_fd();
-    let shutdown_ev = x11_shutdown_waker();
-    let shutdown_fd = unsafe { jfn_wake_event_fd(shutdown_ev) };
+    // -1 if waker allocation failed: poll ignores negative fds.
+    let shutdown_fd = x11_shutdown_waker().map_or(-1, WakeEvent::fd);
 
     let mut fds: [libc::pollfd; 2] = [
         libc::pollfd {
@@ -735,7 +716,7 @@ fn cursor_thread_body(screen_num: i32, window: u32, mailbox: Arc<CursorMailbox>)
     };
 
     let mut fds = [libc::pollfd {
-        fd: unsafe { jfn_wake_event_fd(mailbox.wake) },
+        fd: mailbox.wake.as_ref().map_or(-1, WakeEvent::fd),
         events: libc::POLLIN,
         revents: 0,
     }];
@@ -752,7 +733,9 @@ fn cursor_thread_body(screen_num: i32, window: u32, mailbox: Arc<CursorMailbox>)
         if fds[0].revents & libc::POLLIN == 0 {
             continue;
         }
-        unsafe { jfn_wake_event_drain(mailbox.wake) };
+        if let Some(w) = &mailbox.wake {
+            w.drain();
+        }
         if mailbox.should_shutdown() {
             break;
         }
@@ -762,7 +745,7 @@ fn cursor_thread_body(screen_num: i32, window: u32, mailbox: Arc<CursorMailbox>)
 
 fn input_dispatch_thread_body(mailbox: Arc<InputMailbox>) {
     let mut fds = [libc::pollfd {
-        fd: unsafe { jfn_wake_event_fd(mailbox.wake) },
+        fd: mailbox.wake.as_ref().map_or(-1, WakeEvent::fd),
         events: libc::POLLIN,
         revents: 0,
     }];
@@ -779,7 +762,9 @@ fn input_dispatch_thread_body(mailbox: Arc<InputMailbox>) {
         if fds[0].revents & libc::POLLIN == 0 {
             continue;
         }
-        unsafe { jfn_wake_event_drain(mailbox.wake) };
+        if let Some(w) = &mailbox.wake {
+            w.drain();
+        }
         if mailbox.should_shutdown() {
             break;
         }

@@ -19,7 +19,7 @@ use x11rb::protocol::xproto::{
 use x11rb::rust_connection::RustConnection;
 
 use jfn_playback::shutdown::jfn_shutdown_initiate;
-use jfn_playback::wake_event::{jfn_wake_event_drain, jfn_wake_event_fd, jfn_wake_event_signal};
+use jfn_wake_event::WakeEvent;
 
 use crate::input::x11_shutdown_waker;
 use crate::overlay_fsm::{self, Effect, Geom};
@@ -31,7 +31,9 @@ pub struct Handle {
 
 impl Handle {
     pub fn join(&mut self) {
-        unsafe { jfn_wake_event_signal(x11_shutdown_waker()) };
+        if let Some(ev) = x11_shutdown_waker() {
+            ev.signal();
+        }
         if let Some(j) = self.join.take()
             && let Err(e) = j.join()
         {
@@ -45,18 +47,16 @@ static G: Mutex<Option<Handle>> = Mutex::new(None);
 /// A new CEF layer may be created after the parent has already reached its
 /// final WM placement, so no further ConfigureNotify arrives to settle on;
 /// signalling this waker re-mirrors the parent geometry onto the overlays.
-fn x11_geometry_resync_waker() -> *const jfn_playback::WakeEvent {
+fn x11_geometry_resync_waker() -> Option<&'static WakeEvent> {
     use std::sync::OnceLock;
-    static EV: OnceLock<Option<&'static jfn_playback::WakeEvent>> = OnceLock::new();
-    EV.get_or_init(|| {
-        let raw = jfn_playback::WakeEvent::new()?;
-        Some(Box::leak(Box::new(raw)))
-    })
-    .map_or(std::ptr::null(), |e| e as *const _)
+    static EV: OnceLock<Option<&'static WakeEvent>> = OnceLock::new();
+    *EV.get_or_init(|| Some(Box::leak(Box::new(WakeEvent::new()?))))
 }
 
 pub fn request_resync() {
-    unsafe { jfn_wake_event_signal(x11_geometry_resync_waker()) };
+    if let Some(ev) = x11_geometry_resync_waker() {
+        ev.signal();
+    }
 }
 
 /// The mpv fullscreen callback. It only *triggers* a reconcile; the authority
@@ -359,8 +359,9 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
     let _ = conn.flush();
 
     let x11_fd = conn.stream().as_raw_fd();
-    let shutdown_fd = unsafe { jfn_wake_event_fd(x11_shutdown_waker()) };
-    let resync_fd = unsafe { jfn_wake_event_fd(x11_geometry_resync_waker()) };
+    // -1 if waker allocation failed: poll ignores negative fds.
+    let shutdown_fd = x11_shutdown_waker().map_or(-1, WakeEvent::fd);
+    let resync_fd = x11_geometry_resync_waker().map_or(-1, WakeEvent::fd);
 
     let mut fds: [libc::pollfd; 3] = [
         libc::pollfd {
@@ -406,7 +407,9 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
         let mut reassert = false;
         let mut activate = false;
         if fds[2].revents & libc::POLLIN != 0 {
-            unsafe { jfn_wake_event_drain(x11_geometry_resync_waker()) };
+            if let Some(ev) = x11_geometry_resync_waker() {
+                ev.drain();
+            }
             // A new overlay or an mpv fullscreen toggle drove the resync — both
             // can change parent stacking.
             wake = true;
