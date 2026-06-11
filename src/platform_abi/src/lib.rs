@@ -21,7 +21,9 @@ pub mod dropdown;
 pub mod geometry;
 pub mod media_sink;
 pub mod mpv_host;
-mod process_unix;
+#[cfg_attr(unix, path = "process_unix.rs")]
+#[cfg_attr(not(unix), path = "process_other.rs")]
+mod process;
 pub mod window_source;
 
 pub use cef_host::CefHost;
@@ -481,43 +483,21 @@ pub trait Platform: Send + Sync {
 
     /// `on_shutdown` must be async-signal-safe.
     fn install_shutdown_handler(&self, on_shutdown: fn()) {
-        #[cfg(unix)]
-        process_unix::install_shutdown(on_shutdown);
-        #[cfg(not(unix))]
-        let _ = on_shutdown;
+        process::install_shutdown(on_shutdown);
     }
 
     /// Returns `true` if an existing instance was reached (caller should exit).
     fn single_instance_try_signal(&self, instance_id: &str) -> bool {
-        #[cfg(unix)]
-        {
-            process_unix::try_signal_existing(instance_id)
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = instance_id;
-            false
-        }
+        process::try_signal_existing(instance_id)
     }
 
     /// `cb` runs on the listener thread with the activation token.
     fn single_instance_start_listener(&self, instance_id: &str, cb: Callback) -> bool {
-        #[cfg(unix)]
-        {
-            process_unix::start_listener(instance_id, cb)
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = (instance_id, cb);
-            false
-        }
+        process::start_listener(instance_id, cb)
     }
 
     fn single_instance_stop(&self, instance_id: &str) {
-        #[cfg(unix)]
-        process_unix::stop_listener(instance_id);
-        #[cfg(not(unix))]
-        let _ = instance_id;
+        process::stop_listener(instance_id);
     }
 }
 
