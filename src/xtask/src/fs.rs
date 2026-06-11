@@ -11,6 +11,18 @@ pub fn copy_file(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn copy_executable(src: &Path, dst: &Path) -> Result<()> {
+    copy_file(src, dst)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(dst)?.permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(dst, perm)?;
+    }
+    Ok(())
+}
+
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst).with_context(|| format!("create_dir_all {}", dst.display()))?;
     for entry in std::fs::read_dir(src).with_context(|| format!("read_dir {}", src.display()))? {
