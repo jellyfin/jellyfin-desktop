@@ -18,16 +18,17 @@ use xcb::{Xid, XidNew, x};
 use xkbcommon::xkb::{self, x11 as xkb_x11};
 
 use jfn_input::{
-    jfn_input_dispatch_char, jfn_input_dispatch_history_nav, jfn_input_dispatch_key_raw,
-    jfn_input_dispatch_mouse_button, jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
+    jfn_input_dispatch_char, jfn_input_dispatch_history_nav, jfn_input_dispatch_mouse_button,
+    jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
 };
+use jfn_linux_util::input::jfn_input_dispatch_key_raw;
 use jfn_playback::ingest_driver::jfn_playback_display_scale;
 use jfn_playback::shutdown::jfn_shutdown_register_waker;
 use jfn_wake_event::WakeEvent;
 
 use cursor_icon::CursorIcon;
 use jfn_input::buttons;
-use jfn_input::xkb::to_cef_mods;
+use jfn_linux_util::xkb::to_cef_mods;
 use jfn_platform_abi::cursor::CursorShape;
 use jfn_platform_abi::event_flags::{
     EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON,

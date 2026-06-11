@@ -10,11 +10,7 @@ use parking_lot::Mutex;
 use std::os::raw::c_int;
 
 pub mod buttons;
-#[cfg(target_os = "linux")]
-mod keysym;
 pub mod scroll;
-#[cfg(target_os = "linux")]
-pub mod xkb;
 
 // CEF event-type constants (from include/internal/cef_types.h).
 const KEYEVENT_RAWKEYDOWN: c_int = 0;
@@ -157,8 +153,8 @@ pub fn jfn_input_dispatch_char(codepoint: u32, mods: u32, native_code: u32) {
 }
 
 /// Flat key dispatch used by macOS and Windows input shims. Linux paths use
-/// [`jfn_input_dispatch_key_raw`] below, which routes through the xkb
-/// keysym → VK mapping first.
+/// `jfn_linux_util::input::jfn_input_dispatch_key_raw`, which routes through
+/// the xkb keysym → VK mapping first.
 pub fn jfn_input_dispatch_key_full(
     pressed: c_int,
     windows_key_code: i32,
@@ -199,21 +195,4 @@ pub fn jfn_input_dispatch_key_full(
             unmodified_character,
         );
     });
-}
-
-#[cfg(target_os = "linux")]
-pub fn jfn_input_dispatch_key_raw(keysym: u32, native_code: u32, mods: u32, pressed: c_int) {
-    // XKB_KEY_XF86Back / XKB_KEY_XF86Forward.
-    const XF86_BACK: u32 = 0x1008FF26;
-    const XF86_FORWARD: u32 = 0x1008FF27;
-    if keysym == XF86_BACK || keysym == XF86_FORWARD {
-        if pressed != 0 {
-            jfn_input_dispatch_history_nav((keysym == XF86_FORWARD) as c_int);
-        }
-        return;
-    }
-    let vkey = keysym::keysym_to_vkey(keysym);
-    // CEF on Linux expects an X11 keycode (evdev keycode + 8) for native_key_code.
-    let native = native_code as i32 + 8;
-    jfn_input_dispatch_key_full(pressed, vkey, native, mods, 0, 0, 0);
 }
