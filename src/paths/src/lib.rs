@@ -88,91 +88,22 @@ pub fn write_atomic_noclobber(path: &Path, bytes: &[u8]) -> io::Result<bool> {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn xdg_or_home(xdg_var: &str, home_subdir: &str) -> PathBuf {
-    let fallback = format!("{}{}", home(), home_subdir);
-    PathBuf::from(env_or(xdg_var, &fallback))
-}
-
-#[cfg(target_os = "linux")]
 pub fn config_dir() -> PathBuf {
     if let Some(path) = config_override() {
         return ensure(path);
     }
-    ensure(xdg_or_home("XDG_CONFIG_HOME", "/.config").join(APP_DIR_NAME))
+    ensure(imp::config_base().join(APP_DIR_NAME))
 }
 
-#[cfg(target_os = "linux")]
 pub fn cache_dir() -> PathBuf {
     if let Some(path) = cache_override() {
         return ensure(path);
     }
-    ensure(xdg_or_home("XDG_CACHE_HOME", "/.cache").join(APP_DIR_NAME))
+    ensure(imp::cache_base().join(APP_DIR_NAME))
 }
 
-#[cfg(target_os = "linux")]
 pub fn log_dir() -> PathBuf {
-    ensure(xdg_or_home("XDG_STATE_HOME", "/.local/state").join(APP_DIR_NAME))
-}
-
-#[cfg(target_os = "macos")]
-pub fn config_dir() -> PathBuf {
-    if let Some(path) = config_override() {
-        return ensure(path);
-    }
-    let base = env_or("XDG_CONFIG_HOME", &format!("{}/.config", home()));
-    ensure(PathBuf::from(base).join(APP_DIR_NAME))
-}
-
-#[cfg(target_os = "macos")]
-pub fn cache_dir() -> PathBuf {
-    if let Some(path) = cache_override() {
-        return ensure(path);
-    }
-    ensure(
-        PathBuf::from(home())
-            .join("Library/Caches")
-            .join(APP_DIR_NAME),
-    )
-}
-
-#[cfg(target_os = "macos")]
-pub fn log_dir() -> PathBuf {
-    ensure(
-        PathBuf::from(home())
-            .join("Library/Logs")
-            .join(APP_DIR_NAME),
-    )
-}
-
-#[cfg(windows)]
-pub fn config_dir() -> PathBuf {
-    if let Some(path) = config_override() {
-        return ensure(path);
-    }
-    ensure(PathBuf::from(env_or("APPDATA", "C:")).join(APP_DIR_NAME))
-}
-
-#[cfg(windows)]
-fn local_appdata() -> String {
-    env_or("LOCALAPPDATA", &env_or("APPDATA", "C:"))
-}
-
-#[cfg(windows)]
-pub fn cache_dir() -> PathBuf {
-    if let Some(path) = cache_override() {
-        return ensure(path);
-    }
-    ensure(PathBuf::from(local_appdata()).join(APP_DIR_NAME))
-}
-
-#[cfg(windows)]
-pub fn log_dir() -> PathBuf {
-    ensure(
-        PathBuf::from(local_appdata())
-            .join(APP_DIR_NAME)
-            .join("Logs"),
-    )
+    ensure(imp::log_dir_path())
 }
 
 pub fn mpv_home() -> PathBuf {
@@ -187,9 +118,10 @@ pub fn log_path() -> PathBuf {
 /// stderr/journalctl is the norm. macOS/Windows: GUI processes have no
 /// user-visible stderr, so default to the platform log file.
 pub fn default_log_file() -> Option<PathBuf> {
-    if cfg!(target_os = "linux") {
-        None
-    } else {
-        Some(log_path())
-    }
+    imp::DEFAULT_LOG_TO_FILE.then(log_path)
 }
+
+#[cfg_attr(target_os = "linux", path = "imp_linux.rs")]
+#[cfg_attr(target_os = "macos", path = "imp_macos.rs")]
+#[cfg_attr(windows, path = "imp_windows.rs")]
+mod imp;
