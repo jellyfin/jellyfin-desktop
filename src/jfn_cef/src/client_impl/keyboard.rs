@@ -3,33 +3,24 @@ use std::os::raw::c_int;
 use std::sync::Arc;
 
 use crate::client::Inner;
+use crate::client_impl::os_ffi::OsKeyEvent;
+use jfn_platform_abi::event_flags::{EVENTFLAG_ALT_DOWN, EVENTFLAG_CONTROL_DOWN};
 
-#[cfg(target_os = "linux")]
-type OsKeyEvent<'a> = Option<&'a mut sys::XEvent>;
-#[cfg(target_os = "macos")]
-type OsKeyEvent<'a> = *mut u8;
-#[cfg(target_os = "windows")]
-type OsKeyEvent<'a> = Option<&'a mut sys::MSG>;
-
-// cef_event_flags_t.0 is i32 on non-macos, u32 on macos; cast keeps both green.
-#[allow(clippy::unnecessary_cast)]
-#[cfg(target_os = "macos")]
-const ACTION_MODIFIER: u32 = sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0 as u32;
-#[allow(clippy::unnecessary_cast)]
-#[cfg(not(target_os = "macos"))]
-const ACTION_MODIFIER: u32 = sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0 as u32;
-#[allow(clippy::unnecessary_cast)]
-const ALT_FLAG: u32 = sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0 as u32;
+fn action_modifier() -> u32 {
+    jfn_platform_abi::try_get()
+        .map(|p| p.display().action_modifier_flag())
+        .unwrap_or(EVENTFLAG_CONTROL_DOWN)
+}
 
 fn is_paste_shortcut(e: &KeyEvent) -> bool {
     let kt: sys::cef_key_event_type_t = e.type_.into();
     if kt != sys::cef_key_event_type_t::KEYEVENT_RAWKEYDOWN {
         return false;
     }
-    if (e.modifiers & ACTION_MODIFIER) == 0 {
+    if (e.modifiers & action_modifier()) == 0 {
         return false;
     }
-    if (e.modifiers & ALT_FLAG) != 0 {
+    if (e.modifiers & EVENTFLAG_ALT_DOWN) != 0 {
         return false;
     }
     e.windows_key_code == b'V' as i32
