@@ -14,5 +14,8 @@ jfn-platform-abi = { path = "../platform_abi" }
 parking_lot.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [lints]
 workspace = true
