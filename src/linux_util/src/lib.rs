@@ -5,6 +5,7 @@
 
 #![cfg(target_os = "linux")]
 
+pub mod cli;
 pub mod dmabuf_probe;
 pub mod egl_dyn;
 pub mod idle_inhibit;

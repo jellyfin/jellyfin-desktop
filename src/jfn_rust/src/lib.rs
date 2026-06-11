@@ -5,4 +5,4 @@ pub mod manager;
 mod platform_install;
 mod window_geometry;
 #[cfg(target_os = "linux")]
-pub mod wl_interpose;
+mod wl_interpose;
