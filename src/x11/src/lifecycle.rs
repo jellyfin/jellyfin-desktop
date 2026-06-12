@@ -307,7 +307,6 @@ pub fn init() -> bool {
             pw,
             ph,
             parent_fullscreen: false,
-            cached_scale: 1.0,
             atoms,
             live: Vec::new(),
             gpu_ctx,
@@ -320,6 +319,11 @@ pub fn init() -> bool {
     if X11RB_CONN.set(x11rb_conn).is_err() {
         eprintln!("[x11] x11rb connection already initialized");
         return false;
+    }
+
+    if let Some(s) = crate::scale::query_display_scale() {
+        jfn_platform_abi::scale_push_boot(s);
+        jfn_platform_abi::scale_push(s);
     }
 
     crate::input_lifecycle::start(parent);

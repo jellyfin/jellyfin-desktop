@@ -27,7 +27,7 @@ pub use input::{
 };
 pub use platform::{
     jfn_win_get_hwnd, win_clamp_window_geometry, win_cleanup, win_early_init,
-    win_get_display_scale, win_get_scale, win_init, win_query_window_position, win_set_fullscreen,
+    win_get_display_scale, win_init, win_query_window_position, win_set_fullscreen,
     win_toggle_fullscreen,
 };
 
@@ -374,10 +374,10 @@ impl Platform for WindowsPlatform {
     fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
         win_surface_resize(
             s,
-            size.logical_w,
-            size.logical_h,
-            size.physical_w,
-            size.physical_h,
+            size.logical.width,
+            size.logical.height,
+            size.physical.width,
+            size.physical.height,
         );
     }
 
@@ -442,11 +442,7 @@ impl Platform for WindowsPlatform {
         win_set_expected_size(w, h);
     }
 
-    fn get_scale(&self) -> f32 {
-        win_get_scale()
-    }
-
-    fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
+    fn probe_display_scale(&self, x: c_int, y: c_int) -> f32 {
         win_get_display_scale(x, y)
     }
 

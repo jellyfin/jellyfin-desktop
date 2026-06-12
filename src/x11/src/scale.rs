@@ -13,7 +13,7 @@ use x11rb::rust_connection::RustConnection;
 
 const BASE_DPI: f64 = 96.0;
 
-pub(crate) fn query_display_scale() -> Option<f32> {
+pub(crate) fn query_display_scale() -> Option<f64> {
     let (conn, screen_num) = RustConnection::connect(None).ok()?;
     if let Some(scale) = query_xft_dpi_scale(&conn) {
         tracing::debug!(target: "x11::scale", "Using Xft.dpi scale: {scale}");
@@ -26,13 +26,13 @@ pub(crate) fn query_display_scale() -> Option<f32> {
     None
 }
 
-fn query_xft_dpi_scale(conn: &impl Connection) -> Option<f32> {
+fn query_xft_dpi_scale(conn: &impl Connection) -> Option<f64> {
     let db = new_from_resource_manager(conn).ok().flatten()?;
     let value: i64 = db.get_value("Xft.dpi", "").ok().flatten()?;
     quantize_dpi(value as f64)
 }
 
-fn query_screen_dpi_scale(conn: &impl Connection, screen_num: usize) -> Option<f32> {
+fn query_screen_dpi_scale(conn: &impl Connection, screen_num: usize) -> Option<f64> {
     let screen = conn.setup().roots.get(screen_num)?;
     let w_mm = screen.width_in_millimeters;
     let h_mm = screen.height_in_millimeters;
@@ -49,15 +49,15 @@ fn query_screen_dpi_scale(conn: &impl Connection, screen_num: usize) -> Option<f
     let sx = quantize_dpi_steps(dpi_x)?;
     let sy = quantize_dpi_steps(dpi_y)?;
     if sx == sy {
-        Some(sx as f32 / 2.0)
+        Some(f64::from(sx) / 2.0)
     } else {
         None
     }
 }
 
-fn quantize_dpi(dpi: f64) -> Option<f32> {
+fn quantize_dpi(dpi: f64) -> Option<f64> {
     let s = quantize_dpi_steps(dpi)?;
-    Some(s as f32 / 2.0)
+    Some(f64::from(s) / 2.0)
 }
 
 fn quantize_dpi_steps(dpi: f64) -> Option<i32> {

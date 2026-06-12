@@ -23,7 +23,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CWPRETSTRUCT, CallNextHookEx, GWL_STYLE, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, HHOOK, IsIconic, IsZoomed, SIZE_MINIMIZED, SPI_GETWORKAREA,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW,
-    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_CLOSE, WM_SIZE, WS_CAPTION, WS_THICKFRAME,
+    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_CLOSE, WM_DPICHANGED, WM_SIZE, WS_CAPTION,
+    WS_THICKFRAME,
 };
 
 use jfn_mpv::api::{
@@ -32,7 +33,7 @@ use jfn_mpv::api::{
 };
 use jfn_mpv::boot::jfn_mpv_handle_get;
 use jfn_platform_abi::geometry::{Bounds, WindowGeometry, clamp_to_bounds};
-use jfn_playback::ingest_driver::{jfn_playback_display_scale, jfn_playback_fullscreen};
+use jfn_playback::ingest_driver::jfn_playback_fullscreen;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 
 // Input thread lives in `crate::input`.
@@ -49,7 +50,6 @@ use crate::input::{
 
 struct WinState {
     mpv_hwnd_raw: usize,
-    cached_scale: f32,
 
     // Fullscreen-transition bookkeeping read/written by the WndProc and
     // the fullscreen toggle helpers.
@@ -65,7 +65,6 @@ impl WinState {
     const fn new() -> Self {
         Self {
             mpv_hwnd_raw: 0,
-            cached_scale: 1.0,
             was_fullscreen: false,
             was_minimized: false,
             restore_maximized_on_unfullscreen: false,
@@ -99,22 +98,6 @@ fn is_fullscreen_style(style: isize) -> bool {
 // =====================================================================
 // Scale + content-size lookups.
 // =====================================================================
-
-pub fn win_get_scale() -> f32 {
-    let scale = jfn_playback_display_scale();
-    if scale > 0.0 {
-        let s = scale as f32;
-        STATE.lock().cached_scale = s;
-        return s;
-    }
-    let cached = STATE.lock().cached_scale;
-    if cached > 0.0 {
-        return cached;
-    }
-    // Pre-mpv (default-geometry sizing at startup): ask the OS directly.
-    let dpi = unsafe { GetDpiForSystem() };
-    if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
-}
 
 // Per-monitor DPI (GetDpiForMonitor) lives in Shcore.dll which isn't
 // currently linked; fall back to system DPI and ignore (x, y).
@@ -238,10 +221,10 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                 if pw > 0 && ph > 0 {
                     jfn_input_windows_resize_to_parent(pw, ph);
 
-                    let cached = STATE.lock().cached_scale;
-                    let scale = if cached > 0.0 { cached } else { 1.0 };
-                    let lw = (pw as f32 / scale) as c_int;
-                    let lh = (ph as f32 / scale) as c_int;
+                    let scale = jfn_platform_abi::scale_get_or_one();
+                    let logical: jfn_platform_abi::LogicalSize =
+                        jfn_platform_abi::PhysicalSize::new(pw, ph).to_logical(scale);
+                    let (lw, lh) = (logical.width, logical.height);
 
                     let style =
                         unsafe { GetWindowLongPtrW(hwnd_from_raw(target_hwnd_raw), GWL_STYLE) };
@@ -290,6 +273,12 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                         fs_changed || recovering_from_minimize,
                     );
                 }
+            } else if msg.message == WM_DPICHANGED {
+                // LOWORD(wParam) = new X DPI (X == Y per the contract).
+                let dpi = (msg.wParam.0 & 0xFFFF) as u32;
+                if dpi > 0 {
+                    jfn_platform_abi::scale_push(f64::from(dpi) / 96.0);
+                }
             } else if msg.message == WM_CLOSE {
                 jfn_shutdown_initiate();
             }
@@ -319,8 +308,9 @@ pub fn win_init(_mpv: *mut c_void) -> bool {
     let hwnd_raw = wid as usize;
     STATE.lock().mpv_hwnd_raw = hwnd_raw;
 
-    // Seed cached_scale.
-    win_get_scale();
+    let boot_scale = f64::from(unsafe { GetDpiForSystem() }) / 96.0;
+    jfn_platform_abi::scale_push_boot(boot_scale);
+    jfn_platform_abi::scale_push(boot_scale);
 
     // Enable DWM transparency so DComp visuals with premultiplied alpha work.
     let margins = MARGINS {

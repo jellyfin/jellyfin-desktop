@@ -437,6 +437,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 const CLASS_NAME: PCWSTR = w!("JellyfinCefInput");
 
 pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
+    jfn_input::jfn_input_set_space(jfn_input::InputSpace::Physical);
     let mpv = HWND(mpv_hwnd);
     let tid = unsafe { GetCurrentThreadId() };
 

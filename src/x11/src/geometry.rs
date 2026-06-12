@@ -356,6 +356,8 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
         watch_window(&conn, frame, watch_mask);
     }
     watch_compositor(&conn, root);
+    // RESOURCE_MANAGER property changes (xrdb / Xft.dpi) signal a scale change.
+    watch_window(&conn, root, EventMask::PROPERTY_CHANGE);
     let _ = conn.flush();
 
     let x11_fd = conn.stream().as_raw_fd();
@@ -492,6 +494,11 @@ fn handle_event(
         Event::PropertyNotify(e) => {
             if e.window == parent {
                 Trigger::External
+            } else if e.window == root && e.atom == u32::from(AtomEnum::RESOURCE_MANAGER) {
+                if let Some(s) = crate::scale::query_display_scale() {
+                    jfn_platform_abi::scale_push(s);
+                }
+                Trigger::Ignore
             } else {
                 Trigger::Ignore
             }

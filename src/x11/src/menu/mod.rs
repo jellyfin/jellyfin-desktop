@@ -114,19 +114,17 @@ fn snapshot(conn: &RustConnection) -> Option<Snap> {
         root: m.root,
         parent_x: m.parent_x,
         parent_y: m.parent_y,
-        scale: if m.cached_scale > 0.0 {
-            m.cached_scale
-        } else {
-            1.0
-        },
+        scale: jfn_platform_abi::scale_get_or_one() as f32,
         root_w: screen.width_in_pixels as i32,
         root_h: screen.height_in_pixels as i32,
     })
 }
 
 fn place(snap: &Snap, cx: i32, cy: i32, w: i32, h: i32) -> (i32, i32) {
-    let mut x = snap.parent_x + (cx as f32 * snap.scale).round() as i32;
-    let mut y = snap.parent_y + (cy as f32 * snap.scale).round() as i32;
+    let p: jfn_platform_abi::PhysicalPosition = jfn_platform_abi::LogicalPosition::new(cx, cy)
+        .to_physical(jfn_platform_abi::scale_or_one(f64::from(snap.scale)));
+    let mut x = snap.parent_x + p.x;
+    let mut y = snap.parent_y + p.y;
     if x + w > snap.root_w {
         x = (snap.root_w - w).max(0);
     }

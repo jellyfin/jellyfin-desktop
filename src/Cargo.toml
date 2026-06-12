@@ -35,6 +35,7 @@ publish = false
 
 [workspace.dependencies]
 cef = { version = "=149.1.0", default-features = false }
+dpi = "0.1"
 gix = { version = "0.85", default-features = false, features = ["status", "sha1"] }
 libc = "0.2"
 objc2 = "0.6"

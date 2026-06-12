@@ -28,12 +28,12 @@ fn state() -> &'static IngestState {
 pub const INGEST_FLAG_SHUTDOWN: u8 = 1;
 
 struct CallerCtx {
-    scale: f32,
+    scale: f64,
     mac: Option<(i32, i32)>,
 }
 
 impl IngestCtx for CallerCtx {
-    fn scale(&self) -> f32 {
+    fn scale(&self) -> f64 {
         self.scale
     }
     fn macos_logical_size(&self) -> Option<(i32, i32)> {
@@ -44,13 +44,6 @@ impl IngestCtx for CallerCtx {
 // ---------------------------------------------------------------------
 // Side-channel callbacks (display scale, window pixels)
 // ---------------------------------------------------------------------
-
-type DisplayScaleCb = Box<dyn Fn(f64) + Send + Sync + 'static>;
-
-fn display_scale_slot() -> &'static parking_lot::Mutex<Option<DisplayScaleCb>> {
-    static SLOT: OnceLock<parking_lot::Mutex<Option<DisplayScaleCb>>> = OnceLock::new();
-    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
-}
 
 fn shutdown_flag() -> &'static AtomicBool {
     static FLAG: AtomicBool = AtomicBool::new(false);
@@ -66,11 +59,6 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
     for o in outs {
         match o {
             IngestOut::Input(i) => post_input(i),
-            IngestOut::DisplayScaleChanged(d) => {
-                if let Some(cb) = display_scale_slot().lock().as_ref() {
-                    cb(d);
-                }
-            }
             IngestOut::Shutdown => {
                 shutdown_flag().store(true, Ordering::Release);
                 flags |= INGEST_FLAG_SHUTDOWN;
@@ -83,12 +71,6 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
 // ---------------------------------------------------------------------
 // FFI
 // ---------------------------------------------------------------------
-
-/// Install the browser-side `setScale` thunk used to resolve
-/// `DISPLAY_SCALE` property changes. Replaces any prior callback.
-pub fn jfn_playback_set_display_scale_handler<F: Fn(f64) + Send + Sync + 'static>(cb: F) {
-    *display_scale_slot().lock() = Some(Box::new(cb));
-}
 
 /// Push a device-pixel window size into the geometry-save cache.
 /// Mirrors the legacy `mpv::set_window_pixels` producer used at boot
@@ -108,7 +90,7 @@ pub fn jfn_playback_window_ph() -> i32 {
 /// Returns flag bits — see [`INGEST_FLAG_SHUTDOWN`].
 pub fn jfn_playback_ingest_mpv_event_owned(
     event: &Event,
-    scale: f32,
+    scale: f64,
     macos_logical: Option<(i32, i32)>,
 ) -> u8 {
     let ctx = CallerCtx {
@@ -126,7 +108,7 @@ pub fn jfn_playback_ingest_mpv_event_owned(
 pub fn jfn_playback_post_osd_pixels(
     pw: i32,
     ph: i32,
-    scale: f32,
+    scale: f64,
     has_macos_logical: bool,
     mac_lw: i32,
     mac_lh: i32,
@@ -175,10 +157,6 @@ pub fn jfn_playback_osd_ph() -> i32 {
     state().osd_ph()
 }
 
-pub fn jfn_playback_display_scale() -> f64 {
-    state().display_scale()
-}
-
 pub fn jfn_playback_display_hz() -> f64 {
     state().display_hz()
 }
@@ -214,15 +192,7 @@ pub fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
         return false;
     };
 
-    // Order matches the legacy C++ observe_properties(): display-hidpi-scale
-    // is registered before osd-dimensions so mpv's FIFO initial-value
-    // delivery seeds the scale before osd-dimensions consumes it.
     let pairs: &[(u64, &std::ffi::CStr, mpv_format)] = &[
-        (
-            DISPLAY_SCALE,
-            c"display-hidpi-scale",
-            mpv_format::MPV_FORMAT_DOUBLE,
-        ),
         (OSD_DIMS, c"osd-dimensions", mpv_format::MPV_FORMAT_NODE),
         (FULLSCREEN, c"fullscreen", mpv_format::MPV_FORMAT_FLAG),
         (PAUSE, c"pause", mpv_format::MPV_FORMAT_FLAG),
@@ -286,15 +256,9 @@ pub fn jfn_playback_seed_display_hz_sync() {
 // Rust-owned mpv event thread
 // ---------------------------------------------------------------------
 
-type ScaleProvider = Box<dyn Fn() -> f32 + Send + Sync + 'static>;
 type MacosLogicalProvider = Box<dyn Fn() -> Option<(i32, i32)> + Send + Sync + 'static>;
 type FullscreenHandler = Box<dyn Fn(bool) + Send + Sync + 'static>;
 type ShutdownHandler = Box<dyn Fn() + Send + Sync + 'static>;
-
-fn scale_slot() -> &'static parking_lot::Mutex<Option<ScaleProvider>> {
-    static SLOT: OnceLock<parking_lot::Mutex<Option<ScaleProvider>>> = OnceLock::new();
-    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
-}
 
 fn macos_logical_slot() -> &'static parking_lot::Mutex<Option<MacosLogicalProvider>> {
     static SLOT: OnceLock<parking_lot::Mutex<Option<MacosLogicalProvider>>> = OnceLock::new();
@@ -327,13 +291,6 @@ pub fn jfn_playback_set_fullscreen_handler<F: Fn(bool) + Send + Sync + 'static>(
     *fullscreen_handler_slot().lock() = Some(Box::new(cb));
 }
 
-/// Install the per-event scale provider used when normalizing OSD
-/// dimensions. Must return the device pixel scale (> 0); zero or
-/// negative is substituted with 1.0.
-pub fn jfn_playback_set_scale_provider<F: Fn() -> f32 + Send + Sync + 'static>(cb: F) {
-    *scale_slot().lock() = Some(Box::new(cb));
-}
-
 /// Install the macOS logical-content-size override provider. Returns
 /// `Some((lw, lh))` when an override applies. Non-macOS callers should
 /// leave this unset.
@@ -350,10 +307,8 @@ pub fn jfn_playback_set_shutdown_handler<F: Fn() + Send + Sync + 'static>(cb: F)
     *shutdown_handler_slot().lock() = Some(Box::new(cb));
 }
 
-fn snapshot_scale() -> f32 {
-    let guard = scale_slot().lock();
-    let s = guard.as_ref().map(|f| f()).unwrap_or(1.0);
-    if s > 0.0 { s } else { 1.0 }
+fn snapshot_scale() -> f64 {
+    jfn_platform_abi::scale_get_or_one()
 }
 
 fn snapshot_macos_logical() -> Option<(i32, i32)> {
