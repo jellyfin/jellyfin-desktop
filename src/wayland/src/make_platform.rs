@@ -31,7 +31,6 @@ pub use jfn_platform_abi::{
 #[cfg(feature = "kde-palette")]
 use crate::kde_palette::{jfn_wl_kde_palette_post_window_cleanup, jfn_wl_kde_palette_set_color};
 use crate::lifecycle::{jfn_wl_lifecycle_cleanup, jfn_wl_lifecycle_init};
-use crate::proxy::jfn_wl_get_cached_scale;
 use crate::scale_probe::jfn_wayland_scale_probe;
 
 // =====================================================================
@@ -158,10 +157,10 @@ impl Platform for WaylandPlatform {
     fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
         wl_ops::surface_resize(
             s as *mut crate::wl_state::PlatformSurface,
-            size.logical_w,
-            size.logical_h,
-            size.physical_w,
-            size.physical_h,
+            size.logical.width,
+            size.logical.height,
+            size.physical.width,
+            size.physical.height,
         );
     }
 
@@ -248,21 +247,13 @@ impl Platform for WaylandPlatform {
         crate::wl_ffi::jfn_wl_in_transition()
     }
 
-    fn get_scale(&self) -> f32 {
-        jfn_wl_get_cached_scale()
-    }
-
-    fn effective_scale(&self, _mpv_display_hidpi_scale: f64) -> f32 {
-        self.get_scale()
-    }
-
-    fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
+    fn probe_display_scale(&self, x: c_int, y: c_int) -> f32 {
         let s = jfn_wayland_scale_probe(x, y);
         if s > 0.0 { s as f32 } else { 1.0 }
     }
 
     fn apply_boot_geometry(&self, g: &BootGeometry) {
-        jfn_wlproxy::jfn_wlproxy_set_initial_size(g.logical.w, g.logical.h);
+        jfn_wlproxy::jfn_wlproxy_set_initial_size(g.logical.width, g.logical.height);
         jfn_wlproxy::jfn_wlproxy_set_initial_maximized(g.maximized);
     }
 

@@ -53,6 +53,7 @@ struct Browsers {
     lh: i32,
     pw: i32,
     ph: i32,
+    scale: f64,
     frame_rate: i32,
 }
 
@@ -65,6 +66,7 @@ pub fn jfn_browsers_init(
     lh: i32,
     pw: i32,
     ph: i32,
+    scale: f64,
     frame_rate: f64,
     use_shared_textures: bool,
 ) {
@@ -84,6 +86,7 @@ pub fn jfn_browsers_init(
         lh,
         pw,
         ph,
+        scale: jfn_platform_abi::scale_or_one(scale),
         frame_rate: fr,
     });
     crate::bridge::install();
@@ -122,7 +125,7 @@ pub unsafe fn jfn_browsers_create(kind: *const c_char) -> *mut JfnCefLayer {
     }
     unsafe {
         jfn_cef_layer_set_surface(layer, surface);
-        jfn_cef_layer_resize(layer, b.lw, b.lh, b.pw, b.ph);
+        jfn_cef_layer_resize(layer, b.lw, b.lh, b.pw, b.ph, b.scale);
         jfn_cef_layer_set_refresh_rate(layer, b.frame_rate as f64);
         if !kind.is_null() {
             let cstr = std::ffi::CStr::from_ptr(kind);
@@ -250,7 +253,8 @@ pub fn jfn_browsers_active() -> *mut JfnCefLayer {
         .unwrap_or(std::ptr::null_mut())
 }
 
-pub fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
+pub fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32, scale: f64) {
+    let scale = jfn_platform_abi::scale_or_one(scale);
     let layers: Vec<*mut JfnCefLayer> = {
         let mut g = INSTANCE.lock();
         let Some(b) = g.as_mut() else { return };
@@ -258,28 +262,25 @@ pub fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
         b.lh = lh;
         b.pw = pw;
         b.ph = ph;
+        b.scale = scale;
         b.layers.clone()
     };
     for l in layers {
-        unsafe { jfn_cef_layer_resize(l, lw, lh, pw, ph) };
+        unsafe { jfn_cef_layer_resize(l, lw, lh, pw, ph, scale) };
     }
 }
 
 pub fn jfn_browsers_set_scale(scale: f64) {
-    let (new_lw, new_lh, pw, ph) = {
+    let (logical, pw, ph) = {
         let g = INSTANCE.lock();
         let Some(b) = g.as_ref() else { return };
-        if scale <= 0.0 || b.pw <= 0 || b.ph <= 0 {
+        if !jfn_platform_abi::validate_scale_factor(scale) || b.pw <= 0 || b.ph <= 0 {
             return;
         }
-        (
-            (b.pw as f64 / scale) as i32,
-            (b.ph as f64 / scale) as i32,
-            b.pw,
-            b.ph,
-        )
+        let physical = jfn_platform_abi::PhysicalSize::new(b.pw, b.ph);
+        (physical.to_logical::<i32>(scale), b.pw, b.ph)
     };
-    jfn_browsers_set_size(new_lw, new_lh, pw, ph);
+    jfn_browsers_set_size(logical.width, logical.height, pw, ph, scale);
 }
 
 pub fn jfn_browsers_set_refresh_rate(hz: f64) {

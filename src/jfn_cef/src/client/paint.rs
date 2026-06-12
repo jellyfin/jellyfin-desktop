@@ -1,26 +1,20 @@
 use std::os::raw::c_void;
-use std::sync::atomic::Ordering;
 
 use super::{Inner, platform_ops};
 
 impl Inner {
     pub(crate) fn view_size(&self) -> (i32, i32) {
-        (
-            self.width.load(Ordering::Acquire),
-            self.height.load(Ordering::Acquire),
-        )
+        let v = *self.view.lock();
+        (v.logical.width, v.logical.height)
     }
 
-    pub(crate) fn screen_info_values(&self) -> (f32, i32, i32) {
-        let w = self.width.load(Ordering::Acquire);
-        let h = self.height.load(Ordering::Acquire);
-        let pw = self.physical_w.load(Ordering::Acquire);
-        let scale = if pw > 0 && w > 0 {
-            pw as f32 / w as f32
-        } else {
-            1.0
-        };
-        (scale, w, h)
+    pub(crate) fn screen_info_values(&self) -> (f64, i32, i32) {
+        let v = *self.view.lock();
+        (v.scale, v.logical.width, v.logical.height)
+    }
+
+    pub(crate) fn view_scale(&self) -> f64 {
+        self.view.lock().scale
     }
 
     pub(crate) fn on_paint(

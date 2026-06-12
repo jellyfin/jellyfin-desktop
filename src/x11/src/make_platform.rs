@@ -75,7 +75,7 @@ pub use jfn_platform_abi::{
 
 use jfn_mpv::api::{jfn_mpv_set_fullscreen, jfn_mpv_toggle_fullscreen};
 use jfn_mpv::boot::jfn_mpv_handle_get;
-use jfn_playback::ingest_driver::{jfn_playback_display_scale, jfn_playback_fullscreen};
+use jfn_playback::ingest_driver::jfn_playback_fullscreen;
 
 pub struct X11Platform;
 
@@ -147,10 +147,10 @@ impl Platform for X11Platform {
         unsafe {
             jfn_x11_surface_resize(
                 s as *mut crate::x11_state::PlatformSurface,
-                size.logical_w,
-                size.logical_h,
-                size.physical_w,
-                size.physical_h,
+                size.logical.width,
+                size.logical.height,
+                size.physical.width,
+                size.physical.height,
             )
         };
     }
@@ -237,25 +237,8 @@ impl Platform for X11Platform {
         }
     }
 
-    fn get_scale(&self) -> f32 {
-        let s = jfn_playback_display_scale();
-        if s > 0.0 {
-            let f = s as f32;
-            if let Some(m) = crate::x11_state::MUT.lock().as_mut() {
-                m.cached_scale = f;
-            }
-            return f;
-        }
-        if let Some(m) = crate::x11_state::MUT.lock().as_ref()
-            && m.cached_scale > 0.0
-        {
-            return m.cached_scale;
-        }
-        1.0
-    }
-
-    fn get_display_scale(&self, _x: c_int, _y: c_int) -> f32 {
-        crate::scale::query_display_scale().unwrap_or(1.0)
+    fn probe_display_scale(&self, _x: c_int, _y: c_int) -> f32 {
+        crate::scale::query_display_scale().unwrap_or(1.0) as f32
     }
 
     fn query_window_position(&self) -> Option<WindowPos> {

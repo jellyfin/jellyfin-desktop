@@ -1,5 +1,9 @@
 //! Window-geometry value types + on-screen clamping.
 //!
+//! Size/position types are the `dpi` crate's, fixed to `i32` pixels: one
+//! conversion policy (round via `Pixel::from_f64`) and a bare-`f64` scale
+//! everywhere.
+//!
 //! The clamp algorithm was byte-identical in `macos_clamp_window_geometry`
 //! and `win_clamp_window_geometry`; only the OS bounds query differed
 //! (`NSScreen.visibleFrame * scale` vs `SPI_GETWORKAREA`). That query stays
@@ -8,51 +12,24 @@
 
 use std::ffi::c_int;
 
-/// HiDPI scale factor (physical pixels per logical pixel).
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Scale(pub f32);
-
-impl Scale {
-    /// Replace a non-positive (unknown) scale with 1.0.
-    pub fn or_one(self) -> Self {
-        if self.0 > 0.0 { self } else { Scale(1.0) }
-    }
-}
+pub use dpi::{LogicalUnit, PhysicalUnit, validate_scale_factor};
 
 /// Window size in logical (DIP) pixels — the coordinate space the compositor
 /// uses for the toplevel; the display scale maps it to physical pixels.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct LogicalSize {
-    pub w: c_int,
-    pub h: c_int,
-}
+pub type LogicalSize = dpi::LogicalSize<i32>;
 
 /// Window size in physical (backing) pixels — what mpv's `--geometry` takes and
 /// what gets persisted as `windowWidth/Height`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct PhysicalSize {
-    pub w: c_int,
-    pub h: c_int,
-}
+pub type PhysicalSize = dpi::PhysicalSize<i32>;
 
-impl LogicalSize {
-    pub fn to_physical(self, s: Scale) -> PhysicalSize {
-        let s = s.or_one().0;
-        PhysicalSize {
-            w: (self.w as f32 * s).round() as c_int,
-            h: (self.h as f32 * s).round() as c_int,
-        }
-    }
-}
+pub type LogicalPosition = dpi::LogicalPosition<i32>;
+pub type PhysicalPosition = dpi::PhysicalPosition<i32>;
 
-impl PhysicalSize {
-    pub fn to_logical(self, s: Scale) -> LogicalSize {
-        let s = s.or_one().0;
-        LogicalSize {
-            w: (self.w as f32 / s).round() as c_int,
-            h: (self.h as f32 / s).round() as c_int,
-        }
-    }
+/// Replace an unknown (non-positive / abnormal) scale with 1.0. `dpi`
+/// conversions assert [`validate_scale_factor`], so unguarded zero would
+/// panic, not fall back.
+pub fn scale_or_one(s: f64) -> f64 {
+    if validate_scale_factor(s) { s } else { 1.0 }
 }
 
 /// Fully-resolved boot geometry: one typed value computed once from saved
@@ -62,7 +39,7 @@ impl PhysicalSize {
 pub struct BootGeometry {
     pub logical: LogicalSize,
     pub physical: PhysicalSize,
-    pub scale: Scale,
+    pub scale: f64,
     /// `None` ⇒ let the window center (Wayland ignores position entirely).
     pub position: Option<WindowPos>,
     pub maximized: bool,
@@ -71,7 +48,7 @@ pub struct BootGeometry {
 impl BootGeometry {
     /// mpv `--geometry`: `"<W>x<H>"` or `"<W>x<H>+<X>+<Y>"`, physical pixels.
     pub fn mpv_geometry_string(&self) -> String {
-        let mut s = format!("{}x{}", self.physical.w, self.physical.h);
+        let mut s = format!("{}x{}", self.physical.width, self.physical.height);
         if let Some(p) = self.position {
             s.push_str(&format!("+{}+{}", p.x, p.y));
         }
@@ -111,16 +88,11 @@ pub struct WindowPos {
     pub y: c_int,
 }
 
-/// A surface resize request: logical (DIP) and physical (pixel) dimensions.
-/// Carried as one struct through `Platform::surface_resize` so adding a
-/// field later doesn't change the method's arity (and so doesn't churn
-/// every backend + call site).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SurfaceSize {
-    pub logical_w: c_int,
-    pub logical_h: c_int,
-    pub physical_w: c_int,
-    pub physical_h: c_int,
+    pub logical: LogicalSize,
+    pub physical: PhysicalSize,
+    pub scale: f64,
 }
 
 /// Clamp `g` so the window stays fully within `bounds`: shrink oversized
@@ -164,48 +136,49 @@ mod tests {
     fn logical_physical_round_trip() {
         for (logical, scale, physical) in [
             (
-                LogicalSize { w: 1280, h: 720 },
+                LogicalSize::new(1280, 720),
                 1.0,
-                PhysicalSize { w: 1280, h: 720 },
+                PhysicalSize::new(1280, 720),
             ),
             (
-                LogicalSize { w: 1280, h: 720 },
+                LogicalSize::new(1280, 720),
                 1.25,
-                PhysicalSize { w: 1600, h: 900 },
+                PhysicalSize::new(1600, 900),
             ),
             (
-                LogicalSize { w: 1600, h: 900 },
+                LogicalSize::new(1600, 900),
                 1.5,
-                PhysicalSize { w: 2400, h: 1350 },
+                PhysicalSize::new(2400, 1350),
             ),
             (
-                LogicalSize { w: 1280, h: 720 },
+                LogicalSize::new(1280, 720),
                 2.0,
-                PhysicalSize { w: 2560, h: 1440 },
+                PhysicalSize::new(2560, 1440),
             ),
         ] {
-            assert_eq!(logical.to_physical(Scale(scale)), physical);
-            assert_eq!(physical.to_logical(Scale(scale)), logical);
+            assert_eq!(logical.to_physical::<i32>(scale), physical);
+            assert_eq!(physical.to_logical::<i32>(scale), logical);
         }
     }
 
     #[test]
     fn scale_or_one_guards_nonpositive() {
-        assert_eq!(Scale(0.0).or_one(), Scale(1.0));
-        assert_eq!(Scale(-2.0).or_one(), Scale(1.0));
-        assert_eq!(Scale(1.5).or_one(), Scale(1.5));
+        assert_eq!(scale_or_one(0.0), 1.0);
+        assert_eq!(scale_or_one(-2.0), 1.0);
+        assert_eq!(scale_or_one(f64::NAN), 1.0);
+        assert_eq!(scale_or_one(1.5), 1.5);
         assert_eq!(
-            LogicalSize { w: 800, h: 600 }.to_physical(Scale(0.0)),
-            PhysicalSize { w: 800, h: 600 }
+            LogicalSize::new(800, 600).to_physical::<i32>(scale_or_one(0.0)),
+            PhysicalSize::new(800, 600)
         );
     }
 
     #[test]
     fn mpv_geometry_string_with_and_without_position() {
         let base = BootGeometry {
-            logical: LogicalSize { w: 1280, h: 720 },
-            physical: PhysicalSize { w: 1600, h: 900 },
-            scale: Scale(1.25),
+            logical: LogicalSize::new(1280, 720),
+            physical: PhysicalSize::new(1600, 900),
+            scale: 1.25,
             position: None,
             maximized: false,
         };
