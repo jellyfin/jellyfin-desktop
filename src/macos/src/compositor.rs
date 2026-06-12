@@ -420,7 +420,10 @@ unsafe fn create_content_layer(
     scale: f64,
 ) -> (*mut AnyObject, *mut AnyObject) {
     unsafe {
-        let device = G_METAL.lock().as_ref().unwrap().device;
+        let Some(device) = G_METAL.lock().as_ref().map(|m| m.device) else {
+            tracing::warn!("[METAL] content layer skipped: metal not initialized");
+            return (std::ptr::null_mut(), std::ptr::null_mut());
+        };
 
         // NSView alloc/initWithFrame:
         let view_cls = objc2::class!(NSView);
@@ -551,14 +554,13 @@ unsafe fn present_iosurface(s: &mut Surface, info: &cef::sys::_cef_accelerated_p
         tracing::warn!("[METAL] present skipped: layer null");
         return;
     }
-    let metal_q = match G_METAL.lock().as_ref() {
-        Some(m) => m.queue,
+    let (metal_q, metal_pipe) = match G_METAL.lock().as_ref() {
+        Some(m) => (m.queue, m.pipeline),
         None => {
             tracing::warn!("[METAL] present skipped: metal not initialized");
             return;
         }
     };
-    let metal_pipe = G_METAL.lock().as_ref().unwrap().pipeline;
 
     let surface = info.shared_texture_io_surface as IOSurfaceRef;
     if surface.is_null() {

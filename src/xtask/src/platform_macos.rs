@@ -126,11 +126,9 @@ pub fn install(build_dir: &Path, prefix: &Path, _args: &crate::BuildArgs) -> Res
     }
 
     // MoltenVK ICD descriptor.
-    let icd_dst = resources_dir
-        .join("vulkan")
-        .join("icd.d")
-        .join("MoltenVK_icd.json");
-    std::fs::create_dir_all(icd_dst.parent().unwrap())?;
+    let icd_dir = resources_dir.join("vulkan").join("icd.d");
+    std::fs::create_dir_all(&icd_dir)?;
+    let icd_dst = icd_dir.join("MoltenVK_icd.json");
     xfs::copy_file(
         &paths::repo_root()
             .join("resources")
