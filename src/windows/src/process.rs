@@ -48,13 +48,12 @@ mod single_instance {
 
     use jfn_platform_abi::Callback;
 
-    type HANDLE = *mut std::ffi::c_void;
+    type Handle = *mut std::ffi::c_void;
     const WAIT_OBJECT_0: u32 = 0;
     const FILE_FLAG_OVERLAPPED: u32 = 0x40000000;
 
     fn pipe_name(instance_id: &str) -> CString {
-        CString::new(format!(r"\\.\pipe\jellyfin-desktop-{instance_id}"))
-            .expect("sanitized instance id cannot contain NUL")
+        CString::new(format!(r"\\.\pipe\jellyfin-desktop-{instance_id}")).unwrap_or_default()
     }
 
     static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -93,7 +92,7 @@ mod single_instance {
     }
 
     fn listener_loop(instance_id: String, cb: Callback) {
-        let shutdown = SHUTDOWN_EVENT.load(Ordering::Acquire) as HANDLE;
+        let shutdown = SHUTDOWN_EVENT.load(Ordering::Acquire) as Handle;
         while RUNNING.load(Ordering::Acquire) {
             let name = pipe_name(&instance_id);
             let pipe = unsafe {
@@ -174,7 +173,7 @@ mod single_instance {
         if !RUNNING.swap(false, Ordering::AcqRel) {
             return;
         }
-        let event = SHUTDOWN_EVENT.swap(0, Ordering::AcqRel) as HANDLE;
+        let event = SHUTDOWN_EVENT.swap(0, Ordering::AcqRel) as Handle;
         if !event.is_null() {
             unsafe { SetEvent(event) };
         }
