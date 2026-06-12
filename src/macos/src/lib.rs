@@ -403,6 +403,10 @@ unsafe extern "C" fn noop_dispatch(_ctx: *mut c_void) {}
 /// the main thread can block on the run loop instead of polling
 /// `mpv_wait_event(0)`. The block is a no-op — the side effect is the run
 /// loop wake.
+///
+/// # Safety
+/// Called by mpv from an arbitrary thread; `_data` is unused, so any value
+/// (including null) is fine.
 pub unsafe extern "C" fn macos_mpv_wakeup_cb(_data: *mut c_void) {
     unsafe {
         dispatch_async_f(

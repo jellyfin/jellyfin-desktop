@@ -349,7 +349,7 @@ define_class!(
                 ];
                 if !area.is_null() {
                     let _: () = msg_send![self, addTrackingArea: area];
-                    *slot = Some(Retained::from_raw(area).unwrap());
+                    *slot = Retained::from_raw(area);
                 }
             }
         }
