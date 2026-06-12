@@ -215,7 +215,6 @@ struct MpvInitOptions<'a> {
     backend_byte: u8,
     boot_geometry: &'a str,
     boot_force_position: bool,
-    boot_window_max: bool,
     hwdec: &'a str,
     audio_passthrough: &'a str,
     audio_exclusive: bool,
@@ -247,19 +246,17 @@ fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
         },
         geometry: geometry_c.as_ptr(),
         force_window_position: opts.boot_force_position,
-        window_maximized_at_boot: opts.boot_window_max,
         mpv_log_level: mpv_log_level_c.as_ptr(),
         client_side_decorations: jfn_config::client_side_decorations(),
     };
     unsafe { jfn_mpv::boot::jfn_mpv_handle_init(&boot as *const _) }
 }
 
-fn wait_for_vo_window(want_max: bool) -> Option<(i32, i32)> {
+fn wait_for_vo_window() -> Option<(i32, i32)> {
     tracing::info!(target: "Main", "Waiting for mpv window...");
 
     let mut mw: i32 = 0;
     let mut mh: i32 = 0;
-    let mut need_max = want_max;
     let mut fatal = false;
 
     // The platform owns the wait strategy; this pump owns all mpv event
@@ -285,11 +282,11 @@ fn wait_for_vo_window(want_max: bool) -> Option<(i32, i32)> {
                     return false;
                 }
                 jfn_mpv::api::WaitEvent::Event(event) => {
-                    consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
+                    consume_vo_event(&event, &mut mw, &mut mh);
                 }
             }
         }
-        if vo_ready(&mut mw, &mut mh, &need_max) {
+        if vo_ready(&mut mw, &mut mh) {
             return false;
         }
         if may_block {
@@ -303,7 +300,7 @@ fn wait_for_vo_window(want_max: bool) -> Option<(i32, i32)> {
                     return false;
                 }
                 jfn_mpv::api::WaitEvent::Event(event) => {
-                    consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
+                    consume_vo_event(&event, &mut mw, &mut mh);
                 }
             }
         }
@@ -614,7 +611,6 @@ pub fn jfn_app_main() -> c_int {
         backend_byte,
         boot_geometry: &boot.mpv_geometry_string(),
         boot_force_position: boot.force_position(),
-        boot_window_max: boot.maximized,
         hwdec: &opts.hwdec,
         audio_passthrough: &opts.audio_passthrough,
         audio_exclusive: opts.audio_exclusive,
@@ -648,7 +644,7 @@ pub fn jfn_app_main() -> c_int {
     // the WM close button needs it back.
     install_mpv_close_binding(raw);
 
-    let Some((mw, mh)) = wait_for_vo_window(boot.maximized) else {
+    let Some((mw, mh)) = wait_for_vo_window() else {
         return 0;
     };
 
@@ -719,8 +715,6 @@ fn mpv_log_level_from_filter() -> &'static str {
     }
 }
 
-const JFN_OBSERVE_WINDOW_MAX: u64 = 11;
-
 fn boot_window_size() -> Option<(i32, i32)> {
     crate::window_geometry::controller()
         .source()
@@ -728,7 +722,7 @@ fn boot_window_size() -> Option<(i32, i32)> {
         .map(|s| (s.w, s.h))
 }
 
-fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max: &mut bool) {
+fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32) {
     let scale_raw = plat().get_scale();
     let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
     jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event_owned(
@@ -736,24 +730,18 @@ fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max
         scale,
         plat().mpv_host().logical_content_size(),
     );
-    if let jfn_mpv::Event::PropertyChange { id, .. } = event
-        && *id == JFN_OBSERVE_WINDOW_MAX
-        && jfn_playback::ingest_driver::jfn_playback_window_maximized()
-    {
-        *need_max = false;
-    }
     if let Some((w, h)) = boot_window_size() {
         *mw = w;
         *mh = h;
     }
 }
 
-fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool) -> bool {
+fn vo_ready(mw: &mut i32, mh: &mut i32) -> bool {
     if let Some((w, h)) = boot_window_size() {
         *mw = w;
         *mh = h;
     }
-    *mw > 0 && !*need_max && plat().mpv_host().host_ready()
+    *mw > 0 && plat().mpv_host().host_ready()
 }
 
 static VO_SIZE: OnceLock<(i32, i32)> = OnceLock::new();
@@ -869,13 +857,16 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         use_shared_textures,
     );
 
-    // Apply startup fullscreen after CEF surfaces exist. On Windows the
-    // WndProc resize fires on mpv's window thread as soon as the command
-    // is processed; surfaces must be present or the resize is lost. On
-    // macOS the transition is deferred to [NSApp run], so the timing is
-    // naturally safe there too.
-    if jfn_config::startup_window_mode() == jfn_config::StartupWindowMode::Fullscreen {
+    // Apply startup fullscreen/maximize after CEF surfaces exist. On Windows
+    // the WndProc resize fires on mpv's window thread as soon as the command
+    // is processed; surfaces must be present or the resize is lost. On macOS
+    // the transition is deferred to [NSApp run], so the timing is naturally
+    // safe there too.
+    let startup_mode = jfn_config::startup_window_mode();
+    if startup_mode == jfn_config::StartupWindowMode::Fullscreen {
         plat().set_fullscreen(true);
+    } else if startup_mode == jfn_config::StartupWindowMode::Maximized {
+        jfn_mpv::api::jfn_mpv_set_window_maximized(true);
     }
 
     if !start_playback_coordination() {
