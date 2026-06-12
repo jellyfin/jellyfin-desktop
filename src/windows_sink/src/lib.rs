@@ -42,7 +42,7 @@ pub fn jfn_windows_sink_start_for(hwnd_raw: isize) {
 /// Convenience entry: queries mpv for the window-id and starts the sink.
 pub fn jfn_windows_sink_start() {
     let mut wid: i64 = 0;
-    let name = std::ffi::CString::new("window-id").expect("nul");
+    let name = c"window-id";
     let rc = unsafe { jfn_mpv::api::jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
     if rc < 0 || wid == 0 {
         tracing::error!(target: "Media", "[SMTC] mpv window-id lookup failed");
@@ -156,10 +156,10 @@ fn init_smtc(hwnd_raw: isize) -> Option<Smtc> {
              args: windows_core::Ref<
                 SystemMediaTransportControlsButtonPressedEventArgs,
             >| {
-                if let Some(args) = args.as_ref() {
-                    if let Ok(button) = args.Button() {
-                        on_button_pressed(button);
-                    }
+                if let Some(args) = args.as_ref()
+                    && let Ok(button) = args.Button()
+                {
+                    on_button_pressed(button);
                 }
                 Ok(())
             },
@@ -174,12 +174,12 @@ fn init_smtc(hwnd_raw: isize) -> Option<Smtc> {
                  args: windows_core::Ref<
                     windows::Media::PlaybackPositionChangeRequestedEventArgs,
                 >| {
-                    if let Some(args) = args.as_ref() {
-                        if let Ok(span) = args.RequestedPlaybackPosition() {
-                            // TimeSpan.Duration is 100-ns ticks.
-                            let pos_us = span.Duration / 10;
-                            sink_core::seek_to_ms(pos_us / 1000);
-                        }
+                    if let Some(args) = args.as_ref()
+                        && let Ok(span) = args.RequestedPlaybackPosition()
+                    {
+                        // TimeSpan.Duration is 100-ns ticks.
+                        let pos_us = span.Duration / 10;
+                        sink_core::seek_to_ms(pos_us / 1000);
                     }
                     Ok(())
                 },
