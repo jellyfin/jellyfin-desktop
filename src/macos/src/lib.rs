@@ -178,26 +178,6 @@ pub fn macos_set_idle_inhibit(level: c_int) {
 // route through the jfn_macos_get_window() accessor.
 // =====================================================================
 
-/// Backing scale factor of `g_window`'s screen. Falls back to the main
-/// screen pre-window so default-geometry sizing at startup gets a real
-/// value instead of 1.0.
-pub fn macos_get_scale() -> f32 {
-    unsafe {
-        let win = jfn_macos_get_window();
-        if !win.is_null() {
-            let scale: f64 = objc2::msg_send![win, backingScaleFactor];
-            return scale as f32;
-        }
-        let screen: *mut objc2::runtime::AnyObject =
-            objc2::msg_send![objc2::class!(NSScreen), mainScreen];
-        if !screen.is_null() {
-            let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
-            return scale as f32;
-        }
-        1.0
-    }
-}
-
 /// Query the saved window position in backing pixels, relative to the
 /// screen's visible frame (excluding menu bar / dock), Y measured from
 /// the top. Lossless round-trip with mpv's `--geometry +X+Y`.
@@ -403,6 +383,10 @@ unsafe extern "C" fn noop_dispatch(_ctx: *mut c_void) {}
 /// the main thread can block on the run loop instead of polling
 /// `mpv_wait_event(0)`. The block is a no-op — the side effect is the run
 /// loop wake.
+///
+/// # Safety
+/// Called by mpv from an arbitrary thread; `_data` is unused, so any value
+/// (including null) is fine.
 pub unsafe extern "C" fn macos_mpv_wakeup_cb(_data: *mut c_void) {
     unsafe {
         dispatch_async_f(
@@ -673,10 +657,11 @@ impl Platform for MacosPlatform {
     fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
         macos_surface_resize(
             s,
-            size.logical_w,
-            size.logical_h,
-            size.physical_w,
-            size.physical_h,
+            size.logical.width,
+            size.logical.height,
+            size.physical.width,
+            size.physical.height,
+            size.scale,
         );
     }
 
@@ -759,11 +744,7 @@ impl Platform for MacosPlatform {
         macos_set_expected_size(w, h);
     }
 
-    fn get_scale(&self) -> f32 {
-        macos_get_scale()
-    }
-
-    fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
+    fn probe_display_scale(&self, x: c_int, y: c_int) -> f32 {
         macos_get_display_scale(x, y)
     }
 

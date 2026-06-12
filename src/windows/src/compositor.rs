@@ -229,10 +229,10 @@ fn detach_surface(s: &mut Surface, devices: Option<&CompositorDevices>) {
         s.popup_visual = None;
         s.popup_swap_chain = None;
         if let Some(v) = s.visual.as_ref() {
-            if s.in_tree {
-                if let Some(d) = devices {
-                    let _ = d.dcomp_root.RemoveVisual(v);
-                }
+            if s.in_tree
+                && let Some(d) = devices
+            {
+                let _ = d.dcomp_root.RemoveVisual(v);
             }
             let _ = v.SetContent(None::<&windows_core::IUnknown>);
         }
@@ -349,13 +349,12 @@ fn present_to_swap_chain(devices: &CompositorDevices, sc: &IDXGISwapChain1, src:
 
 pub fn win_alloc_surface() -> *mut c_void {
     let mut st = STATE.lock();
-    if st.devices.is_none() {
+    let Some(devices) = st.devices.as_ref() else {
         return std::ptr::null_mut();
-    }
+    };
 
     let mut s = Box::new(Surface::new());
     {
-        let devices = st.devices.as_ref().unwrap();
         unsafe {
             let visual = match devices.dcomp_device.CreateVisual() {
                 Ok(v) => v,
@@ -415,28 +414,28 @@ pub fn win_free_surface(s: *mut c_void) {
 /// Rebuild the child-list under `dcomp_root` in `ordered` order
 /// (bottom -> top). Popup visuals stay nested under their owning surface,
 /// so they're not in this list.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn win_restack(ordered: *const *mut c_void, n: usize) {
     let mut st = STATE.lock();
-    if st.devices.is_none() {
+    let Some(dcomp_root) = st.devices.as_ref().map(|d| d.dcomp_root.clone()) else {
         return;
-    }
+    };
 
     // Snapshot live pointers so we can detach without holding a borrow of
     // `st` while we mutate per-surface state.
     let live_ptrs: Vec<*mut Surface> = st.surfaces.live().to_vec();
     {
-        let dcomp_root = st.devices.as_ref().unwrap().dcomp_root.clone();
         unsafe {
             for ptr in &live_ptrs {
                 if ptr.is_null() {
                     continue;
                 }
                 let s = &mut **ptr;
-                if let Some(v) = s.visual.as_ref() {
-                    if s.in_tree {
-                        let _ = dcomp_root.RemoveVisual(v);
-                        s.in_tree = false;
-                    }
+                if let Some(v) = s.visual.as_ref()
+                    && s.in_tree
+                {
+                    let _ = dcomp_root.RemoveVisual(v);
+                    s.in_tree = false;
                 }
             }
         }
@@ -445,7 +444,6 @@ pub fn win_restack(ordered: *const *mut c_void, n: usize) {
     st.surfaces.clear_stack();
     let mut prev_visual: Option<IDCompositionVisual> = None;
     {
-        let dcomp_root = st.devices.as_ref().unwrap().dcomp_root.clone();
         unsafe {
             for i in 0..n {
                 let ptr = *ordered.add(i) as *mut Surface;
@@ -473,8 +471,10 @@ pub fn win_restack(ordered: *const *mut c_void, n: usize) {
         }
     }
     st.surfaces.set_main_to_stack_first();
-    unsafe {
-        let _ = st.devices.as_ref().unwrap().dcomp_device.Commit();
+    if let Some(d) = st.devices.as_ref() {
+        unsafe {
+            let _ = d.dcomp_device.Commit();
+        }
     }
 }
 
@@ -493,17 +493,11 @@ pub fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     }
 
     let mut st = STATE.lock();
-    if st.devices.is_none() {
+    let Some(d3d_device) = st.devices.as_ref().map(|d| d.d3d_device.clone()) else {
         return false;
-    }
+    };
     let src: ID3D11Texture2D = unsafe {
-        match st
-            .devices
-            .as_ref()
-            .unwrap()
-            .d3d_device
-            .OpenSharedResource1::<ID3D11Texture2D>(HANDLE(handle))
-        {
+        match d3d_device.OpenSharedResource1::<ID3D11Texture2D>(HANDLE(handle)) {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!(target: "platform", "OpenSharedResource1 failed: {e:?}");
@@ -550,7 +544,9 @@ pub fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
         None => return false,
     };
 
-    let devices = st.devices.as_ref().unwrap();
+    let Some(devices) = st.devices.as_ref() else {
+        return false;
+    };
     ensure_swap_chain(
         devices,
         &mut surf.swap_chain,
@@ -751,7 +747,7 @@ pub fn win_popup_show(s: *mut c_void, x: c_int, y: c_int) {
     let surf = unsafe { &mut *(s as *mut Surface) };
     surf.popup_visible = true;
     if let Some(pv) = surf.popup_visual.as_ref() {
-        let scale = crate::platform::win_get_scale();
+        let scale = jfn_platform_abi::scale_get_or_one() as f32;
         unsafe {
             let _ = pv.SetOffsetX2(x as f32 * scale);
             let _ = pv.SetOffsetY2(y as f32 * scale);

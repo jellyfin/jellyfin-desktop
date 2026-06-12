@@ -6,13 +6,13 @@
 use std::sync::OnceLock;
 
 use jfn_platform_abi::{
-    BootGeometry, LogicalSize, PhysicalSize, Platform, Scale, WindowGeometry, WindowPos,
-    WindowSource,
+    BootGeometry, LogicalSize, PhysicalSize, Platform, WindowGeometry, WindowPos, WindowSource,
+    scale_or_one,
 };
 
 use jfn_config::JfnWindowGeometry;
 
-const DEFAULT_LOGICAL: LogicalSize = LogicalSize { w: 1600, h: 900 };
+const DEFAULT_LOGICAL: LogicalSize = LogicalSize::new(1600, 900);
 
 fn plat() -> &'static dyn Platform {
     jfn_platform_abi::get()
@@ -28,7 +28,7 @@ impl WindowSource for MpvWindowSource {
             w = jfn_playback::ingest_driver::jfn_playback_osd_pw();
             h = jfn_playback::ingest_driver::jfn_playback_osd_ph();
         }
-        (w > 0 && h > 0).then_some(PhysicalSize { w, h })
+        (w > 0 && h > 0).then_some(PhysicalSize::new(w, h))
     }
 
     fn maximized(&self) -> bool {
@@ -43,8 +43,8 @@ impl WindowSource for MpvWindowSource {
         plat().query_window_position()
     }
 
-    fn scale(&self) -> Scale {
-        Scale(plat().get_scale())
+    fn scale(&self) -> f64 {
+        jfn_platform_abi::scale_get().unwrap_or(0.0)
     }
 }
 
@@ -70,7 +70,7 @@ impl WindowGeometryController {
     /// scale + clamp from the platform.
     pub fn boot(&self) -> BootGeometry {
         let g = jfn_config::window_geometry();
-        let scale = Scale(plat().get_display_scale(g.x, g.y));
+        let scale = plat().probe_display_scale(g.x, g.y) as f64;
         resolve_boot(g, scale, |w| plat().clamp_window_geometry(w))
     }
 
@@ -93,29 +93,23 @@ impl WindowGeometryController {
 /// + a clamp fn → typed boot geometry. No globals, so it's unit-testable.
 fn resolve_boot(
     g: JfnWindowGeometry,
-    scale: Scale,
+    scale: f64,
     clamp: impl Fn(WindowGeometry) -> WindowGeometry,
 ) -> BootGeometry {
     let logical = if g.logical_width > 0 && g.logical_height > 0 {
-        LogicalSize {
-            w: g.logical_width,
-            h: g.logical_height,
-        }
+        LogicalSize::new(g.logical_width, g.logical_height)
     } else if g.width > 0 && g.height > 0 {
-        LogicalSize {
-            w: g.width,
-            h: g.height,
-        }
+        LogicalSize::new(g.width, g.height)
     } else {
         DEFAULT_LOGICAL
     };
-    let scale = scale.or_one();
-    let physical = logical.to_physical(scale);
+    let scale = scale_or_one(scale);
+    let physical: PhysicalSize = logical.to_physical(scale);
     // clamp operates on physical backing pixels; on Wayland it's the identity,
     // so the logical size we seed the toplevel with is unaffected.
     let clamped = clamp(WindowGeometry {
-        w: physical.w,
-        h: physical.h,
+        w: physical.width,
+        h: physical.height,
         x: g.x,
         y: g.y,
     });
@@ -125,10 +119,7 @@ fn resolve_boot(
     });
     BootGeometry {
         logical,
-        physical: PhysicalSize {
-            w: clamped.w,
-            h: clamped.h,
-        },
+        physical: PhysicalSize::new(clamped.w, clamped.h),
         scale,
         position,
         maximized: g.maximized,
@@ -158,18 +149,18 @@ fn geometry_to_persist(
         return Some(g);
     }
     let physical = ws.size()?;
-    if physical.w <= 0 || physical.h <= 0 {
+    if physical.width <= 0 || physical.height <= 0 {
         return None;
     }
-    let scale = ws.scale().or_one();
-    let logical = physical.to_logical(scale);
+    let scale = scale_or_one(ws.scale());
+    let logical: LogicalSize = physical.to_logical(scale);
     let pos = ws.position();
     Some(JfnWindowGeometry {
-        width: physical.w,
-        height: physical.h,
-        scale: scale.0,
-        logical_width: logical.w,
-        logical_height: logical.h,
+        width: physical.width,
+        height: physical.height,
+        scale,
+        logical_width: logical.width,
+        logical_height: logical.height,
         maximized: false,
         x: pos.map_or(-1, |p| p.x),
         y: pos.map_or(-1, |p| p.y),
@@ -185,7 +176,7 @@ mod tests {
         maximized: bool,
         fullscreen: bool,
         position: Option<WindowPos>,
-        scale: Scale,
+        scale: f64,
     }
 
     impl WindowSource for FakeWindowSource {
@@ -201,24 +192,24 @@ mod tests {
         fn position(&self) -> Option<WindowPos> {
             self.position
         }
-        fn scale(&self) -> Scale {
+        fn scale(&self) -> f64 {
             self.scale
         }
     }
 
-    fn fake(size: Option<PhysicalSize>, scale: f32) -> FakeWindowSource {
+    fn fake(size: Option<PhysicalSize>, scale: f64) -> FakeWindowSource {
         FakeWindowSource {
             size,
             maximized: false,
             fullscreen: false,
             position: None,
-            scale: Scale(scale),
+            scale,
         }
     }
 
     #[test]
     fn wayland_shaped_no_position_scaled() {
-        let ws = fake(Some(PhysicalSize { w: 2400, h: 1350 }), 1.5);
+        let ws = fake(Some(PhysicalSize::new(2400, 1350)), 1.5);
         let g = geometry_to_persist(&ws, JfnWindowGeometry::default(), false).unwrap();
         assert_eq!((g.x, g.y), (-1, -1));
         assert_eq!((g.width, g.height), (2400, 1350));
@@ -231,7 +222,7 @@ mod tests {
     fn mpv_shaped_with_position() {
         let ws = FakeWindowSource {
             position: Some(WindowPos { x: 100, y: 50 }),
-            ..fake(Some(PhysicalSize { w: 1280, h: 720 }), 1.0)
+            ..fake(Some(PhysicalSize::new(1280, 720)), 1.0)
         };
         let g = geometry_to_persist(&ws, JfnWindowGeometry::default(), false).unwrap();
         assert_eq!((g.x, g.y), (100, 50));
@@ -250,7 +241,7 @@ mod tests {
         };
         let ws = FakeWindowSource {
             maximized: true,
-            ..fake(Some(PhysicalSize { w: 300, h: 200 }), 1.0)
+            ..fake(Some(PhysicalSize::new(300, 200)), 1.0)
         };
         let g = geometry_to_persist(&ws, saved, false).unwrap();
         assert!(g.maximized);
@@ -267,7 +258,7 @@ mod tests {
         let ws = FakeWindowSource {
             maximized: true,
             fullscreen: true,
-            ..fake(Some(PhysicalSize { w: 3840, h: 2160 }), 1.0)
+            ..fake(Some(PhysicalSize::new(3840, 2160)), 1.0)
         };
         let g = geometry_to_persist(&ws, saved, true).unwrap();
         assert!(g.maximized);
@@ -282,8 +273,8 @@ mod tests {
 
     #[test]
     fn logical_rounding() {
-        for (scale, phys, logical) in [(1.25_f32, 2000, 1600), (2.0, 3000, 1500)] {
-            let ws = fake(Some(PhysicalSize { w: phys, h: phys }), scale);
+        for (scale, phys, logical) in [(1.25_f64, 2000, 1600), (2.0, 3000, 1500)] {
+            let ws = fake(Some(PhysicalSize::new(phys, phys)), scale);
             let g = geometry_to_persist(&ws, JfnWindowGeometry::default(), false).unwrap();
             assert_eq!(g.logical_width, logical);
         }
@@ -301,9 +292,9 @@ mod tests {
             scale: 1.0,
             ..Default::default()
         };
-        let boot = resolve_boot(saved, Scale(1.25), identity_clamp);
-        assert_eq!(boot.logical, LogicalSize { w: 1280, h: 720 });
-        assert_eq!(boot.physical, PhysicalSize { w: 1600, h: 900 });
+        let boot = resolve_boot(saved, 1.25, identity_clamp);
+        assert_eq!(boot.logical, LogicalSize::new(1280, 720));
+        assert_eq!(boot.physical, PhysicalSize::new(1600, 900));
         assert!(boot.position.is_none());
     }
 
@@ -320,14 +311,14 @@ mod tests {
         };
         let ws = FakeWindowSource {
             maximized: true,
-            ..fake(Some(PhysicalSize { w: 3840, h: 2160 }), 1.0)
+            ..fake(Some(PhysicalSize::new(3840, 2160)), 1.0)
         };
         let saved = geometry_to_persist(&ws, prior, false).unwrap();
         assert!(saved.maximized);
 
         // Next boot off that saved state comes up maximized at the prior size.
-        let boot = resolve_boot(saved, Scale(1.0), identity_clamp);
+        let boot = resolve_boot(saved, 1.0, identity_clamp);
         assert!(boot.maximized);
-        assert_eq!(boot.logical, LogicalSize { w: 1280, h: 720 });
+        assert_eq!(boot.logical, LogicalSize::new(1280, 720));
     }
 }

@@ -94,7 +94,8 @@ pub fn complete(app: &Path) -> Result<()> {
             if !seen.insert(key) || !lib.exists() {
                 continue;
             }
-            println!("Processing: {}", lib.file_name().unwrap().to_string_lossy());
+            let name = lib.file_name().unwrap_or(lib.as_os_str());
+            println!("Processing: {}", name.to_string_lossy());
             fix_lib_deps(&lib, &fw_dir, &brew_prefix, &mut framework_libs, &mut queue)?;
         }
     }
@@ -153,11 +154,11 @@ fn fix_lib_deps(
             eprintln!("warning: could not resolve: {dep_path}");
             continue;
         };
-        let dep_name = Path::new(&resolved)
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
+        let Some(dep_name) = Path::new(&resolved).file_name() else {
+            eprintln!("warning: dependency has no file name: {resolved}");
+            continue;
+        };
+        let dep_name = dep_name.to_string_lossy().into_owned();
         let target = format!("@executable_path/../Frameworks/{dep_name}");
 
         if !framework_libs.contains(&dep_name) {

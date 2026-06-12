@@ -1,16 +1,13 @@
-//! Cached preferred-scale value + proxy-callback wiring.
+//! Proxy-callback wiring: scale + configure intercepts.
 //!
-//! Owns the `cached_scale` and the scale-callback registered against
-//! jfn-wlproxy. Also owns the xdg_toplevel.configure intercept that
-//! forwards into the runtime resize path (`wl_ops::on_configure`) and
-//! pushes synthetic OSD-dim pixels into the playback coordinator.
-//!
-//! Storage: `AtomicU32` holding the f32 bits, so reads from any thread
-//! don't need a mutex. Zero bits sentinel for
-//! "scale unknown" — same semantics as the C++ `cached_scale = 0.0f` flag.
+//! The preferred-scale callback pushes straight into the
+//! `jfn_platform_abi` ScaleStore. Also owns the xdg_toplevel.configure
+//! intercept that forwards into the runtime resize path
+//! (`wl_ops::on_configure`) and pushes synthetic OSD-dim pixels into the
+//! playback coordinator.
 
 use std::ffi::c_int;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::wl_ops;
 
@@ -21,30 +18,19 @@ use jfn_wlproxy::{
     jfn_wlproxy_set_scale_callback, jfn_wlproxy_set_suspended_callback,
 };
 
-/// Compositor-reported window state, fed by the configure + scale intercepts
-/// and read by the host's `WindowSource`. `scale_bits`/`size` use 0 as the
-/// "unknown" sentinel — safe because the intercepts reject non-positive values.
 struct WlWindowState {
-    scale_bits: AtomicU32,
     size: AtomicU64,
     maximized: AtomicBool,
     fullscreen: AtomicBool,
 }
 
 static WINDOW_STATE: WlWindowState = WlWindowState {
-    scale_bits: AtomicU32::new(0),
     size: AtomicU64::new(0),
     maximized: AtomicBool::new(false),
     fullscreen: AtomicBool::new(false),
 };
 
 impl WlWindowState {
-    fn set_scale(&self, s: f32) {
-        self.scale_bits.store(s.to_bits(), Ordering::Release);
-    }
-    fn scale(&self) -> f32 {
-        f32::from_bits(self.scale_bits.load(Ordering::Acquire))
-    }
     fn set_size(&self, w: c_int, h: c_int) {
         self.size.store(
             ((w as u32 as u64) << 32) | (h as u32 as u64),
@@ -59,21 +45,12 @@ impl WlWindowState {
 
 extern "C" fn on_scale(scale_120: c_int) {
     if scale_120 > 0 {
-        WINDOW_STATE.set_scale(scale_120 as f32 / 120.0);
+        jfn_platform_abi::scale_push(scale_120 as f64 / 120.0);
         // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait
         // loop in `jfn_rust::app`) so it re-checks the scale-known gate
         // event-driven rather than via a polling timeout.
         jfn_mpv::api::jfn_mpv_wakeup();
     }
-}
-
-pub fn jfn_wl_scale_known() -> bool {
-    WINDOW_STATE.scale() > 0.0
-}
-
-pub fn jfn_wl_get_cached_scale() -> f32 {
-    let s = WINDOW_STATE.scale();
-    if s > 0.0 { s } else { 1.0 }
 }
 
 pub fn jfn_wl_window_size_known() -> bool {
@@ -114,15 +91,10 @@ extern "C" fn on_configure(
         .fullscreen
         .store(fullscreen != 0, Ordering::Release);
     crate::wl_ffi::sync_maximized_command_state(maximized != 0);
-    let scale = if crate::wl_state::try_state().is_some() {
-        let s = WINDOW_STATE.scale();
-        if s > 0.0 { s } else { 1.0 }
-    } else {
-        1.0
-    };
     if crate::wl_state::try_state().is_some() {
-        wl_ops::on_configure(physical_w, physical_h, fullscreen != 0, scale);
+        wl_ops::on_configure(physical_w, physical_h, fullscreen != 0);
     }
+    let scale = jfn_platform_abi::scale_get_or_one();
     jfn_playback_post_osd_pixels(physical_w, physical_h, scale, false, 0, 0);
     // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait
     // loop reads OSD pixels from the ingest layer rather than via an mpv

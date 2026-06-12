@@ -26,7 +26,7 @@ wrap_render_handler! {
         ) -> c_int {
             let Some(si) = screen_info else { return 0 };
             let (scale, w, h) = self.inner.screen_info_values();
-            si.device_scale_factor = scale;
+            si.device_scale_factor = scale as f32;
             si.rect = Rect { x: 0, y: 0, width: w, height: h };
             si.available_rect = si.rect.clone();
             1

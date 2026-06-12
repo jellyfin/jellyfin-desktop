@@ -27,7 +27,7 @@ impl MpvHost for WlproxyMpvHost {
     }
 
     fn host_ready(&self) -> bool {
-        crate::proxy::jfn_wl_scale_known()
+        jfn_platform_abi::scale_runtime_known()
     }
 
     fn detach(&self) {

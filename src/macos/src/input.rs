@@ -349,7 +349,7 @@ define_class!(
                 ];
                 if !area.is_null() {
                     let _: () = msg_send![self, addTrackingArea: area];
-                    *slot = Some(Retained::from_raw(area).unwrap());
+                    *slot = Retained::from_raw(area);
                 }
             }
         }
@@ -627,6 +627,7 @@ fn key_event_fields(event: &AnyObject) -> (i32, u32, u16, u16, u16) {
 /// Returns a +1-retained NSView pointer (transfers ownership to the
 /// caller). The caller adds it to the window's content view subtree.
 pub fn jfn_input_macos_create_view() -> *mut c_void {
+    jfn_input::jfn_input_set_space(jfn_input::InputSpace::Logical);
     let zero_rect = NSRect {
         origin: NSPoint { x: 0.0, y: 0.0 },
         size: NSSize {

@@ -83,5 +83,9 @@ fn probe(x: i32, y: i32) -> Option<f64> {
 }
 
 pub fn jfn_wayland_scale_probe(x: c_int, y: c_int) -> c_double {
-    probe(x, y).unwrap_or(0.0)
+    let s = probe(x, y);
+    if let Some(s) = s {
+        jfn_platform_abi::scale_push_boot(s);
+    }
+    s.unwrap_or(0.0)
 }

@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 static G: Mutex<Option<Handle>> = Mutex::new(None);
 
 pub fn start(parent: u32) {
+    jfn_input::jfn_input_set_space(jfn_input::InputSpace::Physical);
     let m = crate::x11_state::MUT.lock();
     let screen_num = m.as_ref().map(|s| s.screen_num).unwrap_or(0);
     drop(m);

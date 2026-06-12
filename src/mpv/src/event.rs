@@ -34,6 +34,9 @@ impl EndFileReason {
                 Self::Error(crate::error::Error::new(error))
             }
             sys::mpv_end_file_reason::MPV_END_FILE_REASON_REDIRECT => Self::Redirect,
+            // The bindgen newtype wraps c_int on MSVC but c_uint on unix
+            // targets, so the cast is required on one and a no-op on the other.
+            #[allow(clippy::unnecessary_cast)]
             other => Self::Unknown(other.0 as i32),
         }
     }

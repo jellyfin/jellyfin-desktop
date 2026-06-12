@@ -420,7 +420,10 @@ unsafe fn create_content_layer(
     scale: f64,
 ) -> (*mut AnyObject, *mut AnyObject) {
     unsafe {
-        let device = G_METAL.lock().as_ref().unwrap().device;
+        let Some(device) = G_METAL.lock().as_ref().map(|m| m.device) else {
+            tracing::warn!("[METAL] content layer skipped: metal not initialized");
+            return (std::ptr::null_mut(), std::ptr::null_mut());
+        };
 
         // NSView alloc/initWithFrame:
         let view_cls = objc2::class!(NSView);
@@ -551,14 +554,13 @@ unsafe fn present_iosurface(s: &mut Surface, info: &cef::sys::_cef_accelerated_p
         tracing::warn!("[METAL] present skipped: layer null");
         return;
     }
-    let metal_q = match G_METAL.lock().as_ref() {
-        Some(m) => m.queue,
+    let (metal_q, metal_pipe) = match G_METAL.lock().as_ref() {
+        Some(m) => (m.queue, m.pipeline),
         None => {
             tracing::warn!("[METAL] present skipped: metal not initialized");
             return;
         }
     };
-    let metal_pipe = G_METAL.lock().as_ref().unwrap().pipeline;
 
     let surface = info.shared_texture_io_surface as IOSurfaceRef;
     if surface.is_null() {
@@ -734,7 +736,14 @@ pub fn macos_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     true
 }
 
-pub fn macos_surface_resize(s: *mut c_void, lw: c_int, _lh: c_int, pw: c_int, ph: c_int) {
+pub fn macos_surface_resize(
+    s: *mut c_void,
+    _lw: c_int,
+    _lh: c_int,
+    pw: c_int,
+    ph: c_int,
+    scale: f64,
+) {
     if s.is_null() {
         return;
     }
@@ -753,13 +762,7 @@ pub fn macos_surface_resize(s: *mut c_void, lw: c_int, _lh: c_int, pw: c_int, ph
                 let _: () = objc2::msg_send![surf.view, setFrame: bounds];
             }
         }
-        let scale: f64 = if pw > 0 && lw > 0 {
-            pw as f64 / lw as f64
-        } else if !win.is_null() {
-            objc2::msg_send![win, backingScaleFactor]
-        } else {
-            1.0
-        };
+        let scale = jfn_platform_abi::scale_or_one(scale);
         let _: () = objc2::msg_send![surf.layer, setContentsScale: scale];
         if pw > 0 && ph > 0 {
             let _: () = objc2::msg_send![

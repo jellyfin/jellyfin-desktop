@@ -774,19 +774,17 @@ fn end_transition_locked(st: &mut WlState) {
 // mpv-configure callback (called from C++ on_proxy_configure → FFI thunk)
 // =====================================================================
 
-pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_scale: f32) {
+pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool) {
     if width <= 0 || height <= 0 {
         return;
     }
     let pw = width;
     let ph = height;
-    let scale = if cached_scale > 0.0 {
-        cached_scale
-    } else {
-        1.0
-    };
-    let lw = (pw as f32 / scale) as i32;
-    let lh = (ph as f32 / scale) as i32;
+    let scale = jfn_platform_abi::scale_get_or_one();
+    let logical: jfn_platform_abi::LogicalSize =
+        jfn_platform_abi::PhysicalSize::new(pw, ph).to_logical(scale);
+    let lw = logical.width;
+    let lh = logical.height;
 
     let mut st = lock();
 

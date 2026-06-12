@@ -29,16 +29,16 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
-    GetWindowThreadProcessId, HCURSOR, HICON, HMENU, IDC_APPSTARTING, IDC_ARROW, IDC_CROSS,
-    IDC_HAND, IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
-    IDC_SIZEWE, IDC_WAIT, KF_EXTENDED, LoadCursorW, MSG, PostMessageW, PostThreadMessageW,
-    RegisterClassExW, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetCursor,
-    SetWindowPos, TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APPCOMMAND,
-    WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_QUIT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW, WS_CHILD, WS_VISIBLE,
-    XBUTTON2,
+    GetWindowThreadProcessId, HCURSOR, HICON, HMENU, HTCLIENT, IDC_APPSTARTING, IDC_ARROW,
+    IDC_CROSS, IDC_HAND, IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS,
+    IDC_SIZENWSE, IDC_SIZEWE, IDC_WAIT, KF_EXTENDED, LoadCursorW, MSG, PostMessageW,
+    PostThreadMessageW, RegisterClassExW, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOZORDER, SetCursor, SetWindowPos, TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_APPCOMMAND, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN,
+    WM_XBUTTONUP, WNDCLASSEXW, WS_CHILD, WS_VISIBLE, XBUTTON2,
 };
 use windows::core::{PCWSTR, w};
 
@@ -173,25 +173,22 @@ fn keyboard_modifiers(wp: WPARAM, lp: LPARAM) -> u32 {
     let extended = ((lp.0 >> 16) as u32 & KF_EXTENDED) != 0;
     let vk = wp.0 as u16;
     match vk {
-        v if v == VK_RETURN.0 => {
-            if extended {
-                m |= EVENTFLAG_IS_KEY_PAD;
-            }
+        v if v == VK_RETURN.0 && extended => {
+            m |= EVENTFLAG_IS_KEY_PAD;
         }
-        v if v == VK_INSERT.0
-            || v == VK_DELETE.0
-            || v == VK_HOME.0
-            || v == VK_END.0
-            || v == VK_PRIOR.0
-            || v == VK_NEXT.0
-            || v == VK_UP.0
-            || v == VK_DOWN.0
-            || v == VK_LEFT.0
-            || v == VK_RIGHT.0 =>
+        v if !extended
+            && (v == VK_INSERT.0
+                || v == VK_DELETE.0
+                || v == VK_HOME.0
+                || v == VK_END.0
+                || v == VK_PRIOR.0
+                || v == VK_NEXT.0
+                || v == VK_UP.0
+                || v == VK_DOWN.0
+                || v == VK_LEFT.0
+                || v == VK_RIGHT.0) =>
         {
-            if !extended {
-                m |= EVENTFLAG_IS_KEY_PAD;
-            }
+            m |= EVENTFLAG_IS_KEY_PAD;
         }
         v if v == VK_NUMLOCK.0
             || v == VK_NUMPAD0.0
@@ -288,19 +285,16 @@ fn is_button_down(msg: u32) -> bool {
 
 unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
-        WM_SETCURSOR => {
-            // HTCLIENT = 1
-            if loword_u32(lp.0 as u32) == 1 {
-                let shape =
-                    CursorShape::from_cef(STATE.lock().cursor_type).unwrap_or(CursorShape::Pointer);
-                if shape == CursorShape::None {
-                    unsafe { SetCursor(None) };
-                } else {
-                    let cur = unsafe { LoadCursorW(None, cef_cursor_to_win(shape)).ok() };
-                    unsafe { SetCursor(cur) };
-                }
-                return LRESULT(1); // TRUE
+        WM_SETCURSOR if u32::from(loword_u32(lp.0 as u32)) == HTCLIENT => {
+            let shape =
+                CursorShape::from_cef(STATE.lock().cursor_type).unwrap_or(CursorShape::Pointer);
+            if shape == CursorShape::None {
+                unsafe { SetCursor(None) };
+            } else {
+                let cur = unsafe { LoadCursorW(None, cef_cursor_to_win(shape)).ok() };
+                unsafe { SetCursor(cur) };
             }
+            return LRESULT(1);
         }
 
         WM_MOUSEMOVE => {
@@ -443,6 +437,7 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 const CLASS_NAME: PCWSTR = w!("JellyfinCefInput");
 
 pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
+    jfn_input::jfn_input_set_space(jfn_input::InputSpace::Physical);
     let mpv = HWND(mpv_hwnd);
     let tid = unsafe { GetCurrentThreadId() };
 

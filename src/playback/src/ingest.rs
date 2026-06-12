@@ -5,7 +5,7 @@
 //! the [`Input`] vocabulary (display-scale callback fanout, raw OSD
 //! pixel-dim mirror for the geometry-save cache).
 //!
-//! Per-process state (fullscreen, window_max, display_scale, display_hz)
+//! Per-process state (fullscreen, window_max, display_hz)
 //! lives in [`IngestState`] so multiple
 //! ingest calls observe the same change-suppression behavior.
 
@@ -28,7 +28,6 @@ pub mod observe_id {
     pub const DISPLAY_FPS: u64 = 9;
     pub const CACHE_STATE: u64 = 10;
     pub const WINDOW_MAX: u64 = 11;
-    pub const DISPLAY_SCALE: u64 = 12;
     pub const PAUSED_FOR_CACHE: u64 = 13;
     pub const CORE_IDLE: u64 = 14;
     pub const VIDEO_FRAME_INFO: u64 = 15;
@@ -36,14 +35,11 @@ pub mod observe_id {
 
 const MAX_BUFFERED_RANGES: usize = 8;
 
-/// Caller-provided platform hooks. Matches the surface the C++ digest
-/// reached out to (`g_platform.get_scale`, `macos_platform::
-/// query_logical_content_size`). Implementations stay outside this
-/// crate so jfn-playback doesn't grow a platform dep.
+/// Caller-provided platform hooks.
 pub trait IngestCtx {
     /// Current device pixel scale. `0.0` is treated as unknown and
     /// substituted with `1.0` by [`ingest`].
-    fn scale(&self) -> f32;
+    fn scale(&self) -> f64;
 
     /// macOS-only logical content size override. When `Some`, the OSD
     /// dim emitted to the coordinator uses this for `lw`/`lh` and back-
@@ -60,9 +56,6 @@ pub trait IngestCtx {
 #[derive(Debug)]
 pub(crate) enum IngestOut {
     Input(Input),
-    /// `mpv::display-hidpi-scale` changed. Forwarded to the
-    /// browser-side `setScale` handler.
-    DisplayScaleChanged(f64),
     /// Terminal: libmpv has shut down. Caller breaks out of the event
     /// loop and triggers the rest of the app's teardown.
     Shutdown,
@@ -71,7 +64,6 @@ pub(crate) enum IngestOut {
 /// Shared atomic cache mirroring the prior C++ `s_*` statics. Holds
 /// last-observed values so digest functions can suppress duplicate
 /// emissions (display-scale, display-fps) and so external readers
-/// (`fullscreen`, `window_maximized`, `display_scale`, `display_hz`)
 /// see the current state without round-tripping through the
 /// coordinator snapshot.
 #[derive(Debug, Default)]
@@ -86,7 +78,6 @@ pub struct IngestState {
     window_pw: AtomicI64,
     window_ph: AtomicI64,
     /// `f64` bit pattern stored as `u64` — `AtomicF64` isn't stable.
-    display_scale_bits: AtomicU64,
     display_hz_bits: AtomicU64,
 }
 
@@ -116,9 +107,6 @@ impl IngestState {
     pub fn set_window_pixels(&self, pw: i32, ph: i32) {
         self.window_pw.store(pw as i64, Ordering::Relaxed);
         self.window_ph.store(ph as i64, Ordering::Relaxed);
-    }
-    pub fn display_scale(&self) -> f64 {
-        f64::from_bits(self.display_scale_bits.load(Ordering::Relaxed))
     }
     pub fn display_hz(&self) -> f64 {
         f64::from_bits(self.display_hz_bits.load(Ordering::Relaxed))
@@ -234,19 +222,6 @@ fn digest_property<C: IngestCtx>(
             }
             Vec::new()
         }
-        DISPLAY_SCALE => {
-            let Some(new_scale) = as_double(value) else {
-                return Vec::new();
-            };
-            let old_bits = state
-                .display_scale_bits
-                .swap(new_scale.to_bits(), Ordering::Relaxed);
-            if f64::from_bits(old_bits) != new_scale {
-                vec![IngestOut::DisplayScaleChanged(new_scale)]
-            } else {
-                Vec::new()
-            }
-        }
         DISPLAY_FPS => {
             let Some(fps) = as_double(value) else {
                 return Vec::new();
@@ -282,20 +257,21 @@ fn digest_osd_dims<C: IngestCtx>(
     let mut ph = h as i32;
     state.osd_pw.store(pw as i64, Ordering::Relaxed);
     state.osd_ph.store(ph as i64, Ordering::Relaxed);
-    let scale = {
-        let s = ctx.scale();
-        if s > 0.0 { s } else { 1.0 }
-    };
-    let mut lw = (pw as f32 / scale) as i32;
-    let mut lh = (ph as f32 / scale) as i32;
+    let scale = jfn_platform_abi::scale_or_one(ctx.scale());
+    let logical: jfn_platform_abi::LogicalSize =
+        jfn_platform_abi::PhysicalSize::new(pw, ph).to_logical(scale);
+    let mut lw = logical.width;
+    let mut lh = logical.height;
     if let Some((qlw, qlh)) = ctx.macos_logical_size()
         && qlw > 0
         && qlh > 0
     {
         lw = qlw;
         lh = qlh;
-        pw = (qlw as f32 * scale) as i32;
-        ph = (qlh as f32 * scale) as i32;
+        let physical: jfn_platform_abi::PhysicalSize =
+            jfn_platform_abi::LogicalSize::new(qlw, qlh).to_physical(scale);
+        pw = physical.width;
+        ph = physical.height;
     }
     if lw <= 0 || lh <= 0 {
         return Vec::new();
@@ -350,11 +326,11 @@ mod tests {
     use jfn_mpv::Node;
 
     struct TestCtx {
-        scale: f32,
+        scale: f64,
         mac: Option<(i32, i32)>,
     }
     impl IngestCtx for TestCtx {
-        fn scale(&self) -> f32 {
+        fn scale(&self) -> f64 {
             self.scale
         }
         fn macos_logical_size(&self) -> Option<(i32, i32)> {
@@ -362,7 +338,7 @@ mod tests {
         }
     }
 
-    fn ctx(scale: f32) -> TestCtx {
+    fn ctx(scale: f64) -> TestCtx {
         TestCtx { scale, mac: None }
     }
 
@@ -440,20 +416,6 @@ mod tests {
         assert!(!fullscreen);
         assert!(!was_maximized);
         assert!(!state.fullscreen());
-    }
-
-    #[test]
-    fn display_scale_suppresses_duplicates() {
-        let state = IngestState::new();
-        let v = PropertyValue::Double(2.0);
-        let out = ingest(
-            &prop(observe_id::DISPLAY_SCALE, v.clone()),
-            &state,
-            &ctx(1.0),
-        );
-        assert!(matches!(out[0], IngestOut::DisplayScaleChanged(s) if s == 2.0));
-        let out = ingest(&prop(observe_id::DISPLAY_SCALE, v), &state, &ctx(1.0));
-        assert!(out.is_empty());
     }
 
     #[test]

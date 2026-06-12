@@ -22,7 +22,6 @@ use jfn_input::{
     jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
 };
 use jfn_linux_util::input::jfn_input_dispatch_key_raw;
-use jfn_playback::ingest_driver::jfn_playback_display_scale;
 use jfn_playback::shutdown::jfn_shutdown_register_waker;
 use jfn_wake_event::WakeEvent;
 
@@ -351,12 +350,6 @@ fn cef_modifiers(st: &State) -> u32 {
     st.modifiers | st.mouse_button_modifiers
 }
 
-fn to_logical(physical: i32) -> i32 {
-    let scale = jfn_playback_display_scale();
-    let s = if scale > 0.0 { scale } else { 1.0 };
-    (physical as f64 / s) as i32
-}
-
 fn handle_key(st: &mut State, detail: u8, pressed: bool) {
     let Some(xst) = st.xkb_st.as_mut() else {
         return;
@@ -414,8 +407,8 @@ fn handle_key(st: &mut State, detail: u8, pressed: bool) {
 
 fn handle_button(st: &mut State, detail: u8, event_x: i16, event_y: i16, pressed: bool) {
     let button = detail as u32;
-    let x = to_logical(event_x as i32);
-    let y = to_logical(event_y as i32);
+    let x = event_x as i32;
+    let y = event_y as i32;
 
     if (4..=7).contains(&button) {
         if !pressed {
@@ -497,8 +490,8 @@ fn activate_parent(st: &State) {
 }
 
 fn handle_motion(st: &mut State, ev: &xcb::x::MotionNotifyEvent) {
-    st.ptr_x = to_logical(ev.event_x() as i32);
-    st.ptr_y = to_logical(ev.event_y() as i32);
+    st.ptr_x = ev.event_x() as i32;
+    st.ptr_y = ev.event_y() as i32;
     st.input_mailbox.push(QueuedInputEvent::MouseMove {
         x: st.ptr_x,
         y: st.ptr_y,
@@ -508,8 +501,8 @@ fn handle_motion(st: &mut State, ev: &xcb::x::MotionNotifyEvent) {
 }
 
 fn handle_enter(st: &mut State, ev: &xcb::x::EnterNotifyEvent) {
-    st.ptr_x = to_logical(ev.event_x() as i32);
-    st.ptr_y = to_logical(ev.event_y() as i32);
+    st.ptr_x = ev.event_x() as i32;
+    st.ptr_y = ev.event_y() as i32;
     st.mailbox.push(CursorReq::Set(st.mailbox.latest_type()));
     st.input_mailbox.push(QueuedInputEvent::MouseMove {
         x: st.ptr_x,
