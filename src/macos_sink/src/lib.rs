@@ -201,7 +201,9 @@ fn mp_const(name: &str) -> Retained<NSString> {
     // exposes them as constants; for the few we need we resolve via
     // dlsym to keep the dependency surface narrow.
     use std::ffi::CString;
-    let cname = CString::new(name).expect("nul");
+    let Ok(cname) = CString::new(name) else {
+        return NSString::from_str(name);
+    };
     unsafe {
         let sym = libc::dlsym(libc::RTLD_DEFAULT, cname.as_ptr());
         if sym.is_null() {
@@ -213,7 +215,10 @@ fn mp_const(name: &str) -> Retained<NSString> {
         // The symbol is `NSString * const`, i.e. a pointer to a pointer.
         let pp = sym as *const *const NSString;
         let p = *pp;
-        Retained::retain(p as *mut NSString).expect("non-null framework string")
+        match Retained::retain(p as *mut NSString) {
+            Some(s) => s,
+            None => NSString::from_str(name),
+        }
     }
 }
 

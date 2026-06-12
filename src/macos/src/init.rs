@@ -978,12 +978,12 @@ unsafe fn add_menu_item(
     modifier_mask: u64,
 ) {
     unsafe {
-        let title_c = std::ffi::CString::new(title).unwrap();
+        let title_c = std::ffi::CString::new(title).unwrap_or_default();
         let title_ns: *mut AnyObject = msg_send![
             class!(NSString),
             stringWithUTF8String: title_c.as_ptr()
         ];
-        let ke_c = std::ffi::CString::new(key_equiv).unwrap();
+        let ke_c = std::ffi::CString::new(key_equiv).unwrap_or_default();
         let ke_ns: *mut AnyObject = msg_send![
             class!(NSString),
             stringWithUTF8String: ke_c.as_ptr()
