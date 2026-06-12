@@ -63,6 +63,7 @@ use jfn_input::{
     jfn_input_dispatch_keyboard_focus, jfn_input_dispatch_mouse_button,
     jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
 };
+use jfn_playback::ingest_driver::jfn_playback_display_scale;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 
 // =====================================================================
@@ -111,6 +112,31 @@ fn get_y_lparam(lp: LPARAM) -> i32 {
 #[inline]
 fn get_xbutton_wparam(wp: WPARAM) -> u16 {
     hiword_i16(wp.0 as u32) as u16
+}
+
+// =====================================================================
+// Physical → logical (DIP) conversion.
+//
+// CEF's windowless renderer takes mouse coordinates in logical (DIP)
+// units — `view_rect` reports the logical size and `screen_info` reports
+// the device scale factor, so CEF multiplies back to device pixels
+// internally. Win32 client coordinates arrive in physical pixels, so we
+// must divide by the current display scale before dispatching, exactly as
+// the X11 backend's `to_logical` does. Without this, the browser hit-tests
+// at `physical` instead of `physical / scale`, leaving the highlighted
+// element offset from the OS cursor on any non-100% (and mixed-DPI
+// multi-monitor) display.
+// =====================================================================
+
+#[inline]
+fn logical_from_physical(physical: i32, scale: f64) -> i32 {
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    (physical as f64 / s) as i32
+}
+
+#[inline]
+fn to_logical(physical: i32) -> i32 {
+    logical_from_physical(physical, jfn_playback_display_scale())
 }
 
 #[inline]
@@ -305,8 +331,8 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 
         WM_MOUSEMOVE => {
             jfn_input_dispatch_mouse_move(
-                get_x_lparam(lp),
-                get_y_lparam(lp),
+                to_logical(get_x_lparam(lp)),
+                to_logical(get_y_lparam(lp)),
                 mouse_modifiers(wp),
                 0,
             );
@@ -327,8 +353,8 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             jfn_input_dispatch_mouse_button(
                 msg_to_button_code(msg),
                 if down { 1 } else { 0 },
-                get_x_lparam(lp),
-                get_y_lparam(lp),
+                to_logical(get_x_lparam(lp)),
+                to_logical(get_y_lparam(lp)),
                 mouse_modifiers(wp),
             );
             return LRESULT(0);
@@ -365,7 +391,13 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
             let delta = hiword_i16(wp.0 as u32) as i32;
-            jfn_input_dispatch_scroll(pt.x, pt.y, 0, delta, mouse_modifiers(wp));
+            jfn_input_dispatch_scroll(
+                to_logical(pt.x),
+                to_logical(pt.y),
+                0,
+                delta,
+                mouse_modifiers(wp),
+            );
             return LRESULT(0);
         }
 
@@ -378,7 +410,13 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
             let delta = hiword_i16(wp.0 as u32) as i32;
-            jfn_input_dispatch_scroll(pt.x, pt.y, delta, 0, mouse_modifiers(wp));
+            jfn_input_dispatch_scroll(
+                to_logical(pt.x),
+                to_logical(pt.y),
+                delta,
+                0,
+                mouse_modifiers(wp),
+            );
             return LRESULT(0);
         }
 
