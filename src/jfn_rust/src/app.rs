@@ -476,6 +476,8 @@ fn sync_cef_window_metrics(
     if !locked
         && display_hidpi_scale > 0.0
         && saved.scale > 0.0
+        && saved.logical_width > 0
+        && saved.logical_height > 0
         && (display_hidpi_scale - saved.scale as f64).abs() >= 0.01
     {
         let physical = LogicalSize {
@@ -490,13 +492,15 @@ fn sync_cef_window_metrics(
             y: -1,
         });
         let (new_pw, new_ph) = (clamped.w, clamped.h);
-        let geom_str = format!("{new_pw}x{new_ph}");
-        tracing::info!(target: "Main",
-            "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
-        let g_c = cs(&geom_str);
-        unsafe { jfn_mpv::api::jfn_mpv_set_geometry(g_c.as_ptr()) };
-        mw = new_pw;
-        mh = new_ph;
+        if new_pw > 0 && new_ph > 0 {
+            let geom_str = format!("{new_pw}x{new_ph}");
+            tracing::info!(target: "Main",
+                "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
+            let g_c = cs(&geom_str);
+            unsafe { jfn_mpv::api::jfn_mpv_set_geometry(g_c.as_ptr()) };
+            mw = new_pw;
+            mh = new_ph;
+        }
     }
     jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
 
