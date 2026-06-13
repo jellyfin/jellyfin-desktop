@@ -483,7 +483,7 @@ pub unsafe fn jfn_cef_set_device_profile_json(json_utf8: *const c_char, len: usi
     if json_utf8.is_null() || len == 0 {
         return;
     }
-    let slice = unsafe { std::slice::from_raw_parts(json_utf8, len) };
+    let slice = unsafe { std::slice::from_raw_parts(json_utf8.cast::<u8>(), len) };
     let s = match std::str::from_utf8(slice) {
         Ok(s) => s.to_string(),
         Err(_) => return,
