@@ -361,6 +361,24 @@ pub(crate) fn on_done(generation: u32) {
     clear_menu_locked(&mut st);
 }
 
+/// Cancel the grab `arm` started if this click never opened a menu.
+///
+/// A popup grab is only honored on the press that triggers it, so `arm` grabs
+/// on every press and waits to see whether a menu opens. On wlroots the grab
+/// goes live immediately, even while the popup is still empty — so a click that
+/// opens nothing strands the seat grabbed, freezing input until the next click
+/// (#494). A real menu has claimed the grab by release time, so it is untouched.
+pub fn dismiss_if_speculative() {
+    let Some(state) = try_state() else { return };
+    let mut st = state.lock();
+    if st.menu_io.menu.is_some() || st.menu_io.phase == Phase::Idle {
+        return;
+    }
+    clear_menu_locked(&mut st);
+    drop(st);
+    jfn_wlproxy::jfn_wlproxy_hide_popup();
+}
+
 /// Tear down the menu without firing its selection callback. Used when CEF
 /// hides its own `<select>` widget (e.g. focus loss) — the close originates
 /// outside the FSM, so there is no pick to report.
