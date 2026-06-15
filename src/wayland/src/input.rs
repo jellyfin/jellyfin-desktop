@@ -399,6 +399,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                         state.cef_modifiers(),
                     );
                 }
+                // Drop the grab armed on the press if this click opened no menu (#494).
+                if (button == BTN_RIGHT || button == BTN_LEFT) && !pressed {
+                    crate::popup::dismiss_if_speculative();
+                }
             }
             Event::Axis { axis, value, .. } => {
                 if matches!(axis, WEnum::Value(wl_pointer::Axis::VerticalScroll)) {
