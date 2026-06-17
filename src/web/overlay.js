@@ -74,6 +74,12 @@ async function tryConnect(server, spinnerStartTime = Date.now()) {
             const onEnd = (e) => {
                 if (e.animationName !== 'fadeOut') return;
                 document.body.removeEventListener('animationend', onEnd);
+                // Detach the overlay surface synchronously now that the fade
+                // has reached opacity 0, before the async window.close() so the
+                // splash never lingers over the web UI / video (issue #425).
+                if (window.jmpNative && window.jmpNative.overlayHidden) {
+                    window.jmpNative.overlayHidden();
+                }
                 window.close();
             };
             document.body.addEventListener('animationend', onEnd);

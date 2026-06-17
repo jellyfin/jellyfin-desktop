@@ -28,6 +28,7 @@ use jfn_jellyfin::{extract_base_url, is_valid_public_info, normalize_input};
 
 struct OverlayState {
     main_layer: Arc<Inner>,
+    overlay_layer: Arc<Inner>,
     active_probe: Option<Urlrequest>,
 }
 
@@ -64,6 +65,7 @@ pub fn jfn_overlay_init(main_layer: *mut JfnCefLayer) {
     let main_inner = unsafe { jfn_cef_layer_inner(main_layer) };
     *INSTANCE.lock() = Some(OverlayState {
         main_layer: main_inner,
+        overlay_layer: inner,
         active_probe: None,
     });
 }
@@ -94,6 +96,13 @@ fn install_handlers(layer: *mut JfnCefLayer, inner_for_created: Arc<Inner>) {
 
 fn main_layer_arc() -> Option<Arc<Inner>> {
     INSTANCE.lock().as_ref().map(|s| Arc::clone(&s.main_layer))
+}
+
+fn overlay_layer_arc() -> Option<Arc<Inner>> {
+    INSTANCE
+        .lock()
+        .as_ref()
+        .map(|s| Arc::clone(&s.overlay_layer))
 }
 
 fn handle_message(message: BrowserMessage) -> bool {
@@ -139,6 +148,17 @@ fn handle_message(message: BrowserMessage) -> bool {
                 jfn_browsers_set_active(p);
             }
             jfn_theme_color_on_overlay_dismissed();
+            true
+        }
+        "overlayHidden" => {
+            // The CSS fade has finished (opacity 0). Detach the overlay
+            // surface from the compositor synchronously instead of waiting
+            // for CEF's async window.close()/OnBeforeClose teardown, which
+            // otherwise leaves the last (faintly composited) splash frame
+            // lingering over the web UI and video. See issue #425.
+            if let Some(overlay) = overlay_layer_arc() {
+                overlay.set_visible(false);
+            }
             true
         }
         "saveServerUrl" => {
