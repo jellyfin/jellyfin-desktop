@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::browsers::{jfn_browsers_active, jfn_browsers_set_active};
 use crate::business_common::{apply_setting_value, js_cstr_or_warn, reject_double_init};
 use crate::client::{Inner, JfnCefLayer, jfn_cef_layer_inner, jfn_cef_layer_set_name};
-use crate::ipc::{BrowserMessage, list_int, list_string};
+use crate::ipc::{BrowserMessage, list_double, list_int, list_string};
 use jfn_color::jfn_cef_parse_color;
 use jfn_color::theme::{jfn_theme_color_on_color, jfn_theme_color_set_video_mode};
 use jfn_mpv::api::{
@@ -342,8 +342,10 @@ fn handle_message(message: BrowserMessage) -> bool {
                 unsafe { jfn_mpv_audio_add(c.as_ptr()) };
             }
         }),
-        "playerSetAudioDelay" => with_args(args, |a| jfn_mpv_set_audio_delay(a.double(0))),
-        "playerSetSubtitleDelay" => with_args(args, |a| jfn_mpv_set_subtitle_delay(a.double(0))),
+        "playerSetAudioDelay" => with_args(args, |a| jfn_mpv_set_audio_delay(list_double(a, 0))),
+        "playerSetSubtitleDelay" => {
+            with_args(args, |a| jfn_mpv_set_subtitle_delay(list_double(a, 0)))
+        }
         "playerSetAspectMode" => with_args(args, |a| {
             let mode = list_string(a, 0);
             if let Some(c) = js_cstr_or_warn("playerSetAspectMode", &mode) {

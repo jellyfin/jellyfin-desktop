@@ -49,6 +49,18 @@ pub(crate) fn list_int(args: &ListValue, idx: usize) -> i32 {
     }
 }
 
+/// Symmetric to [`list_int`]: JS sends a whole-number value (e.g. `1.0`) across
+/// the V8 boundary as `VTYPE_INT`, and reading such a slot with `double()`
+/// yields `0.0`. Widen the int in that case so integer-valued doubles survive.
+pub(crate) fn list_double(args: &ListValue, idx: usize) -> f64 {
+    let t = args.get_type(idx);
+    if t.as_ref() == &sys::cef_value_type_t::VTYPE_INT {
+        f64::from(args.int(idx))
+    } else {
+        args.double(idx)
+    }
+}
+
 pub(crate) fn send_to_renderer<F: FnOnce(&ListValue)>(frame: &Frame, name: &str, fill: F) {
     let Some(mut msg) = process_message_create(Some(&CefString::from(name))) else {
         return;

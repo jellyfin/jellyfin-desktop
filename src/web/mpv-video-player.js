@@ -312,7 +312,7 @@
         }
         canPlayItem(item) { return this.canPlayMediaType(item.MediaType); }
         supportsPlayMethod() { return true; }
-        static getSupportedFeatures() { return ['PlaybackRate', 'SetAspectRatio']; }
+        static getSupportedFeatures() { return ['PlaybackRate', 'SetAspectRatio', 'SubtitleOffset']; }
         supports(feature) { return mpvVideoPlayer.getSupportedFeatures().includes(feature); }
         isFullscreen() { return window._isFullscreen === true; }
         toggleFullscreen() {
