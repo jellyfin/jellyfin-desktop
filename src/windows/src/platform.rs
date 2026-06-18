@@ -237,16 +237,6 @@ fn refresh_geometry_from_hwnd(hwnd_raw: usize) {
     crate::compositor::jfn_win_update_surface_size(lw, lh, pw, ph, false);
 }
 
-// Spawn a background thread that retries geometry sync after RDP/display
-// transitions — the window geometry often doesn't settle immediately.
-fn schedule_geometry_refresh(hwnd_raw: usize) {
-    std::thread::spawn(move || {
-        for delay_ms in [250u64, 750, 1500, 3000] {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            refresh_geometry_from_hwnd(hwnd_raw);
-        }
-    });
-}
 
 // =====================================================================
 // WndProc hook.
@@ -337,7 +327,6 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                     STATE.lock().cached_scale = new_dpi as f32 / 96.0;
                 }
                 refresh_geometry_from_hwnd(target_hwnd_raw);
-                schedule_geometry_refresh(target_hwnd_raw);
             } else if msg.message == WM_ACTIVATEAPP
                 || msg.message == WM_SETFOCUS
                 || msg.message == WM_DISPLAYCHANGE
@@ -347,10 +336,9 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
             {
                 // RDP reconnect, DPI change, and display transitions can change
                 // effective window geometry without a WM_SIZE. Re-sync the input
-                // overlay and compositor immediately and schedule staggered retries
-                // since geometry may not settle right away.
+                // overlay and compositor on each event as Windows fires them when
+                // geometry has settled.
                 refresh_geometry_from_hwnd(target_hwnd_raw);
-                schedule_geometry_refresh(target_hwnd_raw);
             }
         }
     }
