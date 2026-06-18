@@ -20,10 +20,12 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CWPRETSTRUCT, CallNextHookEx, GWL_STYLE, GetWindowLongPtrW, GetWindowRect,
+    CWPRETSTRUCT, CallNextHookEx, GWL_STYLE, GetClientRect, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, HHOOK, IsIconic, IsZoomed, SIZE_MINIMIZED, SPI_GETWORKAREA,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW,
-    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_CLOSE, WM_SIZE, WS_CAPTION, WS_THICKFRAME,
+    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_ACTIVATEAPP, WM_CLOSE, WM_DISPLAYCHANGE,
+    WM_SETFOCUS, WM_SETTINGCHANGE, WM_SHOWWINDOW, WM_SIZE, WM_WINDOWPOSCHANGED, WS_CAPTION,
+    WS_THICKFRAME,
 };
 
 use jfn_mpv::api::{
@@ -212,6 +214,42 @@ pub fn win_toggle_fullscreen() {
 }
 
 // =====================================================================
+// RDP / display-change geometry refresh helpers.
+// =====================================================================
+
+// Read the mpv window's current client rect and re-sync the input overlay
+// and compositor. Safe to call from any thread.
+fn refresh_geometry_from_hwnd(hwnd_raw: usize) {
+    let hwnd = hwnd_from_raw(hwnd_raw);
+    let mut rect = RECT::default();
+    if unsafe { GetClientRect(hwnd, &mut rect) }.is_err() {
+        return;
+    }
+    let pw = rect.right - rect.left;
+    let ph = rect.bottom - rect.top;
+    if pw <= 0 || ph <= 0 {
+        return;
+    }
+    jfn_input_windows_resize_to_parent(pw, ph);
+    let cached = STATE.lock().cached_scale;
+    let scale = if cached > 0.0 { cached } else { 1.0 };
+    let lw = (pw as f32 / scale) as c_int;
+    let lh = (ph as f32 / scale) as c_int;
+    crate::compositor::jfn_win_update_surface_size(lw, lh, pw, ph, false);
+}
+
+// Spawn a background thread that retries geometry sync after RDP/display
+// transitions — the window geometry often doesn't settle immediately.
+fn schedule_geometry_refresh(hwnd_raw: usize) {
+    std::thread::spawn(move || {
+        for delay_ms in [250u64, 750, 1500, 3000] {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            refresh_geometry_from_hwnd(hwnd_raw);
+        }
+    });
+}
+
+// =====================================================================
 // WndProc hook.
 // =====================================================================
 
@@ -292,6 +330,19 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                 }
             } else if msg.message == WM_CLOSE {
                 jfn_shutdown_initiate();
+            } else if msg.message == WM_ACTIVATEAPP
+                || msg.message == WM_SETFOCUS
+                || msg.message == WM_DISPLAYCHANGE
+                || msg.message == WM_SETTINGCHANGE
+                || msg.message == WM_WINDOWPOSCHANGED
+                || msg.message == WM_SHOWWINDOW
+            {
+                // RDP reconnect, DPI change, and display transitions can change
+                // effective window geometry without a WM_SIZE. Re-sync the input
+                // overlay and compositor immediately and schedule staggered retries
+                // since geometry may not settle right away.
+                refresh_geometry_from_hwnd(target_hwnd_raw);
+                schedule_geometry_refresh(target_hwnd_raw);
             }
         }
     }
