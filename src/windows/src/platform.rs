@@ -24,8 +24,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, HHOOK, IsIconic, IsZoomed, SIZE_MINIMIZED, SPI_GETWORKAREA,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW,
     UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_ACTIVATEAPP, WM_CLOSE, WM_DISPLAYCHANGE,
-    WM_SETFOCUS, WM_SETTINGCHANGE, WM_SHOWWINDOW, WM_SIZE, WM_WINDOWPOSCHANGED, WS_CAPTION,
-    WS_THICKFRAME,
+    WM_DPICHANGED, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SHOWWINDOW, WM_SIZE, WM_WINDOWPOSCHANGED,
+    WS_CAPTION, WS_THICKFRAME,
 };
 
 use jfn_mpv::api::{
@@ -231,8 +231,7 @@ fn refresh_geometry_from_hwnd(hwnd_raw: usize) {
         return;
     }
     jfn_input_windows_resize_to_parent(pw, ph);
-    let cached = STATE.lock().cached_scale;
-    let scale = if cached > 0.0 { cached } else { 1.0 };
+    let scale = win_get_scale();
     let lw = (pw as f32 / scale) as c_int;
     let lh = (ph as f32 / scale) as c_int;
     crate::compositor::jfn_win_update_surface_size(lw, lh, pw, ph, false);
@@ -330,6 +329,15 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                 }
             } else if msg.message == WM_CLOSE {
                 jfn_shutdown_initiate();
+            } else if msg.message == WM_DPICHANGED {
+                // Update cached scale from the new DPI before refreshing geometry,
+                // so lw/lh are computed with the correct scale immediately.
+                let new_dpi = (msg.wParam.0 & 0xFFFF) as u32;
+                if new_dpi > 0 {
+                    STATE.lock().cached_scale = new_dpi as f32 / 96.0;
+                }
+                refresh_geometry_from_hwnd(target_hwnd_raw);
+                schedule_geometry_refresh(target_hwnd_raw);
             } else if msg.message == WM_ACTIVATEAPP
                 || msg.message == WM_SETFOCUS
                 || msg.message == WM_DISPLAYCHANGE
