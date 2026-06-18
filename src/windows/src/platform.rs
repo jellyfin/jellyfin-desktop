@@ -237,7 +237,6 @@ fn refresh_geometry_from_hwnd(hwnd_raw: usize) {
     crate::compositor::jfn_win_update_surface_size(lw, lh, pw, ph, false);
 }
 
-
 // =====================================================================
 // WndProc hook.
 // =====================================================================
