@@ -270,7 +270,11 @@ fn cef_cursor_to_win(shape: CursorShape) -> PCWSTR {
 #[inline]
 fn phys_to_logical(px: i32) -> i32 {
     let s = win_get_scale();
-    if s > 0.0 && s != 1.0 { (px as f32 / s) as i32 } else { px }
+    if s > 0.0 && s != 1.0 {
+        (px as f32 / s) as i32
+    } else {
+        px
+    }
 }
 
 // =====================================================================
