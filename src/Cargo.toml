@@ -34,7 +34,7 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-cef = { version = "=149.0.0", default-features = false }
+cef = { version = "=149.1.0", default-features = false }
 gix = { version = "0.84", default-features = false, features = ["status", "sha1"] }
 libc = "0.2"
 objc2 = "0.6"
