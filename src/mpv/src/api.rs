@@ -135,6 +135,22 @@ pub unsafe fn jfn_mpv_set_property_string_async(name: *const c_char, value: *con
     }
 }
 
+pub unsafe fn jfn_mpv_set_property_string(name: *const c_char, value: *const c_char) {
+    let h = raw();
+    if h.is_null() {
+        return;
+    }
+    let Some(n) = (unsafe { cstr(name) }) else {
+        return;
+    };
+    let Some(v) = (unsafe { cstr(value) }) else {
+        return;
+    };
+    unsafe {
+        sys::mpv_set_property_string(h, n.as_ptr(), v.as_ptr());
+    }
+}
+
 /// Sync int property read. Writes the value into `*out` and returns
 /// libmpv's error code (0 on success, negative on failure). NULL `out`
 /// or missing handle returns `MPV_ERROR_INVALID_PARAMETER` (-4).
@@ -372,6 +388,7 @@ pub struct JfnMpvLoadOptions {
     pub external_audio_url: *const c_char,
     pub external_sub_url: *const c_char,
     pub is_infinite_stream: bool,
+    pub http_headers: *const c_char,
 }
 
 struct PendingTrack {
@@ -435,6 +452,19 @@ pub unsafe fn jfn_mpv_load_file(path: *const c_char, opts: *const JfnMpvLoadOpti
         s.external_sub_url = ext_sub;
         s.defer_audio_to_mpv = defer_audio;
         s.valid = true;
+    }
+
+    // Set custom HTTP headers for the stream before loading.
+    // Set both the global option and file-local to cover all backends.
+    if !o.http_headers.is_null()
+        && let Some(h) = unsafe { cstr(o.http_headers) }
+    {
+        let global = CString::new("http-header-fields").unwrap_or_default();
+        let local = CString::new("file-local-options/http-header-fields").unwrap_or_default();
+        unsafe {
+            sys::mpv_set_property_string(raw(), global.as_ptr(), h.as_ptr());
+            sys::mpv_set_property_string(raw(), local.as_ptr(), h.as_ptr());
+        }
     }
 
     let mut opts_str = format!("start={},pause=yes", o.start_secs);

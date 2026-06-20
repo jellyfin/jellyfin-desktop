@@ -252,6 +252,18 @@ fn handle_player_load(args: &ListValue) {
     let Some(ext_sub_c) = js_cstr_or_warn("playerLoad ext sub", &external_sub_url) else {
         return;
     };
+    let headers_str = {
+        let hdrs = jfn_config::custom_headers();
+        if hdrs.is_empty() {
+            None
+        } else {
+            let joined: Vec<String> = hdrs.iter().map(|(k, v)| format!("{k}: {v}")).collect();
+            Some(joined.join("\n"))
+        }
+    };
+    let headers_c = headers_str
+        .as_deref()
+        .and_then(|s| std::ffi::CString::new(s).ok());
     let opts = JfnMpvLoadOptions {
         start_secs: start_ms as f64 / 1000.0,
         video_track: video_idx,
@@ -260,6 +272,10 @@ fn handle_player_load(args: &ListValue) {
         external_audio_url: ext_audio_c.as_ptr(),
         external_sub_url: ext_sub_c.as_ptr(),
         is_infinite_stream,
+        http_headers: headers_c
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null()),
     };
     unsafe { jfn_mpv_load_file(url_c.as_ptr(), &opts) };
 }

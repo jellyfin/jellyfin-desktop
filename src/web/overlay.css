@@ -184,3 +184,92 @@ button:disabled {
     opacity: 1;
   }
 }
+
+#advanced-details {
+    width: 100%;
+    max-width: 450px;
+    margin-top: 0.5em;
+    color: #999;
+    font-size: 0.85em;
+}
+#advanced-details[open] {
+    color: #ddd;
+}
+#advanced-toggle {
+    cursor: pointer;
+    user-select: none;
+    padding: 0.3em 0;
+    color: inherit;
+    font-family: inherit;
+    font-size: 1em;
+}
+#advanced-toggle:hover {
+    color: #00a4dc;
+}
+#advanced-body {
+    margin-top: 0.5em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+}
+.header-row {
+    display: flex;
+    gap: 0.4em;
+    align-items: center;
+}
+.header-row input {
+    flex: 1;
+    font-size: 0.85em;
+    padding: 0.4em 0.5em;
+    background: #292929;
+    border: 0.16em solid #292929;
+    border-radius: 0.2em;
+    color: inherit;
+    font-family: inherit;
+    outline: none;
+}
+.header-row input:focus {
+    border-color: #00a4dc;
+}
+.header-row input::placeholder {
+    color: #555;
+}
+.header-row .remove-header {
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 1.1em;
+    padding: 0.2em 0.3em;
+    width: auto;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: normal;
+}
+.header-row .remove-header:hover {
+    color: #cb272a;
+}
+#add-header-btn {
+    background: #333;
+    color: #999;
+    border: 0.16em dashed #555;
+    border-radius: 0.2em;
+    padding: 0.4em;
+    font-size: 0.85em;
+    cursor: pointer;
+    font-family: inherit;
+    width: auto;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: normal;
+}
+#add-header-btn:hover {
+    border-color: #00a4dc;
+    color: #ddd;
+    background: #383838;
+}
+#headers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+}
