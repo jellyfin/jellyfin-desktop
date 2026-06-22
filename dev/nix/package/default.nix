@@ -4,20 +4,14 @@
   ];
 
   perSystem =
-    {
-      system,
-      pkgs,
-      config,
-      ...
-    }:
+    { pkgs, config, ... }:
     {
       overlayAttrs = {
         inherit (config.packages) jellyfin-desktop;
       };
       packages = rec {
-        jellyfin-desktop = pkgs.callPackage ./_package.nix {
-          inherit (inputs.cef-update.legacyPackages.${system}) cef-binary;
-        };
+        jellyfin-desktop = pkgs.callPackage ./_package.nix { new-cef = cef-binary; };
+        cef-binary = pkgs.callPackage ./_updated-cef-binary.nix { };
         default = jellyfin-desktop;
       };
     };
