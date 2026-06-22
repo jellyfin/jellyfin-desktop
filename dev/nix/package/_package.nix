@@ -10,6 +10,9 @@
   # Needed at runtime by CEF
   libGL,
 
+  # Updated CEF
+  new-cef,
+
   # Dependencies
   ffmpeg,
   mpv-unwrapped,
@@ -26,6 +29,19 @@ let
     ];
   };
 
+  src = ../../..;
+
+  cef-required-version =
+    let
+      lockFile = lib.importTOML "${src}/src/Cargo.lock";
+      cefPackage = lib.findFirst (p: p.name == "cef") { version = "+FAILED"; } lockFile.package;
+    in
+    builtins.elemAt (lib.splitString "+" cefPackage.version) 1;
+
+  # Assuming new-cef version always matches this repo needed version
+  # If it's the same version, then avoid unnecessary compilation and use the provided one.
+  cef-bin = if cef-required-version != cef-binary.version then new-cef else cef-binary;
+
   # Jellyfin expects CEF in a certain layout.
   # Cf the Stremio package for the same issue.
   # Can't symlinkJoin here though because CEF uses the realpaths to determine icudtl.dat path
@@ -36,21 +52,16 @@ let
     dontUnpack = true;
     installPhase = ''
       mkdir -p $out
-      cp -r ${cef-binary}/Release/* $out/
-      cp -r ${cef-binary}/Resources/* $out/
+      cp -r ${cef-bin}/Release/* $out/
+      cp -r ${cef-bin}/Resources/* $out/
     '';
   });
+
 in
 rustPlatform.buildRustPackage (finalAttrs: {
+  inherit src;
   pname = "jellyfin-desktop";
   version = "3.0.0-unstable-2026-06-18";
-
-  src = fetchFromGitHub {
-    owner = "jellyfin";
-    repo = "jellyfin-desktop";
-    rev = "096a01257fc4993d1b3eb785c5d8176f734d9364";
-    hash = "sha256-pP+NXdI39+vxNkKLsHuibiKhMCOk7+iHC4lBhJpRfeg=";
-  };
 
   # Fixes some Cargo.lock issues
   cargoRoot = "src";
