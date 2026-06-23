@@ -719,6 +719,16 @@ fn mpv_log_level_from_filter() -> &'static str {
     }
 }
 
+fn apply_startup_mode(mode: jfn_config::StartupWindowMode) {
+    match mode {
+        jfn_config::StartupWindowMode::Fullscreen => plat().set_fullscreen(true),
+        jfn_config::StartupWindowMode::Maximized => {
+            jfn_mpv::api::jfn_mpv_set_window_maximized(true);
+        }
+        jfn_config::StartupWindowMode::Windowed => {}
+    }
+}
+
 fn boot_window_size() -> Option<(i32, i32)> {
     crate::window_geometry::controller()
         .source()
@@ -873,11 +883,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
     // Deferring to after page load means osd-dimensions fires at the final size,
     // matching runtime fullscreen toggle behavior exactly.
     if plat().cef_host().is_some() {
-        if startup_mode == jfn_config::StartupWindowMode::Fullscreen {
-            plat().set_fullscreen(true);
-        } else if startup_mode == jfn_config::StartupWindowMode::Maximized {
-            jfn_mpv::api::jfn_mpv_set_window_maximized(true);
-        }
+        apply_startup_mode(startup_mode);
     }
 
     if !start_playback_coordination() {
@@ -891,11 +897,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         unsafe { jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer) };
         // Linux/Windows: apply startup mode now that the page is loaded and the
         // display has stabilized. Surfaces exist, so no WndProc resize is lost.
-        if startup_mode == jfn_config::StartupWindowMode::Fullscreen {
-            plat().set_fullscreen(true);
-        } else if startup_mode == jfn_config::StartupWindowMode::Maximized {
-            jfn_mpv::api::jfn_mpv_set_window_maximized(true);
-        }
+        apply_startup_mode(startup_mode);
     }
     tracing::info!(target: "Main", "Main browser loaded");
 
