@@ -16,6 +16,7 @@ use std::thread::{self, JoinHandle};
 
 const DEVICE_NAME_MAX: usize = 64;
 const HWDEC_DEFAULT: &str = "no";
+const DEFAULT_FONT_SIZE: i32 = 38;
 
 #[derive(Clone, Copy, Debug)]
 pub struct JfnWindowGeometry {
@@ -59,6 +60,8 @@ struct SettingsData {
     force_transcoding: bool,
     window_decorations: Option<WindowDecorations>,
     hide_scrollbar: bool,
+    subtitle_bold: bool,
+    subtitle_font_size: i32
 }
 
 impl Default for SettingsData {
@@ -77,6 +80,8 @@ impl Default for SettingsData {
             force_transcoding: false,
             window_decorations: None,
             hide_scrollbar: true,
+            subtitle_bold: false,
+            subtitle_font_size: DEFAULT_FONT_SIZE
         }
     }
 }
@@ -154,6 +159,12 @@ impl SettingsData {
         if let Some(b) = v.get("hideScrollbar").and_then(Value::as_bool) {
             self.hide_scrollbar = b;
         }
+        if let Some(b) = v.get("subtitleBold").and_then(Value::as_bool) {
+            self.subtitle_bold = b;
+        }
+        if let Some(s) = v.get("subtitleFontSize").and_then(Value::as_i64) {
+            self.subtitle_font_size = s as i32;
+        }
     }
 
     fn to_json(&self) -> Value {
@@ -220,6 +231,12 @@ impl SettingsData {
         if !self.hide_scrollbar {
             o.insert("hideScrollbar".into(), Value::Bool(false));
         }
+        if self.subtitle_bold {
+            o.insert("subtitleBold".into(), Value::Bool(true));
+        }
+        if self.subtitle_font_size != DEFAULT_FONT_SIZE {
+            o.insert("subtitleFontSize".into(), Value::Number(self.subtitle_font_size.into()));
+        }
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
         }
@@ -274,6 +291,8 @@ impl SettingsData {
             .map(|s| Value::String(s.clone()))
             .collect();
         o.insert("hwdecOptions".into(), Value::Array(opts));
+        o.insert("subtitleBold".into(), Value::Bool(self.subtitle_bold));
+        o.insert("subtitleFontSize".into(), Value::Number(self.subtitle_font_size.into()));
         serde_json::to_string(&Value::Object(o)).unwrap_or_default()
     }
 }
