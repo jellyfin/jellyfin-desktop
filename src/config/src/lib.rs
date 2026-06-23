@@ -16,7 +16,8 @@ use std::thread::{self, JoinHandle};
 
 const DEVICE_NAME_MAX: usize = 64;
 const HWDEC_DEFAULT: &str = "no";
-const DEFAULT_FONT_SIZE: i32 = 38;
+const DEFAULT_SUBTITLE_SCALE: f64 = 1.0;
+const VALID_SUBTITLE_SCALES: [f64; 5] = [0.5, 0.75, 1.0, 1.25, 1.5];
 
 #[derive(Clone, Copy, Debug)]
 pub struct JfnWindowGeometry {
@@ -61,7 +62,7 @@ struct SettingsData {
     window_decorations: Option<WindowDecorations>,
     hide_scrollbar: bool,
     subtitle_bold: bool,
-    subtitle_font_size: i32
+    subtitle_scale: f64,
 }
 
 impl Default for SettingsData {
@@ -81,7 +82,7 @@ impl Default for SettingsData {
             window_decorations: None,
             hide_scrollbar: true,
             subtitle_bold: false,
-            subtitle_font_size: DEFAULT_FONT_SIZE
+            subtitle_scale: DEFAULT_SUBTITLE_SCALE,
         }
     }
 }
@@ -162,8 +163,10 @@ impl SettingsData {
         if let Some(b) = v.get("subtitleBold").and_then(Value::as_bool) {
             self.subtitle_bold = b;
         }
-        if let Some(s) = v.get("subtitleFontSize").and_then(Value::as_i64) {
-            self.subtitle_font_size = s as i32;
+        if let Some(s) = v.get("subtitleScale").and_then(Value::as_f64)
+            && valid_subtitle_scale(s)
+        {
+            self.subtitle_scale = s;
         }
     }
 
@@ -234,8 +237,8 @@ impl SettingsData {
         if self.subtitle_bold {
             o.insert("subtitleBold".into(), Value::Bool(true));
         }
-        if self.subtitle_font_size != DEFAULT_FONT_SIZE {
-            o.insert("subtitleFontSize".into(), json!(self.subtitle_font_size));
+        if self.subtitle_scale != DEFAULT_SUBTITLE_SCALE {
+            o.insert("subtitleScale".into(), json!(self.subtitle_scale));
         }
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
@@ -292,7 +295,7 @@ impl SettingsData {
             .collect();
         o.insert("hwdecOptions".into(), Value::Array(opts));
         o.insert("subtitleBold".into(), Value::Bool(self.subtitle_bold));
-        o.insert("subtitleFontSize".into(), Value::Number(self.subtitle_font_size.into()));
+        o.insert("subtitleScale".into(), json!(self.subtitle_scale));
         serde_json::to_string(&Value::Object(o)).unwrap_or_default()
     }
 }
@@ -491,17 +494,6 @@ macro_rules! bool_accessors {
     };
 }
 
-macro_rules! int_accessors {
-    ($getter:ident, $setter:ident, $field:ident) => {
-        pub fn $getter() -> i32 {
-            state().lock().data.$field
-        }
-        pub fn $setter(v: i32) {
-            state().lock().data.$field = v;
-        }
-    };
-}
-
 string_accessors!(server_url, set_server_url, server_url);
 string_accessors!(hwdec, set_hwdec, hwdec);
 string_accessors!(audio_passthrough, set_audio_passthrough, audio_passthrough);
@@ -592,9 +584,17 @@ pub fn cli_json(hwdec_opts: &[&str]) -> String {
     snap.cli_json(&opts)
 }
 
-// Subtitles 
+// Subtitles
 bool_accessors!(subtitle_bold, set_subtitle_bold, subtitle_bold);
-int_accessors!(subtitle_font_size, set_subtitle_font_size, subtitle_font_size);
+
+pub fn subtitle_scale() -> f64 {
+    state().lock().data.subtitle_scale
+}
+pub fn set_subtitle_scale(scale: f64) {
+    if valid_subtitle_scale(scale) {
+        state().lock().data.subtitle_scale = scale;
+    }
+}
 
 fn normalize_device_name(raw: &str, platform_default: &str) -> String {
     // Server's auth header parser preserves whitespace verbatim, so " foo "
@@ -623,6 +623,10 @@ fn normalize_device_name(raw: &str, platform_default: &str) -> String {
         trimmed.clear();
     }
     trimmed
+}
+
+fn valid_subtitle_scale(s: f64) -> bool {
+    VALID_SUBTITLE_SCALES.contains(&s)
 }
 
 #[cfg(test)]

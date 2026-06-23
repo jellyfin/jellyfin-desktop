@@ -320,6 +320,12 @@ pub fn jfn_mpv_set_subtitle_delay(s: f64) {
 pub fn jfn_mpv_set_start_position(s: f64) {
     unsafe { set_double(c"start", s) };
 }
+pub fn jfn_mpv_set_subtitle_scale(scale: f64) {
+    unsafe { set_double(c"sub-scale", scale) };
+}
+pub fn jfn_mpv_set_subtitle_bold(bold: bool) {
+    unsafe { set_flag(c"sub-bold", bold) };
+}
 
 /// Track id sentinel: 0 = disabled. >=1 = explicit mpv track id.
 /// Mpv's auto-track-selection is globally disabled (boot applies
@@ -356,14 +362,6 @@ pub unsafe fn jfn_mpv_audio_add(url: *const c_char) {
         return;
     };
     cmd(&[c"audio-add", u, c"select"]);
-}
-
-pub fn jfn_mpv_set_subtitle_size(size: i32) {
-    unsafe { set_double(c"sub-font-size", size as f64) };
-}
-
-pub fn jfn_mpv_set_subtitle_bold(bold: bool) {
-    unsafe { set_flag(c"sub-bold", bold) };
 }
 
 // =============================================================================

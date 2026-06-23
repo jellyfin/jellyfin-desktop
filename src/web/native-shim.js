@@ -91,7 +91,9 @@
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
             playback: {
-                hwdec: _savedSettings.hwdec || 'auto'
+                hwdec: _savedSettings.hwdec || 'auto',
+                subtitleBold: !!_savedSettings.subtitleBold,
+                subtitleScale: _savedSettings.subtitleScale ?? 1.0
             },
             audio: {
                 audioPassthrough: _savedSettings.audioPassthrough || '',
@@ -111,7 +113,15 @@
         },
         settingsDescriptions: {
             playback: [
-                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions }
+                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions },
+                { key: 'subtitleScale', displayName: 'Subtitle Size', options: [
+                    { value: 0.5, title: 'Tiny' },
+                    { value: 0.75, title: 'Small' },
+                    { value: 1.0, title: 'Default' },
+                    { value: 1.25, title: 'Large' },
+                    { value: 1.5, title: 'Huge' }
+                ]},
+                { key: 'subtitleBold', displayName: 'Subtitle Bold' }
             ],
             audio: [
                 { key: 'audioPassthrough', displayName: 'Audio Passthrough', help: 'Comma-separated list of codecs to pass through to the audio device (e.g. ac3,eac3,dts-hd,truehd). Leave empty to disable.', inputType: 'textarea' },

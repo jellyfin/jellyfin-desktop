@@ -261,6 +261,7 @@ fn handle_player_load(args: &ListValue) {
         external_sub_url: ext_sub_c.as_ptr(),
         is_infinite_stream,
     };
+    apply_subtitle_style_settings();
     unsafe { jfn_mpv_load_file(url_c.as_ptr(), &opts) };
 }
 
@@ -424,4 +425,9 @@ fn handle_message(message: BrowserMessage) -> bool {
         }
         _ => false,
     }
+}
+
+fn apply_subtitle_style_settings() {
+    jfn_mpv_set_subtitle_scale(jfn_config::subtitle_scale());
+    jfn_mpv_set_subtitle_bold(jfn_config::subtitle_bold());
 }
