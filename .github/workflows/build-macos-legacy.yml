@@ -54,7 +54,7 @@ jobs:
 
       - name: Cache built deps (ffmpeg + libplacebo)
         id: deps-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/jellyfin-deps
           key: deps-x86_64-ffmpeg-n8.1-libplacebo-v7.360.1-macos${{ env.MACOSX_DEPLOYMENT_TARGET }}-v2
