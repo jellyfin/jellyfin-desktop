@@ -358,6 +358,14 @@ pub unsafe fn jfn_mpv_audio_add(url: *const c_char) {
     cmd(&[c"audio-add", u, c"select"]);
 }
 
+pub fn jfn_mpv_set_subtitle_size(size: i32) {
+    unsafe { set_double(c"sub-font-size", size as f64) };
+}
+
+pub fn jfn_mpv_set_subtitle_bold(bold: bool) {
+    unsafe { set_flag(c"sub-bold", bold) };
+}
+
 // =============================================================================
 // LoadFile + deferred track selection (stateful)
 // =============================================================================

@@ -235,7 +235,7 @@ impl SettingsData {
             o.insert("subtitleBold".into(), Value::Bool(true));
         }
         if self.subtitle_font_size != DEFAULT_FONT_SIZE {
-            o.insert("subtitleFontSize".into(), Value::Number(self.subtitle_font_size.into()));
+            o.insert("subtitleFontSize".into(), json!(self.subtitle_font_size));
         }
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
@@ -491,6 +491,17 @@ macro_rules! bool_accessors {
     };
 }
 
+macro_rules! int_accessors {
+    ($getter:ident, $setter:ident, $field:ident) => {
+        pub fn $getter() -> i32 {
+            state().lock().data.$field
+        }
+        pub fn $setter(v: i32) {
+            state().lock().data.$field = v;
+        }
+    };
+}
+
 string_accessors!(server_url, set_server_url, server_url);
 string_accessors!(hwdec, set_hwdec, hwdec);
 string_accessors!(audio_passthrough, set_audio_passthrough, audio_passthrough);
@@ -580,6 +591,10 @@ pub fn cli_json(hwdec_opts: &[&str]) -> String {
     let opts: Vec<String> = hwdec_opts.iter().map(|s| (*s).to_string()).collect();
     snap.cli_json(&opts)
 }
+
+// Subtitles 
+bool_accessors!(subtitle_bold, set_subtitle_bold, subtitle_bold);
+int_accessors!(subtitle_font_size, set_subtitle_font_size, subtitle_font_size);
 
 fn normalize_device_name(raw: &str, platform_default: &str) -> String {
     // Server's auth header parser preserves whitespace verbatim, so " foo "
