@@ -17,7 +17,7 @@ use std::thread::{self, JoinHandle};
 const DEVICE_NAME_MAX: usize = 64;
 const HWDEC_DEFAULT: &str = "no";
 const DEFAULT_SUBTITLE_SCALE: f64 = 1.0;
-const VALID_SUBTITLE_SCALES: [f64; 5] = [0.5, 0.75, 1.0, 1.25, 1.5];
+const SUBTITLE_SCALE_OPTIONS: [f64; 5] = [0.5, 0.75, 1.0, 1.25, 1.5];
 
 #[derive(Clone, Copy, Debug)]
 pub struct JfnWindowGeometry {
@@ -296,6 +296,7 @@ impl SettingsData {
         o.insert("hwdecOptions".into(), Value::Array(opts));
         o.insert("subtitleBold".into(), Value::Bool(self.subtitle_bold));
         o.insert("subtitleScale".into(), json!(self.subtitle_scale));
+        o.insert("subtitleScaleDefault".into(), json!(DEFAULT_SUBTITLE_SCALE));
         serde_json::to_string(&Value::Object(o)).unwrap_or_default()
     }
 }
@@ -626,12 +627,13 @@ fn normalize_device_name(raw: &str, platform_default: &str) -> String {
 }
 
 fn valid_subtitle_scale(s: f64) -> bool {
-    VALID_SUBTITLE_SCALES.contains(&s)
+    SUBTITLE_SCALE_OPTIONS.contains(&s)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_device_name;
+    use super::{DEFAULT_SUBTITLE_SCALE, SettingsData, normalize_device_name};
+    use serde_json::{Value, json};
 
     const PLATFORM: &str = "platform-host";
 
@@ -685,5 +687,21 @@ mod tests {
     fn clears_override_when_whitespace_padded_default() {
         let padded = format!("  {}  ", PLATFORM);
         assert_eq!(normalize_device_name(&padded, PLATFORM), "");
+    }
+
+    #[test]
+    fn cli_json_includes_subtitle_scale_default() {
+        let raw = SettingsData::default().cli_json(&[]);
+
+        let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
+            assert!(false, "cli_json should produce valid JSON from: {raw}");
+            return;
+        };
+
+        assert_eq!(parsed["subtitleScale"], json!(DEFAULT_SUBTITLE_SCALE));
+        assert_eq!(
+            parsed["subtitleScaleDefault"],
+            json!(DEFAULT_SUBTITLE_SCALE)
+        );
     }
 }

@@ -93,7 +93,7 @@
             playback: {
                 hwdec: _savedSettings.hwdec || 'auto',
                 subtitleBold: !!_savedSettings.subtitleBold,
-                subtitleScale: _savedSettings.subtitleScale ?? 1.0
+                subtitleScale: _savedSettings.subtitleScale ?? _savedSettings.subtitleScaleDefault
             },
             audio: {
                 audioPassthrough: _savedSettings.audioPassthrough || '',
