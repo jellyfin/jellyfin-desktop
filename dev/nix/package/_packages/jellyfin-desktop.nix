@@ -1,74 +1,40 @@
 {
   lib,
-  fetchFromGitHub,
   rustPlatform,
-  stdenv,
-  symlinkJoin,
   pkg-config,
   wrapGAppsHook4,
 
   # Needed at runtime by CEF
   libGL,
 
-  # Updated CEF
-  new-cef,
-
   # Dependencies
   ffmpeg,
-  mpv-unwrapped,
-  cef-binary,
   libxkbcommon,
   libxcb,
+  cef-lib,
+  mpv-external-prefix,
+
+  lastModifiedDate,
 }:
-let
-  mpvPrefix = symlinkJoin {
-    name = "mpv-external-prefix";
-    paths = [
-      (lib.getDev mpv-unwrapped)
-      (lib.getLib mpv-unwrapped)
-    ];
-  };
-
-  src = ../../..;
-
-  cef-required-version =
-    let
-      lockFile = lib.importTOML "${src}/src/Cargo.lock";
-      cefPackage = lib.findFirst (p: p.name == "cef") { version = "+FAILED"; } lockFile.package;
-    in
-    builtins.elemAt (lib.splitString "+" cefPackage.version) 1;
-
-  # Assuming new-cef version always matches this repo needed version
-  # If it's the same version, then avoid unnecessary compilation and use the provided one.
-  cef-bin = if cef-required-version != cef-binary.version then new-cef else cef-binary;
-
-  # Jellyfin expects CEF in a certain layout.
-  # Cf the Stremio package for the same issue.
-  # Can't symlinkJoin here though because CEF uses the realpaths to determine icudtl.dat path
-  # Trivial compilation and should stay correctly linked.
-  # There's likely a Rust issue that is the reason why for the fixup.
-  cef = stdenv.mkDerivation (finalAttrs: {
-    name = "cef-for-jellyfin";
-    dontUnpack = true;
-    installPhase = ''
-      mkdir -p $out
-      cp -r ${cef-bin}/Release/* $out/
-      cp -r ${cef-bin}/Resources/* $out/
-    '';
-  });
-
-in
 rustPlatform.buildRustPackage (finalAttrs: {
-  inherit src;
+  src = ../../../..;
   pname = "jellyfin-desktop";
-  version = "3.0.0-unstable-2026-06-18";
+  version =
+    let
+      majorVersion =
+        (lib.importTOML "${finalAttrs.src}/${finalAttrs.cargoRoot}/Cargo.toml").workspace.package.version;
+
+      s = b: l: builtins.substring b l lastModifiedDate;
+      date = "${s 0 4}-${s 4 2}-${s 6 2}";
+    in
+    "${majorVersion}-${date}";
 
   # Fixes some Cargo.lock issues
   cargoRoot = "src";
   cargoHash = "sha256-GqSk6ZjY34esHGBmaY7sbFjQI6q9e4J3Qu87tFEW6O0=";
   cargoLock = {
     # Fixes some other Cargo.lock issues
-    lockFile = "${finalAttrs.src}/src/Cargo.lock";
+    lockFile = "${finalAttrs.src}/${finalAttrs.cargoRoot}/Cargo.lock";
     outputHashes = {
       "wl-proxy-0.1.2" = "sha256-8NMNPhBSW2gLXc9bwyg2kmHb12XIaV6b4PjM62xLldQ=";
     };
@@ -91,8 +57,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
   buildPhase = ''
     runHook preBuild
     cargo xtask build \
-      --cef-path ${cef} \
-      --external-mpv ${mpvPrefix} \
+      --cef-path ${cef-lib} \
+      --external-mpv ${mpv-external-prefix} \
       --out build/
   '';
 
