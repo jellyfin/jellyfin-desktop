@@ -1,18 +1,34 @@
-{ inputs, ... }: {
+{ inputs, self, ... }: {
   imports = [
     inputs.flake-parts.flakeModules.easyOverlay
   ];
-
   perSystem =
-    { pkgs, config, ... }:
+    {
+      pkgs,
+      lib,
+      config,
+      ...
+    }:
     {
       overlayAttrs = {
         inherit (config.packages) jellyfin-desktop;
       };
-      packages = rec {
-        jellyfin-desktop = pkgs.callPackage ./_package.nix { new-cef = cef-binary; };
-        cef-binary = pkgs.callPackage ./_updated-cef-binary.nix { };
-        default = jellyfin-desktop;
-      };
+      packages = (
+        lib.fix (
+          p:
+          (lib.mapAttrs (n: d: pkgs.callPackage ./_packages/${n}.nix d) {
+            cef-binary = { };
+            cef-lib = { inherit (p) cef-binary; };
+            jellyfin-desktop = {
+              inherit (p) cef-lib mpv-external-prefix;
+              inherit (self) lastModifiedDate;
+            };
+            mpv-external-prefix = { };
+          })
+          // {
+            default = p.jellyfin-desktop;
+          }
+        )
+      );
     };
 }
