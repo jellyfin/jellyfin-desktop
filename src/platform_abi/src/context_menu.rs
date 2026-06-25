@@ -39,7 +39,7 @@ pub fn context_menu_style(b: DisplayBackend) -> ContextMenuStyle {
         DisplayBackend::Wayland => ContextMenuStyle::PlatformMenu,
         DisplayBackend::X11 => ContextMenuStyle::PlatformMenu,
         DisplayBackend::Windows => ContextMenuStyle::JsMenu,
-        DisplayBackend::MacOS => ContextMenuStyle::JsMenu,
+        DisplayBackend::MacOS => ContextMenuStyle::PlatformMenu,
     }
 }
 

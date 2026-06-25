@@ -600,10 +600,12 @@ pub fn macos_open_external_url(url: &str) {
 mod cef_host;
 mod cef_pump;
 mod compositor;
+mod context_menu;
 mod dropdown;
 mod init;
 mod input;
 mod mpv_host;
+mod ns_menu;
 use compositor::{
     macos_alloc_surface, macos_free_surface, macos_restack, macos_set_expected_size,
     macos_surface_present, macos_surface_resize, macos_surface_set_visible,
@@ -697,7 +699,7 @@ impl Platform for MacosPlatform {
     }
 
     fn context_menu_backend(&self) -> &'static dyn jfn_platform_abi::ContextMenuBackend {
-        &jfn_platform_abi::JsMenuContextMenu
+        context_menu::backend()
     }
 
     fn mpv_host(&self) -> &dyn jfn_platform_abi::MpvHost {
