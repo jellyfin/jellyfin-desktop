@@ -1,202 +1,39 @@
-//! macOS `<select>` dropdown: NSMenu-based. Replaces CEF's Alloy OSR
-//! popup widget which renders hover/selection highlights as opaque black
-//! on macOS. CEF's popup widget runs invisibly in the background; we
-//! display a native NSMenu in its place. The selected index (or -1 for
-//! cancel) is reported back via the JfnPopupRequest::on_selected
-//! callback.
+//! CEF's Alloy OSR popup renders `<select>` hover/selection highlights as
+//! opaque black on macOS, so we run its popup invisibly and present a native
+//! NSMenu in its place.
 
-use parking_lot::Mutex;
-use std::ffi::{c_int, c_void};
-
-use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2::{AnyThread, DefinedClass, define_class, msg_send};
-use objc2_foundation::{NSObject, NSPoint, NSString};
+use std::ffi::c_int;
 
 use jfn_platform_abi::{DropdownBackend, JfnPopupRequest, SurfaceHandle};
 
-use crate::init::{jfn_macos_get_input_view, jfn_macos_get_window};
+use crate::ns_menu::{MenuEntry, MenuSpec, present_on_main};
 
 pub(crate) struct NsMenuDropdown;
 
 impl DropdownBackend for NsMenuDropdown {
-    fn show(&self, s: SurfaceHandle, req: JfnPopupRequest) {
-        macos_popup_show(s, req);
-    }
-}
-
-/// The `on_selected` callback: receives the chosen index (or -1 on cancel).
-type SelectedCb = Box<dyn FnOnce(c_int) + Send>;
-
-/// Owns the `on_selected` `FnOnce`. Fires at most once; dropping without
-/// firing reports nothing (which matches the cancel path from the
-/// caller's point of view — the closure's dtor releases its captured
-/// Arc, just like the old explicit dtor did).
-struct PopupCb {
-    fired: Mutex<Option<SelectedCb>>,
-}
-
-impl PopupCb {
-    fn new(cb: Option<SelectedCb>) -> Self {
-        Self {
-            fired: Mutex::new(cb),
+    fn show(&self, _s: SurfaceHandle, req: JfnPopupRequest) {
+        if req.options.is_empty() {
+            return;
         }
-    }
-
-    fn fire(&self, idx: c_int) {
-        if let Some(cb) = self.fired.lock().take() {
-            cb(idx);
-        }
-    }
-}
-
-/// Ivar storage for the NSMenu target.
-struct TargetIvars {
-    cb: std::sync::Arc<PopupCb>,
-}
-
-impl TargetIvars {
-    fn fire_if_first(&self, idx: c_int) {
-        self.cb.fire(idx);
-    }
-}
-
-define_class!(
-    #[unsafe(super(NSObject))]
-    #[name = "JfnPopupMenuTarget"]
-    #[ivars = TargetIvars]
-    struct PopupTarget;
-
-    impl PopupTarget {
-        #[unsafe(method(itemPicked:))]
-        fn item_picked(&self, item: &AnyObject) {
-            let tag: isize = unsafe { msg_send![item, tag] };
-            self.ivars().fire_if_first(tag as c_int);
-        }
-    }
-);
-
-unsafe extern "C" {
-    static _dispatch_main_q: c_void;
-    fn dispatch_async_f(
-        queue: *mut c_void,
-        ctx: *mut c_void,
-        work: unsafe extern "C" fn(*mut c_void),
-    );
-}
-
-#[inline]
-fn dispatch_get_main_queue() -> *mut c_void {
-    std::ptr::addr_of!(_dispatch_main_q) as *mut c_void
-}
-
-/// Heap-allocated state delivered to the main-queue trampoline. Owns the
-/// option titles (so they outlive the caller's req buffer) and the
-/// callback Arc.
-struct PopupRun {
-    cb: std::sync::Arc<PopupCb>,
-    options: Vec<String>,
-    initial_highlight: c_int,
-    x: c_int,
-    y: c_int,
-    min_width: c_int,
-}
-
-unsafe extern "C" fn run_trampoline(ctx: *mut c_void) {
-    let run: Box<PopupRun> = unsafe { Box::from_raw(ctx as *mut PopupRun) };
-    unsafe { show_menu_on_main(*run) };
-}
-
-unsafe fn show_menu_on_main(run: PopupRun) {
-    let window = jfn_macos_get_window();
-    let input_view = jfn_macos_get_input_view();
-    if window.is_null() || input_view.is_null() {
-        // Drop fires the on_selected_dtor automatically; no fire() so the
-        // JS side gets no spurious selection. Matches the C++ guard.
-        return;
-    }
-
-    let menu_cls = objc2::class!(NSMenu);
-    let menu: *mut AnyObject = unsafe { msg_send![menu_cls, alloc] };
-    let empty = NSString::from_str("");
-    let menu: *mut AnyObject = unsafe { msg_send![menu, initWithTitle: &*empty] };
-    let _: () = unsafe { msg_send![menu, setAutoenablesItems: false] };
-
-    let ivars = TargetIvars { cb: run.cb.clone() };
-    let target = PopupTarget::alloc().set_ivars(ivars);
-    let target: Retained<PopupTarget> = unsafe { msg_send![super(target), init] };
-
-    let item_picked_sel = objc2::sel!(itemPicked:);
-
-    let item_cls = objc2::class!(NSMenuItem);
-    let key_equiv = NSString::from_str("");
-    for (i, opt) in run.options.iter().enumerate() {
-        let title = NSString::from_str(opt);
-        let item: *mut AnyObject = unsafe { msg_send![item_cls, alloc] };
-        let item: *mut AnyObject = unsafe {
-            msg_send![
-                item,
-                initWithTitle: &*title,
-                action: item_picked_sel,
-                keyEquivalent: &*key_equiv,
-            ]
+        let entries = req
+            .options
+            .into_iter()
+            .enumerate()
+            .map(|(i, title)| MenuEntry {
+                title,
+                tag: i as c_int,
+                enabled: true,
+                separator: false,
+                checked: i as c_int == req.initial_highlight,
+            })
+            .collect();
+        let spec = MenuSpec {
+            entries,
+            x: req.x,
+            y: req.y,
+            positioning_tag: (req.initial_highlight >= 0).then_some(req.initial_highlight),
+            min_width: Some(req.lw),
         };
-        let _: () = unsafe { msg_send![item, setTag: i as isize] };
-        let _: () = unsafe { msg_send![item, setTarget: &*target] };
-        if i as c_int == run.initial_highlight {
-            // NSControlStateValueOn == 1
-            let _: () = unsafe { msg_send![item, setState: 1isize] };
-        }
-        let _: () = unsafe { msg_send![menu, addItem: item] };
+        present_on_main(spec, req.on_selected);
     }
-
-    let location = NSPoint {
-        x: run.x as f64,
-        y: run.y as f64,
-    };
-
-    let initial: *mut AnyObject =
-        if run.initial_highlight >= 0 && (run.initial_highlight as usize) < run.options.len() {
-            unsafe { msg_send![menu, itemAtIndex: run.initial_highlight as isize] }
-        } else {
-            std::ptr::null_mut()
-        };
-
-    let _: () = unsafe { msg_send![menu, setMinimumWidth: run.min_width as f64] };
-
-    let _: bool = unsafe {
-        msg_send![
-            menu,
-            popUpMenuPositioningItem: initial,
-            atLocation: location,
-            inView: input_view,
-        ]
-    };
-
-    // Modal call; if no item was picked the target hasn't fired yet —
-    // report cancel.
-    target.ivars().fire_if_first(-1);
-    drop(target);
-}
-
-/// `macos_popup_show` — anchored in the input NSView (isFlipped == YES)
-/// so (x, y) are layout coordinates that map directly to AppKit menu
-/// placement. Schedules the actual NSMenu work onto the main queue.
-fn macos_popup_show(_s: *mut c_void, req: JfnPopupRequest) {
-    let cb = std::sync::Arc::new(PopupCb::new(req.on_selected));
-    if req.options.is_empty() {
-        // Drop cb → never fires on_selected (cancel path).
-        return;
-    }
-
-    let run = Box::new(PopupRun {
-        cb,
-        options: req.options,
-        initial_highlight: req.initial_highlight,
-        x: req.x,
-        y: req.y,
-        min_width: req.lw,
-    });
-    let ctx = Box::into_raw(run) as *mut c_void;
-    unsafe { dispatch_async_f(dispatch_get_main_queue(), ctx, run_trampoline) };
 }
