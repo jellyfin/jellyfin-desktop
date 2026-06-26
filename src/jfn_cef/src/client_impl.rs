@@ -12,12 +12,15 @@ mod load;
 mod os_ffi;
 mod process_message;
 mod render;
+mod request;
+mod resource_request;
 use context_menu::JfnContextMenuHandlerBuilder;
 use display::JfnDisplayHandlerBuilder;
 use keyboard::JfnKeyboardHandlerBuilder;
 use lifespan::JfnLifeSpanHandlerBuilder;
 use load::JfnLoadHandlerBuilder;
 use render::JfnRenderHandlerBuilder;
+use request::JfnRequestHandlerBuilder;
 
 pub fn make_client(inner: Arc<Inner>) -> Client {
     JfnClientBuilder::new(inner)
@@ -46,6 +49,9 @@ wrap_client! {
         }
         fn keyboard_handler(&self) -> Option<KeyboardHandler> {
             Some(JfnKeyboardHandlerBuilder::new(self.inner.clone()))
+        }
+        fn request_handler(&self) -> Option<RequestHandler> {
+            Some(JfnRequestHandlerBuilder::new(self.inner.clone()))
         }
         fn on_process_message_received(
             &self,

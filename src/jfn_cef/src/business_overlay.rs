@@ -175,6 +175,40 @@ fn handle_message(message: BrowserMessage) -> bool {
             }
             true
         }
+        "getCustomHeaders" => {
+            let Some(frame) = message.main_frame() else {
+                return true;
+            };
+            let headers = jfn_config::custom_headers();
+            send_to_renderer(&frame, "customHeaders", |args| {
+                // Send as JSON string — simple and avoids complex IPC list encoding
+                let json = serde_json::json!(
+                    headers
+                        .iter()
+                        .map(|(k, v)| { serde_json::json!({"key": k, "value": v}) })
+                        .collect::<Vec<_>>()
+                );
+                args.set_string(0, Some(&CefString::from(json.to_string().as_str())));
+            });
+            true
+        }
+        "setCustomHeaders" => {
+            let Some(args) = args else { return true };
+            let json_str = list_string(args, 0);
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                let headers: Vec<(String, String)> = arr
+                    .iter()
+                    .filter_map(|v| {
+                        let key = v.get("key")?.as_str()?.to_string();
+                        let value = v.get("value")?.as_str()?.to_string();
+                        Some((key, value))
+                    })
+                    .collect();
+                jfn_config::set_custom_headers(headers);
+                jfn_config::settings_save_async();
+            }
+            true
+        }
         _ => false,
     }
 }
@@ -318,6 +352,15 @@ fn make_request(method: &str, url: &str, client: UrlrequestClient) -> Option<Url
     let req: Request = request_create()?;
     req.set_url(Some(&CefString::from(url)));
     req.set_method(Some(&CefString::from(method)));
+    for (key, value) in &jfn_config::custom_headers() {
+        if !key.is_empty() {
+            req.set_header_by_name(
+                Some(&CefString::from(key.as_str())),
+                Some(&CefString::from(value.as_str())),
+                1,
+            );
+        }
+    }
     let mut req_arg = req;
     let mut client_arg = client;
     urlrequest_create(Some(&mut req_arg), Some(&mut client_arg), None)
