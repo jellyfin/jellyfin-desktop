@@ -45,6 +45,10 @@ pub fn stage_cef(out: &Path, cef: &cef::Cef) -> Result<()> {
     Ok(())
 }
 
+pub fn stage_mpv_scripts(_out: &Path) -> Result<()> {
+    Ok(())
+}
+
 pub fn stage_mpv(out: &Path, mpv_info: &mpv::Mpv, used_external: bool, bin: &Path) -> Result<()> {
     if !used_external {
         let runtime = mpv::runtime_library_name();
