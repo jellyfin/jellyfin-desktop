@@ -1,4 +1,16 @@
-{ stdenv, cef-binary }:
+{
+  stdenv,
+  cef-binary,
+  writers,
+  lib,
+}:
+let
+  archive = writers.writeJSON "archive.json" {
+    type = "minimal";
+    name = baseNameOf cef-binary.src.url;
+    sha1 = lib.fakeHash;
+  };
+in
 # Jellyfin expects CEF in a certain layout.
 # Cf the Stremio package for the same issue.
 # Can't symlinkJoin here though because CEF uses the realpaths to determine icudtl.dat path
@@ -12,5 +24,6 @@ stdenv.mkDerivation (finalAttrs: {
     mkdir -p $out
     cp -r ${cef-binary}/Release/* $out/
     cp -r ${cef-binary}/Resources/* $out/
+    cp ${archive} $out/archive.json
   '';
 })
