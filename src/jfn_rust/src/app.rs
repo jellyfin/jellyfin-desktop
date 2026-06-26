@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use clap::Parser;
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
-use jfn_platform_abi::{IdleInhibitLevel, LogicalSize, Platform, Scale, WindowGeometry};
+use jfn_platform_abi::{IdleInhibitLevel, LogicalSize, Platform, WindowGeometry};
 
 use crate::cli;
 
@@ -382,14 +382,8 @@ fn start_playback_coordination() -> bool {
 
     plat().media_session().start();
 
-    jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(|s| {
-        if s > 0.0 {
-            jfn_cef::browsers::jfn_browsers_set_scale(s);
-        }
-    });
-    jfn_playback::ingest_driver::jfn_playback_set_scale_provider(|| {
-        let s = plat().get_scale();
-        if s > 0.0 { s } else { 1.0 }
+    jfn_platform_abi::jfn_scale_set_changed_handler(|s| {
+        jfn_cef::browsers::jfn_browsers_set_scale(s);
     });
     jfn_playback::ingest_driver::jfn_playback_set_fullscreen_handler(|fs| {
         plat().set_fullscreen(fs)
@@ -445,6 +439,7 @@ struct CefWindowMetrics {
     lh: c_int,
     mw: c_int,
     mh: c_int,
+    scale: f64,
     hz: f64,
 }
 
@@ -481,25 +476,22 @@ fn sync_cef_window_metrics(
     let saved = jfn_config::window_geometry();
     let locked = fs_flag != 0 || jfn_playback::ingest_driver::jfn_playback_window_maximized();
     if !locked
-        && display_hidpi_scale > 0.0
         && saved.scale > 0.0
-        && (display_hidpi_scale - saved.scale as f64).abs() >= 0.01
+        && let Some(scale) = jfn_platform_abi::scale_get()
+        && (scale - saved.scale).abs() >= 0.01
     {
-        let physical = LogicalSize {
-            w: saved.logical_width,
-            h: saved.logical_height,
-        }
-        .to_physical(Scale(display_hidpi_scale as f32));
+        let physical: jfn_platform_abi::PhysicalSize =
+            LogicalSize::new(saved.logical_width, saved.logical_height).to_physical(scale);
         let clamped = plat().clamp_window_geometry(WindowGeometry {
-            w: physical.w,
-            h: physical.h,
+            w: physical.width,
+            h: physical.height,
             x: -1,
             y: -1,
         });
         let (new_pw, new_ph) = (clamped.w, clamped.h);
         let geom_str = format!("{new_pw}x{new_ph}");
         tracing::info!(target: "Main",
-            "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
+            "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, scale, geom_str);
         let g_c = cs(&geom_str);
         unsafe { jfn_mpv::api::jfn_mpv_set_geometry(g_c.as_ptr()) };
         mw = new_pw;
@@ -507,19 +499,21 @@ fn sync_cef_window_metrics(
     }
     jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
 
-    let scale = plat().effective_scale(display_hidpi_scale);
-    let lw = (mw as f32 / scale) as c_int;
-    let lh = (mh as f32 / scale) as c_int;
+    let scale = jfn_platform_abi::scale_get_or_one();
+    let logical: LogicalSize = jfn_platform_abi::PhysicalSize::new(mw, mh).to_logical(scale);
 
-    CefWindowMetrics { lw, lh, mw, mh, hz }
+    CefWindowMetrics {
+        lw: logical.width,
+        lh: logical.height,
+        mw,
+        mh,
+        scale,
+        hz,
+    }
 }
 
 fn init_main_browser(
-    lw: c_int,
-    lh: c_int,
-    mw: c_int,
-    mh: c_int,
-    hz: f64,
+    metrics: &CefWindowMetrics,
     use_shared_textures: bool,
 ) -> (std::thread::JoinHandle<()>, *mut jfn_cef::JfnCefLayer) {
     // Must run before main browser create: the pre-loaded page fires its
@@ -537,7 +531,15 @@ fn init_main_browser(
     }
     jfn_color::theme::jfn_theme_color_set_video_bg(video_bg_get());
 
-    jfn_cef::browsers::jfn_browsers_init(lw, lh, mw, mh, hz, use_shared_textures);
+    jfn_cef::browsers::jfn_browsers_init(
+        metrics.lw,
+        metrics.lh,
+        metrics.mw,
+        metrics.mh,
+        metrics.scale,
+        metrics.hz,
+        use_shared_textures,
+    );
     let manager_thread = crate::manager::jfn_manager_start();
     jfn_playback::jfn_shutdown_set_handler(Some(h_shutdown_wake_manager));
 
@@ -547,7 +549,8 @@ fn init_main_browser(
 
     let server_url = jfn_config::server_url();
     tracing::info!(target: "Main",
-        "[FLOW] CreateBrowser(main) url={server_url} lw={lw} lh={lh} pw={mw} ph={mh}");
+        "[FLOW] CreateBrowser(main) url={server_url} lw={} lh={} pw={} ph={}",
+        metrics.lw, metrics.lh, metrics.mw, metrics.mh);
     unsafe {
         jfn_cef::client::jfn_cef_layer_create(
             main_layer,
@@ -729,15 +732,13 @@ fn boot_window_size() -> Option<(i32, i32)> {
     crate::window_geometry::controller()
         .source()
         .size()
-        .map(|s| (s.w, s.h))
+        .map(|s| (s.width, s.height))
 }
 
 fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max: &mut bool) {
-    let scale_raw = plat().get_scale();
-    let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
     jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event_owned(
         event,
-        scale,
+        jfn_platform_abi::scale_get_or_one(),
         plat().mpv_host().logical_content_size(),
     );
     if let jfn_mpv::Event::PropertyChange { id, .. } = event
@@ -812,7 +813,7 @@ extern "C" fn h_web_exec_js(js: *const c_char) {
     }
 }
 extern "C" fn h_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
-    jfn_cef::browsers::jfn_browsers_set_size(lw, lh, pw, ph);
+    jfn_cef::browsers::jfn_browsers_set_size(lw, lh, pw, ph, jfn_platform_abi::scale_get_or_one());
 }
 extern "C" fn h_browsers_set_refresh_rate(hz: f64) {
     tracing::info!(target: "Main", "Display refresh rate changed: {hz} Hz");
@@ -864,14 +865,7 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
 
     let metrics = sync_cef_window_metrics(mpv_raw, mw, mh);
 
-    let (manager_thread, main_layer) = init_main_browser(
-        metrics.lw,
-        metrics.lh,
-        metrics.mw,
-        metrics.mh,
-        metrics.hz,
-        use_shared_textures,
-    );
+    let (manager_thread, main_layer) = init_main_browser(&metrics, use_shared_textures);
 
     if !start_playback_coordination() {
         return 1;

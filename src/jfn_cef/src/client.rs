@@ -77,11 +77,7 @@ pub(crate) struct Inner {
     // C++ platform vtable for surface_resize / present / popup.
     surface: Mutex<*mut c_void>,
 
-    // logical/physical dims (slice 3)
-    width: AtomicI32,
-    height: AtomicI32,
-    physical_w: AtomicI32,
-    physical_h: AtomicI32,
+    view: Mutex<ViewState>,
 
     paint_scheduler: PaintScheduler,
 
@@ -135,6 +131,23 @@ pub type BeforeCloseFn = dyn Fn() + Send + Sync;
 pub type ContextBuilderFn = dyn Fn(*mut c_void) + Send + Sync;
 pub type ContextDispatcherFn = dyn Fn(c_int) -> bool + Send + Sync;
 
+#[derive(Copy, Clone)]
+pub(crate) struct ViewState {
+    pub(crate) logical: jfn_platform_abi::LogicalSize,
+    pub(crate) physical: jfn_platform_abi::PhysicalSize,
+    pub(crate) scale: f64,
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            logical: jfn_platform_abi::LogicalSize::new(0, 0),
+            physical: jfn_platform_abi::PhysicalSize::new(0, 0),
+            scale: 1.0,
+        }
+    }
+}
+
 #[derive(Default)]
 struct PopupState {
     x: i32,
@@ -176,10 +189,7 @@ impl Inner {
             pending_menu_on_selected: Mutex::new(None),
             injection_kind: Mutex::new(String::new()),
             surface: Mutex::new(std::ptr::null_mut()),
-            width: AtomicI32::new(0),
-            height: AtomicI32::new(0),
-            physical_w: AtomicI32::new(0),
-            physical_h: AtomicI32::new(0),
+            view: Mutex::new(ViewState::default()),
             paint_scheduler,
             frame_rate: AtomicI32::new(0),
             current_frame_rate: AtomicI32::new(0),

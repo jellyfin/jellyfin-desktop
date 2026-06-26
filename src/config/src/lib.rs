@@ -25,7 +25,7 @@ pub struct JfnWindowGeometry {
     pub height: i32,
     pub logical_width: i32,
     pub logical_height: i32,
-    pub scale: f32,
+    pub scale: f64,
     pub maximized: bool,
 }
 
@@ -121,7 +121,7 @@ impl SettingsData {
             self.window.logical_height = n as i32;
         }
         if let Some(n) = v.get("windowScale").and_then(Value::as_f64) {
-            self.window.scale = n as f32;
+            self.window.scale = n;
         }
         if let Some(n) = v.get("windowX").and_then(Value::as_i64) {
             self.window.x = n as i32;

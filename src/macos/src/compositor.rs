@@ -736,7 +736,14 @@ pub fn macos_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     true
 }
 
-pub fn macos_surface_resize(s: *mut c_void, lw: c_int, _lh: c_int, pw: c_int, ph: c_int) {
+pub fn macos_surface_resize(
+    s: *mut c_void,
+    _lw: c_int,
+    _lh: c_int,
+    pw: c_int,
+    ph: c_int,
+    scale: f64,
+) {
     if s.is_null() {
         return;
     }
@@ -755,13 +762,7 @@ pub fn macos_surface_resize(s: *mut c_void, lw: c_int, _lh: c_int, pw: c_int, ph
                 let _: () = objc2::msg_send![surf.view, setFrame: bounds];
             }
         }
-        let scale: f64 = if pw > 0 && lw > 0 {
-            pw as f64 / lw as f64
-        } else if !win.is_null() {
-            objc2::msg_send![win, backingScaleFactor]
-        } else {
-            1.0
-        };
+        let scale = jfn_platform_abi::scale_or_one(scale);
         let _: () = objc2::msg_send![surf.layer, setContentsScale: scale];
         if pw > 0 && ph > 0 {
             let _: () = objc2::msg_send![

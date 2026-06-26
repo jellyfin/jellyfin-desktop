@@ -1,7 +1,7 @@
 //! Native [`WindowSource`]: the Wayland backend owns the toplevel, so live
 //! geometry comes from compositor state, not mpv ingest.
 
-use jfn_platform_abi::{PhysicalSize, Scale, WindowPos, WindowSource};
+use jfn_platform_abi::{PhysicalSize, WindowPos, WindowSource};
 
 pub struct WaylandWindowSource;
 
@@ -9,7 +9,7 @@ impl WindowSource for WaylandWindowSource {
     fn size(&self) -> Option<PhysicalSize> {
         crate::proxy::jfn_wl_window_size_known().then(|| {
             let (w, h) = crate::proxy::jfn_wl_window_size();
-            PhysicalSize { w, h }
+            PhysicalSize::new(w, h)
         })
     }
 
@@ -25,7 +25,7 @@ impl WindowSource for WaylandWindowSource {
         None
     }
 
-    fn scale(&self) -> Scale {
-        Scale(crate::proxy::jfn_wl_get_cached_scale())
+    fn scale(&self) -> f64 {
+        jfn_platform_abi::scale_get().unwrap_or(0.0)
     }
 }

@@ -34,6 +34,7 @@ const CALLBACKS: Callbacks = Callbacks {
 static G_CTX: AtomicPtr<JfnInputWayland> = AtomicPtr::new(std::ptr::null_mut());
 
 pub fn lifecycle_init(display: *mut c_void) {
+    jfn_input::jfn_input_set_space(jfn_input::InputSpace::Logical);
     let ptr = unsafe { crate::input::jfn_input_wayland_init(display, &CALLBACKS) };
     G_CTX.store(ptr, Ordering::Release);
 }

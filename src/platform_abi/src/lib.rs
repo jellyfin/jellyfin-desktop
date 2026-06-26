@@ -24,6 +24,7 @@ pub mod mpv_host;
 #[cfg_attr(unix, path = "process_unix.rs")]
 #[cfg_attr(not(unix), path = "process_other.rs")]
 mod process;
+pub mod scale;
 #[cfg_attr(unix, path = "signal_unix.rs")]
 #[cfg_attr(not(unix), path = "signal_other.rs")]
 mod signal;
@@ -39,10 +40,15 @@ pub use dropdown::{
     DropdownBackend, DropdownScript, DropdownStyle, JfnPopupRequest, JsMenuDropdown, dropdown_style,
 };
 pub use geometry::{
-    BootGeometry, LogicalSize, PhysicalSize, Scale, SurfaceSize, WindowGeometry, WindowPos,
+    BootGeometry, LogicalPosition, LogicalSize, LogicalUnit, PhysicalPosition, PhysicalSize,
+    PhysicalUnit, SurfaceSize, WindowGeometry, WindowPos, scale_or_one, validate_scale_factor,
 };
 pub use media_sink::MediaSink;
 pub use mpv_host::{DefaultMpvHost, MpvHost};
+pub use scale::{
+    jfn_scale_set_changed_handler, scale_get, scale_get_or_one, scale_push, scale_push_boot,
+    scale_runtime_known,
+};
 pub use window_source::WindowSource;
 
 /// Preserves the process's SIGINT/SIGTERM dispositions across a scope.
@@ -388,23 +394,10 @@ pub trait Platform: Send + Sync {
     }
     fn set_expected_size(&self, _w: c_int, _h: c_int) {}
 
-    fn get_scale(&self) -> f32 {
+    /// Boot-time display-scale probe for the display containing `(x, y)`
+    /// (saved window position; backends may ignore it).
+    fn probe_display_scale(&self, _x: c_int, _y: c_int) -> f32 {
         1.0
-    }
-    fn get_display_scale(&self, _x: c_int, _y: c_int) -> f32 {
-        1.0
-    }
-
-    /// Scale used to convert physical window pixels to CEF logical size.
-    /// Default trusts mpv's `display-hidpi-scale` when known; Wayland
-    /// overrides to always use the compositor scale (mpv runs behind
-    /// wlproxy there, so its value isn't authoritative).
-    fn effective_scale(&self, mpv_display_hidpi_scale: f64) -> f32 {
-        if mpv_display_hidpi_scale > 0.0 {
-            mpv_display_hidpi_scale as f32
-        } else {
-            self.get_scale()
-        }
     }
 
     /// Seed the window owner with the restored boot geometry. Backends that
@@ -594,6 +587,9 @@ pub trait BrowserBridge: Send + Sync {
     /// True if a layer is currently active. Cheap check used by callers
     /// that want to early-out before building an event payload.
     fn has_active(&self) -> bool;
+    /// Scale of the active layer's view (physical pixels per CEF-logical
+    /// pixel). Non-positive means unknown.
+    fn view_scale(&self) -> f64;
 }
 
 static BROWSER_BRIDGE: OnceLock<&'static dyn BrowserBridge> = OnceLock::new();

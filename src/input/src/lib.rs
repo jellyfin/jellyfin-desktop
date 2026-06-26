@@ -8,6 +8,7 @@ use jfn_playback::hotkey::jfn_hotkey_classify_keydown;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 use parking_lot::Mutex;
 use std::os::raw::c_int;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 pub mod buttons;
 pub mod scroll;
@@ -36,6 +37,35 @@ static LAST_POS: Mutex<LastMousePos> = Mutex::new(LastMousePos {
     y: 0,
     modifiers: 0,
 });
+
+/// Coordinate space the platform delivers pointer positions in. Declared
+/// once at input init; dispatch converts `Physical` positions to CEF-logical
+/// using the active view's scale. Wheel deltas are never converted.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum InputSpace {
+    Logical = 0,
+    Physical = 1,
+}
+
+static INPUT_SPACE: AtomicU8 = AtomicU8::new(InputSpace::Logical as u8);
+
+pub fn jfn_input_set_space(s: InputSpace) {
+    INPUT_SPACE.store(s as u8, Ordering::Release);
+}
+
+fn view_pos(x: i32, y: i32) -> (i32, i32) {
+    if INPUT_SPACE.load(Ordering::Acquire) == InputSpace::Physical as u8
+        && let Some(b) = browser_bridge()
+    {
+        let scale = jfn_platform_abi::scale_or_one(b.view_scale());
+        let p: jfn_platform_abi::LogicalPosition =
+            jfn_platform_abi::PhysicalPosition::new(x, y).to_logical(scale);
+        (p.x, p.y)
+    } else {
+        (x, y)
+    }
+}
 
 fn cef_button(button_code: u32) -> Option<c_int> {
     match button_code {
@@ -66,6 +96,7 @@ pub fn jfn_input_last_mouse_pos(
 }
 
 pub fn jfn_input_dispatch_mouse_move(x: i32, y: i32, mods: u32, leave: c_int) {
+    let (x, y) = view_pos(x, y);
     {
         let mut p = LAST_POS.lock();
         if leave != 0 {
@@ -90,10 +121,12 @@ pub fn jfn_input_dispatch_mouse_button(
     let Some(btn) = cef_button(button_code) else {
         return;
     };
+    let (x, y) = view_pos(x, y);
     with_bridge(|b| b.send_mouse_click(x, y, mods, btn, pressed == 0, 1));
 }
 
 pub fn jfn_input_dispatch_scroll(x: i32, y: i32, dx: i32, dy: i32, mods: u32) {
+    let (x, y) = view_pos(x, y);
     with_bridge(|b| b.send_mouse_wheel(x, y, mods, dx, dy));
 }
 
@@ -111,6 +144,7 @@ pub fn jfn_input_dispatch_scroll_precise(
     } else {
         mods
     };
+    let (x, y) = view_pos(x, y);
     with_bridge(|b| b.send_mouse_wheel(x, y, mods, dx, dy));
 }
 

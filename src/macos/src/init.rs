@@ -529,6 +529,20 @@ define_class!(
             );
             restart_display_link_locked();
         }
+
+        #[unsafe(method(backingPropertiesChanged:))]
+        unsafe fn backing_properties_changed(&self, _note: *mut AnyObject) {
+            let win = {
+                let state = INIT_STATE.lock();
+                state.window
+            };
+            if win.is_null() {
+                return;
+            }
+            let backing: f64 = unsafe { msg_send![win, backingScaleFactor] };
+            tracing::info!(target: LOG_TARGET, "[SCALE] backing properties changed: {backing}");
+            jfn_platform_abi::scale_push(backing);
+        }
     }
 
     unsafe impl NSObjectProtocol for JellyfinWakeTarget {}
@@ -582,9 +596,21 @@ unsafe fn start_wake_observer(state: &mut InitState) {
             object: ptr::null_mut::<AnyObject>(),
         ];
 
+        let backing_name: *mut AnyObject = msg_send![
+            class!(NSString),
+            stringWithUTF8String: c"NSWindowDidChangeBackingPropertiesNotification".as_ptr()
+        ];
+        let _: () = msg_send![
+            nc,
+            addObserver: target_obj,
+            selector: sel!(backingPropertiesChanged:),
+            name: backing_name,
+            object: state.window,
+        ];
+
         tracing::info!(
             target: LOG_TARGET,
-            "[WAKE] subscribed to wake + screen-change notifications"
+            "[WAKE] subscribed to wake + screen-change + backing-properties notifications"
         );
     }
 }
@@ -649,6 +675,10 @@ pub fn macos_init(_mpv: *mut c_void) -> bool {
             return false;
         }
         tracing::info!(target: LOG_TARGET, "[INIT] macos_init: got window={:?}", state.window);
+
+        let backing: f64 = msg_send![state.window, backingScaleFactor];
+        jfn_platform_abi::scale_push_boot(backing);
+        jfn_platform_abi::scale_push(backing);
 
         // Swizzle windowShouldClose: on the actual window class — mpv's
         // implementation routes through MP_KEY_CLOSE_WIN which we

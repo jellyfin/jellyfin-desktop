@@ -225,8 +225,13 @@ pub(crate) unsafe fn jfn_cef_layer_resize(
     height: c_int,
     pw: c_int,
     ph: c_int,
+    scale: f64,
 ) {
-    unsafe { arc(h) }.resize(w, height, pw, ph);
+    unsafe { arc(h) }.resize(w, height, pw, ph, scale);
+}
+
+pub(crate) unsafe fn jfn_cef_layer_view_scale(h: *const JfnCefLayer) -> f64 {
+    unsafe { arc(h) }.view_scale()
 }
 
 pub(crate) unsafe fn jfn_cef_layer_set_refresh_rate(h: *const JfnCefLayer, hz: f64) {

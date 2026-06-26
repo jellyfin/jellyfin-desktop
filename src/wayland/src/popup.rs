@@ -120,11 +120,11 @@ fn to_bgra(rgba: &[u8]) -> Vec<u8> {
 }
 
 fn logical_dim(physical: i32, scale: f32) -> i32 {
-    if scale > 0.0 {
-        ((physical as f32 / scale).round() as i32).max(1)
-    } else {
-        physical.max(1)
-    }
+    let s = jfn_platform_abi::scale_or_one(f64::from(scale));
+    jfn_platform_abi::PhysicalUnit::new(physical)
+        .to_logical::<i32>(s)
+        .0
+        .max(1)
 }
 
 fn paint_bgra(
@@ -166,12 +166,15 @@ pub fn show_highlighted(
 ) {
     let mut st = lock();
 
-    let scale = crate::proxy::jfn_wl_get_cached_scale();
+    let scale = jfn_platform_abi::scale_get_or_one() as f32;
     let layout = {
         let fonts = st.menu_io.fonts.get_or_insert_with(Fonts::new);
         let mut layout = render::layout(fonts, &items, scale);
         if width > 0 {
-            layout.width = ((width as f32 * scale).round() as i32).max(1);
+            layout.width = jfn_platform_abi::LogicalUnit::new(width)
+                .to_physical::<i32>(f64::from(scale))
+                .0
+                .max(1);
         }
         layout
     };
@@ -440,10 +443,10 @@ pub fn handle_motion(local_x: i32, local_y: i32) {
     let Some(menu) = st.menu_io.menu.as_ref().filter(|m| m.mapped) else {
         return;
     };
-    let (px, py) = (
-        (local_x as f32 * menu.scale) as i32,
-        (local_y as f32 * menu.scale) as i32 + menu.scroll,
-    );
+    let p: jfn_platform_abi::PhysicalPosition =
+        jfn_platform_abi::LogicalPosition::new(local_x, local_y)
+            .to_physical(jfn_platform_abi::scale_or_one(f64::from(menu.scale)));
+    let (px, py) = (p.x, p.y + menu.scroll);
     step_locked(&mut st, MenuEvent::Motion { x: px, y: py });
 }
 
@@ -455,10 +458,10 @@ pub fn handle_button(local_x: i32, local_y: i32, pressed: bool) {
     let Some(menu) = st.menu_io.menu.as_ref().filter(|m| m.mapped) else {
         return;
     };
-    let (px, py) = (
-        (local_x as f32 * menu.scale) as i32,
-        (local_y as f32 * menu.scale) as i32 + menu.scroll,
-    );
+    let p: jfn_platform_abi::PhysicalPosition =
+        jfn_platform_abi::LogicalPosition::new(local_x, local_y)
+            .to_physical(jfn_platform_abi::scale_or_one(f64::from(menu.scale)));
+    let (px, py) = (p.x, p.y + menu.scroll);
     step_locked(&mut st, MenuEvent::Press { x: px, y: py });
 }
 

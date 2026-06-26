@@ -178,6 +178,5 @@ pub fn jfn_wl_on_configure(width: i32, height: i32, fullscreen: i32) {
     if crate::wl_state::try_state().is_none() {
         return;
     }
-    let scale = crate::proxy::jfn_wl_get_cached_scale();
-    wl_ops::on_configure(width, height, fullscreen != 0, scale);
+    wl_ops::on_configure(width, height, fullscreen != 0);
 }

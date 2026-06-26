@@ -14,7 +14,7 @@ use crate::client::{
     jfn_cef_layer_go_back, jfn_cef_layer_go_forward, jfn_cef_layer_paste, jfn_cef_layer_redo,
     jfn_cef_layer_select_all, jfn_cef_layer_send_key_event, jfn_cef_layer_send_mouse_click,
     jfn_cef_layer_send_mouse_move, jfn_cef_layer_send_mouse_wheel, jfn_cef_layer_set_focus,
-    jfn_cef_layer_undo,
+    jfn_cef_layer_undo, jfn_cef_layer_view_scale,
 };
 
 pub struct CefBrowserBridge;
@@ -144,6 +144,14 @@ impl BrowserBridge for CefBrowserBridge {
 
     fn has_active(&self) -> bool {
         !jfn_browsers_active().is_null()
+    }
+
+    fn view_scale(&self) -> f64 {
+        let l = jfn_browsers_active();
+        if l.is_null() {
+            return 0.0;
+        }
+        unsafe { jfn_cef_layer_view_scale(l) }
     }
 }
 

@@ -747,7 +747,7 @@ pub fn win_popup_show(s: *mut c_void, x: c_int, y: c_int) {
     let surf = unsafe { &mut *(s as *mut Surface) };
     surf.popup_visible = true;
     if let Some(pv) = surf.popup_visual.as_ref() {
-        let scale = crate::platform::win_get_scale();
+        let scale = jfn_platform_abi::scale_get_or_one() as f32;
         unsafe {
             let _ = pv.SetOffsetX2(x as f32 * scale);
             let _ = pv.SetOffsetY2(y as f32 * scale);

@@ -112,7 +112,6 @@ pub struct Mutable {
     pub pw: i32,
     pub ph: i32,
     pub parent_fullscreen: bool,
-    pub cached_scale: f32,
     pub atoms: Atoms,
     pub live: Vec<*mut PlatformSurface>,
     /// Shared GPU compositor. `None` when no Vulkan adapter was found

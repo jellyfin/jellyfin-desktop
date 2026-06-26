@@ -27,11 +27,18 @@ impl Inner {
         });
     }
 
-    pub(super) fn resize(self: &Arc<Self>, w: i32, h: i32, pw: i32, ph: i32) {
-        self.width.store(w, Ordering::Release);
-        self.height.store(h, Ordering::Release);
-        self.physical_w.store(pw, Ordering::Release);
-        self.physical_h.store(ph, Ordering::Release);
+    pub(super) fn resize(self: &Arc<Self>, w: i32, h: i32, pw: i32, ph: i32, scale: f64) {
+        let size = platform_ops::SurfaceSize {
+            logical: jfn_platform_abi::LogicalSize::new(w, h),
+            physical: jfn_platform_abi::PhysicalSize::new(pw, ph),
+            scale: jfn_platform_abi::scale_or_one(scale),
+        };
+        {
+            let mut v = self.view.lock();
+            v.logical = size.logical;
+            v.physical = size.physical;
+            v.scale = size.scale;
+        }
 
         // Wayland viewport must update on every configure (not debounced) or
         // src/dst go stale.
@@ -39,15 +46,7 @@ impl Inner {
         if !surface.is_null()
             && let Some(p) = platform_ops::ops()
         {
-            p.surface_resize(
-                surface,
-                platform_ops::SurfaceSize {
-                    logical_w: w,
-                    logical_h: h,
-                    physical_w: pw,
-                    physical_h: ph,
-                },
-            );
+            p.surface_resize(surface, size);
         }
 
         if !self.browser_alive() {
