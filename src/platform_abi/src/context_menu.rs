@@ -14,9 +14,21 @@ pub type MenuSelectionFn = Box<dyn FnOnce(c_int) + Send>;
 
 pub struct JsMenuChannel {
     pub exec: Box<dyn FnOnce(String)>,
-    /// Holds `on_selected` until the menuItemSelected / menuDismissed IPC
+    /// Stores `on_selected` until the menuItemSelected / menuDismissed IPC
     /// fires it.
     pub park_selection: Box<dyn FnOnce(MenuSelectionFn)>,
+    pub on_selected: MenuSelectionFn,
+}
+
+pub enum Delivery {
+    Native(MenuSelectionFn),
+    Js(JsMenuChannel),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum DeliveryKind {
+    Native,
+    Js,
 }
 
 pub struct JfnContextMenuRequest {
@@ -24,8 +36,7 @@ pub struct JfnContextMenuRequest {
     pub x: c_int,
     pub y: c_int,
     pub items: Vec<JfnMenuItem>,
-    pub on_selected: Option<MenuSelectionFn>,
-    pub js: Option<JsMenuChannel>,
+    pub delivery: Delivery,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -52,6 +63,9 @@ pub trait ContextMenuBackend: Send + Sync {
     fn scripts(&self) -> &'static [ContextMenuScript] {
         &[]
     }
+    fn delivery_kind(&self) -> DeliveryKind {
+        DeliveryKind::Native
+    }
     fn show(&self, req: JfnContextMenuRequest);
 }
 
@@ -62,11 +76,16 @@ impl ContextMenuBackend for JsMenuContextMenu {
         &[ContextMenuScript::ContextMenu]
     }
 
+    fn delivery_kind(&self) -> DeliveryKind {
+        DeliveryKind::Js
+    }
+
     fn show(&self, req: JfnContextMenuRequest) {
-        let Some(js) = req.js else { return };
-        if let Some(cb) = req.on_selected {
-            (js.park_selection)(cb);
-        }
+        let Delivery::Js(js) = req.delivery else {
+            debug_assert!(false, "JsMenuContextMenu requires Delivery::Js");
+            return;
+        };
+        (js.park_selection)(js.on_selected);
         (js.exec)(format!(
             "window._showContextMenu({},{},{})",
             items_json(&req.items),

@@ -1,6 +1,6 @@
 use jfn_platform_abi::{
-    ContextMenuBackend, ContextMenuStyle, DisplayBackend, JfnContextMenuRequest, JsMenuContextMenu,
-    context_menu_style,
+    ContextMenuBackend, ContextMenuStyle, Delivery, DisplayBackend, JfnContextMenuRequest,
+    JsMenuContextMenu, context_menu_style,
 };
 
 pub(crate) fn backend() -> &'static dyn ContextMenuBackend {
@@ -14,6 +14,10 @@ struct MenuWindowContextMenu;
 
 impl ContextMenuBackend for MenuWindowContextMenu {
     fn show(&self, req: JfnContextMenuRequest) {
+        let Delivery::Native(on_selected) = req.delivery else {
+            debug_assert!(false, "MenuWindowContextMenu requires Delivery::Native");
+            return;
+        };
         let items = req
             .items
             .into_iter()
@@ -28,7 +32,7 @@ impl ContextMenuBackend for MenuWindowContextMenu {
             x: req.x,
             y: req.y,
             items,
-            on_selected: req.on_selected,
+            on_selected: Some(on_selected),
         });
     }
 }

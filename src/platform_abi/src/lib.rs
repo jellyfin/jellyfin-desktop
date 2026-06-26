@@ -31,8 +31,9 @@ pub mod window_source;
 
 pub use cef_host::CefHost;
 pub use context_menu::{
-    ContextMenuBackend, ContextMenuScript, ContextMenuStyle, JfnContextMenuRequest, JfnMenuItem,
-    JsMenuChannel, JsMenuContextMenu, MenuSelectionFn, context_menu_style,
+    ContextMenuBackend, ContextMenuScript, ContextMenuStyle, Delivery, DeliveryKind,
+    JfnContextMenuRequest, JfnMenuItem, JsMenuChannel, JsMenuContextMenu, MenuSelectionFn,
+    context_menu_style,
 };
 pub use dropdown::{
     DropdownBackend, DropdownScript, DropdownStyle, JfnPopupRequest, JsMenuDropdown, dropdown_style,

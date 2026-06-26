@@ -1,6 +1,6 @@
 use jfn_platform_abi::{
-    ContextMenuBackend, ContextMenuStyle, DisplayBackend, JfnContextMenuRequest, JsMenuContextMenu,
-    context_menu_style,
+    ContextMenuBackend, ContextMenuStyle, Delivery, DisplayBackend, JfnContextMenuRequest,
+    JsMenuContextMenu, context_menu_style,
 };
 
 pub(crate) fn backend() -> &'static dyn ContextMenuBackend {
@@ -14,6 +14,10 @@ struct XdgPopupContextMenu;
 
 impl ContextMenuBackend for XdgPopupContextMenu {
     fn show(&self, req: JfnContextMenuRequest) {
+        let Delivery::Native(cb) = req.delivery else {
+            debug_assert!(false, "XdgPopupContextMenu requires Delivery::Native");
+            return;
+        };
         let items = req
             .items
             .into_iter()
@@ -24,7 +28,6 @@ impl ContextMenuBackend for XdgPopupContextMenu {
                 separator: i.separator,
             })
             .collect();
-        let cb = req.on_selected.unwrap_or_else(|| Box::new(|_| {}));
         crate::popup::show(items, req.x, req.y, cb);
     }
 }
