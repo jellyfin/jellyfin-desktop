@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use crate::app::userfree_to_string;
 use crate::client::Inner;
-use crate::platform_ops::{JfnContextMenuRequest, JfnMenuItem, JsMenuChannel};
+use crate::platform_ops::{
+    Delivery, DeliveryKind, JfnContextMenuRequest, JfnMenuItem, JsMenuChannel,
+};
 
 const STRIP_ACCEL_KEEP: u8 = b'&';
 
@@ -108,12 +110,10 @@ wrap_context_menu_handler! {
 
             let frame = browser.main_frame();
             let park_inner = Arc::clone(&self.inner);
-            self.inner.context_menu.show(JfnContextMenuRequest {
-                x: params.xcoord(),
-                y: params.ycoord(),
-                items,
-                on_selected: Some(self.inner.menu_selection_callback(session)),
-                js: Some(JsMenuChannel {
+            let on_selected = self.inner.menu_selection_callback(session);
+            let delivery = match self.inner.context_menu.delivery_kind() {
+                DeliveryKind::Native => Delivery::Native(on_selected),
+                DeliveryKind::Js => Delivery::Js(JsMenuChannel {
                     exec: Box::new(move |js| {
                         if let Some(frame) = frame {
                             let code = CefString::from(js.as_str());
@@ -121,7 +121,14 @@ wrap_context_menu_handler! {
                         }
                     }),
                     park_selection: Box::new(move |cb| park_inner.park_menu_selection(cb)),
+                    on_selected,
                 }),
+            };
+            self.inner.context_menu.show(JfnContextMenuRequest {
+                x: params.xcoord(),
+                y: params.ycoord(),
+                items,
+                delivery,
             });
             1
         }

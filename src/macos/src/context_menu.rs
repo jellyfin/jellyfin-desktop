@@ -1,6 +1,6 @@
 use jfn_platform_abi::{
-    ContextMenuBackend, ContextMenuStyle, DisplayBackend, JfnContextMenuRequest, JsMenuContextMenu,
-    context_menu_style,
+    ContextMenuBackend, ContextMenuStyle, Delivery, DisplayBackend, JfnContextMenuRequest,
+    JsMenuContextMenu, context_menu_style,
 };
 
 use crate::ns_menu::{MenuEntry, MenuSpec, present_on_main};
@@ -16,6 +16,10 @@ struct NsMenuContextMenu;
 
 impl ContextMenuBackend for NsMenuContextMenu {
     fn show(&self, req: JfnContextMenuRequest) {
+        let Delivery::Native(on_selected) = req.delivery else {
+            debug_assert!(false, "NsMenuContextMenu requires Delivery::Native");
+            return;
+        };
         if req.items.is_empty() {
             return;
         }
@@ -37,6 +41,6 @@ impl ContextMenuBackend for NsMenuContextMenu {
             positioning_tag: None,
             min_width: None,
         };
-        present_on_main(spec, req.on_selected);
+        present_on_main(spec, Some(on_selected));
     }
 }
