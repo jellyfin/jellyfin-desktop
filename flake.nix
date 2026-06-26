@@ -7,6 +7,8 @@
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     import-tree.url = "github:denful/import-tree";
+
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
