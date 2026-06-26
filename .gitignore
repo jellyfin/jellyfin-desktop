@@ -13,6 +13,7 @@ third_party/*
 
 # Local environment
 .env
+.direnv/
 
 # Project-scoped MCP
 .mcp.json
