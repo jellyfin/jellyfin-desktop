@@ -108,6 +108,44 @@ fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::e
     }
 }
 
+/// Resolve the bundled mpv scripts directory relative to the running executable.
+/// On Windows the layout is flat: the binary and mpv/scripts/ are siblings.
+#[cfg(target_os = "windows")]
+fn bundled_scripts_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let scripts = exe.parent()?.join("mpv").join("scripts");
+    if scripts.exists() {
+        Some(scripts)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn load_bundled_scripts(handle: &Handle) -> crate::error::Result<()> {
+    let Some(dir) = bundled_scripts_dir() else {
+        return Ok(());
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(());
+    };
+    let mut paths: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension()?.to_str()? == "lua").then(|| p.to_str().map(String::from))?
+        })
+        .collect();
+    paths.sort();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    // Windows path lists use ';' (avoiding conflict with drive-letter colons).
+    let joined = paths.join(";");
+    tracing::info!(target: "mpv", "loading bundled scripts: {joined}");
+    set_option_or_skip(handle, "script", &joined)
+}
+
 fn apply_defaults(
     handle: &Handle,
     display: DisplayBackend,
@@ -159,6 +197,9 @@ fn apply_defaults(
     // while the main thread is blocked in init.
     set("force-window", "yes")?;
     set("idle", "yes")?;
+
+    #[cfg(target_os = "windows")]
+    load_bundled_scripts(handle)?;
 
     Ok(())
 }
