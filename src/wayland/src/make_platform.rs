@@ -110,7 +110,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn post_window_cleanup(&self) {
-        crate::wlproxy_host::stop_wlproxy();
+        crate::mpv_host::stop_proxy();
         #[cfg(feature = "kde-palette")]
         jfn_wl_kde_palette_post_window_cleanup();
     }
@@ -197,7 +197,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn mpv_host(&self) -> &dyn jfn_platform_abi::MpvHost {
-        &crate::wlproxy_host::WlproxyMpvHost
+        &crate::mpv_host::WaylandMpvHost
     }
 
     fn media_session(&self) -> &dyn jfn_platform_abi::MediaSink {
@@ -262,7 +262,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn apply_boot_geometry(&self, g: &BootGeometry) {
-        jfn_wlproxy::jfn_wlproxy_set_initial_size(g.logical.w, g.logical.h);
+        crate::mpv_proxy::set_initial_size(g.logical.w, g.logical.h);
         crate::root_window::set_boot_geometry(g.logical.w, g.logical.h, g.maximized);
     }
 

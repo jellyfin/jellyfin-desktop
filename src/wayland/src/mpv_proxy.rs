@@ -8,12 +8,6 @@
 //! but the caller overrides that env to OUR socket so mpv connects to us. We
 //! must capture the original `WAYLAND_DISPLAY` here at `start` (before any
 //! override) and pass it explicitly via `with_server_display_name`.
-//!
-//! The whole crate is gated to Linux: `wl-proxy` is a Wayland-only dependency,
-//! and nothing references this crate off-Linux (jfn_rust pulls it in only under
-//! its `cfg(target_os = "linux")` deps, and `jfn-wayland` is Linux-only). Off
-//! Linux this is an empty rlib, which keeps `cargo --workspace` uniform.
-#![cfg(target_os = "linux")]
 
 use std::cell::RefCell;
 use std::ffi::CString;
@@ -76,12 +70,12 @@ static APP_CLIENT_FD: AtomicI32 = AtomicI32::new(-1);
 static INITIAL_W: AtomicI32 = AtomicI32::new(1280);
 static INITIAL_H: AtomicI32 = AtomicI32::new(720);
 
-pub extern "C" fn jfn_wlproxy_app_client_fd() -> c_int {
+pub fn app_client_fd() -> c_int {
     APP_CLIENT_FD.load(Ordering::Acquire)
 }
 
 /// Must be called before mpv connects: root construction reads this once.
-pub fn jfn_wlproxy_set_initial_size(w: c_int, h: c_int) {
+pub fn set_initial_size(w: c_int, h: c_int) {
     if w > 0 && h > 0 {
         INITIAL_W.store(w, Ordering::Release);
         INITIAL_H.store(h, Ordering::Release);
@@ -95,7 +89,7 @@ fn initial_size() -> (c_int, c_int) {
     )
 }
 
-pub fn jfn_wlproxy_set_window_size(w: c_int, h: c_int) {
+pub fn set_window_size(w: c_int, h: c_int) {
     if w > 0 && h > 0 {
         CUR_W.store(w, Ordering::Release);
         CUR_H.store(h, Ordering::Release);
@@ -164,11 +158,11 @@ fn with_shell<R>(f: impl FnOnce(&mut Shell) -> R) -> R {
 /// but is unrecoverable in place, so surface it through our infra and continue.
 fn log_send(op: &str, res: Result<(), wl_proxy::object::ObjectError>) {
     if let Err(e) = res {
-        tracing::warn!(target: "Wlproxy", "{op}: {}", Report::new(&e));
+        tracing::warn!(target: "MpvProxy", "{op}: {}", Report::new(&e));
     }
 }
 
-pub fn jfn_wlproxy_start() -> *mut Proxy {
+pub fn start() -> *mut Proxy {
     // Capture upstream BEFORE the caller overrides WAYLAND_DISPLAY, so S_app
     // connects to the real compositor rather than our own socket.
     let upstream = std::env::var("WAYLAND_DISPLAY").ok();
@@ -176,19 +170,19 @@ pub fn jfn_wlproxy_start() -> *mut Proxy {
     let (sp_a, sp_b) = match socketpair_cloexec() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("wlproxy: socketpair: {e}");
+            eprintln!("proxy: socketpair: {e}");
             return std::ptr::null_mut();
         }
     };
 
     let (tx_app, rx_app) = mpsc::sync_channel::<Result<OwnedFd, String>>(1);
     let app_thread = match thread::Builder::new()
-        .name("wlproxy-app".into())
+        .name("proxy-app".into())
         .spawn(move || run_app_state(tx_app, upstream, sp_b))
     {
         Ok(h) => h,
         Err(e) => {
-            eprintln!("wlproxy: app thread spawn failed: {e}");
+            eprintln!("proxy: app thread spawn failed: {e}");
             return std::ptr::null_mut();
         }
     };
@@ -197,34 +191,34 @@ pub fn jfn_wlproxy_start() -> *mut Proxy {
             APP_CLIENT_FD.store(app_fd.into_raw_fd(), Ordering::Release);
         }
         Ok(Err(msg)) => {
-            eprintln!("wlproxy: {msg}");
+            eprintln!("proxy: {msg}");
             return std::ptr::null_mut();
         }
         Err(_) => {
-            eprintln!("wlproxy: app thread exited before publishing client fd");
+            eprintln!("proxy: app thread exited before publishing client fd");
             return std::ptr::null_mut();
         }
     }
 
     let (tx_mpv, rx_mpv) = mpsc::sync_channel::<Result<CString, String>>(1);
     let mpv_thread = match thread::Builder::new()
-        .name("wlproxy-mpv".into())
+        .name("proxy-mpv".into())
         .spawn(move || run_mpv_state(tx_mpv, sp_a))
     {
         Ok(h) => h,
         Err(e) => {
-            eprintln!("wlproxy: mpv thread spawn failed: {e}");
+            eprintln!("proxy: mpv thread spawn failed: {e}");
             return std::ptr::null_mut();
         }
     };
     let display_name = match rx_mpv.recv() {
         Ok(Ok(n)) => n,
         Ok(Err(msg)) => {
-            eprintln!("wlproxy: {msg}");
+            eprintln!("proxy: {msg}");
             return std::ptr::null_mut();
         }
         Err(_) => {
-            eprintln!("wlproxy: mpv thread exited before sending display name");
+            eprintln!("proxy: mpv thread exited before sending display name");
             return std::ptr::null_mut();
         }
     };
@@ -253,12 +247,12 @@ fn socketpair_cloexec() -> std::io::Result<(OwnedFd, OwnedFd)> {
 }
 
 /// Returns the WAYLAND_DISPLAY value clients should connect to (e.g. "wayland-1").
-/// Returns null if `p` is null. Pointer is valid until `jfn_wlproxy_stop`.
+/// Returns null if `p` is null. Pointer is valid until `stop`.
 ///
 /// # Safety
-/// `p` must be null or a pointer previously returned by `jfn_wlproxy_start`
-/// that has not yet been passed to `jfn_wlproxy_stop`.
-pub unsafe fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
+/// `p` must be null or a pointer previously returned by `start`
+/// that has not yet been passed to `stop`.
+pub unsafe fn display_name(p: *const Proxy) -> *const c_char {
     if p.is_null() {
         return std::ptr::null();
     }
@@ -269,9 +263,9 @@ pub unsafe fn jfn_wlproxy_display_name(p: *const Proxy) -> *const c_char {
 /// process exit. Safe to call with null.
 ///
 /// # Safety
-/// `p` must be null or a pointer previously returned by `jfn_wlproxy_start`.
+/// `p` must be null or a pointer previously returned by `start`.
 /// Each non-null pointer may only be passed here once.
-pub unsafe fn jfn_wlproxy_stop(p: *mut Proxy) {
+pub unsafe fn stop(p: *mut Proxy) {
     if p.is_null() {
         return;
     }
@@ -313,7 +307,7 @@ fn run_app_state(
     let client_m = match state.add_client(&Rc::new(mpv_bridge)) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("wlproxy: S_app add mpv bridge: {}", Report::new(e));
+            eprintln!("proxy: S_app add mpv bridge: {}", Report::new(e));
             return;
         }
     };
@@ -327,7 +321,7 @@ fn run_app_state(
         match state.dispatch(Some(Duration::from_millis(16))) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("wlproxy: S_app dispatch: {}", Report::new(e));
+                eprintln!("proxy: S_app dispatch: {}", Report::new(e));
                 return;
             }
         }
@@ -373,7 +367,7 @@ fn run_mpv_state(tx: mpsc::SyncSender<Result<CString, String>>, bridge: OwnedFd)
     let mut seen_gen = 0;
     while state.is_not_destroyed() {
         if let Err(e) = state.dispatch(Some(Duration::from_millis(16))) {
-            eprintln!("wlproxy: S_mpv dispatch: {}", Report::new(e));
+            eprintln!("proxy: S_mpv dispatch: {}", Report::new(e));
             return;
         }
         apply_window_size_mpv(&mut seen_gen);
@@ -649,7 +643,7 @@ struct AppXdgSurfaceH {
 }
 impl XdgSurfaceHandler for AppXdgSurfaceH {
     fn handle_get_toplevel(&mut self, slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
-        tracing::info!(target: "Wlproxy", "get_toplevel: capturing app root surface");
+        tracing::info!(target: "MpvProxy", "get_toplevel: capturing app root surface");
         with_shell(|sh| {
             sh.host_root_surface = Some(self.surface.clone());
             sh.host_root_xdg_surface = Some(slf.clone());
@@ -670,7 +664,7 @@ impl XdgWmBaseHandler for MpvWmBaseH {
             MPV_VIDEO_SURFACE_ID.store(sid, Ordering::Release);
         }
         tracing::info!(
-            target: "Wlproxy",
+            target: "MpvProxy",
             "get_xdg_surface: demoting mpv surface server_id={:?}",
             surface.server_id()
         );
@@ -717,12 +711,12 @@ fn ensure_root() {
     let registry = display.create_child::<WlRegistry>();
     registry.set_handler(ProxyRegistryH);
     if let Err(e) = display.try_send_get_registry(&registry) {
-        tracing::error!(target: "Wlproxy", "ensure_root get_registry: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "ensure_root get_registry: {}", Report::new(&e));
     }
     let sync = display.create_child::<WlCallback>();
     sync.set_handler(RoundtripCb);
     if let Err(e) = display.try_send_sync(&sync) {
-        tracing::error!(target: "Wlproxy", "ensure_root sync: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "ensure_root sync: {}", Report::new(&e));
     }
 }
 
@@ -770,45 +764,45 @@ fn splice_mpv_under_host_root(mpv_surface: Rc<WlSurface>) {
     // Gating call: without the subsurface role nothing below applies, so on
     // failure bail without marking spliced — maybe_build_root retries next tick.
     if let Err(e) = subcompositor.try_send_get_subsurface(&sub, &mpv_surface, &host_root) {
-        tracing::error!(target: "Wlproxy", "splice get_subsurface: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "splice get_subsurface: {}", Report::new(&e));
         return;
     }
     if let Err(e) = sub.try_send_set_desync() {
-        tracing::error!(target: "Wlproxy", "splice set_desync: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "splice set_desync: {}", Report::new(&e));
     }
     if let Err(e) = sub.try_send_set_position(0, 0) {
-        tracing::error!(target: "Wlproxy", "splice set_position: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "splice set_position: {}", Report::new(&e));
     }
     // Pin mpv to the bottom of the root's subsurface stack (place_above the
     // parent = lowest sibling position). The CEF overlay is a sibling subsurface
     // on a different client, so creation order can't keep it above the video.
     if let Err(e) = sub.try_send_place_above(&host_root) {
-        tracing::error!(target: "Wlproxy", "splice place_above: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "splice place_above: {}", Report::new(&e));
     }
 
     let region = compositor.create_child::<WlRegion>();
     if let Err(e) = compositor.try_send_create_region(&region) {
-        tracing::error!(target: "Wlproxy", "splice create_region: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "splice create_region: {}", Report::new(&e));
     }
     if let Err(e) = mpv_surface.try_send_set_input_region(Some(&region)) {
-        tracing::error!(target: "Wlproxy", "splice set_input_region: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "splice set_input_region: {}", Report::new(&e));
     }
     if let Err(e) = region.try_send_destroy() {
-        tracing::error!(target: "Wlproxy", "splice region destroy: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "splice region destroy: {}", Report::new(&e));
     }
 
     // Adding the subsurface only takes effect on the parent's next commit; force
     // one now so a late splice (after the app already mapped) still becomes
     // visible.
     if let Err(e) = host_root.try_send_commit() {
-        tracing::error!(target: "Wlproxy", "splice root commit: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "splice root commit: {}", Report::new(&e));
     }
 
     with_shell(|sh| {
         sh.mpv_subsurface = Some(sub);
         sh.spliced = true;
     });
-    tracing::info!(target: "Wlproxy", "spliced mpv under host-root surface");
+    tracing::info!(target: "MpvProxy", "spliced mpv under host-root surface");
 }
 
 struct ProxyRegistryH;
@@ -860,7 +854,7 @@ impl WlCallbackHandler for RoundtripCb {
         });
         if !ok {
             eprintln!(
-                "wlproxy: missing globals for splice (need compositor, subcompositor, xdg_wm_base)"
+                "proxy: missing globals for splice (need compositor, subcompositor, xdg_wm_base)"
             );
         }
     }
@@ -877,11 +871,11 @@ fn synth_mpv_configure(w: i32, h: i32, states: &[u8]) {
     if let Some(tl) = tl
         && let Err(e) = tl.try_send_configure(w, h, states)
     {
-        tracing::error!(target: "Wlproxy", "synth toplevel configure: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "synth toplevel configure: {}", Report::new(&e));
     }
     if let Some(xs) = xs
         && let Err(e) = xs.try_send_configure(serial)
     {
-        tracing::error!(target: "Wlproxy", "synth xdg_surface configure: {}", Report::new(&e));
+        tracing::error!(target: "MpvProxy", "synth xdg_surface configure: {}", Report::new(&e));
     }
 }

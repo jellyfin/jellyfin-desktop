@@ -36,7 +36,7 @@ fn paint_name(mode: crate::paint_override::WlPaintOverride) -> &'static str {
 pub fn jfn_wl_lifecycle_init() -> bool {
     let display = crate::app_conn::app_display();
     if display.is_null() {
-        tracing::error!("Failed to get app Wayland display (proxy published no client fd)");
+        tracing::error!("Failed to get app Wayland display");
         return false;
     }
 

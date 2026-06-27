@@ -166,13 +166,3 @@ pub fn jfn_wl_window_start_move() {
 pub fn jfn_wl_window_start_resize(edge: i32) {
     crate::root_window::start_resize(edge as u32);
 }
-
-pub fn jfn_wl_on_configure(width: i32, height: i32, fullscreen: i32) {
-    // Fires from wlproxy thread before wl_init may have run — first
-    // xdg_toplevel.configure precedes our mpv_create-time bootstrap.
-    if crate::wl_state::try_state().is_none() {
-        return;
-    }
-    let scale = crate::window_state::jfn_wl_get_cached_scale();
-    wl_ops::on_configure(width, height, fullscreen != 0, scale);
-}

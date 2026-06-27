@@ -26,10 +26,11 @@ jfn-menu = { path = "../menu" }
 jfn-mpris = { path = "../mpris" }
 jfn-mpv = { path = "../mpv" }
 jfn-playback = { path = "../playback" }
-jfn-wlproxy = { path = "../wlproxy" }
 cef.workspace = true
+error_reporter = "1.0.0"
 libc.workspace = true
 libloading = "0.9"
+wl-proxy = { version = "0.1.3", features = ["all-protocols"] }
 memmap2 = "0.9"
 tracing.workspace = true
 smithay-client-toolkit = { version = "0.20", default-features = false }

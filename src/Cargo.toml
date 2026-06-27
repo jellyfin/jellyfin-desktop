@@ -23,7 +23,6 @@ members = [
     "wayland",
     "windows",
     "windows_sink",
-    "wlproxy",
     "x11",
     "xtask",
 ]
