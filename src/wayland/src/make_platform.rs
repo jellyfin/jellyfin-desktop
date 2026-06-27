@@ -262,7 +262,8 @@ impl Platform for WaylandPlatform {
     }
 
     fn apply_boot_geometry(&self, g: &BootGeometry) {
-        crate::mpv_proxy::set_initial_size(g.logical.w, g.logical.h);
+        // Only the host's own window geometry uses the boot size; mpv mirrors the
+        // committed window geometry and never the boot guess.
         crate::root_window::set_boot_geometry(g.logical.w, g.logical.h, g.maximized);
     }
 
