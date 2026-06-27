@@ -6,7 +6,7 @@
 //! trampoline, init EGL, probe dmabuf support, attach the KDE palette
 //! manager, start the input thread, and bring up the clipboard reader.
 
-use std::ffi::{CStr, c_void};
+use std::ffi::c_void;
 
 use jfn_linux_util::egl_dyn as egl;
 
@@ -15,7 +15,6 @@ use jfn_linux_util::egl_dyn as egl;
 // =====================================================================
 
 use jfn_linux_util::dmabuf_probe::jfn_wl_dmabuf_probe;
-use jfn_mpv::api::jfn_mpv_get_property_int;
 
 // =====================================================================
 // Helpers
@@ -30,56 +29,16 @@ fn paint_name(mode: crate::paint_override::WlPaintOverride) -> &'static str {
     }
 }
 
-fn mpv_prop_intptr(name: &CStr) -> Option<usize> {
-    let mut v: i64 = 0;
-    let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut v) };
-    if rc == 0 && v != 0 {
-        Some(v as usize)
-    } else {
-        None
-    }
-}
-
-fn vo_captured_display() -> Option<*mut c_void> {
-    let idx = jfn_wlproxy::jfn_wlproxy_vo_connection_index();
-    let count = jfn_linux_util::wl_display_registry::connect_count();
-    tracing::info!(target: "WlInterpose", "vo_captured_display: vo_index={idx} captured_count={count}");
-    if idx < 0 {
-        return None;
-    }
-    let d = jfn_linux_util::wl_display_registry::captured_display(idx as usize);
-    (!d.is_null()).then_some(d)
-}
-
 // =====================================================================
 // init / cleanup
 // =====================================================================
 
 pub fn jfn_wl_lifecycle_init() -> bool {
-    let captured = vo_captured_display();
-    let prop = mpv_prop_intptr(c"wayland-display").map(|p| p as *mut c_void);
-    tracing::info!(
-        target: "WlInterpose",
-        "vo display: captured={:?} wayland-display={:?} match={}",
-        captured,
-        prop,
-        captured.is_some() && captured == prop
-    );
-
-    let display = match (captured, prop) {
-        (Some(d), _) => d,
-        (None, Some(d)) => {
-            tracing::warn!(
-                target: "WlInterpose",
-                "interposer capture unavailable; falling back to wayland-display property"
-            );
-            d
-        }
-        (None, None) => {
-            tracing::error!("Failed to get Wayland display (no capture, no property)");
-            return false;
-        }
-    };
+    let display = crate::app_conn::app_display();
+    if display.is_null() {
+        tracing::error!("Failed to get app Wayland display (proxy published no client fd)");
+        return false;
+    }
 
     // Seed Rust state with mpv's current fullscreen — first configure
     // after this point won't start a spurious transition.
@@ -185,6 +144,10 @@ pub fn jfn_wl_lifecycle_cleanup() {
     // surface.
     jfn_linux_util::idle_inhibit::cleanup();
     crate::clipboard::clipboard_cleanup();
+    // Stop the app-owned toplevel thread before mpv's VO-teardown roundtrip;
+    // otherwise it holds a wl_display read barrier and the roundtrip hangs when
+    // no video ever played (a quiet display never wakes its poll).
+    crate::root_window::cleanup();
     crate::input_lifecycle::lifecycle_cleanup();
     // Rust-side WlState lives until process exit (mirrors C++ globals).
 }

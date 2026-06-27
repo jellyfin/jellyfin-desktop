@@ -31,8 +31,8 @@ pub use jfn_platform_abi::{
 #[cfg(feature = "kde-palette")]
 use crate::kde_palette::{jfn_wl_kde_palette_post_window_cleanup, jfn_wl_kde_palette_set_color};
 use crate::lifecycle::{jfn_wl_lifecycle_cleanup, jfn_wl_lifecycle_init};
-use crate::proxy::jfn_wl_get_cached_scale;
 use crate::scale_probe::jfn_wayland_scale_probe;
+use crate::window_state::jfn_wl_get_cached_scale;
 
 // =====================================================================
 // Helpers
@@ -263,7 +263,7 @@ impl Platform for WaylandPlatform {
 
     fn apply_boot_geometry(&self, g: &BootGeometry) {
         jfn_wlproxy::jfn_wlproxy_set_initial_size(g.logical.w, g.logical.h);
-        jfn_wlproxy::jfn_wlproxy_set_initial_maximized(g.maximized);
+        crate::root_window::set_boot_geometry(g.logical.w, g.logical.h, g.maximized);
     }
 
     fn set_cursor(&self, shape: CursorShape) {
@@ -279,7 +279,7 @@ impl Platform for WaylandPlatform {
         let g = ((rgb >> 8) & 0xFF) as u8;
         let b = (rgb & 0xFF) as u8;
 
-        jfn_wlproxy::jfn_wlproxy_set_background_color(r, g, b);
+        crate::root_window::set_background_color(r, g, b);
 
         #[cfg(feature = "kde-palette")]
         {

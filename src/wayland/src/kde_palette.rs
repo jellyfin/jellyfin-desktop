@@ -101,7 +101,7 @@ pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_ch
         let _ = fs::remove_file(old_path);
     }
 
-    unsafe { jfn_wlproxy::jfn_wlproxy_set_titlebar_palette(new_path_c.as_ptr()) };
+    crate::root_window::set_titlebar_palette(&new_path);
     state.current_path = Some(new_path_c);
 }
 

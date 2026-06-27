@@ -13,8 +13,6 @@ use jfn_platform_abi::{DisplayBackend, Platform};
 /// bail out of the browser-process flow but may still query the
 /// platform. No-op on Linux ([`install_from_cli`] runs there instead).
 pub fn install_early() {
-    #[cfg(target_os = "linux")]
-    crate::wl_interpose::ensure_linked();
     #[cfg(target_os = "windows")]
     {
         let p = jfn_windows::make_windows_platform();

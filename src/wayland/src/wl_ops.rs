@@ -829,6 +829,12 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
             }
         }
     }
+
+    crate::wl_state::ensure_overlay_root_locked(&mut st);
+    if let Some(vp) = st.overlay_vp.as_ref() {
+        vp.set_destination(lw, lh);
+        st.parent.commit();
+    }
     st.flush();
 }
 
@@ -877,7 +883,7 @@ fn update_surface_size_locked(st: &WlState, lw: i32, lh: i32, pw: i32, ph: i32) 
     }
 }
 
-pub(crate) fn set_fullscreen_via(fullscreen: bool, set_wlproxy: unsafe extern "C" fn(i32)) {
+pub(crate) fn set_fullscreen_via(fullscreen: bool, apply: impl FnOnce(bool)) {
     {
         let mut st = lock();
         if st.was_fullscreen == fullscreen {
@@ -891,15 +897,15 @@ pub(crate) fn set_fullscreen_via(fullscreen: bool, set_wlproxy: unsafe extern "C
         begin_transition_locked(&mut st);
         st.flush();
     }
-    unsafe { set_wlproxy(if fullscreen { 1 } else { 0 }) };
+    apply(fullscreen);
 }
 
-pub(crate) fn toggle_fullscreen_via(set_wlproxy: unsafe extern "C" fn(i32)) {
+pub(crate) fn toggle_fullscreen_via(apply: impl FnOnce(bool)) {
     let target = {
         let mut st = lock();
         begin_transition_locked(&mut st);
         st.flush();
-        if st.was_fullscreen { 0 } else { 1 }
+        !st.was_fullscreen
     };
-    unsafe { set_wlproxy(target) };
+    apply(target);
 }

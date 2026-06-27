@@ -12,7 +12,6 @@ pub mod idle_inhibit;
 pub mod input;
 mod keysym;
 pub mod open_url;
-pub mod wl_display_registry;
 pub mod xkb;
 
 use jfn_platform_abi::{CefPaths, WindowDecorations};

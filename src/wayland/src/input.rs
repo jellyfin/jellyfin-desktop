@@ -83,6 +83,12 @@ fn cef_to_wl_shape(shape: CursorShape) -> u32 {
     s as u32
 }
 
+static LAST_BUTTON_SERIAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn last_button_serial() -> u32 {
+    LAST_BUTTON_SERIAL.load(std::sync::atomic::Ordering::Acquire)
+}
+
 pub type MouseMoveFn = fn(x: i32, y: i32, mods: u32, leave: c_int);
 pub type MouseButtonFn = fn(button: u32, pressed: c_int, x: i32, y: i32, mods: u32);
 pub type ScrollFn = fn(x: i32, y: i32, dx: i32, dy: i32, mods: u32);
@@ -314,9 +320,15 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 }
             }
             Event::Button {
-                button, state: bs, ..
+                button,
+                state: bs,
+                serial,
+                ..
             } => {
                 let pressed = matches!(bs, WEnum::Value(wl_pointer::ButtonState::Pressed));
+                if pressed {
+                    LAST_BUTTON_SERIAL.store(serial, std::sync::atomic::Ordering::Release);
+                }
                 let flag = Self::mouse_button_flag(button);
                 if crate::popup::active() {
                     if pressed {
@@ -723,8 +735,6 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     let qh = queue.handle();
 
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=8, ()).ok()?;
-    // Register before the bind is flushed so the proxy claims this seat (see wlproxy).
-    jfn_wlproxy::jfn_wlproxy_set_input_seat(seat.id().protocol_id());
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
 
     let cursor_type = Arc::new(AtomicU32::new(CursorShape::Pointer.as_raw() as u32));
