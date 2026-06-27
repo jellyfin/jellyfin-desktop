@@ -160,6 +160,14 @@ fn with_shell<R>(f: impl FnOnce(&mut Shell) -> R) -> R {
     SHELL.with(|s| f(&mut s.borrow_mut()))
 }
 
+/// Forwarding sends can't unwind a handler; a failure desyncs a single message
+/// but is unrecoverable in place, so surface it through our infra and continue.
+fn log_send(op: &str, res: Result<(), wl_proxy::object::ObjectError>) {
+    if let Err(e) = res {
+        tracing::warn!(target: "Wlproxy", "{op}: {}", Report::new(&e));
+    }
+}
+
 pub fn jfn_wlproxy_start() -> *mut Proxy {
     // Capture upstream BEFORE the caller overrides WAYLAND_DISPLAY, so S_app
     // connects to the real compositor rather than our own socket.
@@ -401,7 +409,10 @@ impl wl_proxy::state::StateHandler for MpvShimStateH {
 struct ForwardDisplayH;
 impl WlDisplayHandler for ForwardDisplayH {
     fn handle_get_registry(&mut self, slf: &Rc<WlDisplay>, registry: &Rc<WlRegistry>) {
-        slf.send_get_registry(registry);
+        log_send(
+            "wl_display.get_registry",
+            slf.try_send_get_registry(registry),
+        );
     }
 }
 
@@ -419,7 +430,10 @@ impl WlDisplayHandler for AppDisplayH {
             }
         });
         registry.set_handler(AppRegistryH);
-        slf.send_get_registry(registry);
+        log_send(
+            "wl_display.get_registry",
+            slf.try_send_get_registry(registry),
+        );
     }
 }
 
@@ -442,7 +456,7 @@ impl WlRegistryHandler for AppRegistryH {
             }
             _ => {}
         }
-        slf.send_bind(name, id);
+        log_send("wl_registry.bind", slf.try_send_bind(name, id));
     }
 }
 
@@ -455,7 +469,10 @@ impl WlDisplayHandler for MpvDisplayH {
             }
         });
         registry.set_handler(MpvRegistryH);
-        slf.send_get_registry(registry);
+        log_send(
+            "wl_display.get_registry",
+            slf.try_send_get_registry(registry),
+        );
     }
 }
 
@@ -478,7 +495,7 @@ impl WlRegistryHandler for MpvRegistryH {
             }
             _ => {}
         }
-        slf.send_bind(name, id);
+        log_send("wl_registry.bind", slf.try_send_bind(name, id));
     }
 }
 
@@ -491,7 +508,10 @@ impl WpViewporterHandler for ClientViewporterH {
         surface: &Rc<WlSurface>,
     ) {
         id.set_handler(ClientViewportH);
-        slf.send_get_viewport(id, surface);
+        log_send(
+            "wp_viewporter.get_viewport",
+            slf.try_send_get_viewport(id, surface),
+        );
     }
 }
 
@@ -507,7 +527,10 @@ impl WpViewportHandler for ClientViewportH {
         if !unset && (width <= 0 || height <= 0) {
             return;
         }
-        slf.send_set_destination(width, height);
+        log_send(
+            "wp_viewport.set_destination",
+            slf.try_send_set_destination(width, height),
+        );
     }
 }
 
@@ -520,14 +543,20 @@ impl WpFractionalScaleManagerV1Handler for FracScaleMgrH {
         surface: &Rc<WlSurface>,
     ) {
         id.set_handler(FracScaleH);
-        slf.send_get_fractional_scale(id, surface);
+        log_send(
+            "wp_fractional_scale_manager_v1.get_fractional_scale",
+            slf.try_send_get_fractional_scale(id, surface),
+        );
     }
 }
 
 struct FracScaleH;
 impl WpFractionalScaleV1Handler for FracScaleH {
     fn handle_preferred_scale(&mut self, slf: &Rc<WpFractionalScaleV1>, scale: u32) {
-        slf.send_preferred_scale(scale);
+        log_send(
+            "wp_fractional_scale_v1.preferred_scale",
+            slf.try_send_preferred_scale(scale),
+        );
     }
 }
 
@@ -535,14 +564,14 @@ struct ForwardSeatH;
 impl WlSeatHandler for ForwardSeatH {
     fn handle_get_pointer(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlPointer>) {
         id.set_handler(PointerH);
-        slf.send_get_pointer(id);
+        log_send("wl_seat.get_pointer", slf.try_send_get_pointer(id));
     }
     fn handle_get_keyboard(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlKeyboard>) {
         id.set_handler(KeyboardH);
-        slf.send_get_keyboard(id);
+        log_send("wl_seat.get_keyboard", slf.try_send_get_keyboard(id));
     }
     fn handle_get_touch(&mut self, slf: &Rc<WlSeat>, id: &Rc<WlTouch>) {
-        slf.send_get_touch(id);
+        log_send("wl_seat.get_touch", slf.try_send_get_touch(id));
     }
 }
 
@@ -556,7 +585,10 @@ impl WlKeyboardHandler for KeyboardH {
         key: u32,
         state: WlKeyboardKeyState,
     ) {
-        slf.send_key(serial, time, key, state);
+        log_send(
+            "wl_keyboard.key",
+            slf.try_send_key(serial, time, key, state),
+        );
     }
 }
 
@@ -587,7 +619,10 @@ impl WlPointerHandler for PointerH {
         button: u32,
         state: WlPointerButtonState,
     ) {
-        slf.send_button(serial, time, button, state);
+        log_send(
+            "wl_pointer.button",
+            slf.try_send_button(serial, time, button, state),
+        );
     }
 }
 
@@ -602,7 +637,10 @@ impl XdgWmBaseHandler for AppWmBaseH {
         id.set_handler(AppXdgSurfaceH {
             surface: surface.clone(),
         });
-        slf.send_get_xdg_surface(id, surface);
+        log_send(
+            "xdg_wm_base.get_xdg_surface",
+            slf.try_send_get_xdg_surface(id, surface),
+        );
     }
 }
 
@@ -616,7 +654,7 @@ impl XdgSurfaceHandler for AppXdgSurfaceH {
             sh.host_root_surface = Some(self.surface.clone());
             sh.host_root_xdg_surface = Some(slf.clone());
         });
-        slf.send_get_toplevel(id);
+        log_send("xdg_surface.get_toplevel", slf.try_send_get_toplevel(id));
     }
 }
 
@@ -678,10 +716,14 @@ fn ensure_root() {
     with_shell(|sh| sh.roundtrip_started = true);
     let registry = display.create_child::<WlRegistry>();
     registry.set_handler(ProxyRegistryH);
-    display.send_get_registry(&registry);
+    if let Err(e) = display.try_send_get_registry(&registry) {
+        tracing::error!(target: "Wlproxy", "ensure_root get_registry: {}", Report::new(&e));
+    }
     let sync = display.create_child::<WlCallback>();
     sync.set_handler(RoundtripCb);
-    display.send_sync(&sync);
+    if let Err(e) = display.try_send_sync(&sync) {
+        tracing::error!(target: "Wlproxy", "ensure_root sync: {}", Report::new(&e));
+    }
 }
 
 fn maybe_build_root() {
@@ -725,23 +767,42 @@ fn splice_mpv_under_host_root(mpv_surface: Rc<WlSurface>) {
     };
 
     let sub = subcompositor.create_child::<WlSubsurface>();
-    subcompositor.send_get_subsurface(&sub, &mpv_surface, &host_root);
-    sub.send_set_desync();
-    sub.send_set_position(0, 0);
+    // Gating call: without the subsurface role nothing below applies, so on
+    // failure bail without marking spliced — maybe_build_root retries next tick.
+    if let Err(e) = subcompositor.try_send_get_subsurface(&sub, &mpv_surface, &host_root) {
+        tracing::error!(target: "Wlproxy", "splice get_subsurface: {}", Report::new(&e));
+        return;
+    }
+    if let Err(e) = sub.try_send_set_desync() {
+        tracing::error!(target: "Wlproxy", "splice set_desync: {}", Report::new(&e));
+    }
+    if let Err(e) = sub.try_send_set_position(0, 0) {
+        tracing::error!(target: "Wlproxy", "splice set_position: {}", Report::new(&e));
+    }
     // Pin mpv to the bottom of the root's subsurface stack (place_above the
     // parent = lowest sibling position). The CEF overlay is a sibling subsurface
     // on a different client, so creation order can't keep it above the video.
-    sub.send_place_above(&host_root);
+    if let Err(e) = sub.try_send_place_above(&host_root) {
+        tracing::error!(target: "Wlproxy", "splice place_above: {}", Report::new(&e));
+    }
 
     let region = compositor.create_child::<WlRegion>();
-    compositor.send_create_region(&region);
-    mpv_surface.send_set_input_region(Some(&region));
-    region.send_destroy();
+    if let Err(e) = compositor.try_send_create_region(&region) {
+        tracing::error!(target: "Wlproxy", "splice create_region: {}", Report::new(&e));
+    }
+    if let Err(e) = mpv_surface.try_send_set_input_region(Some(&region)) {
+        tracing::error!(target: "Wlproxy", "splice set_input_region: {}", Report::new(&e));
+    }
+    if let Err(e) = region.try_send_destroy() {
+        tracing::error!(target: "Wlproxy", "splice region destroy: {}", Report::new(&e));
+    }
 
     // Adding the subsurface only takes effect on the parent's next commit; force
     // one now so a late splice (after the app already mapped) still becomes
     // visible.
-    host_root.send_commit();
+    if let Err(e) = host_root.try_send_commit() {
+        tracing::error!(target: "Wlproxy", "splice root commit: {}", Report::new(&e));
+    }
 
     with_shell(|sh| {
         sh.mpv_subsurface = Some(sub);
@@ -763,18 +824,18 @@ impl WlRegistryHandler for ProxyRegistryH {
         match interface {
             WlCompositor::INTERFACE => {
                 let o = state.create_object::<WlCompositor>(version.min(6));
-                slf.send_bind(name, o.clone());
+                log_send("wl_registry.bind", slf.try_send_bind(name, o.clone()));
                 with_shell(|sh| sh.compositor = Some(o));
             }
             WlSubcompositor::INTERFACE => {
                 let o = state.create_object::<WlSubcompositor>(version.min(1));
-                slf.send_bind(name, o.clone());
+                log_send("wl_registry.bind", slf.try_send_bind(name, o.clone()));
                 with_shell(|sh| sh.subcompositor = Some(o));
             }
             XdgWmBase::INTERFACE => {
                 let o = state.create_object::<XdgWmBase>(version.min(6));
                 o.set_handler(ProxyWmBaseH);
-                slf.send_bind(name, o.clone());
+                log_send("wl_registry.bind", slf.try_send_bind(name, o.clone()));
                 with_shell(|sh| sh.wm_base = Some(o));
             }
             _ => {}
@@ -786,7 +847,7 @@ struct ProxyWmBaseH;
 impl XdgWmBaseHandler for ProxyWmBaseH {
     fn handle_ping(&mut self, slf: &Rc<XdgWmBase>, serial: u32) {
         // The compositor pings our own wm_base; mpv can't pong it, so we must.
-        slf.send_pong(serial);
+        log_send("xdg_wm_base.pong", slf.try_send_pong(serial));
     }
 }
 
@@ -813,10 +874,14 @@ fn synth_mpv_configure(w: i32, h: i32, states: &[u8]) {
             sh.next_serial(),
         )
     });
-    if let Some(tl) = tl {
-        tl.send_configure(w, h, states);
+    if let Some(tl) = tl
+        && let Err(e) = tl.try_send_configure(w, h, states)
+    {
+        tracing::error!(target: "Wlproxy", "synth toplevel configure: {}", Report::new(&e));
     }
-    if let Some(xs) = xs {
-        xs.send_configure(serial);
+    if let Some(xs) = xs
+        && let Err(e) = xs.try_send_configure(serial)
+    {
+        tracing::error!(target: "Wlproxy", "synth xdg_surface configure: {}", Report::new(&e));
     }
 }
