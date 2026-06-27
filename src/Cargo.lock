@@ -5288,8 +5288,9 @@ dependencies = [
 
 [[package]]
 name = "wl-proxy"
-version = "0.1.2"
-source = "git+https://github.com/mahkoh/wl-proxy#e6ab7a47ba79d9fcf114a3ce834f04a1693a4483"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea90de6bb66013e2259780f86379a0fe78888001c12ad85da1ee612a803100e9"
 dependencies = [
  "debug-fn",
  "error_reporter",

@@ -15,7 +15,7 @@ parking_lot.workspace = true
 # the whole crate is `#![cfg(target_os = "linux")]`, so it's an empty rlib
 # elsewhere and the workspace builds uniformly on every platform.
 [target.'cfg(target_os = "linux")'.dependencies]
-wl-proxy = { git = "https://github.com/mahkoh/wl-proxy", features = ["all-protocols"] }
+wl-proxy = { version = "0.1.3", features = ["all-protocols"] }
 error_reporter = "1.0.0"
 libc.workspace = true
 
