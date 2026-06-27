@@ -10,7 +10,7 @@ crate-type = ["rlib"]
 
 [features]
 default = ["kde-palette"]
-kde-palette = []
+kde-palette = ["dep:wayland-protocols-plasma"]
 
 [dependencies]
 parking_lot.workspace = true
@@ -36,6 +36,7 @@ smithay-client-toolkit = { version = "0.20", default-features = false }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-protocols-plasma = { version = "0.3", features = ["client"], optional = true }
 wayland-scanner = "0.31"
 xkbcommon = "0.9"
 

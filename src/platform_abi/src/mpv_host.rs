@@ -21,6 +21,14 @@ pub trait MpvHost: Send + Sync {
         true
     }
 
+    /// `None` when mpv — not the host — owns the maximized state; the boot gate
+    /// then reads mpv's `window-maximized` property instead.
+    fn window_maximized(&self) -> Option<bool> {
+        None
+    }
+
+    fn ensure_host_window(&self) {}
+
     /// Own the VO wait loop. `pump(may_block)` drains queued mpv events
     /// (and, when `may_block`, may additionally wait for the next one);
     /// it returns `false` once waiting is over. Platforms that must keep

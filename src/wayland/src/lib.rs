@@ -2,6 +2,7 @@
 
 #![cfg(target_os = "linux")]
 
+pub(crate) mod app_conn;
 pub mod clipboard;
 pub(crate) mod context_menu;
 pub(crate) mod dropdown;
@@ -14,11 +15,12 @@ pub mod lifecycle;
 pub mod make_platform;
 pub mod paint_override;
 pub(crate) mod popup;
-pub mod proxy;
+pub(crate) mod root_window;
 pub mod scale_probe;
 pub(crate) mod scene;
 pub(crate) mod shm_paint_worker;
 pub(crate) mod window_source;
+pub mod window_state;
 pub mod wl_ffi;
 pub mod wl_ops;
 pub mod wl_state;

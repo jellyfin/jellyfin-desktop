@@ -289,11 +289,11 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
                     return false;
                 }
                 jfn_mpv::api::WaitEvent::Event(event) => {
-                    consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
+                    consume_vo_event(&event, &mut mw, &mut mh);
                 }
             }
         }
-        if vo_ready(&mut mw, &mut mh, &need_max) {
+        if vo_ready(&mut mw, &mut mh, &mut need_max) {
             return false;
         }
         if may_block {
@@ -307,7 +307,7 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
                     return false;
                 }
                 jfn_mpv::api::WaitEvent::Event(event) => {
-                    consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
+                    consume_vo_event(&event, &mut mw, &mut mh);
                 }
             }
         }
@@ -652,6 +652,8 @@ pub fn jfn_app_main() -> c_int {
     // the WM close button needs it back.
     install_mpv_close_binding(raw);
 
+    plat().mpv_host().ensure_host_window();
+
     let Some((mw, mh)) = wait_for_vo_window() else {
         return 0;
     };
@@ -723,8 +725,6 @@ fn mpv_log_level_from_filter() -> &'static str {
     }
 }
 
-const JFN_OBSERVE_WINDOW_MAX: u64 = 11;
-
 fn boot_window_size() -> Option<(i32, i32)> {
     crate::window_geometry::controller()
         .source()
@@ -732,7 +732,7 @@ fn boot_window_size() -> Option<(i32, i32)> {
         .map(|s| (s.w, s.h))
 }
 
-fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max: &mut bool) {
+fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32) {
     let scale_raw = plat().get_scale();
     let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
     jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event_owned(
@@ -740,22 +740,23 @@ fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max
         scale,
         plat().mpv_host().logical_content_size(),
     );
-    if let jfn_mpv::Event::PropertyChange { id, .. } = event
-        && *id == JFN_OBSERVE_WINDOW_MAX
-        && jfn_playback::ingest_driver::jfn_playback_window_maximized()
-    {
-        *need_max = false;
-    }
     if let Some((w, h)) = boot_window_size() {
         *mw = w;
         *mh = h;
     }
 }
 
-fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool) -> bool {
+fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &mut bool) -> bool {
     if let Some((w, h)) = boot_window_size() {
         *mw = w;
         *mh = h;
+    }
+    let reported_max = plat()
+        .mpv_host()
+        .window_maximized()
+        .unwrap_or_else(jfn_playback::ingest_driver::jfn_playback_window_maximized);
+    if reported_max {
+        *need_max = false;
     }
     *mw > 0 && !*need_max && plat().mpv_host().host_ready()
 }

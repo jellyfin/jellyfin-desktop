@@ -11,8 +11,6 @@ use std::sync::OnceLock;
 use jfn_platform_abi::{MpvHost, WindowDecorations};
 use jfn_wlproxy::{jfn_wlproxy_display_name, jfn_wlproxy_start, jfn_wlproxy_stop};
 
-use crate::proxy::jfn_wl_register_proxy_callbacks;
-
 static WLPROXY: OnceLock<WlproxySlot> = OnceLock::new();
 
 struct WlproxySlot(*mut jfn_wlproxy::Proxy);
@@ -27,19 +25,18 @@ impl MpvHost for WlproxyMpvHost {
     }
 
     fn host_ready(&self) -> bool {
-        crate::proxy::jfn_wl_scale_known()
+        crate::window_state::jfn_wl_scale_known()
     }
 
-    fn detach(&self) {
-        // Sever the wlproxy→host callbacks before CEF teardown. A CEF
-        // paint thread can be terminated by `jfn_cef_shutdown` while
-        // holding the WlState lock, orphaning it; if the proxy's
-        // mpv-connection thread then runs `on_configure` it parks on that
-        // lock forever and can no longer forward mpv's VO-teardown
-        // roundtrip, deadlocking the whole shutdown when video was
-        // playing.
-        jfn_wlproxy::jfn_wlproxy_clear_callbacks();
+    fn window_maximized(&self) -> Option<bool> {
+        Some(crate::window_state::jfn_wl_window_maximized())
     }
+
+    fn ensure_host_window(&self) {
+        crate::root_window::ensure_started();
+    }
+
+    fn detach(&self) {}
 }
 
 unsafe fn start_wlproxy(decorations: WindowDecorations) {
@@ -68,12 +65,8 @@ unsafe fn start_wlproxy(decorations: WindowDecorations) {
         WindowDecorations::Server => 2,
         WindowDecorations::ServerThemed => 3,
     };
-    jfn_wlproxy::jfn_wlproxy_set_decoration_mode(deco_mode);
+    crate::root_window::set_decorations(deco_mode as u32);
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &disp) };
-    // Register the configure intercept BEFORE mpv_create so the first
-    // compositor configure (which arrives shortly after mpv_initialize) is
-    // captured.
-    jfn_wl_register_proxy_callbacks();
     let _ = WLPROXY.set(WlproxySlot(p));
 }
 
