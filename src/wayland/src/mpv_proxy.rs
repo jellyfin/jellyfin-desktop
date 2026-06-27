@@ -22,7 +22,7 @@ use std::time::Duration;
 use error_reporter::Report;
 use wl_proxy::baseline::Baseline;
 use wl_proxy::client::{Client, ClientHandler};
-use wl_proxy::object::{ConcreteObject, Object, ObjectCoreApi, ObjectRcUtils};
+use wl_proxy::object::{ConcreteObject, Object, ObjectCoreApi, ObjectError, ObjectRcUtils};
 use wl_proxy::protocols::ObjectInterface;
 use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::{
     WpFractionalScaleManagerV1, WpFractionalScaleManagerV1Handler,
@@ -44,7 +44,7 @@ use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
 use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatHandler};
 use wl_proxy::protocols::wayland::wl_subcompositor::WlSubcompositor;
 use wl_proxy::protocols::wayland::wl_subsurface::WlSubsurface;
-use wl_proxy::protocols::wayland::wl_surface::WlSurface;
+use wl_proxy::protocols::wayland::wl_surface::{WlSurface, WlSurfaceHandler};
 use wl_proxy::protocols::wayland::wl_touch::WlTouch;
 use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
 use wl_proxy::protocols::xdg_shell::xdg_toplevel::{XdgToplevel, XdgToplevelHandler};
@@ -67,26 +67,23 @@ static MPV_VIDEO_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
 
 static APP_CLIENT_FD: AtomicI32 = AtomicI32::new(-1);
 
-static INITIAL_W: AtomicI32 = AtomicI32::new(1280);
-static INITIAL_H: AtomicI32 = AtomicI32::new(720);
-
 pub fn app_client_fd() -> c_int {
     APP_CLIENT_FD.load(Ordering::Acquire)
 }
 
-/// Must be called before mpv connects: root construction reads this once.
-pub fn set_initial_size(w: c_int, h: c_int) {
-    if w > 0 && h > 0 {
-        INITIAL_W.store(w, Ordering::Release);
-        INITIAL_H.store(h, Ordering::Release);
-    }
+#[derive(Clone, Copy)]
+struct WindowSize {
+    w: c_int,
+    h: c_int,
 }
 
-fn initial_size() -> (c_int, c_int) {
-    (
-        INITIAL_W.load(Ordering::Acquire),
-        INITIAL_H.load(Ordering::Acquire),
-    )
+/// The one authoritative window size, published by the host's configure via
+/// [`set_window_size`]. `None` until the host toplevel has been configured —
+/// there is no boot/default to fall back to, so mpv can only ever mirror the
+/// real window geometry.
+fn window_size() -> Option<WindowSize> {
+    let (w, h) = (CUR_W.load(Ordering::Acquire), CUR_H.load(Ordering::Acquire));
+    (w > 0 && h > 0).then_some(WindowSize { w, h })
 }
 
 pub fn set_window_size(w: c_int, h: c_int) {
@@ -113,12 +110,58 @@ struct Shell {
     host_root_xdg_surface: Option<Rc<XdgSurface>>,
     spliced: bool,
     mpv_client: Option<Rc<Client>>,
-    mpv_xdg_surface: Option<Rc<XdgSurface>>,
-    mpv_toplevel: Option<Rc<XdgToplevel>>,
-    mpv_subsurface: Option<Rc<WlSubsurface>>,
-    cur_w: i32,
-    cur_h: i32,
+    configurator: Option<MpvConfigurator>,
+    mpv_subsurface: Option<SyncSubsurface>,
     serial: u32,
+}
+
+/// mpv's xdg objects, present only once mpv has created its toplevel. Holding
+/// both together makes "emit a configure without a toplevel" unrepresentable:
+/// a configure can only be sent through an `MpvConfigurator`, which exists only
+/// after `get_toplevel`.
+#[derive(Clone)]
+struct MpvConfigurator {
+    toplevel: Rc<XdgToplevel>,
+    xdg_surface: Rc<XdgSurface>,
+}
+
+impl MpvConfigurator {
+    fn configure(&self, size: WindowSize, serial: u32, states: &[u8]) {
+        if let Err(e) = self.toplevel.try_send_configure(size.w, size.h, states) {
+            tracing::error!(target: "MpvProxy", "synth toplevel configure: {}", Report::new(&e));
+        }
+        if let Err(e) = self.xdg_surface.try_send_configure(serial) {
+            tracing::error!(target: "MpvProxy", "synth xdg_surface configure: {}", Report::new(&e));
+        }
+    }
+}
+
+/// A subsurface kept permanently in Wayland synchronized mode: its buffer,
+/// viewport and position apply atomically on the parent surface's commit. The
+/// raw object never escapes and no `set_desync` is exposed, so a desynchronized
+/// video layer — one that could present a size the window does not have — is
+/// unrepresentable.
+struct SyncSubsurface(Rc<WlSubsurface>);
+
+impl SyncSubsurface {
+    fn create(
+        subcompositor: &Rc<WlSubcompositor>,
+        surface: &Rc<WlSurface>,
+        parent: &Rc<WlSurface>,
+    ) -> Result<Self, ObjectError> {
+        let sub = subcompositor.create_child::<WlSubsurface>();
+        // Born synchronized (the protocol default); never desynced.
+        subcompositor.try_send_get_subsurface(&sub, surface, parent)?;
+        Ok(Self(sub))
+    }
+
+    fn set_position(&self, x: i32, y: i32) -> Result<(), ObjectError> {
+        self.0.try_send_set_position(x, y)
+    }
+
+    fn place_above(&self, sibling: &Rc<WlSurface>) -> Result<(), ObjectError> {
+        self.0.try_send_place_above(sibling)
+    }
 }
 
 impl Shell {
@@ -135,11 +178,8 @@ impl Shell {
             host_root_xdg_surface: None,
             spliced: false,
             mpv_client: None,
-            mpv_xdg_surface: None,
-            mpv_toplevel: None,
+            configurator: None,
             mpv_subsurface: None,
-            cur_w: 0,
-            cur_h: 0,
             serial: 0,
         }
     }
@@ -379,17 +419,31 @@ fn apply_window_size_mpv(seen_gen: &mut u32) {
     if cur_gen == *seen_gen {
         return;
     }
-    if with_shell(|sh| sh.mpv_toplevel.is_none()) {
+    let Some(size) = window_size() else {
         return;
+    };
+    // Advance the marker only once a configure is actually emitted; before mpv's
+    // toplevel exists this defers (retried each tick), it never guesses.
+    if emit_mpv_configure(size) {
+        *seen_gen = cur_gen;
     }
-    *seen_gen = cur_gen;
-    let (w, h) = (CUR_W.load(Ordering::Acquire), CUR_H.load(Ordering::Acquire));
-    let (w, h) = (w.max(1), h.max(1));
-    with_shell(|sh| {
-        sh.cur_w = w;
-        sh.cur_h = h;
+}
+
+/// Emit a configure to mpv iff its toplevel exists, returning whether one was
+/// sent. A configure can only be built from an `MpvConfigurator`, so a
+/// toplevel-less emit is unrepresentable rather than guarded.
+fn emit_mpv_configure(size: WindowSize) -> bool {
+    let emit = with_shell(|sh| {
+        let cfg = sh.configurator.clone()?;
+        Some((cfg, sh.next_serial()))
     });
-    synth_mpv_configure(w, h, &[]);
+    match emit {
+        Some((cfg, serial)) => {
+            cfg.configure(size, serial, &[]);
+            true
+        }
+        None => false,
+    }
 }
 
 struct MpvShimStateH;
@@ -672,27 +726,26 @@ impl XdgWmBaseHandler for MpvWmBaseH {
         // subsurface role; never forward get_xdg_surface.
         id.set_forward_to_server(false);
         id.set_handler(MpvSurfaceH);
-        with_shell(|sh| sh.mpv_xdg_surface = Some(id.clone()));
     }
 }
 
 struct MpvSurfaceH;
 impl XdgSurfaceHandler for MpvSurfaceH {
-    fn handle_get_toplevel(&mut self, _slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
+    fn handle_get_toplevel(&mut self, slf: &Rc<XdgSurface>, id: &Rc<XdgToplevel>) {
         id.set_forward_to_server(false);
         id.set_handler(MpvToplevelH);
         with_shell(|sh| {
-            sh.mpv_toplevel = Some(id.clone());
-            if sh.cur_w == 0 || sh.cur_h == 0 {
-                let (w, h) = initial_size();
-                sh.cur_w = w;
-                sh.cur_h = h;
-            }
+            sh.configurator = Some(MpvConfigurator {
+                toplevel: id.clone(),
+                xdg_surface: slf.clone(),
+            });
         });
-        // Hand mpv an immediate initial configure so its geometry is non-zero
-        // before it sizes its viewports. The app's size feed refreshes this.
-        let (w, h) = with_shell(|sh| (sh.cur_w, sh.cur_h));
-        synth_mpv_configure(w, h, &[]);
+        // Configure now if the window size is already known (mpv connected after
+        // the host was configured — the common case); otherwise the size feed
+        // emits once the host publishes. mpv only ever receives real geometry.
+        if let Some(size) = window_size() {
+            emit_mpv_configure(size);
+        }
     }
 }
 
@@ -760,25 +813,34 @@ fn splice_mpv_under_host_root(mpv_surface: Rc<WlSurface>) {
         return;
     };
 
-    let sub = subcompositor.create_child::<WlSubsurface>();
     // Gating call: without the subsurface role nothing below applies, so on
     // failure bail without marking spliced — maybe_build_root retries next tick.
-    if let Err(e) = subcompositor.try_send_get_subsurface(&sub, &mpv_surface, &host_root) {
-        tracing::error!(target: "MpvProxy", "splice get_subsurface: {}", Report::new(&e));
-        return;
-    }
-    if let Err(e) = sub.try_send_set_desync() {
-        tracing::error!(target: "MpvProxy", "splice set_desync: {}", Report::new(&e));
-    }
-    if let Err(e) = sub.try_send_set_position(0, 0) {
+    // The subsurface is born synchronized and is never desynced, so mpv's buffer
+    // applies atomically with the host root's geometry.
+    let sub = match SyncSubsurface::create(&subcompositor, &mpv_surface, &host_root) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(target: "MpvProxy", "splice get_subsurface: {}", Report::new(&e));
+            return;
+        }
+    };
+    if let Err(e) = sub.set_position(0, 0) {
         tracing::error!(target: "MpvProxy", "splice set_position: {}", Report::new(&e));
     }
     // Pin mpv to the bottom of the root's subsurface stack (place_above the
     // parent = lowest sibling position). The CEF overlay is a sibling subsurface
     // on a different client, so creation order can't keep it above the video.
-    if let Err(e) = sub.try_send_place_above(&host_root) {
+    if let Err(e) = sub.place_above(&host_root) {
         tracing::error!(target: "MpvProxy", "splice place_above: {}", Report::new(&e));
     }
+
+    // mpv's synchronized subsurface only displays when the parent commits. Drive
+    // that commit from mpv's own commits so every video frame applies in one
+    // transaction with the host root's current geometry. The handler holds
+    // host_root by value, so a root-less present cannot be expressed.
+    mpv_surface.set_handler(ChildPresentH {
+        host_root: host_root.clone(),
+    });
 
     let region = compositor.create_child::<WlRegion>();
     if let Err(e) = compositor.try_send_create_region(&region) {
@@ -860,22 +922,16 @@ impl WlCallbackHandler for RoundtripCb {
     }
 }
 
-fn synth_mpv_configure(w: i32, h: i32, states: &[u8]) {
-    let (tl, xs, serial) = with_shell(|sh| {
-        (
-            sh.mpv_toplevel.clone(),
-            sh.mpv_xdg_surface.clone(),
-            sh.next_serial(),
-        )
-    });
-    if let Some(tl) = tl
-        && let Err(e) = tl.try_send_configure(w, h, states)
-    {
-        tracing::error!(target: "MpvProxy", "synth toplevel configure: {}", Report::new(&e));
-    }
-    if let Some(xs) = xs
-        && let Err(e) = xs.try_send_configure(serial)
-    {
-        tracing::error!(target: "MpvProxy", "synth xdg_surface configure: {}", Report::new(&e));
+/// Installed on mpv's video surface: mpv's commit caches its (synchronized)
+/// buffer, then the host root commit applies it atomically with the window
+/// geometry. Holding `host_root` by value makes a root-less present
+/// unrepresentable.
+struct ChildPresentH {
+    host_root: Rc<WlSurface>,
+}
+impl WlSurfaceHandler for ChildPresentH {
+    fn handle_commit(&mut self, slf: &Rc<WlSurface>) {
+        log_send("wl_surface.commit", slf.try_send_commit());
+        log_send("host_root.commit", self.host_root.try_send_commit());
     }
 }
