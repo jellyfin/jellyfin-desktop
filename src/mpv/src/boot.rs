@@ -143,7 +143,7 @@ fn load_bundled_scripts(handle: &Handle) -> crate::error::Result<()> {
     // Windows path lists use ';' (avoiding conflict with drive-letter colons).
     let joined = paths.join(";");
     tracing::info!(target: "mpv", "loading bundled scripts: {joined}");
-    set_option_or_skip(handle, "script", &joined)
+    set_option_or_skip(handle, "scripts", &joined)
 }
 
 fn apply_defaults(
