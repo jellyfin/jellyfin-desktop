@@ -416,8 +416,8 @@ fn shutdown_runtime(manager_thread: std::thread::JoinHandle<()>) {
     // Join before any teardown so no posted task outlives the layer free below.
     let _ = manager_thread.join();
 
-    // Sever host↔mpv links (e.g. wlproxy→host callbacks) that could
-    // deadlock the teardown below once CEF threads start dying.
+    // Sever host↔mpv links that could deadlock the teardown below once
+    // CEF threads start dying.
     plat().mpv_host().detach();
 
     jfn_color::theme::jfn_theme_color_shutdown();
@@ -908,5 +908,5 @@ static CEF_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 static COORD_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // Single-instance listener is dropped via its OnceLock at process exit;
-// signal-disposition restore lives in `shutdown_signal`. wlproxy teardown
-// lives in the Wayland backend's `post_window_cleanup`.
+// signal-disposition restore lives in `shutdown_signal`. Wayland host
+// teardown lives in the backend's `post_window_cleanup`.

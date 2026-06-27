@@ -13,9 +13,9 @@ static APP_DISPLAY: OnceLock<usize> = OnceLock::new();
 
 pub(crate) fn app_display() -> *mut c_void {
     *APP_DISPLAY.get_or_init(|| {
-        let fd = jfn_wlproxy::jfn_wlproxy_app_client_fd();
+        let fd = crate::mpv_proxy::app_client_fd();
         if fd < 0 {
-            tracing::error!(target: "Main", "app_display: no client fd published by proxy");
+            tracing::error!(target: "Main", "app_display: no app client fd available");
             return 0;
         }
         let Some(connect) = wl_display_connect_to_fd() else {

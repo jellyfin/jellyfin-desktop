@@ -770,10 +770,6 @@ fn end_transition_locked(st: &mut WlState) {
     }
 }
 
-// =====================================================================
-// mpv-configure callback (called from C++ on_proxy_configure → FFI thunk)
-// =====================================================================
-
 pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_scale: f32) {
     if width <= 0 || height <= 0 {
         return;

@@ -80,9 +80,8 @@ pub fn jfn_wl_window_fullscreen() -> bool {
 
 // Window-state sink, driven by the app's own toplevel configures via
 // `feed_window_state`. Authoritative size source on Wayland. Forwards into
-// `wl_ops::on_configure` (a no-op until `jfn_wl_core_init` has run; see
-// jfn_wl_on_configure) and posts synthetic OSD-dim pixels through the playback
-// coordinator.
+// `wl_ops::on_configure` (skipped until `wl_state` exists) and posts synthetic
+// OSD-dim pixels through the playback coordinator.
 fn on_configure(physical_w: c_int, physical_h: c_int, fullscreen: c_int, maximized: c_int) {
     if physical_w <= 0 || physical_h <= 0 {
         return;

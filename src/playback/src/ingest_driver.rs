@@ -200,7 +200,7 @@ pub const BACKEND_WAYLAND: u8 = 0;
 
 /// Register the property observations whose IDs are dispatched by the
 /// ingest layer. Backend selection skips `osd-dimensions` on Wayland —
-/// the proxy's `xdg_toplevel.configure` intercept feeds those dims via
+/// the window's `xdg_toplevel.configure` feeds those dims via
 /// [`jfn_playback_post_osd_pixels`] instead, and observing it here would
 /// double-post identical values.
 ///

@@ -13,6 +13,8 @@ pub mod input_lifecycle;
 pub mod kde_palette;
 pub mod lifecycle;
 pub mod make_platform;
+pub(crate) mod mpv_host;
+pub(crate) mod mpv_proxy;
 pub mod paint_override;
 pub(crate) mod popup;
 pub(crate) mod root_window;
@@ -24,6 +26,5 @@ pub mod window_state;
 pub mod wl_ffi;
 pub mod wl_ops;
 pub mod wl_state;
-pub(crate) mod wlproxy_host;
 
 pub use paint_override::{WlPaintOverride, paint_override, set_paint_override};

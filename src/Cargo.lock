@@ -2453,7 +2453,6 @@ dependencies = [
  "jfn-wake-event",
  "jfn-wayland",
  "jfn-windows",
- "jfn-wlproxy",
  "jfn-x11",
  "libc",
  "parking_lot",
@@ -2475,6 +2474,7 @@ name = "jfn-wayland"
 version = "3.0.0-dev"
 dependencies = [
  "cef",
+ "error_reporter",
  "jfn-gpu-paint",
  "jfn-input",
  "jfn-linux-util",
@@ -2483,7 +2483,6 @@ dependencies = [
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
- "jfn-wlproxy",
  "libc",
  "libloading 0.9.0",
  "memmap2",
@@ -2495,6 +2494,7 @@ dependencies = [
  "wayland-protocols",
  "wayland-protocols-plasma",
  "wayland-scanner",
+ "wl-proxy",
  "xkbcommon",
 ]
 
@@ -2526,17 +2526,6 @@ dependencies = [
  "windows",
  "windows-core",
  "windows-future",
-]
-
-[[package]]
-name = "jfn-wlproxy"
-version = "3.0.0-dev"
-dependencies = [
- "error_reporter",
- "libc",
- "parking_lot",
- "tracing",
- "wl-proxy",
 ]
 
 [[package]]

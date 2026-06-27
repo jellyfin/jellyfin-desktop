@@ -27,7 +27,7 @@ if ! flatpak info --user org.freedesktop.Sdk//$RUNTIME_VERSION >/dev/null 2>&1 &
     flatpak install --user -y flathub org.freedesktop.Sdk//$RUNTIME_VERSION org.freedesktop.Platform//$RUNTIME_VERSION
 fi
 
-# rust-stable SDK extension provides cargo/rustc for jfn-wlproxy
+# rust-stable SDK extension provides cargo/rustc for the Rust workspace
 if ! flatpak info --user org.freedesktop.Sdk.Extension.rust-stable//$RUNTIME_VERSION >/dev/null 2>&1 && \
    ! flatpak info --system org.freedesktop.Sdk.Extension.rust-stable//$RUNTIME_VERSION >/dev/null 2>&1; then
     echo "Installing Freedesktop Rust SDK extension $RUNTIME_VERSION..."

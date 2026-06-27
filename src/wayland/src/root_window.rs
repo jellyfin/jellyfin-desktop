@@ -57,8 +57,8 @@ const STATE_MAXIMIZED: u32 = 1;
 const STATE_FULLSCREEN: u32 = 2;
 const STATE_SUSPENDED: u32 = 9;
 
-// Wire values matching wlproxy: 1=Csd, 2=Server, 3=ServerThemed. 0 = unset
-// (treated as server-side).
+// Wire values set by `mpv_host::set_decorations`: 1=Csd, 2=Server,
+// 3=ServerThemed. 0 = unset (treated as server-side).
 const DECO_CSD: u32 = 1;
 static DECO_MODE: AtomicU32 = AtomicU32::new(0);
 
@@ -153,7 +153,7 @@ impl RootState {
 
         // mpv's synthesized configure + host-overlay resize use logical size
         // (xdg/viewport coordinate space); mpv applies scale itself.
-        jfn_wlproxy::jfn_wlproxy_set_window_size(w, h);
+        crate::mpv_proxy::set_window_size(w, h);
         // The host (CEF buffers, boot gate, OSD) works in physical pixels.
         let (pw, ph) = self.physical(w, h);
         crate::window_state::feed_window_state(pw, ph, self.fullscreen, self.maximized);
