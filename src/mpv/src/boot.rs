@@ -108,12 +108,45 @@ fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::e
     }
 }
 
-/// Resolve the bundled mpv scripts directory relative to the running executable.
-/// On Windows the layout is flat: the binary and mpv/scripts/ are siblings.
 #[cfg(target_os = "windows")]
 fn bundled_scripts_dir() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let scripts = exe.parent()?.join("mpv").join("scripts");
+    if scripts.exists() {
+        Some(scripts)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn bundled_scripts_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let scripts = exe.parent()?.join("mpv").join("scripts");
+    if scripts.exists() {
+        Some(scripts)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn bundled_scripts_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    // Bundle: .app/Contents/MacOS/ → .app/Contents/Resources/mpv/scripts/
+    if exe_dir.file_name()?.to_str()? == "MacOS" {
+        let scripts = exe_dir
+            .parent()?
+            .join("Resources")
+            .join("mpv")
+            .join("scripts");
+        if scripts.exists() {
+            return Some(scripts);
+        }
+    }
+    // Dev: build/ → build/mpv/scripts/
+    let scripts = exe_dir.join("mpv").join("scripts");
     if scripts.exists() {
         Some(scripts)
     } else {
@@ -142,6 +175,30 @@ fn load_bundled_scripts(handle: &Handle) -> crate::error::Result<()> {
     }
     // Windows path lists use ';' (avoiding conflict with drive-letter colons).
     let joined = paths.join(";");
+    tracing::info!(target: "mpv", "loading bundled scripts: {joined}");
+    set_option_or_skip(handle, "scripts", &joined)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn load_bundled_scripts(handle: &Handle) -> crate::error::Result<()> {
+    let Some(dir) = bundled_scripts_dir() else {
+        return Ok(());
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(());
+    };
+    let mut paths: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension()?.to_str()? == "lua").then(|| p.to_str().map(String::from))?
+        })
+        .collect();
+    paths.sort();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let joined = paths.join(":");
     tracing::info!(target: "mpv", "loading bundled scripts: {joined}");
     set_option_or_skip(handle, "scripts", &joined)
 }
@@ -198,7 +255,7 @@ fn apply_defaults(
     set("force-window", "yes")?;
     set("idle", "yes")?;
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     load_bundled_scripts(handle)?;
 
     Ok(())

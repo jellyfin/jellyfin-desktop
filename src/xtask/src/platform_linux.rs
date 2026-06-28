@@ -1,4 +1,4 @@
-use crate::{BuildArgs, cef, fs as xfs, mpv};
+use crate::{BuildArgs, cef, fs as xfs, mpv, paths};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,14 @@ pub fn stage_cef(out: &Path, cef: &cef::Cef) -> Result<()> {
     Ok(())
 }
 
-pub fn stage_mpv_scripts(_out: &Path) -> Result<()> {
+pub fn stage_mpv_scripts(out: &Path) -> Result<()> {
+    let src = paths::repo_root()
+        .join("resources")
+        .join("mpv")
+        .join("scripts");
+    if src.exists() {
+        xfs::copy_dir_recursive(&src, &out.join("mpv").join("scripts"))?;
+    }
     Ok(())
 }
 
@@ -44,6 +51,14 @@ pub fn install(build_dir: &Path, prefix: &Path, args: &BuildArgs) -> Result<Path
     } else {
         let runtime = mpv::runtime_library_name();
         xfs::copy_file(&build_dir.join(runtime), &prefix.join(runtime))?;
+    }
+
+    let scripts_src = paths::repo_root()
+        .join("resources")
+        .join("mpv")
+        .join("scripts");
+    if scripts_src.exists() {
+        xfs::copy_dir_recursive(&scripts_src, &prefix.join("mpv").join("scripts"))?;
     }
     Ok(prefix.to_path_buf())
 }
