@@ -45,7 +45,14 @@ pub fn stage_cef(out: &Path, cef: &cef::Cef) -> Result<()> {
     Ok(())
 }
 
-pub fn stage_mpv_scripts(_out: &Path) -> Result<()> {
+pub fn stage_mpv_scripts(out: &Path) -> Result<()> {
+    let src = paths::repo_root()
+        .join("resources")
+        .join("mpv")
+        .join("scripts");
+    if src.exists() {
+        xfs::copy_dir_recursive(&src, &out.join("mpv").join("scripts"))?;
+    }
     Ok(())
 }
 
@@ -140,6 +147,15 @@ pub fn install(build_dir: &Path, prefix: &Path, _args: &crate::BuildArgs) -> Res
             .join("MoltenVK_icd.json"),
         &icd_dst,
     )?;
+
+    // Bundled mpv Lua scripts.
+    let scripts_src = paths::repo_root()
+        .join("resources")
+        .join("mpv")
+        .join("scripts");
+    if scripts_src.exists() {
+        xfs::copy_dir_recursive(&scripts_src, &resources_dir.join("mpv").join("scripts"))?;
+    }
 
     // Complete the bundle: dep-walk, install_name rewrites, codesign.
     bundle_macos::complete(&app)?;
