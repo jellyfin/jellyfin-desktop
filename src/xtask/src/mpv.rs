@@ -38,6 +38,7 @@ pub fn build(out: &Path, cplayer: bool) -> Result<Mpv> {
             .arg("--default-library=shared")
             .arg("-Dlibmpv=true")
             .arg(format!("-Dcplayer={cplayer_flag}"))
+            .arg("-Dlua=luajit")
             .status()
             .context("spawn meson setup")?;
         if !status.success() {
