@@ -294,6 +294,7 @@ const SHARED_TEXTURES_ENABLED_KEY: &str = "shared_textures_enabled";
 const WINDOW_DECORATIONS_KEY: &str = "window_decorations";
 const WINDOW_DECORATIONS_SUPPORTED_KEY: &str = "window_decorations_supported";
 const THEME_COLOR_SUPPORTED_KEY: &str = "theme_color_supported";
+const DISPLAY_BACKEND_KEY: &str = "display_backend";
 
 static DEVICE_PROFILE_JSON: OnceLock<String> = OnceLock::new();
 
@@ -306,6 +307,7 @@ pub(crate) struct ExtraInfo {
     window_decorations: Option<WindowDecorations>,
     window_decorations_supported: bool,
     theme_color_supported: bool,
+    display_backend: Option<String>,
 }
 
 impl ExtraInfo {
@@ -320,6 +322,7 @@ impl ExtraInfo {
                 .and_then(WindowDecorations::parse),
             window_decorations_supported: read_bool(&dict, WINDOW_DECORATIONS_SUPPORTED_KEY),
             theme_color_supported: read_bool(&dict, THEME_COLOR_SUPPORTED_KEY),
+            display_backend: read_string(&dict, DISPLAY_BACKEND_KEY),
         }
     }
 
@@ -355,6 +358,12 @@ impl ExtraInfo {
                 Some(&CefString::from(wd.as_str())),
             );
         }
+        if let Some(ref backend) = self.display_backend {
+            dict.set_string(
+                Some(&CefString::from(DISPLAY_BACKEND_KEY)),
+                Some(&CefString::from(backend.as_str())),
+            );
+        }
         Some(dict)
     }
 
@@ -384,6 +393,10 @@ impl ExtraInfo {
 
     pub(crate) fn theme_color_supported(&self) -> bool {
         self.theme_color_supported
+    }
+
+    pub(crate) fn display_backend(&self) -> Option<&str> {
+        self.display_backend.as_deref()
     }
 }
 
@@ -470,7 +483,7 @@ pub unsafe fn jfn_cef_set_device_profile_json(json_utf8: *const c_char, len: usi
     if json_utf8.is_null() || len == 0 {
         return;
     }
-    let slice = unsafe { std::slice::from_raw_parts(json_utf8 as *const u8, len) };
+    let slice = unsafe { std::slice::from_raw_parts(json_utf8.cast::<u8>(), len) };
     let s = match std::str::from_utf8(slice) {
         Ok(s) => s.to_string(),
         Err(_) => return,
@@ -519,6 +532,7 @@ fn build_extra_info(
         window_decorations: None,
         window_decorations_supported: false,
         theme_color_supported: false,
+        display_backend: None,
     }
 }
 
@@ -550,6 +564,15 @@ pub(crate) fn build_for_kind(
             if let Some(p) = jfn_platform_abi::try_get() {
                 extra_info.window_decorations_supported = p.window_decorations_supported();
                 extra_info.theme_color_supported = p.theme_color_supported();
+                extra_info.display_backend = Some(
+                    match p.display() {
+                        jfn_platform_abi::DisplayBackend::Wayland => "wayland",
+                        jfn_platform_abi::DisplayBackend::X11 => "x11",
+                        jfn_platform_abi::DisplayBackend::MacOS => "macos",
+                        jfn_platform_abi::DisplayBackend::Windows => "windows",
+                    }
+                    .to_string(),
+                );
             }
             extra_info.scripts.extend(
                 dropdown

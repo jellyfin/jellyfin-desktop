@@ -65,6 +65,8 @@ use jfn_input::{
 };
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 
+use crate::platform::win_get_scale;
+
 // =====================================================================
 // Shared state. `set_cursor` is invoked from the CEF UI thread; the
 // input thread reads `cursor_type` from WM_SETCURSOR. `input_hwnd_raw`
@@ -262,6 +264,20 @@ fn cef_cursor_to_win(shape: CursorShape) -> PCWSTR {
 }
 
 // =====================================================================
+// DPI helpers — CEF expects logical (CSS) pixels; Win32 delivers physical.
+// =====================================================================
+
+#[inline]
+fn phys_to_logical(px: i32) -> i32 {
+    let s = win_get_scale();
+    if s > 0.0 && s != 1.0 {
+        (px as f32 / s) as i32
+    } else {
+        px
+    }
+}
+
+// =====================================================================
 // Mouse button helpers.
 // =====================================================================
 
@@ -299,8 +315,8 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 
         WM_MOUSEMOVE => {
             jfn_input_dispatch_mouse_move(
-                get_x_lparam(lp),
-                get_y_lparam(lp),
+                phys_to_logical(get_x_lparam(lp)),
+                phys_to_logical(get_y_lparam(lp)),
                 mouse_modifiers(wp),
                 0,
             );
@@ -321,8 +337,8 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             jfn_input_dispatch_mouse_button(
                 msg_to_button_code(msg),
                 if down { 1 } else { 0 },
-                get_x_lparam(lp),
-                get_y_lparam(lp),
+                phys_to_logical(get_x_lparam(lp)),
+                phys_to_logical(get_y_lparam(lp)),
                 mouse_modifiers(wp),
             );
             return LRESULT(0);
@@ -359,7 +375,13 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
             let delta = hiword_i16(wp.0 as u32) as i32;
-            jfn_input_dispatch_scroll(pt.x, pt.y, 0, delta, mouse_modifiers(wp));
+            jfn_input_dispatch_scroll(
+                phys_to_logical(pt.x),
+                phys_to_logical(pt.y),
+                0,
+                delta,
+                mouse_modifiers(wp),
+            );
             return LRESULT(0);
         }
 
@@ -372,7 +394,13 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
             let delta = hiword_i16(wp.0 as u32) as i32;
-            jfn_input_dispatch_scroll(pt.x, pt.y, delta, 0, mouse_modifiers(wp));
+            jfn_input_dispatch_scroll(
+                phys_to_logical(pt.x),
+                phys_to_logical(pt.y),
+                delta,
+                0,
+                mouse_modifiers(wp),
+            );
             return LRESULT(0);
         }
 

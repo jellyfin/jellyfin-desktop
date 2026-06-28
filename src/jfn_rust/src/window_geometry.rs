@@ -13,6 +13,7 @@ use jfn_platform_abi::{
 use jfn_config::JfnWindowGeometry;
 
 const DEFAULT_LOGICAL: LogicalSize = LogicalSize { w: 1600, h: 900 };
+const MIN_LOGICAL: LogicalSize = LogicalSize { w: 320, h: 180 };
 
 fn plat() -> &'static dyn Platform {
     jfn_platform_abi::get()
@@ -69,7 +70,10 @@ impl WindowGeometryController {
     /// Resolve saved config into typed boot geometry, sourcing the display
     /// scale + clamp from the platform.
     pub fn boot(&self) -> BootGeometry {
-        let g = jfn_config::window_geometry();
+        let mut g = jfn_config::window_geometry();
+
+        g.maximized = jfn_config::startup_window_mode() == jfn_config::StartupWindowMode::Maximized;
+
         let scale = Scale(plat().get_display_scale(g.x, g.y));
         resolve_boot(g, scale, |w| plat().clamp_window_geometry(w))
     }
@@ -96,12 +100,12 @@ fn resolve_boot(
     scale: Scale,
     clamp: impl Fn(WindowGeometry) -> WindowGeometry,
 ) -> BootGeometry {
-    let logical = if g.logical_width > 0 && g.logical_height > 0 {
+    let logical = if g.logical_width >= MIN_LOGICAL.w && g.logical_height >= MIN_LOGICAL.h {
         LogicalSize {
             w: g.logical_width,
             h: g.logical_height,
         }
-    } else if g.width > 0 && g.height > 0 {
+    } else if g.width >= MIN_LOGICAL.w && g.height >= MIN_LOGICAL.h {
         LogicalSize {
             w: g.width,
             h: g.height,
@@ -291,6 +295,21 @@ mod tests {
 
     fn identity_clamp(w: WindowGeometry) -> WindowGeometry {
         w
+    }
+
+    #[test]
+    fn tiny_saved_size_falls_back_to_default() {
+        let saved = JfnWindowGeometry {
+            width: 232,
+            height: 5,
+            logical_width: 232,
+            logical_height: 5,
+            scale: 1.0,
+            ..Default::default()
+        };
+        let boot = resolve_boot(saved, Scale(1.0), identity_clamp);
+        assert_eq!(boot.logical, DEFAULT_LOGICAL);
+        assert_eq!(boot.physical, DEFAULT_LOGICAL.to_physical(Scale(1.0)));
     }
 
     #[test]

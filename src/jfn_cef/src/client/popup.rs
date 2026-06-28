@@ -171,6 +171,20 @@ impl Inner {
             return;
         }
 
+        // Drive the invisible OSR popup via synthesized key events so Blink
+        // commits the selection and fires 'change' cleanly. On macOS the popup
+        // may have been dismissed by Blink when the NSMenu took focus, so also
+        // execute JavaScript directly as a reliable fallback.
+        let js = format!(
+            "(function(){{var el=document.activeElement;\
+             if(el&&el.tagName==='SELECT'&&el.selectedIndex!=={idx}){{\
+             el.selectedIndex={idx};\
+             el.dispatchEvent(new Event('input',{{bubbles:true}}));\
+             el.dispatchEvent(new Event('change',{{bubbles:true}}));\
+             }}}})()"
+        );
+        self.exec_js(&js);
+
         // Arrow stepping is in selectable-option space (Blink skips disabled
         // rows), so map both the popup's current highlight and the target into
         // that space and step by the difference.

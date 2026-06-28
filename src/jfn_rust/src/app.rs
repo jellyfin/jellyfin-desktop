@@ -215,7 +215,6 @@ struct MpvInitOptions<'a> {
     backend_byte: u8,
     boot_geometry: &'a str,
     boot_force_position: bool,
-    boot_window_max: bool,
     hwdec: &'a str,
     audio_passthrough: &'a str,
     audio_exclusive: bool,
@@ -247,7 +246,6 @@ fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
         },
         geometry: geometry_c.as_ptr(),
         force_window_position: opts.boot_force_position,
-        window_maximized_at_boot: opts.boot_window_max,
         mpv_log_level: mpv_log_level_c.as_ptr(),
         client_side_decorations: jfn_config::client_side_decorations(),
     };
@@ -255,15 +253,10 @@ fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
 }
 
 fn wait_for_vo_window() -> Option<(i32, i32)> {
-    let want_max = {
-        let g = jfn_config::window_geometry();
-        g.maximized
-    };
     tracing::info!(target: "Main", "Waiting for mpv window...");
 
     let mut mw: i32 = 0;
     let mut mh: i32 = 0;
-    let mut need_max = want_max;
     let mut fatal = false;
 
     // The platform owns the wait strategy; this pump owns all mpv event
@@ -289,11 +282,11 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
                     return false;
                 }
                 jfn_mpv::api::WaitEvent::Event(event) => {
-                    consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
+                    consume_vo_event(&event, &mut mw, &mut mh);
                 }
             }
         }
-        if vo_ready(&mut mw, &mut mh, &need_max) {
+        if vo_ready(&mut mw, &mut mh) {
             return false;
         }
         if may_block {
@@ -307,7 +300,7 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
                     return false;
                 }
                 jfn_mpv::api::WaitEvent::Event(event) => {
-                    consume_vo_event(&event, &mut mw, &mut mh, &mut need_max);
+                    consume_vo_event(&event, &mut mw, &mut mh);
                 }
             }
         }
@@ -483,6 +476,8 @@ fn sync_cef_window_metrics(
     if !locked
         && display_hidpi_scale > 0.0
         && saved.scale > 0.0
+        && saved.logical_width > 0
+        && saved.logical_height > 0
         && (display_hidpi_scale - saved.scale as f64).abs() >= 0.01
     {
         let physical = LogicalSize {
@@ -497,13 +492,15 @@ fn sync_cef_window_metrics(
             y: -1,
         });
         let (new_pw, new_ph) = (clamped.w, clamped.h);
-        let geom_str = format!("{new_pw}x{new_ph}");
-        tracing::info!(target: "Main",
-            "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
-        let g_c = cs(&geom_str);
-        unsafe { jfn_mpv::api::jfn_mpv_set_geometry(g_c.as_ptr()) };
-        mw = new_pw;
-        mh = new_ph;
+        if new_pw > 0 && new_ph > 0 {
+            let geom_str = format!("{new_pw}x{new_ph}");
+            tracing::info!(target: "Main",
+                "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
+            let g_c = cs(&geom_str);
+            unsafe { jfn_mpv::api::jfn_mpv_set_geometry(g_c.as_ptr()) };
+            mw = new_pw;
+            mh = new_ph;
+        }
     }
     jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
 
@@ -618,7 +615,6 @@ pub fn jfn_app_main() -> c_int {
         backend_byte,
         boot_geometry: &boot.mpv_geometry_string(),
         boot_force_position: boot.force_position(),
-        boot_window_max: boot.maximized,
         hwdec: &opts.hwdec,
         audio_passthrough: &opts.audio_passthrough,
         audio_exclusive: opts.audio_exclusive,
@@ -723,7 +719,15 @@ fn mpv_log_level_from_filter() -> &'static str {
     }
 }
 
-const JFN_OBSERVE_WINDOW_MAX: u64 = 11;
+fn apply_startup_mode(mode: jfn_config::StartupWindowMode) {
+    match mode {
+        jfn_config::StartupWindowMode::Fullscreen => plat().set_fullscreen(true),
+        jfn_config::StartupWindowMode::Maximized => {
+            jfn_mpv::api::jfn_mpv_set_window_maximized(true);
+        }
+        jfn_config::StartupWindowMode::Windowed => {}
+    }
+}
 
 fn boot_window_size() -> Option<(i32, i32)> {
     crate::window_geometry::controller()
@@ -732,7 +736,7 @@ fn boot_window_size() -> Option<(i32, i32)> {
         .map(|s| (s.w, s.h))
 }
 
-fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max: &mut bool) {
+fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32) {
     let scale_raw = plat().get_scale();
     let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
     jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event_owned(
@@ -740,24 +744,18 @@ fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32, need_max
         scale,
         plat().mpv_host().logical_content_size(),
     );
-    if let jfn_mpv::Event::PropertyChange { id, .. } = event
-        && *id == JFN_OBSERVE_WINDOW_MAX
-        && jfn_playback::ingest_driver::jfn_playback_window_maximized()
-    {
-        *need_max = false;
-    }
     if let Some((w, h)) = boot_window_size() {
         *mw = w;
         *mh = h;
     }
 }
 
-fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool) -> bool {
+fn vo_ready(mw: &mut i32, mh: &mut i32) -> bool {
     if let Some((w, h)) = boot_window_size() {
         *mw = w;
         *mh = h;
     }
-    *mw > 0 && !*need_max && plat().mpv_host().host_ready()
+    *mw > 0 && plat().mpv_host().host_ready()
 }
 
 static VO_SIZE: OnceLock<(i32, i32)> = OnceLock::new();
@@ -873,6 +871,21 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         use_shared_textures,
     );
 
+    let startup_mode = jfn_config::startup_window_mode();
+
+    // On macOS the fullscreen/maximize transition is deferred to [NSApp run]
+    // inside run_main_loop, so it must be queued before start_playback_coordination.
+    // On Linux/Windows (no external CEF pump) we instead apply it after the page
+    // loads: VM hosts such as Parallels resize the X11 display when mpv goes
+    // fullscreen, and if we apply it early the first osd-dimensions fires at the
+    // pre-resize size. By that time the geometry thread has grown the overlay to
+    // fill the expanded display, so only a fraction of the CEF content is visible.
+    // Deferring to after page load means osd-dimensions fires at the final size,
+    // matching runtime fullscreen toggle behavior exactly.
+    if plat().cef_host().is_some() {
+        apply_startup_mode(startup_mode);
+    }
+
     if !start_playback_coordination() {
         return 1;
     }
@@ -882,6 +895,9 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
     //     blocking main here would starve the pump and never load.
     if plat().cef_host().is_none() {
         unsafe { jfn_cef::client::jfn_cef_layer_wait_for_load(main_layer) };
+        // Linux/Windows: apply startup mode now that the page is loaded and the
+        // display has stabilized. Surfaces exist, so no WndProc resize is lost.
+        apply_startup_mode(startup_mode);
     }
     tracing::info!(target: "Main", "Main browser loaded");
 

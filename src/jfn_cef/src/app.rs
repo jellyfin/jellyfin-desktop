@@ -561,7 +561,10 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
     replace_first(
         &mut code,
         "__SETTINGS_JSON__",
-        &jfn_config::cli_json(jfn_mpv::hwdec_options()),
+        &jfn_config::cli_json(
+            jfn_mpv::hwdec_options(),
+            profile.display_backend().unwrap_or(""),
+        ),
     );
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
     replace_first(
