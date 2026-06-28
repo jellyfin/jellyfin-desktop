@@ -141,9 +141,11 @@ impl RootState {
         }
         .max(1);
 
+        // Geometry + background are cached on the root; the single root commit
+        // that presents them is issued by `present_transaction` below, together
+        // with the overlay/video subtree — never as a standalone commit here.
         self.xdg_surface.set_window_geometry(0, 0, w, h);
         self.fill_background(w, h);
-        self.surface.commit();
         self.cur_w = w;
         self.cur_h = h;
         if !self.mapped {
@@ -154,9 +156,26 @@ impl RootState {
         // mpv's synthesized configure + host-overlay resize use logical size
         // (xdg/viewport coordinate space); mpv applies scale itself.
         crate::mpv_proxy::set_window_size(w, h);
-        // The host (CEF buffers, boot gate, OSD) works in physical pixels.
+        // The host (CEF buffers, boot gate, OSD) works in physical pixels; the
+        // overlay/mpv extent mirrors the logical size. Both are passed exactly —
+        // no consumer re-derives one from the other.
         let (pw, ph) = self.physical(w, h);
-        crate::window_state::feed_window_state(pw, ph, self.fullscreen, self.maximized);
+        crate::window_state::feed_window_state(w, h, pw, ph, self.fullscreen, self.maximized);
+
+        // One owner-issued commit applies geometry + overlay + video atomically.
+        self.present_transaction();
+    }
+
+    // The single root-commit site. Caches the overlay subtree onto the root via
+    // the overlay parent commit, then commits the root so the whole synchronized
+    // tree (geometry, overlay layers, mpv) lands in one compositor transaction.
+    fn present_transaction(&mut self) {
+        if !self.mapped {
+            return;
+        }
+        crate::wl_ops::commit_overlay_parent();
+        self.surface.commit();
+        let _ = self.conn.flush();
     }
 
     fn physical(&self, lw: i32, lh: i32) -> (i32, i32) {
@@ -421,6 +440,21 @@ pub(crate) fn set_background_color(r: u8, g: u8, b: u8) {
 fn pending_bg() -> Option<[u8; 3]> {
     let v = PENDING_BG.load(Ordering::Acquire);
     (v & BG_SET != 0).then_some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
+}
+
+// The root `wl_surface.commit` is issued by exactly one owner — this dispatch
+// thread. Every other producer (CEF paint paths, mpv) that needs to present
+// requests it here, so geometry, overlay and video always land in one
+// uninterruptible root commit; no other thread can commit the root between a
+// geometry change and its children.
+static PENDING_PRESENT: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn request_present() {
+    PENDING_PRESENT.store(true, Ordering::Release);
+    if let Some(t) = ROOT_THREAD.get() {
+        let v: u64 = 1;
+        unsafe { libc::write(t.wake_fd, &v as *const u64 as *const c_void, 8) };
+    }
 }
 
 #[cfg(feature = "kde-palette")]
@@ -703,6 +737,11 @@ fn root_loop(
             if guard.read().is_err() {
                 break;
             }
+            // This thread is the sole reader of the shared display; the read
+            // above distributes events to every queue on it. Pump the CEF
+            // overlay queue so its `wl_buffer.release` events are processed and
+            // retired buffers get destroyed.
+            crate::wl_state::pump_events();
         } else {
             drop(guard);
         }
@@ -728,9 +767,12 @@ fn root_loop(
                 if state.cur_w > 0 && state.cur_h > 0 {
                     let (w, h) = (state.cur_w, state.cur_h);
                     state.fill_background(w, h);
-                    state.surface.commit();
-                    let _ = conn.flush();
+                    // Apply via the single owner commit, not a standalone one.
+                    PENDING_PRESENT.store(true, Ordering::Release);
                 }
+            }
+            if PENDING_PRESENT.swap(false, Ordering::Acquire) {
+                state.present_transaction();
             }
         }
     }
@@ -823,7 +865,15 @@ impl Dispatch<WpFractionalScaleV1, ()> for RootState {
             // re-feed the host with the new physical size for the current logical.
             if state.cur_w > 0 && state.cur_h > 0 {
                 let (pw, ph) = state.physical(state.cur_w, state.cur_h);
-                crate::window_state::feed_window_state(pw, ph, state.fullscreen, state.maximized);
+                crate::window_state::feed_window_state(
+                    state.cur_w,
+                    state.cur_h,
+                    pw,
+                    ph,
+                    state.fullscreen,
+                    state.maximized,
+                );
+                state.present_transaction();
             }
         }
     }

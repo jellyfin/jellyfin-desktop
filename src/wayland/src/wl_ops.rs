@@ -9,7 +9,6 @@ use jfn_gpu_paint::DirtyRect;
 use jfn_platform_abi::JfnRect;
 use std::os::fd::{AsFd, OwnedFd};
 use wayland_client::Proxy;
-use wayland_client::protocol::wl_subsurface::WlSubsurface;
 
 use crate::gpu_paint_worker::WaylandGpuPaintWorker;
 use crate::shm_paint_worker::{ViewportState, WaylandShmPaintWorker};
@@ -50,10 +49,8 @@ pub(crate) fn alloc_surface() -> *mut PlatformSurface {
     let s = unsafe { surface_mut(ptr) };
 
     let surface = st.compositor.create_surface(&st.qh, ());
-    let subsurface = st
-        .subcompositor
-        .get_subsurface(&surface, &st.parent, &st.qh, ());
-    subsurface.set_desync();
+    let subsurface =
+        crate::wl_state::SyncSubsurface::create(&st.subcompositor, &surface, &st.parent, &st.qh);
 
     // No input region on subsurface — keystrokes/clicks go to parent only.
     let empty = st.compositor.create_region(&st.qh, ());
@@ -76,6 +73,8 @@ pub(crate) fn alloc_surface() -> *mut PlatformSurface {
         &mut st,
         crate::scene::SceneEvent::LayerAdded(crate::scene::LayerId(ptr as usize)),
     );
+    drop(st);
+    crate::root_window::request_present();
     ptr
 }
 
@@ -147,21 +146,26 @@ pub(crate) fn restack(ordered: &[*mut PlatformSurface]) {
 // resize / set_visible
 // =====================================================================
 
-pub(crate) fn surface_resize(ptr: *mut PlatformSurface, lw: i32, lh: i32, pw: i32, ph: i32) {
+// CEF's resize notification. CEF's own size opinion is *not* an extent source:
+// the layer mirrors the authoritative window size. We only refresh the layer's
+// destination from it and notify the paint workers.
+pub(crate) fn surface_resize(ptr: *mut PlatformSurface, _lw: i32, _lh: i32, _pw: i32, _ph: i32) {
     if ptr.is_null() {
         return;
     }
     let st = lock();
     let s = unsafe { surface_mut(ptr) };
-    s.lw = lw;
-    s.lh = lh;
-    s.pw = pw;
-    s.ph = ph;
+    let Some(crate::window_state::WindowSize { w: lw, h: lh }) =
+        crate::window_state::window_logical_size()
+    else {
+        return;
+    };
+    let (pw, ph) = crate::window_state::jfn_wl_window_size();
 
-    // Vulkan-WSI path: record desired size/viewport state and notify the
-    // presenter worker. The callback never performs wgpu work.
+    // Vulkan-WSI path: notify the presenter worker. The callback never performs
+    // wgpu work.
     if st.use_gpu_paint {
-        set_viewport_for_buffer_locked(s, s.buffer_w, s.buffer_h);
+        set_viewport_dest_locked(s);
         if let Some(worker) = s.gpu_paint_worker.as_ref() {
             worker.resize((pw.max(1) as u32, ph.max(1) as u32));
         }
@@ -176,24 +180,10 @@ pub(crate) fn surface_resize(ptr: *mut PlatformSurface, lw: i32, lh: i32, pw: i3
     let Some(surface) = s.surface.as_ref() else {
         return;
     };
-    let Some(viewport) = s.viewport.as_ref() else {
-        return;
-    };
-    let is_main = st.stack.first().map(|p| *p == ptr).unwrap_or(false);
-    if st.transitioning && is_main {
-        viewport.set_destination(lw, lh);
-    } else if s.buffer_w > 0 && s.buffer_h > 0 && pw > 0 && ph > 0 {
-        let src_w = s.buffer_w.min(pw);
-        let src_h = s.buffer_h.min(ph);
-        let dst_w = src_w * lw / pw;
-        let dst_h = src_h * lh / ph;
-        viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
-        viewport.set_destination(dst_w, dst_h);
-    } else {
-        viewport.set_destination(lw, lh);
-    }
+    set_viewport_dest_locked(s);
     surface.commit();
     st.flush();
+    crate::root_window::request_present();
 }
 
 pub(crate) fn surface_set_visible(
@@ -241,12 +231,14 @@ pub(crate) fn surface_set_visible(
         // before CEF's first paint lands.
         if let Some(buf) = create_solid_color_buffer(&st, bg_r, bg_g, bg_b) {
             if let Some(old) = s.buffer.take() {
-                old.destroy();
+                crate::wl_state::retire_buffer(old);
             }
             s.placeholder = true;
             if let Some(viewport) = s.viewport.as_ref() {
                 viewport.set_source(0.0, 0.0, 1.0, 1.0);
             }
+            // Stretch the 1×1 placeholder to the authoritative window extent.
+            set_viewport_dest_locked(s);
             surface.attach(Some(&buf), 0, 0);
             surface.damage_buffer(0, 0, 1, 1);
             surface.commit();
@@ -259,11 +251,12 @@ pub(crate) fn surface_set_visible(
         surface.commit();
         st.flush();
         if let Some(b) = s.buffer.take() {
-            b.destroy();
+            crate::wl_state::retire_buffer(b);
         }
         s.placeholder = false;
         s.null_attached = true;
     }
+    crate::root_window::request_present();
 }
 
 // =====================================================================
@@ -310,8 +303,7 @@ fn popup_create_locked(s: &mut PlatformSurface, st: &WlState) {
         return;
     }
     let surf = st.compositor.create_surface(&st.qh, ());
-    let sub: WlSubsurface = st.subcompositor.get_subsurface(&surf, parent, &st.qh, ());
-    sub.set_desync();
+    let sub = crate::wl_state::SyncSubsurface::create(&st.subcompositor, &surf, parent, &st.qh);
     let empty = st.compositor.create_region(&st.qh, ());
     surf.set_input_region(Some(&empty));
     empty.destroy();
@@ -373,7 +365,7 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
     if st.present_mode == PresentMode::Drop {
         return false;
     }
-    if st.transitioning && !size_in_tolerance(s, vw, vh) {
+    if st.transitioning && !size_in_tolerance(vw, vh) {
         unmap_locked(s);
         st.flush();
         return false;
@@ -384,7 +376,7 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
         return false;
     };
 
-    if st.transitioning && !size_in_tolerance(s, vw, vh) {
+    if st.transitioning && !size_in_tolerance(vw, vh) {
         buf.destroy();
         unmap_locked(s);
         st.flush();
@@ -393,18 +385,20 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
 
     let was_transitioning = st.transitioning;
     let was_null_attached = s.null_attached;
-    if !was_transitioning && s.pw > 0 && !size_in_tolerance(s, vw, vh) && !was_null_attached {
+    if !was_transitioning && !size_in_tolerance(vw, vh) && !was_null_attached {
         buf.destroy();
         return false;
     }
 
-    attach_and_commit_locked(s, buf, w, h);
+    attach_and_commit_locked(s, buf, w, h, vw, vh);
     st.flush();
 
     if was_transitioning {
         // First in-tolerance frame ends the FS transition.
         st.transitioning = false;
     }
+    // The layer commit cached its buffer; the owner applies it atomically.
+    crate::root_window::request_present();
     true
 }
 
@@ -419,6 +413,13 @@ fn queue_shm_present(
     let Some(surface) = s.surface.as_ref() else {
         return false;
     };
+    // Worker viewport mirrors the authoritative window extent, never a per-layer
+    // copy.
+    let (lw, lh) = match crate::window_state::window_logical_size() {
+        Some(crate::window_state::WindowSize { w, h }) => (w, h),
+        None => return false,
+    };
+    let (pw, ph) = crate::window_state::jfn_wl_window_size();
     s.buffer_w = w;
     s.buffer_h = h;
     s.placeholder = false;
@@ -431,12 +432,7 @@ fn queue_shm_present(
             st.shm.clone(),
             surface.clone(),
             s.viewport.clone(),
-            ViewportState {
-                lw: s.lw,
-                lh: s.lh,
-                pw: s.pw,
-                ph: s.ph,
-            },
+            ViewportState { lw, lh, pw, ph },
             s.visible,
         ));
     }
@@ -445,7 +441,7 @@ fn queue_shm_present(
         return false;
     };
     worker.set_visible(s.visible);
-    worker.resize(s.lw, s.lh, s.pw, s.ph);
+    worker.resize(lw, lh, pw, ph);
     worker.submit_frame(pixels, w, h, dirty)
 }
 
@@ -490,8 +486,9 @@ pub(crate) fn surface_present_software(
     s.buffer_w = w;
     s.buffer_h = h;
     set_viewport_for_buffer_locked(s, w, h);
-    let painter_size = if s.pw > 0 && s.ph > 0 {
-        (s.pw as u32, s.ph as u32)
+    let (pw, ph) = crate::window_state::jfn_wl_window_size();
+    let painter_size = if pw > 0 && ph > 0 {
+        (pw as u32, ph as u32)
     } else {
         (w as u32, h as u32)
     };
@@ -550,7 +547,7 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
         return;
     };
     if let Some(old) = s.popup_buffer.take() {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     if let Some(vp) = s.popup_viewport.as_ref() {
         vp.set_source(0.0, 0.0, vw as f64, vh as f64);
@@ -568,6 +565,7 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
     popup.commit();
     st.flush();
     s.popup_buffer = Some(buf);
+    crate::root_window::request_present();
 }
 
 pub(crate) fn popup_present_software(
@@ -590,7 +588,7 @@ pub(crate) fn popup_present_software(
         return;
     };
     if let Some(old) = s.popup_buffer.take() {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     if let Some(vp) = s.popup_viewport.as_ref() {
         vp.set_source(0.0, 0.0, pw as f64, ph as f64);
@@ -607,6 +605,7 @@ pub(crate) fn popup_present_software(
     popup.commit();
     st.flush();
     s.popup_buffer = Some(buf);
+    crate::root_window::request_present();
 }
 
 // =====================================================================
@@ -616,43 +615,52 @@ pub(crate) fn popup_present_software(
 fn attach_and_commit_locked(
     s: &mut PlatformSurface,
     buf: wayland_client::protocol::wl_buffer::WlBuffer,
-    w: i32,
-    h: i32,
+    coded_w: i32,
+    coded_h: i32,
+    vis_w: i32,
+    vis_h: i32,
 ) {
     if let Some(old) = s.buffer.take() {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
-    s.buffer_w = w;
-    s.buffer_h = h;
+    s.buffer_w = coded_w;
+    s.buffer_h = coded_h;
     s.placeholder = false;
     s.null_attached = false;
-    set_viewport_for_buffer_locked(s, w, h);
+    set_viewport_for_buffer_locked(s, vis_w, vis_h);
     let Some(surface) = s.surface.as_ref() else {
         return;
     };
     surface.attach(Some(&buf), 0, 0);
-    surface.damage_buffer(0, 0, w, h);
+    surface.damage_buffer(0, 0, coded_w, coded_h);
     surface.commit();
     s.buffer = Some(buf);
 }
 
-fn set_viewport_for_buffer_locked(s: &mut PlatformSurface, w: i32, h: i32) {
+// Destination = the single authoritative logical window extent, read directly —
+// no per-layer copy. Every layer mirrors `window_logical_size`; no other size is
+// representable as a destination.
+fn set_viewport_dest_locked(s: &PlatformSurface) {
     let Some(viewport) = s.viewport.as_ref() else {
         return;
     };
-    if s.pw <= 0 || s.ph <= 0 || s.lw <= 0 || s.lh <= 0 {
-        return;
+    if let Some(crate::window_state::WindowSize { w: lw, h: lh }) =
+        crate::window_state::window_logical_size()
+    {
+        viewport.set_destination(lw, lh);
     }
-    if w > 0 && h > 0 {
-        let src_w = w.min(s.pw);
-        let src_h = h.min(s.ph);
-        let dst_w = src_w * s.lw / s.pw;
-        let dst_h = src_h * s.lh / s.ph;
-        viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
-        viewport.set_destination(dst_w, dst_h);
-    } else {
-        viewport.set_destination(s.lw, s.lh);
+}
+
+// Source = the buffer's own visible extent (the layer's authoritative content
+// size); destination = the authoritative window extent.
+fn set_viewport_for_buffer_locked(s: &PlatformSurface, vis_w: i32, vis_h: i32) {
+    if let Some(viewport) = s.viewport.as_ref()
+        && vis_w > 0
+        && vis_h > 0
+    {
+        viewport.set_source(0.0, 0.0, vis_w as f64, vis_h as f64);
     }
+    set_viewport_dest_locked(s);
 }
 
 fn unmap_locked(s: &mut PlatformSurface) {
@@ -727,6 +735,11 @@ fn begin_transition_locked(st: &mut WlState) {
 fn end_transition_locked(st: &mut WlState) {
     st.transitioning = false;
     st.present_mode = PresentMode::Attach;
+    let (lw, lh) = match crate::window_state::window_logical_size() {
+        Some(crate::window_state::WindowSize { w, h }) => (w, h),
+        None => return,
+    };
+    let (pw, ph) = crate::window_state::jfn_wl_window_size();
     let use_gpu_paint = st.use_gpu_paint;
     if use_gpu_paint {
         // Reapply viewport state and re-enable presenter workers without
@@ -736,11 +749,11 @@ fn end_transition_locked(st: &mut WlState) {
                 continue;
             }
             let s = unsafe { surface_mut(p) };
-            set_viewport_for_buffer_locked(s, s.buffer_w, s.buffer_h);
+            set_viewport_dest_locked(s);
             if let Some(worker) = s.gpu_paint_worker.as_ref() {
                 worker.set_visible(s.visible);
-                if s.pw > 0 && s.ph > 0 {
-                    worker.resize((s.pw as u32, s.ph as u32));
+                if pw > 0 && ph > 0 {
+                    worker.resize((pw as u32, ph as u32));
                 }
             }
         }
@@ -752,7 +765,7 @@ fn end_transition_locked(st: &mut WlState) {
         }
         let s = unsafe { surface_mut(p) };
         if let Some(worker) = s.shm_paint_worker.as_ref() {
-            worker.resize(s.lw, s.lh, s.pw, s.ph);
+            worker.resize(lw, lh, pw, ph);
             worker.set_visible(s.visible);
         }
     }
@@ -760,29 +773,21 @@ fn end_transition_locked(st: &mut WlState) {
         && !p.is_null()
     {
         let s = unsafe { surface_mut(p) };
-        if let Some(viewport) = s.viewport.as_ref()
-            && s.pw > 0
-            && s.lw > 0
-        {
-            viewport.set_source(0.0, 0.0, s.pw as f64, s.ph as f64);
-            viewport.set_destination(s.lw, s.lh);
-        }
+        set_viewport_dest_locked(s);
     }
 }
 
-pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_scale: f32) {
-    if width <= 0 || height <= 0 {
+pub(crate) fn on_configure(fullscreen: bool) {
+    // Mirror the single authoritative extent; never re-derive or guess it.
+    let Some(crate::window_state::WindowSize { w: lw, h: lh }) =
+        crate::window_state::window_logical_size()
+    else {
+        return;
+    };
+    let (pw, ph) = crate::window_state::jfn_wl_window_size();
+    if pw <= 0 || ph <= 0 {
         return;
     }
-    let pw = width;
-    let ph = height;
-    let scale = if cached_scale > 0.0 {
-        cached_scale
-    } else {
-        1.0
-    };
-    let lw = (pw as f32 / scale) as i32;
-    let lh = (ph as f32 / scale) as i32;
 
     let mut st = lock();
 
@@ -792,90 +797,57 @@ pub(crate) fn on_configure(width: i32, height: i32, fullscreen: bool, cached_sca
         }
         st.was_fullscreen = fullscreen;
     }
+    if st.transitioning {
+        st.present_mode = PresentMode::Attach;
+    }
 
+    crate::wl_state::ensure_overlay_root_locked(&mut st);
+
+    // Every layer mirrors the new authoritative extent. Worker-backed layers are
+    // resized through their worker (which owns that surface's commit); the others
+    // get their destination cached here. The present transaction's root commit
+    // applies the whole subtree atomically.
+    let use_gpu_paint = st.use_gpu_paint;
     for &p in &st.stack {
         if p.is_null() {
             continue;
         }
         let s = unsafe { surface_mut(p) };
-        s.lw = lw;
-        s.lh = lh;
-        s.pw = pw;
-        s.ph = ph;
+        if use_gpu_paint {
+            if let Some(worker) = s.gpu_paint_worker.as_ref() {
+                worker.resize((pw.max(1) as u32, ph.max(1) as u32));
+            }
+            continue;
+        }
         if let Some(worker) = s.shm_paint_worker.as_ref() {
             worker.resize(lw, lh, pw, ph);
+            continue;
+        }
+        set_viewport_dest_locked(s);
+        if let Some(surface) = s.surface.as_ref() {
+            surface.commit();
         }
     }
 
-    update_surface_size_locked(&st, lw, lh, pw, ph);
-
-    // pw now NEW. Flip paint gate back to Attach (keep transitioning=true).
-    if st.transitioning {
-        st.present_mode = PresentMode::Attach;
-        if let Some(&p) = st.stack.first()
-            && !p.is_null()
-        {
-            let s = unsafe { surface_mut(p) };
-            if let Some(viewport) = s.viewport.as_ref()
-                && s.pw > 0
-                && s.lw > 0
-            {
-                viewport.set_source(0.0, 0.0, s.pw as f64, s.ph as f64);
-                viewport.set_destination(s.lw, s.lh);
-            }
-        }
-    }
-
-    crate::wl_state::ensure_overlay_root_locked(&mut st);
     if let Some(vp) = st.overlay_vp.as_ref() {
         vp.set_destination(lw, lh);
-        st.parent.commit();
     }
     st.flush();
 }
 
-fn update_surface_size_locked(st: &WlState, lw: i32, lh: i32, pw: i32, ph: i32) {
-    if st.use_gpu_paint {
-        let Some(&p) = st.stack.first() else {
-            return;
-        };
-        if p.is_null() {
-            return;
-        }
-        let s = unsafe { surface_mut(p) };
-        set_viewport_for_buffer_locked(s, s.buffer_w, s.buffer_h);
-        if let Some(worker) = s.gpu_paint_worker.as_ref() {
-            worker.resize((pw.max(1) as u32, ph.max(1) as u32));
-        }
-        return;
-    }
-    let Some(&p) = st.stack.first() else {
+// Cache the overlay subtree onto the root's pending state. Called by the single
+// root-commit owner (`root_window::present_transaction`) immediately before it
+// commits the root, so the overlay applies atomically with window geometry.
+// Uses `try_state` — the owner thread can request a present before `wl_state`
+// has finished initializing, in which case there is no overlay to commit yet.
+pub(crate) fn commit_overlay_parent() {
+    let Some(state) = crate::wl_state::try_state() else {
         return;
     };
-    if p.is_null() {
-        return;
-    }
-    let s = unsafe { surface_mut(p) };
-    if let Some(worker) = s.shm_paint_worker.as_ref() {
-        worker.resize(lw, lh, pw, ph);
-        return;
-    }
-    let (Some(surface), Some(viewport)) = (s.surface.as_ref(), s.viewport.as_ref()) else {
-        return;
-    };
-    if st.transitioning {
-        viewport.set_destination(lw, lh);
-        surface.commit();
-        return;
-    }
-    if s.buffer_w > 0 && s.buffer_h > 0 && pw > 0 && ph > 0 {
-        let src_w = s.buffer_w.min(pw);
-        let src_h = s.buffer_h.min(ph);
-        let dst_w = src_w * lw / pw;
-        let dst_h = src_h * lh / ph;
-        viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
-        viewport.set_destination(dst_w, dst_h);
-        surface.commit();
+    let st = state.lock();
+    if st.overlay_rooted {
+        st.parent.commit();
+        st.flush();
     }
 }
 
