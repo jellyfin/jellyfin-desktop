@@ -68,9 +68,49 @@ pub(crate) const TRANSITION_TOLERANCE_TEXELS: i32 = 32;
 
 /// Per-CefLayer surface. Owns its subsurface, viewport
 /// proxies, and its on-demand popup child.
+/// Wrapper owning an overlay subsurface so the raw `WlSubsurface` never escapes.
+///
+/// The atomic-resize design wants these *synchronized* (apply only on an ancestor
+/// role-surface commit), which would make overlay size-divergence unrepresentable.
+/// But a synchronized subsurface fed by our manual `wl_surface.attach`+`commit`
+/// path does not display on the target compositor (mesa's Vulkan-WSI path
+/// tolerates sync, so `--platform-paint=gpu` works; the dmabuf/shm paths render
+/// blank). Until that is understood, the subsurface is desynchronized so the
+/// overlay renders. Cost: on resize a layer stretches its stale buffer to the new
+/// window extent until CEF repaints (size briefly fills, content lags) — i.e. the
+/// resize is not yet atomic. See [[wayland-layer-size-atomic-commit]].
+pub(crate) struct SyncSubsurface(WlSubsurface);
+
+impl SyncSubsurface {
+    pub(crate) fn create(
+        subcompositor: &WlSubcompositor,
+        surface: &WlSurface,
+        parent: &WlSurface,
+        qh: &QueueHandle<DispatchState>,
+    ) -> Self {
+        let sub = subcompositor.get_subsurface(surface, parent, qh, ());
+        // Desync: see the type doc — synchronized + manual attach renders blank
+        // on dmabuf/shm. Revisit to restore atomic resize.
+        sub.set_desync();
+        Self(sub)
+    }
+
+    pub(crate) fn set_position(&self, x: i32, y: i32) {
+        self.0.set_position(x, y);
+    }
+
+    pub(crate) fn place_above(&self, sibling: &WlSurface) {
+        self.0.place_above(sibling);
+    }
+
+    pub(crate) fn destroy(self) {
+        self.0.destroy();
+    }
+}
+
 pub(crate) struct PlatformSurface {
     pub surface: Option<WlSurface>,
-    pub subsurface: Option<WlSubsurface>,
+    pub subsurface: Option<SyncSubsurface>,
     pub viewport: Option<WpViewport>,
     pub buffer: Option<WlBuffer>,
     pub buffer_w: i32,
@@ -78,14 +118,10 @@ pub(crate) struct PlatformSurface {
     pub visible: bool,
     pub placeholder: bool,
     pub null_attached: bool,
-    pub lw: i32,
-    pub lh: i32,
-    pub pw: i32,
-    pub ph: i32,
 
     // Popup child.
     pub popup_surface: Option<WlSurface>,
-    pub popup_subsurface: Option<WlSubsurface>,
+    pub popup_subsurface: Option<SyncSubsurface>,
     pub popup_viewport: Option<WpViewport>,
     pub popup_buffer: Option<WlBuffer>,
     pub popup_visible: bool,
@@ -110,10 +146,6 @@ impl PlatformSurface {
             visible: true,
             placeholder: false,
             null_attached: false,
-            lw: 0,
-            lh: 0,
-            pw: 0,
-            ph: 0,
             popup_surface: None,
             popup_subsurface: None,
             popup_viewport: None,
@@ -158,7 +190,7 @@ pub(crate) struct WlState {
 
     pub parent: WlSurface,
     pub root_surface: Option<WlSurface>,
-    pub overlay_sub: Option<WlSubsurface>,
+    pub overlay_sub: Option<SyncSubsurface>,
     pub overlay_vp: Option<WpViewport>,
     pub overlay_backdrop: Option<WlBuffer>,
     pub overlay_rooted: bool,
@@ -249,12 +281,53 @@ noop_dispatch!(
     WlRegion,
     WlShm,
     WlShmPool,
-    WlBuffer,
     ZwpLinuxDmabufV1,
     ZwpLinuxBufferParamsV1,
     WpViewporter,
     WpViewport,
 );
+
+// Buffers replaced on a surface are *retired* here, not destroyed: under a
+// synchronized subsurface the compositor applies a committed buffer a frame
+// later, so destroying it eagerly (as the desync path used to) frees a buffer
+// the compositor still references → a blank surface. We hold each retired buffer
+// until its `wl_buffer.release` arrives, then destroy it. Mirrors what mesa's
+// swapchain does internally for the gpu path.
+static RETIRED_BUFFERS: Mutex<Vec<WlBuffer>> = Mutex::new(Vec::new());
+
+/// Hand a no-longer-current buffer to the release-driven reaper instead of
+/// destroying it immediately.
+pub(crate) fn retire_buffer(buf: WlBuffer) {
+    RETIRED_BUFFERS.lock().push(buf);
+}
+
+impl Dispatch<WlBuffer, ()> for DispatchState {
+    fn event(
+        _: &mut Self,
+        buffer: &WlBuffer,
+        event: <WlBuffer as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_buffer::Event::Release = event {
+            let mut retired = RETIRED_BUFFERS.lock();
+            if let Some(pos) = retired.iter().position(|b| b == buffer) {
+                retired.swap_remove(pos).destroy();
+            }
+        }
+    }
+}
+
+/// Dispatch the CEF connection's pending events (notably `wl_buffer.release`).
+/// Called from the root-window read loop, the only reader of the shared display.
+pub(crate) fn pump_events() {
+    if let Some(state) = STATE.get() {
+        let mut st = state.lock();
+        let st = &mut *st;
+        let _ = st.queue.dispatch_pending(&mut DispatchState);
+    }
+}
 
 // =====================================================================
 // Init — bind globals against a dedicated EventQueue over the foreign
@@ -354,21 +427,18 @@ pub(crate) fn ensure_overlay_root_locked(st: &mut WlState) {
         }
     };
 
-    let sub = st
-        .subcompositor
-        .get_subsurface(&st.parent, &root, &st.qh, ());
-    sub.set_desync();
+    let sub = SyncSubsurface::create(&st.subcompositor, &st.parent, &root, &st.qh);
     sub.set_position(0, 0);
 
-    let (w, h) = crate::window_state::jfn_wl_window_size();
-    let (w, h) = (w.max(1), h.max(1));
     if let Some(vt) = st.viewporter.as_ref() {
+        // Destination is written only by the resize transaction (on_configure)
+        // from the authoritative logical size; left unset until then, so the
+        // overlay can never mirror a boot/physical guess.
         let vp = vt.get_viewport(&st.parent, &st.qh, ());
-        vp.set_destination(w, h);
         st.overlay_vp = Some(vp);
     }
-    // Transparent 1×1 backdrop, stretched by the viewport, so `parent` maps and
-    // its CEF subsurfaces become visible.
+    // Transparent 1×1 backdrop, stretched by the viewport once sized, so `parent`
+    // maps and its CEF subsurfaces become visible.
     if let Some(buf) = create_shm_buffer(&*st, &[0, 0, 0, 0], 1, 1) {
         st.parent.attach(Some(&buf), 0, 0);
         st.overlay_backdrop = Some(buf);
@@ -381,7 +451,7 @@ pub(crate) fn ensure_overlay_root_locked(st: &mut WlState) {
     st.root_surface = Some(root);
     st.overlay_sub = Some(sub);
     st.overlay_rooted = true;
-    tracing::info!(target: "Main", "overlay parented under app root ({w}x{h})");
+    tracing::info!(target: "Main", "overlay parented under app root");
 }
 
 // =====================================================================
@@ -400,12 +470,14 @@ pub fn install_gpu_paint(ctx: Arc<GpuContext>) {
     st.use_gpu_paint = true;
 }
 
-pub(crate) fn size_in_tolerance(s: &PlatformSurface, vw: i32, vh: i32) -> bool {
-    if s.pw <= 0 {
+// Does an incoming frame's visible size match the authoritative physical window
+// size (within tolerance)? Reads the single source, not a per-layer copy.
+pub(crate) fn size_in_tolerance(vw: i32, vh: i32) -> bool {
+    let (pw, ph) = crate::window_state::jfn_wl_window_size();
+    if pw <= 0 {
         return true;
     }
-    (vw - s.pw).abs() <= TRANSITION_TOLERANCE_TEXELS
-        && (vh - s.ph).abs() <= TRANSITION_TOLERANCE_TEXELS
+    (vw - pw).abs() <= TRANSITION_TOLERANCE_TEXELS && (vh - ph).abs() <= TRANSITION_TOLERANCE_TEXELS
 }
 
 // =====================================================================

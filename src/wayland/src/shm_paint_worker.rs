@@ -279,13 +279,16 @@ fn run_worker(
         };
 
         if let Some(old) = current_buffer.take() {
-            old.destroy();
+            crate::wl_state::retire_buffer(old);
         }
         set_viewport_for_buffer(viewport.as_ref(), viewport_state, frame.width, frame.height);
         surface.attach(Some(&buf), 0, 0);
         surface.damage_buffer(0, 0, frame.width, frame.height);
         surface.commit();
         let _ = conn.flush();
+        // The layer commit caches this buffer (synchronized); the root-commit
+        // owner applies it atomically with the window geometry.
+        crate::root_window::request_present();
         current_buffer = Some(buf);
     }
 

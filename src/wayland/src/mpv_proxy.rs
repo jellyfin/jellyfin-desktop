@@ -499,9 +499,6 @@ impl WlRegistryHandler for AppRegistryH {
             WlSeat::INTERFACE => {
                 id.downcast::<WlSeat>().set_handler(ForwardSeatH);
             }
-            WpViewporter::INTERFACE => {
-                id.downcast::<WpViewporter>().set_handler(ClientViewporterH);
-            }
             _ => {}
         }
         log_send("wl_registry.bind", slf.try_send_bind(name, id));
@@ -575,6 +572,13 @@ impl WpViewportHandler for ClientViewportH {
         if !unset && (width <= 0 || height <= 0) {
             return;
         }
+        // mpv's surface extent mirrors the authoritative window size, not mpv's
+        // own opinion of it — so a resize can never present mpv at a non-window
+        // extent. Only the unset form is forwarded verbatim.
+        let (width, height) = match window_size() {
+            Some(size) if !unset => (size.w, size.h),
+            _ => (width, height),
+        };
         log_send(
             "wp_viewport.set_destination",
             slf.try_send_set_destination(width, height),
@@ -834,13 +838,10 @@ fn splice_mpv_under_host_root(mpv_surface: Rc<WlSurface>) {
         tracing::error!(target: "MpvProxy", "splice place_above: {}", Report::new(&e));
     }
 
-    // mpv's synchronized subsurface only displays when the parent commits. Drive
-    // that commit from mpv's own commits so every video frame applies in one
-    // transaction with the host root's current geometry. The handler holds
-    // host_root by value, so a root-less present cannot be expressed.
-    mpv_surface.set_handler(ChildPresentH {
-        host_root: host_root.clone(),
-    });
+    // mpv's synchronized subsurface only displays when the root commits. Each mpv
+    // commit requests a present from the single root-commit owner, so every video
+    // frame applies in one transaction with the window's current geometry.
+    mpv_surface.set_handler(ChildPresentH);
 
     let region = compositor.create_child::<WlRegion>();
     if let Err(e) = compositor.try_send_create_region(&region) {
@@ -923,15 +924,13 @@ impl WlCallbackHandler for RoundtripCb {
 }
 
 /// Installed on mpv's video surface: mpv's commit caches its (synchronized)
-/// buffer, then the host root commit applies it atomically with the window
-/// geometry. Holding `host_root` by value makes a root-less present
-/// unrepresentable.
-struct ChildPresentH {
-    host_root: Rc<WlSurface>,
-}
+/// buffer, then a present is requested from the single root-commit owner
+/// (`root_window`), which applies it atomically with the window geometry. mpv
+/// never commits the root itself — the owner is the sole root committer.
+struct ChildPresentH;
 impl WlSurfaceHandler for ChildPresentH {
     fn handle_commit(&mut self, slf: &Rc<WlSurface>) {
         log_send("wl_surface.commit", slf.try_send_commit());
-        log_send("host_root.commit", self.host_root.try_send_commit());
+        crate::root_window::request_present();
     }
 }
