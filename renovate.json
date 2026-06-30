@@ -3,5 +3,8 @@
   "extends": [
     "config:recommended"
   ],
-  "ignorePaths": ["third_party/**"]
+  "ignorePaths": ["third_party/**"],
+  "nix": {
+    "enabled": true
+  }
 }
