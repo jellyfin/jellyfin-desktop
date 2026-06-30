@@ -49,8 +49,6 @@ pub(crate) fn alloc_surface() -> *mut PlatformSurface {
     let s = unsafe { surface_mut(ptr) };
 
     let surface = st.compositor.create_surface(&st.qh, ());
-    let subsurface =
-        crate::wl_state::SyncSubsurface::create(&st.subcompositor, &surface, &st.parent, &st.qh);
 
     // No input region on subsurface — keystrokes/clicks go to parent only.
     let empty = st.compositor.create_region(&st.qh, ());
@@ -66,8 +64,8 @@ pub(crate) fn alloc_surface() -> *mut PlatformSurface {
     st.flush();
 
     s.surface = Some(surface);
-    s.subsurface = Some(subsurface);
     s.viewport = viewport;
+    crate::wl_state::parent_layer(&mut st, ptr);
 
     crate::scene::dispatch(
         &mut st,
@@ -801,12 +799,8 @@ pub(crate) fn on_configure(fullscreen: bool) {
         st.present_mode = PresentMode::Attach;
     }
 
-    crate::wl_state::ensure_overlay_root_locked(&mut st);
+    crate::wl_state::ensure_root_locked(&mut st);
 
-    // Every layer mirrors the new authoritative extent. Worker-backed layers are
-    // resized through their worker (which owns that surface's commit); the others
-    // get their destination cached here. The present transaction's root commit
-    // applies the whole subtree atomically.
     let use_gpu_paint = st.use_gpu_paint;
     for &p in &st.stack {
         if p.is_null() {
@@ -817,11 +811,8 @@ pub(crate) fn on_configure(fullscreen: bool) {
             if let Some(worker) = s.gpu_paint_worker.as_ref() {
                 worker.resize((pw.max(1) as u32, ph.max(1) as u32));
             }
-            continue;
-        }
-        if let Some(worker) = s.shm_paint_worker.as_ref() {
+        } else if let Some(worker) = s.shm_paint_worker.as_ref() {
             worker.resize(lw, lh, pw, ph);
-            continue;
         }
         set_viewport_dest_locked(s);
         if let Some(surface) = s.surface.as_ref() {
@@ -829,26 +820,7 @@ pub(crate) fn on_configure(fullscreen: bool) {
         }
     }
 
-    if let Some(vp) = st.overlay_vp.as_ref() {
-        vp.set_destination(lw, lh);
-    }
     st.flush();
-}
-
-// Cache the overlay subtree onto the root's pending state. Called by the single
-// root-commit owner (`root_window::present_transaction`) immediately before it
-// commits the root, so the overlay applies atomically with window geometry.
-// Uses `try_state` — the owner thread can request a present before `wl_state`
-// has finished initializing, in which case there is no overlay to commit yet.
-pub(crate) fn commit_overlay_parent() {
-    let Some(state) = crate::wl_state::try_state() else {
-        return;
-    };
-    let st = state.lock();
-    if st.overlay_rooted {
-        st.parent.commit();
-        st.flush();
-    }
 }
 
 pub(crate) fn set_fullscreen_via(fullscreen: bool, apply: impl FnOnce(bool)) {

@@ -66,19 +66,7 @@ pub(crate) const TRANSITION_TOLERANCE_TEXELS: i32 = 32;
 // Per-surface state
 // =====================================================================
 
-/// Per-CefLayer surface. Owns its subsurface, viewport
-/// proxies, and its on-demand popup child.
-/// Wrapper owning an overlay subsurface so the raw `WlSubsurface` never escapes.
-///
-/// The atomic-resize design wants these *synchronized* (apply only on an ancestor
-/// role-surface commit), which would make overlay size-divergence unrepresentable.
-/// But a synchronized subsurface fed by our manual `wl_surface.attach`+`commit`
-/// path does not display on the target compositor (mesa's Vulkan-WSI path
-/// tolerates sync, so `--platform-paint=gpu` works; the dmabuf/shm paths render
-/// blank). Until that is understood, the subsurface is desynchronized so the
-/// overlay renders. Cost: on resize a layer stretches its stale buffer to the new
-/// window extent until CEF repaints (size briefly fills, content lags) — i.e. the
-/// resize is not yet atomic. See [[wayland-layer-size-atomic-commit]].
+/// A layer's synchronized subsurface.
 pub(crate) struct SyncSubsurface(WlSubsurface);
 
 impl SyncSubsurface {
@@ -89,9 +77,6 @@ impl SyncSubsurface {
         qh: &QueueHandle<DispatchState>,
     ) -> Self {
         let sub = subcompositor.get_subsurface(surface, parent, qh, ());
-        // Desync: see the type doc — synchronized + manual attach renders blank
-        // on dmabuf/shm. Revisit to restore atomic resize.
-        sub.set_desync();
         Self(sub)
     }
 
@@ -188,12 +173,7 @@ pub(crate) struct WlState {
     pub dmabuf: Option<ZwpLinuxDmabufV1>,
     pub viewporter: Option<WpViewporter>,
 
-    pub parent: WlSurface,
     pub root_surface: Option<WlSurface>,
-    pub overlay_sub: Option<SyncSubsurface>,
-    pub overlay_vp: Option<WpViewport>,
-    pub overlay_backdrop: Option<WlBuffer>,
-    pub overlay_rooted: bool,
 
     /// Stack order, bottom-to-top. Raw pointers are valid for the
     /// lifetime of each `PlatformSurface` (heap-allocated via `Box`,
@@ -331,9 +311,7 @@ pub(crate) fn pump_events() {
 
 // =====================================================================
 // Init — bind globals against a dedicated EventQueue over the foreign
-// (mpv-owned) wl_display. The parent surface is wrapped via
-// ObjectId::from_ptr; it stays unmanaged on our side so destruction
-// remains mpv's responsibility.
+// (mpv-owned) wl_display.
 // =====================================================================
 
 /// SAFETY: `display_ptr` must be a live `*mut wl_display` owned by mpv.
@@ -363,8 +341,6 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
     let dmabuf: Option<ZwpLinuxDmabufV1> = globals.bind(&qh, 1..=4, ()).ok();
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
 
-    let parent = compositor.create_surface(&qh, ());
-
     let mut state = WlState {
         conn,
         qh,
@@ -374,12 +350,7 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
         shm,
         dmabuf,
         viewporter,
-        parent,
         root_surface: None,
-        overlay_sub: None,
-        overlay_vp: None,
-        overlay_backdrop: None,
-        overlay_rooted: false,
         stack: Vec::new(),
         was_fullscreen: false,
         transitioning: false,
@@ -393,7 +364,7 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
         menu_io: crate::popup::MenuIo::default(),
     };
 
-    ensure_overlay_root_locked(&mut state);
+    ensure_root_locked(&mut state);
 
     STATE
         .set(Mutex::new(state))
@@ -401,57 +372,73 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
     Ok(())
 }
 
-// Idempotent; a no-op until the root surface exists.
-pub(crate) fn ensure_overlay_root_locked(st: &mut WlState) {
-    if st.overlay_rooted {
-        return;
-    }
-    let raw = crate::root_window::root_surface_ptr();
+fn surface_from_ptr(
+    conn: &Connection,
+    raw: *mut std::ffi::c_void,
+    what: &str,
+) -> Option<WlSurface> {
     if raw.is_null() {
-        return;
+        return None;
     }
+    // SAFETY: `raw` must be a live `wl_proxy*` for a `wl_surface` on the same
+    // `wl_display` backing `conn` (published by root_window / mpv_proxy).
     let id = match unsafe {
         wayland_client::backend::ObjectId::from_ptr(WlSurface::interface(), raw.cast())
     } {
         Ok(id) => id,
         Err(e) => {
-            tracing::error!(target: "Main", "overlay root: ObjectId::from_ptr: {e}");
-            return;
+            tracing::error!(target: "Main", "{what}: ObjectId::from_ptr: {e}");
+            return None;
         }
     };
-    let root = match WlSurface::from_id(&st.conn, id) {
-        Ok(s) => s,
+    match WlSurface::from_id(conn, id) {
+        Ok(s) => Some(s),
         Err(e) => {
-            tracing::error!(target: "Main", "overlay root: WlSurface::from_id: {e}");
-            return;
+            tracing::error!(target: "Main", "{what}: WlSurface::from_id: {e}");
+            None
         }
+    }
+}
+
+fn parent_layer_locked(st: &mut WlState, ptr: *mut PlatformSurface) {
+    if ptr.is_null() {
+        return;
+    }
+    let Some(root) = st.root_surface.clone() else {
+        return;
     };
-
-    let sub = SyncSubsurface::create(&st.subcompositor, &st.parent, &root, &st.qh);
+    // SAFETY: live PlatformSurface address held in `stack`, accessed under the lock.
+    let s = unsafe { &mut *ptr };
+    if s.subsurface.is_some() {
+        return;
+    }
+    let Some(surface) = s.surface.as_ref() else {
+        return;
+    };
+    let sub = SyncSubsurface::create(&st.subcompositor, surface, &root, &st.qh);
     sub.set_position(0, 0);
+    s.subsurface = Some(sub);
+}
 
-    if let Some(vt) = st.viewporter.as_ref() {
-        // Destination is written only by the resize transaction (on_configure)
-        // from the authoritative logical size; left unset until then, so the
-        // overlay can never mirror a boot/physical guess.
-        let vp = vt.get_viewport(&st.parent, &st.qh, ());
-        st.overlay_vp = Some(vp);
+pub(crate) fn ensure_root_locked(st: &mut WlState) {
+    if st.root_surface.is_some() {
+        return;
     }
-    // Transparent 1×1 backdrop, stretched by the viewport once sized, so `parent`
-    // maps and its CEF subsurfaces become visible.
-    if let Some(buf) = create_shm_buffer(&*st, &[0, 0, 0, 0], 1, 1) {
-        st.parent.attach(Some(&buf), 0, 0);
-        st.overlay_backdrop = Some(buf);
-    }
-    st.parent.commit();
-    // The subsurface addition lands on the parent's (root's) next commit.
-    root.commit();
-    let _ = st.conn.flush();
-
+    let raw = crate::root_window::root_surface_ptr();
+    let Some(root) = surface_from_ptr(&st.conn, raw, "overlay root") else {
+        return;
+    };
     st.root_surface = Some(root);
-    st.overlay_sub = Some(sub);
-    st.overlay_rooted = true;
-    tracing::info!(target: "Main", "overlay parented under app root");
+
+    let pending: Vec<*mut PlatformSurface> = st.stack.clone();
+    for ptr in pending {
+        parent_layer_locked(st, ptr);
+    }
+    tracing::info!(target: "Main", "CEF layers parented under app root");
+}
+
+pub(crate) fn parent_layer(st: &mut WlState, ptr: *mut PlatformSurface) {
+    parent_layer_locked(st, ptr);
 }
 
 // =====================================================================
