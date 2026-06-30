@@ -141,48 +141,8 @@ pub(crate) fn restack(ordered: &[*mut PlatformSurface]) {
 }
 
 // =====================================================================
-// resize / set_visible
+// set_visible
 // =====================================================================
-
-// CEF's resize notification. CEF's own size opinion is *not* an extent source:
-// the layer mirrors the authoritative window size. We only refresh the layer's
-// destination from it and notify the paint workers.
-pub(crate) fn surface_resize(ptr: *mut PlatformSurface, _lw: i32, _lh: i32, _pw: i32, _ph: i32) {
-    if ptr.is_null() {
-        return;
-    }
-    let st = lock();
-    let s = unsafe { surface_mut(ptr) };
-    let Some(crate::window_state::WindowSize { w: lw, h: lh }) =
-        crate::window_state::window_logical_size()
-    else {
-        return;
-    };
-    let (pw, ph) = crate::window_state::jfn_wl_window_size();
-
-    // Vulkan-WSI path: notify the presenter worker. The callback never performs
-    // wgpu work.
-    if st.use_gpu_paint {
-        set_viewport_dest_locked(s);
-        if let Some(worker) = s.gpu_paint_worker.as_ref() {
-            worker.resize((pw.max(1) as u32, ph.max(1) as u32));
-        }
-        st.flush();
-        return;
-    }
-    if let Some(worker) = s.shm_paint_worker.as_ref() {
-        worker.resize(lw, lh, pw, ph);
-        return;
-    }
-
-    let Some(surface) = s.surface.as_ref() else {
-        return;
-    };
-    set_viewport_dest_locked(s);
-    surface.commit();
-    st.flush();
-    crate::root_window::request_present();
-}
 
 pub(crate) fn surface_set_visible(
     ptr: *mut PlatformSurface,

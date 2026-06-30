@@ -64,10 +64,6 @@ pub unsafe fn jfn_wl_restack(handles: *const *mut c_void, n: usize) {
     wl_ops::restack(slice);
 }
 
-pub unsafe fn jfn_wl_surface_resize(handle: *mut c_void, lw: i32, lh: i32, pw: i32, ph: i32) {
-    wl_ops::surface_resize(cast(handle), lw, lh, pw, ph);
-}
-
 pub unsafe fn jfn_wl_surface_set_visible(
     handle: *mut c_void,
     visible: bool,
