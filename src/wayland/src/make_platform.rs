@@ -155,16 +155,6 @@ impl Platform for WaylandPlatform {
         )
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
-        wl_ops::surface_resize(
-            s as *mut crate::wl_state::PlatformSurface,
-            size.logical_w,
-            size.logical_h,
-            size.physical_w,
-            size.physical_h,
-        );
-    }
-
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
         wl_ops::surface_set_visible(
             s as *mut crate::wl_state::PlatformSurface,
