@@ -17,7 +17,6 @@ use std::thread::{self, JoinHandle};
 const DEVICE_NAME_MAX: usize = 64;
 const HWDEC_DEFAULT: &str = "no";
 const DEFAULT_SUBTITLE_SCALE: f64 = 1.0;
-const SUBTITLE_SCALE_OPTIONS: [f64; 5] = [0.5, 0.75, 1.0, 1.25, 1.5];
 
 #[derive(Clone, Copy, Debug)]
 pub struct JfnWindowGeometry {
@@ -627,12 +626,14 @@ fn normalize_device_name(raw: &str, platform_default: &str) -> String {
 }
 
 fn valid_subtitle_scale(s: f64) -> bool {
-    SUBTITLE_SCALE_OPTIONS.contains(&s)
+    s.is_finite() && (0.0..=100.0).contains(&s)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_SUBTITLE_SCALE, SettingsData, normalize_device_name};
+    use super::{
+        DEFAULT_SUBTITLE_SCALE, SettingsData, normalize_device_name, valid_subtitle_scale,
+    };
     use serde_json::{Value, json};
 
     const PLATFORM: &str = "platform-host";
@@ -703,5 +704,28 @@ mod tests {
             parsed["subtitleScaleDefault"],
             json!(DEFAULT_SUBTITLE_SCALE)
         );
+    }
+
+    #[test]
+    fn subtitle_scale_accepts_any_mpv_valid_factor() {
+        let mut settings = SettingsData::default();
+        settings.overlay_json(&json!({ "subtitleScale": 1.33 }));
+
+        assert_eq!(settings.subtitle_scale, 1.33);
+    }
+
+    #[test]
+    fn subtitle_scale_rejects_out_of_range_and_non_finite_values() {
+        let mut settings = SettingsData::default();
+        settings.subtitle_scale = 1.25;
+
+        for invalid in [-0.01, 100.01] {
+            settings.overlay_json(&json!({ "subtitleScale": invalid }));
+            assert_eq!(settings.subtitle_scale, 1.25);
+        }
+
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(!valid_subtitle_scale(invalid));
+        }
     }
 }

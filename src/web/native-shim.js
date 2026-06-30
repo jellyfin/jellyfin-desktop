@@ -114,13 +114,7 @@
         settingsDescriptions: {
             playback: [
                 { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions },
-                { key: 'subtitleScale', displayName: 'Subtitle Size', options: [
-                    { value: 0.5, title: 'Tiny' },
-                    { value: 0.75, title: 'Small' },
-                    { value: 1.0, title: 'Default' },
-                    { value: 1.25, title: 'Large' },
-                    { value: 1.5, title: 'Huge' }
-                ]},
+                { key: 'subtitleScale', displayName: 'Subtitle Scale', help: 'Text subtitle scale factor. Default is 1.', inputType: 'number', min: 0, max: 100, step: 'any', placeholder: _savedSettings.subtitleScaleDefault },
                 { key: 'subtitleBold', displayName: 'Subtitle Bold' }
             ],
             audio: [
