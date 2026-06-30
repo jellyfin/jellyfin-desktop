@@ -16,6 +16,7 @@ use std::thread::{self, JoinHandle};
 
 const DEVICE_NAME_MAX: usize = 64;
 const HWDEC_DEFAULT: &str = "no";
+const DEFAULT_SUBTITLE_SCALE: f64 = 1.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct JfnWindowGeometry {
@@ -59,6 +60,8 @@ struct SettingsData {
     force_transcoding: bool,
     window_decorations: Option<WindowDecorations>,
     hide_scrollbar: bool,
+    subtitle_bold: bool,
+    subtitle_scale: f64,
 }
 
 impl Default for SettingsData {
@@ -77,6 +80,8 @@ impl Default for SettingsData {
             force_transcoding: false,
             window_decorations: None,
             hide_scrollbar: true,
+            subtitle_bold: false,
+            subtitle_scale: DEFAULT_SUBTITLE_SCALE,
         }
     }
 }
@@ -154,6 +159,14 @@ impl SettingsData {
         if let Some(b) = v.get("hideScrollbar").and_then(Value::as_bool) {
             self.hide_scrollbar = b;
         }
+        if let Some(b) = v.get("subtitleBold").and_then(Value::as_bool) {
+            self.subtitle_bold = b;
+        }
+        if let Some(s) = v.get("subtitleScale").and_then(Value::as_f64)
+            && valid_subtitle_scale(s)
+        {
+            self.subtitle_scale = s;
+        }
     }
 
     fn to_json(&self) -> Value {
@@ -220,6 +233,12 @@ impl SettingsData {
         if !self.hide_scrollbar {
             o.insert("hideScrollbar".into(), Value::Bool(false));
         }
+        if self.subtitle_bold {
+            o.insert("subtitleBold".into(), Value::Bool(true));
+        }
+        if self.subtitle_scale != DEFAULT_SUBTITLE_SCALE {
+            o.insert("subtitleScale".into(), json!(self.subtitle_scale));
+        }
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
         }
@@ -274,6 +293,9 @@ impl SettingsData {
             .map(|s| Value::String(s.clone()))
             .collect();
         o.insert("hwdecOptions".into(), Value::Array(opts));
+        o.insert("subtitleBold".into(), Value::Bool(self.subtitle_bold));
+        o.insert("subtitleScale".into(), json!(self.subtitle_scale));
+        o.insert("subtitleScaleDefault".into(), json!(DEFAULT_SUBTITLE_SCALE));
         serde_json::to_string(&Value::Object(o)).unwrap_or_default()
     }
 }
@@ -562,6 +584,18 @@ pub fn cli_json(hwdec_opts: &[&str]) -> String {
     snap.cli_json(&opts)
 }
 
+// Subtitles
+bool_accessors!(subtitle_bold, set_subtitle_bold, subtitle_bold);
+
+pub fn subtitle_scale() -> f64 {
+    state().lock().data.subtitle_scale
+}
+pub fn set_subtitle_scale(scale: f64) {
+    if valid_subtitle_scale(scale) {
+        state().lock().data.subtitle_scale = scale;
+    }
+}
+
 fn normalize_device_name(raw: &str, platform_default: &str) -> String {
     // Server's auth header parser preserves whitespace verbatim, so " foo "
     // would round-trip into the Devices table.
@@ -591,9 +625,16 @@ fn normalize_device_name(raw: &str, platform_default: &str) -> String {
     trimmed
 }
 
+fn valid_subtitle_scale(s: f64) -> bool {
+    s.is_finite() && (0.0..=100.0).contains(&s)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_device_name;
+    use super::{
+        DEFAULT_SUBTITLE_SCALE, SettingsData, normalize_device_name, valid_subtitle_scale,
+    };
+    use serde_json::{Value, json};
 
     const PLATFORM: &str = "platform-host";
 
@@ -647,5 +688,44 @@ mod tests {
     fn clears_override_when_whitespace_padded_default() {
         let padded = format!("  {}  ", PLATFORM);
         assert_eq!(normalize_device_name(&padded, PLATFORM), "");
+    }
+
+    #[test]
+    fn cli_json_includes_subtitle_scale_default() {
+        let raw = SettingsData::default().cli_json(&[]);
+
+        let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
+            assert!(false, "cli_json should produce valid JSON from: {raw}");
+            return;
+        };
+
+        assert_eq!(parsed["subtitleScale"], json!(DEFAULT_SUBTITLE_SCALE));
+        assert_eq!(
+            parsed["subtitleScaleDefault"],
+            json!(DEFAULT_SUBTITLE_SCALE)
+        );
+    }
+
+    #[test]
+    fn subtitle_scale_accepts_any_mpv_valid_factor() {
+        let mut settings = SettingsData::default();
+        settings.overlay_json(&json!({ "subtitleScale": 1.33 }));
+
+        assert_eq!(settings.subtitle_scale, 1.33);
+    }
+
+    #[test]
+    fn subtitle_scale_rejects_out_of_range_and_non_finite_values() {
+        let mut settings = SettingsData::default();
+        settings.subtitle_scale = 1.25;
+
+        for invalid in [-0.01, 100.01] {
+            settings.overlay_json(&json!({ "subtitleScale": invalid }));
+            assert_eq!(settings.subtitle_scale, 1.25);
+        }
+
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(!valid_subtitle_scale(invalid));
+        }
     }
 }

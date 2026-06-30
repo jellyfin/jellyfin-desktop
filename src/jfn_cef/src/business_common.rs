@@ -63,6 +63,12 @@ pub(crate) fn apply_setting_value(_section: &str, key: &str, value: &str) {
         // Pass empty platform_default — Rust setter clears when raw equals
         // the empty string. Neither caller has the live hostname handy here.
         "deviceName" => jfn_config::set_device_name(value, ""),
+        "subtitleBold" => jfn_config::set_subtitle_bold(value == "true"),
+        "subtitleScale" => {
+            if let Ok(scale) = value.parse::<f64>() {
+                jfn_config::set_subtitle_scale(scale);
+            }
+        }
         _ => jfn_logging::log(
             jfn_logging::CATEGORY_CEF,
             jfn_logging::LEVEL_WARN,
