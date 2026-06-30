@@ -3,7 +3,7 @@
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use super::{Above, Effect, LayerId};
-use crate::wl_state::{PlatformSurface, WlState};
+use crate::wl_state::PlatformSurface;
 
 pub trait SceneSink {
     fn apply(&mut self, effect: &Effect);
@@ -39,13 +39,11 @@ fn layer_surface(id: LayerId) -> Option<WlSurface> {
     s.surface.clone()
 }
 
-pub struct WlSink<'a> {
-    st: &'a mut WlState,
-}
+pub struct WlSink;
 
-impl<'a> WlSink<'a> {
-    pub fn new(st: &'a mut WlState) -> Self {
-        Self { st }
+impl WlSink {
+    pub fn new() -> Self {
+        Self
     }
 
     fn place_above(&mut self, layer: LayerId, above: Above) {
@@ -59,7 +57,9 @@ impl<'a> WlSink<'a> {
             return;
         };
         match above {
-            Above::Parent => sub.place_above(&self.st.parent),
+            // Empty by design: re-stacking the bottom layer onto the root would
+            // sink it below mpv.
+            Above::Parent => {}
             Above::Layer(pp) => {
                 if let Some(surf) = layer_surface(pp) {
                     sub.place_above(&surf);
@@ -69,11 +69,17 @@ impl<'a> WlSink<'a> {
     }
 }
 
-impl SceneSink for WlSink<'_> {
+impl Default for WlSink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SceneSink for WlSink {
     fn apply(&mut self, effect: &Effect) {
         match *effect {
             Effect::PlaceAbove { layer, above } => self.place_above(layer, above),
-            Effect::CommitParent => self.st.parent.commit(),
+            Effect::CommitParent => crate::root_window::request_present(),
         }
     }
 }

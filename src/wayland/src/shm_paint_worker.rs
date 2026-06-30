@@ -341,14 +341,12 @@ fn set_viewport_for_buffer(viewport: Option<&WpViewport>, state: ViewportState, 
     if state.pw <= 0 || state.ph <= 0 || state.lw <= 0 || state.lh <= 0 {
         return;
     }
+    // Destination must be the full window extent, never a buffer-proportional
+    // size: a layer's size may never diverge from the window, even for one frame.
     if w > 0 && h > 0 {
         let src_w = w.min(state.pw);
         let src_h = h.min(state.ph);
-        let dst_w = src_w * state.lw / state.pw;
-        let dst_h = src_h * state.lh / state.ph;
         viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
-        viewport.set_destination(dst_w, dst_h);
-    } else {
-        viewport.set_destination(state.lw, state.lh);
     }
+    viewport.set_destination(state.lw, state.lh);
 }

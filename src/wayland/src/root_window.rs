@@ -166,14 +166,10 @@ impl RootState {
         self.present_transaction();
     }
 
-    // The single root-commit site. Caches the overlay subtree onto the root via
-    // the overlay parent commit, then commits the root so the whole synchronized
-    // tree (geometry, overlay layers, mpv) lands in one compositor transaction.
     fn present_transaction(&mut self) {
         if !self.mapped {
             return;
         }
-        crate::wl_ops::commit_overlay_parent();
         self.surface.commit();
         let _ = self.conn.flush();
     }
