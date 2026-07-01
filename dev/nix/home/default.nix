@@ -45,38 +45,41 @@ in
               (
                 _: v:
                 v
-                // {
+                // (lib.optionalAttrs (v.type != types.bool) {
                   type = nullOr v.type;
-                  description = "${v.description} ${warningSuffix}.";
                   default = null;
+                })
+                // {
+                  description = "${v.description} ${warningSuffix}.";
                 }
               )
-              {
-                serverUrl = mkOption {
-                  description = "Server URL";
-                  type = types.str;
-                  example = "https://myserver.mydomain.tld";
-                };
-
-                transparentTitlebar = mkOption {
-                  description = "Whether to enable transparent title bar";
-                  type = types.bool;
-                  example = true;
-                };
-
-                hideScrollbar = mkOption {
-                  description = "Whether to hide scrollbar";
-                  type = types.bool;
-                  example = true;
-                };
-
-                deviceName = mkOption {
-                  description = "Device Name";
-                  type = types.str;
-                  example = "myhost (jellyfin-desktop)";
-                };
-
-              }
+              (
+                let
+                  settings = (lib.fromJSON (builtins.readFile ./_settings.json)).properties;
+                  translateTypes =
+                    typeString:
+                    with lib.types;
+                    {
+                      string = str;
+                      boolean = bool;
+                    }
+                    .${typeString};
+                  maybeExample = v: if v ? examples then { example = builtins.head v.examples; } else { };
+                in
+                lib.mapAttrs (
+                  n: v:
+                  if v.type == "boolean" then
+                    (lib.mkEnableOption v.description) // { inherit (v) default; }
+                  else
+                    (lib.mkOption (
+                      {
+                        inherit (v) description;
+                        type = translateTypes v.type;
+                      }
+                      // (maybeExample v)
+                    ))
+                ) settings
+              )
             );
           extraConfig = mkOption {
             description = ''
