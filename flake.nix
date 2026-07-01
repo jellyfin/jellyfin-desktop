@@ -9,6 +9,7 @@
     import-tree.url = "github:denful/import-tree";
 
     crane.url = "github:ipetkov/crane";
+    home-manager.url = "github:nix-community/home-manager";
   };
 
   outputs =
