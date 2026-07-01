@@ -12,12 +12,13 @@ A [Jellyfin](https://jellyfin.org) desktop client built on [CEF](https://github.
   - [aarch64](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-appimage/main/linux-appimage-aarch64.zip)
 - Arch Linux (AUR): [jellyfin-desktop-git](https://aur.archlinux.org/packages/jellyfin-desktop-git)
 - [Flatpak (non-Flathub bundle)](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-flatpak/main/linux-flatpak-x86_64.zip)
+- [Nix](./dev/nix/README.md)
 
 ### macOS
 - [Apple Silicon](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-macos/main/macos-arm64.zip)
 - [Intel](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-macos/main/macos-x86_64.zip)
 
-After installing, remove quarantine: 
+After installing, remove quarantine:
 ```
 sudo xattr -cr /Applications/Jellyfin\ Desktop.app
 ```
