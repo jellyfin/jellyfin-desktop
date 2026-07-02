@@ -93,11 +93,26 @@ impl SyncSubsurface {
     }
 }
 
+pub(crate) struct DmabufBuf {
+    pub id: (u64, u64),
+    pub w: i32,
+    pub h: i32,
+    pub stride: u32,
+    pub modifier: u64,
+    pub buf: WlBuffer,
+}
+
+pub(crate) enum DmabufLease {
+    Pooled(WlBuffer),
+    OneShot(WlBuffer),
+}
+
 pub(crate) struct PlatformSurface {
     pub surface: Option<WlSurface>,
     pub subsurface: Option<SyncSubsurface>,
     pub viewport: Option<WpViewport>,
     pub buffer: Option<WlBuffer>,
+    pub dmabuf_pool: Vec<DmabufBuf>,
     pub buffer_w: i32,
     pub buffer_h: i32,
     pub visible: bool,
@@ -126,6 +141,7 @@ impl PlatformSurface {
             subsurface: None,
             viewport: None,
             buffer: None,
+            dmabuf_pool: Vec::new(),
             buffer_w: 0,
             buffer_h: 0,
             visible: true,
@@ -252,18 +268,71 @@ noop_dispatch!(
     WpViewport,
 );
 
-// Buffers replaced on a surface are *retired* here, not destroyed: under a
-// synchronized subsurface the compositor applies a committed buffer a frame
-// later, so destroying it eagerly (as the desync path used to) frees a buffer
-// the compositor still references → a blank surface. We hold each retired buffer
-// until its `wl_buffer.release` arrives, then destroy it. Mirrors what mesa's
-// swapchain does internally for the gpu path.
-static RETIRED_BUFFERS: Mutex<Vec<WlBuffer>> = Mutex::new(Vec::new());
+// Under a synchronized subsurface the compositor keeps reading a buffer for a
+// frame after it is replaced. Destroying or re-attaching one while `released`
+// is false shows a blank frame.
+struct ManagedBuffer {
+    buf: WlBuffer,
+    released: bool,
+    doomed: bool,
+}
 
-/// Hand a no-longer-current buffer to the release-driven reaper instead of
-/// destroying it immediately.
+static MANAGED: Mutex<Vec<ManagedBuffer>> = Mutex::new(Vec::new());
+
+pub(crate) fn track_buffer(buf: &WlBuffer) {
+    MANAGED.lock().push(ManagedBuffer {
+        buf: buf.clone(),
+        released: true,
+        doomed: false,
+    });
+}
+
+pub(crate) fn mark_attached(buf: &WlBuffer) {
+    let mut mgd = MANAGED.lock();
+    if let Some(m) = mgd.iter_mut().find(|m| &m.buf == buf) {
+        m.released = false;
+    }
+}
+
+pub(crate) fn buffer_is_idle(buf: &WlBuffer) -> bool {
+    MANAGED
+        .lock()
+        .iter()
+        .find(|m| &m.buf == buf)
+        .is_some_and(|m| m.released)
+}
+
 pub(crate) fn retire_buffer(buf: WlBuffer) {
-    RETIRED_BUFFERS.lock().push(buf);
+    let mut mgd = MANAGED.lock();
+    match mgd.iter().position(|m| m.buf == buf) {
+        Some(pos) if mgd[pos].released => {
+            mgd.swap_remove(pos).buf.destroy();
+        }
+        Some(pos) => mgd[pos].doomed = true,
+        None => {
+            debug_assert!(
+                false,
+                "retire_buffer: untracked buffer — a release may have been missed"
+            );
+            tracing::error!("retire_buffer: untracked buffer — a release may have been missed");
+            mgd.push(ManagedBuffer {
+                buf,
+                released: false,
+                doomed: true,
+            });
+        }
+    }
+}
+
+pub(crate) fn note_buffer_release(buffer: &WlBuffer) {
+    let mut mgd = MANAGED.lock();
+    if let Some(pos) = mgd.iter().position(|m| m.buf == *buffer) {
+        if mgd[pos].doomed {
+            mgd.swap_remove(pos).buf.destroy();
+        } else {
+            mgd[pos].released = true;
+        }
+    }
 }
 
 impl Dispatch<WlBuffer, ()> for DispatchState {
@@ -276,10 +345,7 @@ impl Dispatch<WlBuffer, ()> for DispatchState {
         _: &QueueHandle<Self>,
     ) {
         if let wayland_client::protocol::wl_buffer::Event::Release = event {
-            let mut retired = RETIRED_BUFFERS.lock();
-            if let Some(pos) = retired.iter().position(|b| b == buffer) {
-                retired.swap_remove(pos).destroy();
-            }
+            note_buffer_release(buffer);
         }
     }
 }
@@ -468,6 +534,7 @@ pub(crate) fn create_solid_color_buffer(state: &WlState, r: u8, g: u8, b: u8) ->
     let pool = state.shm.create_pool(fd.as_fd(), 4, &state.qh, ());
     let buf = pool.create_buffer(0, 1, 1, 4, Format::Argb8888, &state.qh, ());
     pool.destroy();
+    track_buffer(&buf);
     Some(buf)
 }
 
@@ -491,6 +558,7 @@ pub(crate) fn create_shm_buffer(
     let pool = state.shm.create_pool(fd.as_fd(), size, &state.qh, ());
     let buf = pool.create_buffer(0, w, h, stride, Format::Argb8888, &state.qh, ());
     pool.destroy();
+    track_buffer(&buf);
     Some(buf)
 }
 
@@ -522,7 +590,73 @@ pub(crate) fn create_dmabuf_buffer(
         (),
     );
     params.destroy();
+    track_buffer(&buf);
     Some(buf)
+}
+
+const DMABUF_POOL_CAP: usize = 16;
+
+fn create_dmabuf_for_frame(
+    state: &WlState,
+    frame: &crate::wl_ops::JfnDmabufFrame,
+) -> Option<WlBuffer> {
+    create_dmabuf_buffer(
+        state,
+        frame.fd.as_fd(),
+        frame.stride,
+        frame.modifier,
+        frame.coded_w,
+        frame.coded_h,
+    )
+}
+
+pub(crate) fn get_or_create_dmabuf(
+    state: &WlState,
+    s: &mut PlatformSurface,
+    frame: &crate::wl_ops::JfnDmabufFrame,
+) -> Option<DmabufLease> {
+    let Some(id) = frame.id else {
+        return Some(DmabufLease::OneShot(create_dmabuf_for_frame(state, frame)?));
+    };
+
+    let hit = s.dmabuf_pool.iter().position(|e| {
+        e.id == id
+            && e.w == frame.coded_w
+            && e.h == frame.coded_h
+            && e.stride == frame.stride
+            && e.modifier == frame.modifier
+    });
+    if let Some(pos) = hit {
+        if buffer_is_idle(&s.dmabuf_pool[pos].buf) {
+            let entry = s.dmabuf_pool.remove(pos);
+            s.dmabuf_pool.insert(0, entry);
+            return Some(DmabufLease::Pooled(s.dmabuf_pool[0].buf.clone()));
+        }
+        retire_buffer(s.dmabuf_pool.remove(pos).buf);
+    }
+    if let Some(stale) = s.dmabuf_pool.iter().position(|e| e.id == id) {
+        retire_buffer(s.dmabuf_pool.remove(stale).buf);
+    }
+
+    let buf = create_dmabuf_for_frame(state, frame)?;
+    let lease = buf.clone();
+    s.dmabuf_pool.insert(
+        0,
+        DmabufBuf {
+            id,
+            w: frame.coded_w,
+            h: frame.coded_h,
+            stride: frame.stride,
+            modifier: frame.modifier,
+            buf,
+        },
+    );
+    while s.dmabuf_pool.len() > DMABUF_POOL_CAP {
+        if let Some(evicted) = s.dmabuf_pool.pop() {
+            retire_buffer(evicted.buf);
+        }
+    }
+    Some(DmabufLease::Pooled(lease))
 }
 
 /// Create a CLOEXEC anonymous memfd of the given size and truncate it.

@@ -184,13 +184,15 @@ impl RootState {
         if let Some(vp) = &self.viewport {
             vp.set_destination(w, h);
         }
+        // Attach once; the viewport (set above) restretches this on resize.
         if self.bg_buffer.is_none() {
             self.bg_buffer = self.create_solid_buffer();
+            if let Some(buf) = &self.bg_buffer {
+                crate::wl_state::mark_attached(buf);
+                self.surface.attach(Some(buf), 0, 0);
+            }
         }
-        if let Some(buf) = &self.bg_buffer {
-            self.surface.attach(Some(buf), 0, 0);
-            self.surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
-        }
+        self.surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
     }
 
     fn create_solid_buffer(&self) -> Option<WlBuffer> {
@@ -206,6 +208,7 @@ impl RootState {
         let pool: WlShmPool = self.shm.create_pool(fd.as_fd(), 4, &self.qh, ());
         let buf = pool.create_buffer(0, 1, 1, 4, Format::Argb8888, &self.qh, ());
         pool.destroy();
+        crate::wl_state::track_buffer(&buf);
         Some(buf)
     }
 }
@@ -316,6 +319,7 @@ impl PopupShell {
         let pool: WlShmPool = self.shm.create_pool(fd.as_fd(), size, &self.qh, ());
         let buf = pool.create_buffer(0, w, h, stride, Format::Argb8888, &self.qh, ());
         pool.destroy();
+        crate::wl_state::track_buffer(&buf);
         Some(buf)
     }
 
@@ -767,7 +771,9 @@ fn root_loop(
                 && bg != state.bg
             {
                 state.bg = bg;
-                state.bg_buffer = None;
+                if let Some(old) = state.bg_buffer.take() {
+                    crate::wl_state::retire_buffer(old);
+                }
                 if state.cur_w > 0 && state.cur_h > 0 {
                     let (w, h) = (state.cur_w, state.cur_h);
                     state.fill_background(w, h);
@@ -776,6 +782,12 @@ fn root_loop(
                 }
             }
         }
+    }
+    // Do not drain the bg's release here: this thread shares the wl_display fd
+    // with the other readers via prepare_read/poll, so a blocking roundtrip
+    // would deadlock them.
+    if let Some(bg) = state.bg_buffer.take() {
+        crate::wl_state::retire_buffer(bg);
     }
 }
 
@@ -935,7 +947,6 @@ noop_dispatch!(
     WlCompositor,
     WlShm,
     WlShmPool,
-    WlBuffer,
     WpViewporter,
     WpViewport,
     WpFractionalScaleManagerV1,
@@ -943,6 +954,21 @@ noop_dispatch!(
     WlSeat,
     XdgPositioner,
 );
+
+impl Dispatch<WlBuffer, ()> for RootState {
+    fn event(
+        _: &mut Self,
+        buffer: &WlBuffer,
+        event: <WlBuffer as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_buffer::Event::Release = event {
+            crate::wl_state::note_buffer_release(buffer);
+        }
+    }
+}
 
 impl Dispatch<ZxdgToplevelDecorationV1, ()> for RootState {
     fn event(

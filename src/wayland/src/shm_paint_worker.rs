@@ -277,11 +277,13 @@ fn run_worker(
             tracing::warn!("wayland shm paint worker: buffer allocation failed");
             continue;
         };
+        crate::wl_state::track_buffer(&buf);
 
         if let Some(old) = current_buffer.take() {
             crate::wl_state::retire_buffer(old);
         }
         set_viewport_for_buffer(viewport.as_ref(), viewport_state, frame.width, frame.height);
+        crate::wl_state::mark_attached(&buf);
         surface.attach(Some(&buf), 0, 0);
         surface.damage_buffer(0, 0, frame.width, frame.height);
         surface.commit();
@@ -293,7 +295,7 @@ fn run_worker(
     }
 
     if let Some(buf) = current_buffer.take() {
-        buf.destroy();
+        crate::wl_state::retire_buffer(buf);
     }
     let _ = conn.flush();
 }

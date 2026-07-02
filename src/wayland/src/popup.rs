@@ -278,7 +278,7 @@ fn ensure_surface_locked(st: &mut WlState) -> u32 {
         st.menu_io.viewport = viewport;
     }
     if let Some(old) = st.menu_io.buffer.take() {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     if let Some(surface) = st.menu_io.surface.as_ref() {
         surface.attach(None, 0, 0);
@@ -321,11 +321,12 @@ fn paint_placeholder_locked(st: &mut WlState) {
         vp.set_source(0.0, 0.0, 1.0, 1.0);
         vp.set_destination(1, 1);
     }
+    crate::wl_state::mark_attached(&buf);
     surface.attach(Some(&buf), 0, 0);
     surface.damage_buffer(0, 0, 1, 1);
     surface.commit();
     if let Some(old) = st.menu_io.buffer.replace(buf) {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     st.flush();
 }
@@ -569,11 +570,12 @@ fn paint_and_attach_locked(st: &mut WlState) {
         vp.set_source(0.0, scroll as f64, pw as f64, view_ph as f64);
         vp.set_destination(lw, lh);
     }
+    crate::wl_state::mark_attached(&buf);
     surface.attach(Some(&buf), 0, 0);
     surface.damage_buffer(0, 0, pw, ph);
     surface.commit();
     if let Some(old) = st.menu_io.buffer.replace(buf) {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     st.flush();
 }
