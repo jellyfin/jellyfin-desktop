@@ -143,19 +143,6 @@ impl PlatformSurface {
 }
 
 // =====================================================================
-// Paint path discriminator (replaces the C++ g_present function pointer)
-// =====================================================================
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PresentMode {
-    /// Steady-state: attach the dmabuf provided.
-    Attach,
-    /// Drop frames silently — used between begin_transition and the
-    /// first on_mpv_configure that publishes the new size.
-    Drop,
-}
-
-// =====================================================================
 // Wl-side state (one global, mutex-guarded — mirrors C++ surface_mtx)
 // =====================================================================
 
@@ -181,8 +168,6 @@ pub(crate) struct WlState {
     pub stack: Vec<*mut PlatformSurface>,
 
     pub was_fullscreen: bool,
-    pub transitioning: bool,
-    pub present_mode: PresentMode,
 
     /// Raw `wl_display*` — kept so `GpuPainter::new` can build
     /// `VK_KHR_wayland_surface` handles for child surfaces.
@@ -353,8 +338,6 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
         root_surface: None,
         stack: Vec::new(),
         was_fullscreen: false,
-        transitioning: false,
-        present_mode: PresentMode::Attach,
         // SAFETY: caller guaranteed `display_ptr` is a live
         // `*mut wl_display`.
         display_ptr: NonNull::new(display_ptr).ok_or_else(|| "display_ptr is null".to_string())?,
