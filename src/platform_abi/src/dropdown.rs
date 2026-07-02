@@ -2,17 +2,9 @@ use std::ffi::{c_int, c_void};
 
 use crate::{DisplayBackend, SurfaceHandle};
 
-pub struct JfnPopupRequest {
-    pub x: c_int,
-    pub y: c_int,
-    pub lw: c_int,
-    pub lh: c_int,
-    pub options: Vec<String>,
-    pub initial_highlight: c_int,
-    /// Picked option index, `-1` for cancel. Dropping it unfired also cancels.
-    pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
-}
-
+/// The mechanism a backend uses to present a `<select>` dropdown. Each platform
+/// maps its chosen style to a concrete [`DropdownBackend`]; this is the single
+/// home for the per-backend policy, mirroring [`crate::context_menu_style`].
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DropdownStyle {
     /// The backend draws its own menu and fires `on_selected`; CEF's OSR
@@ -24,11 +16,22 @@ pub enum DropdownStyle {
 
 pub fn dropdown_style(b: DisplayBackend) -> DropdownStyle {
     match b {
-        DisplayBackend::Wayland => DropdownStyle::Composited,
+        DisplayBackend::Wayland => DropdownStyle::PlatformMenu,
         DisplayBackend::X11 => DropdownStyle::JsMenu,
         DisplayBackend::Windows => DropdownStyle::Composited,
         DisplayBackend::MacOS => DropdownStyle::PlatformMenu,
     }
+}
+
+pub struct JfnPopupRequest {
+    pub x: c_int,
+    pub y: c_int,
+    pub lw: c_int,
+    pub lh: c_int,
+    pub options: Vec<String>,
+    pub initial_highlight: c_int,
+    /// Picked option index, `-1` for cancel. Dropping it unfired also cancels.
+    pub on_selected: Option<Box<dyn FnOnce(c_int) + Send>>,
 }
 
 /// Embedded scripts a dropdown mechanism can require. The embedder maps
