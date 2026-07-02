@@ -1,4 +1,4 @@
-//! Surface lifecycle + paint + transition ops.
+//! Surface lifecycle + paint ops.
 //!
 //! All entry points run under the [`wl_state::lock()`] mutex. Each
 //! protocol-touching op calls `WlState::flush()` (or `conn.flush()`)
@@ -13,8 +13,8 @@ use wayland_client::Proxy;
 use crate::gpu_paint_worker::WaylandGpuPaintWorker;
 use crate::shm_paint_worker::{ViewportState, WaylandShmPaintWorker};
 use crate::wl_state::{
-    PlatformSurface, PresentMode, WlState, create_dmabuf_buffer, create_shm_buffer,
-    create_solid_color_buffer, lock, size_in_tolerance,
+    PlatformSurface, WlState, create_dmabuf_buffer, create_shm_buffer, create_solid_color_buffer,
+    lock, size_in_tolerance,
 };
 
 // =====================================================================
@@ -315,17 +315,9 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
     let vw = frame.visible_w;
     let vh = frame.visible_h;
 
-    let mut st = lock();
+    let st = lock();
     let s = unsafe { surface_mut(ptr) };
     if s.surface.is_none() || !s.visible || st.dmabuf.is_none() {
-        return false;
-    }
-    if st.present_mode == PresentMode::Drop {
-        return false;
-    }
-    if st.transitioning && !size_in_tolerance(vw, vh) {
-        unmap_locked(s);
-        st.flush();
         return false;
     }
 
@@ -334,16 +326,7 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
         return false;
     };
 
-    if st.transitioning && !size_in_tolerance(vw, vh) {
-        buf.destroy();
-        unmap_locked(s);
-        st.flush();
-        return false;
-    }
-
-    let was_transitioning = st.transitioning;
-    let was_null_attached = s.null_attached;
-    if !was_transitioning && !size_in_tolerance(vw, vh) && !was_null_attached {
+    if !size_in_tolerance(vw, vh) && !s.null_attached {
         buf.destroy();
         return false;
     }
@@ -351,10 +334,6 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
     attach_and_commit_locked(s, buf, w, h, vw, vh);
     st.flush();
 
-    if was_transitioning {
-        // First in-tolerance frame ends the FS transition.
-        st.transitioning = false;
-    }
     // The layer commit cached its buffer; the owner applies it atomically.
     crate::root_window::request_present();
     true
@@ -420,13 +399,7 @@ pub(crate) fn surface_present_software(
         return false;
     }
     if !st.use_gpu_paint {
-        if st.present_mode == PresentMode::Drop {
-            return false;
-        }
         return queue_shm_present(s, &st, dirty, pixels, w, h);
-    }
-    if st.present_mode == PresentMode::Drop {
-        return false;
     }
 
     let Some(ctx) = st.gpu_ctx.clone() else {
@@ -621,118 +594,8 @@ fn set_viewport_for_buffer_locked(s: &PlatformSurface, vis_w: i32, vis_h: i32) {
     set_viewport_dest_locked(s);
 }
 
-fn unmap_locked(s: &mut PlatformSurface) {
-    let Some(surface) = s.surface.as_ref() else {
-        return;
-    };
-    surface.attach(None, 0, 0);
-    if let Some(viewport) = s.viewport.as_ref() {
-        viewport.set_destination(-1, -1);
-    }
-    surface.commit();
-    s.null_attached = true;
-}
-
-// =====================================================================
-// Fullscreen transition
-// =====================================================================
-
-pub(crate) fn begin_transition() {
-    let mut st = lock();
-    begin_transition_locked(&mut st);
-    st.flush();
-}
-
-pub(crate) fn end_transition() {
-    let mut st = lock();
-    end_transition_locked(&mut st);
-    st.flush();
-}
-
-pub(crate) fn in_transition() -> bool {
-    lock().transitioning
-}
-
 pub(crate) fn was_fullscreen() -> bool {
     lock().was_fullscreen
-}
-
-fn begin_transition_locked(st: &mut WlState) {
-    st.transitioning = true;
-    st.present_mode = PresentMode::Drop;
-    let use_gpu_paint = st.use_gpu_paint;
-    for &p in &st.stack {
-        if p.is_null() {
-            continue;
-        }
-        let s = unsafe { surface_mut(p) };
-        let (Some(surface), Some(_)) = (s.surface.as_ref(), s.subsurface.as_ref()) else {
-            continue;
-        };
-        // Vulkan WSI owns attach/commit on this wl_surface. Do not do wgpu
-        // work here; only gate the presenter worker so queued frames do not
-        // present during the transition.
-        if use_gpu_paint {
-            if let Some(worker) = s.gpu_paint_worker.as_ref() {
-                worker.set_visible(false);
-            }
-            continue;
-        }
-        if let Some(worker) = s.shm_paint_worker.as_ref() {
-            worker.set_visible(false);
-        }
-        surface.attach(None, 0, 0);
-        if let Some(viewport) = s.viewport.as_ref() {
-            viewport.set_destination(-1, -1);
-        }
-        surface.commit();
-        s.null_attached = true;
-    }
-}
-
-fn end_transition_locked(st: &mut WlState) {
-    st.transitioning = false;
-    st.present_mode = PresentMode::Attach;
-    let (lw, lh) = match crate::window_state::window_logical_size() {
-        Some(crate::window_state::WindowSize { w, h }) => (w, h),
-        None => return,
-    };
-    let (pw, ph) = crate::window_state::jfn_wl_window_size();
-    let use_gpu_paint = st.use_gpu_paint;
-    if use_gpu_paint {
-        // Reapply viewport state and re-enable presenter workers without
-        // doing wgpu work on this callback.
-        for &p in &st.stack {
-            if p.is_null() {
-                continue;
-            }
-            let s = unsafe { surface_mut(p) };
-            set_viewport_dest_locked(s);
-            if let Some(worker) = s.gpu_paint_worker.as_ref() {
-                worker.set_visible(s.visible);
-                if pw > 0 && ph > 0 {
-                    worker.resize((pw as u32, ph as u32));
-                }
-            }
-        }
-        return;
-    }
-    for &p in &st.stack {
-        if p.is_null() {
-            continue;
-        }
-        let s = unsafe { surface_mut(p) };
-        if let Some(worker) = s.shm_paint_worker.as_ref() {
-            worker.resize(lw, lh, pw, ph);
-            worker.set_visible(s.visible);
-        }
-    }
-    if let Some(&p) = st.stack.first()
-        && !p.is_null()
-    {
-        let s = unsafe { surface_mut(p) };
-        set_viewport_dest_locked(s);
-    }
 }
 
 pub(crate) fn on_configure(fullscreen: bool) {
@@ -749,15 +612,7 @@ pub(crate) fn on_configure(fullscreen: bool) {
 
     let mut st = lock();
 
-    if fullscreen != st.was_fullscreen {
-        if !st.transitioning {
-            begin_transition_locked(&mut st);
-        }
-        st.was_fullscreen = fullscreen;
-    }
-    if st.transitioning {
-        st.present_mode = PresentMode::Attach;
-    }
+    st.was_fullscreen = fullscreen;
 
     crate::wl_state::ensure_root_locked(&mut st);
 
@@ -781,31 +636,4 @@ pub(crate) fn on_configure(fullscreen: bool) {
     }
 
     st.flush();
-}
-
-pub(crate) fn set_fullscreen_via(fullscreen: bool, apply: impl FnOnce(bool)) {
-    {
-        let mut st = lock();
-        if st.was_fullscreen == fullscreen {
-            // Compositor may have rejected our previous toggle.
-            if st.transitioning {
-                end_transition_locked(&mut st);
-                st.flush();
-            }
-            return;
-        }
-        begin_transition_locked(&mut st);
-        st.flush();
-    }
-    apply(fullscreen);
-}
-
-pub(crate) fn toggle_fullscreen_via(apply: impl FnOnce(bool)) {
-    let target = {
-        let mut st = lock();
-        begin_transition_locked(&mut st);
-        st.flush();
-        !st.was_fullscreen
-    };
-    apply(target);
 }
