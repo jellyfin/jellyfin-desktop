@@ -142,7 +142,7 @@ impl RootState {
         .max(1);
 
         // Geometry + background are cached on the root; the single root commit
-        // that presents them is issued by `present_transaction` below, together
+        // that presents them is issued by the loop's latch drain, together
         // with the overlay/video subtree — never as a standalone commit here.
         self.xdg_surface.set_window_geometry(0, 0, w, h);
         self.fill_background(w, h);
@@ -162,8 +162,7 @@ impl RootState {
         let (pw, ph) = self.physical(w, h);
         crate::window_state::feed_window_state(w, h, pw, ph, self.fullscreen, self.maximized);
 
-        // One owner-issued commit applies geometry + overlay + video atomically.
-        self.present_transaction();
+        PENDING_PRESENT.store(true, Ordering::Release);
     }
 
     fn present_transaction(&mut self) {
@@ -171,7 +170,6 @@ impl RootState {
             return;
         }
         self.surface.commit();
-        let _ = self.conn.flush();
     }
 
     fn physical(&self, lw: i32, lh: i32) -> (i32, i32) {
@@ -702,6 +700,13 @@ fn root_loop(
         if queue.dispatch_pending(&mut state).is_err() {
             break;
         }
+        // Drain here, before the blocking poll: an event handler (configure,
+        // scale) that raised the latch during dispatch must commit now, or the
+        // loop blocks in poll with the compositor still awaiting our commit.
+        // Gate on `mapped` so a pre-configure request stays latched, not lost.
+        if state.mapped && PENDING_PRESENT.swap(false, Ordering::Acquire) {
+            state.present_transaction();
+        }
         let _ = conn.flush();
 
         let guard = match queue.prepare_read() {
@@ -766,9 +771,6 @@ fn root_loop(
                     // Apply via the single owner commit, not a standalone one.
                     PENDING_PRESENT.store(true, Ordering::Release);
                 }
-            }
-            if PENDING_PRESENT.swap(false, Ordering::Acquire) {
-                state.present_transaction();
             }
         }
     }
@@ -869,7 +871,7 @@ impl Dispatch<WpFractionalScaleV1, ()> for RootState {
                     state.fullscreen,
                     state.maximized,
                 );
-                state.present_transaction();
+                PENDING_PRESENT.store(true, Ordering::Release);
             }
         }
     }
