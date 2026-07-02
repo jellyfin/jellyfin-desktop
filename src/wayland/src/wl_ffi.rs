@@ -104,31 +104,19 @@ pub unsafe fn jfn_wl_surface_present_software(
 }
 
 // =====================================================================
-// Fullscreen / transition
+// Fullscreen
 // =====================================================================
-
-pub fn jfn_wl_begin_transition() {
-    wl_ops::begin_transition();
-}
-
-pub fn jfn_wl_end_transition() {
-    wl_ops::end_transition();
-}
-
-pub fn jfn_wl_in_transition() -> bool {
-    wl_ops::in_transition()
-}
 
 pub fn jfn_wl_was_fullscreen() -> bool {
     wl_ops::was_fullscreen()
 }
 
 pub fn jfn_wl_set_fullscreen(fullscreen: bool) {
-    wl_ops::set_fullscreen_via(fullscreen, crate::root_window::set_fullscreen);
+    crate::root_window::set_fullscreen(fullscreen);
 }
 
 pub fn jfn_wl_toggle_fullscreen() {
-    wl_ops::toggle_fullscreen_via(crate::root_window::set_fullscreen);
+    crate::root_window::set_fullscreen(!wl_ops::was_fullscreen());
 }
 
 // =====================================================================

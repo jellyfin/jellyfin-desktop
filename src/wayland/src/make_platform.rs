@@ -226,18 +226,6 @@ impl Platform for WaylandPlatform {
         crate::wl_ffi::jfn_wl_window_start_resize(edge);
     }
 
-    fn begin_transition(&self) {
-        crate::wl_ffi::jfn_wl_begin_transition();
-    }
-
-    fn end_transition(&self) {
-        crate::wl_ffi::jfn_wl_end_transition();
-    }
-
-    fn in_transition(&self) -> bool {
-        crate::wl_ffi::jfn_wl_in_transition()
-    }
-
     fn get_scale(&self) -> f32 {
         jfn_wl_get_cached_scale()
     }
