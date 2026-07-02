@@ -389,28 +389,31 @@ pub(crate) fn popup_reposition(x: i32, y: i32, w: i32, h: i32) {
     let Some(shell) = popup_shell() else {
         return;
     };
-    let popup = POPUP_ROLE.lock().popup.clone();
-    let Some(popup) = popup else {
-        return;
-    };
     let positioner = build_menu_positioner(shell, x, y, w, h);
-    popup.reposition(&positioner, 0);
+    {
+        // Reposition must be issued under POPUP_ROLE: popup_destroy runs on the
+        // root thread and will otherwise destroy the popup mid-request, leaving
+        // this a request on a dead object that drops the client.
+        let role = POPUP_ROLE.lock();
+        if let Some(popup) = role.popup.as_ref() {
+            popup.reposition(&positioner, 0);
+            shell.flush();
+        }
+    }
     positioner.destroy();
-    shell.flush();
 }
 
 /// Destroys only the popup role objects, not the menu wl_surface — that surface
 /// is persistent (owned by crate::popup) and re-roled on the next open.
 pub(crate) fn popup_destroy() {
-    let (popup, xdg) = {
+    {
         let mut role = POPUP_ROLE.lock();
-        (role.popup.take(), role.xdg.take())
-    };
-    if let Some(p) = popup {
-        p.destroy();
-    }
-    if let Some(x) = xdg {
-        x.destroy();
+        if let Some(p) = role.popup.take() {
+            p.destroy();
+        }
+        if let Some(x) = role.xdg.take() {
+            x.destroy();
+        }
     }
     if let Some(shell) = popup_shell() {
         shell.flush();
