@@ -21,7 +21,7 @@ raw-window-handle = "0.6"
 wgpu = "29"
 # Pinned to wgpu's exact build so the hal/ash types are identical to the ones
 # wgpu links; the dmabuf-import path reaches the Vulkan device through them.
-wgpu-hal = { version = "=29.0.3", features = ["vulkan"] }
+wgpu-hal = { version = "=30.0.0", features = ["vulkan"] }
 ash = "0.38"
 pollster = "0.4"
 
