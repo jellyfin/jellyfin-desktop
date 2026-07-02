@@ -1,6 +1,3 @@
-//! Both mechanisms are kept compiled so the style table in
-//! `jfn_platform_abi::dropdown` can flip between them.
-
 mod subsurface;
 mod xdg_popup;
 
