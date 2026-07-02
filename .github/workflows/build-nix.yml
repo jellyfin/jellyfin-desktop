@@ -11,8 +11,11 @@ on:
 
 jobs:
   build-and-push:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
     name: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
@@ -23,4 +26,4 @@ jobs:
           name: xaltsc-jfnd
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - name: Build packages and push to cachix
-        run: nix build .#packages.x86_64-linux.default
+        run: nix build .
