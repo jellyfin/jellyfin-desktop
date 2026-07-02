@@ -1,17 +1,11 @@
-use std::os::fd::AsFd;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use memmap2::MmapOptions;
-use wayland_client::protocol::{
-    wl_buffer::WlBuffer,
-    wl_shm::{Format, WlShm},
-    wl_surface::WlSurface,
-};
+use wayland_client::protocol::{wl_shm::WlShm, wl_surface::WlSurface};
 use wayland_client::{Connection, QueueHandle};
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 
-use crate::wl_state::{DispatchState, memfd_anon};
+use crate::wl_state::DispatchState;
 use jfn_platform_abi::JfnRect;
 
 struct PendingRect {
@@ -232,7 +226,7 @@ fn run_worker(
 ) {
     let mut shadow = Vec::<u8>::new();
     let mut shadow_size = (0, 0);
-    let mut current_buffer: Option<WlBuffer> = None;
+    let mut current_buffer: Option<crate::wl_state::OwnedBuffer> = None;
 
     loop {
         let (frame, viewport_state, visible, shutdown) = {
@@ -282,7 +276,7 @@ fn run_worker(
             crate::wl_state::retire_buffer(old);
         }
         set_viewport_for_buffer(viewport.as_ref(), viewport_state, frame.width, frame.height);
-        surface.attach(Some(&buf), 0, 0);
+        buf.attach_to(&surface, 0, 0);
         surface.damage_buffer(0, 0, frame.width, frame.height);
         surface.commit();
         let _ = conn.flush();
@@ -293,7 +287,7 @@ fn run_worker(
     }
 
     if let Some(buf) = current_buffer.take() {
-        buf.destroy();
+        crate::wl_state::retire_buffer(buf);
     }
     let _ = conn.flush();
 }
@@ -317,21 +311,8 @@ fn create_shm_buffer(
     pixels: &[u8],
     w: i32,
     h: i32,
-) -> Option<WlBuffer> {
-    let stride = w.checked_mul(4)?;
-    let size = stride.checked_mul(h)?;
-    if size <= 0 || pixels.len() < size as usize {
-        return None;
-    }
-    let fd = memfd_anon("cef-sw-worker", size as usize)?;
-    {
-        let mut mmap = unsafe { MmapOptions::new().len(size as usize).map_mut(&fd) }.ok()?;
-        mmap.copy_from_slice(&pixels[..size as usize]);
-    }
-    let pool = shm.create_pool(fd.as_fd(), size, qh, ());
-    let buf = pool.create_buffer(0, w, h, stride, Format::Argb8888, qh, ());
-    pool.destroy();
-    Some(buf)
+) -> Option<crate::wl_state::OwnedBuffer> {
+    crate::wl_state::build_shm_buffer_from_pixels(shm, qh, "cef-sw-worker", pixels, w, h)
 }
 
 fn set_viewport_for_buffer(viewport: Option<&WpViewport>, state: ViewportState, w: i32, h: i32) {

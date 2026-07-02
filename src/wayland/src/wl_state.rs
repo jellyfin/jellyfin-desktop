@@ -31,6 +31,7 @@ use crate::shm_paint_worker::WaylandShmPaintWorker;
 
 use memmap2::MmapOptions;
 use wayland_backend::client::Backend;
+use wayland_client::backend::ObjectId;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{
     wl_buffer::WlBuffer,
@@ -93,22 +94,65 @@ impl SyncSubsurface {
     }
 }
 
+/// Sole owner of a `wl_buffer`; destruction goes through [`retire_buffer`],
+/// which honors the pending-release invariant.
+pub(crate) struct OwnedBuffer {
+    buf: WlBuffer,
+}
+
+impl OwnedBuffer {
+    fn adopt(buf: WlBuffer) -> Self {
+        MANAGED.lock().push(ManagedBuffer {
+            id: buf.id(),
+            released: true,
+            doomed: None,
+        });
+        Self { buf }
+    }
+
+    fn id(&self) -> ObjectId {
+        self.buf.id()
+    }
+
+    /// Marks the buffer in-use until its next release.
+    pub(crate) fn attach_to(&self, surface: &WlSurface, x: i32, y: i32) {
+        mark_attached(&self.id());
+        surface.attach(Some(&self.buf), x, y);
+    }
+}
+
+pub(crate) struct DmabufBuf {
+    pub id: (u64, u64),
+    pub w: i32,
+    pub h: i32,
+    pub stride: u32,
+    pub modifier: u64,
+    pub buf: OwnedBuffer,
+}
+
+pub(crate) enum DmabufLease {
+    /// Present the buffer at pool index 0 by borrowing; ownership stays in the pool.
+    PooledFront,
+    /// A one-shot buffer (unpooled) owned by the caller.
+    OneShot(OwnedBuffer),
+}
+
 pub(crate) struct PlatformSurface {
     pub surface: Option<WlSurface>,
     pub subsurface: Option<SyncSubsurface>,
     pub viewport: Option<WpViewport>,
-    pub buffer: Option<WlBuffer>,
+    pub buffer: Option<OwnedBuffer>,
+    pub dmabuf_pool: Vec<DmabufBuf>,
     pub buffer_w: i32,
     pub buffer_h: i32,
     pub visible: bool,
     pub placeholder: bool,
     pub null_attached: bool,
 
-    // Popup child.
     pub popup_surface: Option<WlSurface>,
     pub popup_subsurface: Option<SyncSubsurface>,
     pub popup_viewport: Option<WpViewport>,
-    pub popup_buffer: Option<WlBuffer>,
+    pub popup_buffer: Option<OwnedBuffer>,
     pub popup_visible: bool,
 
     /// Vulkan-WSI presenter worker, lazily created on first software
@@ -126,6 +170,7 @@ impl PlatformSurface {
             subsurface: None,
             viewport: None,
             buffer: None,
+            dmabuf_pool: Vec::new(),
             buffer_w: 0,
             buffer_h: 0,
             visible: true,
@@ -252,18 +297,79 @@ noop_dispatch!(
     WpViewport,
 );
 
-// Buffers replaced on a surface are *retired* here, not destroyed: under a
-// synchronized subsurface the compositor applies a committed buffer a frame
-// later, so destroying it eagerly (as the desync path used to) frees a buffer
-// the compositor still references → a blank surface. We hold each retired buffer
-// until its `wl_buffer.release` arrives, then destroy it. Mirrors what mesa's
-// swapchain does internally for the gpu path.
-static RETIRED_BUFFERS: Mutex<Vec<WlBuffer>> = Mutex::new(Vec::new());
+// Release-state metadata for a live buffer, keyed by protocol identity rather
+// than an owning proxy clone (which would make this a second owner).
+//
+// Under a synchronized subsurface the compositor keeps reading a buffer for a
+// frame after it is replaced. Destroying or re-attaching one while `released`
+// is false shows a blank frame.
+struct ManagedBuffer {
+    id: ObjectId,
+    released: bool,
+    // Holds the owning proxy only after `retire_buffer` on a still-unreleased
+    // buffer: ownership moves here so it can be destroyed once its release
+    // arrives. `None` while the buffer is owned elsewhere (attached / pooled).
+    doomed: Option<WlBuffer>,
+}
 
-/// Hand a no-longer-current buffer to the release-driven reaper instead of
-/// destroying it immediately.
-pub(crate) fn retire_buffer(buf: WlBuffer) {
-    RETIRED_BUFFERS.lock().push(buf);
+static MANAGED: Mutex<Vec<ManagedBuffer>> = Mutex::new(Vec::new());
+
+fn mark_attached(id: &ObjectId) {
+    let mut mgd = MANAGED.lock();
+    if let Some(m) = mgd.iter_mut().find(|m| &m.id == id) {
+        m.released = false;
+    }
+}
+
+pub(crate) fn buffer_is_idle(buf: &OwnedBuffer) -> bool {
+    let id = buf.id();
+    MANAGED
+        .lock()
+        .iter()
+        .find(|m| m.id == id)
+        .is_some_and(|m| m.released && m.doomed.is_none())
+}
+
+pub(crate) fn damage_all(surface: &WlSurface) {
+    surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
+}
+
+pub(crate) fn retire_buffer(buf: OwnedBuffer) {
+    let id = buf.id();
+    let mut mgd = MANAGED.lock();
+    match mgd.iter().position(|m| m.id == id) {
+        Some(pos) if mgd[pos].released => {
+            mgd.swap_remove(pos);
+            buf.buf.destroy();
+        }
+        Some(pos) => mgd[pos].doomed = Some(buf.buf),
+        None => {
+            debug_assert!(
+                false,
+                "retire_buffer: untracked buffer — a release may have been missed"
+            );
+            tracing::error!("retire_buffer: untracked buffer — a release may have been missed");
+            mgd.push(ManagedBuffer {
+                id,
+                released: false,
+                doomed: Some(buf.buf),
+            });
+        }
+    }
+}
+
+pub(crate) fn note_buffer_release(buffer: &WlBuffer) {
+    let id = buffer.id();
+    let mut mgd = MANAGED.lock();
+    if let Some(pos) = mgd.iter().position(|m| m.id == id) {
+        if mgd[pos].doomed.is_some() {
+            if let Some(doomed) = mgd.swap_remove(pos).doomed {
+                doomed.destroy();
+            }
+        } else {
+            mgd[pos].released = true;
+        }
+    }
 }
 
 impl Dispatch<WlBuffer, ()> for DispatchState {
@@ -276,10 +382,7 @@ impl Dispatch<WlBuffer, ()> for DispatchState {
         _: &QueueHandle<Self>,
     ) {
         if let wayland_client::protocol::wl_buffer::Event::Release = event {
-            let mut retired = RETIRED_BUFFERS.lock();
-            if let Some(pos) = retired.iter().position(|b| b == buffer) {
-                retired.swap_remove(pos).destroy();
-            }
+            note_buffer_release(buffer);
         }
     }
 }
@@ -454,21 +557,70 @@ pub(crate) fn size_in_tolerance(vw: i32, vh: i32) -> bool {
 // Buffer creation
 // =====================================================================
 
-/// Create a 1×1 ARGB8888 wl_buffer filled with `(r, g, b, 0xFF)`.
-pub(crate) fn create_solid_color_buffer(state: &WlState, r: u8, g: u8, b: u8) -> Option<WlBuffer> {
-    let fd = memfd_anon("solid-color", 4)?;
-    {
-        let mut mmap = unsafe { MmapOptions::new().len(4).map_mut(&fd) }.ok()?;
-        // ARGB8888 little-endian byte order = [B, G, R, A].
-        mmap[0] = b;
-        mmap[1] = g;
-        mmap[2] = r;
-        mmap[3] = 0xFF;
+/// Build an ARGB8888 `wl_shm` buffer of `w`×`h`, handing `fill` a mapping of
+/// exactly `stride*h` bytes to populate (`false` aborts).
+pub(crate) fn build_argb8888_shm_buffer<D>(
+    shm: &WlShm,
+    qh: &QueueHandle<D>,
+    label: &str,
+    w: i32,
+    h: i32,
+    fill: impl FnOnce(&mut [u8]) -> bool,
+) -> Option<OwnedBuffer>
+where
+    D: Dispatch<WlShmPool, ()> + Dispatch<WlBuffer, ()> + 'static,
+{
+    let stride = w.checked_mul(4)?;
+    let size = stride.checked_mul(h)?;
+    if size <= 0 {
+        return None;
     }
-    let pool = state.shm.create_pool(fd.as_fd(), 4, &state.qh, ());
-    let buf = pool.create_buffer(0, 1, 1, 4, Format::Argb8888, &state.qh, ());
+    let fd = memfd_anon(label, size as usize)?;
+    {
+        let mut mmap = unsafe { MmapOptions::new().len(size as usize).map_mut(&fd) }.ok()?;
+        if !fill(&mut mmap) {
+            return None;
+        }
+    }
+    let pool = shm.create_pool(fd.as_fd(), size, qh, ());
+    let buf = pool.create_buffer(0, w, h, stride, Format::Argb8888, qh, ());
     pool.destroy();
-    Some(buf)
+    Some(OwnedBuffer::adopt(buf))
+}
+
+/// Copy `pixels` into a fresh ARGB8888 shm buffer, or `None` if it's too short.
+pub(crate) fn build_shm_buffer_from_pixels<D>(
+    shm: &WlShm,
+    qh: &QueueHandle<D>,
+    label: &str,
+    pixels: &[u8],
+    w: i32,
+    h: i32,
+) -> Option<OwnedBuffer>
+where
+    D: Dispatch<WlShmPool, ()> + Dispatch<WlBuffer, ()> + 'static,
+{
+    build_argb8888_shm_buffer(shm, qh, label, w, h, |dst| {
+        if pixels.len() < dst.len() {
+            return false;
+        }
+        dst.copy_from_slice(&pixels[..dst.len()]);
+        true
+    })
+}
+
+/// Create a 1×1 ARGB8888 wl_buffer filled with `(r, g, b, 0xFF)`.
+pub(crate) fn create_solid_color_buffer(
+    state: &WlState,
+    r: u8,
+    g: u8,
+    b: u8,
+) -> Option<OwnedBuffer> {
+    build_argb8888_shm_buffer(&state.shm, &state.qh, "solid-color", 1, 1, |dst| {
+        // ARGB8888 little-endian byte order = [B, G, R, A].
+        dst.copy_from_slice(&[b, g, r, 0xFF]);
+        true
+    })
 }
 
 /// Create a wl_shm ARGB8888 buffer from a CPU pixel array.
@@ -477,21 +629,8 @@ pub(crate) fn create_shm_buffer(
     pixels: &[u8],
     w: i32,
     h: i32,
-) -> Option<WlBuffer> {
-    let stride = w.checked_mul(4)?;
-    let size = stride.checked_mul(h)?;
-    if size <= 0 || pixels.len() < size as usize {
-        return None;
-    }
-    let fd = memfd_anon("cef-sw", size as usize)?;
-    {
-        let mut mmap = unsafe { MmapOptions::new().len(size as usize).map_mut(&fd) }.ok()?;
-        mmap.copy_from_slice(&pixels[..size as usize]);
-    }
-    let pool = state.shm.create_pool(fd.as_fd(), size, &state.qh, ());
-    let buf = pool.create_buffer(0, w, h, stride, Format::Argb8888, &state.qh, ());
-    pool.destroy();
-    Some(buf)
+) -> Option<OwnedBuffer> {
+    build_shm_buffer_from_pixels(&state.shm, &state.qh, "cef-sw", pixels, w, h)
 }
 
 /// Create a dmabuf-backed wl_buffer from a single-plane fd.
@@ -502,7 +641,7 @@ pub(crate) fn create_dmabuf_buffer(
     modifier: u64,
     w: i32,
     h: i32,
-) -> Option<WlBuffer> {
+) -> Option<OwnedBuffer> {
     let dmabuf = state.dmabuf.as_ref()?;
     let params: ZwpLinuxBufferParamsV1 = dmabuf.create_params(&state.qh, ());
     params.add(
@@ -522,7 +661,71 @@ pub(crate) fn create_dmabuf_buffer(
         (),
     );
     params.destroy();
-    Some(buf)
+    Some(OwnedBuffer::adopt(buf))
+}
+
+const DMABUF_POOL_CAP: usize = 16;
+
+fn create_dmabuf_for_frame(
+    state: &WlState,
+    frame: &crate::wl_ops::JfnDmabufFrame,
+) -> Option<OwnedBuffer> {
+    create_dmabuf_buffer(
+        state,
+        frame.fd.as_fd(),
+        frame.stride,
+        frame.modifier,
+        frame.coded_w,
+        frame.coded_h,
+    )
+}
+
+pub(crate) fn get_or_create_dmabuf(
+    state: &WlState,
+    s: &mut PlatformSurface,
+    frame: &crate::wl_ops::JfnDmabufFrame,
+) -> Option<DmabufLease> {
+    let Some(id) = frame.id else {
+        return Some(DmabufLease::OneShot(create_dmabuf_for_frame(state, frame)?));
+    };
+
+    let hit = s.dmabuf_pool.iter().position(|e| {
+        e.id == id
+            && e.w == frame.coded_w
+            && e.h == frame.coded_h
+            && e.stride == frame.stride
+            && e.modifier == frame.modifier
+    });
+    if let Some(pos) = hit {
+        if buffer_is_idle(&s.dmabuf_pool[pos].buf) {
+            let entry = s.dmabuf_pool.remove(pos);
+            s.dmabuf_pool.insert(0, entry);
+            return Some(DmabufLease::PooledFront);
+        }
+        retire_buffer(s.dmabuf_pool.remove(pos).buf);
+    }
+    if let Some(stale) = s.dmabuf_pool.iter().position(|e| e.id == id) {
+        retire_buffer(s.dmabuf_pool.remove(stale).buf);
+    }
+
+    let buf = create_dmabuf_for_frame(state, frame)?;
+    s.dmabuf_pool.insert(
+        0,
+        DmabufBuf {
+            id,
+            w: frame.coded_w,
+            h: frame.coded_h,
+            stride: frame.stride,
+            modifier: frame.modifier,
+            buf,
+        },
+    );
+    while s.dmabuf_pool.len() > DMABUF_POOL_CAP {
+        if let Some(evicted) = s.dmabuf_pool.pop() {
+            retire_buffer(evicted.buf);
+        }
+    }
+    Some(DmabufLease::PooledFront)
 }
 
 /// Create a CLOEXEC anonymous memfd of the given size and truncate it.

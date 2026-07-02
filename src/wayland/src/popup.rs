@@ -16,7 +16,6 @@ use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use wayland_client::Proxy;
-use wayland_client::protocol::wl_buffer::WlBuffer;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 
@@ -49,7 +48,7 @@ pub struct MenuIo {
     fonts: Option<Fonts>,
     surface: Option<WlSurface>,
     viewport: Option<WpViewport>,
-    buffer: Option<WlBuffer>,
+    buffer: Option<crate::wl_state::OwnedBuffer>,
     menu: Option<Menu>,
     phase: Phase,
     /// `None` when no popup is active; a live generation only exists alongside
@@ -283,7 +282,7 @@ fn ensure_surface_locked(st: &mut WlState) -> u32 {
         st.menu_io.viewport = viewport;
     }
     if let Some(old) = st.menu_io.buffer.take() {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     if let Some(surface) = st.menu_io.surface.as_ref() {
         surface.attach(None, 0, 0);
@@ -326,11 +325,11 @@ fn paint_placeholder_locked(st: &mut WlState) {
         vp.set_source(0.0, 0.0, 1.0, 1.0);
         vp.set_destination(1, 1);
     }
-    surface.attach(Some(&buf), 0, 0);
-    surface.damage_buffer(0, 0, 1, 1);
+    buf.attach_to(&surface, 0, 0);
+    crate::wl_state::damage_all(&surface);
     surface.commit();
     if let Some(old) = st.menu_io.buffer.replace(buf) {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     st.flush();
 }
@@ -583,11 +582,11 @@ fn paint_and_attach_locked(st: &mut WlState) {
         vp.set_source(0.0, scroll as f64, pw as f64, view_ph as f64);
         vp.set_destination(lw, lh);
     }
-    surface.attach(Some(&buf), 0, 0);
+    buf.attach_to(&surface, 0, 0);
     surface.damage_buffer(0, 0, pw, ph);
     surface.commit();
     if let Some(old) = st.menu_io.buffer.replace(buf) {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     st.flush();
 }

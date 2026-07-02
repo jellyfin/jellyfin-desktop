@@ -55,10 +55,19 @@ pub(crate) unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFra
     if dup_fd < 0 {
         return None;
     }
+    let id = {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(dup_fd, &mut st) } == 0 {
+            Some((st.st_dev as u64, st.st_ino as u64))
+        } else {
+            None
+        }
+    };
     // OwnedFd closes the dup on drop once the frame is presented.
     let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
     Some(JfnDmabufFrame {
         fd,
+        id,
         stride: plane0.stride,
         modifier: info.modifier,
         coded_w: info.extra.coded_size.width,

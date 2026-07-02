@@ -115,7 +115,10 @@ pub(crate) fn free_surface(ptr: *mut PlatformSurface) {
             v.destroy();
         }
         if let Some(b) = s.buffer.take() {
-            b.destroy();
+            crate::wl_state::retire_buffer(b);
+        }
+        for entry in s.dmabuf_pool.drain(..) {
+            crate::wl_state::retire_buffer(entry.buf);
         }
         if let Some(sub) = s.subsurface.take() {
             sub.destroy();
@@ -197,8 +200,8 @@ pub(crate) fn surface_set_visible(
             }
             // Stretch the 1×1 placeholder to the authoritative window extent.
             set_viewport_dest_locked(s);
-            surface.attach(Some(&buf), 0, 0);
-            surface.damage_buffer(0, 0, 1, 1);
+            buf.attach_to(&surface, 0, 0);
+            crate::wl_state::damage_all(&surface);
             surface.commit();
             st.flush();
             s.buffer = Some(buf);
@@ -279,7 +282,7 @@ fn popup_destroy_locked(s: &mut PlatformSurface) {
         v.destroy();
     }
     if let Some(b) = s.popup_buffer.take() {
-        b.destroy();
+        crate::wl_state::retire_buffer(b);
     }
     if let Some(sub) = s.popup_subsurface.take() {
         sub.destroy();
@@ -298,6 +301,7 @@ fn popup_destroy_locked(s: &mut PlatformSurface) {
 /// the compositor dups its own copy over the wire in `create_params.add`.
 pub struct JfnDmabufFrame {
     pub fd: OwnedFd,
+    pub id: Option<(u64, u64)>,
     pub stride: u32,
     pub modifier: u64,
     pub coded_w: i32,
@@ -321,17 +325,23 @@ pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame)
         return false;
     }
 
-    let Some(buf) = create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h)
-    else {
-        return false;
-    };
-
     if !size_in_tolerance(vw, vh) && !s.null_attached {
-        buf.destroy();
         return false;
     }
 
-    attach_and_commit_locked(s, buf, w, h, vw, vh);
+    let Some(lease) = crate::wl_state::get_or_create_dmabuf(&st, s, frame) else {
+        return false;
+    };
+    prep_layer_present_locked(s, w, h, vw, vh);
+    match lease {
+        crate::wl_state::DmabufLease::OneShot(buf) => {
+            commit_layer_buffer_locked(s, &buf, w, h);
+            s.buffer = Some(buf);
+        }
+        crate::wl_state::DmabufLease::PooledFront => {
+            commit_layer_buffer_locked(s, &s.dmabuf_pool[0].buf, w, h);
+        }
+    }
     st.flush();
 
     // The layer commit cached its buffer; the owner applies it atomically.
@@ -487,7 +497,7 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
     let Some(popup) = s.popup_surface.as_ref() else {
         return;
     };
-    popup.attach(Some(&buf), 0, 0);
+    buf.attach_to(popup, 0, 0);
     popup.damage_buffer(0, 0, vw, vh);
     // Commit parent first so subsurface state lands in the same frame.
     if let Some(parent) = s.surface.as_ref() {
@@ -528,7 +538,7 @@ pub(crate) fn popup_present_software(
     let Some(popup) = s.popup_surface.as_ref() else {
         return;
     };
-    popup.attach(Some(&buf), 0, 0);
+    buf.attach_to(popup, 0, 0);
     popup.damage_buffer(0, 0, pw, ph);
     if let Some(parent) = s.surface.as_ref() {
         parent.commit();
@@ -543,9 +553,8 @@ pub(crate) fn popup_present_software(
 // Internal helpers
 // =====================================================================
 
-fn attach_and_commit_locked(
+fn prep_layer_present_locked(
     s: &mut PlatformSurface,
-    buf: wayland_client::protocol::wl_buffer::WlBuffer,
     coded_w: i32,
     coded_h: i32,
     vis_w: i32,
@@ -559,13 +568,20 @@ fn attach_and_commit_locked(
     s.placeholder = false;
     s.null_attached = false;
     set_viewport_for_buffer_locked(s, vis_w, vis_h);
+}
+
+fn commit_layer_buffer_locked(
+    s: &PlatformSurface,
+    buf: &crate::wl_state::OwnedBuffer,
+    coded_w: i32,
+    coded_h: i32,
+) {
     let Some(surface) = s.surface.as_ref() else {
         return;
     };
-    surface.attach(Some(&buf), 0, 0);
+    buf.attach_to(surface, 0, 0);
     surface.damage_buffer(0, 0, coded_w, coded_h);
     surface.commit();
-    s.buffer = Some(buf);
 }
 
 // Destination = the single authoritative logical window extent, read directly —
