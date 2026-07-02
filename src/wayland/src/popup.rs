@@ -1,10 +1,10 @@
-//! Context menu as a real `xdg_popup`.
+//! Context menu / `<select>` dropdown as a real `xdg_popup`.
 //!
 //! The menu `wl_surface` is **persistent** — created once and re-roled for each
-//! menu. Destroying it would race the proxy's teardown of its role objects
-//! across the two connection hops (a `wl_surface`-destroyed-before-its-role
-//! protocol error); reusing it sidesteps that. Each show clears its buffer
-//! first so the surface is role-free and buffer-free when the proxy re-roles it.
+//! menu. Destroying it would race teardown of its role objects (a
+//! `wl_surface`-destroyed-before-its-role protocol error); reusing it sidesteps
+//! that. Each show clears its buffer first so the surface is role-free and
+//! buffer-free when it is re-roled.
 //!
 //! `xdg_popup.grab` is only honored in response to the triggering input event,
 //! with that event's serial — but CEF hands us the menu model later, via an
@@ -23,7 +23,7 @@ use jfn_menu::MenuItem;
 use jfn_menu::interaction_fsm::{self, MenuEffect, MenuEvent, MenuState as FsmState};
 use jfn_menu::render::{self, Fonts, Layout};
 
-use crate::wl_state::{WlState, create_shm_buffer, lock, try_state};
+use crate::wl_state::{WlState, lock, try_state};
 
 static MENU_ACTIVE: AtomicBool = AtomicBool::new(false);
 // True from menu map (grab activation) until teardown. Our menu's xdg_popup
@@ -142,12 +142,14 @@ pub fn arm(x: i32, y: i32) {
     let mut st = lock();
     clear_menu_locked(&mut st);
     st.menu_io.generation = generation;
-    let surface_id = ensure_surface_locked(&mut st);
+    ensure_surface_locked(&mut st);
     st.menu_io.phase = Phase::AwaitPlaceholder;
+    let surface = st.menu_io.surface.clone();
     drop(st);
 
-    jfn_wlproxy::jfn_wlproxy_set_popup_surface(surface_id);
-    jfn_wlproxy::jfn_wlproxy_show_popup(generation, x, y, 1, 1);
+    if let Some(surface) = surface {
+        crate::root_window::popup_create(generation, x, y, 1, 1, &surface);
+    }
 }
 
 pub fn show(items: Vec<MenuItem>, x: i32, y: i32, cb: Box<dyn FnOnce(i32) + Send>) {
@@ -166,7 +168,7 @@ pub fn show_highlighted(
 ) {
     let mut st = lock();
 
-    let scale = crate::proxy::jfn_wl_get_cached_scale();
+    let scale = crate::window_state::jfn_wl_get_cached_scale();
     let layout = {
         let fonts = st.menu_io.fonts.get_or_insert_with(Fonts::new);
         let mut layout = render::layout(fonts, &items, scale);
@@ -196,7 +198,7 @@ pub fn show_highlighted(
     // Only select dropdowns (width > 0) clamp to the window bottom — context
     // menus stay full-height and rely on compositor flip/slide. Keep at least
     // one row when the anchor sits at the very bottom.
-    let (_, win_ph) = crate::proxy::jfn_wl_window_size();
+    let (_, win_ph) = crate::window_state::jfn_wl_window_size();
     if width > 0 && win_ph > 0 {
         let anchor_ph_y = (y as f32 * scale).round() as i32;
         let avail = win_ph - anchor_ph_y;
@@ -211,7 +213,7 @@ pub fn show_highlighted(
             let repos = begin_menu_locked(&mut st);
             drop(st);
             if let Some((x, y, lw, lh)) = repos {
-                jfn_wlproxy::jfn_wlproxy_reposition_popup(x, y, lw, lh);
+                crate::root_window::popup_reposition(x, y, lw, lh);
             }
         }
         // on_ready() starts the menu once the popup is configured.
@@ -226,11 +228,13 @@ pub fn show_highlighted(
             st.menu_io.generation = generation;
             let lw = logical_dim(pw, scale);
             let lh = logical_dim(view_ph, scale);
-            let surface_id = ensure_surface_locked(&mut st);
+            ensure_surface_locked(&mut st);
             st.menu_io.phase = Phase::AwaitMenu;
+            let surface = st.menu_io.surface.clone();
             drop(st);
-            jfn_wlproxy::jfn_wlproxy_set_popup_surface(surface_id);
-            jfn_wlproxy::jfn_wlproxy_show_popup(generation, x, y, lw, lh);
+            if let Some(surface) = surface {
+                crate::root_window::popup_create(generation, x, y, lw, lh, &surface);
+            }
         }
         // Configure is still pending; on_ready() maps the replacement menu.
         Phase::AwaitMenu => {
@@ -254,30 +258,33 @@ pub fn show_highlighted(
             });
             drop(st);
             if let Some((x, y, lw, lh)) = repos {
-                jfn_wlproxy::jfn_wlproxy_reposition_popup(x, y, lw, lh);
+                crate::root_window::popup_reposition(x, y, lw, lh);
             }
         }
     }
 }
 
+// The menu surface and all its buffers live on the root connection (where the
+// app toplevel — the popup's parent — lives), so it can be parented as an
+// xdg_popup without crossing wl_client boundaries.
 fn ensure_surface_locked(st: &mut WlState) -> u32 {
+    let Some(shell) = crate::root_window::popup_shell() else {
+        return 0;
+    };
     if st.menu_io.surface.is_none() {
-        let surface = st.compositor.create_surface(&st.qh, ());
-        let viewport = st
-            .viewporter
-            .as_ref()
-            .map(|v| v.get_viewport(&surface, &st.qh, ()));
+        let surface = shell.create_surface();
+        let viewport = shell.create_viewport(&surface);
         st.menu_io.surface = Some(surface);
         st.menu_io.viewport = viewport;
     }
     if let Some(old) = st.menu_io.buffer.take() {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     if let Some(surface) = st.menu_io.surface.as_ref() {
         surface.attach(None, 0, 0);
         surface.commit();
     }
-    st.flush();
+    shell.flush();
     st.menu_io
         .surface
         .as_ref()
@@ -301,7 +308,10 @@ fn begin_menu_locked(st: &mut WlState) -> Option<(i32, i32, i32, i32)> {
 
 fn paint_placeholder_locked(st: &mut WlState) {
     let pixels = [0u8; 4]; // 1×1 transparent BGRA — maps the popup invisibly.
-    let Some(buf) = create_shm_buffer(st, &pixels, 1, 1) else {
+    let Some(shell) = crate::root_window::popup_shell() else {
+        return;
+    };
+    let Some(buf) = shell.create_shm_buffer(&pixels, 1, 1) else {
         return;
     };
     let Some(surface) = st.menu_io.surface.clone() else {
@@ -311,11 +321,12 @@ fn paint_placeholder_locked(st: &mut WlState) {
         vp.set_source(0.0, 0.0, 1.0, 1.0);
         vp.set_destination(1, 1);
     }
+    crate::wl_state::mark_attached(&buf);
     surface.attach(Some(&buf), 0, 0);
     surface.damage_buffer(0, 0, 1, 1);
     surface.commit();
     if let Some(old) = st.menu_io.buffer.replace(buf) {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     st.flush();
 }
@@ -332,7 +343,7 @@ pub(crate) fn on_ready(generation: u32) {
                 let repos = begin_menu_locked(&mut st);
                 drop(st);
                 if let Some((x, y, lw, lh)) = repos {
-                    jfn_wlproxy::jfn_wlproxy_reposition_popup(x, y, lw, lh);
+                    crate::root_window::popup_reposition(x, y, lw, lh);
                 }
             } else {
                 // Stay unmapped until the model arrives — the grab is inert while
@@ -376,7 +387,7 @@ pub fn dismiss_if_speculative() {
     }
     clear_menu_locked(&mut st);
     drop(st);
-    jfn_wlproxy::jfn_wlproxy_hide_popup();
+    crate::root_window::popup_destroy();
 }
 
 /// Tear down the menu without firing its selection callback. Used when CEF
@@ -394,7 +405,7 @@ pub fn hide() {
     }
     clear_menu_locked(&mut st);
     drop(st);
-    jfn_wlproxy::jfn_wlproxy_hide_popup();
+    crate::root_window::popup_destroy();
 }
 
 pub fn active() -> bool {
@@ -518,7 +529,7 @@ fn step_locked(st: &mut WlState, ev: MenuEvent) {
             MenuEffect::Close(id) => {
                 fire_locked(st, id);
                 clear_menu_locked(st);
-                jfn_wlproxy::jfn_wlproxy_hide_popup();
+                crate::root_window::popup_destroy();
                 return;
             }
         }
@@ -546,7 +557,10 @@ fn paint_and_attach_locked(st: &mut WlState) {
         paint_bgra(fonts, &layout, &items, active)
     };
     let Some(pixels) = pixels else { return };
-    let Some(buf) = create_shm_buffer(st, &pixels, pw, ph) else {
+    let Some(shell) = crate::root_window::popup_shell() else {
+        return;
+    };
+    let Some(buf) = shell.create_shm_buffer(&pixels, pw, ph) else {
         return;
     };
     let Some(surface) = st.menu_io.surface.clone() else {
@@ -556,11 +570,12 @@ fn paint_and_attach_locked(st: &mut WlState) {
         vp.set_source(0.0, scroll as f64, pw as f64, view_ph as f64);
         vp.set_destination(lw, lh);
     }
+    crate::wl_state::mark_attached(&buf);
     surface.attach(Some(&buf), 0, 0);
     surface.damage_buffer(0, 0, pw, ph);
     surface.commit();
     if let Some(old) = st.menu_io.buffer.replace(buf) {
-        old.destroy();
+        crate::wl_state::retire_buffer(old);
     }
     st.flush();
 }

@@ -64,10 +64,6 @@ pub unsafe fn jfn_wl_restack(handles: *const *mut c_void, n: usize) {
     wl_ops::restack(slice);
 }
 
-pub unsafe fn jfn_wl_surface_resize(handle: *mut c_void, lw: i32, lh: i32, pw: i32, ph: i32) {
-    wl_ops::surface_resize(cast(handle), lw, lh, pw, ph);
-}
-
 pub unsafe fn jfn_wl_surface_set_visible(
     handle: *mut c_void,
     visible: bool,
@@ -108,36 +104,19 @@ pub unsafe fn jfn_wl_surface_present_software(
 }
 
 // =====================================================================
-// Fullscreen / transition
+// Fullscreen
 // =====================================================================
-
-pub fn jfn_wl_begin_transition() {
-    wl_ops::begin_transition();
-}
-
-pub fn jfn_wl_end_transition() {
-    wl_ops::end_transition();
-}
-
-pub fn jfn_wl_in_transition() -> bool {
-    wl_ops::in_transition()
-}
 
 pub fn jfn_wl_was_fullscreen() -> bool {
     wl_ops::was_fullscreen()
 }
 
-use jfn_wlproxy::{
-    jfn_wlproxy_set_fullscreen, jfn_wlproxy_set_maximized, jfn_wlproxy_set_minimized,
-    jfn_wlproxy_window_move, jfn_wlproxy_window_resize,
-};
-
 pub fn jfn_wl_set_fullscreen(fullscreen: bool) {
-    wl_ops::set_fullscreen_via(fullscreen, jfn_wlproxy_set_fullscreen);
+    crate::root_window::set_fullscreen(fullscreen);
 }
 
 pub fn jfn_wl_toggle_fullscreen() {
-    wl_ops::toggle_fullscreen_via(jfn_wlproxy_set_fullscreen);
+    crate::root_window::set_fullscreen(!wl_ops::was_fullscreen());
 }
 
 // =====================================================================
@@ -147,14 +126,14 @@ pub fn jfn_wl_toggle_fullscreen() {
 static MAXIMIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn jfn_wl_window_minimize() {
-    jfn_wlproxy_set_minimized();
+    crate::root_window::set_minimized();
 }
 
 pub fn jfn_wl_window_toggle_maximize() {
     use std::sync::atomic::Ordering;
     let next = !MAXIMIZED.load(Ordering::Relaxed);
     MAXIMIZED.store(next, Ordering::Relaxed);
-    jfn_wlproxy_set_maximized(next as std::os::raw::c_int);
+    crate::root_window::set_maximized(next);
 }
 
 /// Mirror the compositor's maximized state into the toggle's command atomic;
@@ -165,19 +144,9 @@ pub fn sync_maximized_command_state(maximized: bool) {
 }
 
 pub fn jfn_wl_window_start_move() {
-    jfn_wlproxy_window_move();
+    crate::root_window::start_move();
 }
 
 pub fn jfn_wl_window_start_resize(edge: i32) {
-    jfn_wlproxy_window_resize(edge);
-}
-
-pub fn jfn_wl_on_configure(width: i32, height: i32, fullscreen: i32) {
-    // Fires from wlproxy thread before wl_init may have run — first
-    // xdg_toplevel.configure precedes our mpv_create-time bootstrap.
-    if crate::wl_state::try_state().is_none() {
-        return;
-    }
-    let scale = crate::proxy::jfn_wl_get_cached_scale();
-    wl_ops::on_configure(width, height, fullscreen != 0, scale);
+    crate::root_window::start_resize(edge as u32);
 }

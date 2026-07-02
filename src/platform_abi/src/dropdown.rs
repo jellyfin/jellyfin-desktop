@@ -24,7 +24,7 @@ pub enum DropdownStyle {
 
 pub fn dropdown_style(b: DisplayBackend) -> DropdownStyle {
     match b {
-        DisplayBackend::Wayland => DropdownStyle::Composited,
+        DisplayBackend::Wayland => DropdownStyle::PlatformMenu,
         DisplayBackend::X11 => DropdownStyle::JsMenu,
         DisplayBackend::Windows => DropdownStyle::Composited,
         DisplayBackend::MacOS => DropdownStyle::PlatformMenu,

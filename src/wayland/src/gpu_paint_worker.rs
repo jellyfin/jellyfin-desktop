@@ -177,7 +177,11 @@ fn run_worker(
         };
         // If acquire/present is busy or transiently unavailable, drop this
         // frame. The compositor keeps showing the last presented image.
-        let _ = painter.push_pixels(pixel_frame);
+        // mesa WSI commits the (synchronized) child surface internally; the
+        // root-commit owner then applies it atomically with the window geometry.
+        if painter.push_pixels(pixel_frame).is_ok() {
+            crate::root_window::request_present();
+        }
     }
 
     if let Some(painter) = painter {

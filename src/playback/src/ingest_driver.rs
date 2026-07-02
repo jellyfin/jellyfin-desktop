@@ -121,7 +121,7 @@ pub fn jfn_playback_ingest_mpv_event_owned(
 
 /// Push synthetic OSD-dim pixels through the same digest path the
 /// `osd-dimensions` property observation drives. Used by the Wayland
-/// xdg_toplevel.configure intercept (`jfn_wayland::proxy::on_configure`)
+/// xdg_toplevel.configure intercept (`jfn_wayland::window_state::on_configure`)
 /// in place of mpv's own osd-dimensions delivery.
 pub fn jfn_playback_post_osd_pixels(
     pw: i32,
@@ -200,7 +200,7 @@ pub const BACKEND_WAYLAND: u8 = 0;
 
 /// Register the property observations whose IDs are dispatched by the
 /// ingest layer. Backend selection skips `osd-dimensions` on Wayland —
-/// the proxy's `xdg_toplevel.configure` intercept feeds those dims via
+/// the window's `xdg_toplevel.configure` feeds those dims via
 /// [`jfn_playback_post_osd_pixels`] instead, and observing it here would
 /// double-post identical values.
 ///

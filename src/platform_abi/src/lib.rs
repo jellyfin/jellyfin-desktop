@@ -397,8 +397,8 @@ pub trait Platform: Send + Sync {
 
     /// Scale used to convert physical window pixels to CEF logical size.
     /// Default trusts mpv's `display-hidpi-scale` when known; Wayland
-    /// overrides to always use the compositor scale (mpv runs behind
-    /// wlproxy there, so its value isn't authoritative).
+    /// overrides to always use the compositor scale (mpv doesn't own the
+    /// surface there, so its value isn't authoritative).
     fn effective_scale(&self, mpv_display_hidpi_scale: f64) -> f32 {
         if mpv_display_hidpi_scale > 0.0 {
             mpv_display_hidpi_scale as f32

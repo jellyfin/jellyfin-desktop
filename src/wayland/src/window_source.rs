@@ -7,18 +7,18 @@ pub struct WaylandWindowSource;
 
 impl WindowSource for WaylandWindowSource {
     fn size(&self) -> Option<PhysicalSize> {
-        crate::proxy::jfn_wl_window_size_known().then(|| {
-            let (w, h) = crate::proxy::jfn_wl_window_size();
+        crate::window_state::jfn_wl_window_size_known().then(|| {
+            let (w, h) = crate::window_state::jfn_wl_window_size();
             PhysicalSize { w, h }
         })
     }
 
     fn maximized(&self) -> bool {
-        crate::proxy::jfn_wl_window_maximized()
+        crate::window_state::jfn_wl_window_maximized()
     }
 
     fn fullscreen(&self) -> bool {
-        crate::proxy::jfn_wl_window_fullscreen()
+        crate::window_state::jfn_wl_window_fullscreen()
     }
 
     fn position(&self) -> Option<WindowPos> {
@@ -26,6 +26,6 @@ impl WindowSource for WaylandWindowSource {
     }
 
     fn scale(&self) -> Scale {
-        Scale(crate::proxy::jfn_wl_get_cached_scale())
+        Scale(crate::window_state::jfn_wl_get_cached_scale())
     }
 }

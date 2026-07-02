@@ -66,26 +66,62 @@ pub(crate) const TRANSITION_TOLERANCE_TEXELS: i32 = 32;
 // Per-surface state
 // =====================================================================
 
-/// Per-CefLayer surface. Owns its subsurface, viewport
-/// proxies, and its on-demand popup child.
+/// A layer's synchronized subsurface.
+pub(crate) struct SyncSubsurface(WlSubsurface);
+
+impl SyncSubsurface {
+    pub(crate) fn create(
+        subcompositor: &WlSubcompositor,
+        surface: &WlSurface,
+        parent: &WlSurface,
+        qh: &QueueHandle<DispatchState>,
+    ) -> Self {
+        let sub = subcompositor.get_subsurface(surface, parent, qh, ());
+        Self(sub)
+    }
+
+    pub(crate) fn set_position(&self, x: i32, y: i32) {
+        self.0.set_position(x, y);
+    }
+
+    pub(crate) fn place_above(&self, sibling: &WlSurface) {
+        self.0.place_above(sibling);
+    }
+
+    pub(crate) fn destroy(self) {
+        self.0.destroy();
+    }
+}
+
+pub(crate) struct DmabufBuf {
+    pub id: (u64, u64),
+    pub w: i32,
+    pub h: i32,
+    pub stride: u32,
+    pub modifier: u64,
+    pub buf: WlBuffer,
+}
+
+pub(crate) enum DmabufLease {
+    Pooled(WlBuffer),
+    OneShot(WlBuffer),
+}
+
 pub(crate) struct PlatformSurface {
     pub surface: Option<WlSurface>,
-    pub subsurface: Option<WlSubsurface>,
+    pub subsurface: Option<SyncSubsurface>,
     pub viewport: Option<WpViewport>,
     pub buffer: Option<WlBuffer>,
+    pub dmabuf_pool: Vec<DmabufBuf>,
     pub buffer_w: i32,
     pub buffer_h: i32,
     pub visible: bool,
     pub placeholder: bool,
     pub null_attached: bool,
-    pub lw: i32,
-    pub lh: i32,
-    pub pw: i32,
-    pub ph: i32,
 
     // Popup child.
     pub popup_surface: Option<WlSurface>,
-    pub popup_subsurface: Option<WlSubsurface>,
+    pub popup_subsurface: Option<SyncSubsurface>,
     pub popup_viewport: Option<WpViewport>,
     pub popup_buffer: Option<WlBuffer>,
     pub popup_visible: bool,
@@ -105,15 +141,12 @@ impl PlatformSurface {
             subsurface: None,
             viewport: None,
             buffer: None,
+            dmabuf_pool: Vec::new(),
             buffer_w: 0,
             buffer_h: 0,
             visible: true,
             placeholder: false,
             null_attached: false,
-            lw: 0,
-            lh: 0,
-            pw: 0,
-            ph: 0,
             popup_surface: None,
             popup_subsurface: None,
             popup_viewport: None,
@@ -123,19 +156,6 @@ impl PlatformSurface {
             shm_paint_worker: None,
         }
     }
-}
-
-// =====================================================================
-// Paint path discriminator (replaces the C++ g_present function pointer)
-// =====================================================================
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PresentMode {
-    /// Steady-state: attach the dmabuf provided.
-    Attach,
-    /// Drop frames silently — used between begin_transition and the
-    /// first on_mpv_configure that publishes the new size.
-    Drop,
 }
 
 // =====================================================================
@@ -156,8 +176,7 @@ pub(crate) struct WlState {
     pub dmabuf: Option<ZwpLinuxDmabufV1>,
     pub viewporter: Option<WpViewporter>,
 
-    /// mpv-owned parent surface (foreign object — never destroyed by us).
-    pub parent: WlSurface,
+    pub root_surface: Option<WlSurface>,
 
     /// Stack order, bottom-to-top. Raw pointers are valid for the
     /// lifetime of each `PlatformSurface` (heap-allocated via `Box`,
@@ -165,8 +184,6 @@ pub(crate) struct WlState {
     pub stack: Vec<*mut PlatformSurface>,
 
     pub was_fullscreen: bool,
-    pub transitioning: bool,
-    pub present_mode: PresentMode,
 
     /// Raw `wl_display*` — kept so `GpuPainter::new` can build
     /// `VK_KHR_wayland_surface` handles for child surfaces.
@@ -245,18 +262,107 @@ noop_dispatch!(
     WlRegion,
     WlShm,
     WlShmPool,
-    WlBuffer,
     ZwpLinuxDmabufV1,
     ZwpLinuxBufferParamsV1,
     WpViewporter,
     WpViewport,
 );
 
+// Under a synchronized subsurface the compositor keeps reading a buffer for a
+// frame after it is replaced. Destroying or re-attaching one while `released`
+// is false shows a blank frame.
+struct ManagedBuffer {
+    buf: WlBuffer,
+    released: bool,
+    doomed: bool,
+}
+
+static MANAGED: Mutex<Vec<ManagedBuffer>> = Mutex::new(Vec::new());
+
+pub(crate) fn track_buffer(buf: &WlBuffer) {
+    MANAGED.lock().push(ManagedBuffer {
+        buf: buf.clone(),
+        released: true,
+        doomed: false,
+    });
+}
+
+pub(crate) fn mark_attached(buf: &WlBuffer) {
+    let mut mgd = MANAGED.lock();
+    if let Some(m) = mgd.iter_mut().find(|m| &m.buf == buf) {
+        m.released = false;
+    }
+}
+
+pub(crate) fn buffer_is_idle(buf: &WlBuffer) -> bool {
+    MANAGED
+        .lock()
+        .iter()
+        .find(|m| &m.buf == buf)
+        .is_some_and(|m| m.released)
+}
+
+pub(crate) fn retire_buffer(buf: WlBuffer) {
+    let mut mgd = MANAGED.lock();
+    match mgd.iter().position(|m| m.buf == buf) {
+        Some(pos) if mgd[pos].released => {
+            mgd.swap_remove(pos).buf.destroy();
+        }
+        Some(pos) => mgd[pos].doomed = true,
+        None => {
+            debug_assert!(
+                false,
+                "retire_buffer: untracked buffer — a release may have been missed"
+            );
+            tracing::error!("retire_buffer: untracked buffer — a release may have been missed");
+            mgd.push(ManagedBuffer {
+                buf,
+                released: false,
+                doomed: true,
+            });
+        }
+    }
+}
+
+pub(crate) fn note_buffer_release(buffer: &WlBuffer) {
+    let mut mgd = MANAGED.lock();
+    if let Some(pos) = mgd.iter().position(|m| m.buf == *buffer) {
+        if mgd[pos].doomed {
+            mgd.swap_remove(pos).buf.destroy();
+        } else {
+            mgd[pos].released = true;
+        }
+    }
+}
+
+impl Dispatch<WlBuffer, ()> for DispatchState {
+    fn event(
+        _: &mut Self,
+        buffer: &WlBuffer,
+        event: <WlBuffer as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_buffer::Event::Release = event {
+            note_buffer_release(buffer);
+        }
+    }
+}
+
+/// Dispatch the CEF connection's pending events (notably `wl_buffer.release`).
+/// Called from the root-window read loop, the only reader of the shared display.
+pub(crate) fn pump_events() {
+    if let Some(state) = STATE.get() {
+        let mut st = state.lock();
+        let st = &mut *st;
+        let _ = st.queue.dispatch_pending(&mut DispatchState);
+    }
+}
+
 // =====================================================================
 // Init — bind globals against a dedicated EventQueue over the foreign
-// (mpv-owned) wl_display. The parent surface is wrapped via
-// ObjectId::from_ptr; it stays unmanaged on our side so destruction
-// remains mpv's responsibility.
+// (mpv-owned) wl_display.
 // =====================================================================
 
 /// SAFETY: `display_ptr` must be a live `*mut wl_display` owned by mpv.
@@ -286,10 +392,7 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
     let dmabuf: Option<ZwpLinuxDmabufV1> = globals.bind(&qh, 1..=4, ()).ok();
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
 
-    let parent = compositor.create_surface(&qh, ());
-    jfn_wlproxy::jfn_wlproxy_set_host_surface(parent.id().protocol_id());
-
-    let state = WlState {
+    let mut state = WlState {
         conn,
         qh,
         queue,
@@ -298,11 +401,9 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
         shm,
         dmabuf,
         viewporter,
-        parent,
+        root_surface: None,
         stack: Vec::new(),
         was_fullscreen: false,
-        transitioning: false,
-        present_mode: PresentMode::Attach,
         // SAFETY: caller guaranteed `display_ptr` is a live
         // `*mut wl_display`.
         display_ptr: NonNull::new(display_ptr).ok_or_else(|| "display_ptr is null".to_string())?,
@@ -312,10 +413,81 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
         menu_io: crate::popup::MenuIo::default(),
     };
 
+    ensure_root_locked(&mut state);
+
     STATE
         .set(Mutex::new(state))
         .map_err(|_| "wl_state lost init race".to_string())?;
     Ok(())
+}
+
+fn surface_from_ptr(
+    conn: &Connection,
+    raw: *mut std::ffi::c_void,
+    what: &str,
+) -> Option<WlSurface> {
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: `raw` must be a live `wl_proxy*` for a `wl_surface` on the same
+    // `wl_display` backing `conn` (published by root_window / mpv_proxy).
+    let id = match unsafe {
+        wayland_client::backend::ObjectId::from_ptr(WlSurface::interface(), raw.cast())
+    } {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!(target: "Main", "{what}: ObjectId::from_ptr: {e}");
+            return None;
+        }
+    };
+    match WlSurface::from_id(conn, id) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            tracing::error!(target: "Main", "{what}: WlSurface::from_id: {e}");
+            None
+        }
+    }
+}
+
+fn parent_layer_locked(st: &mut WlState, ptr: *mut PlatformSurface) {
+    if ptr.is_null() {
+        return;
+    }
+    let Some(root) = st.root_surface.clone() else {
+        return;
+    };
+    // SAFETY: live PlatformSurface address held in `stack`, accessed under the lock.
+    let s = unsafe { &mut *ptr };
+    if s.subsurface.is_some() {
+        return;
+    }
+    let Some(surface) = s.surface.as_ref() else {
+        return;
+    };
+    let sub = SyncSubsurface::create(&st.subcompositor, surface, &root, &st.qh);
+    sub.set_position(0, 0);
+    s.subsurface = Some(sub);
+}
+
+pub(crate) fn ensure_root_locked(st: &mut WlState) {
+    if st.root_surface.is_some() {
+        return;
+    }
+    let raw = crate::root_window::root_surface_ptr();
+    let Some(root) = surface_from_ptr(&st.conn, raw, "overlay root") else {
+        return;
+    };
+    st.root_surface = Some(root);
+
+    let pending: Vec<*mut PlatformSurface> = st.stack.clone();
+    for ptr in pending {
+        parent_layer_locked(st, ptr);
+    }
+    tracing::info!(target: "Main", "CEF layers parented under app root");
+}
+
+pub(crate) fn parent_layer(st: &mut WlState, ptr: *mut PlatformSurface) {
+    parent_layer_locked(st, ptr);
 }
 
 // =====================================================================
@@ -334,12 +506,14 @@ pub fn install_gpu_paint(ctx: Arc<GpuContext>) {
     st.use_gpu_paint = true;
 }
 
-pub(crate) fn size_in_tolerance(s: &PlatformSurface, vw: i32, vh: i32) -> bool {
-    if s.pw <= 0 {
+// Does an incoming frame's visible size match the authoritative physical window
+// size (within tolerance)? Reads the single source, not a per-layer copy.
+pub(crate) fn size_in_tolerance(vw: i32, vh: i32) -> bool {
+    let (pw, ph) = crate::window_state::jfn_wl_window_size();
+    if pw <= 0 {
         return true;
     }
-    (vw - s.pw).abs() <= TRANSITION_TOLERANCE_TEXELS
-        && (vh - s.ph).abs() <= TRANSITION_TOLERANCE_TEXELS
+    (vw - pw).abs() <= TRANSITION_TOLERANCE_TEXELS && (vh - ph).abs() <= TRANSITION_TOLERANCE_TEXELS
 }
 
 // =====================================================================
@@ -360,6 +534,7 @@ pub(crate) fn create_solid_color_buffer(state: &WlState, r: u8, g: u8, b: u8) ->
     let pool = state.shm.create_pool(fd.as_fd(), 4, &state.qh, ());
     let buf = pool.create_buffer(0, 1, 1, 4, Format::Argb8888, &state.qh, ());
     pool.destroy();
+    track_buffer(&buf);
     Some(buf)
 }
 
@@ -383,6 +558,7 @@ pub(crate) fn create_shm_buffer(
     let pool = state.shm.create_pool(fd.as_fd(), size, &state.qh, ());
     let buf = pool.create_buffer(0, w, h, stride, Format::Argb8888, &state.qh, ());
     pool.destroy();
+    track_buffer(&buf);
     Some(buf)
 }
 
@@ -414,7 +590,73 @@ pub(crate) fn create_dmabuf_buffer(
         (),
     );
     params.destroy();
+    track_buffer(&buf);
     Some(buf)
+}
+
+const DMABUF_POOL_CAP: usize = 16;
+
+fn create_dmabuf_for_frame(
+    state: &WlState,
+    frame: &crate::wl_ops::JfnDmabufFrame,
+) -> Option<WlBuffer> {
+    create_dmabuf_buffer(
+        state,
+        frame.fd.as_fd(),
+        frame.stride,
+        frame.modifier,
+        frame.coded_w,
+        frame.coded_h,
+    )
+}
+
+pub(crate) fn get_or_create_dmabuf(
+    state: &WlState,
+    s: &mut PlatformSurface,
+    frame: &crate::wl_ops::JfnDmabufFrame,
+) -> Option<DmabufLease> {
+    let Some(id) = frame.id else {
+        return Some(DmabufLease::OneShot(create_dmabuf_for_frame(state, frame)?));
+    };
+
+    let hit = s.dmabuf_pool.iter().position(|e| {
+        e.id == id
+            && e.w == frame.coded_w
+            && e.h == frame.coded_h
+            && e.stride == frame.stride
+            && e.modifier == frame.modifier
+    });
+    if let Some(pos) = hit {
+        if buffer_is_idle(&s.dmabuf_pool[pos].buf) {
+            let entry = s.dmabuf_pool.remove(pos);
+            s.dmabuf_pool.insert(0, entry);
+            return Some(DmabufLease::Pooled(s.dmabuf_pool[0].buf.clone()));
+        }
+        retire_buffer(s.dmabuf_pool.remove(pos).buf);
+    }
+    if let Some(stale) = s.dmabuf_pool.iter().position(|e| e.id == id) {
+        retire_buffer(s.dmabuf_pool.remove(stale).buf);
+    }
+
+    let buf = create_dmabuf_for_frame(state, frame)?;
+    let lease = buf.clone();
+    s.dmabuf_pool.insert(
+        0,
+        DmabufBuf {
+            id,
+            w: frame.coded_w,
+            h: frame.coded_h,
+            stride: frame.stride,
+            modifier: frame.modifier,
+            buf,
+        },
+    );
+    while s.dmabuf_pool.len() > DMABUF_POOL_CAP {
+        if let Some(evicted) = s.dmabuf_pool.pop() {
+            retire_buffer(evicted.buf);
+        }
+    }
+    Some(DmabufLease::Pooled(lease))
 }
 
 /// Create a CLOEXEC anonymous memfd of the given size and truncate it.

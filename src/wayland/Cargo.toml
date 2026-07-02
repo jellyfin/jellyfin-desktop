@@ -10,7 +10,7 @@ crate-type = ["rlib"]
 
 [features]
 default = ["kde-palette"]
-kde-palette = []
+kde-palette = ["dep:wayland-protocols-plasma"]
 
 [dependencies]
 parking_lot.workspace = true
@@ -26,16 +26,18 @@ jfn-menu = { path = "../menu" }
 jfn-mpris = { path = "../mpris" }
 jfn-mpv = { path = "../mpv" }
 jfn-playback = { path = "../playback" }
-jfn-wlproxy = { path = "../wlproxy" }
 cef.workspace = true
+error_reporter = "1.0.0"
 libc.workspace = true
 libloading = "0.9"
+wl-proxy = { version = "0.1.3", features = ["all-protocols"] }
 memmap2 = "0.9"
 tracing.workspace = true
 smithay-client-toolkit = { version = "0.20", default-features = false }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-protocols-plasma = { version = "0.3", features = ["client"], optional = true }
 wayland-scanner = "0.31"
 xkbcommon = "0.9"
 

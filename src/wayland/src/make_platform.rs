@@ -31,8 +31,8 @@ pub use jfn_platform_abi::{
 #[cfg(feature = "kde-palette")]
 use crate::kde_palette::{jfn_wl_kde_palette_post_window_cleanup, jfn_wl_kde_palette_set_color};
 use crate::lifecycle::{jfn_wl_lifecycle_cleanup, jfn_wl_lifecycle_init};
-use crate::proxy::jfn_wl_get_cached_scale;
 use crate::scale_probe::jfn_wayland_scale_probe;
+use crate::window_state::jfn_wl_get_cached_scale;
 
 // =====================================================================
 // Helpers
@@ -55,10 +55,19 @@ pub(crate) unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFra
     if dup_fd < 0 {
         return None;
     }
+    let id = {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(dup_fd, &mut st) } == 0 {
+            Some((st.st_dev as u64, st.st_ino as u64))
+        } else {
+            None
+        }
+    };
     // OwnedFd closes the dup on drop once the frame is presented.
     let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
     Some(JfnDmabufFrame {
         fd,
+        id,
         stride: plane0.stride,
         modifier: info.modifier,
         coded_w: info.extra.coded_size.width,
@@ -110,7 +119,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn post_window_cleanup(&self) {
-        crate::wlproxy_host::stop_wlproxy();
+        crate::mpv_host::stop_proxy();
         #[cfg(feature = "kde-palette")]
         jfn_wl_kde_palette_post_window_cleanup();
     }
@@ -155,16 +164,6 @@ impl Platform for WaylandPlatform {
         )
     }
 
-    fn surface_resize(&self, s: SurfaceHandle, size: SurfaceSize) {
-        wl_ops::surface_resize(
-            s as *mut crate::wl_state::PlatformSurface,
-            size.logical_w,
-            size.logical_h,
-            size.physical_w,
-            size.physical_h,
-        );
-    }
-
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
         wl_ops::surface_set_visible(
             s as *mut crate::wl_state::PlatformSurface,
@@ -197,7 +196,7 @@ impl Platform for WaylandPlatform {
     }
 
     fn mpv_host(&self) -> &dyn jfn_platform_abi::MpvHost {
-        &crate::wlproxy_host::WlproxyMpvHost
+        &crate::mpv_host::WaylandMpvHost
     }
 
     fn media_session(&self) -> &dyn jfn_platform_abi::MediaSink {
@@ -236,18 +235,6 @@ impl Platform for WaylandPlatform {
         crate::wl_ffi::jfn_wl_window_start_resize(edge);
     }
 
-    fn begin_transition(&self) {
-        crate::wl_ffi::jfn_wl_begin_transition();
-    }
-
-    fn end_transition(&self) {
-        crate::wl_ffi::jfn_wl_end_transition();
-    }
-
-    fn in_transition(&self) -> bool {
-        crate::wl_ffi::jfn_wl_in_transition()
-    }
-
     fn get_scale(&self) -> f32 {
         jfn_wl_get_cached_scale()
     }
@@ -262,8 +249,9 @@ impl Platform for WaylandPlatform {
     }
 
     fn apply_boot_geometry(&self, g: &BootGeometry) {
-        jfn_wlproxy::jfn_wlproxy_set_initial_size(g.logical.w, g.logical.h);
-        jfn_wlproxy::jfn_wlproxy_set_initial_maximized(g.maximized);
+        // Only the host's own window geometry uses the boot size; mpv mirrors the
+        // committed window geometry and never the boot guess.
+        crate::root_window::set_boot_geometry(g.logical.w, g.logical.h, g.maximized);
     }
 
     fn set_cursor(&self, shape: CursorShape) {
@@ -279,7 +267,7 @@ impl Platform for WaylandPlatform {
         let g = ((rgb >> 8) & 0xFF) as u8;
         let b = (rgb & 0xFF) as u8;
 
-        jfn_wlproxy::jfn_wlproxy_set_background_color(r, g, b);
+        crate::root_window::set_background_color(r, g, b);
 
         #[cfg(feature = "kde-palette")]
         {

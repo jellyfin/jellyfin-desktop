@@ -277,20 +277,25 @@ fn run_worker(
             tracing::warn!("wayland shm paint worker: buffer allocation failed");
             continue;
         };
+        crate::wl_state::track_buffer(&buf);
 
         if let Some(old) = current_buffer.take() {
-            old.destroy();
+            crate::wl_state::retire_buffer(old);
         }
         set_viewport_for_buffer(viewport.as_ref(), viewport_state, frame.width, frame.height);
+        crate::wl_state::mark_attached(&buf);
         surface.attach(Some(&buf), 0, 0);
         surface.damage_buffer(0, 0, frame.width, frame.height);
         surface.commit();
         let _ = conn.flush();
+        // The layer commit caches this buffer (synchronized); the root-commit
+        // owner applies it atomically with the window geometry.
+        crate::root_window::request_present();
         current_buffer = Some(buf);
     }
 
     if let Some(buf) = current_buffer.take() {
-        buf.destroy();
+        crate::wl_state::retire_buffer(buf);
     }
     let _ = conn.flush();
 }
@@ -338,14 +343,12 @@ fn set_viewport_for_buffer(viewport: Option<&WpViewport>, state: ViewportState, 
     if state.pw <= 0 || state.ph <= 0 || state.lw <= 0 || state.lh <= 0 {
         return;
     }
+    // Destination must be the full window extent, never a buffer-proportional
+    // size: a layer's size may never diverge from the window, even for one frame.
     if w > 0 && h > 0 {
         let src_w = w.min(state.pw);
         let src_h = h.min(state.ph);
-        let dst_w = src_w * state.lw / state.pw;
-        let dst_h = src_h * state.lh / state.ph;
         viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
-        viewport.set_destination(dst_w, dst_h);
-    } else {
-        viewport.set_destination(state.lw, state.lh);
     }
+    viewport.set_destination(state.lw, state.lh);
 }

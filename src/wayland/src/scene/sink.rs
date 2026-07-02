@@ -1,10 +1,9 @@
 //! Effect interpreters for [`super::reduce`].
 
-use wayland_client::protocol::wl_subsurface::WlSubsurface;
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use super::{Above, Effect, LayerId};
-use crate::wl_state::{PlatformSurface, WlState};
+use crate::wl_state::PlatformSurface;
 
 pub trait SceneSink {
     fn apply(&mut self, effect: &Effect);
@@ -27,7 +26,9 @@ fn layer_ptr(id: LayerId) -> *mut PlatformSurface {
     id.0 as *mut PlatformSurface
 }
 
-fn layer_objs(id: LayerId) -> Option<(WlSubsurface, WlSurface)> {
+// The synchronized subsurface stays owned by its PlatformSurface (the raw object
+// never escapes); only the sibling surface handle is cloned out for restacking.
+fn layer_surface(id: LayerId) -> Option<WlSurface> {
     let p = layer_ptr(id);
     if p.is_null() {
         return None;
@@ -35,29 +36,32 @@ fn layer_objs(id: LayerId) -> Option<(WlSubsurface, WlSurface)> {
     // SAFETY: LayerId is a live PlatformSurface address (removed from the scene
     // before the box is freed), dereferenced only under the wl_state lock.
     let s = unsafe { &*p };
-    match (s.subsurface.as_ref(), s.surface.as_ref()) {
-        (Some(sub), Some(surf)) => Some((sub.clone(), surf.clone())),
-        _ => None,
-    }
+    s.surface.clone()
 }
 
-pub struct WlSink<'a> {
-    st: &'a mut WlState,
-}
+pub struct WlSink;
 
-impl<'a> WlSink<'a> {
-    pub fn new(st: &'a mut WlState) -> Self {
-        Self { st }
+impl WlSink {
+    pub fn new() -> Self {
+        Self
     }
 
     fn place_above(&mut self, layer: LayerId, above: Above) {
-        let Some((sub, _)) = layer_objs(layer) else {
+        let p = layer_ptr(layer);
+        if p.is_null() {
+            return;
+        }
+        // SAFETY: see `layer_surface` — live address, accessed under the lock.
+        let s = unsafe { &*p };
+        let Some(sub) = s.subsurface.as_ref() else {
             return;
         };
         match above {
-            Above::Parent => sub.place_above(&self.st.parent),
-            Above::Layer(p) => {
-                if let Some((_, surf)) = layer_objs(p) {
+            // Empty by design: re-stacking the bottom layer onto the root would
+            // sink it below mpv.
+            Above::Parent => {}
+            Above::Layer(pp) => {
+                if let Some(surf) = layer_surface(pp) {
                     sub.place_above(&surf);
                 }
             }
@@ -65,11 +69,17 @@ impl<'a> WlSink<'a> {
     }
 }
 
-impl SceneSink for WlSink<'_> {
+impl Default for WlSink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SceneSink for WlSink {
     fn apply(&mut self, effect: &Effect) {
         match *effect {
             Effect::PlaceAbove { layer, above } => self.place_above(layer, above),
-            Effect::CommitParent => self.st.parent.commit(),
+            Effect::CommitParent => crate::root_window::request_present(),
         }
     }
 }
