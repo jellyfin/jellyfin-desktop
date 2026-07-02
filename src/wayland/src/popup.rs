@@ -12,7 +12,8 @@
 //! serial) and leaves it unmapped (grab inert); [`show`] maps a 1×1 placeholder
 //! (xdg_popup.reposition requires a mapped popup) then grows it to the menu.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use wayland_client::Proxy;
 use wayland_client::protocol::wl_buffer::WlBuffer;
@@ -31,7 +32,7 @@ static MENU_ACTIVE: AtomicBool = AtomicBool::new(false);
 // keyboard-leave; while engaged we must NOT forward that as focus-loss to CEF,
 // or Blink closes the still-needed <select> popup out from under us.
 static ENGAGED: AtomicBool = AtomicBool::new(false);
-static NEXT_GENERATION: AtomicU32 = AtomicU32::new(1);
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
@@ -51,7 +52,9 @@ pub struct MenuIo {
     buffer: Option<WlBuffer>,
     menu: Option<Menu>,
     phase: Phase,
-    generation: u32,
+    /// `None` when no popup is active; a live generation only exists alongside
+    /// the menu/surface state that carries it.
+    generation: Option<NonZeroU64>,
 }
 
 struct Menu {
@@ -141,7 +144,7 @@ pub fn arm(x: i32, y: i32) {
     let generation = next_generation();
     let mut st = lock();
     clear_menu_locked(&mut st);
-    st.menu_io.generation = generation;
+    st.menu_io.generation = Some(generation);
     ensure_surface_locked(&mut st);
     st.menu_io.phase = Phase::AwaitPlaceholder;
     let surface = st.menu_io.surface.clone();
@@ -211,9 +214,10 @@ pub fn show_highlighted(
     match phase {
         Phase::Placeholder => {
             let repos = begin_menu_locked(&mut st);
+            let generation = st.menu_io.generation;
             drop(st);
-            if let Some((x, y, lw, lh)) = repos {
-                crate::root_window::popup_reposition(x, y, lw, lh);
+            if let (Some(generation), Some((x, y, lw, lh))) = (generation, repos) {
+                crate::root_window::popup_reposition(generation, x, y, lw, lh);
             }
         }
         // on_ready() starts the menu once the popup is configured.
@@ -225,7 +229,7 @@ pub fn show_highlighted(
         Phase::Idle => {
             let generation = next_generation();
             ENGAGED.store(true, Ordering::Release);
-            st.menu_io.generation = generation;
+            st.menu_io.generation = Some(generation);
             let lw = logical_dim(pw, scale);
             let lh = logical_dim(view_ph, scale);
             ensure_surface_locked(&mut st);
@@ -256,9 +260,10 @@ pub fn show_highlighted(
                     logical_dim(m.view_ph, m.scale),
                 )
             });
+            let generation = st.menu_io.generation;
             drop(st);
-            if let Some((x, y, lw, lh)) = repos {
-                crate::root_window::popup_reposition(x, y, lw, lh);
+            if let (Some(generation), Some((x, y, lw, lh))) = (generation, repos) {
+                crate::root_window::popup_reposition(generation, x, y, lw, lh);
             }
         }
     }
@@ -330,10 +335,10 @@ fn paint_placeholder_locked(st: &mut WlState) {
     st.flush();
 }
 
-pub(crate) fn on_ready(generation: u32) {
+pub(crate) fn on_ready(generation: NonZeroU64) {
     let Some(state) = try_state() else { return };
     let mut st = state.lock();
-    if st.menu_io.generation != generation {
+    if st.menu_io.generation != Some(generation) {
         return;
     }
     match st.menu_io.phase {
@@ -342,7 +347,7 @@ pub(crate) fn on_ready(generation: u32) {
                 let repos = begin_menu_locked(&mut st);
                 drop(st);
                 if let Some((x, y, lw, lh)) = repos {
-                    crate::root_window::popup_reposition(x, y, lw, lh);
+                    crate::root_window::popup_reposition(generation, x, y, lw, lh);
                 }
             } else {
                 // Stay unmapped until the model arrives — the grab is inert while
@@ -361,10 +366,10 @@ pub(crate) fn on_ready(generation: u32) {
     }
 }
 
-pub(crate) fn on_done(generation: u32) {
+pub(crate) fn on_done(generation: NonZeroU64) {
     let Some(state) = try_state() else { return };
     let mut st = state.lock();
-    if st.menu_io.generation != generation {
+    if st.menu_io.generation != Some(generation) {
         return;
     }
     fire_locked(&mut st, -1);
@@ -384,9 +389,12 @@ pub fn dismiss_if_speculative() {
     if st.menu_io.menu.is_some() || st.menu_io.phase == Phase::Idle {
         return;
     }
+    let generation = st.menu_io.generation;
     clear_menu_locked(&mut st);
     drop(st);
-    crate::root_window::popup_destroy();
+    if let Some(generation) = generation {
+        crate::root_window::popup_destroy(generation);
+    }
 }
 
 /// Tear down the menu without firing its selection callback. Used when CEF
@@ -402,9 +410,12 @@ pub fn hide() {
     if st.menu_io.menu.is_none() {
         return;
     }
+    let generation = st.menu_io.generation;
     clear_menu_locked(&mut st);
     drop(st);
-    crate::root_window::popup_destroy();
+    if let Some(generation) = generation {
+        crate::root_window::popup_destroy(generation);
+    }
 }
 
 pub fn active() -> bool {
@@ -526,9 +537,12 @@ fn step_locked(st: &mut WlState, ev: MenuEvent) {
                 }
             }
             MenuEffect::Close(id) => {
+                let generation = st.menu_io.generation;
                 fire_locked(st, id);
                 clear_menu_locked(st);
-                crate::root_window::popup_destroy();
+                if let Some(generation) = generation {
+                    crate::root_window::popup_destroy(generation);
+                }
                 return;
             }
         }
@@ -591,13 +605,10 @@ fn clear_menu_locked(st: &mut WlState) {
     ENGAGED.store(false, Ordering::Release);
     st.menu_io.menu = None;
     st.menu_io.phase = Phase::Idle;
-    st.menu_io.generation = 0;
+    st.menu_io.generation = None;
 }
 
-fn next_generation() -> u32 {
-    NEXT_GENERATION
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
-            Some(if v == u32::MAX { 1 } else { v + 1 })
-        })
-        .unwrap_or(1)
+fn next_generation() -> NonZeroU64 {
+    let v = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+    NonZeroU64::new(v).unwrap_or(NonZeroU64::MIN)
 }
