@@ -8,6 +8,7 @@
 
 use jfn_platform_abi::WindowDecorations;
 use parking_lot::{Condvar, Mutex};
+use schemars::{JsonSchema, schema_for};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,20 +45,51 @@ impl Default for JfnWindowGeometry {
     }
 }
 
-#[derive(Clone, Debug)]
+/// Produce a schema describing available settings.
+pub fn print_settings_schema() {
+    let schema = schema_for!(SettingsData);
+    println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+}
+
+#[derive(Clone, Debug, JsonSchema)]
+#[schemars(default, rename_all = "camelCase")]
 struct SettingsData {
+    /// Server URL
+    #[schemars(url, example = "https://jellyfin.domain.tld")]
     server_url: String,
+    // TODO: should be enum or bool ?
+    /// Hardware decoding mode (default: no)
     hwdec: String,
+    // TODO: Should be Vec<Enum> ?
+    /// Audio passthrough codecs, e.g. ac3,dts-hd,eac3,truehd
+    #[schemars(example = "ac3,dts-hd")]
     audio_passthrough: String,
+    // TODO: Should be enum ?
+    /// Audio channel layout, e.g. stereo, 5.1, 7.1
+    #[schemars(example = "7.1")]
     audio_channels: String,
+    // TODO: should be enum ?
+    /// Log level
+    #[schemars(example = &"debug")]
     log_level: String,
+    /// Device name
+    #[schemars(example = &"MYHOST")]
     device_name: String,
+    // IDK (state?)
+    #[schemars(skip)]
     window: JfnWindowGeometry,
+    /// Use exclusive audio output
     audio_exclusive: bool,
+    /// Disable CEF GPU compositing
     disable_gpu_compositing: bool,
+    /// Transparent title bar
     transparent_titlebar: bool,
+    /// Force transcoding
     force_transcoding: bool,
+    /// Enable window decorations
+    #[schemars(skip)] // for now
     window_decorations: Option<WindowDecorations>,
+    /// Enable hidden scrollbar
     hide_scrollbar: bool,
 }
 

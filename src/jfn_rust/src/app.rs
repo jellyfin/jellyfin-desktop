@@ -579,6 +579,10 @@ pub fn jfn_app_main() -> c_int {
         print_version();
         return 0;
     }
+    if cli.generate_settings_schema {
+        jfn_config::print_settings_schema();
+        return 0;
+    }
     if let Some(path) = &cli.config_dir {
         jfn_paths::set_config_dir_override(path.into());
     }
