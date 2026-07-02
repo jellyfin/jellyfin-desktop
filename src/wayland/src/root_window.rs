@@ -1,8 +1,9 @@
 use std::ffi::{c_int, c_void};
+use std::num::NonZeroU64;
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 
 use parking_lot::Mutex;
@@ -328,17 +329,26 @@ impl PopupShell {
 // late event from a torn-down popup is ignored.
 #[derive(Clone, Copy)]
 struct PopupRole {
-    generation: u32,
+    generation: NonZeroU64,
 }
 
 struct PopupRoleObjs {
     xdg: Option<XdgSurface>,
     popup: Option<XdgPopup>,
+    generation: Option<NonZeroU64>,
 }
 static POPUP_ROLE: Mutex<PopupRoleObjs> = Mutex::new(PopupRoleObjs {
     xdg: None,
     popup: None,
+    generation: None,
 });
+
+// Highest menu generation ever armed; generations come from a monotonic counter.
+// create runs on the input/CEF thread while destroy/reposition run on the root
+// thread, so a call delayed past a newer arm carries a stale generation. Rejecting
+// against this stops a stale create from tearing down the newer popup and a stale
+// reposition from retargeting it.
+static ARMED_GEN: AtomicU64 = AtomicU64::new(0);
 
 fn build_menu_positioner(shell: &PopupShell, x: i32, y: i32, w: i32, h: i32) -> XdgPositioner {
     let p = shell.wm_base.create_positioner(&shell.qh, ());
@@ -358,11 +368,29 @@ fn build_menu_positioner(shell: &PopupShell, x: i32, y: i32, w: i32, h: i32) -> 
 /// Create the grab popup for `surface`. The grab cites the input thread's last
 /// button serial — valid here only because every app connection shares one
 /// wl_client.
-pub(crate) fn popup_create(generation: u32, x: i32, y: i32, w: i32, h: i32, surface: &WlSurface) {
+pub(crate) fn popup_create(
+    generation: NonZeroU64,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    surface: &WlSurface,
+) {
     let Some(shell) = popup_shell() else {
         return;
     };
-    popup_destroy();
+    // Hold POPUP_ROLE across teardown of the old role and publication of the new
+    // one: without this a concurrent popup_destroy/popup_reposition could run in
+    // the gap, observe an empty slot, and leave the just-created popup live but
+    // unpublished — a torn create/use span.
+    let mut role = POPUP_ROLE.lock();
+    // Each generation drives exactly one create, so `<=` (not `<`) also blocks
+    // resurrecting a just-destroyed popup, since destroy leaves ARMED_GEN at its peak.
+    if generation.get() <= ARMED_GEN.load(Ordering::Acquire) {
+        return;
+    }
+    ARMED_GEN.store(generation.get(), Ordering::Release);
+    destroy_role_objs(&mut role);
     let positioner = build_menu_positioner(shell, x, y, w, h);
     let xdg = shell
         .wm_base
@@ -379,38 +407,56 @@ pub(crate) fn popup_create(generation: u32, x: i32, y: i32, w: i32, h: i32, surf
     }
     surface.commit();
     shell.flush();
-    let mut role = POPUP_ROLE.lock();
     role.xdg = Some(xdg);
     role.popup = Some(popup);
+    role.generation = Some(generation);
 }
 
 /// Requires the popup to already be mapped.
-pub(crate) fn popup_reposition(x: i32, y: i32, w: i32, h: i32) {
+pub(crate) fn popup_reposition(generation: NonZeroU64, x: i32, y: i32, w: i32, h: i32) {
     let Some(shell) = popup_shell() else {
         return;
     };
-    let popup = POPUP_ROLE.lock().popup.clone();
-    let Some(popup) = popup else {
-        return;
-    };
     let positioner = build_menu_positioner(shell, x, y, w, h);
-    popup.reposition(&positioner, 0);
+    {
+        // Reposition must be issued under POPUP_ROLE: popup_destroy runs on the
+        // root thread and will otherwise destroy the popup mid-request, leaving
+        // this a request on a dead object that drops the client.
+        let role = POPUP_ROLE.lock();
+        if role.generation == Some(generation)
+            && let Some(popup) = role.popup.as_ref()
+        {
+            popup.reposition(&positioner, 0);
+            shell.flush();
+        }
+    }
     positioner.destroy();
-    shell.flush();
 }
 
 /// Destroys only the popup role objects, not the menu wl_surface — that surface
 /// is persistent (owned by crate::popup) and re-roled on the next open.
-pub(crate) fn popup_destroy() {
-    let (popup, xdg) = {
-        let mut role = POPUP_ROLE.lock();
-        (role.popup.take(), role.xdg.take())
-    };
-    if let Some(p) = popup {
+fn destroy_role_objs(role: &mut PopupRoleObjs) {
+    if let Some(p) = role.popup.take() {
         p.destroy();
     }
-    if let Some(x) = xdg {
+    if let Some(x) = role.xdg.take() {
         x.destroy();
+    }
+    role.generation = None;
+}
+
+/// Tear down the popup role, but only if `generation` still owns it — a newer
+/// `arm` may have published a fresh role in the gap between a stale teardown
+/// deciding to destroy and this call, and must not be torn down by it. Unqualified
+/// force-destroy stays private (`destroy_role_objs`), reached only from
+/// `popup_create` under the `ARMED_GEN` guard.
+pub(crate) fn popup_destroy(generation: NonZeroU64) {
+    {
+        let mut role = POPUP_ROLE.lock();
+        if role.generation != Some(generation) {
+            return;
+        }
+        destroy_role_objs(&mut role);
     }
     if let Some(shell) = popup_shell() {
         shell.flush();
@@ -907,7 +953,7 @@ impl Dispatch<XdgPopup, PopupRole> for RootState {
     ) {
         if let xdg_popup::Event::PopupDone = event {
             crate::popup::on_done(role.generation);
-            popup_destroy();
+            popup_destroy(role.generation);
         }
     }
 }
