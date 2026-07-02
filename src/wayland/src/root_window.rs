@@ -14,7 +14,7 @@ use wayland_client::protocol::{
     wl_compositor::WlCompositor,
     wl_registry::WlRegistry,
     wl_seat::WlSeat,
-    wl_shm::{Format, WlShm},
+    wl_shm::WlShm,
     wl_shm_pool::WlShmPool,
     wl_surface::WlSurface,
 };
@@ -42,8 +42,6 @@ use wayland_protocols_plasma::server_decoration_palette::client::{
     org_kde_kwin_server_decoration_palette::OrgKdeKwinServerDecorationPalette,
     org_kde_kwin_server_decoration_palette_manager::OrgKdeKwinServerDecorationPaletteManager,
 };
-
-use memmap2::MmapOptions;
 
 const APP_ID: &str = "org.jellyfin.JellyfinDesktop";
 const TITLE: &str = "Jellyfin Desktop";
@@ -96,7 +94,7 @@ struct RootState {
     toplevel: XdgToplevel,
     shm: WlShm,
     viewport: Option<WpViewport>,
-    bg_buffer: Option<WlBuffer>,
+    bg_buffer: Option<crate::wl_state::OwnedBuffer>,
     bg: [u8; 3],
     // Held alive so the compositor keeps delivering preferred_scale.
     #[allow(dead_code)]
@@ -185,29 +183,30 @@ impl RootState {
         if let Some(vp) = &self.viewport {
             vp.set_destination(w, h);
         }
+        // Attach once; the viewport (set above) restretches this on resize.
         if self.bg_buffer.is_none() {
             self.bg_buffer = self.create_solid_buffer();
+            if let Some(buf) = &self.bg_buffer {
+                buf.attach_to(&self.surface, 0, 0);
+            }
         }
-        if let Some(buf) = &self.bg_buffer {
-            self.surface.attach(Some(buf), 0, 0);
-            self.surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
-        }
+        crate::wl_state::damage_all(&self.surface);
     }
 
-    fn create_solid_buffer(&self) -> Option<WlBuffer> {
-        let fd = crate::wl_state::memfd_anon("root-bg", 4)?;
-        {
-            let mut mmap = unsafe { MmapOptions::new().len(4).map_mut(&fd) }.ok()?;
-            // ARGB8888 little-endian byte order = [B, G, R, A].
-            mmap[0] = self.bg[2];
-            mmap[1] = self.bg[1];
-            mmap[2] = self.bg[0];
-            mmap[3] = 0xFF;
-        }
-        let pool: WlShmPool = self.shm.create_pool(fd.as_fd(), 4, &self.qh, ());
-        let buf = pool.create_buffer(0, 1, 1, 4, Format::Argb8888, &self.qh, ());
-        pool.destroy();
-        Some(buf)
+    fn create_solid_buffer(&self) -> Option<crate::wl_state::OwnedBuffer> {
+        let bg = self.bg;
+        crate::wl_state::build_argb8888_shm_buffer(
+            &self.shm,
+            &self.qh,
+            "root-bg",
+            1,
+            1,
+            move |dst| {
+                // ARGB8888 little-endian byte order = [B, G, R, A].
+                dst.copy_from_slice(&[bg[2], bg[1], bg[0], 0xFF]);
+                true
+            },
+        )
     }
 }
 
@@ -303,21 +302,13 @@ impl PopupShell {
             .map(|v| v.get_viewport(surface, &self.qh, ()))
     }
 
-    pub(crate) fn create_shm_buffer(&self, pixels: &[u8], w: i32, h: i32) -> Option<WlBuffer> {
-        let stride = w.checked_mul(4)?;
-        let size = stride.checked_mul(h)?;
-        if size <= 0 || pixels.len() < size as usize {
-            return None;
-        }
-        let fd = crate::wl_state::memfd_anon("menu-sw", size as usize)?;
-        {
-            let mut mmap = unsafe { MmapOptions::new().len(size as usize).map_mut(&fd) }.ok()?;
-            mmap.copy_from_slice(&pixels[..size as usize]);
-        }
-        let pool: WlShmPool = self.shm.create_pool(fd.as_fd(), size, &self.qh, ());
-        let buf = pool.create_buffer(0, w, h, stride, Format::Argb8888, &self.qh, ());
-        pool.destroy();
-        Some(buf)
+    pub(crate) fn create_shm_buffer(
+        &self,
+        pixels: &[u8],
+        w: i32,
+        h: i32,
+    ) -> Option<crate::wl_state::OwnedBuffer> {
+        crate::wl_state::build_shm_buffer_from_pixels(&self.shm, &self.qh, "menu-sw", pixels, w, h)
     }
 
     pub(crate) fn flush(&self) {
@@ -810,7 +801,9 @@ fn root_loop(
                 && bg != state.bg
             {
                 state.bg = bg;
-                state.bg_buffer = None;
+                if let Some(old) = state.bg_buffer.take() {
+                    crate::wl_state::retire_buffer(old);
+                }
                 if state.cur_w > 0 && state.cur_h > 0 {
                     let (w, h) = (state.cur_w, state.cur_h);
                     state.fill_background(w, h);
@@ -819,6 +812,12 @@ fn root_loop(
                 }
             }
         }
+    }
+    // Do not drain the bg's release here: this thread shares the wl_display fd
+    // with the other readers via prepare_read/poll, so a blocking roundtrip
+    // would deadlock them.
+    if let Some(bg) = state.bg_buffer.take() {
+        crate::wl_state::retire_buffer(bg);
     }
 }
 
@@ -978,7 +977,6 @@ noop_dispatch!(
     WlCompositor,
     WlShm,
     WlShmPool,
-    WlBuffer,
     WpViewporter,
     WpViewport,
     WpFractionalScaleManagerV1,
@@ -986,6 +984,21 @@ noop_dispatch!(
     WlSeat,
     XdgPositioner,
 );
+
+impl Dispatch<WlBuffer, ()> for RootState {
+    fn event(
+        _: &mut Self,
+        buffer: &WlBuffer,
+        event: <WlBuffer as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_buffer::Event::Release = event {
+            crate::wl_state::note_buffer_release(buffer);
+        }
+    }
+}
 
 impl Dispatch<ZxdgToplevelDecorationV1, ()> for RootState {
     fn event(
