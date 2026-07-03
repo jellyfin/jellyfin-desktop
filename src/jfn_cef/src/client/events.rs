@@ -53,9 +53,19 @@ impl Inner {
             &formatted,
         );
         if is_main {
-            let _g = self.load_mtx.lock();
-            self.loaded.store(true, Ordering::Release);
-            self.load_cv.notify_all();
+            {
+                let _g = self.load_mtx.lock();
+                self.loaded.store(true, Ordering::Release);
+                self.load_cv.notify_all();
+            }
+            // A same-layer navigation (profile switch / login "Back to user
+            // selection") reloads the document without changing the active
+            // layer, so `jfn_browsers_set_active`'s refocus never runs and the
+            // reloaded page comes up unfocused on X11 OSR (no caret / no blue
+            // focus ring on the login inputs, though typing still works because
+            // the element is `document.activeElement`). Re-assert focus here,
+            // but only if we are the active top layer.
+            crate::browsers::jfn_browsers_refocus_if_active(self as *const Inner);
         }
     }
 
