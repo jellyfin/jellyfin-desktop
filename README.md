@@ -1,11 +1,13 @@
 # Jellyfin Desktop
 
-> [!WARNING]
-> This client is still under active development and may have bugs or missing features.
-
 A [Jellyfin](https://jellyfin.org) desktop client built on [CEF](https://github.com/chromiumembedded/cef) and [mpv](https://mpv.io/). A complete rewrite of the previous [Qt-based client](https://github.com/jellyfin-archive/jellyfin-desktop-qt/).
 
 ## Downloads
+> [!WARNING]
+> This client is still under active development and may have bugs or missing features.
+> The previous Qt-based Jellyfin Media Player is available at [v1.12.0](https://github.com/jellyfin-archive/jellyfin-desktop-qt/releases/tag/v1.12.0) but is no longer supported.
+> See [Supported Versions](https://github.com/jellyfin/jellyfin-desktop/wiki/Supported-Versions) for compatibility details.
+
 ### Linux
 - AppImage
   - [x86_64](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-linux-appimage/main/linux-appimage-x86_64.zip)
@@ -58,3 +60,7 @@ Available recipes:
     run *args     # Run the app
     run-mpv *args # Run the mpv CLI
 ```
+
+## LLM Development
+
+LLMs were used in the development of this project. LLM-assisted contributions are welcome.
