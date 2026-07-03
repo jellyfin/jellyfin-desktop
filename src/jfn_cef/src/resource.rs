@@ -38,6 +38,7 @@ static RESOURCES: &[(&str, Embedded)] = &[
     embedded!("connectivityHelper.js", "application/javascript"),
     embedded!("context-menu.js", "application/javascript"),
     embedded!("input-plugin.js", "application/javascript"),
+    embedded!("user-switch.js", "application/javascript"),
     embedded!("logo.png", "image/png"),
     embedded!("mpv-audio-player.js", "application/javascript"),
     embedded!("mpv-player-base.js", "application/javascript"),
