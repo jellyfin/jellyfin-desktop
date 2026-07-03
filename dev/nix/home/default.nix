@@ -126,8 +126,8 @@ in
           })
           (mkIf cfg.cache.enable {
             nix.settings = {
-              substituters = [ "https://xaltsc-jfnd.cachix.org" ];
-              trusted-public-keys = [ "xaltsc-jfnd.cachix.org-1:cCD4MB/Hqw1ktSbT+Dtv0clFpK1/YksbIQExL1hBxqo=" ];
+              extra-substituters = [ "https://xaltsc-jfnd.cachix.org" ];
+              extra-trusted-public-keys = [ "xaltsc-jfnd.cachix.org-1:cCD4MB/Hqw1ktSbT+Dtv0clFpK1/YksbIQExL1hBxqo=" ];
             };
           })
         ];
