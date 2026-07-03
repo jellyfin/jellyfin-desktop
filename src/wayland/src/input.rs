@@ -557,7 +557,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 }
                 if pressed {
                     let cp = st.key_get_utf32(kc);
-                    if cp > 0
+                    // Only send char events for printable codepoints. Control
+                    // characters (tab, enter, backspace, escape, etc.) must not
+                    // generate KEYEVENT_CHAR — macOS and Windows never produce
+                    // char events for them, and doing so on Linux breaks focus
+                    // traversal (e.g. tab in login form fields).
+                    if cp >= 0x20
+                        && cp != 0x7F
                         && let Some(f) = state.cb.char_
                     {
                         f(cp, state.modifiers, key);
