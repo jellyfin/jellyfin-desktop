@@ -191,10 +191,22 @@ wrap_render_process_handler! {
                 .insert(id, ExtraInfo::from_dictionary(extra.clone()));
         }
 
-        fn on_browser_destroyed(&self, browser: Option<&mut Browser>) {
-            let Some(browser) = browser else { return };
-            let id = browser.identifier();
-            self.inner.profiles.lock().remove(&id);
+        fn on_browser_destroyed(&self, _browser: Option<&mut Browser>) {
+            // Deliberately not removing the profile from `self.inner.profiles`
+            // here. CEF's RenderProcessHandler::OnBrowserDestroyed fires when
+            // the renderer-side view for a browser is torn down, which can
+            // happen on ordinary same-process navigations (observed on X11:
+            // repeated same-origin `location.href` reloads) without the
+            // logical CefBrowser ever actually closing. Removing the entry
+            // here left the next on_context_created for that same browser_id
+            // with no injection profile, silently skipping all script
+            // injection (native-shim.js, user-switch.js, etc.) — the cause of
+            // Settings menu items vanishing after a few profile switches.
+            //
+            // The map is keyed by browser_id and only ever grows by the
+            // handful of browsers this app creates per session (main,
+            // overlay, about, popups), so leaving stale entries in place is a
+            // bounded, negligible cost against a real correctness bug.
         }
 
         fn on_context_created(
