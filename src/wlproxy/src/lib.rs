@@ -1315,6 +1315,10 @@ fn build_root() {
     let root_tl = root_xdg.create_child::<XdgToplevel>();
     root_tl.set_handler(RootToplevelH);
     root_xdg.send_get_toplevel(&root_tl);
+    // mpv's own set_title/set_app_id land on its demoted toplevel, so the
+    // root would otherwise stay nameless (breaks taskbars and window rules).
+    root_tl.send_set_title("Jellyfin Desktop");
+    root_tl.send_set_app_id("org.jellyfin.JellyfinDesktop");
 
     if INITIAL_MAXIMIZED.load(Ordering::Acquire) {
         root_tl.send_set_maximized();
