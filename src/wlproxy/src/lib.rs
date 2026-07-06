@@ -62,6 +62,8 @@ use wl_proxy::protocols::wayland::wl_pointer::{WlPointer, WlPointerButtonState, 
 use wl_proxy::protocols::wayland::wl_region::WlRegion;
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
 use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatHandler};
+use wl_proxy::protocols::wayland::wl_shm::{WlShm, WlShmFormat};
+use wl_proxy::protocols::wayland::wl_shm_pool::WlShmPool;
 use wl_proxy::protocols::wayland::wl_subcompositor::WlSubcompositor;
 use wl_proxy::protocols::wayland::wl_subsurface::WlSubsurface;
 use wl_proxy::protocols::wayland::wl_surface::WlSurface;
@@ -271,6 +273,7 @@ struct Shell {
     subcompositor: Option<Rc<WlSubcompositor>>,
     wm_base: Option<Rc<XdgWmBase>>,
     spbm: Option<Rc<WpSinglePixelBufferManagerV1>>,
+    shm: Option<Rc<WlShm>>,
     viewporter: Option<Rc<WpViewporter>>,
     decoration_manager: Option<Rc<ZxdgDecorationManagerV1>>,
     palette_manager: Option<Rc<OrgKdeKwinServerDecorationPaletteManager>>,
@@ -312,6 +315,7 @@ impl Shell {
             subcompositor: None,
             wm_base: None,
             spbm: None,
+            shm: None,
             viewporter: None,
             decoration_manager: None,
             palette_manager: None,
@@ -1160,14 +1164,16 @@ fn adopt_host_surface(host: Rc<WlSurface>) {
         }
         Some((
             sh.subcompositor.clone()?,
-            sh.spbm.clone()?,
             sh.viewporter.clone()?,
             sh.root_surface.clone()?,
             sh.cur_w.max(1),
             sh.cur_h.max(1),
         ))
     });
-    let Some((subcompositor, spbm, viewporter, root, w, h)) = objs else {
+    let Some((subcompositor, viewporter, root, w, h)) = objs else {
+        return;
+    };
+    let Some(buf) = create_rgba_buffer(0, 0, 0, 0) else {
         return;
     };
 
@@ -1181,8 +1187,6 @@ fn adopt_host_surface(host: Rc<WlSurface>) {
     let vp = viewporter.create_child::<WpViewport>();
     viewporter.send_get_viewport(&vp, &host);
     vp.send_set_destination(w, h);
-    let buf = spbm.create_child::<WlBuffer>();
-    spbm.send_create_u32_rgba_buffer(&buf, 0, 0, 0, 0);
     host.send_attach(Some(&buf), 0, 0);
     host.send_commit();
     // Adding the subsurface only takes effect on the parent's next commit; the
@@ -1229,6 +1233,11 @@ impl WlRegistryHandler for ProxyRegistryH {
                 slf.send_bind(name, o.clone());
                 with_shell(|sh| sh.spbm = Some(o));
             }
+            WlShm::INTERFACE => {
+                let o = state.create_object::<WlShm>(version.min(1));
+                slf.send_bind(name, o.clone());
+                with_shell(|sh| sh.shm = Some(o));
+            }
             WpViewporter::INTERFACE => {
                 let o = state.create_object::<WpViewporter>(version.min(1));
                 slf.send_bind(name, o.clone());
@@ -1266,12 +1275,12 @@ impl WlCallbackHandler for RoundtripCb {
             sh.compositor.is_some()
                 && sh.subcompositor.is_some()
                 && sh.wm_base.is_some()
-                && sh.spbm.is_some()
+                && (sh.spbm.is_some() || sh.shm.is_some())
                 && sh.viewporter.is_some()
         });
         if !ok {
             eprintln!(
-                "wlproxy: missing globals for root (need compositor, subcompositor, xdg_wm_base, single_pixel_buffer, viewporter)"
+                "wlproxy: missing globals for root (need compositor, subcompositor, xdg_wm_base, single_pixel_buffer or wl_shm, viewporter)"
             );
         }
     }
@@ -1365,11 +1374,49 @@ fn single_pixel_rgba(rgb: u32) -> (u32, u32, u32, u32) {
     (chan(rgb >> 16), chan(rgb >> 8), chan(rgb), 0xFFFF_FFFF)
 }
 
+/// Creates a 1×1 solid-color buffer. Channels are full-range u32
+/// (`0xFFFF_FFFF` = 1.0), matching `create_u32_rgba_buffer` semantics.
+/// Compositors without single-pixel-buffer (e.g. niri, YaLTeR/niri#619)
+/// get an equivalent 1×1 wl_shm buffer instead.
+fn create_rgba_buffer(r: u32, g: u32, b: u32, a: u32) -> Option<Rc<WlBuffer>> {
+    if let Some(spbm) = with_shell(|sh| sh.spbm.clone()) {
+        let buf = spbm.create_child::<WlBuffer>();
+        spbm.send_create_u32_rgba_buffer(&buf, r, g, b, a);
+        return Some(buf);
+    }
+    let shm = with_shell(|sh| sh.shm.clone())?;
+    // Little-endian ARGB8888, premultiplied — the top 8 bits of each channel.
+    let px = [
+        (b >> 24) as u8,
+        (g >> 24) as u8,
+        (r >> 24) as u8,
+        (a >> 24) as u8,
+    ];
+    let fd = unsafe {
+        let raw = libc::memfd_create(c"jfn-wlproxy-pixel".as_ptr(), libc::MFD_CLOEXEC);
+        if raw < 0 {
+            return None;
+        }
+        if libc::write(raw, px.as_ptr().cast(), px.len()) != px.len() as isize {
+            libc::close(raw);
+            return None;
+        }
+        use std::os::fd::FromRawFd;
+        OwnedFd::from_raw_fd(raw)
+    };
+    let pool = shm.create_child::<WlShmPool>();
+    shm.send_create_pool(&pool, &Rc::new(fd), 4);
+    let buf = pool.create_child::<WlBuffer>();
+    pool.send_create_buffer(&buf, 0, 1, 1, 4, WlShmFormat::ARGB8888);
+    // The buffer keeps the pool's storage alive server-side.
+    pool.send_destroy();
+    Some(buf)
+}
+
 fn fill_root(w: i32, h: i32) {
-    let Some((compositor, spbm, viewporter, surface)) = with_shell(|sh| {
+    let Some((compositor, viewporter, surface)) = with_shell(|sh| {
         Some((
             sh.compositor.clone()?,
-            sh.spbm.clone()?,
             sh.viewporter.clone()?,
             sh.root_surface.clone()?,
         ))
@@ -1390,8 +1437,9 @@ fn fill_root(w: i32, h: i32) {
     viewport.send_set_destination(w, h);
 
     let (r, g, b, a) = single_pixel_rgba(BACKGROUND_RGBA.load(Ordering::Acquire));
-    let buffer = spbm.create_child::<WlBuffer>();
-    spbm.send_create_u32_rgba_buffer(&buffer, r, g, b, a);
+    let Some(buffer) = create_rgba_buffer(r, g, b, a) else {
+        return;
+    };
     surface.send_attach(Some(&buffer), 0, 0);
 
     let region = compositor.create_child::<WlRegion>();
