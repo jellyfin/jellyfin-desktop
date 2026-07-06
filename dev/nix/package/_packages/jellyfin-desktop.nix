@@ -2,7 +2,6 @@
   lib,
   rustPlatform,
   pkg-config,
-  wrapGAppsHook4,
 
   # Needed at runtime by CEF
   libGL,
@@ -31,7 +30,6 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   # Fixes some Cargo.lock issues
   cargoRoot = "src";
-  cargoHash = "sha256-GqSk6ZjY34esHGBmaY7sbFjQI6q9e4J3Qu87tFEW6O0=";
   cargoLock = {
     # Fixes some other Cargo.lock issues
     lockFile = "${finalAttrs.src}/${finalAttrs.cargoRoot}/Cargo.lock";
@@ -43,7 +41,6 @@ rustPlatform.buildRustPackage (finalAttrs: {
   strictDeps = true;
 
   nativeBuildInputs = [
-    wrapGAppsHook4
     rustPlatform.bindgenHook # fixes clang issues
     pkg-config
   ];
@@ -82,10 +79,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
     runHook postInstall
   '';
 
-  preFixup = ''
-    gappsWrapperArgs+=(
-      --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath [ libGL ]}" \
-    )
+  postFixup = ''
+    old_rpath="$(patchelf --print-rpath $out/bin/jellyfin-desktop)"
+    patchelf \
+      --set-rpath "$old_rpath:${lib.makeLibraryPath [ libGL ]}" \
+      --add-needed libGL.so \
+      $out/bin/jellyfin-desktop
   '';
 
   doCheck = false;
@@ -95,14 +94,6 @@ rustPlatform.buildRustPackage (finalAttrs: {
     homepage = "https://github.com/jellyfin/jellyfin-desktop";
     license = lib.licenses.gpl2Only;
     mainProgram = "jellyfin-desktop";
-    # TODO: add myself once this goes on nixpkgs.
-    maintainers = with lib.maintainers; [
-      {
-        email = "hey+dev@xaltsc.dev";
-        name = "xaltsc";
-        github = "xaltsc";
-        githubId = 41400742;
-      }
-    ];
+    maintainers = with lib.maintainers; [ xaltsc ];
   };
 })
