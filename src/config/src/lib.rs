@@ -497,7 +497,9 @@ string_accessors!(subtitle_scale, set_subtitle_scale, subtitle_scale);
 string_accessors!(log_level, set_log_level, log_level);
 
 /// Parse a stored subtitle-scale string into an mpv `sub-scale` multiplier.
-/// Empty or malformed values fall back to 1.0 (mpv's default); valid values are
+/// Empty or malformed values fall back to 0.5 — the app's default subtitle
+/// size, deliberately smaller than mpv's own 1.0 default so plain-text subs
+/// land close to the jellyfin-web client's "Normal" size. Valid values are
 /// clamped so a bad stored number can neither shrink subtitles to nothing nor
 /// blow them up off-screen.
 fn parse_subtitle_scale(raw: &str) -> f64 {
@@ -505,7 +507,7 @@ fn parse_subtitle_scale(raw: &str) -> f64 {
         .parse::<f64>()
         .ok()
         .filter(|v| v.is_finite() && *v > 0.0)
-        .map_or(1.0, |v| v.clamp(0.1, 10.0))
+        .map_or(0.5, |v| v.clamp(0.1, 10.0))
 }
 
 /// The saved subtitle size as an mpv `sub-scale` multiplier (see
@@ -641,13 +643,13 @@ mod tests {
             let got = parse_subtitle_scale(raw);
             assert!((got - want).abs() < 1e-9, "{raw:?} → {got}, want {want}");
         };
-        // Unset / malformed → mpv default (1.0).
-        eq("", 1.0);
-        eq("garbage", 1.0);
+        // Unset / malformed → app default (0.5).
+        eq("", 0.5);
+        eq("garbage", 0.5);
         // Non-positive and non-finite are rejected, not clamped, → default.
-        eq("0", 1.0);
-        eq("-3", 1.0);
-        eq("inf", 1.0);
+        eq("0", 0.5);
+        eq("-3", 0.5);
+        eq("inf", 0.5);
         // Valid values pass through; surrounding whitespace is tolerated.
         eq("1.5", 1.5);
         eq("  2 ", 2.0);

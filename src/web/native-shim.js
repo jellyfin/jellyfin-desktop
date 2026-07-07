@@ -114,11 +114,11 @@
             playback: [
                 { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions },
                 { key: 'subtitleScale', displayName: 'Subtitle Size', help: 'Size of subtitles during playback. Takes effect immediately and is remembered for future playback.', options: [
-                    { value: '0.75', title: 'Small' },
+                    { value: '0.35', title: 'Small' },
                     { value: '', title: 'Normal' },
-                    { value: '1.25', title: 'Large' },
-                    { value: '1.5', title: 'Larger' },
-                    { value: '2', title: 'Huge' }
+                    { value: '0.75', title: 'Large' },
+                    { value: '1', title: 'Larger' },
+                    { value: '1.5', title: 'Huge' }
                 ]}
             ],
             audio: [
