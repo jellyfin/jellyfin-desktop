@@ -62,6 +62,53 @@ pub(crate) fn apply_setting_value(_section: &str, key: &str, value: &str) {
             jfn_config::set_subtitle_scale(value);
             jfn_mpv::api::jfn_mpv_set_subtitle_scale(jfn_config::subtitle_scale_value());
         }
+        // --- Web "Subtitle Appearance" mirror --------------------------------
+        // Reflect jellyfin-web's per-device Subtitle Appearance panel straight
+        // into mpv. The web client's localStorage is the source of truth, so
+        // these are applied live but NOT persisted here — each returns early to
+        // skip the config save below.
+        "subtitlePos" => {
+            if let Ok(v) = value.parse::<f64>() {
+                jfn_mpv::api::jfn_mpv_set_subtitle_pos(v);
+            }
+            return;
+        }
+        "subtitleColor" => {
+            jfn_mpv::api::jfn_mpv_set_subtitle_color(value);
+            return;
+        }
+        "subtitleBackColor" => {
+            jfn_mpv::api::jfn_mpv_set_subtitle_back_color(value);
+            return;
+        }
+        "subtitleBold" => {
+            jfn_mpv::api::jfn_mpv_set_subtitle_bold(value == "true");
+            return;
+        }
+        "subtitleFont" => {
+            jfn_mpv::api::jfn_mpv_set_subtitle_font(value);
+            return;
+        }
+        "subtitleBorderSize" => {
+            if let Ok(v) = value.parse::<f64>() {
+                jfn_mpv::api::jfn_mpv_set_subtitle_border_size(v);
+            }
+            return;
+        }
+        "subtitleShadowOffset" => {
+            if let Ok(v) = value.parse::<f64>() {
+                jfn_mpv::api::jfn_mpv_set_subtitle_shadow_offset(v);
+            }
+            return;
+        }
+        // Panel-driven subtitle size (mpv `sub-scale`), non-persisted like the
+        // other appearance fields — the web panel's Text size is the source.
+        "subtitleSize" => {
+            if let Ok(v) = value.parse::<f64>() {
+                jfn_mpv::api::jfn_mpv_set_subtitle_scale(v);
+            }
+            return;
+        }
         "windowDecorations" => jfn_config::set_window_decorations(value),
         "hideScrollbar" => jfn_config::set_hide_scrollbar(value == "true"),
         "logLevel" => jfn_config::set_log_level(value),

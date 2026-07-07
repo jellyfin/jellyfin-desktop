@@ -323,6 +323,45 @@ pub fn jfn_mpv_set_subtitle_delay(s: f64) {
 pub fn jfn_mpv_set_subtitle_scale(v: f64) {
     unsafe { set_double(c"sub-scale", v) };
 }
+/// Subtitle vertical position (mpv `sub-pos`, 0..=150; 100 = bottom, lower =
+/// higher). Mirrors the jellyfin-web "Vertical position" appearance control.
+pub fn jfn_mpv_set_subtitle_pos(v: f64) {
+    unsafe { set_double(c"sub-pos", v.clamp(0.0, 150.0)) };
+}
+/// Subtitle bold weight (mpv `sub-bold`). Mirrors web "Text weight".
+pub fn jfn_mpv_set_subtitle_bold(v: bool) {
+    unsafe { set_flag(c"sub-bold", v) };
+}
+/// Subtitle text color as an mpv color string ("#RRGGBB" / "#AARRGGBB").
+/// Mirrors web "Text color". Ignored if the string has an interior NUL.
+pub fn jfn_mpv_set_subtitle_color(color: &str) {
+    if let Ok(c) = CString::new(color) {
+        unsafe { set_str(c"sub-color", &c) };
+    }
+}
+/// Subtitle background box color (mpv `sub-back-color`). Mirrors web "Text
+/// background"; pass a fully-transparent color to disable the box.
+pub fn jfn_mpv_set_subtitle_back_color(color: &str) {
+    if let Ok(c) = CString::new(color) {
+        unsafe { set_str(c"sub-back-color", &c) };
+    }
+}
+/// Subtitle font family (mpv `sub-font`). Mirrors web "Font". mpv resolves it
+/// via its font backend and falls back to the default if it can't.
+pub fn jfn_mpv_set_subtitle_font(font: &str) {
+    if let Ok(c) = CString::new(font) {
+        unsafe { set_str(c"sub-font", &c) };
+    }
+}
+/// Subtitle outline/border thickness (mpv `sub-border-size`).
+pub fn jfn_mpv_set_subtitle_border_size(v: f64) {
+    unsafe { set_double(c"sub-border-size", v.max(0.0)) };
+}
+/// Subtitle drop-shadow offset (mpv `sub-shadow-offset`). Together with border
+/// size this reproduces the web "Drop shadow" presets.
+pub fn jfn_mpv_set_subtitle_shadow_offset(v: f64) {
+    unsafe { set_double(c"sub-shadow-offset", v.max(0.0)) };
+}
 pub fn jfn_mpv_set_start_position(s: f64) {
     unsafe { set_double(c"start", s) };
 }
