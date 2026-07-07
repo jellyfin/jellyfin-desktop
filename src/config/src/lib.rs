@@ -50,6 +50,7 @@ struct SettingsData {
     hwdec: String,
     audio_passthrough: String,
     audio_channels: String,
+    subtitle_scale: String,
     log_level: String,
     device_name: String,
     window: JfnWindowGeometry,
@@ -68,6 +69,7 @@ impl Default for SettingsData {
             hwdec: String::new(),
             audio_passthrough: String::new(),
             audio_channels: String::new(),
+            subtitle_scale: String::new(),
             log_level: String::new(),
             device_name: String::new(),
             window: JfnWindowGeometry::default(),
@@ -97,6 +99,9 @@ impl SettingsData {
         }
         if let Some(s) = v.get("audioChannels").and_then(Value::as_str) {
             self.audio_channels = s.into();
+        }
+        if let Some(s) = v.get("subtitleScale").and_then(Value::as_str) {
+            self.subtitle_scale = s.into();
         }
         if let Some(s) = v.get("logLevel").and_then(Value::as_str) {
             self.log_level = s.into();
@@ -199,6 +204,12 @@ impl SettingsData {
                 Value::String(self.audio_channels.clone()),
             );
         }
+        if !self.subtitle_scale.is_empty() {
+            o.insert(
+                "subtitleScale".into(),
+                Value::String(self.subtitle_scale.clone()),
+            );
+        }
         if self.disable_gpu_compositing {
             o.insert("disableGpuCompositing".into(), Value::Bool(true));
         }
@@ -244,6 +255,12 @@ impl SettingsData {
             o.insert(
                 "audioChannels".into(),
                 Value::String(self.audio_channels.clone()),
+            );
+        }
+        if !self.subtitle_scale.is_empty() {
+            o.insert(
+                "subtitleScale".into(),
+                Value::String(self.subtitle_scale.clone()),
             );
         }
         if self.disable_gpu_compositing {
@@ -476,7 +493,26 @@ string_accessors!(server_url, set_server_url, server_url);
 string_accessors!(hwdec, set_hwdec, hwdec);
 string_accessors!(audio_passthrough, set_audio_passthrough, audio_passthrough);
 string_accessors!(audio_channels, set_audio_channels, audio_channels);
+string_accessors!(subtitle_scale, set_subtitle_scale, subtitle_scale);
 string_accessors!(log_level, set_log_level, log_level);
+
+/// Parse a stored subtitle-scale string into an mpv `sub-scale` multiplier.
+/// Empty or malformed values fall back to 1.0 (mpv's default); valid values are
+/// clamped so a bad stored number can neither shrink subtitles to nothing nor
+/// blow them up off-screen.
+fn parse_subtitle_scale(raw: &str) -> f64 {
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .map_or(1.0, |v| v.clamp(0.1, 10.0))
+}
+
+/// The saved subtitle size as an mpv `sub-scale` multiplier (see
+/// [`parse_subtitle_scale`]).
+pub fn subtitle_scale_value() -> f64 {
+    parse_subtitle_scale(&state().lock().data.subtitle_scale)
+}
 
 pub fn device_name() -> String {
     state().lock().data.device_name.clone()
@@ -593,9 +629,32 @@ fn normalize_device_name(raw: &str, platform_default: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_device_name;
+    use super::{normalize_device_name, parse_subtitle_scale};
 
     const PLATFORM: &str = "platform-host";
+
+    #[test]
+    fn subtitle_scale_parses_clamps_and_defaults() {
+        // Compare with a tolerance so the assertions stay clippy::float_cmp-clean
+        // under `just strict-lint`.
+        let eq = |raw: &str, want: f64| {
+            let got = parse_subtitle_scale(raw);
+            assert!((got - want).abs() < 1e-9, "{raw:?} → {got}, want {want}");
+        };
+        // Unset / malformed → mpv default (1.0).
+        eq("", 1.0);
+        eq("garbage", 1.0);
+        // Non-positive and non-finite are rejected, not clamped, → default.
+        eq("0", 1.0);
+        eq("-3", 1.0);
+        eq("inf", 1.0);
+        // Valid values pass through; surrounding whitespace is tolerated.
+        eq("1.5", 1.5);
+        eq("  2 ", 2.0);
+        // Out-of-range values clamp to the sane band.
+        eq("999", 10.0);
+        eq("0.001", 0.1);
+    }
 
     #[test]
     fn trims_leading_and_trailing_whitespace() {

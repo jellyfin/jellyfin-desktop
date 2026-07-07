@@ -646,6 +646,13 @@ pub fn jfn_app_main() -> c_int {
     let startup_bg = cs("#101010");
     unsafe { jfn_mpv::api::jfn_mpv_set_background_color_hex(startup_bg.as_ptr()) };
 
+    // Restore the saved "Subtitle size" (mpv `sub-scale`). The live-apply path
+    // (apply_setting_value) only runs on user changes, so a fresh launch has to
+    // push the persisted value once. Skipped when unset (mpv default is 1.0).
+    if !jfn_config::subtitle_scale().is_empty() {
+        jfn_mpv::api::jfn_mpv_set_subtitle_scale(jfn_config::subtitle_scale_value());
+    }
+
     log_mpv_versions();
 
     // input-default-bindings=no drops the builtin CLOSE_WIN -> quit binding;

@@ -317,6 +317,12 @@ pub fn jfn_mpv_set_audio_delay(s: f64) {
 pub fn jfn_mpv_set_subtitle_delay(s: f64) {
     unsafe { set_double(c"sub-delay", s) };
 }
+/// Subtitle size, as a multiplier on the rendered font size (mpv `sub-scale`,
+/// default 1.0). `sub-ass-override=scale` (set at boot) lets this reach ASS/SSA
+/// subtitles too, not just plain text.
+pub fn jfn_mpv_set_subtitle_scale(v: f64) {
+    unsafe { set_double(c"sub-scale", v) };
+}
 pub fn jfn_mpv_set_start_position(s: f64) {
     unsafe { set_double(c"start", s) };
 }

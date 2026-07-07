@@ -120,6 +120,12 @@ fn apply_defaults(
     set("osc", "no")?;
     set("display-tags", "")?;
 
+    // Make the user-facing "Subtitle size" setting (mpv `sub-scale`) also apply
+    // to ASS/SSA subtitles; `scale` preserves the rest of each script's styling
+    // (position, colors, fonts). If an mpv build lacks the option, set_option
+    // downgrades it to a skip rather than failing boot.
+    set("sub-ass-override", "scale")?;
+
     // Track selection is owned by Jellyfin. Disable mpv's heuristic
     // so unspecified tracks stay disabled instead of being auto-picked
     // by language / default-flag / codec scoring.
