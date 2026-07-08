@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::app::userfree_to_string;
 use crate::client::Inner;
+use crate::i18n::{StringKey, text};
 use crate::platform_ops::{
     Delivery, DeliveryKind, JfnContextMenuRequest, JfnMenuItem, JsMenuChannel,
 };
@@ -42,7 +43,7 @@ wrap_context_menu_handler! {
             m.remove(MenuId::VIEW_SOURCE.get_raw() as c_int);
             let reload_id: c_int = MenuId::RELOAD.get_raw() as c_int;
             if m.index_of(reload_id) < 0 {
-                m.add_item(reload_id, Some(&CefString::from("Reload")));
+                m.add_item(reload_id, Some(&CefString::from(text(StringKey::Reload))));
             }
             loop {
                 let n = m.count();

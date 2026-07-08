@@ -542,7 +542,10 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
     // substitution.
     ensure_renderer_settings_loaded();
 
-    let mut code = String::new();
+    let mut code = format!(
+        "window._desktopStrings = {};\n",
+        crate::i18n::strings_json()
+    );
     for (i, script) in scripts.iter().enumerate() {
         if i > 0 {
             code.push('\n');

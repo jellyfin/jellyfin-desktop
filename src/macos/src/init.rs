@@ -898,20 +898,27 @@ pub fn macos_early_init() {
 
         add_menu_item(
             app_menu,
-            "About Jellyfin Desktop",
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::AboutJellyfinDesktop),
             sel!(showAbout:),
             "",
             Some(mt_obj),
             0,
         );
         add_separator(app_menu);
-        add_menu_item(app_menu, "Hide Jellyfin Desktop", sel!(hide:), "h", None, 0);
+        add_menu_item(
+            app_menu,
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::HideJellyfinDesktop),
+            sel!(hide:),
+            "h",
+            None,
+            0,
+        );
         // NSEventModifierFlagOption | NSEventModifierFlagCommand
         // = (1 << 19) | (1 << 20).
         let opt_cmd_mask: u64 = (1u64 << 19) | (1u64 << 20);
         add_menu_item(
             app_menu,
-            "Hide Others",
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::HideOthers),
             sel!(hideOtherApplications:),
             "h",
             None,
@@ -919,14 +926,21 @@ pub fn macos_early_init() {
         );
         add_menu_item(
             app_menu,
-            "Show All",
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::ShowAll),
             sel!(unhideAllApplications:),
             "",
             None,
             0,
         );
         add_separator(app_menu);
-        add_menu_item(app_menu, "Quit", sel!(terminate:), "q", None, 0);
+        add_menu_item(
+            app_menu,
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::Quit),
+            sel!(terminate:),
+            "q",
+            None,
+            0,
+        );
 
         let _: () = msg_send![app_item, setSubmenu: app_menu];
         let _: () = msg_send![app_menu, release];
@@ -938,18 +952,63 @@ pub fn macos_early_init() {
         let _: () = msg_send![menubar, addItem: edit_item];
 
         let edit_menu: *mut AnyObject = msg_send![class!(NSMenu), alloc];
+        let edit_title =
+            std::ffi::CString::new(jfn_cef::i18n::text(jfn_cef::i18n::StringKey::Edit))
+                .unwrap_or_default();
         let title_ns: *mut AnyObject =
-            msg_send![class!(NSString), stringWithUTF8String: c"Edit".as_ptr()];
+            msg_send![class!(NSString), stringWithUTF8String: edit_title.as_ptr()];
         let edit_menu: *mut AnyObject = msg_send![edit_menu, initWithTitle: title_ns];
 
-        add_menu_item(edit_menu, "Undo", sel!(undo:), "z", None, 0);
-        add_menu_item(edit_menu, "Redo", sel!(redo:), "Z", None, 0);
+        add_menu_item(
+            edit_menu,
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::Undo),
+            sel!(undo:),
+            "z",
+            None,
+            0,
+        );
+        add_menu_item(
+            edit_menu,
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::Redo),
+            sel!(redo:),
+            "Z",
+            None,
+            0,
+        );
         add_separator(edit_menu);
-        add_menu_item(edit_menu, "Cut", sel!(cut:), "x", None, 0);
-        add_menu_item(edit_menu, "Copy", sel!(copy:), "c", None, 0);
-        add_menu_item(edit_menu, "Paste", sel!(paste:), "v", None, 0);
+        add_menu_item(
+            edit_menu,
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::Cut),
+            sel!(cut:),
+            "x",
+            None,
+            0,
+        );
+        add_menu_item(
+            edit_menu,
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::Copy),
+            sel!(copy:),
+            "c",
+            None,
+            0,
+        );
+        add_menu_item(
+            edit_menu,
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::Paste),
+            sel!(paste:),
+            "v",
+            None,
+            0,
+        );
         add_separator(edit_menu);
-        add_menu_item(edit_menu, "Select All", sel!(selectAll:), "a", None, 0);
+        add_menu_item(
+            edit_menu,
+            jfn_cef::i18n::text(jfn_cef::i18n::StringKey::SelectAll),
+            sel!(selectAll:),
+            "a",
+            None,
+            0,
+        );
 
         let _: () = msg_send![edit_item, setSubmenu: edit_menu];
         let _: () = msg_send![edit_menu, release];

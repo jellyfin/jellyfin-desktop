@@ -45,6 +45,8 @@ pub struct JfnMpvBoot {
     /// Hardware-decoding mode, e.g. `"auto"`, `"no"`, `"vaapi"`.
     pub hwdec: *const c_char,
     pub user_agent: *const c_char,
+    /// Localized window title.
+    pub title: *const c_char,
     /// Optional `--audio-spdif` codecs (e.g. `"ac3,dts-hd,eac3,truehd"`).
     pub audio_passthrough: *const c_char,
     pub audio_exclusive: bool,
@@ -112,6 +114,7 @@ fn apply_defaults(
     handle: &Handle,
     display: DisplayBackend,
     client_side_decorations: bool,
+    title: &str,
 ) -> crate::error::Result<()> {
     let set = |name: &str, value: &str| set_option_or_skip(handle, name, value);
 
@@ -150,7 +153,7 @@ fn apply_defaults(
     // (e.g. KDE) would stack on top of ours.
     let suppress_ssd = display == DisplayBackend::Wayland && client_side_decorations;
     set("border", if suppress_ssd { "no" } else { "yes" })?;
-    set("title", "Jellyfin Desktop")?;
+    set("title", title)?;
     set("wayland-app-id", "org.jellyfin.JellyfinDesktop")?;
 
     // Keep window open when idle. `force-window=yes` (not "immediate")
@@ -228,7 +231,8 @@ pub unsafe fn jfn_mpv_handle_init(boot: *const JfnMpvBoot) -> *mut sys::mpv_hand
         }
     };
 
-    if let Err(e) = apply_defaults(&handle, display, boot.client_side_decorations) {
+    let title = unsafe { cstr_opt(boot.title) }.unwrap_or_else(|| "Jellyfin Desktop".to_string());
+    if let Err(e) = apply_defaults(&handle, display, boot.client_side_decorations, &title) {
         tracing::error!(target: "mpv", "apply_defaults failed: {:?}", e);
         return ptr::null_mut();
     }

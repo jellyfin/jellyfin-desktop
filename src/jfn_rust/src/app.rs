@@ -227,6 +227,7 @@ fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
     let geometry_c = cs(opts.boot_geometry);
     let hwdec_c = cs(opts.hwdec);
     let user_agent_c = cs(&format!("JellyfinDesktop/{}", APP_VERSION_FULL));
+    let title_c = cs("Jellyfin Desktop");
     let passthrough_c = cs(opts.audio_passthrough);
     let channels_c = cs(opts.audio_channels);
     let mpv_log_level_c = cs(opts.mpv_log_level);
@@ -234,6 +235,7 @@ fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
         display_backend: opts.backend_byte,
         hwdec: hwdec_c.as_ptr(),
         user_agent: user_agent_c.as_ptr(),
+        title: title_c.as_ptr(),
         audio_passthrough: if opts.audio_passthrough.is_empty() {
             ptr::null()
         } else {
