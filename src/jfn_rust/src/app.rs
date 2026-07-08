@@ -505,9 +505,12 @@ fn sync_cef_window_metrics(
         mw = new_pw;
         mh = new_ph;
     }
-    jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
-
     let scale = plat().effective_scale(display_hidpi_scale);
+    if let Some(size) = plat().window_source().and_then(|source| source.size()) {
+        mw = size.w;
+        mh = size.h;
+    }
+    jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
     let lw = (mw as f32 / scale) as c_int;
     let lh = (mh as f32 / scale) as c_int;
 
@@ -757,7 +760,7 @@ fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &bool) -> bool {
         *mw = w;
         *mh = h;
     }
-    *mw > 0 && !*need_max && plat().mpv_host().host_ready()
+    *mw > 0 && *mh > 0 && !*need_max && plat().mpv_host().host_ready()
 }
 
 static VO_SIZE: OnceLock<(i32, i32)> = OnceLock::new();

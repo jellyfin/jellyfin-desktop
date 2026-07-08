@@ -20,8 +20,9 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CWPRETSTRUCT, CallNextHookEx, GWL_STYLE, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, HHOOK, IsIconic, IsZoomed, SIZE_MINIMIZED, SPI_GETWORKAREA,
+    CWPRETSTRUCT, CallNextHookEx, GWL_STYLE, GetClientRect, GetSystemMetrics, GetWindowLongPtrW,
+    GetWindowRect, GetWindowThreadProcessId, HHOOK, IsIconic, IsZoomed, SIZE_MINIMIZED, SM_CXFRAME,
+    SM_CXPADDEDBORDER, SM_CYCAPTION, SM_CYFRAME, SPI_GETWORKAREA,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW,
     UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_CLOSE, WM_SIZE, WS_CAPTION, WS_THICKFRAME,
 };
@@ -416,9 +417,61 @@ pub fn win_query_window_position(x: &mut c_int, y: &mut c_int) -> bool {
     true
 }
 
-/// Resolve saved geometry against the primary monitor's working area so the
-/// window never opens larger than the screen or off-screen, and center any
-/// unset axis.
+pub fn win_query_client_size(w: &mut c_int, h: &mut c_int) -> bool {
+    let hwnd_raw = STATE.lock().mpv_hwnd_raw;
+    if hwnd_raw == 0 {
+        return false;
+    }
+    let hwnd = hwnd_from_raw(hwnd_raw);
+    let mut rc = RECT::default();
+    if unsafe { GetClientRect(hwnd, &mut rc) }.is_err() {
+        return false;
+    }
+    let cw = rc.right - rc.left;
+    let ch = rc.bottom - rc.top;
+    if cw <= 0 || ch <= 0 {
+        return false;
+    }
+    *w = cw;
+    *h = ch;
+    true
+}
+
+fn decorated_frame_size() -> (c_int, c_int) {
+    let hwnd_raw = STATE.lock().mpv_hwnd_raw;
+    let style = if hwnd_raw == 0 {
+        WS_CAPTION.0 | WS_THICKFRAME.0
+    } else {
+        (unsafe { GetWindowLongPtrW(hwnd_from_raw(hwnd_raw), GWL_STYLE) }) as u32
+    };
+    let has_caption = (style & WS_CAPTION.0) != 0;
+    let has_thickframe = (style & WS_THICKFRAME.0) != 0;
+    if !has_caption && !has_thickframe {
+        return (0, 0);
+    }
+
+    let padded = unsafe { GetSystemMetrics(SM_CXPADDEDBORDER) }.max(0);
+    let frame_x = if has_thickframe {
+        unsafe { GetSystemMetrics(SM_CXFRAME) }.max(0) + padded
+    } else {
+        0
+    };
+    let frame_y = if has_thickframe {
+        unsafe { GetSystemMetrics(SM_CYFRAME) }.max(0) + padded
+    } else {
+        0
+    };
+    let caption = if has_caption {
+        unsafe { GetSystemMetrics(SM_CYCAPTION) }.max(0)
+    } else {
+        0
+    };
+    (frame_x * 2, frame_y * 2 + caption)
+}
+
+/// Resolve saved client geometry against the primary monitor's working area so
+/// the outer decorated window never opens larger than the screen or off-screen,
+/// and center any unset axis.
 pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
     let mut work = RECT::default();
     let ok = unsafe {
@@ -434,13 +487,20 @@ pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y:
     }
     let vw = work.right - work.left;
     let vh = work.bottom - work.top;
+    let (frame_w, frame_h) = decorated_frame_size();
     let mut g = WindowGeometry {
         w: *w,
         h: *h,
         x: *x,
         y: *y,
     };
-    clamp_to_bounds(&mut g, Bounds { w: vw, h: vh });
+    clamp_to_bounds(
+        &mut g,
+        Bounds {
+            w: (vw - frame_w).max(1),
+            h: (vh - frame_h).max(1),
+        },
+    );
     *w = g.w;
     *h = g.h;
     *x = g.x;

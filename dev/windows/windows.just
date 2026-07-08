@@ -3,8 +3,9 @@
 # Recipes run under PowerShell 7 so the dev/windows/*.ps1 scripts
 # (which use PS 7+ syntax such as `&&`) parse correctly. just's default
 # shell is `sh`, which isn't available from a plain PowerShell prompt,
-# so we point windows-shell at pwsh.exe explicitly.
-set windows-shell := ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command"]
+# so we point windows-shell at pwsh. Prefer PATH over a hardcoded Program
+# Files path — Store / winget installs often land elsewhere.
+set windows-shell := ["pwsh", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command"]
 
 [group('deps')]
 [windows]

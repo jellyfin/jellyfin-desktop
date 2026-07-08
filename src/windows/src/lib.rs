@@ -27,8 +27,8 @@ pub use input::{
 };
 pub use platform::{
     jfn_win_get_hwnd, win_clamp_window_geometry, win_cleanup, win_early_init,
-    win_get_display_scale, win_get_scale, win_init, win_query_window_position, win_set_fullscreen,
-    win_toggle_fullscreen,
+    win_get_display_scale, win_get_scale, win_init, win_query_client_size,
+    win_query_window_position, win_set_fullscreen, win_toggle_fullscreen,
 };
 
 pub fn win_pump() {
@@ -310,7 +310,10 @@ pub fn win_open_external_url(url: &str) {
 // Backend impl
 // =====================================================================
 
-use jfn_platform_abi::{IdleInhibitLevel, SurfaceHandle, SurfaceSize, WindowGeometry, WindowPos};
+use jfn_platform_abi::{
+    IdleInhibitLevel, PhysicalSize, Scale, SurfaceHandle, SurfaceSize, WindowGeometry, WindowPos,
+    WindowSource,
+};
 
 /// SMTC-backed [`jfn_platform_abi::MediaSink`].
 struct SmtcSink;
@@ -324,6 +327,46 @@ impl jfn_platform_abi::MediaSink for SmtcSink {
         jfn_windows_sink::jfn_windows_sink_stop();
     }
 }
+
+struct WindowsWindowSource;
+
+impl WindowSource for WindowsWindowSource {
+    fn size(&self) -> Option<PhysicalSize> {
+        // HWND is only published in win_init(), which runs after the VO wait.
+        // Until then fall back to mpv ingest (osd-/window-pixels) so boot does
+        // not hang forever on a black "Waiting for mpv window..." screen.
+        let (mut w, mut h) = (0, 0);
+        if win_query_client_size(&mut w, &mut h) {
+            return Some(PhysicalSize { w, h });
+        }
+        let mut w = jfn_playback::ingest_driver::jfn_playback_window_pw();
+        let mut h = jfn_playback::ingest_driver::jfn_playback_window_ph();
+        if w <= 0 || h <= 0 {
+            w = jfn_playback::ingest_driver::jfn_playback_osd_pw();
+            h = jfn_playback::ingest_driver::jfn_playback_osd_ph();
+        }
+        (w > 0 && h > 0).then_some(PhysicalSize { w, h })
+    }
+
+    fn maximized(&self) -> bool {
+        jfn_playback::ingest_driver::jfn_playback_window_maximized()
+    }
+
+    fn fullscreen(&self) -> bool {
+        jfn_playback::ingest_driver::jfn_playback_fullscreen()
+    }
+
+    fn position(&self) -> Option<WindowPos> {
+        let (mut x, mut y) = (0, 0);
+        win_query_window_position(&mut x, &mut y).then_some(WindowPos { x, y })
+    }
+
+    fn scale(&self) -> Scale {
+        Scale(win_get_scale())
+    }
+}
+
+static WINDOWS_WINDOW_SOURCE: WindowsWindowSource = WindowsWindowSource;
 
 pub struct WindowsPlatform;
 
@@ -457,6 +500,10 @@ impl Platform for WindowsPlatform {
         } else {
             None
         }
+    }
+
+    fn window_source(&self) -> Option<&'static dyn WindowSource> {
+        Some(&WINDOWS_WINDOW_SOURCE)
     }
 
     fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
