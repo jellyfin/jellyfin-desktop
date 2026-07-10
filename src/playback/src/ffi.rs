@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 use std::sync::OnceLock;
 
 pub use crate::coordinator::Input;
-use crate::coordinator::PlaybackCoordinator;
+use crate::coordinator::{CoordinatorHandle, PlaybackCoordinator};
 use crate::types::*;
 
 // =====================================================================
@@ -33,6 +33,13 @@ fn with_coord<F: FnOnce(&PlaybackCoordinator)>(f: F) {
     if let Some(c) = guard.as_ref() {
         f(c);
     }
+}
+
+fn coord_handle() -> Option<CoordinatorHandle> {
+    coord_slot()
+        .lock()
+        .as_ref()
+        .map(PlaybackCoordinator::handle)
 }
 
 pub fn jfn_playback_init() {
@@ -84,11 +91,7 @@ pub fn register_action_sink(sink: ActionSink) {
 }
 
 pub fn jfn_playback_snapshot() -> PlaybackSnapshot {
-    let mut guard = coord_slot().lock();
-    match guard.as_mut() {
-        Some(c) => c.snapshot(),
-        None => PlaybackSnapshot::fresh(),
-    }
+    coord_handle().map_or_else(PlaybackSnapshot::fresh, |h| h.snapshot())
 }
 
 // =====================================================================
@@ -96,5 +99,7 @@ pub fn jfn_playback_snapshot() -> PlaybackSnapshot {
 // =====================================================================
 
 pub fn post(input: Input) {
-    with_coord(|c| c.enqueue(input));
+    if let Some(h) = coord_handle() {
+        h.enqueue(input);
+    }
 }
