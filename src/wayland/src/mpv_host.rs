@@ -56,12 +56,7 @@ unsafe fn start_proxy(decorations: WindowDecorations) {
         return;
     }
     tracing::info!(target: "Main", "proxy listening on {disp}");
-    let deco_mode = match decorations {
-        WindowDecorations::Csd => 1,
-        WindowDecorations::Server => 2,
-        WindowDecorations::ServerThemed => 3,
-    };
-    crate::root_window::set_decorations(deco_mode as u32);
+    crate::root_window::set_decorations(decorations);
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &disp) };
     let _ = PROXY.set(ProxySlot(p));
 }

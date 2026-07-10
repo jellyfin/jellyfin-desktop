@@ -116,7 +116,7 @@ pub fn jfn_wl_set_fullscreen(fullscreen: bool) {
 }
 
 pub fn jfn_wl_toggle_fullscreen() {
-    crate::root_window::set_fullscreen(!wl_ops::was_fullscreen());
+    crate::root_window::toggle_fullscreen();
 }
 
 // =====================================================================

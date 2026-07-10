@@ -21,9 +21,8 @@ use crate::wl_state::{
 // Lifetime helpers
 // =====================================================================
 
-/// Heap-allocate a fresh PlatformSurface and return its raw pointer.
-/// Caller owns it until `free_surface` is invoked. The pointer is
-/// stable for the surface's lifetime.
+/// The returned pointer is stable for the surface's lifetime; the caller owns
+/// it until `free_surface`.
 fn new_boxed() -> *mut PlatformSurface {
     Box::into_raw(Box::new(PlatformSurface::new()))
 }
@@ -360,13 +359,12 @@ fn queue_shm_present(
     let Some(surface) = s.surface.as_ref() else {
         return false;
     };
-    // Worker viewport mirrors the authoritative window extent, never a per-layer
-    // copy.
-    let (lw, lh) = match crate::window_state::window_logical_size() {
-        Some(crate::window_state::WindowSize { w, h }) => (w, h),
-        None => return false,
+    // One snapshot so logical and physical can't span two extent generations.
+    let Some(ext) = crate::window_state::window_extent() else {
+        return false;
     };
-    let (pw, ph) = crate::window_state::jfn_wl_window_size();
+    let (lw, lh) = (ext.logical().w(), ext.logical().h());
+    let (pw, ph) = (ext.physical().w(), ext.physical().h());
     s.buffer_w = w;
     s.buffer_h = h;
     s.placeholder = false;
@@ -427,12 +425,9 @@ pub(crate) fn surface_present_software(
     s.buffer_w = w;
     s.buffer_h = h;
     set_viewport_for_buffer_locked(s, w, h);
-    let (pw, ph) = crate::window_state::jfn_wl_window_size();
-    let painter_size = if pw > 0 && ph > 0 {
-        (pw as u32, ph as u32)
-    } else {
-        (w as u32, h as u32)
-    };
+    let painter_size = crate::window_state::window_extent().map_or((w as u32, h as u32), |ext| {
+        (ext.physical().w() as u32, ext.physical().h() as u32)
+    });
 
     if s.gpu_paint_worker.is_none() {
         s.gpu_paint_worker = Some(WaylandGpuPaintWorker::new(
@@ -584,22 +579,15 @@ fn commit_layer_buffer_locked(
     surface.commit();
 }
 
-// Destination = the single authoritative logical window extent, read directly —
-// no per-layer copy. Every layer mirrors `window_logical_size`; no other size is
-// representable as a destination.
 fn set_viewport_dest_locked(s: &PlatformSurface) {
     let Some(viewport) = s.viewport.as_ref() else {
         return;
     };
-    if let Some(crate::window_state::WindowSize { w: lw, h: lh }) =
-        crate::window_state::window_logical_size()
-    {
-        viewport.set_destination(lw, lh);
+    if let Some(size) = crate::window_state::window_logical_size() {
+        viewport.set_destination(size.w(), size.h());
     }
 }
 
-// Source = the buffer's own visible extent (the layer's authoritative content
-// size); destination = the authoritative window extent.
 fn set_viewport_for_buffer_locked(s: &PlatformSurface, vis_w: i32, vis_h: i32) {
     if let Some(viewport) = s.viewport.as_ref()
         && vis_w > 0
@@ -615,16 +603,11 @@ pub(crate) fn was_fullscreen() -> bool {
 }
 
 pub(crate) fn on_configure(fullscreen: bool) {
-    // Mirror the single authoritative extent; never re-derive or guess it.
-    let Some(crate::window_state::WindowSize { w: lw, h: lh }) =
-        crate::window_state::window_logical_size()
-    else {
+    let Some(ext) = crate::window_state::window_extent() else {
         return;
     };
-    let (pw, ph) = crate::window_state::jfn_wl_window_size();
-    if pw <= 0 || ph <= 0 {
-        return;
-    }
+    let (lw, lh) = (ext.logical().w(), ext.logical().h());
+    let (pw, ph) = (ext.physical().w(), ext.physical().h());
 
     let mut st = lock();
 
