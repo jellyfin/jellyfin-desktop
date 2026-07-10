@@ -11,15 +11,16 @@
 
 use std::cell::RefCell;
 use std::ffi::CString;
-use std::os::fd::{IntoRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd};
 use std::os::raw::{c_char, c_int};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
 use error_reporter::Report;
+use jfn_wake_event::WakeEvent;
+use parking_lot::Mutex;
 use wl_proxy::baseline::Baseline;
 use wl_proxy::client::{Client, ClientHandler};
 use wl_proxy::object::{ConcreteObject, Object, ObjectCoreApi, ObjectError, ObjectRcUtils};
@@ -51,6 +52,8 @@ use wl_proxy::protocols::xdg_shell::xdg_toplevel::{XdgToplevel, XdgToplevelHandl
 use wl_proxy::protocols::xdg_shell::xdg_wm_base::{XdgWmBase, XdgWmBaseHandler};
 use wl_proxy::state::State;
 
+use crate::window_state::WindowSize;
+
 pub struct Proxy {
     display_name: CString,
     _app_thread: thread::JoinHandle<()>,
@@ -67,14 +70,9 @@ static MPV_VIDEO_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
 
 static APP_CLIENT_FD: AtomicI32 = AtomicI32::new(-1);
 
-pub fn app_client_fd() -> c_int {
-    APP_CLIENT_FD.load(Ordering::Acquire)
-}
-
-#[derive(Clone, Copy)]
-struct WindowSize {
-    w: c_int,
-    h: c_int,
+pub fn app_client_fd() -> Option<c_int> {
+    let fd = APP_CLIENT_FD.load(Ordering::Acquire);
+    (fd >= 0).then_some(fd)
 }
 
 /// The one authoritative window size, published by the host's configure via
@@ -82,15 +80,26 @@ struct WindowSize {
 /// there is no boot/default to fall back to, so mpv can only ever mirror the
 /// real window geometry.
 fn window_size() -> Option<WindowSize> {
-    let (w, h) = (CUR_W.load(Ordering::Acquire), CUR_H.load(Ordering::Acquire));
-    (w > 0 && h > 0).then_some(WindowSize { w, h })
+    WindowSize::new(CUR_W.load(Ordering::Acquire), CUR_H.load(Ordering::Acquire))
 }
 
+/// Owns the S_mpv thread's wake eventfd. Writers signal, and teardown clears it,
+/// under this lock — so a wake can never write to a descriptor that has been
+/// closed (and possibly reused) out from under it.
+static MPV_WAKE: Mutex<Option<WakeEvent>> = Mutex::new(None);
+
 pub fn set_window_size(w: c_int, h: c_int) {
-    if w > 0 && h > 0 {
-        CUR_W.store(w, Ordering::Release);
-        CUR_H.store(h, Ordering::Release);
+    if let Some(size) = WindowSize::new(w, h) {
+        CUR_W.store(size.w(), Ordering::Release);
+        CUR_H.store(size.h(), Ordering::Release);
         WINDOW_SIZE_GEN.fetch_add(1, Ordering::AcqRel);
+        wake_mpv_thread();
+    }
+}
+
+fn wake_mpv_thread() {
+    if let Some(wake) = MPV_WAKE.lock().as_ref() {
+        wake.signal();
     }
 }
 
@@ -127,7 +136,7 @@ struct MpvConfigurator {
 
 impl MpvConfigurator {
     fn configure(&self, size: WindowSize, serial: u32, states: &[u8]) {
-        if let Err(e) = self.toplevel.try_send_configure(size.w, size.h, states) {
+        if let Err(e) = self.toplevel.try_send_configure(size.w(), size.h(), states) {
             tracing::error!(target: "MpvProxy", "synth toplevel configure: {}", Report::new(&e));
         }
         if let Err(e) = self.xdg_surface.try_send_configure(serial) {
@@ -355,10 +364,8 @@ fn run_app_state(
     client_m.display().set_handler(ForwardDisplayH);
     with_shell(|sh| sh.mpv_client = Some(client_m.clone()));
 
-    // Short timeout so the splice retry runs even during idle periods; real
-    // events return immediately from poll.
     while state.is_not_destroyed() {
-        match state.dispatch(Some(Duration::from_millis(16))) {
+        match state.dispatch(None) {
             Ok(_) => {}
             Err(e) => {
                 eprintln!("proxy: S_app dispatch: {}", Report::new(e));
@@ -402,15 +409,65 @@ fn run_mpv_state(tx: mpsc::SyncSender<Result<CString, String>>, bridge: OwnedFd)
     drop(tx);
     state.set_handler(MpvShimStateH);
 
-    // Timed dispatch so the size feed reaches mpv's synthesized configure within
-    // ~16ms even while mpv's connection is idle.
+    let Some(wake) = WakeEvent::new() else {
+        eprintln!("proxy: S_mpv eventfd failed");
+        return;
+    };
+    // Cache the raw fd for this thread's own poll/drain; cross-thread wakes go
+    // through MPV_WAKE under its lock, never this number.
+    let wake_fd = wake.fd();
+    *MPV_WAKE.lock() = Some(wake);
+    // Clear (and close) the wake handle under the same lock a wake signals under.
+    struct WakeGuard;
+    impl Drop for WakeGuard {
+        fn drop(&mut self) {
+            MPV_WAKE.lock().take();
+        }
+    }
+    let _wake_guard = WakeGuard;
+
+    // Block on both the mpv connection and the size-feed wake fd so a resize
+    // reaches mpv without waiting out a poll timeout.
+    let poll_fd = state.poll_fd().as_raw_fd();
     let mut seen_gen = 0;
     while state.is_not_destroyed() {
-        if let Err(e) = state.dispatch(Some(Duration::from_millis(16))) {
+        // Reconcile before every blocking poll, not only after dispatch: a size
+        // raised before the wake handle was published (line above) delivers no
+        // wake, so servicing it here is the only thing that keeps it from
+        // sleeping out an infinite poll timeout on an otherwise-idle connection.
+        apply_window_size_mpv(&mut seen_gen);
+        if let Err(e) = state.before_poll() {
+            eprintln!("proxy: S_mpv before_poll: {}", Report::new(e));
+            return;
+        }
+        let mut pfds = [
+            libc::pollfd {
+                fd: poll_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: wake_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        let r = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as _, -1) };
+        if r < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            eprintln!("proxy: S_mpv poll: {err}");
+            return;
+        }
+        if pfds[1].revents & libc::POLLIN != 0 {
+            jfn_wake_event::drain_raw_fd(wake_fd);
+        }
+        if let Err(e) = state.dispatch_available() {
             eprintln!("proxy: S_mpv dispatch: {}", Report::new(e));
             return;
         }
-        apply_window_size_mpv(&mut seen_gen);
     }
 }
 
@@ -576,7 +633,7 @@ impl WpViewportHandler for ClientViewportH {
         // own opinion of it — so a resize can never present mpv at a non-window
         // extent. Only the unset form is forwarded verbatim.
         let (width, height) = match window_size() {
-            Some(size) if !unset => (size.w, size.h),
+            Some(size) if !unset => (size.w(), size.h()),
             _ => (width, height),
         };
         log_send(

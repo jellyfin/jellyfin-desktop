@@ -68,6 +68,21 @@ pub(crate) const TRANSITION_TOLERANCE_TEXELS: i32 = 32;
 // =====================================================================
 
 /// A layer's synchronized subsurface.
+/// The app root `wl_surface`, exposed only as a subsurface parent.
+#[derive(Clone)]
+pub(crate) struct RootParent(WlSurface);
+
+impl RootParent {
+    pub(crate) fn attach_child(
+        &self,
+        subcompositor: &WlSubcompositor,
+        surface: &WlSurface,
+        qh: &QueueHandle<DispatchState>,
+    ) -> SyncSubsurface {
+        SyncSubsurface::create(subcompositor, surface, &self.0, qh)
+    }
+}
+
 pub(crate) struct SyncSubsurface(WlSubsurface);
 
 impl SyncSubsurface {
@@ -205,7 +220,7 @@ pub(crate) struct WlState {
     pub dmabuf: Option<ZwpLinuxDmabufV1>,
     pub viewporter: Option<WpViewporter>,
 
-    pub root_surface: Option<WlSurface>,
+    pub root_surface: Option<RootParent>,
 
     /// Stack order, bottom-to-top. Raw pointers are valid for the
     /// lifetime of each `PlatformSurface` (heap-allocated via `Box`,
@@ -458,16 +473,15 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
     Ok(())
 }
 
-fn surface_from_ptr(
+fn surface_from_handle(
     conn: &Connection,
-    raw: *mut std::ffi::c_void,
+    handle: crate::root_window::RootSurfaceHandle,
     what: &str,
-) -> Option<WlSurface> {
-    if raw.is_null() {
-        return None;
-    }
-    // SAFETY: `raw` must be a live `wl_proxy*` for a `wl_surface` on the same
-    // `wl_display` backing `conn` (published by root_window / mpv_proxy).
+) -> Option<RootParent> {
+    let raw = handle.as_ptr();
+    // SAFETY: the handle carries a live `wl_proxy*` for the root `wl_surface` on
+    // the same `wl_display` backing `conn` (minted by root_window from the real
+    // root surface, which outlives the process).
     let id = match unsafe {
         wayland_client::backend::ObjectId::from_ptr(WlSurface::interface(), raw.cast())
     } {
@@ -478,7 +492,7 @@ fn surface_from_ptr(
         }
     };
     match WlSurface::from_id(conn, id) {
-        Ok(s) => Some(s),
+        Ok(s) => Some(RootParent(s)),
         Err(e) => {
             tracing::error!(target: "Main", "{what}: WlSurface::from_id: {e}");
             None
@@ -501,7 +515,7 @@ fn parent_layer_locked(st: &mut WlState, ptr: *mut PlatformSurface) {
     let Some(surface) = s.surface.as_ref() else {
         return;
     };
-    let sub = SyncSubsurface::create(&st.subcompositor, surface, &root, &st.qh);
+    let sub = root.attach_child(&st.subcompositor, surface, &st.qh);
     sub.set_position(0, 0);
     s.subsurface = Some(sub);
 }
@@ -510,8 +524,10 @@ pub(crate) fn ensure_root_locked(st: &mut WlState) {
     if st.root_surface.is_some() {
         return;
     }
-    let raw = crate::root_window::root_surface_ptr();
-    let Some(root) = surface_from_ptr(&st.conn, raw, "overlay root") else {
+    let Some(handle) = crate::root_window::root_surface_handle() else {
+        return;
+    };
+    let Some(root) = surface_from_handle(&st.conn, handle, "overlay root") else {
         return;
     };
     st.root_surface = Some(root);
@@ -546,10 +562,10 @@ pub fn install_gpu_paint(ctx: Arc<GpuContext>) {
 // Does an incoming frame's visible size match the authoritative physical window
 // size (within tolerance)? Reads the single source, not a per-layer copy.
 pub(crate) fn size_in_tolerance(vw: i32, vh: i32) -> bool {
-    let (pw, ph) = crate::window_state::jfn_wl_window_size();
-    if pw <= 0 {
+    let Some(ext) = crate::window_state::window_extent() else {
         return true;
-    }
+    };
+    let (pw, ph) = (ext.physical().w(), ext.physical().h());
     (vw - pw).abs() <= TRANSITION_TOLERANCE_TEXELS && (vh - ph).abs() <= TRANSITION_TOLERANCE_TEXELS
 }
 

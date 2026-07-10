@@ -1,22 +1,17 @@
-use std::ffi::{c_int, c_void};
-use std::num::NonZeroU64;
+use std::ffi::c_void;
+use std::num::{NonZeroI32, NonZeroU64};
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
 use parking_lot::Mutex;
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{
-    wl_buffer::WlBuffer,
-    wl_compositor::WlCompositor,
-    wl_registry::WlRegistry,
-    wl_seat::WlSeat,
-    wl_shm::WlShm,
-    wl_shm_pool::WlShmPool,
-    wl_surface::WlSurface,
+    wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_registry::WlRegistry, wl_seat::WlSeat,
+    wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use wayland_protocols::wp::fractional_scale::v1::client::{
@@ -43,6 +38,8 @@ use wayland_protocols_plasma::server_decoration_palette::client::{
     org_kde_kwin_server_decoration_palette_manager::OrgKdeKwinServerDecorationPaletteManager,
 };
 
+use jfn_platform_abi::WindowDecorations;
+
 const APP_ID: &str = "org.jellyfin.JellyfinDesktop";
 const TITLE: &str = "Jellyfin Desktop";
 
@@ -55,14 +52,16 @@ const DEFAULT_H: i32 = 720;
 const STATE_MAXIMIZED: u32 = 1;
 const STATE_FULLSCREEN: u32 = 2;
 const STATE_SUSPENDED: u32 = 9;
+// xdg_toplevel tiled edges (5..=8); any of them means compositor-tiled.
+const STATE_TILED_LEFT: u32 = 5;
+const STATE_TILED_RIGHT: u32 = 6;
+const STATE_TILED_TOP: u32 = 7;
+const STATE_TILED_BOTTOM: u32 = 8;
 
-// Wire values set by `mpv_host::set_decorations`: 1=Csd, 2=Server,
-// 3=ServerThemed. 0 = unset (treated as server-side).
-const DECO_CSD: u32 = 1;
-static DECO_MODE: AtomicU32 = AtomicU32::new(0);
+static WANT_CSD: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn set_decorations(mode: u32) {
-    DECO_MODE.store(mode, Ordering::Release);
+pub(crate) fn set_decorations(mode: WindowDecorations) {
+    WANT_CSD.store(matches!(mode, WindowDecorations::Csd), Ordering::Release);
 }
 
 static BOOT_W: AtomicU32 = AtomicU32::new(DEFAULT_W as u32);
@@ -70,9 +69,9 @@ static BOOT_H: AtomicU32 = AtomicU32::new(DEFAULT_H as u32);
 static BOOT_MAX: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn set_boot_geometry(w: i32, h: i32, maximized: bool) {
-    if w > 0 && h > 0 {
-        BOOT_W.store(w as u32, Ordering::Release);
-        BOOT_H.store(h as u32, Ordering::Release);
+    if let Some(size) = crate::window_state::WindowSize::new(w, h) {
+        BOOT_W.store(size.w() as u32, Ordering::Release);
+        BOOT_H.store(size.h() as u32, Ordering::Release);
     }
     BOOT_MAX.store(maximized, Ordering::Release);
 }
@@ -92,6 +91,11 @@ struct RootState {
     xdg_surface: XdgSurface,
     #[allow(dead_code)] // held to keep the toplevel role alive
     toplevel: XdgToplevel,
+    // Single-owner protocol objects for window-control commands, owned by this
+    // thread. `seat` also drives interactive move/resize grabs.
+    seat: Option<WlSeat>,
+    #[cfg(feature = "kde-palette")]
+    palette: Option<OrgKdeKwinServerDecorationPalette>,
     shm: WlShm,
     viewport: Option<WpViewport>,
     bg_buffer: Option<crate::wl_state::OwnedBuffer>,
@@ -104,91 +108,171 @@ struct RootState {
     #[allow(dead_code)]
     decoration: Option<ZxdgToplevelDecorationV1>,
 
-    cur_w: i32,
-    cur_h: i32,
-    // Latest size from xdg_toplevel.configure (0 = compositor defers to us).
-    pending_w: i32,
-    pending_h: i32,
-    // Scale numerator over 120 (120 = 1.0).
-    scale_120: u32,
-    fullscreen: bool,
-    maximized: bool,
+    current_size: Option<crate::window_state::WindowSize>,
+    pending_w: Option<NonZeroI32>,
+    pending_h: Option<NonZeroI32>,
+    mode: crate::window_state::WindowMode,
     suspended: bool,
-    boot_w: i32,
-    boot_h: i32,
-    mapped: bool,
+    floating: FloatingRestore,
+    pending_ack: Option<ConfigureSerial>,
+    scale_known: bool,
+    /// `Some` once the first configure has been acked (the window is "mapped").
+    /// Holds the capability that gates buffer attach/commit.
+    present: Option<Presented>,
+    pre_fs_maximized: bool,
+}
+
+mod floating_restore {
+    use crate::window_state::{WindowMode, WindowSize};
+
+    #[derive(Clone, Copy)]
+    pub(super) struct FloatingRestore(Option<WindowSize>);
+
+    impl FloatingRestore {
+        pub(super) const EMPTY: Self = Self(None);
+
+        pub(super) fn size(self) -> Option<WindowSize> {
+            self.0
+        }
+
+        pub(super) fn record(&mut self, mode: WindowMode, w: i32, h: i32) {
+            if mode.uses_floating_restore() {
+                self.0 = WindowSize::new(w, h);
+            }
+        }
+    }
+}
+use floating_restore::FloatingRestore;
+
+/// Capability proving a configure has been acked. Buffer attach/commit take a
+/// [`Presented`], and the only way to mint one is [`ack`] — so the protocol rule
+/// "never commit a buffer before acking a configure" is enforced by the type
+/// system, not by comments and a `mapped` bool.
+mod present_cap {
+    use super::XdgSurface;
+
+    /// A configure serial awaiting ack, consumed by [`ack`].
+    #[derive(Clone, Copy)]
+    pub(super) struct ConfigureSerial(pub(super) u32);
+
+    /// Zero-sized proof of an acked configure. Its field is private, so it can
+    /// only be obtained from [`ack`].
+    #[derive(Clone, Copy)]
+    pub(super) struct Presented(());
+
+    pub(super) fn ack(xdg: &XdgSurface, serial: ConfigureSerial) -> Presented {
+        xdg.ack_configure(serial.0);
+        Presented(())
+    }
+}
+use present_cap::{ConfigureSerial, Presented};
+
+fn resolve_logical_size(
+    pending: (Option<NonZeroI32>, Option<NonZeroI32>),
+    cur: Option<crate::window_state::WindowSize>,
+    floating: Option<crate::window_state::WindowSize>,
+    mode: crate::window_state::WindowMode,
+) -> Option<crate::window_state::WindowSize> {
+    let pick =
+        |pending: Option<NonZeroI32>, cur: Option<i32>, floating: Option<i32>| -> Option<i32> {
+            if let Some(p) = pending {
+                Some(p.get())
+            } else if mode.uses_floating_restore() {
+                floating
+            } else {
+                cur
+            }
+        };
+    let w = pick(pending.0, cur.map(|s| s.w()), floating.map(|s| s.w()))?;
+    let h = pick(pending.1, cur.map(|s| s.h()), floating.map(|s| s.h()))?;
+    crate::window_state::WindowSize::new(w, h)
 }
 
 impl RootState {
-    fn configure(&mut self, serial: u32) {
-        self.xdg_surface.ack_configure(serial);
+    fn resolve_logical(&self) -> Option<crate::window_state::WindowSize> {
+        resolve_logical_size(
+            (self.pending_w, self.pending_h),
+            self.current_size,
+            self.floating.size(),
+            self.mode,
+        )
+    }
 
-        let w = if self.pending_w > 0 {
-            self.pending_w
-        } else if self.cur_w > 0 {
-            self.cur_w
-        } else {
-            self.boot_w
+    fn try_present(&mut self) {
+        // Never commit a buffer before acking a configure (protocol violation);
+        // before the first map that means waiting for one.
+        if self.pending_ack.is_none() && self.present.is_none() {
+            return;
         }
-        .max(1);
-        let h = if self.pending_h > 0 {
-            self.pending_h
-        } else if self.cur_h > 0 {
-            self.cur_h
-        } else {
-            self.boot_h
+        if !self.scale_known {
+            return;
         }
-        .max(1);
+        let Some(size) = self.resolve_logical() else {
+            return;
+        };
+        let (w, h) = (size.w(), size.h());
 
-        // Geometry + background are cached on the root; the single root commit
-        // that presents them is issued by the loop's latch drain, together
-        // with the overlay/video subtree — never as a standalone commit here.
+        let first = self.present.is_none();
+        // Acking a pending configure is the only way to mint the Presented that
+        // the buffer ops below require, so the ack necessarily precedes them. On
+        // a size/scale-driven re-present (no new configure) we reuse the token
+        // from the first ack.
+        let present = if let Some(serial) = self.pending_ack.take() {
+            let p = present_cap::ack(&self.xdg_surface, serial);
+            self.present = Some(p);
+            p
+        } else if let Some(p) = self.present {
+            p
+        } else {
+            return;
+        };
+        // Never commit the root here: the loop's latch drain issues the one root
+        // commit that presents geometry with the overlay/video subtree.
         self.xdg_surface.set_window_geometry(0, 0, w, h);
-        self.fill_background(w, h);
-        self.cur_w = w;
-        self.cur_h = h;
-        if !self.mapped {
+        self.fill_background(w, h, present);
+        self.current_size = Some(size);
+        self.floating.record(self.mode, w, h);
+        if first {
             tracing::info!(target: "Main", "root window: first configure {w}x{h} (app toplevel is live)");
         }
-        self.mapped = true;
 
-        // mpv's synthesized configure + host-overlay resize use logical size
-        // (xdg/viewport coordinate space); mpv applies scale itself.
+        // Pass logical (not physical) size: mpv and the overlay apply scale
+        // themselves, so a physical size here would double-scale.
         crate::mpv_proxy::set_window_size(w, h);
-        // The host (CEF buffers, boot gate, OSD) works in physical pixels; the
-        // overlay/mpv extent mirrors the logical size. Both are passed exactly —
-        // no consumer re-derives one from the other.
-        let (pw, ph) = self.physical(w, h);
-        crate::window_state::feed_window_state(w, h, pw, ph, self.fullscreen, self.maximized);
+        crate::window_state::publish(w, h, self.mode);
 
         PENDING_PRESENT.store(true, Ordering::Release);
     }
 
-    fn present_transaction(&mut self) {
-        if !self.mapped {
-            return;
-        }
+    fn present_transaction(&mut self, _present: Presented) {
         self.surface.commit();
     }
 
-    fn physical(&self, lw: i32, lh: i32) -> (i32, i32) {
-        let s = i64::from(self.scale_120);
-        (
-            ((i64::from(lw) * s + 60) / 120) as i32,
-            ((i64::from(lh) * s + 60) / 120) as i32,
-        )
-    }
-
-    fn fill_background(&mut self, w: i32, h: i32) {
+    fn fill_background(&mut self, w: i32, h: i32, _present: Presented) {
         if let Some(vp) = &self.viewport {
             vp.set_destination(w, h);
         }
-        // Attach once; the viewport (set above) restretches this on resize.
         if self.bg_buffer.is_none() {
             self.bg_buffer = self.create_solid_buffer();
             if let Some(buf) = &self.bg_buffer {
                 buf.attach_to(&self.surface, 0, 0);
             }
+        }
+        crate::wl_state::damage_all(&self.surface);
+    }
+
+    fn rebuild_background(&mut self, w: i32, h: i32, _present: Presented) {
+        // Build the replacement before retiring the current buffer so an
+        // allocation failure leaves a valid buffer owned rather than none.
+        let Some(new) = self.create_solid_buffer() else {
+            return;
+        };
+        new.attach_to(&self.surface, 0, 0);
+        if let Some(old) = self.bg_buffer.replace(new) {
+            crate::wl_state::retire_buffer(old);
+        }
+        if let Some(vp) = &self.viewport {
+            vp.set_destination(w, h);
         }
         crate::wl_state::damage_all(&self.surface);
     }
@@ -212,66 +296,159 @@ impl RootState {
 
 static STARTED: AtomicBool = AtomicBool::new(false);
 
-static ROOT_SURFACE_PTR: AtomicUsize = AtomicUsize::new(0);
+/// Opaque handle to the app root `wl_surface`, carrying the live `wl_proxy`
+/// pointer — the only representation valid across the two wayland-client
+/// `Backend`s that share this one `wl_display` — so `wl_state` can rebuild the
+/// surface under its own `Backend` via `ObjectId::from_ptr`.
+#[derive(Copy, Clone)]
+pub(crate) struct RootSurfaceHandle(std::ptr::NonNull<c_void>);
 
-pub(crate) fn root_surface_ptr() -> *mut std::ffi::c_void {
-    ROOT_SURFACE_PTR.load(Ordering::Acquire) as *mut std::ffi::c_void
+// Process-lifetime `wl_proxy` owned by the root thread; the handle only
+// republishes it for reconstruction and never destroys it.
+unsafe impl Send for RootSurfaceHandle {}
+unsafe impl Sync for RootSurfaceHandle {}
+
+impl RootSurfaceHandle {
+    pub(crate) fn as_ptr(self) -> *mut c_void {
+        self.0.as_ptr()
+    }
 }
 
-struct Controls {
-    conn: Connection,
-    toplevel: XdgToplevel,
-    seat: Option<WlSeat>,
+static ROOT_SURFACE: OnceLock<RootSurfaceHandle> = OnceLock::new();
+
+pub(crate) fn root_surface_handle() -> Option<RootSurfaceHandle> {
+    ROOT_SURFACE.get().copied()
 }
-static CONTROLS: OnceLock<Controls> = OnceLock::new();
+
+// Window-control requests queued here and applied on the root thread by
+// `apply_command`. The toplevel/seat proxies are single-owner and live on that
+// thread, so requests cross this queue rather than caching proxy clones that
+// could be used after teardown. Move/resize carry the input serial captured at
+// request time.
+enum WindowCommand {
+    Move {
+        serial: u32,
+    },
+    Resize {
+        serial: u32,
+        edge: u32,
+    },
+    SetMaximized(bool),
+    Minimize,
+    #[cfg(feature = "kde-palette")]
+    SetTitlebarPalette(String),
+}
+
+static COMMANDS: Mutex<Vec<WindowCommand>> = Mutex::new(Vec::new());
+
+fn push_command(cmd: WindowCommand) {
+    COMMANDS.lock().push(cmd);
+    wake_root_thread();
+}
+
+fn apply_command(state: &mut RootState, cmd: WindowCommand) {
+    match cmd {
+        WindowCommand::Move { serial } => {
+            if let Some(seat) = &state.seat {
+                state.toplevel._move(seat, serial);
+            } else {
+                // Not re-queued: the serial is only valid for the input event it
+                // came from, so replaying it once a seat exists would be stale.
+                tracing::warn!(target: "Main", "interactive move dropped: no seat");
+            }
+        }
+        WindowCommand::Resize { serial, edge } => {
+            if let Some(seat) = &state.seat {
+                match xdg_toplevel::ResizeEdge::try_from(edge) {
+                    Ok(e) => state.toplevel.resize(seat, serial, e),
+                    Err(_) => {
+                        tracing::warn!(target: "Main", "interactive resize dropped: bad edge {edge}");
+                    }
+                }
+            } else {
+                tracing::warn!(target: "Main", "interactive resize dropped: no seat");
+            }
+        }
+        WindowCommand::SetMaximized(on) => {
+            if on {
+                state.toplevel.set_maximized();
+            } else {
+                state.toplevel.unset_maximized();
+            }
+        }
+        WindowCommand::Minimize => state.toplevel.set_minimized(),
+        #[cfg(feature = "kde-palette")]
+        WindowCommand::SetTitlebarPalette(path) => {
+            if let Some(p) = &state.palette {
+                p.set_palette(path);
+            } else {
+                tracing::warn!(target: "Main", "titlebar palette dropped: no palette manager");
+            }
+        }
+    }
+    let _ = state.conn.flush();
+}
 
 pub(crate) fn start_move() {
-    if let Some(c) = CONTROLS.get()
-        && let Some(seat) = &c.seat
-    {
-        c.toplevel._move(seat, crate::input::last_button_serial());
-        let _ = c.conn.flush();
-    }
+    push_command(WindowCommand::Move {
+        serial: crate::input::last_button_serial(),
+    });
 }
 
 pub(crate) fn start_resize(edge: u32) {
-    if let Some(c) = CONTROLS.get()
-        && let Some(seat) = &c.seat
-        && let Ok(e) = xdg_toplevel::ResizeEdge::try_from(edge)
-    {
-        c.toplevel
-            .resize(seat, crate::input::last_button_serial(), e);
-        let _ = c.conn.flush();
-    }
+    push_command(WindowCommand::Resize {
+        serial: crate::input::last_button_serial(),
+        edge,
+    });
 }
 
+// Fullscreen requests posted here and applied on the root thread by
+// `apply_fullscreen`. The mode read and the protocol request must stay on that
+// thread — the sole mutator/reader of `RootState.mode` — so a configure can't
+// flip the mode between them and make toggle send the wrong command.
+const FS_NONE: u8 = 0;
+const FS_TOGGLE: u8 = 1;
+const FS_ON: u8 = 2;
+const FS_OFF: u8 = 3;
+static PENDING_FS: AtomicU8 = AtomicU8::new(FS_NONE);
+
 pub(crate) fn set_fullscreen(on: bool) {
-    if let Some(c) = CONTROLS.get() {
-        if on {
-            c.toplevel.set_fullscreen(None);
-        } else {
-            c.toplevel.unset_fullscreen();
+    PENDING_FS.store(if on { FS_ON } else { FS_OFF }, Ordering::Release);
+    wake_root_thread();
+}
+
+pub(crate) fn toggle_fullscreen() {
+    PENDING_FS.store(FS_TOGGLE, Ordering::Release);
+    wake_root_thread();
+}
+
+fn apply_fullscreen(state: &mut RootState, on: bool) {
+    if on {
+        // A fullscreen-enter received while already fullscreen must not overwrite
+        // the saved restore mode, so capture it only when entering from another mode.
+        if !matches!(state.mode, crate::window_state::WindowMode::Fullscreen) {
+            state.pre_fs_maximized =
+                matches!(state.mode, crate::window_state::WindowMode::Maximized);
         }
-        let _ = c.conn.flush();
+        state.toplevel.set_fullscreen(None);
+    } else {
+        state.toplevel.unset_fullscreen();
+        // The compositor need not restore the pre-fullscreen maximized state, so
+        // re-request it (the final mode is still confirmed via a configure).
+        if state.pre_fs_maximized {
+            state.toplevel.set_maximized();
+            state.pre_fs_maximized = false;
+        }
     }
+    let _ = state.conn.flush();
 }
 
 pub(crate) fn set_maximized(on: bool) {
-    if let Some(c) = CONTROLS.get() {
-        if on {
-            c.toplevel.set_maximized();
-        } else {
-            c.toplevel.unset_maximized();
-        }
-        let _ = c.conn.flush();
-    }
+    push_command(WindowCommand::SetMaximized(on));
 }
 
 pub(crate) fn set_minimized() {
-    if let Some(c) = CONTROLS.get() {
-        c.toplevel.set_minimized();
-        let _ = c.conn.flush();
-    }
+    push_command(WindowCommand::Minimize);
 }
 
 pub(crate) struct PopupShell {
@@ -459,13 +636,16 @@ pub(crate) fn popup_destroy(generation: NonZeroU64) {
 static PENDING_BG: AtomicU32 = AtomicU32::new(0);
 const BG_SET: u32 = 1 << 24;
 
+fn wake_root_thread() {
+    if let Some(t) = ROOT_THREAD.get() {
+        t.wake.signal();
+    }
+}
+
 pub(crate) fn set_background_color(r: u8, g: u8, b: u8) {
     let rgb = (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
     PENDING_BG.store(BG_SET | rgb, Ordering::Release);
-    if let Some(t) = ROOT_THREAD.get() {
-        let v: u64 = 1;
-        unsafe { libc::write(t.wake_fd, &v as *const u64 as *const c_void, 8) };
-    }
+    wake_root_thread();
 }
 
 fn pending_bg() -> Option<[u8; 3]> {
@@ -482,27 +662,13 @@ static PENDING_PRESENT: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn request_present() {
     PENDING_PRESENT.store(true, Ordering::Release);
-    if let Some(t) = ROOT_THREAD.get() {
-        let v: u64 = 1;
-        unsafe { libc::write(t.wake_fd, &v as *const u64 as *const c_void, 8) };
-    }
+    wake_root_thread();
 }
-
-#[cfg(feature = "kde-palette")]
-struct Palette {
-    conn: Connection,
-    palette: OrgKdeKwinServerDecorationPalette,
-}
-#[cfg(feature = "kde-palette")]
-static PALETTE: OnceLock<Palette> = OnceLock::new();
 
 #[cfg(feature = "kde-palette")]
 pub(crate) fn set_titlebar_palette(path: &std::path::Path) {
-    if let Some(p) = PALETTE.get()
-        && let Some(s) = path.to_str()
-    {
-        p.palette.set_palette(s.to_owned());
-        let _ = p.conn.flush();
+    if let Some(s) = path.to_str() {
+        push_command(WindowCommand::SetTitlebarPalette(s.to_owned()));
     }
 }
 
@@ -512,7 +678,7 @@ pub(crate) fn set_titlebar_palette(path: &std::path::Path) {
 // roundtrip hangs forever. `cleanup` signals + joins before that roundtrip.
 struct RootThread {
     stop: Arc<AtomicBool>,
-    wake_fd: c_int,
+    wake: Arc<jfn_wake_event::WakeEvent>,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 static ROOT_THREAD: OnceLock<RootThread> = OnceLock::new();
@@ -524,17 +690,16 @@ pub(crate) fn cleanup() {
         return;
     };
     t.stop.store(true, Ordering::Relaxed);
-    let v: u64 = 1;
-    unsafe { libc::write(t.wake_fd, &v as *const u64 as *const c_void, 8) };
+    wake_root_thread();
     if let Some(h) = t.handle.lock().take() {
         let _ = h.join();
-        unsafe { libc::close(t.wake_fd) };
+        // The WakeEvent's fd is owned by this process-lifetime RootThread and
+        // closes with it; no manual close.
     }
 }
 
-fn vo_display() -> Option<*mut std::ffi::c_void> {
-    let d = crate::app_conn::app_display();
-    (!d.is_null()).then_some(d)
+fn vo_display() -> Option<crate::app_conn::AppDisplay> {
+    crate::app_conn::app_display()
 }
 
 /// Create the app-owned toplevel and start its dispatch thread. The toplevel
@@ -552,7 +717,8 @@ pub(crate) fn ensure_started() {
         return;
     }
 
-    let backend = unsafe { wayland_backend::client::Backend::from_foreign_display(display.cast()) };
+    let backend =
+        unsafe { wayland_backend::client::Backend::from_foreign_display(display.as_ptr().cast()) };
     let conn = Connection::from_backend(backend);
     let (globals, queue) = match registry_queue_init::<RootState>(&conn) {
         Ok(g) => g,
@@ -588,10 +754,12 @@ pub(crate) fn ensure_started() {
     };
 
     let surface = compositor.create_surface(&qh, ());
-    // Publish the raw wl_proxy so wl_state can parent its CEF overlay under this
+    // Publish the root wl_proxy so wl_state can parent its CEF overlay under this
     // surface: same libwayland wl_display, but a different wayland-client Backend,
     // so it must be reconstructed there via ObjectId::from_ptr.
-    ROOT_SURFACE_PTR.store(surface.id().as_ptr() as usize, Ordering::Release);
+    if let Some(p) = std::ptr::NonNull::new(surface.id().as_ptr().cast()) {
+        let _ = ROOT_SURFACE.set(RootSurfaceHandle(p));
+    }
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
     toplevel.set_title(TITLE.to_owned());
@@ -613,11 +781,12 @@ pub(crate) fn ensure_started() {
     let frac_scale = frac_mgr
         .as_ref()
         .map(|m| m.get_fractional_scale(&surface, &qh, ()));
-    if frac_mgr.is_none() {
-        // No preferred_scale will ever arrive, so satisfy the boot scale gate at
-        // 1.0 — otherwise it waits forever.
+    let scale_known_at_boot = frac_mgr.is_none();
+    if scale_known_at_boot {
+        // No preferred_scale will ever arrive, so satisfy the boot scale gate —
+        // otherwise it waits forever.
         tracing::warn!(target: "Main", "root window: no wp_fractional_scale_manager_v1; assuming scale 1.0");
-        crate::window_state::feed_scale(120);
+        crate::window_state::feed_unit_scale();
     }
 
     // Request server/client-side decorations to match the configured mode.
@@ -626,7 +795,7 @@ pub(crate) fn ensure_started() {
     let deco_mgr: Option<ZxdgDecorationManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
     let decoration = deco_mgr.as_ref().map(|mgr| {
         let dec = mgr.get_toplevel_decoration(&toplevel, &qh, ());
-        let mode = if DECO_MODE.load(Ordering::Acquire) == DECO_CSD {
+        let mode = if WANT_CSD.load(Ordering::Acquire) {
             DecorationMode::ClientSide
         } else {
             DecorationMode::ServerSide
@@ -639,14 +808,10 @@ pub(crate) fn ensure_started() {
     }
 
     #[cfg(feature = "kde-palette")]
-    if let Ok(mgr) = globals.bind::<OrgKdeKwinServerDecorationPaletteManager, _, _>(&qh, 1..=1, ())
-    {
-        let palette = mgr.create(&surface, &qh, ());
-        let _ = PALETTE.set(Palette {
-            conn: conn.clone(),
-            palette,
-        });
-    }
+    let palette: Option<OrgKdeKwinServerDecorationPalette> = globals
+        .bind::<OrgKdeKwinServerDecorationPaletteManager, _, _>(&qh, 1..=1, ())
+        .ok()
+        .map(|mgr| mgr.create(&surface, &qh, ()));
 
     let seat: Option<WlSeat> = globals.bind(&qh, 1..=8, ()).ok();
 
@@ -661,13 +826,12 @@ pub(crate) fn ensure_started() {
         seat: seat.clone(),
     });
 
-    let _ = CONTROLS.set(Controls {
-        conn: conn.clone(),
-        toplevel: toplevel.clone(),
-        seat,
-    });
-
-    // Roleless commit to elicit the first xdg_surface.configure.
+    xdg_surface.set_window_geometry(0, 0, boot_w, boot_h);
+    // Roleless commit (no buffer attached) to elicit the first
+    // xdg_surface.configure — and, on compositors that send preferred_scale only
+    // in response to a commit, the first scale. It must not be gated on scale:
+    // xdg-shell requires this commit to obtain the configure that scale may
+    // itself depend on.
     surface.commit();
     let _ = conn.flush();
 
@@ -677,6 +841,9 @@ pub(crate) fn ensure_started() {
         surface,
         xdg_surface,
         toplevel,
+        seat,
+        #[cfg(feature = "kde-palette")]
+        palette,
         shm: shm.clone(),
         viewport,
         bg_buffer: None,
@@ -684,40 +851,76 @@ pub(crate) fn ensure_started() {
         frac_mgr,
         frac_scale,
         decoration,
-        cur_w: 0,
-        cur_h: 0,
-        pending_w: 0,
-        pending_h: 0,
-        scale_120: 120,
-        fullscreen: false,
-        maximized: boot_max,
+        current_size: None,
+        pending_w: None,
+        pending_h: None,
+        mode: crate::window_state::WindowMode::Floating,
         suspended: false,
-        boot_w,
-        boot_h,
-        mapped: false,
+        floating: {
+            let mut f = FloatingRestore::EMPTY;
+            f.record(crate::window_state::WindowMode::Floating, boot_w, boot_h);
+            f
+        },
+        pending_ack: None,
+        present: None,
+        scale_known: scale_known_at_boot,
+        pre_fs_maximized: false,
     };
 
-    let wake_fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
-    if wake_fd < 0 {
+    let Some(wake) = jfn_wake_event::WakeEvent::new().map(Arc::new) else {
         tracing::error!(target: "Main", "root window: eventfd failed");
         return;
-    }
+    };
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    let wake_thread = wake.clone();
     match thread::Builder::new()
         .name("wl-root".into())
-        .spawn(move || root_loop(queue, state, wake_fd, stop_thread))
+        .spawn(move || root_loop(queue, state, wake_thread, stop_thread))
     {
         Ok(handle) => {
             let _ = ROOT_THREAD.set(RootThread {
                 stop,
-                wake_fd,
+                wake,
                 handle: Mutex::new(Some(handle)),
             });
         }
         Err(e) => {
-            unsafe { libc::close(wake_fd) };
             tracing::error!(target: "Main", "root window: thread spawn: {e}");
+        }
+    }
+}
+
+// Apply queued fullscreen / window-control / background-color requests. Runs on
+// the root thread each iteration before it blocks, so a request enqueued before
+// the wake fd could ring is still serviced without waiting for another event.
+fn service_root_requests(state: &mut RootState) {
+    match PENDING_FS.swap(FS_NONE, Ordering::Acquire) {
+        FS_ON => apply_fullscreen(state, true),
+        FS_OFF => apply_fullscreen(state, false),
+        FS_TOGGLE => {
+            let on = !matches!(state.mode, crate::window_state::WindowMode::Fullscreen);
+            apply_fullscreen(state, on);
+        }
+        _ => {}
+    }
+    // Drain into a local first so the queue lock isn't held while issuing
+    // protocol requests.
+    let cmds = std::mem::take(&mut *COMMANDS.lock());
+    for cmd in cmds {
+        apply_command(state, cmd);
+    }
+    if let Some(bg) = pending_bg()
+        && bg != state.bg
+    {
+        state.bg = bg;
+        // current_size is only set once presented, so the capability is present
+        // too; requiring it keeps the buffer attach behind an ack.
+        if let (Some(size), Some(present)) = (state.current_size, state.present) {
+            let (w, h) = (size.w(), size.h());
+            state.rebuild_background(w, h, present);
+            // Apply via the single owner commit, not a standalone one.
+            PENDING_PRESENT.store(true, Ordering::Release);
         }
     }
 }
@@ -728,21 +931,30 @@ pub(crate) fn ensure_started() {
 fn root_loop(
     mut queue: EventQueue<RootState>,
     mut state: RootState,
-    wake_fd: c_int,
+    wake: Arc<jfn_wake_event::WakeEvent>,
     stop: Arc<AtomicBool>,
 ) {
     let conn = state.conn.clone();
     let fd = conn.as_fd().as_raw_fd();
+    let wake_fd = wake.fd();
     loop {
         if queue.dispatch_pending(&mut state).is_err() {
             break;
         }
+        // Service queued control work before the blocking poll, not only after a
+        // wake: wake_root_thread is a no-op until ROOT_THREAD is published, so a
+        // request stored during that startup window rings no fd and would
+        // otherwise sleep here until an unrelated compositor event arrives.
+        service_root_requests(&mut state);
         // Drain here, before the blocking poll: an event handler (configure,
         // scale) that raised the latch during dispatch must commit now, or the
         // loop blocks in poll with the compositor still awaiting our commit.
-        // Gate on `mapped` so a pre-configure request stays latched, not lost.
-        if state.mapped && PENDING_PRESENT.swap(false, Ordering::Acquire) {
-            state.present_transaction();
+        // Gate on the present capability so a pre-configure request stays
+        // latched, not lost — swapping the latch only once we can present.
+        if let Some(present) = state.present
+            && PENDING_PRESENT.swap(false, Ordering::Acquire)
+        {
+            state.present_transaction(present);
         }
         let _ = conn.flush();
 
@@ -787,29 +999,9 @@ fn root_loop(
             break;
         }
         if pfds[1].revents & libc::POLLIN != 0 {
-            let mut buf = [0u8; 64];
-            loop {
-                let n = unsafe { libc::read(wake_fd, buf.as_mut_ptr() as *mut c_void, buf.len()) };
-                if n <= 0 {
-                    break;
-                }
-            }
+            wake.drain();
             if stop.load(Ordering::Relaxed) {
                 break;
-            }
-            if let Some(bg) = pending_bg()
-                && bg != state.bg
-            {
-                state.bg = bg;
-                if let Some(old) = state.bg_buffer.take() {
-                    crate::wl_state::retire_buffer(old);
-                }
-                if state.cur_w > 0 && state.cur_h > 0 {
-                    let (w, h) = (state.cur_w, state.cur_h);
-                    state.fill_background(w, h);
-                    // Apply via the single owner commit, not a standalone one.
-                    PENDING_PRESENT.store(true, Ordering::Release);
-                }
             }
         }
     }
@@ -846,7 +1038,11 @@ impl Dispatch<XdgSurface, ()> for RootState {
         _: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
-            state.configure(serial);
+            // Coalesce to the latest serial; the toplevel.configure that carries
+            // the size/states precedes this in wire order, so pending_w/h + mode
+            // are already current.
+            state.pending_ack = Some(ConfigureSerial(serial));
+            state.try_present();
         }
     }
 }
@@ -866,19 +1062,28 @@ impl Dispatch<XdgToplevel, ()> for RootState {
                 height,
                 states,
             } => {
-                state.pending_w = width;
-                state.pending_h = height;
-                let (mut fs, mut max, mut suspended) = (false, false, false);
+                state.pending_w = NonZeroI32::new(width);
+                state.pending_h = NonZeroI32::new(height);
+                let (mut fs, mut max, mut tiled, mut suspended) = (false, false, false, false);
                 for chunk in states.chunks_exact(4) {
                     match u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) {
                         STATE_FULLSCREEN => fs = true,
                         STATE_MAXIMIZED => max = true,
+                        STATE_TILED_LEFT | STATE_TILED_RIGHT | STATE_TILED_TOP
+                        | STATE_TILED_BOTTOM => tiled = true,
                         STATE_SUSPENDED => suspended = true,
                         _ => {}
                     }
                 }
-                state.fullscreen = fs;
-                state.maximized = max;
+                state.mode = if fs {
+                    crate::window_state::WindowMode::Fullscreen
+                } else if max {
+                    crate::window_state::WindowMode::Maximized
+                } else if tiled {
+                    crate::window_state::WindowMode::Tiled
+                } else {
+                    crate::window_state::WindowMode::Floating
+                };
                 if suspended != state.suspended {
                     state.suspended = suspended;
                     crate::window_state::feed_suspended(suspended);
@@ -902,22 +1107,11 @@ impl Dispatch<WpFractionalScaleV1, ()> for RootState {
         _: &QueueHandle<Self>,
     ) {
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
-            state.scale_120 = scale;
+            state.scale_known = true;
             crate::window_state::feed_scale(scale as i32);
-            // Scale can change without a resize (e.g. moved to another output);
-            // re-feed the host with the new physical size for the current logical.
-            if state.cur_w > 0 && state.cur_h > 0 {
-                let (pw, ph) = state.physical(state.cur_w, state.cur_h);
-                crate::window_state::feed_window_state(
-                    state.cur_w,
-                    state.cur_h,
-                    pw,
-                    ph,
-                    state.fullscreen,
-                    state.maximized,
-                );
-                PENDING_PRESENT.store(true, Ordering::Release);
-            }
+            // Scale arrives without a configure (output change, or the first
+            // scale completing a withheld configure), so drive a present here too.
+            state.try_present();
         }
     }
 }
@@ -1047,5 +1241,89 @@ impl Dispatch<WlRegistry, GlobalListContents> for RootState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_logical_size;
+    use crate::window_state::{WindowMode, WindowSize};
+    use std::num::NonZeroI32;
+
+    const NONE: (Option<NonZeroI32>, Option<NonZeroI32>) = (None, None);
+
+    fn pending(w: i32, h: i32) -> (Option<NonZeroI32>, Option<NonZeroI32>) {
+        (NonZeroI32::new(w), NonZeroI32::new(h))
+    }
+
+    fn size(w: i32, h: i32) -> Option<WindowSize> {
+        WindowSize::new(w, h)
+    }
+
+    #[test]
+    fn maximized_without_compositor_size_defers() {
+        assert_eq!(
+            resolve_logical_size(NONE, None, size(1280, 720), WindowMode::Maximized),
+            None
+        );
+        assert_eq!(
+            resolve_logical_size(NONE, None, size(1280, 720), WindowMode::Fullscreen),
+            None
+        );
+    }
+
+    #[test]
+    fn tiled_defers_like_maximized_not_floating() {
+        // Tiled is compositor-dictated: without a compositor size it must defer,
+        // not fall back to the saved floating size.
+        assert_eq!(
+            resolve_logical_size(NONE, None, size(1280, 720), WindowMode::Tiled),
+            None
+        );
+        assert!(!WindowMode::Tiled.uses_floating_restore());
+    }
+
+    #[test]
+    fn floating_without_compositor_size_uses_floating() {
+        assert_eq!(
+            resolve_logical_size(NONE, None, size(1280, 720), WindowMode::Floating),
+            size(1280, 720)
+        );
+    }
+
+    #[test]
+    fn unmaximize_uses_floating_not_stale_cur() {
+        assert_eq!(
+            resolve_logical_size(NONE, size(1920, 1080), size(800, 600), WindowMode::Floating),
+            size(800, 600)
+        );
+    }
+
+    #[test]
+    fn compositor_size_wins_for_every_mode() {
+        for mode in [
+            WindowMode::Floating,
+            WindowMode::Tiled,
+            WindowMode::Maximized,
+            WindowMode::Fullscreen,
+        ] {
+            assert_eq!(
+                resolve_logical_size(pending(2560, 1440), size(800, 600), size(1280, 720), mode),
+                size(2560, 1440)
+            );
+        }
+    }
+
+    #[test]
+    fn last_completed_size_bridges_a_bare_ack() {
+        assert_eq!(
+            resolve_logical_size(
+                NONE,
+                size(2560, 1440),
+                size(1280, 720),
+                WindowMode::Maximized
+            ),
+            size(2560, 1440)
+        );
     }
 }

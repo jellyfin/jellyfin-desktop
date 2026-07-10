@@ -34,11 +34,11 @@ fn paint_name(mode: crate::paint_override::WlPaintOverride) -> &'static str {
 // =====================================================================
 
 pub fn jfn_wl_lifecycle_init() -> bool {
-    let display = crate::app_conn::app_display();
-    if display.is_null() {
+    let Some(display) = crate::app_conn::app_display() else {
         tracing::error!("Failed to get app Wayland display");
         return false;
-    }
+    };
+    let display = display.as_ptr();
 
     // Seed Rust state with mpv's current fullscreen — first configure
     // after this point won't start a spurious transition.
