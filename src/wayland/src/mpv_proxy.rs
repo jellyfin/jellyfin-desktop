@@ -39,6 +39,7 @@ use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
 use wl_proxy::protocols::wayland::wl_keyboard::{
     WlKeyboard, WlKeyboardHandler, WlKeyboardKeyState,
 };
+use wl_proxy::protocols::wayland::wl_output::WlOutput;
 use wl_proxy::protocols::wayland::wl_pointer::{WlPointer, WlPointerButtonState, WlPointerHandler};
 use wl_proxy::protocols::wayland::wl_region::WlRegion;
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
@@ -48,7 +49,9 @@ use wl_proxy::protocols::wayland::wl_subsurface::WlSubsurface;
 use wl_proxy::protocols::wayland::wl_surface::{WlSurface, WlSurfaceHandler};
 use wl_proxy::protocols::wayland::wl_touch::WlTouch;
 use wl_proxy::protocols::xdg_shell::xdg_surface::{XdgSurface, XdgSurfaceHandler};
-use wl_proxy::protocols::xdg_shell::xdg_toplevel::{XdgToplevel, XdgToplevelHandler};
+use wl_proxy::protocols::xdg_shell::xdg_toplevel::{
+    XdgToplevel, XdgToplevelHandler, XdgToplevelState,
+};
 use wl_proxy::protocols::xdg_shell::xdg_wm_base::{XdgWmBase, XdgWmBaseHandler};
 use wl_proxy::state::State;
 
@@ -486,6 +489,10 @@ fn apply_window_size_mpv(seen_gen: &mut u32) {
     }
 }
 
+/// MAXIMIZED puts mpv in `locked_size`, so mpv holds the size we hand it instead
+/// of re-deriving its geometry from the video.
+const LOCKED_STATES: [u8; size_of::<u32>()] = XdgToplevelState::MAXIMIZED.0.to_ne_bytes();
+
 /// Emit a configure to mpv iff its toplevel exists, returning whether one was
 /// sent. A configure can only be built from an `MpvConfigurator`, so a
 /// toplevel-less emit is unrepresentable rather than guarded.
@@ -496,7 +503,7 @@ fn emit_mpv_configure(size: WindowSize) -> bool {
     });
     match emit {
         Some((cfg, serial)) => {
-            cfg.configure(size, serial, &[]);
+            cfg.configure(size, serial, &LOCKED_STATES);
             true
         }
         None => false,
@@ -629,13 +636,9 @@ impl WpViewportHandler for ClientViewportH {
         if !unset && (width <= 0 || height <= 0) {
             return;
         }
-        // mpv's surface extent mirrors the authoritative window size, not mpv's
-        // own opinion of it — so a resize can never present mpv at a non-window
-        // extent. Only the unset form is forwarded verbatim.
-        let (width, height) = match window_size() {
-            Some(size) if !unset => (size.w(), size.h()),
-            _ => (width, height),
-        };
+        // Forward mpv's own destination rect unchanged: mpv is pinned to our
+        // window size by the locked-state configure and letterboxes internally,
+        // so overriding this rect with the window size stretches the video.
         log_send(
             "wp_viewport.set_destination",
             slf.try_send_set_destination(width, height),
@@ -810,8 +813,31 @@ impl XdgSurfaceHandler for MpvSurfaceH {
     }
 }
 
+/// mpv blocks waiting for a configure in reply to its state-change request (e.g.
+/// unset_maximized from VOCTRL_SET_UNFS_WINDOW_SIZE). We never honor the request
+/// — the host owns geometry — but must answer it, or mpv stalls on the dropped
+/// message.
+fn reassert_mpv_state() {
+    if let Some(size) = window_size() {
+        emit_mpv_configure(size);
+    }
+}
+
 struct MpvToplevelH;
-impl XdgToplevelHandler for MpvToplevelH {}
+impl XdgToplevelHandler for MpvToplevelH {
+    fn handle_set_maximized(&mut self, _slf: &Rc<XdgToplevel>) {
+        reassert_mpv_state();
+    }
+    fn handle_unset_maximized(&mut self, _slf: &Rc<XdgToplevel>) {
+        reassert_mpv_state();
+    }
+    fn handle_set_fullscreen(&mut self, _slf: &Rc<XdgToplevel>, _output: Option<&Rc<WlOutput>>) {
+        reassert_mpv_state();
+    }
+    fn handle_unset_fullscreen(&mut self, _slf: &Rc<XdgToplevel>) {
+        reassert_mpv_state();
+    }
+}
 
 fn ensure_root() {
     let (started, display) = with_shell(|sh| (sh.roundtrip_started, sh.display.clone()));
