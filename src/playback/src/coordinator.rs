@@ -69,6 +69,23 @@ pub struct PlaybackCoordinator {
     join: Option<JoinHandle<()>>,
 }
 
+#[derive(Clone)]
+pub struct CoordinatorHandle(Arc<Shared>);
+
+impl CoordinatorHandle {
+    pub fn enqueue(&self, in_: Input) {
+        {
+            let mut q = self.0.queue.lock();
+            q.push_back(in_);
+        }
+        self.0.wake.signal();
+    }
+
+    pub fn snapshot(&self) -> PlaybackSnapshot {
+        self.0.snapshot.lock().clone()
+    }
+}
+
 impl PlaybackCoordinator {
     /// Returns `None` if the wake eventfd can't be created (fd exhaustion).
     pub fn new() -> Option<Self> {
@@ -107,16 +124,16 @@ impl PlaybackCoordinator {
         }
     }
 
+    pub fn handle(&self) -> CoordinatorHandle {
+        CoordinatorHandle(Arc::clone(&self.shared))
+    }
+
     pub fn enqueue(&self, in_: Input) {
-        {
-            let mut q = self.shared.queue.lock();
-            q.push_back(in_);
-        }
-        self.shared.wake.signal();
+        self.handle().enqueue(in_);
     }
 
     pub fn snapshot(&self) -> PlaybackSnapshot {
-        self.shared.snapshot.lock().clone()
+        self.handle().snapshot()
     }
 
     pub fn add_event_sink(&self, sink: EventSink) {
