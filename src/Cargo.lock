@@ -2483,6 +2483,7 @@ dependencies = [
  "jfn-mpv",
  "jfn-platform-abi",
  "jfn-playback",
+ "jfn-wake-event",
  "libc",
  "libloading 0.9.0",
  "memmap2",

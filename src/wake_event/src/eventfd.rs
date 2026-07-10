@@ -18,14 +18,7 @@ impl WakeEvent {
     }
 
     pub fn signal(&self) {
-        let val: u64 = 1;
-        unsafe {
-            libc::write(
-                self.fd,
-                &val as *const u64 as *const c_void,
-                core::mem::size_of::<u64>(),
-            );
-        }
+        crate::signal_raw_fd(self.fd);
     }
 
     pub fn drain(&self) {
