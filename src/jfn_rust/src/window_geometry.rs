@@ -6,8 +6,8 @@
 use std::sync::OnceLock;
 
 use jfn_platform_abi::{
-    BootGeometry, LogicalSize, PhysicalSize, Platform, Scale, WindowGeometry, WindowPos,
-    WindowSource,
+    BootGeometry, LogicalSize, PhysicalSize, Platform, Scale, WindowExtent, WindowGeometry,
+    WindowSnapshot, WindowSource,
 };
 
 use jfn_config::JfnWindowGeometry;
@@ -21,30 +21,17 @@ fn plat() -> &'static dyn Platform {
 struct MpvWindowSource;
 
 impl WindowSource for MpvWindowSource {
-    fn size(&self) -> Option<PhysicalSize> {
-        let mut w = jfn_playback::ingest_driver::jfn_playback_window_pw();
-        let mut h = jfn_playback::ingest_driver::jfn_playback_window_ph();
-        if w <= 0 || h <= 0 {
-            w = jfn_playback::ingest_driver::jfn_playback_osd_pw();
-            h = jfn_playback::ingest_driver::jfn_playback_osd_ph();
+    fn snapshot(&self) -> WindowSnapshot {
+        let size = jfn_playback::ingest_driver::jfn_playback_window_size()
+            .or_else(jfn_playback::ingest_driver::jfn_playback_osd_size);
+        let extent =
+            size.map(|(w, h)| WindowExtent::new(PhysicalSize { w, h }, Scale(plat().get_scale())));
+        WindowSnapshot {
+            extent,
+            position: plat().query_window_position(),
+            maximized: jfn_playback::ingest_driver::jfn_playback_window_maximized(),
+            fullscreen: jfn_playback::ingest_driver::jfn_playback_fullscreen(),
         }
-        (w > 0 && h > 0).then_some(PhysicalSize { w, h })
-    }
-
-    fn maximized(&self) -> bool {
-        jfn_playback::ingest_driver::jfn_playback_window_maximized()
-    }
-
-    fn fullscreen(&self) -> bool {
-        jfn_playback::ingest_driver::jfn_playback_fullscreen()
-    }
-
-    fn position(&self) -> Option<WindowPos> {
-        plat().query_window_position()
-    }
-
-    fn scale(&self) -> Scale {
-        Scale(plat().get_scale())
     }
 }
 
@@ -113,26 +100,8 @@ fn resolve_boot(
     let physical = logical.to_physical(scale);
     // clamp operates on physical backing pixels; on Wayland it's the identity,
     // so the logical size we seed the toplevel with is unaffected.
-    let clamped = clamp(WindowGeometry {
-        w: physical.w,
-        h: physical.h,
-        x: g.x,
-        y: g.y,
-    });
-    let position = (clamped.x >= 0 && clamped.y >= 0).then_some(WindowPos {
-        x: clamped.x,
-        y: clamped.y,
-    });
-    BootGeometry {
-        logical,
-        physical: PhysicalSize {
-            w: clamped.w,
-            h: clamped.h,
-        },
-        scale,
-        position,
-        maximized: g.maximized,
-    }
+    let clamped = clamp(WindowGeometry::from_raw(physical.w, physical.h, g.x, g.y));
+    BootGeometry::from_clamped(logical, scale, clamped, g.maximized)
 }
 
 pub fn controller() -> &'static WindowGeometryController {
@@ -147,23 +116,24 @@ fn geometry_to_persist(
     saved: JfnWindowGeometry,
     was_maximized_before_fullscreen: bool,
 ) -> Option<JfnWindowGeometry> {
-    if ws.fullscreen() {
+    let snap = ws.snapshot();
+    if snap.fullscreen {
         let mut g = saved;
         g.maximized = was_maximized_before_fullscreen;
         return Some(g);
     }
-    if ws.maximized() {
+    if snap.maximized {
         let mut g = saved;
         g.maximized = true;
         return Some(g);
     }
-    let physical = ws.size()?;
+    let ext = snap.extent?;
+    let physical = ext.physical();
     if physical.w <= 0 || physical.h <= 0 {
         return None;
     }
-    let scale = ws.scale().or_one();
+    let scale = ext.scale().or_one();
     let logical = physical.to_logical(scale);
-    let pos = ws.position();
     Some(JfnWindowGeometry {
         width: physical.w,
         height: physical.h,
@@ -171,14 +141,15 @@ fn geometry_to_persist(
         logical_width: logical.w,
         logical_height: logical.h,
         maximized: false,
-        x: pos.map_or(-1, |p| p.x),
-        y: pos.map_or(-1, |p| p.y),
+        x: snap.position.map_or(-1, |p| p.x),
+        y: snap.position.map_or(-1, |p| p.y),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jfn_platform_abi::WindowPos;
 
     struct FakeWindowSource {
         size: Option<PhysicalSize>,
@@ -189,20 +160,15 @@ mod tests {
     }
 
     impl WindowSource for FakeWindowSource {
-        fn size(&self) -> Option<PhysicalSize> {
-            self.size
-        }
-        fn maximized(&self) -> bool {
-            self.maximized
-        }
-        fn fullscreen(&self) -> bool {
-            self.fullscreen
-        }
-        fn position(&self) -> Option<WindowPos> {
-            self.position
-        }
-        fn scale(&self) -> Scale {
-            self.scale
+        fn snapshot(&self) -> WindowSnapshot {
+            WindowSnapshot {
+                extent: self
+                    .size
+                    .map(|physical| WindowExtent::new(physical, self.scale)),
+                position: self.position,
+                maximized: self.maximized,
+                fullscreen: self.fullscreen,
+            }
         }
     }
 
@@ -302,9 +268,9 @@ mod tests {
             ..Default::default()
         };
         let boot = resolve_boot(saved, Scale(1.25), identity_clamp);
-        assert_eq!(boot.logical, LogicalSize { w: 1280, h: 720 });
-        assert_eq!(boot.physical, PhysicalSize { w: 1600, h: 900 });
-        assert!(boot.position.is_none());
+        assert_eq!(boot.logical(), LogicalSize { w: 1280, h: 720 });
+        assert_eq!(boot.physical(), PhysicalSize { w: 1600, h: 900 });
+        assert!(boot.position().is_none());
     }
 
     #[test]
@@ -327,7 +293,7 @@ mod tests {
 
         // Next boot off that saved state comes up maximized at the prior size.
         let boot = resolve_boot(saved, Scale(1.0), identity_clamp);
-        assert!(boot.maximized);
-        assert_eq!(boot.logical, LogicalSize { w: 1280, h: 720 });
+        assert!(boot.maximized());
+        assert_eq!(boot.logical(), LogicalSize { w: 1280, h: 720 });
     }
 }

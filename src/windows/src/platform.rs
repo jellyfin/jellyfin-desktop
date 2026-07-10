@@ -434,15 +434,11 @@ pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y:
     }
     let vw = work.right - work.left;
     let vh = work.bottom - work.top;
-    let mut g = WindowGeometry {
-        w: *w,
-        h: *h,
-        x: *x,
-        y: *y,
-    };
+    let mut g = WindowGeometry::from_raw(*w, *h, *x, *y);
     clamp_to_bounds(&mut g, Bounds { w: vw, h: vh });
     *w = g.w;
     *h = g.h;
-    *x = g.x;
-    *y = g.y;
+    let (nx, ny) = g.raw_position();
+    *x = nx;
+    *y = ny;
 }

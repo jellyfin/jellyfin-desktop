@@ -273,8 +273,7 @@ impl Platform for X11Platform {
         WindowGeometry {
             w,
             h,
-            x: g.x,
-            y: g.y,
+            position: g.position,
         }
     }
 

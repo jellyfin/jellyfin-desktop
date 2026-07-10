@@ -97,12 +97,12 @@ pub fn jfn_playback_set_window_pixels(pw: i32, ph: i32) {
     state().set_window_pixels(pw, ph);
 }
 
-pub fn jfn_playback_window_pw() -> i32 {
-    state().window_pw()
+pub fn jfn_playback_window_size() -> Option<(i32, i32)> {
+    positive_pair(state().window_pw(), state().window_ph())
 }
 
-pub fn jfn_playback_window_ph() -> i32 {
-    state().window_ph()
+fn positive_pair(w: i32, h: i32) -> Option<(i32, i32)> {
+    (w > 0 && h > 0).then_some((w, h))
 }
 
 /// Returns flag bits — see [`INGEST_FLAG_SHUTDOWN`].
@@ -167,12 +167,8 @@ pub fn jfn_playback_window_maximized() -> bool {
     state().window_maximized()
 }
 
-pub fn jfn_playback_osd_pw() -> i32 {
-    state().osd_pw()
-}
-
-pub fn jfn_playback_osd_ph() -> i32 {
-    state().osd_ph()
+pub fn jfn_playback_osd_size() -> Option<(i32, i32)> {
+    positive_pair(state().osd_pw(), state().osd_ph())
 }
 
 pub fn jfn_playback_display_scale() -> f64 {
