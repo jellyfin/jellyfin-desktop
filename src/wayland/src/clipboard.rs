@@ -8,7 +8,6 @@
 //! dedicated worker thread, no shared globals with the main display.
 
 use parking_lot::Mutex;
-use std::ffi::c_void;
 use std::io::{ErrorKind, Read};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::raw::c_int;
@@ -75,7 +74,7 @@ struct PendingCb {
 struct Shared {
     queued: Mutex<Vec<PendingCb>>,
     stop: AtomicBool,
-    wake_fd: c_int,
+    wake: jfn_wake_event::WakeEvent,
 }
 
 struct State {
@@ -233,28 +232,6 @@ impl Dispatch<ExtDataControlOfferV1, ()> for State {
     }
 }
 
-fn make_wake_fd() -> Option<c_int> {
-    let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
-    if fd < 0 { None } else { Some(fd) }
-}
-
-fn signal_wake(fd: c_int) {
-    let v: u64 = 1;
-    unsafe {
-        libc::write(fd, &v as *const u64 as *const c_void, 8);
-    }
-}
-
-fn drain_wake(fd: c_int) {
-    let mut buf = [0u8; 64];
-    loop {
-        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut c_void, buf.len()) };
-        if n <= 0 {
-            break;
-        }
-    }
-}
-
 fn fire(pending: PendingCb, text: &[u8]) {
     let s = std::str::from_utf8(text).unwrap_or("");
     (pending.cb)(s);
@@ -282,7 +259,7 @@ fn worker_loop(
     mut state: State,
 ) {
     let display_fd = conn.as_fd().as_raw_fd();
-    let wake_fd = shared.wake_fd;
+    let wake_fd = shared.wake.fd();
 
     // (read_fd, callback, buffer) for the in-flight receive — at most one
     // active at a time, matching the C++ implementation's natural
@@ -340,7 +317,7 @@ fn worker_loop(
         }
 
         if pfds[1].revents & libc::POLLIN != 0 {
-            drain_wake(wake_fd);
+            shared.wake.drain();
             let _ = queue.dispatch_pending(&mut state);
         }
 
@@ -441,11 +418,10 @@ fn init_impl() -> Option<JfnClipboardWayland> {
     };
     queue.roundtrip(&mut state).ok()?;
 
-    let wake_fd = make_wake_fd()?;
     let shared = Arc::new(Shared {
         queued: Mutex::new(Vec::new()),
         stop: AtomicBool::new(false),
-        wake_fd,
+        wake: jfn_wake_event::WakeEvent::new()?,
     });
     let shared_w = shared.clone();
     let worker = thread::spawn(move || worker_loop(shared_w, conn, queue, state));
@@ -485,7 +461,7 @@ pub fn clipboard_read_text_async(cb: Box<dyn FnOnce(&str) + Send>) {
         let mut q = c.shared.queued.lock();
         q.push(PendingCb { cb });
     }
-    signal_wake(c.shared.wake_fd);
+    c.shared.wake.signal();
 }
 
 pub fn clipboard_cleanup() {
@@ -493,9 +469,9 @@ pub fn clipboard_cleanup() {
         return;
     };
     boxed.shared.stop.store(true, Ordering::Relaxed);
-    signal_wake(boxed.shared.wake_fd);
+    boxed.shared.wake.signal();
     if let Some(w) = boxed.worker.take() {
         let _ = w.join();
     }
-    unsafe { libc::close(boxed.shared.wake_fd) };
+    // The WakeEvent closes its fd when the last Arc<Shared> drops.
 }
