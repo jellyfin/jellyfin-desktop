@@ -460,9 +460,10 @@ impl Platform for WindowsPlatform {
     }
 
     fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
-        let (mut w, mut h, mut x, mut y) = (g.w, g.h, g.x, g.y);
+        let (mut w, mut h) = (g.w, g.h);
+        let (mut x, mut y) = g.raw_position();
         win_clamp_window_geometry(&mut w, &mut h, &mut x, &mut y);
-        WindowGeometry { w, h, x, y }
+        WindowGeometry::from_raw(w, h, x, y)
     }
 
     fn pump(&self) {

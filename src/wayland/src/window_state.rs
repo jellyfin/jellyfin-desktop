@@ -139,16 +139,6 @@ pub(crate) fn window_logical_size() -> Option<WindowSize> {
     extent().map(|e| e.logical)
 }
 
-// Transitional shims for the per-field WindowSource; removed once it takes
-// one WindowExtent snapshot.
-pub(crate) fn jfn_wl_window_size_known() -> bool {
-    extent().is_some()
-}
-
-pub(crate) fn jfn_wl_window_size() -> (c_int, c_int) {
-    extent().map_or((0, 0), |e| (e.physical.w, e.physical.h))
-}
-
 pub(crate) fn jfn_wl_scale_known() -> bool {
     NonZeroU32::new(SCALE_120.load(Ordering::Acquire)).is_some()
 }

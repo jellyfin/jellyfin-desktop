@@ -269,17 +269,13 @@ pub fn macos_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, 
         let scale: f64 = objc2::msg_send![screen, backingScaleFactor];
         let vw = (visible.size.width * scale) as c_int;
         let vh = (visible.size.height * scale) as c_int;
-        let mut g = WindowGeometry {
-            w: *w,
-            h: *h,
-            x: *x,
-            y: *y,
-        };
+        let mut g = WindowGeometry::from_raw(*w, *h, *x, *y);
         clamp_to_bounds(&mut g, Bounds { w: vw, h: vh });
         *w = g.w;
         *h = g.h;
-        *x = g.x;
-        *y = g.y;
+        let (nx, ny) = g.raw_position();
+        *x = nx;
+        *y = ny;
     }
 }
 
@@ -783,9 +779,10 @@ impl Platform for MacosPlatform {
     }
 
     fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {
-        let (mut w, mut h, mut x, mut y) = (g.w, g.h, g.x, g.y);
+        let (mut w, mut h) = (g.w, g.h);
+        let (mut x, mut y) = g.raw_position();
         macos_clamp_window_geometry(&mut w, &mut h, &mut x, &mut y);
-        WindowGeometry { w, h, x, y }
+        WindowGeometry::from_raw(w, h, x, y)
     }
 
     fn pump(&self) {

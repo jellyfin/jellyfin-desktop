@@ -39,11 +39,12 @@ pub use dropdown::{
     DropdownBackend, DropdownScript, DropdownStyle, JfnPopupRequest, JsMenuDropdown, dropdown_style,
 };
 pub use geometry::{
-    BootGeometry, LogicalSize, PhysicalSize, Scale, SurfaceSize, WindowGeometry, WindowPos,
+    BootGeometry, LogicalSize, PhysicalSize, Scale, SurfaceSize, WindowExtent, WindowGeometry,
+    WindowPos,
 };
 pub use media_sink::MediaSink;
 pub use mpv_host::{DefaultMpvHost, MpvHost};
-pub use window_source::WindowSource;
+pub use window_source::{WindowSnapshot, WindowSource};
 
 /// Preserves the process's SIGINT/SIGTERM dispositions across a scope.
 ///
@@ -423,6 +424,35 @@ pub trait Platform: Send + Sync {
     fn window_source(&self) -> Option<&'static dyn WindowSource> {
         None
     }
+
+    /// The mpv `--geometry` string for boot, or `None` when the backend owns
+    /// its toplevel and sizes it itself. The default sizes via mpv; toplevel-
+    /// owning backends (Wayland) override to `None`.
+    fn boot_mpv_geometry(&self, g: &BootGeometry) -> Option<String> {
+        Some(g.mpv_geometry_string())
+    }
+
+    /// Physical size mpv should be resized to when the boot display scale
+    /// differs from the saved scale, or `None` to leave sizing untouched. The
+    /// default performs the mpv reconcile; `locked` (booting fullscreen or
+    /// maximized) and toplevel-owning backends yield `None`.
+    fn reconcile_mpv_size(
+        &self,
+        display_hidpi_scale: f64,
+        saved_scale: f32,
+        saved_logical: LogicalSize,
+        locked: bool,
+    ) -> Option<PhysicalSize> {
+        if locked
+            || display_hidpi_scale <= 0.0
+            || saved_scale <= 0.0
+            || (display_hidpi_scale - f64::from(saved_scale)).abs() < 0.01
+        {
+            return None;
+        }
+        Some(saved_logical.to_physical(Scale(display_hidpi_scale as f32)))
+    }
+
     /// Clamp saved geometry to stay on-screen. Backends that don't constrain
     /// geometry return `g` unchanged (the default).
     fn clamp_window_geometry(&self, g: WindowGeometry) -> WindowGeometry {

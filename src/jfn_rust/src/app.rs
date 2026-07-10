@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use clap::Parser;
 use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
-use jfn_platform_abi::{IdleInhibitLevel, LogicalSize, Platform, Scale, WindowGeometry};
+use jfn_platform_abi::{IdleInhibitLevel, LogicalSize, Platform, WindowGeometry};
 
 use crate::cli;
 
@@ -213,7 +213,7 @@ fn resolve_startup_options(cli: &cli::Cli) -> StartupOptions {
 
 struct MpvInitOptions<'a> {
     backend_byte: u8,
-    boot_geometry: &'a str,
+    boot_geometry: Option<&'a str>,
     boot_force_position: bool,
     boot_window_max: bool,
     hwdec: &'a str,
@@ -224,7 +224,7 @@ struct MpvInitOptions<'a> {
 }
 
 fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
-    let geometry_c = cs(opts.boot_geometry);
+    let geometry_c = opts.boot_geometry.map(cs);
     let hwdec_c = cs(opts.hwdec);
     let user_agent_c = cs(&format!("JellyfinDesktop/{}", APP_VERSION_FULL));
     let passthrough_c = cs(opts.audio_passthrough);
@@ -245,7 +245,7 @@ fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
         } else {
             channels_c.as_ptr()
         },
-        geometry: geometry_c.as_ptr(),
+        geometry: geometry_c.as_ref().map_or(ptr::null(), |c| c.as_ptr()),
         force_window_position: opts.boot_force_position,
         window_maximized_at_boot: opts.boot_window_max,
         mpv_log_level: mpv_log_level_c.as_ptr(),
@@ -480,21 +480,19 @@ fn sync_cef_window_metrics(
 
     let saved = jfn_config::window_geometry();
     let locked = fs_flag != 0 || jfn_playback::ingest_driver::jfn_playback_window_maximized();
-    if !locked
-        && display_hidpi_scale > 0.0
-        && saved.scale > 0.0
-        && (display_hidpi_scale - saved.scale as f64).abs() >= 0.01
-    {
-        let physical = LogicalSize {
+    if let Some(physical) = plat().reconcile_mpv_size(
+        display_hidpi_scale,
+        saved.scale,
+        LogicalSize {
             w: saved.logical_width,
             h: saved.logical_height,
-        }
-        .to_physical(Scale(display_hidpi_scale as f32));
+        },
+        locked,
+    ) {
         let clamped = plat().clamp_window_geometry(WindowGeometry {
             w: physical.w,
             h: physical.h,
-            x: -1,
-            y: -1,
+            position: None,
         });
         let (new_pw, new_ph) = (clamped.w, clamped.h);
         let geom_str = format!("{new_pw}x{new_ph}");
@@ -614,11 +612,12 @@ pub fn jfn_app_main() -> c_int {
     // mpv's --geometry takes physical pixels (see m_geometry_apply in
     // third_party/mpv/options/m_option.c).
     let backend_byte: u8 = plat().display() as u8;
+    let boot_mpv_geometry = plat().boot_mpv_geometry(&boot);
     let raw = init_mpv_handle(MpvInitOptions {
         backend_byte,
-        boot_geometry: &boot.mpv_geometry_string(),
+        boot_geometry: boot_mpv_geometry.as_deref(),
         boot_force_position: boot.force_position(),
-        boot_window_max: boot.maximized,
+        boot_window_max: boot.maximized(),
         hwdec: &opts.hwdec,
         audio_passthrough: &opts.audio_passthrough,
         audio_exclusive: opts.audio_exclusive,
@@ -728,8 +727,9 @@ fn mpv_log_level_from_filter() -> &'static str {
 fn boot_window_size() -> Option<(i32, i32)> {
     crate::window_geometry::controller()
         .source()
-        .size()
-        .map(|s| (s.w, s.h))
+        .snapshot()
+        .extent
+        .map(|e| (e.physical().w, e.physical().h))
 }
 
 fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32) {

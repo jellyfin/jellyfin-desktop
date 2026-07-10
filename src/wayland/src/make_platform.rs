@@ -63,7 +63,6 @@ pub(crate) unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFra
             None
         }
     };
-    // OwnedFd closes the dup on drop once the frame is presented.
     let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
     Some(JfnDmabufFrame {
         fd,
@@ -211,6 +210,22 @@ impl Platform for WaylandPlatform {
         Some(&crate::window_source::WaylandWindowSource)
     }
 
+    // Wayland owns its toplevel and sizes it in apply_boot_geometry, so mpv
+    // neither sizes at boot nor reconciles on scale change.
+    fn boot_mpv_geometry(&self, _g: &BootGeometry) -> Option<String> {
+        None
+    }
+
+    fn reconcile_mpv_size(
+        &self,
+        _display_hidpi_scale: f64,
+        _saved_scale: f32,
+        _saved_logical: jfn_platform_abi::LogicalSize,
+        _locked: bool,
+    ) -> Option<jfn_platform_abi::PhysicalSize> {
+        None
+    }
+
     fn set_fullscreen(&self, v: bool) {
         crate::wl_ffi::jfn_wl_set_fullscreen(v);
     }
@@ -251,7 +266,7 @@ impl Platform for WaylandPlatform {
     fn apply_boot_geometry(&self, g: &BootGeometry) {
         // Only the host's own window geometry uses the boot size; mpv mirrors the
         // committed window geometry and never the boot guess.
-        crate::root_window::set_boot_geometry(g.logical.w, g.logical.h, g.maximized);
+        crate::root_window::set_boot_geometry(g.logical().w, g.logical().h, g.maximized());
     }
 
     fn set_cursor(&self, shape: CursorShape) {
