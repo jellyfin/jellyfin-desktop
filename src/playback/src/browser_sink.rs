@@ -34,6 +34,16 @@ pub fn jfn_playback_set_browsers_size_handler(cb: Option<SetSizeCb>) {
     slot().lock().set_size = cb;
 }
 
+/// Deliver a native window-size update without going through the playback
+/// state machine. Windows can resize the host HWND while no media is playing;
+/// the browser still needs the new client dimensions in that case.
+pub fn jfn_playback_dispatch_browsers_size(lw: i32, lh: i32, pw: i32, ph: i32) {
+    let cb = slot().lock().set_size;
+    if let Some(cb) = cb {
+        cb(lw, lh, pw, ph);
+    }
+}
+
 /// Install / clear the browsers.setRefreshRate handler.
 pub fn jfn_playback_set_browsers_refresh_rate_handler(cb: Option<SetHzCb>) {
     slot().lock().set_hz = cb;

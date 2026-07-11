@@ -273,8 +273,8 @@ pub fn jfn_browsers_set_scale(scale: f64) {
             return;
         }
         (
-            (b.pw as f64 / scale) as i32,
-            (b.ph as f64 / scale) as i32,
+            (b.pw as f64 / scale).ceil() as i32,
+            (b.ph as f64 / scale).ceil() as i32,
             b.pw,
             b.ph,
         )

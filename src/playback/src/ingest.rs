@@ -286,8 +286,10 @@ fn digest_osd_dims<C: IngestCtx>(
         let s = ctx.scale();
         if s > 0.0 { s } else { 1.0 }
     };
-    let mut lw = (pw as f32 / scale) as i32;
-    let mut lh = (ph as f32 / scale) as i32;
+    // The browser surface must cover the whole physical client area. Flooring
+    // here can leave a 1-2 px strip at fractional scales such as 250%.
+    let mut lw = (pw as f32 / scale).ceil() as i32;
+    let mut lh = (ph as f32 / scale).ceil() as i32;
     if let Some((qlw, qlh)) = ctx.macos_logical_size()
         && qlw > 0
         && qlh > 0
@@ -508,6 +510,24 @@ mod tests {
             panic!();
         };
         assert_eq!((lw, lh, pw, ph), (1280, 720, 2560, 1440));
+    }
+
+    #[test]
+    fn osd_dims_rounds_up_to_cover_fractional_scale() {
+        let state = IngestState::new();
+        let node = Node::Map(vec![
+            ("w".into(), Node::Int(3840)),
+            ("h".into(), Node::Int(1999)),
+        ]);
+        let out = ingest(
+            &prop(observe_id::OSD_DIMS, PropertyValue::Node(node)),
+            &state,
+            &ctx(2.5),
+        );
+        let IngestOut::Input(Input::OsdDims { lw, lh, pw, ph }) = out[0] else {
+            panic!();
+        };
+        assert_eq!((lw, lh, pw, ph), (1536, 800, 3840, 1999));
     }
 
     #[test]

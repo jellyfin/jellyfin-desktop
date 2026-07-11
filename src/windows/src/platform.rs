@@ -12,19 +12,24 @@ use parking_lot::Mutex;
 use std::ffi::{c_int, c_void};
 use std::thread::JoinHandle;
 
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+    MonitorFromPoint, MonitorFromWindow,
 };
 use windows::Win32::UI::Controls::MARGINS;
-use windows::Win32::UI::HiDpi::GetDpiForSystem;
+use windows::Win32::UI::HiDpi::{
+    AdjustWindowRectExForDpi, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor,
+    GetDpiForSystem, GetDpiForWindow, MDT_EFFECTIVE_DPI, SetProcessDpiAwarenessContext,
+    SetThreadDpiAwarenessContext,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CWPRETSTRUCT, CallNextHookEx, GWL_STYLE, GetClientRect, GetSystemMetrics, GetWindowLongPtrW,
-    GetWindowRect, GetWindowThreadProcessId, HHOOK, IsIconic, IsZoomed, SIZE_MINIMIZED, SM_CXFRAME,
-    SM_CXPADDEDBORDER, SM_CYCAPTION, SM_CYFRAME, SPI_GETWORKAREA,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW,
-    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WM_CLOSE, WM_SIZE, WS_CAPTION, WS_THICKFRAME,
+    CWPRETSTRUCT, CallNextHookEx, GWL_EXSTYLE, GWL_STYLE, GetClientRect, GetWindowLongPtrW,
+    GetWindowRect, GetWindowThreadProcessId, HHOOK, IsIconic, IsZoomed, SIZE_MAXIMIZED,
+    SIZE_MINIMIZED, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW,
+    SystemParametersInfoW, UnhookWindowsHookEx, WH_CALLWNDPROCRET, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_CLOSE, WM_SIZE, WS_CAPTION, WS_OVERLAPPEDWINDOW, WS_THICKFRAME,
 };
 
 use jfn_mpv::api::{
@@ -101,6 +106,30 @@ fn is_fullscreen_style(style: isize) -> bool {
 // Scale + content-size lookups.
 // =====================================================================
 
+fn dpi_to_scale(dpi: u32) -> f32 {
+    if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
+}
+
+fn monitor_dpi(mon: HMONITOR) -> u32 {
+    let mut dpi_x = 0u32;
+    let mut dpi_y = 0u32;
+    if unsafe { GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }.is_ok()
+        && dpi_x > 0
+    {
+        return dpi_x;
+    }
+    let dpi = unsafe { GetDpiForSystem() };
+    if dpi > 0 { dpi } else { 96 }
+}
+
+fn window_dpi(hwnd: HWND) -> u32 {
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    if dpi > 0 {
+        return dpi;
+    }
+    monitor_dpi(unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) })
+}
+
 pub fn win_get_scale() -> f32 {
     let scale = jfn_playback_display_scale();
     if scale > 0.0 {
@@ -113,15 +142,17 @@ pub fn win_get_scale() -> f32 {
         return cached;
     }
     // Pre-mpv (default-geometry sizing at startup): ask the OS directly.
-    let dpi = unsafe { GetDpiForSystem() };
-    if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
+    dpi_to_scale(unsafe { GetDpiForSystem() })
 }
 
-// Per-monitor DPI (GetDpiForMonitor) lives in Shcore.dll which isn't
-// currently linked; fall back to system DPI and ignore (x, y).
-pub fn win_get_display_scale(_x: c_int, _y: c_int) -> f32 {
-    let dpi = unsafe { GetDpiForSystem() };
-    if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
+pub fn win_get_display_scale(x: c_int, y: c_int) -> f32 {
+    let mon = if x >= 0 && y >= 0 {
+        unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) }
+    } else {
+        // Unset position: primary monitor (matches default boot clamp).
+        unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) }
+    };
+    dpi_to_scale(monitor_dpi(mon))
 }
 
 // =====================================================================
@@ -236,13 +267,39 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                 let lparam = msg.lParam.0 as u32;
                 let pw = (lparam & 0xFFFF) as c_int;
                 let ph = ((lparam >> 16) & 0xFFFF) as c_int;
+                if msg.wParam.0 == SIZE_MAXIMIZED as usize {
+                    let hwnd = hwnd_from_raw(target_hwnd_raw);
+                    let mut window = RECT::default();
+                    let _ = unsafe { GetWindowRect(hwnd, &mut window) };
+                    let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+                    let mut mi = MONITORINFO {
+                        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                        ..Default::default()
+                    };
+                    let _ = unsafe { GetMonitorInfoW(mon, &mut mi) };
+                    tracing::info!(
+                        target: "windows::platform",
+                        "maximized client={}x{} window=({},{} {}x{}) work=({},{} {}x{}) dpi={}",
+                        pw,
+                        ph,
+                        window.left,
+                        window.top,
+                        window.right - window.left,
+                        window.bottom - window.top,
+                        mi.rcWork.left,
+                        mi.rcWork.top,
+                        mi.rcWork.right - mi.rcWork.left,
+                        mi.rcWork.bottom - mi.rcWork.top,
+                        window_dpi(hwnd),
+                    );
+                }
                 if pw > 0 && ph > 0 {
                     jfn_input_windows_resize_to_parent(pw, ph);
 
                     let cached = STATE.lock().cached_scale;
                     let scale = if cached > 0.0 { cached } else { 1.0 };
-                    let lw = (pw as f32 / scale) as c_int;
-                    let lh = (ph as f32 / scale) as c_int;
+                    let lw = (pw as f32 / scale).ceil() as c_int;
+                    let lh = (ph as f32 / scale).ceil() as c_int;
 
                     let style =
                         unsafe { GetWindowLongPtrW(hwnd_from_raw(target_hwnd_raw), GWL_STYLE) };
@@ -290,6 +347,12 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
                         ph,
                         fs_changed || recovering_from_minimize,
                     );
+
+                    // The playback OSD-dimensions property is not emitted
+                    // while the home page is idle. Feed the settled native
+                    // client size directly so CEF follows normal/maximize
+                    // changes even when no media is playing.
+                    jfn_playback::ingest_driver::jfn_playback_set_native_window_size(pw, ph, scale);
                 }
             } else if msg.message == WM_CLOSE {
                 jfn_shutdown_initiate();
@@ -306,10 +369,19 @@ unsafe extern "system" fn mpv_wndproc_hook(n_code: c_int, wp: WPARAM, lp: LPARAM
 // =====================================================================
 
 pub fn win_early_init() {
-    // Nothing needed on Windows before mpv starts.
+    // Set this before mpv or CEF creates any HWND. The embedded manifest makes
+    // the same declaration for normal launches.
+    let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    // A compatibility override can leave the process context virtualized even
+    // when the manifest/API call above is present. Keep the main thread in the
+    // same physical-pixel context used by the mpv window thread.
+    let _ = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
 }
 
 pub fn win_init(_mpv: *mut c_void) -> bool {
+    // win_init runs after mpv has created its HWND; re-assert the caller's
+    // thread context before querying any window or monitor dimensions.
+    let _ = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     let mut wid: i64 = 0;
     let name = c"window-id";
     let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
@@ -333,7 +405,6 @@ pub fn win_init(_mpv: *mut c_void) -> bool {
     unsafe {
         let _ = DwmExtendFrameIntoClientArea(hwnd_from_raw(hwnd_raw), &margins);
     }
-
     if !crate::compositor::jfn_win_init_compositor(hwnd_raw as *mut c_void) {
         return false;
     }
@@ -437,44 +508,66 @@ pub fn win_query_client_size(w: &mut c_int, h: &mut c_int) -> bool {
     true
 }
 
-fn decorated_frame_size() -> (c_int, c_int) {
-    let hwnd_raw = STATE.lock().mpv_hwnd_raw;
-    let style = if hwnd_raw == 0 {
-        WS_CAPTION.0 | WS_THICKFRAME.0
-    } else {
-        (unsafe { GetWindowLongPtrW(hwnd_from_raw(hwnd_raw), GWL_STYLE) }) as u32
-    };
-    let has_caption = (style & WS_CAPTION.0) != 0;
-    let has_thickframe = (style & WS_THICKFRAME.0) != 0;
+/// Outer frame (non-client) size for a decorated window, in physical pixels
+/// for the given DPI. Uses `AdjustWindowRectExForDpi` so 250% (and other
+/// non-100%) scales do not mix 96-DPI `GetSystemMetrics` with a physical
+/// `SPI_GETWORKAREA` / monitor rect.
+fn decorated_frame_size(
+    dpi: u32,
+    style: WINDOW_STYLE,
+    ex_style: WINDOW_EX_STYLE,
+) -> (c_int, c_int) {
+    let s = style.0;
+    let has_caption = (s & WS_CAPTION.0) != 0;
+    let has_thickframe = (s & WS_THICKFRAME.0) != 0;
     if !has_caption && !has_thickframe {
         return (0, 0);
     }
-
-    let padded = unsafe { GetSystemMetrics(SM_CXPADDEDBORDER) }.max(0);
-    let frame_x = if has_thickframe {
-        unsafe { GetSystemMetrics(SM_CXFRAME) }.max(0) + padded
-    } else {
-        0
+    let mut rc = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
     };
-    let frame_y = if has_thickframe {
-        unsafe { GetSystemMetrics(SM_CYFRAME) }.max(0) + padded
-    } else {
-        0
-    };
-    let caption = if has_caption {
-        unsafe { GetSystemMetrics(SM_CYCAPTION) }.max(0)
-    } else {
-        0
-    };
-    (frame_x * 2, frame_y * 2 + caption)
+    if unsafe { AdjustWindowRectExForDpi(&mut rc, style, false, ex_style, dpi) }.is_err() {
+        return (0, 0);
+    }
+    ((rc.right - rc.left).max(0), (rc.bottom - rc.top).max(0))
 }
 
-/// Resolve saved client geometry against the primary monitor's working area so
-/// the outer decorated window never opens larger than the screen or off-screen,
-/// and center any unset axis.
-pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
+fn clamp_work_area(x: c_int, y: c_int) -> (RECT, u32, WINDOW_STYLE, WINDOW_EX_STYLE) {
+    let hwnd_raw = STATE.lock().mpv_hwnd_raw;
+    let (mon, style, ex_style, dpi) = if hwnd_raw != 0 {
+        let hwnd = hwnd_from_raw(hwnd_raw);
+        let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        let style = WINDOW_STYLE(unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32);
+        let ex_style = WINDOW_EX_STYLE(unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32);
+        (mon, style, ex_style, window_dpi(hwnd))
+    } else {
+        let mon = if x >= 0 && y >= 0 {
+            unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) }
+        } else {
+            unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) }
+        };
+        (
+            mon,
+            WS_OVERLAPPEDWINDOW,
+            WINDOW_EX_STYLE(0),
+            monitor_dpi(mon),
+        )
+    };
+
+    let mut mi = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetMonitorInfoW(mon, &mut mi) }.as_bool() {
+        return (mi.rcWork, dpi, style, ex_style);
+    }
+
+    // Fallback: primary work area (same pixel space as a PerMonitorV2 process).
     let mut work = RECT::default();
-    let ok = unsafe {
+    let _ = unsafe {
         SystemParametersInfoW(
             SPI_GETWORKAREA,
             0,
@@ -482,12 +575,17 @@ pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y:
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         )
     };
-    if ok.is_err() {
-        return;
-    }
+    (work, dpi, style, ex_style)
+}
+
+/// Resolve saved client geometry against the monitor working area so the outer
+/// decorated window never opens larger than the screen or off-screen, and
+/// center any unset axis. Client size is clamped in physical pixels.
+pub fn win_clamp_window_geometry(w: &mut c_int, h: &mut c_int, x: &mut c_int, y: &mut c_int) {
+    let (work, dpi, style, ex_style) = clamp_work_area(*x, *y);
     let vw = work.right - work.left;
     let vh = work.bottom - work.top;
-    let (frame_w, frame_h) = decorated_frame_size();
+    let (frame_w, frame_h) = decorated_frame_size(dpi, style, ex_style);
     let mut g = WindowGeometry {
         w: *w,
         h: *h,

@@ -97,6 +97,19 @@ pub fn jfn_playback_set_window_pixels(pw: i32, ph: i32) {
     state().set_window_pixels(pw, ph);
 }
 
+/// Publish a native client-area resize. This updates geometry persistence and
+/// the CEF size handler without synthesizing an OSD-dimensions playback event.
+pub fn jfn_playback_set_native_window_size(pw: i32, ph: i32, scale: f32) {
+    if pw <= 0 || ph <= 0 {
+        return;
+    }
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    let lw = (pw as f32 / s).ceil() as i32;
+    let lh = (ph as f32 / s).ceil() as i32;
+    state().set_window_pixels(pw, ph);
+    crate::browser_sink::jfn_playback_dispatch_browsers_size(lw, lh, pw, ph);
+}
+
 pub fn jfn_playback_window_pw() -> i32 {
     state().window_pw()
 }

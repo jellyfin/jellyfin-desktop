@@ -58,7 +58,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .join("resources")
             .join("win")
             .join("iconres.rc.in");
+        let dpi_manifest = repo_root
+            .join("resources")
+            .join("win")
+            .join("jellyfin-desktop.manifest");
         println!("cargo:rerun-if-changed={}", rc_template.display());
+        println!("cargo:rerun-if-changed={}", dpi_manifest.display());
 
         let template = std::fs::read_to_string(&rc_template)?;
 

@@ -19,6 +19,9 @@ use windows::Win32::System::SystemServices::{
     MK_RBUTTON, MK_SHIFT,
 };
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetFocus, VK_ADD, VK_BROWSER_BACK, VK_BROWSER_FORWARD, VK_CAPITAL, VK_CLEAR,
     VK_CONTROL, VK_DECIMAL, VK_DELETE, VK_DIVIDE, VK_DOWN, VK_END, VK_F4, VK_HOME, VK_INSERT,
@@ -456,6 +459,11 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 const CLASS_NAME: PCWSTR = w!("JellyfinCefInput");
 
 pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
+    // This child window receives physical-pixel Win32 mouse coordinates. Keep
+    // its thread in the same PMv2 context as mpv so its size and hit-testing
+    // do not get virtualized to 1536x802 on a 250% display.
+    let _ = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+
     let mpv = HWND(mpv_hwnd);
     let tid = unsafe { GetCurrentThreadId() };
 
