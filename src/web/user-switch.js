@@ -19,7 +19,9 @@
     const ICON_STRUCTURAL = new Set([
         'material-icons', 'md-icon',
         'listItemIcon', 'listItemIcon-transparent',
-        'actionsheetMenuItemIcon'
+        'actionsheetMenuItemIcon',
+        // Left-drawer (hamburger) row icons carry sizing/color on this class.
+        'navMenuOptionIcon'
     ]);
 
     function parseJson(text, fallback) {
@@ -519,8 +521,13 @@
     }
 
     function findRowByLabel(label) {
+        return findInRows(menuRows(), label);
+    }
+
+    // Case-insensitive label lookup within an explicit list of rows (exact
+    // match first, then substring). Shared by all menu installers.
+    function findInRows(rows, label) {
         const lower = label.toLowerCase();
-        const rows = menuRows();
         return rows.find(r => normalizedText(r).toLowerCase() === lower)
             || rows.find(r => normalizedText(r).toLowerCase().includes(lower))
             || null;
@@ -541,7 +548,11 @@
     }
 
     function setRowLabel(row, text) {
-        const body = row.querySelector('.listItemBodyText') || row.querySelector('.listItemBody');
+        // .listItemBodyText → preferences page + actionSheet rows;
+        // .navMenuOptionText → left-drawer rows; .listItemBody → fallback.
+        const body = row.querySelector('.listItemBodyText')
+            || row.querySelector('.navMenuOptionText')
+            || row.querySelector('.listItemBody');
         if (body) {
             body.textContent = text;
             return;
@@ -628,6 +639,172 @@
         }
 
         return true;
+    }
+
+    // Wire a freshly-cloned "Select User" row: neutralize the source row's
+    // navigation/behavior, point it at our picker, and make it keyboard-usable.
+    // `onActivate` runs after our own preventDefault/stopPropagation.
+    function wireSelectUserRow(row, id, onActivate) {
+        row.id = id;
+        row.removeAttribute('href');
+        row.removeAttribute('data-itemid');
+        row.removeAttribute('data-id');
+        row.setAttribute('role', 'button');
+        row.setAttribute('tabindex', '0');
+        row.style.cursor = 'pointer';
+        setRowIcon(row, 'people');
+        setRowLabel(row, 'Select User');
+        row.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onActivate();
+        }, true);
+        row.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onActivate();
+            }
+        });
+    }
+
+    // Location 2: the bottom of the left "hamburger" drawer. Rows there are
+    //   <a is="emby-linkbutton" class="navMenuOption lnkMediaFolder btnLogout" ...>
+    //     <span class="material-icons navMenuOptionIcon GLYPH"></span>
+    //     <span class="navMenuOptionText">Label</span></a>
+    // Present on every page, so this is not gated to the preferences view.
+    function installDrawerItem() {
+        if (document.getElementById('jfdSelectUserDrawerItem')) return true;
+
+        const rows = Array.from(document.querySelectorAll('a.navMenuOption'));
+        if (!rows.length) return false;
+
+        const signOut = findInRows(rows, 'Sign Out');
+        const selectServer = findInRows(rows, 'Select Server');
+        const reference = signOut || selectServer;
+        if (!reference || !reference.parentNode) return false;
+
+        const row = reference.cloneNode(true);
+        // Keep only the structural class; drop btnLogout/btnSelectServer/
+        // lnkMediaFolder so jellyfin-web's delegated drawer handlers don't fire.
+        row.className = 'navMenuOption';
+        wireSelectUserRow(row, 'jfdSelectUserDrawerItem', showPicker);
+
+        // Place it directly below Select Server (above Settings/Sign Out);
+        // fall back to just above Sign Out if Select Server isn't present.
+        if (selectServer && selectServer.parentNode) {
+            selectServer.parentNode.insertBefore(row, selectServer.nextSibling);
+        } else {
+            signOut.parentNode.insertBefore(row, signOut);
+        }
+        return true;
+    }
+
+    // Location 3a (classic): the account actionSheet (older jellyfin-web).
+    // Items are <button class="listItem ... actionSheetMenuItem"> with an
+    // .actionsheetMenuItemIcon and .listItemBodyText. Only inject into a sheet
+    // that carries account actions (Sign Out / Select Server).
+    function installActionSheetItem() {
+        const sheets = Array.from(document.querySelectorAll('.actionSheet'));
+        for (const sheet of sheets) {
+            if (sheet.querySelector('#jfdSelectUserSheetItem')) return true;
+
+            const scroller = sheet.querySelector('.actionSheetScroller') || sheet;
+            const items = Array.from(scroller.querySelectorAll('.actionSheetMenuItem'));
+            if (!items.length) continue;
+
+            const signOut = findInRows(items, 'Sign Out');
+            const selectServer = findInRows(items, 'Select Server');
+            const reference = signOut || selectServer;
+            if (!reference || !reference.parentNode) continue;
+
+            const row = reference.cloneNode(true);
+            row.className = 'listItem listItem-button actionSheetMenuItem';
+            wireSelectUserRow(row, 'jfdSelectUserSheetItem', () => {
+                const closeBtn = sheet.querySelector('.btnCloseActionSheet');
+                if (closeBtn) {
+                    closeBtn.click();
+                } else {
+                    (sheet.closest('.dialogContainer') || sheet).remove();
+                    document.querySelectorAll('.dialogBackdrop').forEach(b => b.remove());
+                }
+                showPicker();
+            });
+
+            reference.parentNode.insertBefore(row, reference);
+            return true;
+        }
+        return false;
+    }
+
+    // Material "group" (people) icon path, 24x24 viewBox — used for the MUI
+    // menu item whose icon is an inline SVG rather than a font-glyph class.
+    const PEOPLE_SVG_PATH = 'M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z';
+
+    // Location 3b (real on jellyfin-web 10.11): the top-right avatar menu is a
+    // React/MUI <Menu>, NOT an actionSheet:
+    //   ul.MuiMenu-list[role=menu] > li.MuiMenuItem-root[role=menuitem]
+    //     > div.MuiListItemIcon-root > svg.MuiSvgIcon-root   (inline SVG icon)
+    //     > div.MuiListItemText-root > span.MuiListItemText-primary (label)
+    // Emotion `css-*` hash classes carry all styling, so clone a real item
+    // (keeping its classes), swap only the SVG path + label, close the menu via
+    // its modal backdrop, then open the picker. Re-injected per open.
+    function installMuiUserMenuItem() {
+        const lists = Array.from(document.querySelectorAll('ul.MuiMenu-list'));
+        for (const ul of lists) {
+            if (ul.querySelector('#jfdSelectUserMuiItem')) return true;
+
+            const items = Array.from(ul.querySelectorAll(':scope > [role="menuitem"]'));
+            if (!items.length) continue;
+
+            const signOut = findInRows(items, 'Sign Out');
+            const selectServer = findInRows(items, 'Select Server');
+            const reference = signOut || selectServer;
+            if (!reference || !reference.parentNode) continue;
+
+            const row = reference.cloneNode(true);
+            row.id = 'jfdSelectUserMuiItem';
+            row.removeAttribute('href');
+            row.removeAttribute('aria-disabled');
+            const svg = row.querySelector('svg');
+            if (svg) {
+                svg.removeAttribute('data-testid');
+                svg.innerHTML = '<path d="' + PEOPLE_SVG_PATH + '"></path>';
+            }
+            const label = row.querySelector('.MuiListItemText-primary')
+                || row.querySelector('.MuiListItemText-root span')
+                || row.querySelector('.MuiListItemText-root');
+            if (label) label.textContent = 'Select User';
+            const ripple = row.querySelector('.MuiTouchRipple-root');
+            if (ripple) ripple.innerHTML = '';
+
+            const activate = () => {
+                const backdrop = document.querySelector('.MuiModal-root .MuiBackdrop-root');
+                if (backdrop) {
+                    backdrop.click();
+                } else {
+                    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                }
+                showPicker();
+            };
+            // stopImmediatePropagation so React's root-delegated handler can't
+            // also fire (e.g. navigating away) when our item is clicked.
+            row.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                activate();
+            }, true);
+            row.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    activate();
+                }
+            });
+
+            reference.parentNode.insertBefore(row, reference);
+            return true;
+        }
+        return false;
     }
 
     window.jfdUserSwitch = {
@@ -760,6 +937,9 @@
 
     function onDomChange() {
         installMenuItem();
+        installDrawerItem();
+        installActionSheetItem();
+        installMuiUserMenuItem();
         injectLoginCancelButton();
         fixLoginInputTabindex();
         maybeRecoverSwitch();
