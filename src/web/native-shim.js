@@ -142,6 +142,23 @@
         settingsDescriptionsUpdate: []
     };
 
+    // Older desktop builds could persist Jellyfin's automatic TV layout in
+    // the app profile. That layout intentionally omits desktop scroller
+    // buttons, even though this client advertises desktop mode. Migrate that
+    // stale preference once; a later manual layout choice must remain intact.
+    try {
+        const migrationKey = 'jfnDesktopLayoutMigratedV1';
+        if (!localStorage.getItem(migrationKey)) {
+            if (localStorage.getItem('layout') === 'tv') {
+                localStorage.setItem('layout', 'desktop');
+                console.info('[Main] Migrated saved layout from tv to desktop');
+            }
+            localStorage.setItem(migrationKey, '1');
+        }
+    } catch (e) {
+        console.warn('[Main] Could not migrate saved layout:', e);
+    }
+
     // macOS-only: transparent titlebar toggle (shown first in Advanced section)
     if (navigator.platform.startsWith('Mac')) {
         jmpInfo.settingsDescriptions.advanced.unshift({
