@@ -50,7 +50,18 @@ const TRANSCODE_MAX_AUDIO_CHANNELS: &str = "6";
 // dropped to stay under the server's 40-char AudioCodec query-param
 // validator, ^[a-zA-Z0-9\-\._,|]{0,40}$):
 // https://github.com/jellyfin/jellyfin/blob/2c62d40f0d13926874eef9118a95be0dcee4e659/MediaBrowser.Model/Dlna/StreamBuilder.cs#L31-L33
-const TRANSCODE_VIDEO_CODEC: &[&str] = &["av1", "hevc", "h264", "vp9"];
+//
+// ORDER IS CRITICAL for video: the server picks the output codec straight from
+// this list (StreamBuilder keeps profile order; StreamingHelpers takes the
+// first entry) and does NO encoder-capability validation — it will happily
+// emit `-codec:v av1_nvenc` on a GPU with no AV1 encoder and hard-fail (ffmpeg
+// exit 218). So the list must be ordered by descending real-world encode
+// compatibility: h264 (every server can hardware-encode it) first, then hevc
+// (all recent NVENC/QSV/VAAPI/AMF). av1/vp9 are software-encode-only on the
+// vast majority of servers (~0.1x realtime), so they trail as last-resort
+// fallbacks only — never reached in practice, since any client that can decode
+// av1/vp9 also decodes hevc, which precedes them.
+const TRANSCODE_VIDEO_CODEC: &[&str] = &["h264", "hevc", "av1", "vp9"];
 const TRANSCODE_AUDIO_CODEC_MP4: &[&str] =
     &["opus", "aac", "eac3", "ac3", "flac", "mp3", "dts", "truehd"];
 const TRANSCODE_AUDIO_CODEC_TS: &[&str] = &["aac", "eac3", "ac3", "mp3"];
@@ -425,6 +436,28 @@ mod tests {
                 .collect();
             assert!(methods.contains(&"Embed"));
             assert!(methods.contains(&"External"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn transcode_video_prefers_h264_first_regardless_of_decoder_order() -> TestResult {
+        // The server picks the first VideoCodec with no encoder validation, so
+        // h264 (universally hardware-encodable) must lead even when the decoder
+        // list enumerates other codecs first. av1/vp9 trail as last resort.
+        let decoders = vec![
+            codec("av1", MediaKind::Video),
+            codec("vp9", MediaKind::Video),
+            codec("hevc", MediaKind::Video),
+            codec("h264", MediaKind::Video),
+        ];
+        let s = build_device_profile(&decoders, &["matroska".into()], "dev", "1.0", false);
+        let v = parse(&s)?;
+        let tp = v["TranscodingProfiles"]
+            .as_array()
+            .ok_or("expected array")?;
+        for e in tp.iter().filter(|e| e["Type"] == "Video") {
+            assert_eq!(e["VideoCodec"], "h264,hevc,av1,vp9");
         }
         Ok(())
     }

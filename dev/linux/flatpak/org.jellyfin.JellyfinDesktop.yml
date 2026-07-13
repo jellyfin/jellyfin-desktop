@@ -17,6 +17,24 @@ finish-args:
   - --device=dri
   - --talk-name=org.freedesktop.ScreenSaver
   - --own-name=org.mpris.MediaPlayer2.JellyfinDesktop
+# The base org.freedesktop.Platform//25.08 libavcodec ships WITHOUT the
+# patent-encumbered h264/hevc decoders (freedesktop moved them out of the base
+# runtime in 25.08 — 24.08 still had h264). Those decoders live only in the
+# codecs-extra extension (the 25.08 rename of ffmpeg-full). Without it, the
+# device profile built from mpv's decoder list (src/jellyfin) advertises no
+# h264/hevc, so the server (a) can't direct-play the ~all of most libraries and
+# (b) is forced to transcode into av1/vp9 — software-encode-only on the vast
+# majority of servers (~0.1x). It is nominally an autodownloaded runtime
+# extension, but that only fires for remote installs of an up-to-date client;
+# local/bundle installs strand users in full-library transcoding. Declare it
+# as an explicit, non-autodeleted dependency so h264/hevc decode is guaranteed.
+add-extensions:
+  org.freedesktop.Platform.codecs-extra:
+    version: '25.08-extra'
+    directory: lib/x86_64-linux-gnu/codecs-extra
+    add-ld-path: lib
+    no-autodownload: false
+    autodelete: false
 cleanup:
   - '*.a'
   - '*.la'
@@ -161,6 +179,9 @@ modules:
     build-commands:
       - cargo xtask install --external-cef /app/cef --external-mpv /app --no-kde-palette --prefix /app
       - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
+      # Mount point for the codecs-extra extension (add-extensions above);
+      # flatpak refuses to mount an extension whose directory is absent.
+      - mkdir -p /app/lib/x86_64-linux-gnu/codecs-extra
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
       - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg
       - install -Dm644 build/flatpak/generated.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
