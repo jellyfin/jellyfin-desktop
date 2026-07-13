@@ -20,6 +20,7 @@ mod paths;
 mod platform;
 #[cfg(target_os = "macos")]
 mod template;
+mod test;
 mod version;
 
 #[derive(Parser)]
@@ -34,6 +35,8 @@ enum Cmd {
     Build(BuildArgs),
     Install(InstallArgs),
     Package(PackageArgs),
+    /// Run the workspace test suite against the in-tree (or external) libmpv.
+    Test(TestArgs),
     FetchCef,
     /// Print the full version string (`<semver>+<short-sha>[-dirty]`).
     Version,
@@ -74,6 +77,20 @@ pub struct InstallArgs {
 }
 
 #[derive(clap::Args)]
+pub struct TestArgs {
+    /// Use the named external libmpv directory (must contain include/ and lib/).
+    #[arg(long, env = "EXTERNAL_MPV_DIR")]
+    pub external_mpv: Option<PathBuf>,
+    /// Build directory the mpv library was staged into (matches `build --out`).
+    #[arg(long, default_value = "build")]
+    pub out: PathBuf,
+    /// Extra arguments forwarded verbatim to `cargo test`
+    /// (e.g. `cargo xtask test -- --nocapture`).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub cargo_args: Vec<String>,
+}
+
+#[derive(clap::Args)]
 pub struct PackageArgs {
     #[command(flatten)]
     pub install: InstallArgs,
@@ -88,6 +105,7 @@ fn main() -> Result<()> {
         Cmd::Build(a) => build::run(&a).map(|_| ()),
         Cmd::Install(a) => install::run(&a).map(|_| ()),
         Cmd::Package(a) => package::run(&a),
+        Cmd::Test(a) => test::run(&a),
         Cmd::FetchCef => {
             cef::ensure(&paths::cef_cache_dir()).map(|dir| println!("CEF ready: {}", dir.display()))
         }

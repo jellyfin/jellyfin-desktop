@@ -32,8 +32,8 @@ clean:
 # Run tests
 [group('test')]
 [unix]
-test: build
-    cargo test --manifest-path src/Cargo.toml --workspace
+test *args: build
+    cargo xtask test {{args}}
 
 # Run tests (loads MSVC + bindgen libclang env via dev/windows/env.ps1)
 [group('test')]
