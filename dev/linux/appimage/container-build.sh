@@ -49,6 +49,15 @@ cp "$BUILD"/libvk_swiftshader.so "$APPDIR/usr/bin/"
 # Fedora x86_64: shared libs live in /usr/lib64; /usr/lib holds noarch only.
 cp -a /usr/lib64 "$APPDIR/usr/lib"
 
+# On aarch64, Fedora's glibc package installs the ELF dynamic loader itself
+# under /usr/lib rather than /usr/lib64 (unlike x86_64, where it lives
+# alongside the rest of the 64-bit libs in /usr/lib64 and is already covered
+# by the copy above). Without it, AppRun's interpreter symlink dangles and
+# the AppImage fails to launch on any host with a different glibc version.
+if [ ! -e "$APPDIR/usr/lib/${LD_SONAME}" ]; then
+    cp -a "/usr/lib/${LD_SONAME}" "$APPDIR/usr/lib/"
+fi
+
 # mpv lib (xtask build copies it next to jellyfin-desktop)
 cp "$BUILD"/libmpv.so.2 "$APPDIR/usr/lib/"
 
