@@ -18,7 +18,7 @@ tracing.workspace = true
 libc.workspace = true
 thiserror = "2"
 raw-window-handle = "0.6"
-wgpu = "29"
+wgpu = "30"
 # Pinned to wgpu's exact build so the hal/ash types are identical to the ones
 # wgpu links; the dmabuf-import path reaches the Vulkan device through them.
 wgpu-hal = { version = "=29.0.4", features = ["vulkan"] }
