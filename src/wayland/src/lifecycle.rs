@@ -48,7 +48,21 @@ fn vo_captured_display() -> Option<*mut c_void> {
         return None;
     }
     let d = jfn_linux_util::wl_display_registry::captured_display(idx as usize);
-    (!d.is_null()).then_some(d)
+    if !d.is_null() {
+        return Some(d);
+    }
+    // The wlproxy's SAME_PROC_SEQ index can be 1 ahead of the registry on
+    // some GPU contexts (e.g. EGL Wayland) where mpv's internal connection
+    // sequence differs from the Vulkan path. Fall back to the last captured
+    // display, which is mpv's VO connection in this case.
+    if count > 0 {
+        let last = jfn_linux_util::wl_display_registry::captured_display(count - 1);
+        if !last.is_null() {
+            tracing::warn!(target: "WlInterpose", "vo_index out of range; falling back to last captured display (idx {})", count - 1);
+            return Some(last);
+        }
+    }
+    None
 }
 
 // =====================================================================

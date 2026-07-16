@@ -16,8 +16,11 @@ use std::thread::{self, JoinHandle};
 use memmap2::MmapOptions;
 use wayland_backend::client::Backend;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
-use wayland_client::protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_surface};
+use wayland_client::protocol::{
+    wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_surface,
+};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
+use wayland_cursor::CursorTheme;
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1::{self, WpCursorShapeDeviceV1},
     wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
@@ -81,6 +84,36 @@ fn cef_to_wl_shape(shape: CursorShape) -> u32 {
         _ => Shape::Default,
     };
     s as u32
+}
+
+fn cef_to_xcursor_name(shape: CursorShape) -> &'static str {
+    use CursorShape::*;
+    match shape {
+        Hand => "pointer",
+        IBeam => "text",
+        Wait => "wait",
+        Progress => "progress",
+        Cross => "crosshair",
+        Move => "move",
+        NoDrop => "no-drop",
+        NotAllowed => "not-allowed",
+        EastResize => "e-resize",
+        WestResize => "w-resize",
+        NorthResize => "n-resize",
+        SouthResize => "s-resize",
+        NorthEastResize => "ne-resize",
+        NorthWestResize => "nw-resize",
+        SouthEastResize => "se-resize",
+        SouthWestResize => "sw-resize",
+        NorthSouthResize | RowResize => "ns-resize",
+        EastWestResize | ColumnResize => "ew-resize",
+        NorthEastSouthWestResize => "nesw-resize",
+        NorthWestSouthEastResize => "nwse-resize",
+        Grab | Grabbing => "grabbing",
+        ZoomIn => "zoom-in",
+        ZoomOut => "zoom-out",
+        _ => "default",
+    }
 }
 
 pub type MouseMoveFn = fn(x: i32, y: i32, mods: u32, leave: c_int);
@@ -152,6 +185,13 @@ struct State {
     cursor_type: Arc<AtomicU32>,
 
     menu_focus: bool,
+
+    // Cursor theme fallback for when wp_cursor_shape_manager_v1 is unavailable.
+    conn: Option<Connection>,
+    compositor: Option<wl_compositor::WlCompositor>,
+    shm: Option<wl_shm::WlShm>,
+    cursor_theme: Option<CursorTheme>,
+    cursor_surface: Option<wl_surface::WlSurface>,
 }
 
 impl State {
@@ -196,7 +236,57 @@ impl State {
                 std::mem::transmute::<u32, wp_cursor_shape_device_v1::Shape>(cef_to_wl_shape(cef))
             };
             dev.set_shape(self.pointer_serial, shape);
+            return;
         }
+        // Cursor shape protocol unavailable; fall back to wl_cursor_theme.
+        self.apply_cursor_legacy(cef, qh);
+    }
+
+    fn apply_cursor_legacy(&mut self, shape: CursorShape, qh: &QueueHandle<Self>) {
+        let serial = self.pointer_serial;
+        if self.cursor_theme.is_none()
+            && let (Some(conn), Some(shm)) = (&self.conn, self.shm.clone())
+        {
+            self.cursor_theme = CursorTheme::load(conn, shm, 24).ok();
+        }
+        let Some(theme) = &mut self.cursor_theme else {
+            return;
+        };
+        // get_cursor takes &mut self (for caching), so find the name in a
+        // separate pass then do one final lookup to avoid overlapping borrows.
+        let mut chosen_name = "";
+        for candidate in [cef_to_xcursor_name(shape), "default", "left_ptr"] {
+            if theme.get_cursor(candidate).is_some() {
+                chosen_name = candidate;
+                break;
+            }
+        }
+        if chosen_name.is_empty() {
+            return;
+        }
+        let Some(cursor) = theme.get_cursor(chosen_name) else {
+            return;
+        };
+        if cursor.image_count() == 0 {
+            return;
+        }
+        let image = &cursor[0];
+        let (hx, hy) = image.hotspot();
+
+        if self.cursor_surface.is_none()
+            && let Some(compositor) = &self.compositor
+        {
+            self.cursor_surface = Some(compositor.create_surface(qh, ()));
+        }
+        let Some(surface) = &self.cursor_surface else {
+            return;
+        };
+        surface.attach(Some(&**image), 0, 0);
+        surface.damage(0, 0, i32::MAX, i32::MAX);
+        surface.commit();
+
+        let Some(pointer) = &self.pointer else { return };
+        pointer.set_cursor(serial, Some(surface), hx as i32, hy as i32);
     }
 }
 
@@ -617,6 +707,30 @@ impl Dispatch<wl_surface::WlSurface, ()> for State {
     }
 }
 
+impl Dispatch<wl_compositor::WlCompositor, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_shm::WlShm, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &wl_shm::WlShm,
+        _: wl_shm::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
 pub struct JfnInputWayland {
     cursor_type: Arc<AtomicU32>,
     set_cursor_inbox: Arc<AtomicBool>,
@@ -726,10 +840,13 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
     // Register before the bind is flushed so the proxy claims this seat (see wlproxy).
     jfn_wlproxy::jfn_wlproxy_set_input_seat(seat.id().protocol_id());
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
+    let compositor: Option<wl_compositor::WlCompositor> = globals.bind(&qh, 1..=6, ()).ok();
+    let shm: Option<wl_shm::WlShm> = globals.bind(&qh, 1..=1, ()).ok();
 
     let cursor_type = Arc::new(AtomicU32::new(CursorShape::Pointer.as_raw() as u32));
     let set_cursor_inbox = Arc::new(AtomicBool::new(false));
 
+    let conn_clone = conn.clone();
     let state = State {
         cb,
         seat: Some(seat),
@@ -755,6 +872,11 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
         modifiers: 0,
         cursor_type: cursor_type.clone(),
         menu_focus: false,
+        conn: Some(conn_clone),
+        compositor,
+        shm,
+        cursor_theme: None,
+        cursor_surface: None,
     };
 
     let stop = Arc::new(AtomicBool::new(false));

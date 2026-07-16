@@ -52,7 +52,6 @@ pub struct JfnMpvBoot {
     /// Optional `<W>x<H>[+x+y]` geometry string from saved settings.
     pub geometry: *const c_char,
     pub force_window_position: bool,
-    pub window_maximized_at_boot: bool,
     /// libmpv log-message subscription level (`"no"`, `"error"`,
     /// `"warn"`, `"info"`, `"v"`, `"debug"`, `"trace"`).
     pub mpv_log_level: *const c_char,
@@ -137,8 +136,11 @@ fn apply_defaults(
     }
 
     // Disable mpv's clipboard so it keeps a single wl_display connection.
+    // Force EGL Wayland context: skip the Vulkan probe (waylandvk) which
+    // hangs on software-only Vulkan drivers (e.g. llvmpipe in VMs).
     if display == DisplayBackend::Wayland {
         set("clipboard-backends", "")?;
+        set("gpu-context", "wayland")?;
     }
 
     // Window behavior.
@@ -185,9 +187,6 @@ fn apply_boot_options(handle: &Handle, boot: &JfnMpvBoot) -> crate::error::Resul
     }
     if boot.force_window_position {
         set("force-window-position", "yes")?;
-    }
-    if boot.window_maximized_at_boot {
-        set("window-maximized", "yes")?;
     }
     if let Some(spdif) = unsafe { cstr_opt(boot.audio_passthrough) }
         && !spdif.is_empty()

@@ -91,7 +91,8 @@
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
             playback: {
-                hwdec: _savedSettings.hwdec || 'auto'
+                hwdec: _savedSettings.hwdec || 'auto',
+                startupWindowMode: _savedSettings.startupWindowMode || 'windowed'
             },
             audio: {
                 audioPassthrough: _savedSettings.audioPassthrough || '',
@@ -111,7 +112,18 @@
         },
         settingsDescriptions: {
             playback: [
-                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions }
+                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions },
+                { key: 'startupWindowMode', displayName: 'Startup Window Mode', help: 'Controls how the Jellyfin Desktop window opens on startup.', options: (() => {
+                    const options = [
+                        { value: 'windowed', title: 'Open windowed' },
+                        { value: 'maximized', title: 'Open maximized' },
+                        { value: 'fullscreen', title: 'Open fullscreen' }
+                    ];
+                    if (_savedSettings.displayBackend === 'macos' || _savedSettings.displayBackend === 'wayland') {
+                        return options.filter(option => option.value !== 'maximized');
+                    }
+                    return options;
+                })()}
             ],
             audio: [
                 { key: 'audioPassthrough', displayName: 'Audio Passthrough', help: 'Comma-separated list of codecs to pass through to the audio device (e.g. ac3,eac3,dts-hd,truehd). Leave empty to disable.', inputType: 'textarea' },

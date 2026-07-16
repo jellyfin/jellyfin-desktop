@@ -1,5 +1,11 @@
 # Project Notes
 
+## Constraints
+- **No hand-rolled JSON** — never manually construct or parse JSON with string concatenation, manual escaping, or homebrew parsers. Always use a proper JSON library or API (e.g. CEF's `CefParseJSON`/`CefWriteJSON`, or a vendored library if CEF isn't available in that context).
+- **No artificial heartbeats/polling** - event-driven architecture only. Never use timeouts as a workaround for proper event integration. No arbitrary timeout-based bailouts in shutdown paths either — fix the root cause instead.
+- **No texture stretching during resize** - CEF content must always render at 1:1 pixel mapping. Never scale/stretch textures to fill the viewport. Gaps from stale texture sizes are acceptable; stretching is not.
+- **No force pushing shared branches** — never use `git push --force` on any branch. `--force-with-lease` is only permitted on your own single-session branches and only after explicitly confirming with the user that no other session has pushed to that branch. When in doubt, fetch first and rebase locally.
+
 ## Build / Run
 All app code is Rust; the cargo workspace lives in `src/` and produces the `jellyfin-desktop` binary. Everything is driven through `just` — recipes are OS-gated via `[macos]`/`[linux]`/`[windows]` attributes, so the same command works everywhere:
 ```
@@ -33,3 +39,6 @@ Run `just fmt` and `just lint` before every commit; both must pass clean (lint r
 
 ## mpv Event Flow
 mpv is the authoritative source of playback state. All state (position, speed, pause, seeking, etc.) flows from mpv property observations outward to the JS UI and OS media sessions. The JS UI and MPRIS/macOS media sessions are consumers — they never determine playback state, they only reflect what mpv reports. This means things like rate changes, seek completion, and position updates come from mpv, not from JS round-trips or manual bookkeeping.
+
+## Debugging
+- For mpv (third_party/mpv), jellyfin-web, and CEF: investigate source code directly before suggesting debug logs that require manual user action

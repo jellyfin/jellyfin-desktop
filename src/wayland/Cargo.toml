@@ -35,6 +35,7 @@ tracing.workspace = true
 smithay-client-toolkit = { version = "0.20", default-features = false }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
+wayland-cursor = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-scanner = "0.31"
 xkbcommon = "0.9"

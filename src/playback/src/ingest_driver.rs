@@ -438,6 +438,13 @@ fn event_loop(handle_addr: usize, stop: std::sync::Arc<AtomicBool>) {
                 if id == crate::ingest::observe_id::FULLSCREEN
                     && let PropertyValue::Flag(f) = value
                 {
+                    // Pre-update the atomic so win_set_fullscreen sees the
+                    // current state and skips starting a redundant transition.
+                    // Without this, win_set_fullscreen reads stale state and
+                    // calls begin_transition_locked() again on a window that is
+                    // already in the target fullscreen state, dropping the swap
+                    // chain and leaving the gate open forever (black screen).
+                    state().set_fullscreen(*f);
                     invoke_fullscreen_handler(*f);
                 }
             }

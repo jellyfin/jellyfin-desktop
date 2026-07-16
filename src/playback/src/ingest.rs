@@ -98,6 +98,9 @@ impl IngestState {
     pub fn fullscreen(&self) -> bool {
         self.fullscreen.load(Ordering::Relaxed)
     }
+    pub fn set_fullscreen(&self, val: bool) {
+        self.fullscreen.store(val, Ordering::Relaxed);
+    }
     pub fn window_maximized(&self) -> bool {
         self.window_maximized.load(Ordering::Relaxed)
     }
