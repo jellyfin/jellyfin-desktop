@@ -583,7 +583,7 @@ fn clear_menu_locked(st: &mut WlState) {
 
 fn next_generation() -> u32 {
     NEXT_GENERATION
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |v| {
             Some(if v == u32::MAX { 1 } else { v + 1 })
         })
         .unwrap_or(1)
