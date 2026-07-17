@@ -217,6 +217,28 @@ fn refocus(layer: *mut JfnCefLayer) {
     unsafe { jfn_cef_layer_set_focus(layer, true) };
 }
 
+/// Re-assert widget focus on the active top layer, but only if `inner` is that
+/// layer. Called from `Inner::on_load_end` after a main-frame (re)load: a
+/// same-layer navigation (profile switch / login "Back to user selection")
+/// keeps the layer active but leaves the freshly loaded document unfocused on
+/// some platforms (X11 OSR), so the login input renders with no caret or focus
+/// ring even though it is `document.activeElement`. Re-focusing only when the
+/// loaded layer is the current top avoids stealing focus from an overlay whose
+/// background layer happens to finish loading.
+pub(crate) fn jfn_browsers_refocus_if_active(inner: *const Inner) {
+    if inner.is_null() {
+        return;
+    }
+    let top = jfn_browsers_active();
+    if top.is_null() {
+        return;
+    }
+    let top_inner = Arc::as_ptr(unsafe { &(*top).inner });
+    if std::ptr::eq(top_inner, inner) {
+        refocus(top);
+    }
+}
+
 fn cursor_handle_of(layer: *mut JfnCefLayer) -> Option<Handle> {
     if layer.is_null() {
         return None;

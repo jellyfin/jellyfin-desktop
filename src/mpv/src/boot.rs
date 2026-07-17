@@ -137,8 +137,23 @@ fn apply_defaults(
     }
 
     // Disable mpv's clipboard so it keeps a single wl_display connection.
+    // Force EGL Wayland context: skip the Vulkan probe (waylandvk) which
+    // hangs on software-only Vulkan drivers (e.g. llvmpipe in VMs).
+    // If this libmpv build lacks Wayland support (HAVE_EGL_WAYLAND=0, e.g.
+    // wayland-client < 1.23 on Ubuntu 24.04), the value is invalid — skip
+    // gracefully; mpv will auto-select X11/EGL via XWayland instead.
     if display == DisplayBackend::Wayland {
         set("clipboard-backends", "")?;
+        match handle.set_option_string("gpu-context", "wayland") {
+            Ok(()) => {}
+            Err(e)
+                if e.code == sys::mpv_error::MPV_ERROR_OPTION_NOT_FOUND.0
+                    || e.code == sys::mpv_error::MPV_ERROR_OPTION_ERROR.0 =>
+            {
+                tracing::warn!(target: "mpv", "gpu-context=wayland unavailable in this libmpv build; skipping");
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     // Window behavior.
