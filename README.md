@@ -36,6 +36,7 @@ Available recipes:
     dmg             # [macos] build Apple Disk Image (.dmg)
 
     [maintenance]
+    outdated      # List outdated dependencies
     clean         # Remove build artifacts
 
     [test]

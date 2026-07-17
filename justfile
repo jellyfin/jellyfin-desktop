@@ -13,6 +13,11 @@ import 'dev/windows/windows.just'
 list:
     @just --list --unsorted
 
+# List outdated dependencies
+[group('maintenance')]
+outdated:
+    cargo outdated --manifest-path src/Cargo.toml --workspace --root-deps-only
+
 # Remove build artifacts
 [group('maintenance')]
 [macos]
