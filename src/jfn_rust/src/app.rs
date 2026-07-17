@@ -53,7 +53,7 @@ fn normalize_passthrough(s: &str) -> String {
 
 fn print_version() {
     println!(
-        "jellyfin-desktop {}\n\nCEF {}\n",
+        "jellium-desktop {}\n\nCEF {}\n",
         APP_VERSION_FULL, APP_CEF_VERSION
     );
     use std::io::Write;
@@ -75,7 +75,7 @@ fn init_logging(log_file: Option<String>, log_level: &str) {
     };
     jfn_logging::jfn_log_init(&log_path, &filter);
 
-    tracing::info!(target: "Main", "jellyfin-desktop {APP_VERSION_FULL}");
+    tracing::info!(target: "Main", "jellium-desktop {APP_VERSION_FULL}");
     tracing::info!(target: "Main", "CEF {APP_CEF_VERSION}");
     if !log_path.is_empty() {
         tracing::info!(target: "Main", "Log file: {log_path}");
@@ -226,7 +226,7 @@ struct MpvInitOptions<'a> {
 fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
     let geometry_c = opts.boot_geometry.map(cs);
     let hwdec_c = cs(opts.hwdec);
-    let user_agent_c = cs(&format!("JellyfinDesktop/{}", APP_VERSION_FULL));
+    let user_agent_c = cs(&format!("JelliumDesktop/{}", APP_VERSION_FULL));
     let passthrough_c = cs(opts.audio_passthrough);
     let channels_c = cs(opts.audio_channels);
     let mpv_log_level_c = cs(opts.mpv_log_level);
@@ -338,7 +338,7 @@ fn publish_device_profile(mpv_raw: *mut jfn_mpv::sys::mpv_handle) {
     let profile = jfn_jellyfin::build_device_profile(
         &decoders,
         &caps.demuxers,
-        "Jellyfin Desktop",
+        "Jellium Desktop",
         APP_VERSION_FULL,
         force,
     );

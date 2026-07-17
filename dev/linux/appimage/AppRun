@@ -31,4 +31,4 @@ export GNUTLS_SYSTEM_PRIORITY_FILE="${HERE}/usr/share/crypto-policies/DEFAULT/gn
 # LD_LIBRARY_PATH for library resolution (bundled first, host fallback for GPU).
 export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-exec "${HERE}/usr/bin/jellyfin-desktop" "$@"
+exec "${HERE}/usr/bin/jellium-desktop" "$@"

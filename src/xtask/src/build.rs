@@ -26,7 +26,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     cmd.arg("build")
         .arg("--release")
         .arg("--bin")
-        .arg("jellyfin-desktop")
+        .arg("jellium-desktop")
         .arg("--manifest-path")
         .arg(&manifest);
     if args.no_kde_palette {
@@ -85,16 +85,16 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         }
     }
 
-    println!("Building jellyfin-desktop (Rust binary)...");
+    println!("Building jellium-desktop (Rust binary)...");
     let status = cmd.status().context("spawn cargo build")?;
     if !status.success() {
         bail!("cargo build failed");
     }
 
     let bin_name = if cfg!(target_os = "windows") {
-        "jellyfin-desktop.exe"
+        "jellium-desktop.exe"
     } else {
-        "jellyfin-desktop"
+        "jellium-desktop"
     };
     let bin_src = target_dir.join("release").join(bin_name);
     let bin_dst = out.join(bin_name);

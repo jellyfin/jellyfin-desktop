@@ -1,4 +1,4 @@
-# Toolchain image for building jellyfin-desktop AppImages.
+# Toolchain image for building jellium-desktop AppImages.
 # Source build, mpv build, AppDir assembly, and packaging all happen at
 # `podman run` time via container-build.sh (bind-mounted from the repo at
 # /src/dev/linux/appimage/container-build.sh), with host bind mounts for

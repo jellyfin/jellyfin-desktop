@@ -40,8 +40,8 @@ use wayland_protocols_plasma::server_decoration_palette::client::{
 
 use jfn_platform_abi::WindowDecorations;
 
-const APP_ID: &str = "org.jellyfin.JellyfinDesktop";
-const TITLE: &str = "Jellyfin Desktop";
+const APP_ID: &str = "net.nullsum.JelliumDesktop";
+const TITLE: &str = "Jellium Desktop";
 
 // Background behind the video/overlay, matching kBgColor (0x101010).
 const BG: [u8; 3] = [0x10, 0x10, 0x10];

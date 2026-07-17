@@ -2,7 +2,7 @@
 //!
 //! Two groups, separated by the dividers below:
 //!   1. Generic CEF/Rust helpers — could lift into a `cef-rs-helpers` crate.
-//!   2. App-specific dispatch — Jellyfin-desktop config wiring.
+//!   2. App-specific dispatch — Jellium Desktop config wiring.
 
 use std::ffi::CString;
 

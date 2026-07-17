@@ -40,7 +40,7 @@ fn make_colors_dir() -> Option<PathBuf> {
         _ => return None,
     };
     let mut dir = PathBuf::from(runtime);
-    dir.push("jellyfin-desktop");
+    dir.push("jellium-desktop");
     if let Err(e) = fs::create_dir_all(&dir) {
         tracing::warn!("kde_palette: mkdir {} failed: {}", dir.display(), e);
         return None;
@@ -81,7 +81,7 @@ pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_ch
     };
 
     let mut new_path = state.colors_dir.clone();
-    new_path.push(format!("JellyfinDesktop-{}.colors", hex_str));
+    new_path.push(format!("JelliumDesktop-{}.colors", hex_str));
 
     let new_path_c = match CString::new(new_path.as_os_str().as_encoded_bytes()) {
         Ok(c) => c,

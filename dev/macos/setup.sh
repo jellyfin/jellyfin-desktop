@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Jellyfin Desktop - macOS dependency installer
+# Jellium Desktop - macOS dependency installer
 # Run once to install all build dependencies
 set -eu
 

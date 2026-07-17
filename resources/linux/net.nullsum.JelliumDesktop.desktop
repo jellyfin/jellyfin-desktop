@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Jellium Desktop
+Comment=Desktop client for Jellyfin
+Exec=jellium-desktop
+Icon=net.nullsum.JelliumDesktop
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Player;TV;
+StartupWMClass=net.nullsum.JelliumDesktop

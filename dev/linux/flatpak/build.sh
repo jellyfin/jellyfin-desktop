@@ -8,12 +8,12 @@ DIST_DIR="${REPO_ROOT}/dist"
 mkdir -p "$BUILD_OUT" "$DIST_DIR"
 cd "$BUILD_OUT"
 
-MANIFEST="${SCRIPT_DIR}/org.jellyfin.JellyfinDesktop.yml"
-APP_ID="org.jellyfin.JellyfinDesktop"
+MANIFEST="${SCRIPT_DIR}/net.nullsum.JelliumDesktop.yml"
+APP_ID="net.nullsum.JelliumDesktop"
 VERSION="$(cargo run --quiet --manifest-path "${REPO_ROOT}/src/xtask/Cargo.toml" -- version)"
 DATE="$(date -u +%Y-%m-%d)"
 ARCH="$(uname -m)"
-BUNDLE_NAME="JellyfinDesktop-${VERSION}-linux-${ARCH}.flatpak"
+BUNDLE_NAME="JelliumDesktop-${VERSION}-linux-${ARCH}.flatpak"
 RUNTIME_VERSION="25.08"
 
 # Check dependencies
@@ -46,7 +46,7 @@ fi
 
 # Generate metainfo.xml with the current version injected.
 python3 "${SCRIPT_DIR}/generate_metainfo.py" \
-    --template "${REPO_ROOT}/resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml" \
+    --template "${REPO_ROOT}/resources/linux/net.nullsum.JelliumDesktop.metainfo.xml" \
     --output "${BUILD_OUT}/generated.metainfo.xml" \
     --version "$VERSION" \
     --date "$DATE"

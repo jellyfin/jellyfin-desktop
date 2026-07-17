@@ -1,4 +1,4 @@
-# Setup Windows development environment for jellyfin-desktop
+# Setup Windows development environment for jellium-desktop
 # Prerequisites: Visual Studio 2022, Python 3, 7-Zip, CMake (needed by
 # cef-dll-sys to build libcef_dll_wrapper), Ninja, meson, Rust.
 
@@ -13,7 +13,7 @@ $RepoRoot = (Get-Item $PSScriptRoot).Parent.Parent.FullName
 # Refresh PATH to pick up recently installed tools (e.g. via winget)
 $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
 
-Write-Host "=== jellyfin-desktop Windows Setup ===" -ForegroundColor Cyan
+Write-Host "=== jellium-desktop Windows Setup ===" -ForegroundColor Cyan
 Write-Host "Repository: $RepoRoot"
 Write-Host ""
 

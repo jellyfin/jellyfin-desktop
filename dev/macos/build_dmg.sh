@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
-# Jellyfin Desktop - create distributable DMG from a built app bundle.
+# Jellium Desktop - create distributable DMG from a built app bundle.
 # Assumes `cargo xtask install --prefix build/output` has already run.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${0}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-APP_NAME="Jellyfin Desktop.app"
+APP_NAME="Jellium Desktop.app"
 APP_DIR="${PROJECT_ROOT}/build/output/${APP_NAME}"
 DIST_DIR="${PROJECT_ROOT}/dist"
 
@@ -18,11 +18,11 @@ VERSION="$(cargo run --quiet --manifest-path "${PROJECT_ROOT}/src/xtask/Cargo.to
 ARCH="$(uname -m)"
 mkdir -p "${DIST_DIR}"
 
-DMG_NAME="JellyfinDesktop-${VERSION}-macos-${ARCH}.dmg"
+DMG_NAME="JelliumDesktop-${VERSION}-macos-${ARCH}.dmg"
 rm -f "${DIST_DIR}/${DMG_NAME}"
 
 create-dmg \
-    --volname "Jellyfin Desktop v${VERSION}" \
+    --volname "Jellium Desktop v${VERSION}" \
     --no-internet-enable \
     --window-size 500 300 \
     --icon-size 100 \

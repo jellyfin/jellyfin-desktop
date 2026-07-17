@@ -5,13 +5,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing, please read the [Supported Versions](https://github.com/jellyfin/jellyfin-desktop/wiki/Supported-Versions) page.
+        Before filing, please read the [Supported Versions](https://github.com/andrewrabert/jellium-desktop/wiki/Supported-Versions) page.
   - type: checkboxes
     id: read-guide
     attributes:
       label: Confirmation
       options:
-        - label: I have confirmed this feature is absent from a [supported version](https://github.com/jellyfin/jellyfin-desktop/wiki/Supported-Versions).
+        - label: I have confirmed this feature is absent from a [supported version](https://github.com/andrewrabert/jellium-desktop/wiki/Supported-Versions).
           required: true
   - type: input
     id: version

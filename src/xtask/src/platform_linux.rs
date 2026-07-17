@@ -21,8 +21,8 @@ pub fn stage_mpv(out: &Path, mpv_info: &mpv::Mpv, used_external: bool, _bin: &Pa
 }
 
 pub fn install(build_dir: &Path, prefix: &Path, args: &BuildArgs) -> Result<PathBuf> {
-    let bin_src = build_dir.join("jellyfin-desktop");
-    let bin_dst = prefix.join("jellyfin-desktop");
+    let bin_src = build_dir.join("jellium-desktop");
+    let bin_dst = prefix.join("jellium-desktop");
     xfs::copy_executable(&bin_src, &bin_dst)?;
 
     if args.cef_path.is_none() {

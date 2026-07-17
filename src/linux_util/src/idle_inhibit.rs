@@ -56,7 +56,7 @@ pub fn set(level: u32) {
         "/org/freedesktop/login1",
         Some("org.freedesktop.login1.Manager"),
         "Inhibit",
-        &(what, "Jellyfin Desktop", "Media playback", "block"),
+        &(what, "Jellium Desktop", "Media playback", "block"),
     );
     match reply {
         Ok(msg) => match msg.body().deserialize::<ZOwnedFd>() {

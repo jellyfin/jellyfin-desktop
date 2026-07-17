@@ -36,7 +36,7 @@ pub fn run(args: &PackageArgs) -> Result<()> {
     let prefix = install::run(&args.install)?;
 
     let arch = current_arch();
-    let name = format!("JellyfinDesktop-{}-{}-{}", ver.full, TARGET.os_slug, arch);
+    let name = format!("JelliumDesktop-{}-{}-{}", ver.full, TARGET.os_slug, arch);
     let out = dist.join(format!("{name}.{}", TARGET.ext));
     let _ = std::fs::remove_file(&out);
     write_archive(&prefix, &out)?;

@@ -5,7 +5,7 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-IMG="jellyfin-desktop-appimage:base"
+IMG="jellium-desktop-appimage:base"
 VERSION="$(cargo run --quiet --manifest-path "${PROJECT_ROOT}/src/xtask/Cargo.toml" -- version)"
 
 if command -v podman >/dev/null 2>&1; then
@@ -33,7 +33,7 @@ mkdir -p "${PROJECT_ROOT}/build/appimage/build" "${PROJECT_ROOT}/dist"
     "$IMG" /src/dev/linux/appimage/container-build.sh
 
 ARCH="$(uname -m)"
-BUNDLE="dist/JellyfinDesktop-${VERSION}-${ARCH}.AppImage"
-LINK="${PROJECT_ROOT}/build/appimage/JellyfinDesktop.AppImage"
+BUNDLE="dist/JelliumDesktop-${VERSION}-${ARCH}.AppImage"
+LINK="${PROJECT_ROOT}/build/appimage/JelliumDesktop.AppImage"
 ln -sf "../../${BUNDLE}" "$LINK"
 echo "AppImage: ${BUNDLE} (-> ${LINK})"
