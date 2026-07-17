@@ -193,7 +193,13 @@ pub(crate) unsafe fn import(
         usage: wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     };
-    let texture = unsafe { device.create_texture_from_hal::<vulkan::Api>(hal_texture, &desc) };
+    let texture = unsafe {
+        device.create_texture_from_hal::<vulkan::Api>(
+            hal_texture,
+            &desc,
+            wgpu::TextureUses::UNINITIALIZED,
+        )
+    };
     Ok((texture, image.as_raw()))
 }
 

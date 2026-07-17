@@ -75,6 +75,7 @@ impl GpuPainter {
             desired_maximum_frame_latency: 2,
             alpha_mode,
             view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&ctx.device, &config);
 
@@ -405,7 +406,7 @@ impl GpuPainter {
             pass.draw(0..3, 0..1);
         }
         self.ctx.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
+        self.ctx.queue.present(frame);
         Ok(())
     }
 }
