@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Jellyfin Desktop
-Comment=Jellyfin desktop client
-Exec=jellyfin-desktop
-Icon=org.jellyfin.JellyfinDesktop
-Terminal=false
-Type=Application
-Categories=AudioVideo;Video;Player;TV;
-StartupWMClass=org.jellyfin.JellyfinDesktop

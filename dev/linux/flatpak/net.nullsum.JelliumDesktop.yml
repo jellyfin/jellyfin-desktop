@@ -1,4 +1,4 @@
-app-id: org.jellyfin.JellyfinDesktop
+app-id: net.nullsum.JelliumDesktop
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
@@ -7,7 +7,7 @@ sdk-extensions:
   # libclang.so for bindgen (jfn-mpv build.rs runs bindgen on mpv +
   # libavcodec headers; bindgen dlopens libclang at build time).
   - org.freedesktop.Sdk.Extension.llvm20
-command: jellyfin-desktop
+command: jellium-desktop
 finish-args:
   - --socket=wayland
   - --socket=x11
@@ -16,7 +16,7 @@ finish-args:
   - --share=network
   - --device=dri
   - --talk-name=org.freedesktop.ScreenSaver
-  - --own-name=org.mpris.MediaPlayer2.JellyfinDesktop
+  - --own-name=org.mpris.MediaPlayer2.JelliumDesktop
 # The base org.freedesktop.Platform//25.08 libavcodec ships WITHOUT the
 # patent-encumbered h264/hevc decoders (freedesktop moved them out of the base
 # runtime in 25.08 — 24.08 still had h264). Those decoders live only in the
@@ -157,7 +157,7 @@ modules:
               stable-only: true
               url-template: https://www.freedesktop.org/software/uchardet/releases/uchardet-$version.tar.xz
 
-  - name: jellyfin-desktop
+  - name: jellium-desktop
     buildsystem: simple
     build-options:
       # Force ld to resolve libmpv's transitive ffmpeg deps from the base
@@ -168,7 +168,7 @@ modules:
       append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm20/bin
       prepend-ld-library-path: /usr/lib/sdk/llvm20/lib
       env:
-        CARGO_HOME: /run/build/jellyfin-desktop/cargo
+        CARGO_HOME: /run/build/jellium-desktop/cargo
         CEF_PATH: /app/cef
         EXTERNAL_MPV_DIR: /app
         # bindgen dlopens libclang from this SDK extension dir.
@@ -178,13 +178,13 @@ modules:
         - --share=network
     build-commands:
       - cargo xtask install --external-cef /app/cef --external-mpv /app --no-kde-palette --prefix /app
-      - mkdir -p /app/bin && ln -sf ../jellyfin-desktop /app/bin/jellyfin-desktop
+      - mkdir -p /app/bin && ln -sf ../jellium-desktop /app/bin/jellium-desktop
       # Mount point for the codecs-extra extension (add-extensions above);
       # flatpak refuses to mount an extension whose directory is absent.
       - mkdir -p /app/lib/x86_64-linux-gnu/codecs-extra
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.desktop /app/share/applications/org.jellyfin.JellyfinDesktop.desktop
-      - install -Dm644 resources/linux/org.jellyfin.JellyfinDesktop.svg /app/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg
-      - install -Dm644 build/flatpak/generated.metainfo.xml /app/share/metainfo/org.jellyfin.JellyfinDesktop.metainfo.xml
+      - install -Dm644 resources/linux/net.nullsum.JelliumDesktop.desktop /app/share/applications/net.nullsum.JelliumDesktop.desktop
+      - install -Dm644 resources/linux/net.nullsum.JelliumDesktop.svg /app/share/icons/hicolor/scalable/apps/net.nullsum.JelliumDesktop.svg
+      - install -Dm644 build/flatpak/generated.metainfo.xml /app/share/metainfo/net.nullsum.JelliumDesktop.metainfo.xml
     sources:
       - type: dir
         path: ../../..

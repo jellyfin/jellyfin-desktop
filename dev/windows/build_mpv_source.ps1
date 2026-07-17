@@ -174,7 +174,7 @@ New-Item -ItemType Directory -Path $IncludeDir -Force | Out-Null
 Write-Host "Copying headers..."
 Copy-Item (Join-Path $MpvSourceDir "include\mpv") (Join-Path $IncludeDir "mpv") -Recurse
 
-# Copy ffmpeg headers — jellyfin-desktop links libavcodec directly to enumerate
+# Copy ffmpeg headers — jellium-desktop links libavcodec directly to enumerate
 # decoders for the Jellyfin device profile. Mirrors the mpv layout: headers
 # under include/, import lib under lib/ alongside mpv.lib.
 Write-Host "Copying ffmpeg headers..."

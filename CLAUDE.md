@@ -1,7 +1,7 @@
 # Project Notes
 
 ## Build / Run
-All app code is Rust; the cargo workspace lives in `src/` and produces the `jellyfin-desktop` binary. Everything is driven through `just` — recipes are OS-gated via `[macos]`/`[linux]`/`[windows]` attributes, so the same command works everywhere:
+All app code is Rust; the cargo workspace lives in `src/` and produces the `jellium-desktop` binary. Everything is driven through `just` — recipes are OS-gated via `[macos]`/`[linux]`/`[windows]` attributes, so the same command works everywhere:
 ```
 just deps      # one-time: submodules, CEF download, macOS brew packages
 just build     # build + stage a runnable tree in build/ (+ .app bundle on macOS)

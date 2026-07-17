@@ -91,4 +91,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
-          path: dist/JellyfinDesktop-*.zip
+          path: dist/JelliumDesktop-*.zip

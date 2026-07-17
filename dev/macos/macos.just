@@ -19,7 +19,7 @@ build: deps
 [group('run')]
 [macos]
 run *args: build
-    "build/output/Jellyfin Desktop.app/Contents/MacOS/jellyfin-desktop" {{args}}
+    "build/output/Jellium Desktop.app/Contents/MacOS/jellium-desktop" {{args}}
 
 # Run the standalone mpv CLI built from the submodule (forwards args)
 [group('run')]

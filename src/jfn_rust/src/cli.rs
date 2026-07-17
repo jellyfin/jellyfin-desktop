@@ -1,27 +1,27 @@
-//! Argv parser for jellyfin-desktop, built on clap. `--version` is a plain
+//! Argv parser for jellium-desktop, built on clap. `--version` is a plain
 //! `bool` intercepted by `app::jfn_app_main` after parsing, so the libmpv
 //! version probe the version string needs only fires when `--version` is
 //! actually requested.
 
 use clap::{ArgAction, Parser};
 
-const ENV_LOG_LEVEL: &str = "JELLYFIN_DESKTOP_LOG_LEVEL";
-const ENV_LOG_FILE: &str = "JELLYFIN_DESKTOP_LOG_FILE";
-const ENV_CONFIG_DIR: &str = "JELLYFIN_DESKTOP_CONFIG_DIR";
-const ENV_CACHE_DIR: &str = "JELLYFIN_DESKTOP_CACHE_DIR";
+const ENV_LOG_LEVEL: &str = "JELLIUM_DESKTOP_LOG_LEVEL";
+const ENV_LOG_FILE: &str = "JELLIUM_DESKTOP_LOG_FILE";
+const ENV_CONFIG_DIR: &str = "JELLIUM_DESKTOP_CONFIG_DIR";
+const ENV_CACHE_DIR: &str = "JELLIUM_DESKTOP_CACHE_DIR";
 
 #[cfg(test)]
 const ENV_BACKED: &[&str] = &[ENV_LOG_LEVEL, ENV_LOG_FILE, ENV_CONFIG_DIR, ENV_CACHE_DIR];
 
-/// jellyfin-desktop — Jellyfin native desktop client.
+/// jellium-desktop — Jellyfin native desktop client.
 ///
-/// The four path/logging options also read a `JELLYFIN_DESKTOP_*` environment
+/// The four path/logging options also read a `JELLIUM_DESKTOP_*` environment
 /// variable; an explicit flag always wins over the variable. Each option is
 /// `Option<T>` with no clap default, so an absent flag/var falls back to the
 /// settings.json / platform-default layer.
 #[derive(Parser, Debug)]
 #[command(
-    name = "jellyfin-desktop",
+    name = "jellium-desktop",
     disable_version_flag = true,
     args_override_self = true
 )]

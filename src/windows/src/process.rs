@@ -53,7 +53,7 @@ mod single_instance {
     const FILE_FLAG_OVERLAPPED: u32 = 0x40000000;
 
     fn pipe_name(instance_id: &str) -> CString {
-        CString::new(format!(r"\\.\pipe\jellyfin-desktop-{instance_id}")).unwrap_or_default()
+        CString::new(format!(r"\\.\pipe\jellium-desktop-{instance_id}")).unwrap_or_default()
     }
 
     static RUNNING: AtomicBool = AtomicBool::new(false);

@@ -42,4 +42,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: linux-appimage-${{ matrix.arch }}
-          path: dist/JellyfinDesktop-*.AppImage
+          path: dist/JelliumDesktop-*.AppImage

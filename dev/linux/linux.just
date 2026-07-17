@@ -13,7 +13,7 @@ build: linux_common::deps
 [group('run')]
 [linux]
 run *args: build
-    build/jellyfin-desktop {{args}}
+    build/jellium-desktop {{args}}
 
 # Run the mpv CLI
 [group('run')]

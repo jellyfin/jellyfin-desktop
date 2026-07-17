@@ -147,7 +147,7 @@ pub fn macos_set_idle_inhibit(level: c_int) {
     }
 
     // Build a CFString for the assertion name.
-    let name_bytes = b"Jellyfin Desktop media playback\0";
+    let name_bytes = b"Jellium Desktop media playback\0";
     let name = unsafe {
         CFStringCreateWithCStringNoCopy(
             std::ptr::null(),

@@ -403,7 +403,7 @@
         init() {
             return Promise.resolve({
                 deviceName: jmpInfo.deviceName,
-                appName: 'Jellyfin Desktop',
+                appName: 'Jellium Desktop',
                 appVersion: jmpInfo.version
             });
         },
@@ -421,7 +421,7 @@
         },
         getDeviceProfile,
         getSyncProfile: getDeviceProfile,
-        appName() { return 'Jellyfin Desktop'; },
+        appName() { return 'Jellium Desktop'; },
         appVersion() { return jmpInfo.version; },
         deviceName() { return jmpInfo.deviceName; },
         exit() { window.api.system.exit(); }

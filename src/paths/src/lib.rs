@@ -15,8 +15,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
-const APP_DIR_NAME: &str = "jellyfin-desktop";
-const LOG_FILE_NAME: &str = "jellyfin-desktop.log";
+const APP_DIR_NAME: &str = "jellium-desktop";
+const LOG_FILE_NAME: &str = "jellium-desktop.log";
 
 #[derive(Default)]
 struct Overrides {

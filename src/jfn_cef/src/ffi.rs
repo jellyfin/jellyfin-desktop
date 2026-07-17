@@ -128,7 +128,7 @@ pub fn jfn_cef_initialize() -> bool {
         remote_debugging_port: cfg_port,
         locale: CefString::from("en-US"),
         user_agent: CefString::from(concat!(
-            "Mozilla/5.0 jellyfin-desktop/",
+            "Mozilla/5.0 jellium-desktop/",
             env!("JFN_APP_VERSION")
         )),
         root_cache_path: CefString::from(jfn_paths::cache_dir().to_string_lossy().as_ref()),
@@ -201,7 +201,7 @@ fn browser_main_args() -> MainArgs {
     let c = CLEAN.get_or_init(|| {
         let program = std::env::args()
             .next()
-            .unwrap_or_else(|| "jellyfin-desktop".to_string());
+            .unwrap_or_else(|| "jellium-desktop".to_string());
         let cstr = CString::new(program).unwrap_or_default();
         let cstr_ptr = cstr.as_ptr() as *mut c_char;
         // Keep the backing buffer alive for the process lifetime.

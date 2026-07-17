@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run inside the appimage build container (jellyfin-desktop-appimage:base).
+# Run inside the appimage build container (jellium-desktop-appimage:base).
 # Bind mounts (set up by `just appimage build`):
 #   /src           rw  -- repo root (CEF + submodules must be populated by host)
 #   /build         rw  -- cargo + meson incremental state, persists on host
@@ -20,7 +20,7 @@ esac
 cd /src
 
 cargo xtask build --out /build
-strip /build/*.so /build/jellyfin-desktop
+strip /build/*.so /build/jellium-desktop
 
 BUILD=/build
 
@@ -30,7 +30,7 @@ rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share"
 
 # Binary + CEF resources (CEF finds resources relative to /proc/self/exe)
-cp "$BUILD"/jellyfin-desktop "$APPDIR/usr/bin/"
+cp "$BUILD"/jellium-desktop "$APPDIR/usr/bin/"
 cp "$BUILD"/*.pak "$APPDIR/usr/bin/"
 cp "$BUILD"/icudtl.dat "$APPDIR/usr/bin/"
 cp "$BUILD"/v8_context_snapshot.bin "$APPDIR/usr/bin/"
@@ -58,7 +58,7 @@ if [ ! -e "$APPDIR/usr/lib/${LD_SONAME}" ]; then
     cp -a "/usr/lib/${LD_SONAME}" "$APPDIR/usr/lib/"
 fi
 
-# mpv lib (xtask build copies it next to jellyfin-desktop)
+# mpv lib (xtask build copies it next to jellium-desktop)
 cp "$BUILD"/libmpv.so.2 "$APPDIR/usr/lib/"
 
 # Fedora's ffmpeg links GnuTLS; GnuTLS needs a system priority file from
@@ -71,11 +71,11 @@ cp /usr/share/crypto-policies/DEFAULT/gnutls.txt \
 mkdir -p "$APPDIR/usr/share/applications" \
          "$APPDIR/usr/share/icons/hicolor/scalable/apps" \
          "$APPDIR/usr/share/metainfo"
-cp /src/resources/linux/org.jellyfin.JellyfinDesktop.desktop \
+cp /src/resources/linux/net.nullsum.JelliumDesktop.desktop \
    "$APPDIR/usr/share/applications/"
-cp /src/resources/linux/org.jellyfin.JellyfinDesktop.svg \
+cp /src/resources/linux/net.nullsum.JelliumDesktop.svg \
    "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
-cp /src/resources/linux/org.jellyfin.JellyfinDesktop.metainfo.xml \
+cp /src/resources/linux/net.nullsum.JelliumDesktop.metainfo.xml \
    "$APPDIR/usr/share/metainfo/"
 
 # Strip non-runtime cruft to reduce size
@@ -153,16 +153,16 @@ done
 # the binary itself — required for CEF, which re-execs /proc/self/exe for its
 # renderer/GPU/utility subprocesses. AppRun creates the symlink at startup.
 patchelf --set-interpreter "/tmp/.jf-cef-interp/${LD_SONAME}" \
-    "$APPDIR/usr/bin/jellyfin-desktop"
+    "$APPDIR/usr/bin/jellium-desktop"
 
 # AppDir root files (per AppImage spec)
-cp "$APPDIR/usr/share/applications/org.jellyfin.JellyfinDesktop.desktop" "$APPDIR/"
-cp "$APPDIR/usr/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg" "$APPDIR/"
-ln -sf org.jellyfin.JellyfinDesktop.svg "$APPDIR/.DirIcon"
+cp "$APPDIR/usr/share/applications/net.nullsum.JelliumDesktop.desktop" "$APPDIR/"
+cp "$APPDIR/usr/share/icons/hicolor/scalable/apps/net.nullsum.JelliumDesktop.svg" "$APPDIR/"
+ln -sf net.nullsum.JelliumDesktop.svg "$APPDIR/.DirIcon"
 cp /src/dev/linux/appimage/AppRun "$APPDIR/AppRun"
 chmod +x "$APPDIR/AppRun"
 
 # Package
 ARCH="$ARCH" /opt/tools/appimagetool/AppRun --no-appstream \
     --runtime-file "/opt/tools/runtime-${ARCH}" \
-    "$APPDIR" "/host-output/JellyfinDesktop-${VERSION}-${ARCH}.AppImage"
+    "$APPDIR" "/host-output/JelliumDesktop-${VERSION}-${ARCH}.AppImage"

@@ -5,15 +5,15 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing, please read the [Supported Versions](https://github.com/jellyfin/jellyfin-desktop/wiki/Supported-Versions) page.
+        Before filing, please read the [Supported Versions](https://github.com/andrewrabert/jellium-desktop/wiki/Supported-Versions) page.
   - type: checkboxes
     id: read-guide
     attributes:
       label: Confirmation
       options:
-        - label: I am running a supported version as per the [Supported Version](https://github.com/jellyfin/jellyfin-desktop/wiki/Supported-Versions) guide.
+        - label: I am running a supported version as per the [Supported Version](https://github.com/andrewrabert/jellium-desktop/wiki/Supported-Versions) guide.
           required: true
-        - label: I acknowledge that the version of Jellyfin Desktop I'm reporting for starts with `3.0.0-dev`
+        - label: I acknowledge that the version of Jellium Desktop I'm reporting for starts with `3.0.0-dev`
           required: true
         - label: I will disclose any use of custom styles or plugins that alter the web appearance.
           required: true
@@ -65,7 +65,7 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Attach logs. See the [Logging](https://github.com/jellyfin/jellyfin-desktop/wiki/Logging) page.
+      description: Attach logs. See the [Logging](https://github.com/andrewrabert/jellium-desktop/wiki/Logging) page.
   - type: textarea
     id: additional
     attributes:

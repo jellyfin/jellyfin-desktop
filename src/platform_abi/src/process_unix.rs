@@ -90,7 +90,7 @@ mod single_instance {
     static THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
     fn socket_path(instance_id: &str) -> PathBuf {
-        let file_name = format!("jellyfin-desktop-{instance_id}.sock");
+        let file_name = format!("jellium-desktop-{instance_id}.sock");
         if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR")
             && !dir.is_empty()
         {
@@ -99,7 +99,7 @@ mod single_instance {
             return p;
         }
         let uid = unsafe { getuid() };
-        PathBuf::from(format!("/tmp/jellyfin-desktop-{uid}-{instance_id}.sock"))
+        PathBuf::from(format!("/tmp/jellium-desktop-{uid}-{instance_id}.sock"))
     }
 
     fn fill_sockaddr(path: &std::ffi::CStr) -> Option<sockaddr_un> {

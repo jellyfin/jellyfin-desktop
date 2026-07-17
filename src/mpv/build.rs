@@ -3,7 +3,7 @@
 //! Header source order:
 //!   1. `JFN_MPV_INCLUDE_DIR` env override (set by xtask during in-tree build).
 //!   2. `EXTERNAL_MPV_DIR` env override.
-//!   3. pkg-config `mpv` (system install / `/opt/jellyfin-desktop/libmpv`).
+//!   3. pkg-config `mpv` (system install / `/opt/jellium-desktop/libmpv`).
 //!   4. Vendored `third_party/mpv/include`.
 //!
 //! Linkage: `JFN_MPV_LIB_DIR` (in-tree meson build dir) or `EXTERNAL_MPV_DIR/lib`

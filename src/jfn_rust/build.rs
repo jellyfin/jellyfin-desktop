@@ -1,4 +1,4 @@
-//! Build-script hooks for the jellyfin-desktop binary.
+//! Build-script hooks for the jellium-desktop binary.
 //!
 //! * On Windows, embed `resources/win/iconres.rc` so File Explorer
 //!   surfaces the version, company, and product strings (FILE/PRODUCT
@@ -30,8 +30,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Additional rpath entries for system / out-of-tree library
         // installs (e.g. Arch's `cef` package puts libcef.so in
-        // /usr/lib/cef, jellyfin-desktop-libmpv-git in
-        // /opt/jellyfin-desktop/libmpv/lib). xtask sets this when
+        // /usr/lib/cef, jellium-desktop-libmpv-git in
+        // /opt/jellium-desktop/libmpv/lib). xtask sets this when
         // --system-cef or --external-mpv resolves outside $ORIGIN.
         // Colon-separated; $ORIGIN entries still take precedence.
         println!("cargo:rerun-if-env-changed=JFN_EXTRA_RPATH");
