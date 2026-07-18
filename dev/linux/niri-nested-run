@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+# Run cmd under niri, keep its stdin/stdout/stderr on this terminal.
+set -eu
+
+if [ "$#" -eq 0 ]; then
+    echo "usage: command [args...]" >&2
+    exit 1
+fi
+
+IN=$(readlink "/proc/$$/fd/0")
+OUT=$(readlink "/proc/$$/fd/1")
+ERR=$(readlink "/proc/$$/fd/2")
+
+SCRIPT='
+IN=$1
+OUT=$2
+ERR=$3
+shift 3
+exec "$@" <"$IN" >"$OUT" 2>"$ERR"
+'
+
+exec niri -c /dev/null -- sh -c "$SCRIPT" _ "$IN" "$OUT" "$ERR" "$@" >/dev/null 2>&1

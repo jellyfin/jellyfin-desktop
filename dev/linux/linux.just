@@ -21,6 +21,13 @@ run *args: build
 run-mpv *args: build
     build/mpv-build/mpv {{args}}
 
+# Run the app inside a nested niri session (stdio stays on this terminal)
+[group('run')]
+[linux]
+[positional-arguments]
+run-niri *args:
+    env -u JUST_JUSTFILE -u JUST_WORKING_DIRECTORY '{{ source_directory() }}/niri-nested-run' just run "$@"
+
 [group('package')]
 mod appimage 'appimage/appimage.just'
 
