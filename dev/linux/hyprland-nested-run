@@ -1,0 +1,38 @@
+#!/usr/bin/env sh
+# Run cmd under nested Hyprland, keep its stdin/stdout/stderr on this terminal.
+# Hyprland can't spawn a command from the CLI, so a throwaway config's
+# exec-once runs it and exits the compositor when it finishes.
+set -eu
+
+if [ "$#" -eq 0 ]; then
+    echo "usage: command [args...]" >&2
+    exit 1
+fi
+
+IN=$(readlink "/proc/$$/fd/0")
+OUT=$(readlink "/proc/$$/fd/1")
+ERR=$(readlink "/proc/$$/fd/2")
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+quoted=''
+for arg in "$@"; do
+    q=$(printf '%s' "$arg" | sed "s/'/'\\\\''/g")
+    quoted="$quoted '$q'"
+done
+
+cat > "$TMP/runner" <<EOF
+#!/usr/bin/env sh
+$quoted <'$IN' >'$OUT' 2>'$ERR'
+echo \$? > '$TMP/status'
+hyprctl dispatch exit >/dev/null 2>&1
+EOF
+chmod +x "$TMP/runner"
+
+printf 'exec-once = %s\n' "$TMP/runner" > "$TMP/hyprland.conf"
+
+Hyprland --config "$TMP/hyprland.conf" >/dev/null 2>&1 || true
+
+read -r status < "$TMP/status" 2>/dev/null || status=1
+exit "$status"
