@@ -28,6 +28,13 @@ run-mpv *args: build
 run-niri *args:
     env -u JUST_JUSTFILE -u JUST_WORKING_DIRECTORY '{{ source_directory() }}/niri-nested-run' just run "$@"
 
+# Run the app inside a nested Hyprland session (stdio stays on this terminal)
+[group('run')]
+[linux]
+[positional-arguments]
+run-hyprland *args:
+    env -u JUST_JUSTFILE -u JUST_WORKING_DIRECTORY '{{ source_directory() }}/hyprland-nested-run' just run "$@"
+
 [group('package')]
 mod appimage 'appimage/appimage.just'
 
