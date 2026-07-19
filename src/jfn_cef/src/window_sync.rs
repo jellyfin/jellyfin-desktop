@@ -1,7 +1,5 @@
-//! Level-triggered window-state sync: CEF layer size and the playback
-//! window mode are functions of the current window snapshot. Producers
-//! fire payload-free wakeups; this module pulls the snapshot and
-//! reconciles, so no edge delivery is load-bearing.
+//! Level-triggered CEF sizing: layer size is a function of the current
+//! window snapshot, pulled on each platform-abi window wakeup.
 
 use jfn_platform_abi::{LogicalSize, PhysicalSize, WindowSnapshot};
 use parking_lot::Mutex;
@@ -29,23 +27,24 @@ pub(crate) fn cef_size_from_snapshot(snap: &WindowSnapshot) -> Option<CefViewSiz
 /// an older snapshot apply after a newer one.
 static LAST_APPLIED: Mutex<Option<CefViewSize>> = Mutex::new(None);
 
-/// Pull the current window snapshot and reconcile every consumer that
-/// derives from it: CEF layer size, and the playback state machine's
-/// window mode (fullscreen / maximized). Callable from any thread, any
-/// number of times.
-pub(crate) fn sync_browsers_to_window() {
+/// Pull the current window snapshot and size the CEF layers from it.
+/// Callable from any thread, any number of times.
+pub(crate) fn sync_from_window() {
     let mut last = LAST_APPLIED.lock();
-    let snap = crate::window_geometry::controller().source().snapshot();
+    let snap = jfn_platform_abi::get().window_source().snapshot();
 
     if let Some(size) = cef_size_from_snapshot(&snap)
         && *last != Some(size)
     {
-        tracing::debug!(
-            target: "Main",
-            "browser size sync: logical={}x{} physical={}x{}",
-            size.logical.w, size.logical.h, size.physical.w, size.physical.h,
+        jfn_logging::log(
+            jfn_logging::CATEGORY_CEF,
+            jfn_logging::LEVEL_DEBUG,
+            &format!(
+                "window sync: logical={}x{} physical={}x{}",
+                size.logical.w, size.logical.h, size.physical.w, size.physical.h
+            ),
         );
-        jfn_cef::browsers::jfn_browsers_set_size(
+        crate::browsers::jfn_browsers_set_size(
             size.logical.w,
             size.logical.h,
             size.physical.w,
@@ -53,9 +52,6 @@ pub(crate) fn sync_browsers_to_window() {
         );
         *last = Some(size);
     }
-
-    // The state machine dedupes; posting an unchanged mode emits nothing.
-    jfn_playback::ingest_driver::jfn_playback_post_window_state(snap.fullscreen, snap.maximized);
 }
 
 #[cfg(test)]

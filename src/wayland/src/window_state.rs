@@ -9,8 +9,6 @@ use parking_lot::RwLock;
 use crate::scale::Scale120;
 use crate::wl_ops;
 
-use jfn_playback::ingest_driver::jfn_playback_post_osd_pixels;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WindowSize {
     w: i32,
@@ -199,16 +197,9 @@ pub(crate) fn publish(logical: WindowSize, mode: WindowMode) {
     if crate::wl_state::try_state().is_some() {
         wl_ops::on_configure(fullscreen);
     }
-    let scale = extent.scale.scale.ratio_f32();
-    jfn_playback_post_osd_pixels(extent.physical.w, extent.physical.h, scale, false, 0, 0);
-    // mpv's `fullscreen` / `window-maximized` observations are skipped on
-    // Wayland (the compositor owns this toplevel); this is the only mode feed.
-    jfn_playback::ingest_driver::jfn_playback_post_window_state(
-        mode == WindowMode::Fullscreen,
-        mode == WindowMode::Maximized,
-    );
+    jfn_platform_abi::notify_window_changed();
     // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait loop
-    // reads OSD pixels from the ingest layer rather than via an mpv event).
+    // polls the window source rather than receiving an mpv event).
     jfn_mpv::api::jfn_mpv_wakeup();
 }
 

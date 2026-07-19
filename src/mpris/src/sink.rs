@@ -479,7 +479,6 @@ fn handle_event(ev: PlaybackEvent, state: &Arc<Mutex<State>>, conn: &Connection)
             PlaybackEventKind::DurationChanged => {}
             PlaybackEventKind::MediaTypeChanged
             | PlaybackEventKind::FullscreenChanged
-            | PlaybackEventKind::OsdDimsChanged
             | PlaybackEventKind::BufferedRangesChanged
             | PlaybackEventKind::DisplayHzChanged => {}
         }

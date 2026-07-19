@@ -258,6 +258,10 @@ impl Platform for X11Platform {
         crate::scale::query_display_scale().unwrap_or(1.0)
     }
 
+    fn window_source(&self) -> &'static dyn jfn_platform_abi::WindowSource {
+        &jfn_playback::window_source::MPV_WINDOW_SOURCE
+    }
+
     fn query_window_position(&self) -> Option<WindowPos> {
         let conn = crate::x11_state::x11rb_conn()?;
         let g = crate::x11_state::MUT.lock();

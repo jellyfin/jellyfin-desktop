@@ -19,6 +19,7 @@ pub mod sink_core;
 mod state_machine;
 pub mod theme_color_sink;
 mod types;
+pub mod window_source;
 
 pub use coordinator::PlaybackCoordinator;
 pub use ffi::*;

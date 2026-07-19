@@ -287,21 +287,6 @@ impl PlaybackStateMachine {
         vec![PlaybackEvent::new(PlaybackEventKind::FullscreenChanged)]
     }
 
-    pub fn on_osd_dims(&mut self, lw: i32, lh: i32, pw: i32, ph: i32) -> Vec<PlaybackEvent> {
-        if self.s.layout_w == lw
-            && self.s.layout_h == lh
-            && self.s.pixel_w == pw
-            && self.s.pixel_h == ph
-        {
-            return vec![];
-        }
-        self.s.layout_w = lw;
-        self.s.layout_h = lh;
-        self.s.pixel_w = pw;
-        self.s.pixel_h = ph;
-        vec![PlaybackEvent::new(PlaybackEventKind::OsdDimsChanged)]
-    }
-
     pub fn on_buffered_ranges(&mut self, ranges: Vec<PlaybackBufferedRange>) -> Vec<PlaybackEvent> {
         if ranges == self.s.buffered {
             return vec![];

@@ -82,6 +82,9 @@ pub fn jfn_browsers_init(frame_rate: f64, use_shared_textures: bool) {
         frame_rate: fr,
     });
     crate::bridge::install();
+    jfn_platform_abi::subscribe_window_changed(crate::window_sync::sync_from_window);
+    // Seed the size cache before the first jfn_browsers_create.
+    crate::window_sync::sync_from_window();
 }
 
 /// Tear down all remaining layers. Called once at the end of run_with_cef.
