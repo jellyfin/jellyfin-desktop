@@ -69,14 +69,8 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
 // FFI
 // ---------------------------------------------------------------------
 
-/// Seed the extent cell with a device-pixel window size + scale at boot,
-/// before the first osd-dimensions digest can supply one.
-pub fn jfn_playback_seed_window_extent(pw: i32, ph: i32, scale: f32) {
-    state().seed_window_extent(pw, ph, scale);
-}
-
 /// Last known window extent — coherent (logical, physical, scale) from
-/// whichever producer (boot seed / osd-dimensions digest) wrote last.
+/// the most recent osd-dimensions digest.
 pub fn jfn_playback_window_extent() -> Option<jfn_platform_abi::WindowExtent> {
     state().window_extent()
 }
