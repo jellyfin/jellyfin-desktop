@@ -36,10 +36,6 @@ impl Scale120 {
         Self::from_wire(scaled as u32)
     }
 
-    pub(crate) fn get(self) -> NonZeroU32 {
-        self.0
-    }
-
     pub(crate) fn ratio_f32(self) -> f32 {
         self.0.get() as f32 / Self::BASE as f32
     }
@@ -80,7 +76,6 @@ mod tests {
     #[test]
     fn wire_roundtrip() {
         let s = Scale120::from_wire(150).unwrap();
-        assert_eq!(s.get().get(), 150);
         assert_eq!(s.ratio_f32(), 1.25);
     }
 
@@ -106,9 +101,9 @@ mod tests {
     #[test]
     fn ratio_rounds_to_nearest_120th() {
         assert_eq!(Scale120::from_ratio(1.0), Some(Scale120::UNIT));
-        assert_eq!(Scale120::from_ratio(1.25).unwrap().get().get(), 150);
+        assert_eq!(Scale120::from_ratio(1.25), Scale120::from_wire(150));
         // 1.3 * 120 = 156.0 exactly in this decimal; 1.301 rounds to 156 too.
-        assert_eq!(Scale120::from_ratio(1.301).unwrap().get().get(), 156);
+        assert_eq!(Scale120::from_ratio(1.301), Scale120::from_wire(156));
     }
 
     #[test]

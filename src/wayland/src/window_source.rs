@@ -7,20 +7,22 @@ pub struct WaylandWindowSource;
 
 impl WindowSource for WaylandWindowSource {
     fn snapshot(&self) -> WindowSnapshot {
-        let extent = crate::window_state::window_extent().map(|e| {
-            WindowExtent::new(
-                PhysicalSize {
-                    w: e.physical().w(),
-                    h: e.physical().h(),
-                },
-                Scale(e.scale()),
-            )
-        });
+        // One snapshot so extent and mode can't span two generations.
+        let snap = crate::window_state::window_extent();
         WindowSnapshot {
-            extent,
+            extent: snap.map(|e| {
+                WindowExtent::new(
+                    PhysicalSize {
+                        w: e.physical().w(),
+                        h: e.physical().h(),
+                    },
+                    Scale(e.scale()),
+                )
+            }),
             position: None,
-            maximized: crate::window_state::jfn_wl_window_maximized(),
-            fullscreen: crate::window_state::jfn_wl_window_fullscreen(),
+            maximized: snap.is_some_and(|e| e.mode() == crate::window_state::WindowMode::Maximized),
+            fullscreen: snap
+                .is_some_and(|e| e.mode() == crate::window_state::WindowMode::Fullscreen),
         }
     }
 }

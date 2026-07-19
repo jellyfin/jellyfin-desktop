@@ -115,7 +115,6 @@ struct RootState {
     suspended: bool,
     floating: FloatingRestore,
     pending_ack: Option<ConfigureSerial>,
-    scale_known: bool,
     /// `Some` once the first configure has been acked (the window is "mapped").
     /// Holds the capability that gates buffer attach/commit.
     present: Option<Presented>,
@@ -204,7 +203,7 @@ impl RootState {
         if self.pending_ack.is_none() && self.present.is_none() {
             return;
         }
-        if !self.scale_known {
+        if crate::window_state::known_scale().is_none() {
             // Some compositors (Hyprland) withhold preferred_scale until the
             // window maps, which never happens while the first buffer waits on
             // the scale. Once a configure arrives, resolve a provisional scale
@@ -220,7 +219,10 @@ impl RootState {
                         target: "Main",
                         "root window: no preferred_scale before first configure; using probed scale {probed}"
                     );
-                    crate::window_state::feed_scale(scale);
+                    crate::window_state::feed_scale(
+                        scale,
+                        crate::window_state::ScaleProvenance::Provisional,
+                    );
                 }
                 None => {
                     tracing::warn!(
@@ -230,7 +232,6 @@ impl RootState {
                     crate::window_state::feed_unit_scale();
                 }
             }
-            self.scale_known = true;
         }
         let Some(size) = self.resolve_logical() else {
             return;
@@ -806,8 +807,7 @@ pub(crate) fn ensure_started() {
     let frac_scale = frac_mgr
         .as_ref()
         .map(|m| m.get_fractional_scale(&surface, &qh, ()));
-    let scale_known_at_boot = frac_mgr.is_none();
-    if scale_known_at_boot {
+    if frac_mgr.is_none() {
         // No preferred_scale will ever arrive, so satisfy the boot scale gate —
         // otherwise it waits forever.
         tracing::warn!(target: "Main", "root window: no wp_fractional_scale_manager_v1; assuming scale 1.0");
@@ -888,7 +888,6 @@ pub(crate) fn ensure_started() {
         },
         pending_ack: None,
         present: None,
-        scale_known: scale_known_at_boot,
         pre_fs_maximized: false,
     };
 
@@ -1135,8 +1134,10 @@ impl Dispatch<WpFractionalScaleV1, ()> for RootState {
             let Some(scale) = crate::scale::Scale120::from_wire(scale) else {
                 return;
             };
-            state.scale_known = true;
-            crate::window_state::feed_scale(scale);
+            crate::window_state::feed_scale(
+                scale,
+                crate::window_state::ScaleProvenance::Authoritative,
+            );
             // Scale arrives without a configure (output change, or the first
             // scale completing a withheld configure), so drive a present here too.
             state.try_present();
