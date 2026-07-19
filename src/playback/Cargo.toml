@@ -11,6 +11,7 @@ crate-type = ["rlib"]
 [dependencies]
 parking_lot.workspace = true
 jfn-mpv = { path = "../mpv" }
+jfn-platform-abi = { path = "../platform_abi" }
 jfn-wake-event = { path = "../wake_event" }
 serde_json.workspace = true
 

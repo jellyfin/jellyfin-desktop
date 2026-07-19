@@ -2417,6 +2417,7 @@ name = "jfn-playback"
 version = "0.1.0-dev"
 dependencies = [
  "jfn-mpv",
+ "jfn-platform-abi",
  "jfn-wake-event",
  "parking_lot",
  "serde_json",

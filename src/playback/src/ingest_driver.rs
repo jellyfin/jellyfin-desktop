@@ -90,19 +90,16 @@ pub fn jfn_playback_set_display_scale_handler<F: Fn(f64) + Send + Sync + 'static
     *display_scale_slot().lock() = Some(Box::new(cb));
 }
 
-/// Push a device-pixel window size into the geometry-save cache.
-/// Mirrors the legacy `mpv::set_window_pixels` producer used at boot
-/// (geometry seed) and runtime resize.
-pub fn jfn_playback_set_window_pixels(pw: i32, ph: i32) {
-    state().set_window_pixels(pw, ph);
+/// Seed the extent cell with a device-pixel window size + scale at boot,
+/// before the first osd-dimensions digest can supply one.
+pub fn jfn_playback_seed_window_extent(pw: i32, ph: i32, scale: f32) {
+    state().seed_window_extent(pw, ph, scale);
 }
 
-pub fn jfn_playback_window_size() -> Option<(i32, i32)> {
-    positive_pair(state().window_pw(), state().window_ph())
-}
-
-fn positive_pair(w: i32, h: i32) -> Option<(i32, i32)> {
-    (w > 0 && h > 0).then_some((w, h))
+/// Last known window extent — coherent (logical, physical, scale) from
+/// whichever producer (boot seed / osd-dimensions digest) wrote last.
+pub fn jfn_playback_window_extent() -> Option<jfn_platform_abi::WindowExtent> {
+    state().window_extent()
 }
 
 /// Returns flag bits — see [`INGEST_FLAG_SHUTDOWN`].
@@ -155,6 +152,27 @@ pub fn jfn_playback_post_osd_pixels(
 
 const OSD_DIMS_OBSERVE_ID: ObserveId = crate::ingest::observe_id::OSD_DIMS;
 
+/// Push the window mode through the same digest path the `fullscreen` /
+/// `window-maximized` property observations drive. Used by backends where
+/// the compositor — not mpv — owns the toplevel (Wayland), so those mpv
+/// properties never change.
+///
+/// `FULLSCREEN` must digest first: entering fullscreen reads the *stored*
+/// maximized flag for `was_maximized`, and a fullscreen caller passes
+/// `maximized == false` (the modes are mutually exclusive), which must not
+/// clobber that flag before it is read.
+pub fn jfn_playback_post_window_state(fullscreen: bool, maximized: bool) {
+    use crate::ingest::observe_id::{FULLSCREEN, WINDOW_MAX};
+    let ctx = CallerCtx {
+        scale: 1.0,
+        mac: None,
+    };
+    let outs = ingest_property_for_ffi(FULLSCREEN, &PropertyValue::Flag(fullscreen), state(), &ctx);
+    dispatch(outs);
+    let outs = ingest_property_for_ffi(WINDOW_MAX, &PropertyValue::Flag(maximized), state(), &ctx);
+    dispatch(outs);
+}
+
 // ---------------------------------------------------------------------
 // State accessors mirroring the legacy `mpv::*` getters
 // ---------------------------------------------------------------------
@@ -165,10 +183,6 @@ pub fn jfn_playback_fullscreen() -> bool {
 
 pub fn jfn_playback_window_maximized() -> bool {
     state().window_maximized()
-}
-
-pub fn jfn_playback_osd_size() -> Option<(i32, i32)> {
-    positive_pair(state().osd_pw(), state().osd_ph())
 }
 
 pub fn jfn_playback_display_scale() -> f64 {
@@ -195,10 +209,12 @@ pub fn jfn_playback_set_display_hz(hz: f64) {
 pub const BACKEND_WAYLAND: u8 = 0;
 
 /// Register the property observations whose IDs are dispatched by the
-/// ingest layer. Backend selection skips `osd-dimensions` on Wayland —
-/// the window's `xdg_toplevel.configure` feeds those dims via
-/// [`jfn_playback_post_osd_pixels`] instead, and observing it here would
-/// double-post identical values.
+/// ingest layer. Backend selection skips `osd-dimensions`, `fullscreen`,
+/// and `window-maximized` on Wayland — the compositor owns the toplevel
+/// there, so the window's `xdg_toplevel.configure` feeds dims and mode via
+/// [`jfn_playback_post_osd_pixels`] / [`jfn_playback_post_window_state`]
+/// instead, and mpv's own properties either never change (mode) or would
+/// double-post identical values (dims).
 ///
 /// Requires `jfn_mpv_handle_init` to have succeeded; returns false if
 /// the handle is missing.
@@ -247,7 +263,7 @@ pub fn jfn_playback_observe_mpv_properties(backend: u8) -> bool {
     ];
 
     for &(id, name, fmt) in pairs {
-        if backend == BACKEND_WAYLAND && id == OSD_DIMS {
+        if backend == BACKEND_WAYLAND && matches!(id, OSD_DIMS | FULLSCREEN | WINDOW_MAX) {
             continue;
         }
         unsafe { jfn_mpv::sys::mpv_observe_property(raw, id, name.as_ptr(), fmt) };

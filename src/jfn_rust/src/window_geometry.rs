@@ -6,8 +6,7 @@
 use std::sync::OnceLock;
 
 use jfn_platform_abi::{
-    BootGeometry, LogicalSize, PhysicalSize, Platform, Scale, WindowExtent, WindowGeometry,
-    WindowSnapshot, WindowSource,
+    BootGeometry, LogicalSize, Platform, Scale, WindowGeometry, WindowSnapshot, WindowSource,
 };
 
 use jfn_config::JfnWindowGeometry;
@@ -22,12 +21,8 @@ struct MpvWindowSource;
 
 impl WindowSource for MpvWindowSource {
     fn snapshot(&self) -> WindowSnapshot {
-        let size = jfn_playback::ingest_driver::jfn_playback_window_size()
-            .or_else(jfn_playback::ingest_driver::jfn_playback_osd_size);
-        let extent =
-            size.map(|(w, h)| WindowExtent::new(PhysicalSize { w, h }, Scale(plat().get_scale())));
         WindowSnapshot {
-            extent,
+            extent: jfn_playback::ingest_driver::jfn_playback_window_extent(),
             position: plat().query_window_position(),
             maximized: jfn_playback::ingest_driver::jfn_playback_window_maximized(),
             fullscreen: jfn_playback::ingest_driver::jfn_playback_fullscreen(),
@@ -133,7 +128,7 @@ fn geometry_to_persist(
         return None;
     }
     let scale = ext.scale().or_one();
-    let logical = physical.to_logical(scale);
+    let logical = ext.logical();
     Some(JfnWindowGeometry {
         width: physical.w,
         height: physical.h,
@@ -149,7 +144,7 @@ fn geometry_to_persist(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jfn_platform_abi::WindowPos;
+    use jfn_platform_abi::{PhysicalSize, WindowExtent, WindowPos};
 
     struct FakeWindowSource {
         size: Option<PhysicalSize>,

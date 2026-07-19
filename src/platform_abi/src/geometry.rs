@@ -55,20 +55,36 @@ impl PhysicalSize {
     }
 }
 
-/// Physical size paired with its display scale. Reading the two coherently is
-/// the producer's responsibility, not this type's: the Wayland source derives
-/// both from one window-extent snapshot, while the mpv-backed source reads
-/// ingest size and `Platform::get_scale` separately because it has no bundled
-/// snapshot to offer. `WindowExtent` only carries the pair it is handed.
+/// A coherent (logical, physical, scale) triple. [`WindowExtent::new`]
+/// derives the logical size by division; [`WindowExtent::with_logical`]
+/// preserves a producer's exact logical size, which division at fractional
+/// scales cannot reproduce.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct WindowExtent {
+    logical: LogicalSize,
     physical: PhysicalSize,
     scale: Scale,
 }
 
 impl WindowExtent {
     pub fn new(physical: PhysicalSize, scale: Scale) -> Self {
-        Self { physical, scale }
+        Self {
+            logical: physical.to_logical(scale),
+            physical,
+            scale,
+        }
+    }
+
+    pub fn with_logical(physical: PhysicalSize, scale: Scale, logical: LogicalSize) -> Self {
+        Self {
+            logical,
+            physical,
+            scale,
+        }
+    }
+
+    pub fn logical(&self) -> LogicalSize {
+        self.logical
     }
 
     pub fn physical(&self) -> PhysicalSize {

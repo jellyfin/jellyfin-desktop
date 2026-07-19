@@ -1,7 +1,9 @@
 //! Native [`WindowSource`]: the Wayland backend owns the toplevel, so live
 //! geometry comes from compositor state, not mpv ingest.
 
-use jfn_platform_abi::{PhysicalSize, Scale, WindowExtent, WindowSnapshot, WindowSource};
+use jfn_platform_abi::{
+    LogicalSize, PhysicalSize, Scale, WindowExtent, WindowSnapshot, WindowSource,
+};
 
 pub struct WaylandWindowSource;
 
@@ -11,12 +13,16 @@ impl WindowSource for WaylandWindowSource {
         let snap = crate::window_state::window_extent();
         WindowSnapshot {
             extent: snap.map(|e| {
-                WindowExtent::new(
+                WindowExtent::with_logical(
                     PhysicalSize {
                         w: e.physical().w(),
                         h: e.physical().h(),
                     },
                     Scale(e.scale()),
+                    LogicalSize {
+                        w: e.logical().w(),
+                        h: e.logical().h(),
+                    },
                 )
             }),
             position: None,

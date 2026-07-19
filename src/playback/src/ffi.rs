@@ -76,8 +76,10 @@ fn register_builtin_sinks(c: &PlaybackCoordinator) {
 }
 
 pub fn jfn_playback_shutdown() {
-    let mut guard = coord_slot().lock();
-    if let Some(mut c) = guard.take() {
+    // stop() joins the worker, whose sinks call post() → coord_slot;
+    // holding the guard across stop() deadlocks.
+    let coord = coord_slot().lock().take();
+    if let Some(mut c) = coord {
         c.stop();
     }
 }
