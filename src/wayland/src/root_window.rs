@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::num::{NonZeroI32, NonZeroU64};
+use std::num::{NonZeroI32, NonZeroU32, NonZeroU64};
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -205,7 +205,32 @@ impl RootState {
             return;
         }
         if !self.scale_known {
-            return;
+            // Some compositors (Hyprland) withhold preferred_scale until the
+            // window maps, which never happens while the first buffer waits on
+            // the scale. Once a configure arrives, resolve a provisional scale
+            // from the outputs and proceed; the authoritative preferred_scale
+            // corrects it after map.
+            if self.present.is_some() || self.pending_ack.is_none() {
+                return;
+            }
+            let probed = crate::scale_probe::jfn_wayland_scale_probe(-1, -1);
+            match crate::window_state::scale_120_from_ratio(probed) {
+                Some(scale_120) => {
+                    tracing::info!(
+                        target: "Main",
+                        "root window: no preferred_scale before first configure; using probed scale {probed}"
+                    );
+                    crate::window_state::feed_scale(scale_120);
+                }
+                None => {
+                    tracing::warn!(
+                        target: "Main",
+                        "root window: no preferred_scale before first configure and probe failed; assuming scale 1.0"
+                    );
+                    crate::window_state::feed_unit_scale();
+                }
+            }
+            self.scale_known = true;
         }
         let Some(size) = self.resolve_logical() else {
             return;
@@ -1107,8 +1132,11 @@ impl Dispatch<WpFractionalScaleV1, ()> for RootState {
         _: &QueueHandle<Self>,
     ) {
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            let Some(scale_120) = NonZeroU32::new(scale) else {
+                return;
+            };
             state.scale_known = true;
-            crate::window_state::feed_scale(scale as i32);
+            crate::window_state::feed_scale(scale_120);
             // Scale arrives without a configure (output change, or the first
             // scale completing a withheld configure), so drive a present here too.
             state.try_present();
