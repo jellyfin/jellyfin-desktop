@@ -1,17 +1,16 @@
 //! Wayland backend impl of [`jfn_platform_abi::Platform`].
 //!
-//! Each method forwards to the existing Rust `wl_*` / `jfn_wl_*` helpers
-//! (mostly `crate::wl_ops` + `crate::wl_ffi`). The factory returns the
-//! concrete type; `jfn_app_main` boxes it as `Box<dyn Platform>` before
-//! handing it to `jfn_platform_abi::install`.
+//! This is the crate's ABI adapter: raw pointers, `c_int` dimensions, and
+//! opaque `SurfaceHandle`s from the Platform trait are converted here into
+//! the crate's domain types before reaching any internal module. The factory
+//! returns the concrete type; `jfn_app_main` boxes it as `Box<dyn Platform>`
+//! before handing it to `jfn_platform_abi::install`.
 
 #![allow(non_snake_case)]
 // Platform trait carries raw-pointer args (dmabuf info, accel-paint info)
 // from CEF; trait impls forward them unchanged to unsafe FFI fns.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-#[cfg(feature = "kde-palette")]
-use std::ffi::c_char;
 use std::ffi::{c_int, c_void};
 use std::os::fd::FromRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,15 +22,6 @@ pub use jfn_platform_abi::{
     BootGeometry, DisplayBackend, IdleInhibitLevel, JfnContextMenuRequest, JfnPopupRequest,
     JfnRect, Platform, SurfaceHandle, SurfaceSize, WindowDecorations,
 };
-
-// =====================================================================
-// External symbols
-// =====================================================================
-
-#[cfg(feature = "kde-palette")]
-use crate::kde_palette::{jfn_wl_kde_palette_post_window_cleanup, jfn_wl_kde_palette_set_color};
-use crate::lifecycle::{jfn_wl_lifecycle_cleanup, jfn_wl_lifecycle_init};
-use crate::window_state::jfn_wl_get_cached_scale;
 
 // =====================================================================
 // Helpers
@@ -109,17 +99,17 @@ impl Platform for WaylandPlatform {
     }
 
     fn init(&self, _mpv: *mut c_void) -> bool {
-        jfn_wl_lifecycle_init()
+        crate::lifecycle::init()
     }
 
     fn cleanup(&self) {
-        jfn_wl_lifecycle_cleanup();
+        crate::lifecycle::cleanup();
     }
 
     fn post_window_cleanup(&self) {
         crate::mpv_host::stop_proxy();
         #[cfg(feature = "kde-palette")]
-        jfn_wl_kde_palette_post_window_cleanup();
+        crate::kde_palette::post_window_cleanup();
     }
 
     fn alloc_surface(&self) -> SurfaceHandle {
@@ -226,31 +216,31 @@ impl Platform for WaylandPlatform {
     }
 
     fn set_fullscreen(&self, v: bool) {
-        crate::wl_ffi::jfn_wl_set_fullscreen(v);
+        crate::root_window::set_fullscreen(v);
     }
 
     fn toggle_fullscreen(&self) {
-        crate::wl_ffi::jfn_wl_toggle_fullscreen();
+        crate::root_window::toggle_fullscreen();
     }
 
     fn window_minimize(&self) {
-        crate::wl_ffi::jfn_wl_window_minimize();
+        crate::root_window::set_minimized();
     }
 
     fn window_toggle_maximize(&self) {
-        crate::wl_ffi::jfn_wl_window_toggle_maximize();
+        crate::root_window::toggle_maximize();
     }
 
     fn window_start_move(&self) {
-        crate::wl_ffi::jfn_wl_window_start_move();
+        crate::root_window::start_move();
     }
 
     fn window_start_resize(&self, edge: c_int) {
-        crate::wl_ffi::jfn_wl_window_start_resize(edge);
+        crate::root_window::start_resize(edge as u32);
     }
 
     fn get_scale(&self) -> f32 {
-        jfn_wl_get_cached_scale()
+        crate::window_state::cached_scale()
     }
 
     fn effective_scale(&self, _mpv_display_hidpi_scale: f64) -> f32 {
@@ -296,8 +286,8 @@ impl Platform for WaylandPlatform {
             hex[5] = hexdigit((b >> 4) & 0xF);
             hex[6] = hexdigit(b & 0xF);
             hex[7] = 0;
-            unsafe {
-                jfn_wl_kde_palette_set_color(r, g, b, hex.as_ptr() as *const c_char);
+            if let Ok(hex) = std::ffi::CStr::from_bytes_with_nul(&hex) {
+                crate::kde_palette::set_color(r, g, b, hex);
             }
         }
     }

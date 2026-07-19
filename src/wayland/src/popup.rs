@@ -174,7 +174,7 @@ pub fn show_highlighted(
     // generations. Falls back to the cached scale (and win height 0) before any
     // extent exists, which disables the bottom-clamp anyway.
     let extent = crate::window_state::window_extent();
-    let scale = extent.map_or_else(crate::window_state::jfn_wl_get_cached_scale, |e| e.scale());
+    let scale = extent.map_or_else(crate::window_state::cached_scale, |e| e.scale());
     let layout = {
         let fonts = st.menu_io.fonts.get_or_insert_with(Fonts::new);
         let mut layout = render::layout(fonts, &items, scale);

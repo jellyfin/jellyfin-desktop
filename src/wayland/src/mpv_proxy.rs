@@ -73,7 +73,7 @@ static MPV_VIDEO_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
 
 static APP_CLIENT_FD: AtomicI32 = AtomicI32::new(-1);
 
-pub fn app_client_fd() -> Option<c_int> {
+pub(crate) fn app_client_fd() -> Option<std::os::fd::RawFd> {
     let fd = APP_CLIENT_FD.load(Ordering::Acquire);
     (fd >= 0).then_some(fd)
 }
@@ -91,13 +91,11 @@ fn window_size() -> Option<WindowSize> {
 /// closed (and possibly reused) out from under it.
 static MPV_WAKE: Mutex<Option<WakeEvent>> = Mutex::new(None);
 
-pub fn set_window_size(w: c_int, h: c_int) {
-    if let Some(size) = WindowSize::new(w, h) {
-        CUR_W.store(size.w(), Ordering::Release);
-        CUR_H.store(size.h(), Ordering::Release);
-        WINDOW_SIZE_GEN.fetch_add(1, Ordering::AcqRel);
-        wake_mpv_thread();
-    }
+pub(crate) fn set_window_size(size: WindowSize) {
+    CUR_W.store(size.w(), Ordering::Release);
+    CUR_H.store(size.h(), Ordering::Release);
+    WINDOW_SIZE_GEN.fetch_add(1, Ordering::AcqRel);
+    wake_mpv_thread();
 }
 
 fn wake_mpv_thread() {

@@ -41,7 +41,7 @@ impl Scale120 {
     }
 
     /// Scale one logical dimension to physical (round half up), or `None` when
-    /// the result cannot be represented as a positive `c_int`.
+    /// the result cannot be represented as a positive `i32`.
     fn scale_dim(self, logical: i32) -> Option<i32> {
         let base = i64::from(Self::BASE);
         let scaled = i64::from(logical)
