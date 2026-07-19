@@ -55,6 +55,15 @@ const SCALE_120_BASE: u32 = 120;
 /// Sentinel for the `SCALE_120` atomic: no scale reported yet.
 const SCALE_120_UNKNOWN: u32 = 0;
 
+/// 1.0 in 120ths. A known scale is always a `NonZeroU32` of 120ths; parsing
+/// into that type happens at the boundaries ([`scale_120_from_ratio`], the
+/// `preferred_scale` wire handler), so [`feed_scale`] cannot receive an
+/// invalid scale.
+const SCALE_120_UNIT: NonZeroU32 = match NonZeroU32::new(SCALE_120_BASE) {
+    Some(s) => s,
+    None => unreachable!(),
+};
+
 fn scale_ratio(scale_120: NonZeroU32) -> f32 {
     scale_120.get() as f32 / SCALE_120_BASE as f32
 }
@@ -193,13 +202,19 @@ pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
 /// Satisfy the boot scale gate when no `wp_fractional_scale_manager_v1` exists,
 /// so it doesn't wait forever for a `preferred_scale` that never arrives.
 pub(crate) fn feed_unit_scale() {
-    feed_scale(SCALE_120_BASE as c_int);
+    feed_scale(SCALE_120_UNIT);
 }
 
-pub(crate) fn feed_scale(scale_120: c_int) {
-    let Some(scale_120) = u32::try_from(scale_120).ok().and_then(NonZeroU32::new) else {
-        return;
-    };
+/// Parse a scale ratio (1.0 = 100%), e.g. from the output probe, into 120ths.
+pub(crate) fn scale_120_from_ratio(ratio: f64) -> Option<NonZeroU32> {
+    let scaled = (ratio * f64::from(SCALE_120_BASE)).round();
+    if !(1.0..=f64::from(u32::MAX)).contains(&scaled) {
+        return None;
+    }
+    NonZeroU32::new(scaled as u32)
+}
+
+pub(crate) fn feed_scale(scale_120: NonZeroU32) {
     let first = SCALE_120.swap(scale_120.get(), Ordering::AcqRel) == SCALE_120_UNKNOWN;
     if first {
         tracing::info!(target: "Main", "scale known: {}", scale_ratio(scale_120));
