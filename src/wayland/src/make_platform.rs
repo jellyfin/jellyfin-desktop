@@ -31,7 +31,6 @@ pub use jfn_platform_abi::{
 #[cfg(feature = "kde-palette")]
 use crate::kde_palette::{jfn_wl_kde_palette_post_window_cleanup, jfn_wl_kde_palette_set_color};
 use crate::lifecycle::{jfn_wl_lifecycle_cleanup, jfn_wl_lifecycle_init};
-use crate::scale_probe::jfn_wayland_scale_probe;
 use crate::window_state::jfn_wl_get_cached_scale;
 
 // =====================================================================
@@ -259,8 +258,8 @@ impl Platform for WaylandPlatform {
     }
 
     fn get_display_scale(&self, x: c_int, y: c_int) -> f32 {
-        let s = jfn_wayland_scale_probe(x, y);
-        if s > 0.0 { s as f32 } else { 1.0 }
+        crate::scale_probe::probe_scale(crate::scale_probe::ProbeTarget::Point { x, y })
+            .map_or(1.0, |s| s.ratio_f32())
     }
 
     fn apply_boot_geometry(&self, g: &BootGeometry) {

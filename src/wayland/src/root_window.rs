@@ -323,9 +323,11 @@ impl RootState {
         let spawned = thread::Builder::new()
             .name("wl-scale-fallback".into())
             .spawn(|| {
-                let probed = crate::scale_probe::probe_first_output_bounded(SCALE_PROBE_TIMEOUT);
-                match probed.and_then(crate::scale::Scale120::from_ratio) {
-                    Some(scale) => {
+                match crate::scale_probe::probe_scale_bounded(
+                    crate::scale_probe::ProbeTarget::FirstOutput,
+                    SCALE_PROBE_TIMEOUT,
+                ) {
+                    Ok(scale) => {
                         tracing::info!(
                             target: "Main",
                             "root window: no preferred_scale before first configure; using probed scale {scale}"
@@ -335,10 +337,10 @@ impl RootState {
                             crate::window_state::ScaleProvenance::Provisional,
                         );
                     }
-                    None => {
+                    Err(e) => {
                         tracing::warn!(
                             target: "Main",
-                            "root window: no preferred_scale before first configure and probe failed; assuming scale 1.0"
+                            "root window: no preferred_scale before first configure and probe failed ({e}); assuming scale 1.0"
                         );
                         crate::window_state::feed_unit_scale();
                     }
