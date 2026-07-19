@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::num::{NonZeroI32, NonZeroU32, NonZeroU64};
+use std::num::{NonZeroI32, NonZeroU64};
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -214,13 +214,13 @@ impl RootState {
                 return;
             }
             let probed = crate::scale_probe::jfn_wayland_scale_probe(-1, -1);
-            match crate::window_state::scale_120_from_ratio(probed) {
-                Some(scale_120) => {
+            match crate::scale::Scale120::from_ratio(probed) {
+                Some(scale) => {
                     tracing::info!(
                         target: "Main",
                         "root window: no preferred_scale before first configure; using probed scale {probed}"
                     );
-                    crate::window_state::feed_scale(scale_120);
+                    crate::window_state::feed_scale(scale);
                 }
                 None => {
                     tracing::warn!(
@@ -1132,11 +1132,11 @@ impl Dispatch<WpFractionalScaleV1, ()> for RootState {
         _: &QueueHandle<Self>,
     ) {
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
-            let Some(scale_120) = NonZeroU32::new(scale) else {
+            let Some(scale) = crate::scale::Scale120::from_wire(scale) else {
                 return;
             };
             state.scale_known = true;
-            crate::window_state::feed_scale(scale_120);
+            crate::window_state::feed_scale(scale);
             // Scale arrives without a configure (output change, or the first
             // scale completing a withheld configure), so drive a present here too.
             state.try_present();

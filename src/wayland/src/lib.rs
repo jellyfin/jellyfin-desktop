@@ -18,6 +18,7 @@ pub(crate) mod mpv_proxy;
 pub mod paint_override;
 pub(crate) mod popup;
 pub(crate) mod root_window;
+pub(crate) mod scale;
 pub mod scale_probe;
 pub(crate) mod scene;
 pub(crate) mod shm_paint_worker;
