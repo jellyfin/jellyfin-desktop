@@ -103,7 +103,7 @@
             },
             advanced: {
                 transparentTitlebar: _savedSettings.transparentTitlebar !== false,
-                windowDecorations: '__WINDOW_DECORATIONS__',
+                windowDecorations: __WINDOW_DECORATIONS__,
                 hideScrollbar: _savedSettings.hideScrollbar !== false,
                 logLevel: _savedSettings.logLevel || '',
                 deviceName: _savedSettings.deviceName || ''
@@ -151,21 +151,21 @@
         });
     }
 
-    // Window decorations (Linux): how the titlebar is drawn. Replaces separate
-    // client-side-decoration and titlebar-theme-color toggles.
-    if (__WINDOW_DECORATIONS_SUPPORTED__) {
-        const decorationOptions = [
-            { value: 'csd', title: 'In-app (client-side)' },
-            { value: 'server', title: 'System (server-side)' }
-        ];
-        if (__THEME_COLOR_SUPPORTED__) {
-            decorationOptions.push({ value: 'serverThemed', title: 'System, themed (KDE)' });
-        }
+    const decorationValues = __WINDOW_DECORATION_OPTIONS__;
+    if (decorationValues.length > 1) {
+        const decorationTitles = {
+            csd: 'In-app (client-side)',
+            server: 'System (server-side)',
+            serverThemed: 'System, themed (KDE)'
+        };
         jmpInfo.settingsDescriptions.advanced.unshift({
             key: 'windowDecorations',
             displayName: 'Window Decorations',
-            help: 'How the window titlebar is drawn. In-app is needed on desktops without their own (e.g. GNOME). Auto-detected by default; changing requires restart.',
-            options: decorationOptions
+            help: 'How the window titlebar is drawn. Changing requires restart.',
+            options: [
+                { value: null, title: 'Auto' },
+                ...decorationValues.map((value) => ({ value, title: decorationTitles[value] || value }))
+            ]
         });
     }
 
@@ -310,7 +310,8 @@
             setValue(section, key, value, callback) {
                 if (window.jmpNative && window.jmpNative.setSettingValue) {
                     let serialized;
-                    if (typeof value === 'boolean')      serialized = value ? 'true' : 'false';
+                    if (value === null)                  serialized = null;
+                    else if (typeof value === 'boolean') serialized = value ? 'true' : 'false';
                     else if (Array.isArray(value))       serialized = JSON.stringify(value);
                     else                                 serialized = String(value);
                     window.jmpNative.setSettingValue(section, key, serialized);

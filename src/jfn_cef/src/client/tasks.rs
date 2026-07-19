@@ -119,3 +119,17 @@ pub(crate) fn jfn_cef_post_set_hidden_all(hidden: bool) {
     let mut task = SetHiddenAllTask::new(hidden);
     let _ = post_task(ThreadId::UI, Some(&mut task));
 }
+
+wrap_task! {
+    struct PushCsdStateAllTask {}
+    impl Task {
+        fn execute(&self) {
+            crate::browsers::jfn_browsers_apply_csd_state_all();
+        }
+    }
+}
+
+pub(crate) fn jfn_cef_post_csd_state_all() {
+    let mut task = PushCsdStateAllTask::new();
+    let _ = post_task(ThreadId::UI, Some(&mut task));
+}

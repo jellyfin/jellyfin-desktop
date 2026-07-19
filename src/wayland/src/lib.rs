@@ -5,6 +5,7 @@
 pub(crate) mod app_conn;
 pub(crate) mod clipboard;
 pub(crate) mod context_menu;
+pub(crate) mod decoration_probe;
 pub(crate) mod dropdown;
 pub(crate) mod gpu_paint_worker;
 pub(crate) mod input;

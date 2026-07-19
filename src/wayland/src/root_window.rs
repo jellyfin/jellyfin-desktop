@@ -13,7 +13,7 @@ use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_registry::WlRegistry, wl_seat::WlSeat,
     wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface,
 };
-use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
@@ -38,7 +38,7 @@ use wayland_protocols_plasma::server_decoration_palette::client::{
     org_kde_kwin_server_decoration_palette_manager::OrgKdeKwinServerDecorationPaletteManager,
 };
 
-use jfn_platform_abi::WindowDecorations;
+use jfn_platform_abi::{EffectiveDecorations, WindowDecorations};
 
 const APP_ID: &str = "net.nullsum.JelliumDesktop";
 const TITLE: &str = "Jellium Desktop";
@@ -58,10 +58,67 @@ const STATE_TILED_RIGHT: u32 = 6;
 const STATE_TILED_TOP: u32 = 7;
 const STATE_TILED_BOTTOM: u32 = 8;
 
-static WANT_CSD: AtomicBool = AtomicBool::new(false);
+/// The user's explicit decoration preference; `Auto` sends no `set_mode`, so
+/// the compositor's preferred mode (delivered in the decoration configure)
+/// decides.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u8)]
+enum DecorationRequest {
+    Auto = 0,
+    ClientSide = 1,
+    ServerSide = 2,
+}
 
-pub(crate) fn set_decorations(mode: WindowDecorations) {
-    WANT_CSD.store(matches!(mode, WindowDecorations::Csd), Ordering::Release);
+static DECORATION_REQUEST: AtomicU8 = AtomicU8::new(DecorationRequest::Auto as u8);
+
+fn decoration_request() -> DecorationRequest {
+    match DECORATION_REQUEST.load(Ordering::Acquire) {
+        v if v == DecorationRequest::ClientSide as u8 => DecorationRequest::ClientSide,
+        v if v == DecorationRequest::ServerSide as u8 => DecorationRequest::ServerSide,
+        _ => DecorationRequest::Auto,
+    }
+}
+
+pub(crate) fn set_decorations(configured: Option<WindowDecorations>) {
+    let request = match configured {
+        None => DecorationRequest::Auto,
+        Some(WindowDecorations::Csd) => DecorationRequest::ClientSide,
+        Some(_) => DecorationRequest::ServerSide,
+    };
+    DECORATION_REQUEST.store(request as u8, Ordering::Release);
+}
+
+/// The decoration mode in effect. `ClientSide` until a decoration configure
+/// — or, absent the decoration protocol, an explicit server-side request —
+/// grants otherwise.
+struct EffectiveState(AtomicU8);
+
+impl EffectiveState {
+    fn encode(mode: EffectiveDecorations) -> u8 {
+        match mode {
+            EffectiveDecorations::ClientSide => 0,
+            EffectiveDecorations::ServerSide => 1,
+        }
+    }
+
+    fn load(&self) -> EffectiveDecorations {
+        if self.0.load(Ordering::Acquire) == Self::encode(EffectiveDecorations::ServerSide) {
+            EffectiveDecorations::ServerSide
+        } else {
+            EffectiveDecorations::ClientSide
+        }
+    }
+
+    /// Returns true when the stored value changed.
+    fn store(&self, mode: EffectiveDecorations) -> bool {
+        self.0.swap(Self::encode(mode), Ordering::AcqRel) != Self::encode(mode)
+    }
+}
+
+static EFFECTIVE: EffectiveState = EffectiveState(AtomicU8::new(0));
+
+pub(crate) fn effective_decorations() -> EffectiveDecorations {
+    EFFECTIVE.load()
 }
 
 static BOOT_W: AtomicU32 = AtomicU32::new(DEFAULT_W as u32);
@@ -973,22 +1030,27 @@ pub(crate) fn ensure_started() {
         crate::window_state::feed_unit_scale();
     }
 
-    // Request server/client-side decorations to match the configured mode.
-    // Without an explicit request a compositor's default (KWin: server-side,
-    // sway: none) leaves the window with no titlebar.
     let deco_mgr: Option<ZxdgDecorationManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
     let decoration = deco_mgr.as_ref().map(|mgr| {
         let dec = mgr.get_toplevel_decoration(&toplevel, &qh, ());
-        let mode = if WANT_CSD.load(Ordering::Acquire) {
-            DecorationMode::ClientSide
-        } else {
-            DecorationMode::ServerSide
-        };
-        dec.set_mode(mode);
+        match decoration_request() {
+            DecorationRequest::ClientSide => dec.set_mode(DecorationMode::ClientSide),
+            DecorationRequest::ServerSide => dec.set_mode(DecorationMode::ServerSide),
+            // No set_mode: the compositor's preferred mode arrives in the
+            // decoration configure, which we obey either way.
+            DecorationRequest::Auto => {}
+        }
         dec
     });
     if deco_mgr.is_none() {
-        tracing::warn!(target: "Main", "root window: no zxdg_decoration_manager_v1");
+        if decoration_request() == DecorationRequest::ServerSide {
+            tracing::warn!(target: "Main", "root window: no zxdg_decoration_manager_v1; server-side requested, drawing no titlebar");
+            if EFFECTIVE.store(EffectiveDecorations::ServerSide) {
+                jfn_platform_abi::notify_decorations_changed();
+            }
+        } else {
+            tracing::warn!(target: "Main", "root window: no zxdg_decoration_manager_v1; client-side decorations");
+        }
     }
 
     #[cfg(feature = "kde-palette")]
@@ -1401,11 +1463,22 @@ impl Dispatch<ZxdgToplevelDecorationV1, ()> for RootState {
     fn event(
         _: &mut Self,
         _: &ZxdgToplevelDecorationV1,
-        _: zxdg_toplevel_decoration_v1::Event,
+        event: zxdg_toplevel_decoration_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = event {
+            let effective = match mode {
+                WEnum::Value(DecorationMode::ClientSide) => EffectiveDecorations::ClientSide,
+                WEnum::Value(DecorationMode::ServerSide) => EffectiveDecorations::ServerSide,
+                _ => return,
+            };
+            if EFFECTIVE.store(effective) {
+                tracing::info!(target: "Main", "decorations: compositor set {effective:?}");
+                jfn_platform_abi::notify_decorations_changed();
+            }
+        }
     }
 }
 

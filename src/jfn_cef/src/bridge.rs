@@ -149,4 +149,5 @@ impl BrowserBridge for CefBrowserBridge {
 
 pub fn install() {
     jfn_platform_abi::install_browser_bridge(Box::new(CefBrowserBridge));
+    jfn_platform_abi::set_decorations_listener(crate::browsers::jfn_browsers_push_csd_state_all);
 }

@@ -132,7 +132,7 @@ fn setup_mpv_environment() {
 
     plat()
         .mpv_host()
-        .prepare(jfn_config::window_decorations_mode());
+        .prepare(jfn_config::configured_window_decorations());
 }
 
 struct StartupOptions {

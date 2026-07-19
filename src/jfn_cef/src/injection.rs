@@ -292,8 +292,7 @@ const SCRIPTS_KEY: &str = "scripts";
 const DEVICE_PROFILE_JSON_KEY: &str = "device_profile_json";
 const SHARED_TEXTURES_ENABLED_KEY: &str = "shared_textures_enabled";
 const WINDOW_DECORATIONS_KEY: &str = "window_decorations";
-const WINDOW_DECORATIONS_SUPPORTED_KEY: &str = "window_decorations_supported";
-const THEME_COLOR_SUPPORTED_KEY: &str = "theme_color_supported";
+const WINDOW_DECORATION_OPTIONS_KEY: &str = "window_decoration_options";
 
 static DEVICE_PROFILE_JSON: OnceLock<String> = OnceLock::new();
 
@@ -304,8 +303,9 @@ pub(crate) struct ExtraInfo {
     device_profile_json: Option<String>,
     shared_textures_enabled: bool,
     window_decorations: Option<WindowDecorations>,
-    window_decorations_supported: bool,
-    theme_color_supported: bool,
+    /// Decoration modes the user may choose between; empty when the setting
+    /// does not apply (non-Linux).
+    window_decoration_options: Vec<WindowDecorations>,
 }
 
 impl ExtraInfo {
@@ -318,8 +318,11 @@ impl ExtraInfo {
             window_decorations: read_string(&dict, WINDOW_DECORATIONS_KEY)
                 .as_deref()
                 .and_then(WindowDecorations::parse),
-            window_decorations_supported: read_bool(&dict, WINDOW_DECORATIONS_SUPPORTED_KEY),
-            theme_color_supported: read_bool(&dict, THEME_COLOR_SUPPORTED_KEY),
+            window_decoration_options: read_typed_list(
+                &dict,
+                WINDOW_DECORATION_OPTIONS_KEY,
+                WindowDecorations::parse,
+            ),
         }
     }
 
@@ -331,18 +334,11 @@ impl ExtraInfo {
             Some(&CefString::from(SHARED_TEXTURES_ENABLED_KEY)),
             if self.shared_textures_enabled { 1 } else { 0 },
         );
-        dict.set_bool(
-            Some(&CefString::from(WINDOW_DECORATIONS_SUPPORTED_KEY)),
-            if self.window_decorations_supported {
-                1
-            } else {
-                0
-            },
-        );
-        dict.set_bool(
-            Some(&CefString::from(THEME_COLOR_SUPPORTED_KEY)),
-            if self.theme_color_supported { 1 } else { 0 },
-        );
+        write_string_list(
+            &dict,
+            WINDOW_DECORATION_OPTIONS_KEY,
+            self.window_decoration_options.iter().map(|wd| wd.as_str()),
+        )?;
         if let Some(json) = self.device_profile_json {
             dict.set_string(
                 Some(&CefString::from(DEVICE_PROFILE_JSON_KEY)),
@@ -378,12 +374,8 @@ impl ExtraInfo {
         self.window_decorations.map(WindowDecorations::as_str)
     }
 
-    pub(crate) fn window_decorations_supported(&self) -> bool {
-        self.window_decorations_supported
-    }
-
-    pub(crate) fn theme_color_supported(&self) -> bool {
-        self.theme_color_supported
+    pub(crate) fn window_decoration_options(&self) -> &[WindowDecorations] {
+        &self.window_decoration_options
     }
 }
 
@@ -517,8 +509,7 @@ fn build_extra_info(
         device_profile_json: None,
         shared_textures_enabled,
         window_decorations: None,
-        window_decorations_supported: false,
-        theme_color_supported: false,
+        window_decoration_options: Vec::new(),
     }
 }
 
@@ -544,12 +535,12 @@ pub(crate) fn build_for_kind(
             {
                 extra_info.device_profile_json = Some(json.clone());
             }
-            extra_info.window_decorations = Some(jfn_config::window_decorations_mode());
-            // Resolved here, browser-side: the renderer process never has a
-            // Platform installed on Linux.
-            if let Some(p) = jfn_platform_abi::try_get() {
-                extra_info.window_decorations_supported = p.window_decorations_supported();
-                extra_info.theme_color_supported = p.theme_color_supported();
+            extra_info.window_decorations = jfn_config::configured_window_decorations();
+            if let Some(p) = jfn_platform_abi::try_get()
+                && p.window_decorations_supported()
+            {
+                extra_info.window_decoration_options =
+                    p.window_decoration_options().iter().collect();
             }
             extra_info.scripts.extend(
                 dropdown

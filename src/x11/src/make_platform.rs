@@ -190,6 +190,10 @@ impl Platform for X11Platform {
         true
     }
 
+    fn window_decoration_options(&self) -> jfn_platform_abi::DecorationOptions {
+        jfn_platform_abi::DecorationOptions::with_server(false)
+    }
+
     fn begin_transition(&self) {
         if let Some(m) = crate::x11_state::MUT.lock().as_mut() {
             m.gate.begin_capturing((m.pw, m.ph));

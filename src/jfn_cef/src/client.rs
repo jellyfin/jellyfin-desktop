@@ -35,7 +35,9 @@ mod resize;
 mod tasks;
 pub(crate) use ffi::*;
 pub use ffi::{jfn_cef_layer_create, jfn_cef_layer_wait_for_load};
-pub(crate) use tasks::{jfn_cef_post_close_and_collect, jfn_cef_post_set_hidden_all};
+pub(crate) use tasks::{
+    jfn_cef_post_close_and_collect, jfn_cef_post_csd_state_all, jfn_cef_post_set_hidden_all,
+};
 
 const STATE_NORMAL: i32 = 0;
 const STATE_PENDING_RESET: i32 = 1;

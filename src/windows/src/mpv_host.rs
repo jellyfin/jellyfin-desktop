@@ -7,7 +7,7 @@ use jfn_platform_abi::{MpvHost, WindowDecorations};
 pub struct WindowsMpvHost;
 
 impl MpvHost for WindowsMpvHost {
-    fn prepare(&self, _decorations: WindowDecorations) {
+    fn prepare(&self, _configured: Option<WindowDecorations>) {
         // Tell mpv to load the window icon from our exe resources. Set via
         // _putenv_s — mpv reads it through the CRT's getenv, which
         // SetEnvironmentVariableW (std::env::set_var) does not update.

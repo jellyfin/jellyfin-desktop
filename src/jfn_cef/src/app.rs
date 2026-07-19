@@ -564,32 +564,26 @@ fn run_user_scripts(profile: &ExtraInfo, frame: &Frame) {
         &jfn_config::cli_json(jfn_mpv::hwdec_options()),
     );
     replace_first(&mut code, "__APP_VERSION__", crate::APP_VERSION);
+    let decoration_options = profile
+        .window_decoration_options()
+        .iter()
+        .map(|wd| format!("'{}'", wd.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
     replace_first(
         &mut code,
-        "__THEME_COLOR_SUPPORTED__",
-        if profile.theme_color_supported() {
-            "true"
-        } else {
-            "false"
-        },
-    );
-    replace_first(
-        &mut code,
-        "__WINDOW_DECORATIONS_SUPPORTED__",
-        if profile.window_decorations_supported() {
-            "true"
-        } else {
-            "false"
-        },
+        "__WINDOW_DECORATION_OPTIONS__",
+        &format!("[{decoration_options}]"),
     );
 
     if let Some(dp) = profile.device_profile_json() {
         replace_first(&mut code, "__DEVICE_PROFILE_JSON__", dp);
     }
 
-    if let Some(wd) = profile.window_decorations() {
-        replace_first(&mut code, "__WINDOW_DECORATIONS__", wd);
-    }
+    let window_decorations = profile
+        .window_decorations()
+        .map_or_else(|| "null".to_string(), |wd| format!("'{wd}'"));
+    replace_first(&mut code, "__WINDOW_DECORATIONS__", &window_decorations);
 
     let url_uf = frame.url();
     let url = CefString::from(&url_uf);

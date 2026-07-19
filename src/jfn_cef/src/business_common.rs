@@ -50,13 +50,25 @@ pub(crate) fn js_cstr_or_warn(label: &str, s: &str) -> Option<CString> {
 /// `setSettingValue` IPC dispatch. Superset of the keys the overlay and the
 /// main web UI send today — both UIs share this single source of truth so
 /// new keys land in one place.
-pub(crate) fn apply_setting_value(_section: &str, key: &str, value: &str) {
+pub(crate) fn apply_setting_value(_section: &str, key: &str, value: Option<&str>) {
+    if key == "windowDecorations" {
+        jfn_config::set_window_decorations(value);
+        jfn_config::settings_save_async();
+        return;
+    }
+    let Some(value) = value else {
+        jfn_logging::log(
+            jfn_logging::CATEGORY_CEF,
+            jfn_logging::LEVEL_WARN,
+            &format!("Null value for setting key: {_section}.{key}"),
+        );
+        return;
+    };
     match key {
         "hwdec" => jfn_config::set_hwdec(value),
         "audioPassthrough" => jfn_config::set_audio_passthrough(value),
         "audioExclusive" => jfn_config::set_audio_exclusive(value == "true"),
         "audioChannels" => jfn_config::set_audio_channels(value),
-        "windowDecorations" => jfn_config::set_window_decorations(value),
         "hideScrollbar" => jfn_config::set_hide_scrollbar(value == "true"),
         "logLevel" => jfn_config::set_log_level(value),
         "forceTranscoding" => jfn_config::set_force_transcoding(value == "true"),

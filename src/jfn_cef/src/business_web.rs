@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::browsers::{jfn_browsers_active, jfn_browsers_set_active};
 use crate::business_common::{apply_setting_value, js_cstr_or_warn, reject_double_init};
 use crate::client::{Inner, JfnCefLayer, jfn_cef_layer_inner, jfn_cef_layer_set_name};
-use crate::ipc::{BrowserMessage, list_int, list_string};
+use crate::ipc::{BrowserMessage, list_int, list_opt_string, list_string};
 use jfn_color::jfn_cef_parse_color;
 use jfn_color::theme::{jfn_theme_color_on_color, jfn_theme_color_set_video_mode};
 use jfn_mpv::api::{
@@ -371,8 +371,8 @@ fn handle_message(message: BrowserMessage) -> bool {
         "setSettingValue" => with_args(args, |a| {
             let section = list_string(a, 0);
             let key = list_string(a, 1);
-            let value = list_string(a, 2);
-            apply_setting_value(&section, &key, &value);
+            let value = list_opt_string(a, 2);
+            apply_setting_value(&section, &key, value.as_deref());
         }),
         "themeColor" => with_args(args, |a| {
             let color = list_string(a, 0);
