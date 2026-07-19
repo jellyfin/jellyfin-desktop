@@ -37,7 +37,7 @@ fn metal_has_mac2_family() -> bool {
 pub struct MacosMpvHost;
 
 impl MpvHost for MacosMpvHost {
-    fn prepare(&self, _decorations: WindowDecorations) {
+    fn prepare(&self, _configured: Option<WindowDecorations>) {
         unsafe {
             // Used by mpv's macOS Cocoa Common to locate the bundle.
             let key = c"MPVBUNDLE";

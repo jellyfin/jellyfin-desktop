@@ -94,8 +94,21 @@ impl Platform for WaylandPlatform {
         DisplayBackend::Wayland
     }
 
+    /// A preference among the available options only — availability itself is
+    /// protocol-derived in [`Self::window_decoration_options`].
     fn default_window_decorations(&self) -> WindowDecorations {
         jfn_linux_util::default_window_decorations()
+    }
+
+    fn window_decoration_options(&self) -> jfn_platform_abi::DecorationOptions {
+        let globals = crate::decoration_probe::globals();
+        jfn_platform_abi::DecorationOptions::with_server(
+            cfg!(feature = "kde-palette") && globals.kde_palette,
+        )
+    }
+
+    fn early_init(&self) {
+        crate::decoration_probe::init();
     }
 
     fn init(&self, _mpv: *mut c_void) -> bool {
@@ -293,11 +306,11 @@ impl Platform for WaylandPlatform {
     }
 
     fn window_decorations_supported(&self) -> bool {
-        true
+        self.window_decoration_options().has_choice()
     }
 
-    fn theme_color_supported(&self) -> bool {
-        cfg!(feature = "kde-palette")
+    fn effective_decorations(&self) -> jfn_platform_abi::EffectiveDecorations {
+        crate::root_window::effective_decorations()
     }
 
     fn shared_texture_supported(&self) -> bool {

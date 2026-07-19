@@ -11,8 +11,9 @@ use crate::WindowDecorations;
 pub trait MpvHost: Send + Sync {
     /// Prepare the process environment for mpv. Runs before `mpv_create`;
     /// position-critical setup (window-ownership proxies, env vars mpv
-    /// reads during init) belongs here.
-    fn prepare(&self, _decorations: WindowDecorations) {}
+    /// reads during init) belongs here. `configured` is the user's explicit
+    /// decoration preference; `None` leaves the choice to the platform.
+    fn prepare(&self, _configured: Option<WindowDecorations>) {}
 
     /// Whether the host window state mpv's VO depends on (scale, first
     /// configure) is known. Gates VO-startup completion — not VO state

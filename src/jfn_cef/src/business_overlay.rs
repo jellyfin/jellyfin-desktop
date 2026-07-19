@@ -22,7 +22,7 @@ use crate::client::{
     Inner, JfnCefLayer, jfn_cef_layer_create, jfn_cef_layer_inner, jfn_cef_layer_set_name,
     jfn_cef_layer_set_visible,
 };
-use crate::ipc::{BrowserMessage, list_string, send_to_renderer};
+use crate::ipc::{BrowserMessage, list_opt_string, list_string, send_to_renderer};
 use jfn_color::theme::jfn_theme_color_on_overlay_dismissed;
 use jfn_jellyfin::{extract_base_url, is_valid_public_info, normalize_input};
 
@@ -152,8 +152,8 @@ fn handle_message(message: BrowserMessage) -> bool {
             let Some(args) = args else { return true };
             let section = list_string(args, 0);
             let key = list_string(args, 1);
-            let value = list_string(args, 2);
-            apply_setting_value(&section, &key, &value);
+            let value = list_opt_string(args, 2);
+            apply_setting_value(&section, &key, value.as_deref());
             true
         }
         "checkServerConnectivity" => {

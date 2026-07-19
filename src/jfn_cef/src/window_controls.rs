@@ -7,12 +7,17 @@
 
 use cef::*;
 
-/// Whether the app should draw client-side decorations: user setting enabled
-/// and running on a backend that needs them (Wayland). X11/macOS/Windows draw
-/// their own and are excluded.
+/// Whether the app draws its own titlebar.
 pub fn csd_enabled() -> bool {
-    let display = jfn_platform_abi::get().display();
-    jfn_config::client_side_decorations() && display == jfn_platform_abi::DisplayBackend::Wayland
+    jfn_platform_abi::get().effective_decorations()
+        == jfn_platform_abi::EffectiveDecorations::ClientSide
+}
+
+pub(crate) fn csd_state_js() -> String {
+    format!(
+        "window.__jmpCsd&&window.__jmpCsd.setEnabled({});",
+        csd_enabled()
+    )
 }
 
 fn list_int(args: &ListValue, idx: usize) -> i32 {
@@ -45,10 +50,7 @@ fn push_csd_state(browser: Option<&mut Browser>) {
     let Some(frame) = browser.and_then(|b| b.main_frame()) else {
         return;
     };
-    let js = format!(
-        "window.__jmpCsd&&window.__jmpCsd.setEnabled({});",
-        csd_enabled()
-    );
+    let js = csd_state_js();
     let code = CefString::from(js.as_str());
     frame.execute_java_script(Some(&code), None, 0);
 }

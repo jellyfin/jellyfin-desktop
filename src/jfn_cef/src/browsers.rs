@@ -353,6 +353,30 @@ pub fn jfn_browsers_set_hidden_all(hidden: bool) {
     crate::client::jfn_cef_post_set_hidden_all(hidden);
 }
 
+/// TID_UI only: re-announce the CSD state to every live layer's page.
+pub(crate) fn jfn_browsers_apply_csd_state_all() {
+    let inners: Vec<Arc<Inner>> = {
+        let g = INSTANCE.lock();
+        let Some(b) = g.as_ref() else {
+            return;
+        };
+        b.layers
+            .iter()
+            .map(|l| unsafe { jfn_cef_layer_inner(*l) })
+            .collect()
+    };
+    let js = crate::window_controls::csd_state_js();
+    for i in &inners {
+        i.exec_js(&js);
+    }
+}
+
+/// Re-announce the CSD state to every live browser. Thread-agnostic: posts a
+/// TID_UI task.
+pub fn jfn_browsers_push_csd_state_all() {
+    crate::client::jfn_cef_post_csd_state_all();
+}
+
 /// Force-close every layer's browser and block until each `OnBeforeClose`
 /// has fired. Thread-agnostic: callable from any non-TID_UI thread (the
 /// shutdown manager). Posts a single snapshot-and-close task onto TID_UI,

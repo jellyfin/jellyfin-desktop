@@ -269,6 +269,73 @@ impl WindowDecorations {
     }
 }
 
+/// The decoration mode in effect right now — the app-level projection of
+/// whatever authority the platform has (on Wayland, the compositor's
+/// xdg-decoration verdict). Two-valued and total: protocol lifecycle states
+/// (no such protocol, verdict pending) never cross this boundary.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum EffectiveDecorations {
+    /// The app draws its own titlebar.
+    ClientSide,
+    /// The OS/compositor owns decorations; the app draws none.
+    ServerSide,
+}
+
+/// The set of decoration modes a backend can actually honor. CSD is a member
+/// of every set — the app can always draw its own titlebar — so only the
+/// server-side modes vary, and resolution against a set is total: anything
+/// the set lacks falls back to CSD, which [`Self::contains`] always accepts.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct DecorationOptions {
+    server: bool,
+    server_themed: bool,
+}
+
+impl DecorationOptions {
+    pub fn csd_only() -> Self {
+        Self {
+            server: false,
+            server_themed: false,
+        }
+    }
+
+    pub fn with_server(themed: bool) -> Self {
+        Self {
+            server: true,
+            server_themed: themed,
+        }
+    }
+
+    pub fn all() -> Self {
+        Self::with_server(true)
+    }
+
+    pub fn contains(self, mode: WindowDecorations) -> bool {
+        match mode {
+            WindowDecorations::Csd => true,
+            WindowDecorations::Server => self.server,
+            WindowDecorations::ServerThemed => self.server_themed,
+        }
+    }
+
+    /// Whether there is anything to choose — a CSD-only set leaves the user
+    /// no decision, so the settings entry is hidden.
+    pub fn has_choice(self) -> bool {
+        self.server
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = WindowDecorations> {
+        [
+            Some(WindowDecorations::Csd),
+            self.server.then_some(WindowDecorations::Server),
+            self.server_themed
+                .then_some(WindowDecorations::ServerThemed),
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
 #[repr(C)]
 pub struct JfnRect {
     pub x: c_int,
@@ -303,11 +370,23 @@ pub trait Platform: Send + Sync {
 
     fn default_window_decorations(&self) -> WindowDecorations;
 
+    /// Decoration modes this backend can honor. The default keeps every mode
+    /// valid; backends with an authoritative availability source (Wayland
+    /// derives it from the compositor's advertised protocols) narrow the set.
+    fn window_decoration_options(&self) -> DecorationOptions {
+        DecorationOptions::all()
+    }
+
     fn resolve_window_decorations(
         &self,
         configured: Option<WindowDecorations>,
     ) -> WindowDecorations {
-        configured.unwrap_or_else(|| self.default_window_decorations())
+        let wanted = configured.unwrap_or_else(|| self.default_window_decorations());
+        if self.window_decoration_options().contains(wanted) {
+            wanted
+        } else {
+            WindowDecorations::Csd
+        }
     }
 
     fn early_init(&self) {}
@@ -478,14 +557,16 @@ pub trait Platform: Send + Sync {
     fn set_theme_color(&self, _rgb: u32) {}
 
     /// Whether the window-decorations setting (client-side vs server-side
-    /// titlebar) applies on this platform. Gates the settings UI entry.
+    /// titlebar) applies on this platform. Gates the settings UI entry; the
+    /// entry's option list comes from [`Platform::window_decoration_options`].
     fn window_decorations_supported(&self) -> bool {
         false
     }
-    /// Whether [`Platform::set_theme_color`] actually themes the server
-    /// decorations. Gates the "System, themed" decorations option.
-    fn theme_color_supported(&self) -> bool {
-        false
+    /// The decoration mode currently in effect. Defaults to ServerSide — on
+    /// macOS/Windows/X11 the OS/WM draws the titlebar, so the app never
+    /// does. Changes are announced via [`notify_decorations_changed`].
+    fn effective_decorations(&self) -> EffectiveDecorations {
+        EffectiveDecorations::ServerSide
     }
 
     fn shared_texture_supported(&self) -> bool {
@@ -639,4 +720,18 @@ pub fn install_browser_bridge(b: Box<dyn BrowserBridge>) {
 
 pub fn browser_bridge() -> Option<&'static dyn BrowserBridge> {
     BROWSER_BRIDGE.get().copied()
+}
+
+static DECORATIONS_LISTENER: OnceLock<fn()> = OnceLock::new();
+
+/// Register the callback fired when [`Platform::effective_decorations`]
+/// changes. Single listener, installed once alongside the browser bridge.
+pub fn set_decorations_listener(f: fn()) {
+    let _ = DECORATIONS_LISTENER.set(f);
+}
+
+pub fn notify_decorations_changed() {
+    if let Some(f) = DECORATIONS_LISTENER.get() {
+        f();
+    }
 }

@@ -33,9 +33,11 @@ pub fn cef_paths() -> CefPaths {
     }
 }
 
-/// KDE draws its own server-side decorations and lets us tint them via the
-/// palette protocol; elsewhere (notably GNOME) nothing draws them, so we draw
-/// our own client-side titlebar.
+/// Default *preference*: KDE draws its own server-side decorations and lets
+/// us tint them via the palette protocol; elsewhere we draw our own
+/// client-side titlebar. Whether server-side decorations are available at all
+/// is decided per-backend (Wayland probes the compositor's protocols), not
+/// here.
 pub fn default_window_decorations() -> WindowDecorations {
     let kde = std::env::var("XDG_CURRENT_DESKTOP")
         .map(|v| v.split(':').any(|s| s.eq_ignore_ascii_case("KDE")))

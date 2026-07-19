@@ -205,14 +205,19 @@
                         const val = typeof option === 'string' ? option : option.value;
                         const optTitle = typeof option === 'string' ? option : option.title;
                         const opt = document.createElement('option');
-                        opt.value = val;
-                        opt.selected = String(val) === String(values[setting.key]);
+                        if (val !== null) opt.value = val;
+                        opt.selected = val === null
+                            ? values[setting.key] == null
+                            : String(val) === String(values[setting.key]);
                         opt.textContent = optTitle;
                         control.appendChild(opt);
                     }
                     control.addEventListener('change', () => {
-                        jmpInfo.settings[section][setting.key] = control.value;
-                        window.api.settings.setValue(section, setting.key, control.value);
+                        // A null option value can't round-trip through control.value (DOM strings).
+                        const selected = setting.options[control.selectedIndex];
+                        const value = typeof selected === 'string' ? selected : selected.value;
+                        jmpInfo.settings[section][setting.key] = value;
+                        window.api.settings.setValue(section, setting.key, value);
                     });
                     container.appendChild(control);
                     if (setting.help) {
