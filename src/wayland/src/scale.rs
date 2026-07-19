@@ -27,13 +27,13 @@ impl Scale120 {
         NonZeroU32::new(raw).map(Self)
     }
 
-    /// Parse a scale ratio (1.0 = 100%), e.g. from the output probe.
-    pub(crate) fn from_ratio(ratio: f64) -> Option<Self> {
-        let scaled = (ratio * f64::from(Self::BASE)).round();
-        if !(1.0..=f64::from(u32::MAX)).contains(&scaled) {
-            return None;
-        }
-        Self::from_wire(scaled as u32)
+    /// Exact rational physical/logical width, rounded to the nearest 120th —
+    /// no float round-trip.
+    pub(crate) fn from_physical_logical(physical: u32, logical: NonZeroU32) -> Option<Self> {
+        let num = u64::from(physical).checked_mul(u64::from(Self::BASE))?;
+        let den = u64::from(logical.get());
+        let scaled = (num + den / 2) / den;
+        Self::from_wire(u32::try_from(scaled).ok()?)
     }
 
     pub(crate) fn ratio_f32(self) -> f32 {
@@ -80,30 +80,42 @@ mod tests {
     }
 
     #[test]
-    fn ratio_rejects_non_finite_and_non_positive() {
-        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0, -0.5] {
-            assert_eq!(Scale120::from_ratio(bad), None, "{bad}");
-        }
+    fn rational_matches_exact_ratios() {
+        let logical = NonZeroU32::new(1920).unwrap();
+        assert_eq!(
+            Scale120::from_physical_logical(1920, logical),
+            Some(Scale120::UNIT)
+        );
+        assert_eq!(
+            Scale120::from_physical_logical(2400, logical),
+            Scale120::from_wire(150)
+        );
+        assert_eq!(
+            Scale120::from_physical_logical(2880, logical),
+            Scale120::from_wire(180)
+        );
     }
 
     #[test]
-    fn ratio_rejects_below_one_120th() {
-        // Rounds to 0 in 120ths.
-        assert_eq!(Scale120::from_ratio(0.001), None);
+    fn rational_rounds_half_up_and_rejects_zero() {
+        // physical 0 → scale 0 → rejected.
+        assert_eq!(
+            Scale120::from_physical_logical(0, NonZeroU32::new(1).unwrap()),
+            None
+        );
+        // 1 physical / 240 logical = 0.5 in 120ths → rounds up to 1.
+        assert_eq!(
+            Scale120::from_physical_logical(1, NonZeroU32::new(240).unwrap()),
+            Scale120::from_wire(1)
+        );
     }
 
     #[test]
-    fn ratio_rejects_above_u32_max() {
-        assert_eq!(Scale120::from_ratio(f64::from(u32::MAX)), None);
-        assert_eq!(Scale120::from_ratio(1e300), None);
-    }
-
-    #[test]
-    fn ratio_rounds_to_nearest_120th() {
-        assert_eq!(Scale120::from_ratio(1.0), Some(Scale120::UNIT));
-        assert_eq!(Scale120::from_ratio(1.25), Scale120::from_wire(150));
-        // 1.3 * 120 = 156.0 exactly in this decimal; 1.301 rounds to 156 too.
-        assert_eq!(Scale120::from_ratio(1.301), Scale120::from_wire(156));
+    fn rational_rejects_overflowing_result() {
+        assert_eq!(
+            Scale120::from_physical_logical(u32::MAX, NonZeroU32::new(1).unwrap()),
+            None
+        );
     }
 
     #[test]
