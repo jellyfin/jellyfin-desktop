@@ -91,7 +91,8 @@
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
             playback: {
-                hwdec: _savedSettings.hwdec || 'auto'
+                hwdec: _savedSettings.hwdec || 'auto',
+                subtitleScale: _savedSettings.subtitleScale || ''
             },
             audio: {
                 audioPassthrough: _savedSettings.audioPassthrough || '',
@@ -112,6 +113,9 @@
         settingsDescriptions: {
             playback: [
                 { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions }
+                // Subtitle size/appearance now comes from jellyfin-web's Subtitle
+                // Appearance panel (unlocked via the subtitleappearancesettings
+                // capability) and is mirrored to mpv in applyWebSubtitleAppearance.
             ],
             audio: [
                 { key: 'audioPassthrough', displayName: 'Audio Passthrough', help: 'Comma-separated list of codecs to pass through to the audio device (e.g. ac3,eac3,dts-hd,truehd). Leave empty to disable.', inputType: 'textarea' },
@@ -178,6 +182,79 @@
         paused: false
     };
 
+    // --- Web "Subtitle Appearance" mirror ---------------------------------
+    // jellyfin-web stores its per-device Subtitle Appearance under a localStorage
+    // key like "<userId>-localplayersubtitleappearance3" and renders it with its
+    // own HTML/CSS engine. Here mpv renders subtitles instead, bypassing that —
+    // so read the panel and push equivalent mpv `sub-*` properties. Applied on
+    // each playback start (the web value is the source of truth).
+    function readWebSubtitleAppearance() {
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k && /localplayersubtitleappearance/i.test(k)) {
+                    return JSON.parse(localStorage.getItem(k) || '{}');
+                }
+            }
+        } catch (e) {
+            console.error('[Media] subtitle appearance read failed:', e);
+        }
+        return null;
+    }
+
+    function applyWebSubtitleAppearance() {
+        const a = readWebSubtitleAppearance();
+        if (!a || !window.jmpNative || !window.jmpNative.setSettingValue) return;
+        const set = (key, val) => window.jmpNative.setSettingValue('playback', key, String(val));
+
+        // Text size: map jellyfin-web's token to an mpv sub-scale multiplier.
+        // Calibrated so web "Normal" ('') ~ 0.5 (≈ the web client's rendered size).
+        const SIZE = { extrasmall: 0.28, smaller: 0.35, small: 0.42, '': 0.5, large: 0.62, larger: 0.8, extralarge: 1.05 };
+        set('subtitleSize', SIZE[a.textSize] != null ? SIZE[a.textSize] : 0.5);
+
+        // Vertical position: web "line number" (negative = up from bottom) ->
+        // mpv sub-pos (100 = bottom, lower = higher). Calibrated so the web
+        // default (-3) lands near sub-pos 95.
+        const vp = parseInt(a.verticalPosition, 10);
+        if (!isNaN(vp)) set('subtitlePos', Math.max(0, Math.min(150, Math.round(100 + vp * (5 / 3)))));
+
+        // Text color — hex passes straight through to mpv.
+        if (a.textColor) set('subtitleColor', a.textColor);
+
+        // Text weight.
+        set('subtitleBold', a.textWeight === 'bold');
+
+        // Font: jellyfin-web stores a token (e.g. 'typewriter'), not a usable
+        // family name — map each to a real Windows font mpv can resolve.
+        // '' (Default) and unmapped tokens (e.g. 'smallcaps') leave mpv's default.
+        const FONT = {
+            typewriter: 'Courier New',
+            print:      'Times New Roman',
+            console:    'Consolas',
+            casual:     'Comic Sans MS',
+            cursive:    'Segoe Script'
+        };
+        if (a.font) { const fam = FONT[String(a.font).toLowerCase()]; if (fam) set('subtitleFont', fam); }
+
+        // Text background box ('transparent' -> disable the box).
+        set('subtitleBackColor', (a.textBackground && a.textBackground !== 'transparent') ? a.textBackground : '#00000000');
+
+        // Drop-shadow presets -> mpv shadow offset + outline size.
+        // NOTE: first-pass values — the default keeps mpv's legible outline
+        // (border 3, no shadow), i.e. today's look, so nothing regresses.
+        // True per-preset parity (real drop shadow etc.) is a calibration TODO.
+        const SHADOW = {
+            dropshadow: { shadow: 0, border: 3 },
+            raised:     { shadow: 2, border: 2 },
+            depressed:  { shadow: 2, border: 2 },
+            uniform:    { shadow: 0, border: 3 },
+            none:       { shadow: 0, border: 0 }
+        };
+        const sh = SHADOW[(a.dropShadow || 'dropshadow').toLowerCase()] || SHADOW.dropshadow;
+        set('subtitleShadowOffset', sh.shadow);
+        set('subtitleBorderSize', sh.border);
+    }
+
     // window.api.player - MPV control API
     window.api = {
         player: {
@@ -216,6 +293,9 @@
                     this.playing.connect(onPlaying);
                     this.error.connect(onError);
                 }
+                // Mirror the web client's Subtitle Appearance into mpv for this
+                // playback (color, weight, position, shadow, font, background).
+                applyWebSubtitleAppearance();
                 if (window.jmpNative && window.jmpNative.playerLoad) {
                     const metadataJson = streamdata?.metadata ? JSON.stringify(streamdata.metadata) : '{}';
                     window.jmpNative.playerLoad(url, options.startMilliseconds, videoStream, audioStream, subtitleStream, metadataJson, externalAudioUrl || '', externalSubUrl || '', !!options.isInfiniteStream);
@@ -415,7 +495,12 @@
                 'fileinput', 'filedownload', 'displaylanguage', 'htmlaudioautoplay',
                 'htmlvideoautoplay', 'externallinks', 'multiserver',
                 'fullscreenchange', 'remotevideo', 'displaymode',
-                'exitmenu', 'clientsettings'
+                'exitmenu', 'clientsettings',
+                // Unlock jellyfin-web's Subtitle Appearance panel in the desktop
+                // app. mpv (not HTML/CSS) renders subs, so the shim reads the
+                // panel's localStorage values and applies them as mpv sub-*
+                // properties (see applyWebSubtitleAppearance).
+                'subtitleappearancesettings'
             ];
             return features.includes(command.toLowerCase());
         },
