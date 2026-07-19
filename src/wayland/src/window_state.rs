@@ -1,10 +1,10 @@
-//! Stored as ONE `Option<WindowExtent>` swapped under a lock. Readers that need
-//! several fields coherently take a single [`window_extent`] snapshot; the
-//! per-field accessors read one field each and must not be composed into a
-//! geometry that spans two generations.
+//! The single owner of Wayland window geometry/scale state. Everything lives
+//! in ONE `RwLock<State>`: the last fed scale (with its provenance) and the
+//! last published extent. Readers that need several fields coherently take a
+//! single [`window_extent`] snapshot; the per-field accessors read one field
+//! each and must not be composed into a geometry that spans two generations.
 
 use std::ffi::c_int;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use parking_lot::RwLock;
 
@@ -49,14 +49,27 @@ impl WindowMode {
     }
 }
 
-/// Sentinel for the `SCALE_120` atomic: no scale reported yet.
-const SCALE_120_UNKNOWN: u32 = 0;
+/// Where the current scale came from. A provisional scale (output probe, or
+/// the unit fallback when the compositor offers no fractional-scale protocol)
+/// is a stand-in until the compositor's authoritative `preferred_scale`
+/// arrives; an authoritative scale is never displaced by a provisional one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScaleProvenance {
+    Provisional,
+    Authoritative,
+}
 
 #[derive(Clone, Copy)]
-pub(crate) struct WindowExtent {
+struct KnownScale {
+    scale: Scale120,
+    provenance: ScaleProvenance,
+}
+
+#[derive(Clone, Copy)]
+struct WindowExtent {
     logical: WindowSize,
     physical: WindowSize,
-    scale: Scale120,
+    scale: KnownScale,
     generation: u64,
     mode: WindowMode,
 }
@@ -64,11 +77,11 @@ pub(crate) struct WindowExtent {
 impl WindowExtent {
     fn build(
         logical: WindowSize,
-        scale: Scale120,
+        scale: KnownScale,
         mode: WindowMode,
         generation: u64,
     ) -> Option<Self> {
-        let physical = scale.physical_size(logical)?;
+        let physical = scale.scale.physical_size(logical)?;
         Some(Self {
             logical,
             physical,
@@ -79,14 +92,20 @@ impl WindowExtent {
     }
 }
 
-static WINDOW_EXTENT: RwLock<Option<WindowExtent>> = RwLock::new(None);
+struct State {
+    scale: Option<KnownScale>,
+    extent: Option<WindowExtent>,
+    generation: u64,
+}
 
-static SCALE_120: AtomicU32 = AtomicU32::new(SCALE_120_UNKNOWN);
-
-static GENERATION: AtomicU64 = AtomicU64::new(0);
+static STATE: RwLock<State> = RwLock::new(State {
+    scale: None,
+    extent: None,
+    generation: 0,
+});
 
 fn extent() -> Option<WindowExtent> {
-    *WINDOW_EXTENT.read()
+    STATE.read().extent
 }
 
 /// A coherent view of the window geometry from one lock acquisition.
@@ -95,6 +114,7 @@ pub(crate) struct WindowExtentSnapshot {
     logical: WindowSize,
     physical: WindowSize,
     scale: f32,
+    mode: WindowMode,
 }
 
 impl WindowExtentSnapshot {
@@ -102,7 +122,8 @@ impl WindowExtentSnapshot {
         Self {
             logical: e.logical,
             physical: e.physical,
-            scale: e.scale.ratio_f32(),
+            scale: e.scale.scale.ratio_f32(),
+            mode: e.mode,
         }
     }
 
@@ -117,6 +138,10 @@ impl WindowExtentSnapshot {
     pub(crate) fn scale(&self) -> f32 {
         self.scale
     }
+
+    pub(crate) fn mode(&self) -> WindowMode {
+        self.mode
+    }
 }
 
 pub(crate) fn window_extent() -> Option<WindowExtentSnapshot> {
@@ -127,27 +152,24 @@ pub(crate) fn window_logical_size() -> Option<WindowSize> {
     extent().map(|e| e.logical)
 }
 
-fn fed_scale() -> Option<Scale120> {
-    Scale120::from_wire(SCALE_120.load(Ordering::Acquire))
+pub(crate) fn known_scale() -> Option<Scale120> {
+    STATE.read().scale.map(|k| k.scale)
 }
 
 pub(crate) fn jfn_wl_scale_known() -> bool {
-    fed_scale().is_some()
+    known_scale().is_some()
 }
 
 pub(crate) fn jfn_wl_get_cached_scale() -> f32 {
-    extent()
-        .map(|e| e.scale)
-        .or_else(fed_scale)
+    let st = STATE.read();
+    st.extent
+        .map(|e| e.scale.scale)
+        .or(st.scale.map(|k| k.scale))
         .map_or(1.0, Scale120::ratio_f32)
 }
 
 pub(crate) fn jfn_wl_window_maximized() -> bool {
     matches!(extent().map(|e| e.mode), Some(WindowMode::Maximized))
-}
-
-pub(crate) fn jfn_wl_window_fullscreen() -> bool {
-    matches!(extent().map(|e| e.mode), Some(WindowMode::Fullscreen))
 }
 
 /// The consumer notifications below read the value back through the accessors,
@@ -156,18 +178,25 @@ pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
     let Some(logical) = WindowSize::new(logical_w, logical_h) else {
         return;
     };
-    let Some(scale) = fed_scale() else {
+    let Some(extent) = ({
+        let mut st = STATE.write();
+        let Some(scale) = st.scale else {
+            return;
+        };
+        st.generation += 1;
+        let extent = WindowExtent::build(logical, scale, mode, st.generation);
+        if let Some(e) = extent {
+            st.extent = Some(e);
+        }
+        extent
+    }) else {
         return;
     };
-    let generation = GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
-    let Some(extent) = WindowExtent::build(logical, scale, mode, generation) else {
-        return;
-    };
-    *WINDOW_EXTENT.write() = Some(extent);
     tracing::debug!(
         target: "Main",
         "window extent gen={} logical={}x{} physical={}x{} scale={}",
-        extent.generation, extent.logical.w, extent.logical.h, extent.physical.w, extent.physical.h, scale
+        extent.generation, extent.logical.w, extent.logical.h, extent.physical.w, extent.physical.h,
+        extent.scale.scale
     );
 
     let fullscreen = mode == WindowMode::Fullscreen;
@@ -175,7 +204,7 @@ pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
     if crate::wl_state::try_state().is_some() {
         wl_ops::on_configure(fullscreen);
     }
-    let scale = extent.scale.ratio_f32();
+    let scale = extent.scale.scale.ratio_f32();
     jfn_playback_post_osd_pixels(extent.physical.w, extent.physical.h, scale, false, 0, 0);
     // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait loop
     // reads OSD pixels from the ingest layer rather than via an mpv event).
@@ -185,11 +214,26 @@ pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
 /// Satisfy the boot scale gate when no `wp_fractional_scale_manager_v1` exists,
 /// so it doesn't wait forever for a `preferred_scale` that never arrives.
 pub(crate) fn feed_unit_scale() {
-    feed_scale(Scale120::UNIT);
+    feed_scale(Scale120::UNIT, ScaleProvenance::Provisional);
 }
 
-pub(crate) fn feed_scale(scale: Scale120) {
-    let first = SCALE_120.swap(scale.get().get(), Ordering::AcqRel) == SCALE_120_UNKNOWN;
+/// Record a scale. An authoritative scale always wins; a provisional one never
+/// displaces an authoritative one (a late probe result must not clobber the
+/// compositor's `preferred_scale`).
+pub(crate) fn feed_scale(scale: Scale120, provenance: ScaleProvenance) {
+    let first = {
+        let mut st = STATE.write();
+        let first = st.scale.is_none();
+        let displaces = match (st.scale, provenance) {
+            (None, _) => true,
+            (Some(_), ScaleProvenance::Authoritative) => true,
+            (Some(k), ScaleProvenance::Provisional) => k.provenance == ScaleProvenance::Provisional,
+        };
+        if displaces {
+            st.scale = Some(KnownScale { scale, provenance });
+        }
+        first && displaces
+    };
     if first {
         tracing::info!(target: "Main", "scale known: {scale}");
     }
