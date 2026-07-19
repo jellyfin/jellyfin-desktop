@@ -4,8 +4,14 @@
 # exec-once runs it and exits the compositor when it finishes.
 set -eu
 
+SCALE=1
+if [ "${1:-}" = "--scale" ]; then
+    SCALE=$2
+    shift 2
+fi
+
 if [ "$#" -eq 0 ]; then
-    echo "usage: command [args...]" >&2
+    echo "usage: [--scale factor] command [args...]" >&2
     exit 1
 fi
 
@@ -31,6 +37,7 @@ EOF
 chmod +x "$TMP/runner"
 
 printf 'exec-once = %s\n' "$TMP/runner" > "$TMP/hyprland.conf"
+printf 'monitor = , preferred, auto, %s\n' "$SCALE" >> "$TMP/hyprland.conf"
 
 Hyprland --config "$TMP/hyprland.conf" >/dev/null 2>&1 || true
 

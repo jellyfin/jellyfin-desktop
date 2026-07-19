@@ -3,6 +3,8 @@
 [private]
 mod linux_common 'linux_common.just'
 
+scale := '1'
+
 # Build the app
 [group('build')]
 [linux]
@@ -33,7 +35,7 @@ run-niri *args:
 [linux]
 [positional-arguments]
 run-hyprland *args:
-    env -u JUST_JUSTFILE -u JUST_WORKING_DIRECTORY '{{ source_directory() }}/hyprland-nested-run' just run "$@"
+    env -u JUST_JUSTFILE -u JUST_WORKING_DIRECTORY '{{ source_directory() }}/hyprland-nested-run' --scale '{{ scale }}' just run "$@"
 
 [group('package')]
 mod appimage 'appimage/appimage.just'
