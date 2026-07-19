@@ -166,26 +166,82 @@ mod present_cap {
 }
 use present_cap::{ConfigureSerial, Presented};
 
-fn resolve_logical_size(
-    pending: (Option<NonZeroI32>, Option<NonZeroI32>),
-    cur: Option<crate::window_state::WindowSize>,
-    floating: Option<crate::window_state::WindowSize>,
-    mode: crate::window_state::WindowMode,
-) -> Option<crate::window_state::WindowSize> {
-    let pick =
-        |pending: Option<NonZeroI32>, cur: Option<i32>, floating: Option<i32>| -> Option<i32> {
-            if let Some(p) = pending {
-                Some(p.get())
-            } else if mode.uses_floating_restore() {
-                floating
+/// Pure presentation state machine. Given what the root window currently
+/// knows — mapped or not, pending configure or not, scale known or not, and
+/// the resolvable logical size — [`presentation::plan`] decides the next step.
+/// All Wayland I/O and cross-subsystem notifications stay in the effect layer
+/// ([`RootState::try_present`] / [`RootState::execute_present`]).
+mod presentation {
+    use std::num::NonZeroI32;
+
+    use crate::window_state::{WindowMode, WindowSize};
+
+    /// Everything `plan` needs, free of protocol objects so it is unit-testable.
+    #[derive(Clone, Copy)]
+    pub(super) struct Inputs {
+        /// A configure has been acked before (the window is mapped).
+        pub(super) mapped: bool,
+        /// An unacked configure is pending.
+        pub(super) pending_ack: bool,
+        pub(super) scale_known: bool,
+        pub(super) size: Option<WindowSize>,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(super) enum Step {
+        /// Nothing presentable: no configure yet, or no resolvable size.
+        Wait,
+        /// A first configure is waiting but no scale is known; scale discovery
+        /// must run, then planning re-runs.
+        DiscoverScale,
+        /// Ack (if a configure is pending), update geometry, and request the
+        /// root commit.
+        Present,
+    }
+
+    pub(super) fn plan(i: Inputs) -> Step {
+        // Never commit a buffer before acking a configure (protocol violation);
+        // before the first map that means waiting for one.
+        if !i.pending_ack && !i.mapped {
+            return Step::Wait;
+        }
+        if !i.scale_known {
+            // Scale can only be missing before the first map; after map the
+            // compositor has spoken (or the fallback already fed one).
+            return if i.mapped {
+                Step::Wait
             } else {
-                cur
-            }
-        };
-    let w = pick(pending.0, cur.map(|s| s.w()), floating.map(|s| s.w()))?;
-    let h = pick(pending.1, cur.map(|s| s.h()), floating.map(|s| s.h()))?;
-    crate::window_state::WindowSize::new(w, h)
+                Step::DiscoverScale
+            };
+        }
+        if i.size.is_none() {
+            return Step::Wait;
+        }
+        Step::Present
+    }
+
+    pub(super) fn resolve_logical_size(
+        pending: (Option<NonZeroI32>, Option<NonZeroI32>),
+        cur: Option<WindowSize>,
+        floating: Option<WindowSize>,
+        mode: WindowMode,
+    ) -> Option<WindowSize> {
+        let pick =
+            |pending: Option<NonZeroI32>, cur: Option<i32>, floating: Option<i32>| -> Option<i32> {
+                if let Some(p) = pending {
+                    Some(p.get())
+                } else if mode.uses_floating_restore() {
+                    floating
+                } else {
+                    cur
+                }
+            };
+        let w = pick(pending.0, cur.map(|s| s.w()), floating.map(|s| s.w()))?;
+        let h = pick(pending.1, cur.map(|s| s.h()), floating.map(|s| s.h()))?;
+        WindowSize::new(w, h)
+    }
 }
+use presentation::resolve_logical_size;
 
 impl RootState {
     fn resolve_logical(&self) -> Option<crate::window_state::WindowSize> {
@@ -197,42 +253,58 @@ impl RootState {
         )
     }
 
+    /// Effect layer around the pure [`presentation::plan`]: gathers inputs,
+    /// runs the decided step's Wayland I/O and notifications, and re-plans
+    /// after scale discovery.
     fn try_present(&mut self) {
-        // Never commit a buffer before acking a configure (protocol violation);
-        // before the first map that means waiting for one.
-        if self.pending_ack.is_none() && self.present.is_none() {
-            return;
-        }
-        if crate::window_state::known_scale().is_none() {
-            // Some compositors (Hyprland) withhold preferred_scale until the
-            // window maps, which never happens while the first buffer waits on
-            // the scale. Once a configure arrives, resolve a provisional scale
-            // from the outputs and proceed; the authoritative preferred_scale
-            // corrects it after map.
-            if self.present.is_some() || self.pending_ack.is_none() {
-                return;
-            }
-            let probed = crate::scale_probe::jfn_wayland_scale_probe(-1, -1);
-            match crate::scale::Scale120::from_ratio(probed) {
-                Some(scale) => {
-                    tracing::info!(
-                        target: "Main",
-                        "root window: no preferred_scale before first configure; using probed scale {probed}"
-                    );
-                    crate::window_state::feed_scale(
-                        scale,
-                        crate::window_state::ScaleProvenance::Provisional,
-                    );
-                }
-                None => {
-                    tracing::warn!(
-                        target: "Main",
-                        "root window: no preferred_scale before first configure and probe failed; assuming scale 1.0"
-                    );
-                    crate::window_state::feed_unit_scale();
+        loop {
+            let step = presentation::plan(presentation::Inputs {
+                mapped: self.present.is_some(),
+                pending_ack: self.pending_ack.is_some(),
+                scale_known: crate::window_state::known_scale().is_some(),
+                size: self.resolve_logical(),
+            });
+            match step {
+                presentation::Step::Wait => return,
+                // Discovery always feeds some scale (probe result or unit
+                // fallback), so the re-plan cannot choose DiscoverScale again.
+                presentation::Step::DiscoverScale => self.discover_scale(),
+                presentation::Step::Present => {
+                    self.execute_present();
+                    return;
                 }
             }
         }
+    }
+
+    /// Some compositors (Hyprland) withhold preferred_scale until the window
+    /// maps, which never happens while the first buffer waits on the scale.
+    /// Once a configure arrives, resolve a provisional scale from the outputs
+    /// and proceed; the authoritative preferred_scale corrects it after map.
+    fn discover_scale(&self) {
+        let probed = crate::scale_probe::jfn_wayland_scale_probe(-1, -1);
+        match crate::scale::Scale120::from_ratio(probed) {
+            Some(scale) => {
+                tracing::info!(
+                    target: "Main",
+                    "root window: no preferred_scale before first configure; using probed scale {probed}"
+                );
+                crate::window_state::feed_scale(
+                    scale,
+                    crate::window_state::ScaleProvenance::Provisional,
+                );
+            }
+            None => {
+                tracing::warn!(
+                    target: "Main",
+                    "root window: no preferred_scale before first configure and probe failed; assuming scale 1.0"
+                );
+                crate::window_state::feed_unit_scale();
+            }
+        }
+    }
+
+    fn execute_present(&mut self) {
         let Some(size) = self.resolve_logical() else {
             return;
         };
@@ -1275,9 +1347,57 @@ impl Dispatch<WlRegistry, GlobalListContents> for RootState {
 
 #[cfg(test)]
 mod tests {
+    use super::presentation::{Inputs, Step, plan};
     use super::resolve_logical_size;
     use crate::window_state::{WindowMode, WindowSize};
     use std::num::NonZeroI32;
+
+    fn inputs(mapped: bool, pending_ack: bool, scale_known: bool, size: bool) -> Inputs {
+        Inputs {
+            mapped,
+            pending_ack,
+            scale_known,
+            size: size.then(|| WindowSize::new(1280, 720).unwrap()),
+        }
+    }
+
+    #[test]
+    fn no_configure_and_unmapped_waits() {
+        // Whatever else is known, nothing may happen before the first configure.
+        for scale_known in [false, true] {
+            for size in [false, true] {
+                assert_eq!(plan(inputs(false, false, scale_known, size)), Step::Wait);
+            }
+        }
+    }
+
+    #[test]
+    fn first_configure_without_scale_discovers() {
+        for size in [false, true] {
+            assert_eq!(plan(inputs(false, true, false, size)), Step::DiscoverScale);
+        }
+    }
+
+    #[test]
+    fn mapped_without_scale_waits_instead_of_probing() {
+        // After map the compositor owns the scale; a re-present must not probe.
+        assert_eq!(plan(inputs(true, true, false, true)), Step::Wait);
+        assert_eq!(plan(inputs(true, false, false, true)), Step::Wait);
+    }
+
+    #[test]
+    fn unresolvable_size_waits() {
+        assert_eq!(plan(inputs(false, true, true, false)), Step::Wait);
+        assert_eq!(plan(inputs(true, false, true, false)), Step::Wait);
+    }
+
+    #[test]
+    fn presents_once_configured_scaled_and_sized() {
+        assert_eq!(plan(inputs(false, true, true, true)), Step::Present);
+        assert_eq!(plan(inputs(true, true, true, true)), Step::Present);
+        // Re-present without a new configure (scale/size change after map).
+        assert_eq!(plan(inputs(true, false, true, true)), Step::Present);
+    }
 
     const NONE: (Option<NonZeroI32>, Option<NonZeroI32>) = (None, None);
 
