@@ -80,8 +80,8 @@ pub(crate) enum IngestOut {
 pub struct IngestState {
     fullscreen: AtomicBool,
     window_maximized: AtomicBool,
-    /// Last known window extent, written whole by whichever producer saw
-    /// it last (boot seed or osd-dimensions digest).
+    /// Last known window extent, written whole by the osd-dimensions
+    /// digest.
     extent: Mutex<Option<WindowExtent>>,
     /// `f64` bit pattern stored as `u64` — `AtomicF64` isn't stable.
     display_scale_bits: AtomicU64,
@@ -101,12 +101,6 @@ impl IngestState {
     }
     pub fn window_extent(&self) -> Option<WindowExtent> {
         *self.extent.lock()
-    }
-    pub fn seed_window_extent(&self, pw: i32, ph: i32, scale: f32) {
-        *self.extent.lock() = Some(WindowExtent::new(
-            PhysicalSize { w: pw, h: ph },
-            Scale(scale),
-        ));
     }
     pub fn display_scale(&self) -> f64 {
         f64::from_bits(self.display_scale_bits.load(Ordering::Relaxed))
@@ -439,10 +433,19 @@ mod tests {
         assert!(!state.fullscreen());
     }
 
+    fn digest_dims(state: &IngestState, w: i64, h: i64, scale: f32) {
+        let node = Node::Map(vec![("w".into(), Node::Int(w)), ("h".into(), Node::Int(h))]);
+        let _ = ingest(
+            &prop(observe_id::OSD_DIMS, PropertyValue::Node(node)),
+            state,
+            &ctx(scale),
+        );
+    }
+
     #[test]
     fn display_scale_suppresses_duplicates() {
         let state = IngestState::new();
-        state.seed_window_extent(1280, 720, 1.0);
+        digest_dims(&state, 1280, 720, 1.0);
         let v = PropertyValue::Double(2.0);
         let out = ingest(
             &prop(observe_id::DISPLAY_SCALE, v.clone()),
@@ -513,7 +516,7 @@ mod tests {
     #[test]
     fn display_scale_change_rewrites_extent_coherently() {
         let state = IngestState::new();
-        state.seed_window_extent(3840, 2160, 2.0);
+        digest_dims(&state, 3840, 2160, 2.0);
         let out = ingest(
             &prop(observe_id::DISPLAY_SCALE, PropertyValue::Double(1.5)),
             &state,
@@ -529,18 +532,10 @@ mod tests {
     }
 
     #[test]
-    fn osd_dims_digest_overwrites_boot_seed() {
+    fn later_digest_overwrites_earlier() {
         let state = IngestState::new();
-        state.seed_window_extent(1600, 900, 1.0);
-        let node = Node::Map(vec![
-            ("w".into(), Node::Int(1196)),
-            ("h".into(), Node::Int(636)),
-        ]);
-        let _ = ingest(
-            &prop(observe_id::OSD_DIMS, PropertyValue::Node(node)),
-            &state,
-            &ctx(2.0),
-        );
+        digest_dims(&state, 1600, 900, 1.0);
+        digest_dims(&state, 1196, 636, 2.0);
         let Some(extent) = state.window_extent() else {
             panic!("expected extent");
         };

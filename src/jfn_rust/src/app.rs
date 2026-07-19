@@ -432,10 +432,9 @@ fn shutdown_runtime(manager_thread: std::thread::JoinHandle<()>) {
     COORD_INITED.store(false, std::sync::atomic::Ordering::Release);
 }
 
-/// Boot-time mpv-size reconcile and extent-cell seed. Returns the display
-/// refresh rate for browser init.
-fn sync_cef_window_metrics(mpv_raw: *mut jfn_mpv::sys::mpv_handle) -> f64 {
-    let (mut mw, mut mh) = boot_window_size().unwrap_or((0, 0));
+/// Boot-time mpv size reconcile (saved scale vs live display scale);
+/// seeds the display-hz cache and returns it for browser init.
+fn boot_mpv_reconcile(mpv_raw: *mut jfn_mpv::sys::mpv_handle) -> f64 {
     let mut display_hidpi_scale: f64 = 0.0;
     unsafe {
         let name = cs("display-hidpi-scale");
@@ -483,15 +482,6 @@ fn sync_cef_window_metrics(mpv_raw: *mut jfn_mpv::sys::mpv_handle) -> f64 {
             "[FLOW] scale {:.3} -> {:.3}, resize to {}", saved.scale, display_hidpi_scale, geom_str);
         let g_c = cs(&geom_str);
         unsafe { jfn_mpv::api::jfn_mpv_set_geometry(g_c.as_ptr()) };
-        mw = new_pw;
-        mh = new_ph;
-    }
-    if mw > 0 && mh > 0 {
-        jfn_playback::ingest_driver::jfn_playback_seed_window_extent(
-            mw,
-            mh,
-            plat().effective_scale(display_hidpi_scale),
-        );
     }
 
     hz
@@ -824,7 +814,7 @@ unsafe fn run_with_cef(ba: &BootArgs) -> c_int {
         return 1;
     }
 
-    let hz = sync_cef_window_metrics(mpv_raw);
+    let hz = boot_mpv_reconcile(mpv_raw);
 
     let (manager_thread, main_layer) = init_main_browser(hz, use_shared_textures);
 
