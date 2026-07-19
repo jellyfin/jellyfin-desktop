@@ -44,7 +44,9 @@ pub use geometry::{
 };
 pub use media_sink::MediaSink;
 pub use mpv_host::{DefaultMpvHost, MpvHost};
-pub use window_source::{WindowSnapshot, WindowSource};
+pub use window_source::{
+    WindowSnapshot, WindowSource, notify_window_changed, subscribe_window_changed,
+};
 
 /// Preserves the process's SIGINT/SIGTERM dispositions across a scope.
 ///
@@ -418,12 +420,10 @@ pub trait Platform: Send + Sync {
         None
     }
 
-    /// Native live-window-geometry source, for backends that own their
-    /// toplevel (Wayland). `None` ⇒ the caller falls back to the generic
-    /// mpv-backed source.
-    fn window_source(&self) -> Option<&'static dyn WindowSource> {
-        None
-    }
+    /// Live window-geometry authority for this backend: the compositor-backed
+    /// source where the backend owns its toplevel (Wayland), the mpv-backed
+    /// source everywhere else.
+    fn window_source(&self) -> &'static dyn WindowSource;
 
     /// The mpv `--geometry` string for boot, or `None` when the backend owns
     /// its toplevel and sizes it itself. The default sizes via mpv; toplevel-

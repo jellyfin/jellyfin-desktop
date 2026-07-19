@@ -22,6 +22,7 @@ pub mod sink_routing;
 mod state;
 mod v8_handler;
 pub mod window_controls;
+mod window_sync;
 
 pub use client::{BeforeCloseFn, ContextBuilderFn, ContextDispatcherFn, CreatedFn, JfnCefLayer};
 pub use ffi::*;

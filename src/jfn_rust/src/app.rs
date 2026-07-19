@@ -372,18 +372,12 @@ fn start_playback_coordination() -> bool {
         h_theme_video_mode,
     ));
     jfn_playback::exec_js::jfn_playback_set_web_exec_js_handler(Some(h_web_exec_js));
-    jfn_playback::browser_sink::jfn_playback_set_window_wakeup_handler(|| {
-        crate::browser_size::sync_browsers_to_window();
-    });
     jfn_playback::browser_sink::jfn_playback_set_browsers_refresh_rate_handler(Some(
         h_browsers_set_refresh_rate,
     ));
 
     plat().media_session().start();
 
-    jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(|_| {
-        crate::browser_size::sync_browsers_to_window();
-    });
     jfn_playback::ingest_driver::jfn_playback_set_scale_provider(|| {
         let s = plat().get_scale();
         if s > 0.0 { s } else { 1.0 }
@@ -402,9 +396,6 @@ fn start_playback_coordination() -> bool {
         return false;
     }
 
-    // The sync in init_main_browser ran before the coordinator existed, so
-    // its window-mode posts were dropped; reconcile now that inputs land.
-    crate::browser_size::sync_browsers_to_window();
     true
 }
 
@@ -526,8 +517,6 @@ fn init_main_browser(
     jfn_color::theme::jfn_theme_color_set_video_bg(video_bg_get());
 
     jfn_cef::browsers::jfn_browsers_init(hz, use_shared_textures);
-    // jfn_browsers_create sizes new layers from the cache this sync seeds.
-    crate::browser_size::sync_browsers_to_window();
     let manager_thread = crate::manager::jfn_manager_start();
     jfn_playback::jfn_shutdown_set_handler(Some(h_shutdown_wake_manager));
 

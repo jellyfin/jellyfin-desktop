@@ -11,28 +11,15 @@ use serde_json::json;
 use crate::exec_js::call as call_exec_js;
 use crate::types::{PlaybackEvent, PlaybackEventKind};
 
-type WindowWakeupCb = std::sync::Arc<dyn Fn() + Send + Sync>;
 type SetHzCb = extern "C" fn(f64);
 
 struct Handlers {
-    window_wakeup: Option<WindowWakeupCb>,
     set_hz: Option<SetHzCb>,
 }
 
 fn slot() -> &'static Mutex<Handlers> {
     static SLOT: OnceLock<Mutex<Handlers>> = OnceLock::new();
-    SLOT.get_or_init(|| {
-        Mutex::new(Handlers {
-            window_wakeup: None,
-            set_hz: None,
-        })
-    })
-}
-
-/// Install the window wakeup, fired when the window's dimensions may
-/// have changed; the consumer pulls the current `WindowSource` snapshot.
-pub fn jfn_playback_set_window_wakeup_handler<F: Fn() + Send + Sync + 'static>(cb: F) {
-    slot().lock().window_wakeup = Some(std::sync::Arc::new(cb));
+    SLOT.get_or_init(|| Mutex::new(Handlers { set_hz: None }))
 }
 
 /// Install / clear the browsers.setRefreshRate handler.
@@ -97,12 +84,6 @@ pub(crate) fn deliver(ev: &PlaybackEvent) {
                 "window._nativeFullscreenChanged({})",
                 if snap.fullscreen { "true" } else { "false" }
             ));
-        }
-        PlaybackEventKind::OsdDimsChanged => {
-            let cb = slot().lock().window_wakeup.clone();
-            if let Some(cb) = cb {
-                cb();
-            }
         }
         PlaybackEventKind::DisplayHzChanged => {
             if let Some(cb) = slot().lock().set_hz {

@@ -450,6 +450,10 @@ impl Platform for WindowsPlatform {
         win_get_display_scale(x, y)
     }
 
+    fn window_source(&self) -> &'static dyn jfn_platform_abi::WindowSource {
+        &jfn_playback::window_source::MPV_WINDOW_SOURCE
+    }
+
     fn query_window_position(&self) -> Option<WindowPos> {
         let (mut x, mut y) = (0, 0);
         if win_query_window_position(&mut x, &mut y) {

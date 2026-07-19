@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
-use jfn_mpv::{Event, ObserveId, PropertyValue, sys as mpv_sys};
+use jfn_mpv::{Event, PropertyValue, sys as mpv_sys};
 
 use crate::ffi::post as post_input;
 use crate::ingest::{
@@ -41,17 +41,6 @@ impl IngestCtx for CallerCtx {
     }
 }
 
-// ---------------------------------------------------------------------
-// Side-channel callbacks (display scale, window pixels)
-// ---------------------------------------------------------------------
-
-type DisplayScaleCb = Box<dyn Fn(f64) + Send + Sync + 'static>;
-
-fn display_scale_slot() -> &'static parking_lot::Mutex<Option<DisplayScaleCb>> {
-    static SLOT: OnceLock<parking_lot::Mutex<Option<DisplayScaleCb>>> = OnceLock::new();
-    SLOT.get_or_init(|| parking_lot::Mutex::new(None))
-}
-
 fn shutdown_flag() -> &'static AtomicBool {
     static FLAG: AtomicBool = AtomicBool::new(false);
     &FLAG
@@ -66,11 +55,7 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
     for o in outs {
         match o {
             IngestOut::Input(i) => post_input(i),
-            IngestOut::DisplayScaleChanged(d) => {
-                if let Some(cb) = display_scale_slot().lock().as_ref() {
-                    cb(d);
-                }
-            }
+            IngestOut::WindowExtentChanged => jfn_platform_abi::notify_window_changed(),
             IngestOut::Shutdown => {
                 shutdown_flag().store(true, Ordering::Release);
                 flags |= INGEST_FLAG_SHUTDOWN;
@@ -83,12 +68,6 @@ fn dispatch(outs: Vec<IngestOut>) -> u8 {
 // ---------------------------------------------------------------------
 // FFI
 // ---------------------------------------------------------------------
-
-/// Install the browser-side `setScale` thunk used to resolve
-/// `DISPLAY_SCALE` property changes. Replaces any prior callback.
-pub fn jfn_playback_set_display_scale_handler<F: Fn(f64) + Send + Sync + 'static>(cb: F) {
-    *display_scale_slot().lock() = Some(Box::new(cb));
-}
 
 /// Seed the extent cell with a device-pixel window size + scale at boot,
 /// before the first osd-dimensions digest can supply one.
@@ -116,52 +95,22 @@ pub fn jfn_playback_ingest_mpv_event_owned(
     dispatch(outs)
 }
 
-/// Push synthetic OSD-dim pixels through the same digest path the
-/// `osd-dimensions` property observation drives. Used by the Wayland
-/// xdg_toplevel.configure intercept (`jfn_wayland::window_state::on_configure`)
-/// in place of mpv's own osd-dimensions delivery.
-pub fn jfn_playback_post_osd_pixels(
-    pw: i32,
-    ph: i32,
-    scale: f32,
-    has_macos_logical: bool,
-    mac_lw: i32,
-    mac_lh: i32,
-) {
-    use jfn_mpv::Node;
-    let node = Node::Map(vec![
-        ("w".into(), Node::Int(pw as i64)),
-        ("h".into(), Node::Int(ph as i64)),
-    ]);
-    let ctx = CallerCtx {
-        scale,
-        mac: if has_macos_logical {
-            Some((mac_lw, mac_lh))
-        } else {
-            None
-        },
-    };
-    let outs = ingest_property_for_ffi(
-        OSD_DIMS_OBSERVE_ID,
-        &PropertyValue::Node(node),
-        state(),
-        &ctx,
-    );
-    dispatch(outs);
+/// Reconcile the playback window mode from the current window snapshot.
+/// Idempotent — the state machine dedupes, so an unchanged mode emits
+/// nothing.
+pub fn jfn_playback_reconcile_window_mode() {
+    let snap = jfn_platform_abi::get().window_source().snapshot();
+    post_window_state(snap.fullscreen, snap.maximized);
 }
 
-const OSD_DIMS_OBSERVE_ID: ObserveId = crate::ingest::observe_id::OSD_DIMS;
-
 /// Push the window mode through the same digest path the `fullscreen` /
-/// `window-maximized` property observations drive. Used by backends where
-/// the compositor — not mpv — owns the toplevel (Wayland), so those mpv
-/// properties never change.
+/// `window-maximized` property observations drive.
 ///
 /// `FULLSCREEN` must digest first: entering fullscreen reads the *stored*
-/// maximized flag for `was_maximized`, and a fullscreen caller passes
+/// maximized flag for `was_maximized`, and a fullscreen snapshot carries
 /// `maximized == false` (the modes are mutually exclusive), which must not
 /// clobber that flag before it is read.
-pub fn jfn_playback_post_window_state(fullscreen: bool, maximized: bool) {
+fn post_window_state(fullscreen: bool, maximized: bool) {
     use crate::ingest::observe_id::{FULLSCREEN, WINDOW_MAX};
     let ctx = CallerCtx {
         scale: 1.0,

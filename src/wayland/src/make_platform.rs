@@ -195,8 +195,8 @@ impl Platform for WaylandPlatform {
         jfn_linux_util::cef_paths()
     }
 
-    fn window_source(&self) -> Option<&'static dyn jfn_platform_abi::WindowSource> {
-        Some(&crate::window_source::WaylandWindowSource)
+    fn window_source(&self) -> &'static dyn jfn_platform_abi::WindowSource {
+        &crate::window_source::WaylandWindowSource
     }
 
     // Wayland owns its toplevel and sizes it in apply_boot_geometry, so mpv

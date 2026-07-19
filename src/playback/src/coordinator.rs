@@ -36,12 +36,6 @@ pub enum Input {
         fullscreen: bool,
         was_maximized: bool,
     },
-    OsdDims {
-        lw: i32,
-        lh: i32,
-        pw: i32,
-        ph: i32,
-    },
     BufferedRanges(Vec<PlaybackBufferedRange>),
     DisplayHz(f64),
     Metadata(MediaMetadata),
@@ -239,7 +233,6 @@ fn apply(sm: &mut PlaybackStateMachine, input: Input, out: &mut Vec<PlaybackEven
             fullscreen,
             was_maximized,
         } => sm.on_fullscreen(fullscreen, was_maximized),
-        Input::OsdDims { lw, lh, pw, ph } => sm.on_osd_dims(lw, lh, pw, ph),
         Input::BufferedRanges(r) => sm.on_buffered_ranges(r),
         Input::DisplayHz(h) => sm.on_display_hz(h),
         Input::Metadata(m) => {

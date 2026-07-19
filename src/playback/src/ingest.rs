@@ -62,9 +62,9 @@ pub trait IngestCtx {
 #[derive(Debug)]
 pub(crate) enum IngestOut {
     Input(Input),
-    /// `mpv::display-hidpi-scale` changed. Forwarded to the
-    /// browser-side `setScale` handler.
-    DisplayScaleChanged(f64),
+    /// The window-extent cell was rewritten; the driver wakes the
+    /// platform-abi window subscribers, which pull the new snapshot.
+    WindowExtentChanged,
     /// Terminal: libmpv has shut down. Caller breaks out of the event
     /// loop and triggers the rest of the app's teardown.
     Shutdown,
@@ -232,16 +232,16 @@ fn digest_property<C: IngestCtx>(
             let old_bits = state
                 .display_scale_bits
                 .swap(new_scale.to_bits(), Ordering::Relaxed);
-            if f64::from_bits(old_bits) != new_scale {
-                {
-                    let mut extent = state.extent.lock();
-                    if let Some(e) = *extent {
-                        *extent = Some(WindowExtent::new(e.physical(), Scale(new_scale as f32)));
-                    }
+            if f64::from_bits(old_bits) == new_scale {
+                return Vec::new();
+            }
+            let mut extent = state.extent.lock();
+            match *extent {
+                Some(e) => {
+                    *extent = Some(WindowExtent::new(e.physical(), Scale(new_scale as f32)));
+                    vec![IngestOut::WindowExtentChanged]
                 }
-                vec![IngestOut::DisplayScaleChanged(new_scale)]
-            } else {
-                Vec::new()
+                None => Vec::new(),
             }
         }
         DISPLAY_FPS => {
@@ -300,7 +300,7 @@ fn digest_osd_dims<C: IngestCtx>(
         Scale(scale),
         LogicalSize { w: lw, h: lh },
     ));
-    vec![IngestOut::Input(Input::OsdDims { lw, lh, pw, ph })]
+    vec![IngestOut::WindowExtentChanged]
 }
 
 fn digest_cache_state(value: &PropertyValue) -> Vec<IngestOut> {
@@ -442,13 +442,15 @@ mod tests {
     #[test]
     fn display_scale_suppresses_duplicates() {
         let state = IngestState::new();
+        state.seed_window_extent(1280, 720, 1.0);
         let v = PropertyValue::Double(2.0);
         let out = ingest(
             &prop(observe_id::DISPLAY_SCALE, v.clone()),
             &state,
             &ctx(1.0),
         );
-        assert!(matches!(out[0], IngestOut::DisplayScaleChanged(s) if s == 2.0));
+        assert!(matches!(out[0], IngestOut::WindowExtentChanged));
+        assert_eq!(state.display_scale(), 2.0);
         let out = ingest(&prop(observe_id::DISPLAY_SCALE, v), &state, &ctx(1.0));
         assert!(out.is_empty());
     }
@@ -477,10 +479,7 @@ mod tests {
             &ctx(2.0),
         );
         assert_eq!(out.len(), 1);
-        let IngestOut::Input(Input::OsdDims { lw, lh, pw, ph }) = out[0] else {
-            panic!("expected OsdDims");
-        };
-        assert_eq!((lw, lh, pw, ph), (1920, 1080, 3840, 2160));
+        assert!(matches!(out[0], IngestOut::WindowExtentChanged));
         let Some(extent) = state.window_extent() else {
             panic!("expected extent");
         };
@@ -503,10 +502,7 @@ mod tests {
             &state,
             &c,
         );
-        let IngestOut::Input(Input::OsdDims { lw, lh, pw, ph }) = out[0] else {
-            panic!();
-        };
-        assert_eq!((lw, lh, pw, ph), (1280, 720, 2560, 1440));
+        assert!(matches!(out[0], IngestOut::WindowExtentChanged));
         let Some(extent) = state.window_extent() else {
             panic!("expected extent");
         };
@@ -523,7 +519,7 @@ mod tests {
             &state,
             &ctx(1.0),
         );
-        assert!(matches!(out[0], IngestOut::DisplayScaleChanged(s) if s == 1.5));
+        assert!(matches!(out[0], IngestOut::WindowExtentChanged));
         let Some(extent) = state.window_extent() else {
             panic!("expected extent");
         };
