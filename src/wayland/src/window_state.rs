@@ -4,8 +4,6 @@
 //! single [`window_extent`] snapshot; the per-field accessors read one field
 //! each and must not be composed into a geometry that spans two generations.
 
-use std::ffi::c_int;
-
 use parking_lot::RwLock;
 
 use crate::scale::Scale120;
@@ -15,20 +13,20 @@ use jfn_playback::ingest_driver::jfn_playback_post_osd_pixels;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WindowSize {
-    w: c_int,
-    h: c_int,
+    w: i32,
+    h: i32,
 }
 
 impl WindowSize {
-    pub(crate) fn new(w: c_int, h: c_int) -> Option<Self> {
+    pub(crate) fn new(w: i32, h: i32) -> Option<Self> {
         (w > 0 && h > 0).then_some(Self { w, h })
     }
 
-    pub(crate) fn w(self) -> c_int {
+    pub(crate) fn w(self) -> i32 {
         self.w
     }
 
-    pub(crate) fn h(self) -> c_int {
+    pub(crate) fn h(self) -> i32 {
         self.h
     }
 }
@@ -156,11 +154,11 @@ pub(crate) fn known_scale() -> Option<Scale120> {
     STATE.read().scale.map(|k| k.scale)
 }
 
-pub(crate) fn jfn_wl_scale_known() -> bool {
+pub(crate) fn scale_known() -> bool {
     known_scale().is_some()
 }
 
-pub(crate) fn jfn_wl_get_cached_scale() -> f32 {
+pub(crate) fn cached_scale() -> f32 {
     let st = STATE.read();
     st.extent
         .map(|e| e.scale.scale)
@@ -168,16 +166,13 @@ pub(crate) fn jfn_wl_get_cached_scale() -> f32 {
         .map_or(1.0, Scale120::ratio_f32)
 }
 
-pub(crate) fn jfn_wl_window_maximized() -> bool {
+pub(crate) fn window_maximized() -> bool {
     matches!(extent().map(|e| e.mode), Some(WindowMode::Maximized))
 }
 
 /// The consumer notifications below read the value back through the accessors,
 /// so they must run after the write lock is released or they deadlock.
-pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
-    let Some(logical) = WindowSize::new(logical_w, logical_h) else {
-        return;
-    };
+pub(crate) fn publish(logical: WindowSize, mode: WindowMode) {
     let Some(extent) = ({
         let mut st = STATE.write();
         let Some(scale) = st.scale else {
@@ -200,7 +195,7 @@ pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
     );
 
     let fullscreen = mode == WindowMode::Fullscreen;
-    crate::wl_ffi::sync_maximized_command_state(mode == WindowMode::Maximized);
+    crate::root_window::sync_maximized_command_state(mode == WindowMode::Maximized);
     if crate::wl_state::try_state().is_some() {
         wl_ops::on_configure(fullscreen);
     }

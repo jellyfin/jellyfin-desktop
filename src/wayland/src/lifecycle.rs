@@ -33,26 +33,26 @@ fn paint_name(mode: crate::paint_override::WlPaintOverride) -> &'static str {
 // init / cleanup
 // =====================================================================
 
-pub fn jfn_wl_lifecycle_init() -> bool {
+pub(crate) fn init() -> bool {
     let Some(display) = crate::app_conn::app_display() else {
         tracing::error!("Failed to get app Wayland display");
         return false;
     };
     let display = display.as_ptr();
 
-    // Seed Rust state with mpv's current fullscreen — first configure
-    // after this point won't start a spurious transition.
-    crate::wl_ffi::jfn_wl_core_set_was_fullscreen(
-        jfn_playback::ingest_driver::jfn_playback_fullscreen(),
-    );
-
     // Prepare the input layer first so its xkb context is ready before
     // any seat_caps wires up keyboard listeners that need xkb.
     crate::input_lifecycle::lifecycle_init(display);
 
-    if !unsafe { crate::wl_ffi::jfn_wl_core_init(display) } {
-        tracing::error!("jfn_wl_core_init failed");
+    if let Err(e) = unsafe { crate::wl_state::init(display) } {
+        tracing::error!("wayland core init failed: {e}");
         return false;
+    }
+
+    // Seed Rust state with mpv's current fullscreen — first configure
+    // after this point won't start a spurious transition.
+    if let Some(m) = crate::wl_state::try_state() {
+        m.lock().was_fullscreen = jfn_playback::ingest_driver::jfn_playback_fullscreen();
     }
 
     use crate::paint_override::WlPaintOverride as Req;
@@ -125,9 +125,7 @@ pub fn jfn_wl_lifecycle_init() -> bool {
     }
 
     #[cfg(feature = "kde-palette")]
-    crate::kde_palette::jfn_wl_kde_palette_init();
-
-    crate::input_lifecycle::lifecycle_start();
+    crate::kde_palette::init();
 
     crate::clipboard::clipboard_init();
     if !crate::clipboard::clipboard_available() {
@@ -137,11 +135,10 @@ pub fn jfn_wl_lifecycle_init() -> bool {
     true
 }
 
-pub fn jfn_wl_lifecycle_cleanup() {
+pub(crate) fn cleanup() {
     // KDE palette: KWin atomically drops the palette object with the
     // window. The scheme file is unlinked separately via
-    // jfn_wl_kde_palette_post_window_cleanup after mpv tears down the
-    // surface.
+    // kde_palette::post_window_cleanup after mpv tears down the surface.
     jfn_linux_util::idle_inhibit::cleanup();
     crate::clipboard::clipboard_cleanup();
     // Stop the app-owned toplevel thread before mpv's VO-teardown roundtrip;

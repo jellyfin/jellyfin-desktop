@@ -1,7 +1,6 @@
-//! Wayland surface / present / transition state.
-//!
-//! Dispatches CEF-typed structs unpacked to plain integers into the
-//! FFI entry points exposed by [`crate::wl_ffi`].
+//! Wayland surface / present / transition state, driven through the
+//! [`crate::wl_ops`] entry points reached from the Platform adapter
+//! ([`crate::make_platform`]).
 //!
 //! Owns:
 //!   * A dedicated `EventQueue` over an mpv-owned `wl_display`

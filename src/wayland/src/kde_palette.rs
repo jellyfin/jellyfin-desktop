@@ -1,7 +1,7 @@
 //! KDE/KWin per-window titlebar color support.
 
 use parking_lot::Mutex;
-use std::ffi::{CString, c_char};
+use std::ffi::CString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
@@ -49,7 +49,7 @@ fn make_colors_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
-pub fn jfn_wl_kde_palette_init() -> bool {
+pub(crate) fn init() -> bool {
     if STATE.lock().is_some() {
         return true;
     }
@@ -63,13 +63,8 @@ pub fn jfn_wl_kde_palette_init() -> bool {
     true
 }
 
-/// # Safety
-/// `hex` must be a valid NUL-terminated UTF-8 pointer.
-pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_char) {
-    if hex.is_null() {
-        return;
-    }
-    let hex_str = match unsafe { std::ffi::CStr::from_ptr(hex) }.to_str() {
+pub(crate) fn set_color(r: u8, g: u8, b: u8, hex: &std::ffi::CStr) {
+    let hex_str = match hex.to_str() {
         Ok(s) if s.len() == 7 && s.starts_with('#') => &s[1..],
         _ => return,
     };
@@ -105,7 +100,7 @@ pub unsafe fn jfn_wl_kde_palette_set_color(r: u8, g: u8, b: u8, hex: *const c_ch
     state.current_path = Some(new_path_c);
 }
 
-pub fn jfn_wl_kde_palette_post_window_cleanup() {
+pub(crate) fn post_window_cleanup() {
     let mut guard = STATE.lock();
     let state = match guard.as_mut() {
         Some(s) => s,

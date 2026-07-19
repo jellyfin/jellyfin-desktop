@@ -726,7 +726,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for State {
     }
 }
 
-pub struct JfnInputWayland {
+pub struct InputThread {
     cursor_type: Arc<AtomicU32>,
     set_cursor_inbox: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
@@ -829,7 +829,7 @@ fn worker_loop(
     let _ = cursor_type;
 }
 
-fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
+fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<InputThread> {
     if display.is_null() {
         return None;
     }
@@ -903,7 +903,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
             inbox_thread,
         )
     });
-    Some(JfnInputWayland {
+    Some(InputThread {
         cursor_type,
         set_cursor_inbox,
         stop,
@@ -913,34 +913,17 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<JfnInputWayland> {
 }
 
 /// # Safety
-/// `display` must be a valid `wl_display*` and `callbacks` must point to
-/// a `Callbacks` live for the duration of the call (the value is copied
-/// in).
-pub unsafe fn jfn_input_wayland_init(
-    display: *mut c_void,
-    callbacks: *const Callbacks,
-) -> *mut JfnInputWayland {
-    let Some(cb) = (unsafe { callbacks.as_ref() }) else {
-        return std::ptr::null_mut();
-    };
-    let cb = *cb;
-    match init_impl(display, cb) {
+/// `display` must be a valid `wl_display*`.
+pub unsafe fn init(display: *mut c_void, callbacks: &Callbacks) -> *mut InputThread {
+    match init_impl(display, *callbacks) {
         Some(c) => Box::into_raw(Box::new(c)),
         None => std::ptr::null_mut(),
     }
 }
 
 /// # Safety
-/// `_ctx` is unused; the function is kept unsafe for symmetry with the
-/// rest of the FFI surface.
-pub unsafe fn jfn_input_wayland_start(_ctx: *mut JfnInputWayland) {
-    // Thread starts in init; this is kept for ABI compatibility with the
-    // C++ API which had an explicit start step.
-}
-
-/// # Safety
-/// `ctx` must be a pointer returned by [`jfn_input_wayland_init`] (or null).
-pub unsafe fn jfn_input_wayland_set_cursor(ctx: *mut JfnInputWayland, cef_cursor_type: u32) {
+/// `ctx` must be a pointer returned by [`init`] (or null).
+pub unsafe fn set_cursor(ctx: *mut InputThread, cef_cursor_type: u32) {
     let Some(c) = (unsafe { ctx.as_ref() }) else {
         return;
     };
@@ -951,9 +934,9 @@ pub unsafe fn jfn_input_wayland_set_cursor(ctx: *mut JfnInputWayland, cef_cursor
 }
 
 /// # Safety
-/// `ctx` must be the pointer returned by [`jfn_input_wayland_init`] (or
+/// `ctx` must be the pointer returned by [`init`] (or
 /// null). Calling twice with the same non-null `ctx` causes use-after-free.
-pub unsafe fn jfn_input_wayland_cleanup(ctx: *mut JfnInputWayland) {
+pub unsafe fn cleanup(ctx: *mut InputThread) {
     if ctx.is_null() {
         return;
     }

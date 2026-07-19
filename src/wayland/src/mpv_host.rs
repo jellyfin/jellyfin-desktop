@@ -21,11 +21,11 @@ impl MpvHost for WaylandMpvHost {
     }
 
     fn host_ready(&self) -> bool {
-        crate::window_state::jfn_wl_scale_known()
+        crate::window_state::scale_known()
     }
 
     fn window_maximized(&self) -> Option<bool> {
-        Some(crate::window_state::jfn_wl_window_maximized())
+        Some(crate::window_state::window_maximized())
     }
 
     fn ensure_host_window(&self) {

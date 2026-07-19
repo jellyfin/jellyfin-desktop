@@ -408,8 +408,8 @@ impl RootState {
 
         // Pass logical (not physical) size: mpv and the overlay apply scale
         // themselves, so a physical size here would double-scale.
-        crate::mpv_proxy::set_window_size(w, h);
-        crate::window_state::publish(w, h, self.mode);
+        crate::mpv_proxy::set_window_size(size);
+        crate::window_state::publish(size, self.mode);
 
         PENDING_PRESENT.store(true, Ordering::Release);
     }
@@ -615,6 +615,21 @@ fn apply_fullscreen(state: &mut RootState, on: bool) {
 
 pub(crate) fn set_maximized(on: bool) {
     push_command(WindowCommand::SetMaximized(on));
+}
+
+// Commanded maximize state for the CSD toggle button. Mirrored from the
+// compositor on every configure so a compositor-initiated maximize doesn't
+// desync the toggle.
+static MAXIMIZED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn toggle_maximize() {
+    let next = !MAXIMIZED.load(Ordering::Relaxed);
+    MAXIMIZED.store(next, Ordering::Relaxed);
+    set_maximized(next);
+}
+
+pub(crate) fn sync_maximized_command_state(maximized: bool) {
+    MAXIMIZED.store(maximized, Ordering::Relaxed);
 }
 
 pub(crate) fn set_minimized() {

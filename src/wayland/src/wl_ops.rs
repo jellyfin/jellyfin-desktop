@@ -598,10 +598,6 @@ fn set_viewport_for_buffer_locked(s: &PlatformSurface, vis_w: i32, vis_h: i32) {
     set_viewport_dest_locked(s);
 }
 
-pub(crate) fn was_fullscreen() -> bool {
-    lock().was_fullscreen
-}
-
 pub(crate) fn on_configure(fullscreen: bool) {
     let Some(ext) = crate::window_state::window_extent() else {
         return;
