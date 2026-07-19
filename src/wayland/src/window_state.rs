@@ -217,22 +217,26 @@ pub(crate) fn feed_unit_scale() {
     feed_scale(Scale120::UNIT, ScaleProvenance::Provisional);
 }
 
-/// Record a scale. An authoritative scale always wins; a provisional one never
-/// displaces an authoritative one (a late probe result must not clobber the
-/// compositor's `preferred_scale`).
+/// Pure arbitration: an authoritative scale always wins; a provisional one
+/// never displaces an authoritative one (a late probe result must not clobber
+/// the compositor's `preferred_scale`).
+pub(crate) fn scale_displaces(current: Option<ScaleProvenance>, incoming: ScaleProvenance) -> bool {
+    match (current, incoming) {
+        (None, _) | (Some(_), ScaleProvenance::Authoritative) => true,
+        (Some(cur), ScaleProvenance::Provisional) => cur == ScaleProvenance::Provisional,
+    }
+}
+
+/// Record a scale, subject to [`scale_displaces`].
 pub(crate) fn feed_scale(scale: Scale120, provenance: ScaleProvenance) {
     let first = {
         let mut st = STATE.write();
         let first = st.scale.is_none();
-        let displaces = match (st.scale, provenance) {
-            (None, _) => true,
-            (Some(_), ScaleProvenance::Authoritative) => true,
-            (Some(k), ScaleProvenance::Provisional) => k.provenance == ScaleProvenance::Provisional,
-        };
-        if displaces {
-            st.scale = Some(KnownScale { scale, provenance });
+        if !scale_displaces(st.scale.map(|k| k.provenance), provenance) {
+            return;
         }
-        first && displaces
+        st.scale = Some(KnownScale { scale, provenance });
+        first
     };
     if first {
         tracing::info!(target: "Main", "scale known: {scale}");
@@ -242,4 +246,39 @@ pub(crate) fn feed_scale(scale: Scale120, provenance: ScaleProvenance) {
 
 pub(crate) fn feed_suspended(suspended: bool) {
     jfn_playback::lifecycle::jfn_lifecycle_set_visible(!suspended);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn any_scale_fills_an_empty_slot() {
+        assert!(scale_displaces(None, ScaleProvenance::Provisional));
+        assert!(scale_displaces(None, ScaleProvenance::Authoritative));
+    }
+
+    #[test]
+    fn authoritative_always_displaces() {
+        assert!(scale_displaces(
+            Some(ScaleProvenance::Provisional),
+            ScaleProvenance::Authoritative
+        ));
+        assert!(scale_displaces(
+            Some(ScaleProvenance::Authoritative),
+            ScaleProvenance::Authoritative
+        ));
+    }
+
+    #[test]
+    fn provisional_corrects_provisional_but_never_authoritative() {
+        assert!(scale_displaces(
+            Some(ScaleProvenance::Provisional),
+            ScaleProvenance::Provisional
+        ));
+        assert!(!scale_displaces(
+            Some(ScaleProvenance::Authoritative),
+            ScaleProvenance::Provisional
+        ));
+    }
 }

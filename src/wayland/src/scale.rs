@@ -159,4 +159,123 @@ mod tests {
         assert_eq!(Scale120::UNIT.to_string(), "1");
         assert_eq!(Scale120::from_wire(150).unwrap().to_string(), "1.25");
     }
+
+    // ------------------------------------------------------------------
+    // Property tests over deterministic seeded samples (no proptest dep):
+    // the checked arithmetic must agree with an exact wide-integer oracle
+    // on every input, including extremes.
+    // ------------------------------------------------------------------
+
+    fn lcg(seed: u64) -> impl FnMut() -> u64 {
+        let mut s = seed;
+        move || {
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            s
+        }
+    }
+
+    const WIRE_EDGES: [u32; 6] = [1, 119, 120, 121, 240, u32::MAX];
+    const DIM_EDGES: [i32; 5] = [1, 2, 120, i32::MAX - 1, i32::MAX];
+
+    #[test]
+    fn physical_size_agrees_with_exact_rational_oracle() {
+        let mut next = lcg(0x5CA1E);
+        let check = |wire: u32, w: i32, h: i32| {
+            let (Some(scale), Some(logical)) = (Scale120::from_wire(wire), WindowSize::new(w, h))
+            else {
+                return;
+            };
+            let oracle = |d: i32| (i128::from(d) * i128::from(wire) + 60) / 120;
+            let (ow, oh) = (oracle(w), oracle(h));
+            let representable = |d: i128| (1..=i128::from(i32::MAX)).contains(&d);
+            match scale.physical_size(logical) {
+                Some(p) => {
+                    assert_eq!(i128::from(p.w()), ow, "wire={wire} w={w}");
+                    assert_eq!(i128::from(p.h()), oh, "wire={wire} h={h}");
+                }
+                None => {
+                    assert!(
+                        !representable(ow) || !representable(oh),
+                        "wire={wire} {w}x{h} rejected but representable"
+                    );
+                }
+            }
+        };
+        for wire in WIRE_EDGES {
+            for w in DIM_EDGES {
+                for h in DIM_EDGES {
+                    check(wire, w, h);
+                }
+            }
+        }
+        for _ in 0..10_000 {
+            let wire = (next() % 1200 + 1) as u32;
+            let w = (next() % 20_000 + 1) as i32;
+            let h = (next() % 20_000 + 1) as i32;
+            check(wire, w, h);
+        }
+    }
+
+    #[test]
+    fn from_physical_logical_agrees_with_exact_rational_oracle() {
+        let mut next = lcg(0xF00D);
+        let check = |physical: u32, logical: u32| {
+            let Some(logical_nz) = NonZeroU32::new(logical) else {
+                return;
+            };
+            let oracle =
+                (u128::from(physical) * 120 + u128::from(logical) / 2) / u128::from(logical);
+            match Scale120::from_physical_logical(physical, logical_nz) {
+                Some(s) => assert_eq!(
+                    Scale120::from_wire(u32::try_from(oracle).unwrap()),
+                    Some(s),
+                    "{physical}/{logical}"
+                ),
+                None => assert!(
+                    oracle == 0 || oracle > u128::from(u32::MAX),
+                    "{physical}/{logical} rejected but oracle={oracle}"
+                ),
+            }
+        };
+        for physical in [0u32, 1, 119, 120, 1920, 3840, u32::MAX] {
+            for logical in [1u32, 2, 120, 1920, u32::MAX] {
+                check(physical, logical);
+            }
+        }
+        for _ in 0..10_000 {
+            let physical = (next() % 20_000) as u32;
+            let logical = (next() % 20_000 + 1) as u32;
+            check(physical, logical);
+        }
+    }
+
+    #[test]
+    fn scale_then_rederive_roundtrips_within_one_120th() {
+        let mut next = lcg(0xB0BA);
+        for _ in 0..10_000 {
+            // Realistic display range: scales 0.5..=4.0, widths ≥ 120.
+            let wire = (next() % 421 + 60) as u32;
+            let w = (next() % 7_500 + 120) as i32;
+            let scale = Scale120::from_wire(wire).unwrap();
+            let logical = WindowSize::new(w, w).unwrap();
+            let Some(physical) = scale.physical_size(logical) else {
+                continue;
+            };
+            let rederived = Scale120::from_physical_logical(
+                u32::try_from(physical.w()).unwrap(),
+                NonZeroU32::new(u32::try_from(w).unwrap()).unwrap(),
+            )
+            .unwrap();
+            // Rounding the physical size loses at most half a pixel, which for
+            // widths ≥ 120 is at most one 120th of scale.
+            assert!(
+                [wire - 1, wire, wire + 1]
+                    .into_iter()
+                    .any(|cand| Scale120::from_wire(cand) == Some(rederived)),
+                "wire={wire} w={w} rederived out of tolerance"
+            );
+        }
+    }
 }
