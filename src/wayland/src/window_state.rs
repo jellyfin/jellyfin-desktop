@@ -4,11 +4,11 @@
 //! geometry that spans two generations.
 
 use std::ffi::c_int;
-use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use parking_lot::RwLock;
 
+use crate::scale::Scale120;
 use crate::wl_ops;
 
 use jfn_playback::ingest_driver::jfn_playback_post_osd_pixels;
@@ -49,30 +49,14 @@ impl WindowMode {
     }
 }
 
-/// wp_fractional_scale reports scale in 120ths (120 = 1.0).
-const SCALE_120_BASE: u32 = 120;
-
 /// Sentinel for the `SCALE_120` atomic: no scale reported yet.
 const SCALE_120_UNKNOWN: u32 = 0;
-
-/// 1.0 in 120ths. A known scale is always a `NonZeroU32` of 120ths; parsing
-/// into that type happens at the boundaries ([`scale_120_from_ratio`], the
-/// `preferred_scale` wire handler), so [`feed_scale`] cannot receive an
-/// invalid scale.
-const SCALE_120_UNIT: NonZeroU32 = match NonZeroU32::new(SCALE_120_BASE) {
-    Some(s) => s,
-    None => unreachable!(),
-};
-
-fn scale_ratio(scale_120: NonZeroU32) -> f32 {
-    scale_120.get() as f32 / SCALE_120_BASE as f32
-}
 
 #[derive(Clone, Copy)]
 pub(crate) struct WindowExtent {
     logical: WindowSize,
     physical: WindowSize,
-    scale_120: NonZeroU32,
+    scale: Scale120,
     generation: u64,
     mode: WindowMode,
 }
@@ -80,20 +64,15 @@ pub(crate) struct WindowExtent {
 impl WindowExtent {
     fn build(
         logical: WindowSize,
-        scale_120: NonZeroU32,
+        scale: Scale120,
         mode: WindowMode,
         generation: u64,
     ) -> Option<Self> {
-        let base = i64::from(SCALE_120_BASE);
-        let s = i64::from(scale_120.get());
-        let physical = WindowSize::new(
-            ((i64::from(logical.w) * s + base / 2) / base) as c_int,
-            ((i64::from(logical.h) * s + base / 2) / base) as c_int,
-        )?;
+        let physical = scale.physical_size(logical)?;
         Some(Self {
             logical,
             physical,
-            scale_120,
+            scale,
             generation,
             mode,
         })
@@ -123,7 +102,7 @@ impl WindowExtentSnapshot {
         Self {
             logical: e.logical,
             physical: e.physical,
-            scale: scale_ratio(e.scale_120),
+            scale: e.scale.ratio_f32(),
         }
     }
 
@@ -148,15 +127,19 @@ pub(crate) fn window_logical_size() -> Option<WindowSize> {
     extent().map(|e| e.logical)
 }
 
+fn fed_scale() -> Option<Scale120> {
+    Scale120::from_wire(SCALE_120.load(Ordering::Acquire))
+}
+
 pub(crate) fn jfn_wl_scale_known() -> bool {
-    NonZeroU32::new(SCALE_120.load(Ordering::Acquire)).is_some()
+    fed_scale().is_some()
 }
 
 pub(crate) fn jfn_wl_get_cached_scale() -> f32 {
     extent()
-        .map(|e| e.scale_120)
-        .or_else(|| NonZeroU32::new(SCALE_120.load(Ordering::Acquire)))
-        .map_or(1.0, scale_ratio)
+        .map(|e| e.scale)
+        .or_else(fed_scale)
+        .map_or(1.0, Scale120::ratio_f32)
 }
 
 pub(crate) fn jfn_wl_window_maximized() -> bool {
@@ -173,18 +156,18 @@ pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
     let Some(logical) = WindowSize::new(logical_w, logical_h) else {
         return;
     };
-    let Some(scale_120) = NonZeroU32::new(SCALE_120.load(Ordering::Acquire)) else {
+    let Some(scale) = fed_scale() else {
         return;
     };
     let generation = GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
-    let Some(extent) = WindowExtent::build(logical, scale_120, mode, generation) else {
+    let Some(extent) = WindowExtent::build(logical, scale, mode, generation) else {
         return;
     };
     *WINDOW_EXTENT.write() = Some(extent);
     tracing::debug!(
         target: "Main",
         "window extent gen={} logical={}x{} physical={}x{} scale={}",
-        extent.generation, extent.logical.w, extent.logical.h, extent.physical.w, extent.physical.h, scale_120
+        extent.generation, extent.logical.w, extent.logical.h, extent.physical.w, extent.physical.h, scale
     );
 
     let fullscreen = mode == WindowMode::Fullscreen;
@@ -192,7 +175,7 @@ pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
     if crate::wl_state::try_state().is_some() {
         wl_ops::on_configure(fullscreen);
     }
-    let scale = scale_ratio(extent.scale_120);
+    let scale = extent.scale.ratio_f32();
     jfn_playback_post_osd_pixels(extent.physical.w, extent.physical.h, scale, false, 0, 0);
     // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait loop
     // reads OSD pixels from the ingest layer rather than via an mpv event).
@@ -202,22 +185,13 @@ pub(crate) fn publish(logical_w: c_int, logical_h: c_int, mode: WindowMode) {
 /// Satisfy the boot scale gate when no `wp_fractional_scale_manager_v1` exists,
 /// so it doesn't wait forever for a `preferred_scale` that never arrives.
 pub(crate) fn feed_unit_scale() {
-    feed_scale(SCALE_120_UNIT);
+    feed_scale(Scale120::UNIT);
 }
 
-/// Parse a scale ratio (1.0 = 100%), e.g. from the output probe, into 120ths.
-pub(crate) fn scale_120_from_ratio(ratio: f64) -> Option<NonZeroU32> {
-    let scaled = (ratio * f64::from(SCALE_120_BASE)).round();
-    if !(1.0..=f64::from(u32::MAX)).contains(&scaled) {
-        return None;
-    }
-    NonZeroU32::new(scaled as u32)
-}
-
-pub(crate) fn feed_scale(scale_120: NonZeroU32) {
-    let first = SCALE_120.swap(scale_120.get(), Ordering::AcqRel) == SCALE_120_UNKNOWN;
+pub(crate) fn feed_scale(scale: Scale120) {
+    let first = SCALE_120.swap(scale.get().get(), Ordering::AcqRel) == SCALE_120_UNKNOWN;
     if first {
-        tracing::info!(target: "Main", "scale known: {}", scale_ratio(scale_120));
+        tracing::info!(target: "Main", "scale known: {scale}");
     }
     jfn_mpv::api::jfn_mpv_wakeup();
 }
