@@ -26,10 +26,12 @@ use jfn_menu::render::{self, Fonts, Layout};
 use crate::wl_state::{WlState, lock, try_state};
 
 static MENU_ACTIVE: AtomicBool = AtomicBool::new(false);
-// True from menu map (grab activation) until teardown. Our menu's xdg_popup
-// grab steals the Wayland keyboard, so the compositor sends the main surface a
-// keyboard-leave; while engaged we must NOT forward that as focus-loss to CEF,
-// or Blink closes the still-needed <select> popup out from under us.
+// True from the grab request in `arm` until teardown. Our menu's xdg_popup
+// grab steals the Wayland keyboard — on Mutter already at the popup's initial
+// commit, on wlroots/KWin only at map — so the compositor sends the main
+// surface a keyboard-leave; while engaged we must NOT forward that as
+// focus-loss to CEF, or Blink closes the still-needed <select> popup out from
+// under us.
 static ENGAGED: AtomicBool = AtomicBool::new(false);
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
@@ -144,6 +146,9 @@ pub fn arm(x: i32, y: i32) {
     let mut st = lock();
     clear_menu_locked(&mut st);
     st.menu_io.generation = Some(generation);
+    // Mutter activates the grab at the initial commit inside popup_create; the
+    // grab-induced keyboard-leave must already observe ENGAGED == true.
+    ENGAGED.store(true, Ordering::Release);
     ensure_surface_locked(&mut st);
     st.menu_io.phase = Phase::AwaitPlaceholder;
     let surface = st.menu_io.surface.clone();
@@ -379,6 +384,11 @@ pub(crate) fn on_done(generation: NonZeroU64) {
     }
     fire_locked(&mut st, -1);
     clear_menu_locked(&mut st);
+    drop(st);
+    // A compositor-initiated dismissal usually means focus left the window
+    // (alt-tab, click on another client): the keyboard-leave swallowed while
+    // engaged was a real loss, and no re-enter will follow to correct it.
+    crate::input::flush_suppressed_focus_loss();
 }
 
 /// Cancel the grab `arm` started if this click never opened a menu.
@@ -388,11 +398,13 @@ pub(crate) fn on_done(generation: NonZeroU64) {
 /// goes live immediately, even while the popup is still empty — so a click that
 /// opens nothing strands the seat grabbed, freezing input until the next click
 /// (#494). A real menu has claimed the grab by release time, so it is untouched.
-pub fn dismiss_if_speculative() {
-    let Some(state) = try_state() else { return };
+pub fn dismiss_if_speculative() -> bool {
+    let Some(state) = try_state() else {
+        return false;
+    };
     let mut st = state.lock();
     if st.menu_io.menu.is_some() || st.menu_io.phase == Phase::Idle {
-        return;
+        return false;
     }
     let generation = st.menu_io.generation;
     clear_menu_locked(&mut st);
@@ -400,6 +412,7 @@ pub fn dismiss_if_speculative() {
     if let Some(generation) = generation {
         crate::root_window::popup_destroy(generation);
     }
+    true
 }
 
 /// Tear down the menu without firing its selection callback. Used when CEF
@@ -427,9 +440,9 @@ pub fn active() -> bool {
     MENU_ACTIVE.load(Ordering::Acquire)
 }
 
-/// True from menu map until teardown — i.e. our menu's grab owns (or is about
-/// to own) the seat. Used to suppress forwarding the grab-induced
-/// keyboard-leave on the MAIN surface to CEF as focus-loss.
+/// True from the grab request in [`arm`] until teardown — i.e. our menu's grab
+/// owns (or is about to own) the seat. Used to suppress forwarding the
+/// grab-induced keyboard-leave on the MAIN surface to CEF as focus-loss.
 pub fn is_engaged() -> bool {
     ENGAGED.load(Ordering::Acquire)
 }
