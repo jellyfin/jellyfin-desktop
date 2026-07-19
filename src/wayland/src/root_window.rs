@@ -719,8 +719,8 @@ fn build_menu_positioner(shell: &PopupShell, x: i32, y: i32, w: i32, h: i32) -> 
 }
 
 /// Create the grab popup for `surface`. The grab cites the input thread's last
-/// button serial — valid here only because every app connection shares one
-/// wl_client.
+/// press serial (button or key) — valid here only because every app connection
+/// shares one wl_client.
 pub(crate) fn popup_create(
     generation: NonZeroU64,
     x: i32,
@@ -756,7 +756,7 @@ pub(crate) fn popup_create(
     );
     positioner.destroy();
     if let Some(seat) = &shell.seat {
-        popup.grab(seat, crate::input::last_button_serial());
+        popup.grab(seat, crate::input::last_input_serial());
     }
     surface.commit();
     shell.flush();

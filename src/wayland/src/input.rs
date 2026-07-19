@@ -83,10 +83,39 @@ fn cef_to_wl_shape(shape: CursorShape) -> u32 {
     s as u32
 }
 
-static LAST_BUTTON_SERIAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+// Interactive move/resize requires the serial of the pointer press whose
+// implicit grab drives the drag — a later key press serial would be rejected.
+static LAST_BUTTON_SERIAL: AtomicU32 = AtomicU32::new(0);
+// xdg_popup.grab accepts the serial of any press-type input event; tracking
+// key presses too keeps the serial fresh for keyboard-opened `<select>`s
+// (Enter/Space), which grab without any button press to cite.
+static LAST_INPUT_SERIAL: AtomicU32 = AtomicU32::new(0);
 
 pub fn last_button_serial() -> u32 {
-    LAST_BUTTON_SERIAL.load(std::sync::atomic::Ordering::Acquire)
+    LAST_BUTTON_SERIAL.load(Ordering::Acquire)
+}
+
+pub fn last_input_serial() -> u32 {
+    LAST_INPUT_SERIAL.load(Ordering::Acquire)
+}
+
+static SUPPRESSED_FOCUS_LOSS: AtomicBool = AtomicBool::new(false);
+static KB_FOCUS_CB: Mutex<Option<KbFocusFn>> = Mutex::new(None);
+
+fn suppress_focus_loss() {
+    SUPPRESSED_FOCUS_LOSS.store(true, Ordering::Release);
+}
+
+fn discard_suppressed_focus_loss() {
+    SUPPRESSED_FOCUS_LOSS.store(false, Ordering::Release);
+}
+
+pub(crate) fn flush_suppressed_focus_loss() {
+    if SUPPRESSED_FOCUS_LOSS.swap(false, Ordering::AcqRel)
+        && let Some(f) = *KB_FOCUS_CB.lock()
+    {
+        f(0);
+    }
 }
 
 pub type MouseMoveFn = fn(x: i32, y: i32, mods: u32, leave: c_int);
@@ -412,7 +441,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             } => {
                 let pressed = matches!(bs, WEnum::Value(wl_pointer::ButtonState::Pressed));
                 if pressed {
-                    LAST_BUTTON_SERIAL.store(serial, std::sync::atomic::Ordering::Release);
+                    LAST_BUTTON_SERIAL.store(serial, Ordering::Release);
+                    LAST_INPUT_SERIAL.store(serial, Ordering::Release);
                 }
                 let flag = Self::mouse_button_flag(button);
                 if crate::popup::active() {
@@ -498,8 +528,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     );
                 }
                 // Drop the grab armed on the press if this click opened no menu (#494).
-                if (button == BTN_RIGHT || button == BTN_LEFT) && !pressed {
-                    crate::popup::dismiss_if_speculative();
+                if (button == BTN_RIGHT || button == BTN_LEFT)
+                    && !pressed
+                    && crate::popup::dismiss_if_speculative()
+                {
+                    // The window still holds compositor focus here — teardown
+                    // returns the keyboard to the main surface, so a leave
+                    // swallowed at arm time was our own grab, not a real loss.
+                    discard_suppressed_focus_loss();
                 }
             }
             Event::Axis { axis, value, .. } => {
@@ -614,6 +650,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 if crate::popup::is_menu_surface(surface.id().protocol_id()) {
                     return;
                 }
+                discard_suppressed_focus_loss();
                 if let Some(f) = state.cb.kb_focus {
                     f(1);
                 }
@@ -627,6 +664,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                     return;
                 }
                 if crate::popup::is_engaged() {
+                    suppress_focus_loss();
                     return;
                 }
                 // Stop repeating on real focus loss, or it keeps firing
@@ -636,11 +674,19 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                     f(0);
                 }
             }
-            Event::Key { key, state: ks, .. } => {
+            Event::Key {
+                key,
+                state: ks,
+                serial,
+                ..
+            } => {
+                let pressed = matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                if pressed {
+                    LAST_INPUT_SERIAL.store(serial, Ordering::Release);
+                }
                 let Some(st) = &state.xkb_st else { return };
                 let kc: xkb::Keycode = (key + 8).into();
                 let sym = st.key_get_one_sym(kc);
-                let pressed = matches!(ks, WEnum::Value(wl_keyboard::KeyState::Pressed));
                 if crate::popup::active() {
                     // Otherwise a repeat released here stays armed and
                     // outlives the popup.
@@ -855,6 +901,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<InputThread> {
 
     let cursor_type = Arc::new(AtomicU32::new(CursorShape::Pointer.as_raw() as u32));
     let set_cursor_inbox = Arc::new(AtomicBool::new(false));
+    *KB_FOCUS_CB.lock() = cb.kb_focus;
 
     let state = State {
         cb,
@@ -941,6 +988,7 @@ pub unsafe fn cleanup(ctx: *mut InputThread) {
         return;
     }
     let mut boxed = unsafe { Box::from_raw(ctx) };
+    *KB_FOCUS_CB.lock() = None;
     boxed.stop.store(true, Ordering::Relaxed);
     boxed.wake.signal();
     if let Some(w) = boxed.worker.get_mut().take() {
