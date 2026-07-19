@@ -85,3 +85,20 @@ fn probe(x: i32, y: i32) -> Option<f64> {
 pub fn jfn_wayland_scale_probe(x: c_int, y: c_int) -> c_double {
     probe(x, y).unwrap_or(0.0)
 }
+
+/// Probe the first output's scale on a throwaway thread, waiting at most
+/// `timeout`. The probe opens a second display connection and round-trips on
+/// it, which can block indefinitely if the compositor stops responding; the
+/// caller must never do that inline (it would stall the root event loop), so
+/// the blocking part is isolated here and abandoned on timeout — the orphaned
+/// thread holds only its own private connection and exits with the process.
+pub(crate) fn probe_first_output_bounded(timeout: std::time::Duration) -> Option<f64> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("wl-scale-probe".into())
+        .spawn(move || {
+            let _ = tx.send(probe(-1, -1));
+        })
+        .ok()?;
+    rx.recv_timeout(timeout).ok().flatten()
+}

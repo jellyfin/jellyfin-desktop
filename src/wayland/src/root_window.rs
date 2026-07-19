@@ -118,8 +118,40 @@ struct RootState {
     /// `Some` once the first configure has been acked (the window is "mapped").
     /// Holds the capability that gates buffer attach/commit.
     present: Option<Presented>,
+    scale_discovery: ScaleDiscovery,
     pre_fs_maximized: bool,
 }
+
+/// Progress of the deferred first-configure scale fallback.
+///
+/// Ordering, per compositor style:
+/// - Normal compositors send `preferred_scale` before or alongside the first
+///   configure. The scale is known when the configure dispatches, `plan` never
+///   returns `DiscoverScale`, and this stays `Idle`.
+/// - Hyprland-style compositors withhold `preferred_scale` until the window
+///   maps — which never happens while the first buffer waits on the scale. The
+///   configure handler then requests discovery (`Requested`), but the probe is
+///   NOT run inside the callback: the root loop first finishes dispatching the
+///   current event batch, so a `preferred_scale` queued later in the same batch
+///   wins and cancels the request. Only if the scale is still unknown after the
+///   drain does the loop spawn the bounded off-thread probe (`Spawned`), which
+///   feeds a provisional scale (or the unit fallback) back through
+///   `window_state` and wakes the root thread to present. The authoritative
+///   `preferred_scale` corrects it after map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScaleDiscovery {
+    Idle,
+    Requested,
+    Spawned,
+}
+
+/// Upper bound on the fallback probe: it round-trips on a second display
+/// connection, which a wedged compositor can stall forever.
+const SCALE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Set by the fallback probe thread once it has fed a scale; the root loop
+/// re-plans presentation when it observes this.
+static SCALE_FALLBACK_FED: AtomicBool = AtomicBool::new(false);
 
 mod floating_restore {
     use crate::window_state::{WindowMode, WindowSize};
@@ -253,54 +285,72 @@ impl RootState {
         )
     }
 
-    /// Effect layer around the pure [`presentation::plan`]: gathers inputs,
-    /// runs the decided step's Wayland I/O and notifications, and re-plans
-    /// after scale discovery.
+    /// Effect layer around the pure [`presentation::plan`]: gathers inputs and
+    /// runs the decided step's Wayland I/O and notifications. May run inside an
+    /// event callback, so it must never block — scale discovery is only
+    /// requested here and serviced by the root loop between dispatch batches.
     fn try_present(&mut self) {
-        loop {
-            let step = presentation::plan(presentation::Inputs {
-                mapped: self.present.is_some(),
-                pending_ack: self.pending_ack.is_some(),
-                scale_known: crate::window_state::known_scale().is_some(),
-                size: self.resolve_logical(),
-            });
-            match step {
-                presentation::Step::Wait => return,
-                // Discovery always feeds some scale (probe result or unit
-                // fallback), so the re-plan cannot choose DiscoverScale again.
-                presentation::Step::DiscoverScale => self.discover_scale(),
-                presentation::Step::Present => {
-                    self.execute_present();
-                    return;
+        let step = presentation::plan(presentation::Inputs {
+            mapped: self.present.is_some(),
+            pending_ack: self.pending_ack.is_some(),
+            scale_known: crate::window_state::known_scale().is_some(),
+            size: self.resolve_logical(),
+        });
+        match step {
+            presentation::Step::Wait => {}
+            presentation::Step::DiscoverScale => {
+                if self.scale_discovery == ScaleDiscovery::Idle {
+                    self.scale_discovery = ScaleDiscovery::Requested;
                 }
             }
+            presentation::Step::Present => self.execute_present(),
         }
     }
 
-    /// Some compositors (Hyprland) withhold preferred_scale until the window
-    /// maps, which never happens while the first buffer waits on the scale.
-    /// Once a configure arrives, resolve a provisional scale from the outputs
-    /// and proceed; the authoritative preferred_scale corrects it after map.
-    fn discover_scale(&self) {
-        let probed = crate::scale_probe::jfn_wayland_scale_probe(-1, -1);
-        match crate::scale::Scale120::from_ratio(probed) {
-            Some(scale) => {
-                tracing::info!(
-                    target: "Main",
-                    "root window: no preferred_scale before first configure; using probed scale {probed}"
-                );
-                crate::window_state::feed_scale(
-                    scale,
-                    crate::window_state::ScaleProvenance::Provisional,
-                );
-            }
-            None => {
-                tracing::warn!(
-                    target: "Main",
-                    "root window: no preferred_scale before first configure and probe failed; assuming scale 1.0"
-                );
-                crate::window_state::feed_unit_scale();
-            }
+    /// Runs on the root loop after `dispatch_pending` has drained the current
+    /// event batch. If a `preferred_scale` arrived later in that batch the
+    /// request dissolves; otherwise spawn the bounded off-thread probe. See
+    /// [`ScaleDiscovery`] for the full ordering contract.
+    fn service_scale_discovery(&mut self) {
+        if self.scale_discovery != ScaleDiscovery::Requested {
+            return;
+        }
+        if crate::window_state::known_scale().is_some() {
+            self.scale_discovery = ScaleDiscovery::Idle;
+            return;
+        }
+        self.scale_discovery = ScaleDiscovery::Spawned;
+        let spawned = thread::Builder::new()
+            .name("wl-scale-fallback".into())
+            .spawn(|| {
+                let probed = crate::scale_probe::probe_first_output_bounded(SCALE_PROBE_TIMEOUT);
+                match probed.and_then(crate::scale::Scale120::from_ratio) {
+                    Some(scale) => {
+                        tracing::info!(
+                            target: "Main",
+                            "root window: no preferred_scale before first configure; using probed scale {scale}"
+                        );
+                        crate::window_state::feed_scale(
+                            scale,
+                            crate::window_state::ScaleProvenance::Provisional,
+                        );
+                    }
+                    None => {
+                        tracing::warn!(
+                            target: "Main",
+                            "root window: no preferred_scale before first configure and probe failed; assuming scale 1.0"
+                        );
+                        crate::window_state::feed_unit_scale();
+                    }
+                }
+                SCALE_FALLBACK_FED.store(true, Ordering::Release);
+                wake_root_thread();
+            })
+            .is_ok();
+        if !spawned {
+            // No thread, no probe: unblock presentation with the unit fallback.
+            crate::window_state::feed_unit_scale();
+            self.try_present();
         }
     }
 
@@ -960,6 +1010,7 @@ pub(crate) fn ensure_started() {
         },
         pending_ack: None,
         present: None,
+        scale_discovery: ScaleDiscovery::Idle,
         pre_fs_maximized: false,
     };
 
@@ -1037,6 +1088,14 @@ fn root_loop(
         if queue.dispatch_pending(&mut state).is_err() {
             break;
         }
+        // The batch is drained: a preferred_scale queued behind the configure
+        // has dispatched by now, so only a genuinely absent scale spawns the
+        // fallback probe — and a completed probe re-plans presentation here,
+        // on the thread that owns the surface.
+        if SCALE_FALLBACK_FED.swap(false, Ordering::AcqRel) {
+            state.try_present();
+        }
+        state.service_scale_discovery();
         // Service queued control work before the blocking poll, not only after a
         // wake: wake_root_thread is a no-op until ROOT_THREAD is published, so a
         // request stored during that startup window rings no fd and would
@@ -1054,6 +1113,12 @@ fn root_loop(
         }
         let _ = conn.flush();
 
+        // A probe completion between the check above and here must not strand
+        // its result until the next compositor event (its wake can be lost if
+        // ROOT_THREAD isn't published yet); re-run the loop instead of polling.
+        if SCALE_FALLBACK_FED.load(Ordering::Acquire) {
+            continue;
+        }
         let guard = match queue.prepare_read() {
             Some(g) => g,
             None => continue,
