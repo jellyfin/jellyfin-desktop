@@ -49,6 +49,8 @@ struct Browsers {
     active_stack: Vec<*mut JfnCefLayer>,
     cursor_router: Router<CursorShape, CursorSink>,
     menu: MenuOwnership,
+    /// Last size applied via [`jfn_browsers_set_size`]; used only to size
+    /// layers created after the fact (`jfn_browsers_create`).
     lw: i32,
     lh: i32,
     pw: i32,
@@ -60,14 +62,7 @@ unsafe impl Send for Browsers {}
 
 static INSTANCE: Mutex<Option<Browsers>> = Mutex::new(None);
 
-pub fn jfn_browsers_init(
-    lw: i32,
-    lh: i32,
-    pw: i32,
-    ph: i32,
-    frame_rate: f64,
-    use_shared_textures: bool,
-) {
+pub fn jfn_browsers_init(frame_rate: f64, use_shared_textures: bool) {
     let fr = if frame_rate > 0.0 {
         (frame_rate + 0.5) as i32
     } else {
@@ -80,10 +75,10 @@ pub fn jfn_browsers_init(
         active_stack: Vec::new(),
         cursor_router: Router::new(CursorSink),
         menu: MenuOwnership::default(),
-        lw,
-        lh,
-        pw,
-        ph,
+        lw: 0,
+        lh: 0,
+        pw: 0,
+        ph: 0,
         frame_rate: fr,
     });
     crate::bridge::install();
@@ -263,23 +258,6 @@ pub fn jfn_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
     for l in layers {
         unsafe { jfn_cef_layer_resize(l, lw, lh, pw, ph) };
     }
-}
-
-pub fn jfn_browsers_set_scale(scale: f64) {
-    let (new_lw, new_lh, pw, ph) = {
-        let g = INSTANCE.lock();
-        let Some(b) = g.as_ref() else { return };
-        if scale <= 0.0 || b.pw <= 0 || b.ph <= 0 {
-            return;
-        }
-        (
-            (b.pw as f64 / scale) as i32,
-            (b.ph as f64 / scale) as i32,
-            b.pw,
-            b.ph,
-        )
-    };
-    jfn_browsers_set_size(new_lw, new_lh, pw, ph);
 }
 
 pub fn jfn_browsers_set_refresh_rate(hz: f64) {

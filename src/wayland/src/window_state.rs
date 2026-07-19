@@ -201,6 +201,12 @@ pub(crate) fn publish(logical: WindowSize, mode: WindowMode) {
     }
     let scale = extent.scale.scale.ratio_f32();
     jfn_playback_post_osd_pixels(extent.physical.w, extent.physical.h, scale, false, 0, 0);
+    // mpv's `fullscreen` / `window-maximized` observations are skipped on
+    // Wayland (the compositor owns this toplevel); this is the only mode feed.
+    jfn_playback::ingest_driver::jfn_playback_post_window_state(
+        mode == WindowMode::Fullscreen,
+        mode == WindowMode::Maximized,
+    );
     // Wake any thread parked in `mpv_wait_event` (the boot-time VO-wait loop
     // reads OSD pixels from the ingest layer rather than via an mpv event).
     jfn_mpv::api::jfn_mpv_wakeup();

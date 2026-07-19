@@ -11,11 +11,11 @@ use serde_json::json;
 use crate::exec_js::call as call_exec_js;
 use crate::types::{PlaybackEvent, PlaybackEventKind};
 
-type SetSizeCb = extern "C" fn(i32, i32, i32, i32);
+type WindowWakeupCb = std::sync::Arc<dyn Fn() + Send + Sync>;
 type SetHzCb = extern "C" fn(f64);
 
 struct Handlers {
-    set_size: Option<SetSizeCb>,
+    window_wakeup: Option<WindowWakeupCb>,
     set_hz: Option<SetHzCb>,
 }
 
@@ -23,15 +23,16 @@ fn slot() -> &'static Mutex<Handlers> {
     static SLOT: OnceLock<Mutex<Handlers>> = OnceLock::new();
     SLOT.get_or_init(|| {
         Mutex::new(Handlers {
-            set_size: None,
+            window_wakeup: None,
             set_hz: None,
         })
     })
 }
 
-/// Install / clear the browsers.setSize handler.
-pub fn jfn_playback_set_browsers_size_handler(cb: Option<SetSizeCb>) {
-    slot().lock().set_size = cb;
+/// Install the window wakeup, fired when the window's dimensions may
+/// have changed; the consumer pulls the current `WindowSource` snapshot.
+pub fn jfn_playback_set_window_wakeup_handler<F: Fn() + Send + Sync + 'static>(cb: F) {
+    slot().lock().window_wakeup = Some(std::sync::Arc::new(cb));
 }
 
 /// Install / clear the browsers.setRefreshRate handler.
@@ -98,8 +99,9 @@ pub(crate) fn deliver(ev: &PlaybackEvent) {
             ));
         }
         PlaybackEventKind::OsdDimsChanged => {
-            if let Some(cb) = slot().lock().set_size {
-                cb(snap.layout_w, snap.layout_h, snap.pixel_w, snap.pixel_h);
+            let cb = slot().lock().window_wakeup.clone();
+            if let Some(cb) = cb {
+                cb();
             }
         }
         PlaybackEventKind::DisplayHzChanged => {

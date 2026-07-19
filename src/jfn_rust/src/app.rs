@@ -254,15 +254,15 @@ fn init_mpv_handle(opts: MpvInitOptions<'_>) -> *mut jfn_mpv::sys::mpv_handle {
     unsafe { jfn_mpv::boot::jfn_mpv_handle_init(&boot as *const _) }
 }
 
-fn wait_for_vo_window() -> Option<(i32, i32)> {
+/// Blocks until the window source has a usable extent. Returns false on
+/// a fatal mpv event (shutdown before the VO came up).
+fn wait_for_vo_window() -> bool {
     let want_max = {
         let g = jfn_config::window_geometry();
         g.maximized
     };
     tracing::info!(target: "Main", "Waiting for mpv window...");
 
-    let mut mw: i32 = 0;
-    let mut mh: i32 = 0;
     let mut need_max = want_max;
     let mut fatal = false;
 
@@ -289,11 +289,11 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
                     return false;
                 }
                 jfn_mpv::api::WaitEvent::Event(event) => {
-                    consume_vo_event(&event, &mut mw, &mut mh);
+                    consume_vo_event(&event);
                 }
             }
         }
-        if vo_ready(&mut mw, &mut mh, &mut need_max) {
+        if vo_ready(&mut need_max) {
             return false;
         }
         if may_block {
@@ -307,17 +307,14 @@ fn wait_for_vo_window() -> Option<(i32, i32)> {
                     return false;
                 }
                 jfn_mpv::api::WaitEvent::Event(event) => {
-                    consume_vo_event(&event, &mut mw, &mut mh);
+                    consume_vo_event(&event);
                 }
             }
         }
         true
     });
 
-    if fatal {
-        return None;
-    }
-    Some((mw, mh))
+    !fatal
 }
 
 fn publish_device_profile(mpv_raw: *mut jfn_mpv::sys::mpv_handle) {
@@ -375,17 +372,17 @@ fn start_playback_coordination() -> bool {
         h_theme_video_mode,
     ));
     jfn_playback::exec_js::jfn_playback_set_web_exec_js_handler(Some(h_web_exec_js));
-    jfn_playback::browser_sink::jfn_playback_set_browsers_size_handler(Some(h_browsers_set_size));
+    jfn_playback::browser_sink::jfn_playback_set_window_wakeup_handler(|| {
+        crate::browser_size::sync_browsers_to_window();
+    });
     jfn_playback::browser_sink::jfn_playback_set_browsers_refresh_rate_handler(Some(
         h_browsers_set_refresh_rate,
     ));
 
     plat().media_session().start();
 
-    jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(|s| {
-        if s > 0.0 {
-            jfn_cef::browsers::jfn_browsers_set_scale(s);
-        }
+    jfn_playback::ingest_driver::jfn_playback_set_display_scale_handler(|_| {
+        crate::browser_size::sync_browsers_to_window();
     });
     jfn_playback::ingest_driver::jfn_playback_set_scale_provider(|| {
         let s = plat().get_scale();
@@ -404,6 +401,10 @@ fn start_playback_coordination() -> bool {
         tracing::error!(target: "Main", "failed to start mpv event thread");
         return false;
     }
+
+    // The sync in init_main_browser ran before the coordinator existed, so
+    // its window-mode posts were dropped; reconcile now that inputs land.
+    crate::browser_size::sync_browsers_to_window();
     true
 }
 
@@ -440,19 +441,10 @@ fn shutdown_runtime(manager_thread: std::thread::JoinHandle<()>) {
     COORD_INITED.store(false, std::sync::atomic::Ordering::Release);
 }
 
-struct CefWindowMetrics {
-    lw: c_int,
-    lh: c_int,
-    mw: c_int,
-    mh: c_int,
-    hz: f64,
-}
-
-fn sync_cef_window_metrics(
-    mpv_raw: *mut jfn_mpv::sys::mpv_handle,
-    mut mw: c_int,
-    mut mh: c_int,
-) -> CefWindowMetrics {
+/// Boot-time mpv-size reconcile and extent-cell seed. Returns the display
+/// refresh rate for browser init.
+fn sync_cef_window_metrics(mpv_raw: *mut jfn_mpv::sys::mpv_handle) -> f64 {
+    let (mut mw, mut mh) = boot_window_size().unwrap_or((0, 0));
     let mut display_hidpi_scale: f64 = 0.0;
     unsafe {
         let name = cs("display-hidpi-scale");
@@ -503,20 +495,18 @@ fn sync_cef_window_metrics(
         mw = new_pw;
         mh = new_ph;
     }
-    jfn_playback::ingest_driver::jfn_playback_set_window_pixels(mw, mh);
+    if mw > 0 && mh > 0 {
+        jfn_playback::ingest_driver::jfn_playback_seed_window_extent(
+            mw,
+            mh,
+            plat().effective_scale(display_hidpi_scale),
+        );
+    }
 
-    let scale = plat().effective_scale(display_hidpi_scale);
-    let lw = (mw as f32 / scale) as c_int;
-    let lh = (mh as f32 / scale) as c_int;
-
-    CefWindowMetrics { lw, lh, mw, mh, hz }
+    hz
 }
 
 fn init_main_browser(
-    lw: c_int,
-    lh: c_int,
-    mw: c_int,
-    mh: c_int,
     hz: f64,
     use_shared_textures: bool,
 ) -> (std::thread::JoinHandle<()>, *mut jfn_cef::JfnCefLayer) {
@@ -535,7 +525,9 @@ fn init_main_browser(
     }
     jfn_color::theme::jfn_theme_color_set_video_bg(video_bg_get());
 
-    jfn_cef::browsers::jfn_browsers_init(lw, lh, mw, mh, hz, use_shared_textures);
+    jfn_cef::browsers::jfn_browsers_init(hz, use_shared_textures);
+    // jfn_browsers_create sizes new layers from the cache this sync seeds.
+    crate::browser_size::sync_browsers_to_window();
     let manager_thread = crate::manager::jfn_manager_start();
     jfn_playback::jfn_shutdown_set_handler(Some(h_shutdown_wake_manager));
 
@@ -544,8 +536,7 @@ fn init_main_browser(
     jfn_cef::business_web::jfn_web_init(main_layer);
 
     let server_url = jfn_config::server_url();
-    tracing::info!(target: "Main",
-        "[FLOW] CreateBrowser(main) url={server_url} lw={lw} lh={lh} pw={mw} ph={mh}");
+    tracing::info!(target: "Main", "[FLOW] CreateBrowser(main) url={server_url}");
     unsafe {
         jfn_cef::client::jfn_cef_layer_create(
             main_layer,
@@ -653,17 +644,15 @@ pub fn jfn_app_main() -> c_int {
 
     plat().mpv_host().ensure_host_window();
 
-    let Some((mw, mh)) = wait_for_vo_window() else {
+    if !wait_for_vo_window() {
         return 0;
-    };
-
-    store_vo_size(mw, mh);
+    }
 
     let boot_args = BootArgs {
         disable_gpu_compositing: opts.disable_gpu_compositing,
         remote_debugging_port: opts.remote_debugging_port,
     };
-    let rc = unsafe { run_with_cef(&boot_args, mw, mh) };
+    let rc = unsafe { run_with_cef(&boot_args) };
     if rc != 0 {
         return rc;
     }
@@ -732,7 +721,7 @@ fn boot_window_size() -> Option<(i32, i32)> {
         .map(|e| (e.physical().w, e.physical().h))
 }
 
-fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32) {
+fn consume_vo_event(event: &jfn_mpv::Event) {
     let scale_raw = plat().get_scale();
     let scale = if scale_raw > 0.0 { scale_raw } else { 1.0 };
     jfn_playback::ingest_driver::jfn_playback_ingest_mpv_event_owned(
@@ -740,17 +729,9 @@ fn consume_vo_event(event: &jfn_mpv::Event, mw: &mut i32, mh: &mut i32) {
         scale,
         plat().mpv_host().logical_content_size(),
     );
-    if let Some((w, h)) = boot_window_size() {
-        *mw = w;
-        *mh = h;
-    }
 }
 
-fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &mut bool) -> bool {
-    if let Some((w, h)) = boot_window_size() {
-        *mw = w;
-        *mh = h;
-    }
+fn vo_ready(need_max: &mut bool) -> bool {
     let reported_max = plat()
         .mpv_host()
         .window_maximized()
@@ -758,13 +739,7 @@ fn vo_ready(mw: &mut i32, mh: &mut i32, need_max: &mut bool) -> bool {
     if reported_max {
         *need_max = false;
     }
-    *mw > 0 && !*need_max && plat().mpv_host().host_ready()
-}
-
-static VO_SIZE: OnceLock<(i32, i32)> = OnceLock::new();
-
-fn store_vo_size(w: i32, h: i32) {
-    let _ = VO_SIZE.set((w, h));
+    boot_window_size().is_some() && !*need_max && plat().mpv_host().host_ready()
 }
 
 // =====================================================================
@@ -812,9 +787,6 @@ extern "C" fn h_web_exec_js(js: *const c_char) {
         unsafe { jfn_cef::business_web::jfn_web_exec_js(js) };
     }
 }
-extern "C" fn h_browsers_set_size(lw: i32, lh: i32, pw: i32, ph: i32) {
-    jfn_cef::browsers::jfn_browsers_set_size(lw, lh, pw, ph);
-}
 extern "C" fn h_browsers_set_refresh_rate(hz: f64) {
     tracing::info!(target: "Main", "Display refresh rate changed: {hz} Hz");
     jfn_cef::browsers::jfn_browsers_set_refresh_rate(hz);
@@ -836,7 +808,7 @@ fn h_shutdown_wake_manager() {
 }
 
 /// Owns the run_with_cef body — invoked once by `jfn_app_main`.
-unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
+unsafe fn run_with_cef(ba: &BootArgs) -> c_int {
     // 2. Platform init (PlatformScope). Cleanup happens in shutdown_runtime.
     let mpv_raw = jfn_mpv::boot::jfn_mpv_handle_get();
     let platform_ok = plat().init(mpv_raw as *mut std::ffi::c_void);
@@ -863,16 +835,9 @@ unsafe fn run_with_cef(ba: &BootArgs, mw: c_int, mh: c_int) -> c_int {
         return 1;
     }
 
-    let metrics = sync_cef_window_metrics(mpv_raw, mw, mh);
+    let hz = sync_cef_window_metrics(mpv_raw);
 
-    let (manager_thread, main_layer) = init_main_browser(
-        metrics.lw,
-        metrics.lh,
-        metrics.mw,
-        metrics.mh,
-        metrics.hz,
-        use_shared_textures,
-    );
+    let (manager_thread, main_layer) = init_main_browser(hz, use_shared_textures);
 
     if !start_playback_coordination() {
         return 1;

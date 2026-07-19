@@ -9,9 +9,11 @@
 //! lives in [`IngestState`] so multiple
 //! ingest calls observe the same change-suppression behavior.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use jfn_mpv::{Event, ObserveId, PropertyValue};
+use jfn_platform_abi::{LogicalSize, PhysicalSize, Scale, WindowExtent};
+use parking_lot::Mutex;
 
 use crate::coordinator::Input;
 use crate::types::{EndReason, PlaybackBufferedRange};
@@ -78,13 +80,9 @@ pub(crate) enum IngestOut {
 pub struct IngestState {
     fullscreen: AtomicBool,
     window_maximized: AtomicBool,
-    osd_pw: AtomicI64,
-    osd_ph: AtomicI64,
-    /// Last device-pixel window size the app pushed (boot geometry,
-    /// runtime resize, or the most recent osd-dimensions event). Read
-    /// by the geometry-save tail at shutdown.
-    window_pw: AtomicI64,
-    window_ph: AtomicI64,
+    /// Last known window extent, written whole by whichever producer saw
+    /// it last (boot seed or osd-dimensions digest).
+    extent: Mutex<Option<WindowExtent>>,
     /// `f64` bit pattern stored as `u64` — `AtomicF64` isn't stable.
     display_scale_bits: AtomicU64,
     display_hz_bits: AtomicU64,
@@ -101,21 +99,14 @@ impl IngestState {
     pub fn window_maximized(&self) -> bool {
         self.window_maximized.load(Ordering::Relaxed)
     }
-    pub fn osd_pw(&self) -> i32 {
-        self.osd_pw.load(Ordering::Relaxed) as i32
+    pub fn window_extent(&self) -> Option<WindowExtent> {
+        *self.extent.lock()
     }
-    pub fn osd_ph(&self) -> i32 {
-        self.osd_ph.load(Ordering::Relaxed) as i32
-    }
-    pub fn window_pw(&self) -> i32 {
-        self.window_pw.load(Ordering::Relaxed) as i32
-    }
-    pub fn window_ph(&self) -> i32 {
-        self.window_ph.load(Ordering::Relaxed) as i32
-    }
-    pub fn set_window_pixels(&self, pw: i32, ph: i32) {
-        self.window_pw.store(pw as i64, Ordering::Relaxed);
-        self.window_ph.store(ph as i64, Ordering::Relaxed);
+    pub fn seed_window_extent(&self, pw: i32, ph: i32, scale: f32) {
+        *self.extent.lock() = Some(WindowExtent::new(
+            PhysicalSize { w: pw, h: ph },
+            Scale(scale),
+        ));
     }
     pub fn display_scale(&self) -> f64 {
         f64::from_bits(self.display_scale_bits.load(Ordering::Relaxed))
@@ -242,6 +233,12 @@ fn digest_property<C: IngestCtx>(
                 .display_scale_bits
                 .swap(new_scale.to_bits(), Ordering::Relaxed);
             if f64::from_bits(old_bits) != new_scale {
+                {
+                    let mut extent = state.extent.lock();
+                    if let Some(e) = *extent {
+                        *extent = Some(WindowExtent::new(e.physical(), Scale(new_scale as f32)));
+                    }
+                }
                 vec![IngestOut::DisplayScaleChanged(new_scale)]
             } else {
                 Vec::new()
@@ -280,8 +277,6 @@ fn digest_osd_dims<C: IngestCtx>(
     }
     let mut pw = w as i32;
     let mut ph = h as i32;
-    state.osd_pw.store(pw as i64, Ordering::Relaxed);
-    state.osd_ph.store(ph as i64, Ordering::Relaxed);
     let scale = {
         let s = ctx.scale();
         if s > 0.0 { s } else { 1.0 }
@@ -300,9 +295,11 @@ fn digest_osd_dims<C: IngestCtx>(
     if lw <= 0 || lh <= 0 {
         return Vec::new();
     }
-    // Keep the effective-pixel cache current so a later geometry save
-    // reads the latest resize rather than the boot-time seed.
-    state.set_window_pixels(pw, ph);
+    *state.extent.lock() = Some(WindowExtent::with_logical(
+        PhysicalSize { w: pw, h: ph },
+        Scale(scale),
+        LogicalSize { w: lw, h: lh },
+    ));
     vec![IngestOut::Input(Input::OsdDims { lw, lh, pw, ph })]
 }
 
@@ -484,10 +481,12 @@ mod tests {
             panic!("expected OsdDims");
         };
         assert_eq!((lw, lh, pw, ph), (1920, 1080, 3840, 2160));
-        assert_eq!(state.osd_pw(), 3840);
-        assert_eq!(state.osd_ph(), 2160);
-        assert_eq!(state.window_pw(), 3840);
-        assert_eq!(state.window_ph(), 2160);
+        let Some(extent) = state.window_extent() else {
+            panic!("expected extent");
+        };
+        assert_eq!(extent.physical(), PhysicalSize { w: 3840, h: 2160 });
+        assert_eq!(extent.logical(), LogicalSize { w: 1920, h: 1080 });
+        assert_eq!(extent.scale(), Scale(2.0));
     }
 
     #[test]
@@ -508,6 +507,49 @@ mod tests {
             panic!();
         };
         assert_eq!((lw, lh, pw, ph), (1280, 720, 2560, 1440));
+        let Some(extent) = state.window_extent() else {
+            panic!("expected extent");
+        };
+        assert_eq!(extent.logical(), LogicalSize { w: 1280, h: 720 });
+        assert_eq!(extent.physical(), PhysicalSize { w: 2560, h: 1440 });
+    }
+
+    #[test]
+    fn display_scale_change_rewrites_extent_coherently() {
+        let state = IngestState::new();
+        state.seed_window_extent(3840, 2160, 2.0);
+        let out = ingest(
+            &prop(observe_id::DISPLAY_SCALE, PropertyValue::Double(1.5)),
+            &state,
+            &ctx(1.0),
+        );
+        assert!(matches!(out[0], IngestOut::DisplayScaleChanged(s) if s == 1.5));
+        let Some(extent) = state.window_extent() else {
+            panic!("expected extent");
+        };
+        assert_eq!(extent.physical(), PhysicalSize { w: 3840, h: 2160 });
+        assert_eq!(extent.scale(), Scale(1.5));
+        assert_eq!(extent.logical(), LogicalSize { w: 2560, h: 1440 });
+    }
+
+    #[test]
+    fn osd_dims_digest_overwrites_boot_seed() {
+        let state = IngestState::new();
+        state.seed_window_extent(1600, 900, 1.0);
+        let node = Node::Map(vec![
+            ("w".into(), Node::Int(1196)),
+            ("h".into(), Node::Int(636)),
+        ]);
+        let _ = ingest(
+            &prop(observe_id::OSD_DIMS, PropertyValue::Node(node)),
+            &state,
+            &ctx(2.0),
+        );
+        let Some(extent) = state.window_extent() else {
+            panic!("expected extent");
+        };
+        assert_eq!(extent.physical(), PhysicalSize { w: 1196, h: 636 });
+        assert_eq!(extent.scale(), Scale(2.0));
     }
 
     #[test]
