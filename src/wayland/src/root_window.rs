@@ -420,7 +420,7 @@ impl RootState {
 
     fn fill_background(&mut self, w: i32, h: i32, _present: Presented) {
         if let Some(vp) = &self.viewport {
-            vp.set_destination(w, h);
+            crate::wl_state::set_viewport_destination(vp, "root_fill_background", w, h);
         }
         if self.bg_buffer.is_none() {
             self.bg_buffer = self.create_solid_buffer();
@@ -442,7 +442,7 @@ impl RootState {
             crate::wl_state::retire_buffer(old);
         }
         if let Some(vp) = &self.viewport {
-            vp.set_destination(w, h);
+            crate::wl_state::set_viewport_destination(vp, "root_rebuild_background", w, h);
         }
         crate::wl_state::damage_all(&self.surface);
     }

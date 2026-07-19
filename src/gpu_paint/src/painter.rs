@@ -4,6 +4,7 @@
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, XcbDisplayHandle,
@@ -15,6 +16,18 @@ use crate::error::GpuPaintError;
 use crate::types::{DmabufFrame, PixelFrame, WindowTarget};
 
 const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
+
+// Lower bound on the gap between successive `wgpu::Surface::configure`
+// calls. A rapid resize can hand us a differently-sized frame on
+// almost every dequeue; reconfiguring the swapchain that often has
+// been observed to race the compositor's linux-drm-syncobj bookkeeping
+// (Hyprland: `wp_linux_drm_syncobj_surface_v1` "Missing buffer"),
+// which is otherwise entirely outside our control (driver/WSI
+// internals). Rate-limiting reconfigures — dropping the odd frame
+// rather than resizing on every one — sidesteps the race without
+// touching that protocol directly. Mirrors the existing "gaps
+// acceptable during resize, stretching forbidden" policy.
+const MIN_RECONFIGURE_INTERVAL: Duration = Duration::from_millis(16);
 
 pub struct GpuPainter {
     ctx: Arc<GpuContext>,
@@ -34,6 +47,9 @@ pub struct GpuPainter {
     // frame matches it.
     pending_size: (u32, u32),
     visible: bool,
+    // When the swapchain was last reconfigured; used to rate-limit
+    // `surface.configure()` calls during a rapid resize burst.
+    last_reconfigure: Instant,
 }
 
 struct UploadTexture {
@@ -171,6 +187,7 @@ impl GpuPainter {
             upload: None,
             pending_size: size,
             visible: true,
+            last_reconfigure: Instant::now(),
         })
     }
 
@@ -205,13 +222,20 @@ impl GpuPainter {
         // differs from the current config. CEF authors the frame at
         // its own pace after a resize; presenting at the producer's
         // size keeps content 1:1 (no stretching) and avoids stalling
-        // on a `pending_size` that never matches.
+        // on a `pending_size` that never matches. Rate-limited (see
+        // `MIN_RECONFIGURE_INTERVAL`): if a size-changing frame arrives
+        // too soon after the last reconfigure, drop this frame instead
+        // of reconfiguring again immediately.
         if (self.config.width, self.config.height) != (frame.width, frame.height) {
+            if self.last_reconfigure.elapsed() < MIN_RECONFIGURE_INTERVAL {
+                return Ok(());
+            }
             self.config.width = frame.width;
             self.config.height = frame.height;
             self.surface.configure(&self.ctx.device, &self.config);
             self.upload = None;
             self.pending_size = (frame.width, frame.height);
+            self.last_reconfigure = Instant::now();
         }
 
         self.ensure_upload(frame.width, frame.height);
@@ -257,11 +281,15 @@ impl GpuPainter {
         }
 
         if (self.config.width, self.config.height) != (frame.width, frame.height) {
+            if self.last_reconfigure.elapsed() < MIN_RECONFIGURE_INTERVAL {
+                return Ok(());
+            }
             self.config.width = frame.width;
             self.config.height = frame.height;
             self.surface.configure(&self.ctx.device, &self.config);
             self.upload = None;
             self.pending_size = (frame.width, frame.height);
+            self.last_reconfigure = Instant::now();
         }
 
         let (texture, image) = unsafe { crate::dmabuf_import::import(&self.ctx.device, &frame) }?;
