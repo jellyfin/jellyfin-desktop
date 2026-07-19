@@ -122,29 +122,6 @@ struct RootState {
     pre_fs_maximized: bool,
 }
 
-/// Progress of the deferred first-configure scale fallback.
-///
-/// Ordering, per compositor style:
-/// - Normal compositors send `preferred_scale` before or alongside the first
-///   configure. The scale is known when the configure dispatches, `plan` never
-///   returns `DiscoverScale`, and this stays `Idle`.
-/// - Hyprland-style compositors withhold `preferred_scale` until the window
-///   maps — which never happens while the first buffer waits on the scale. The
-///   configure handler then requests discovery (`Requested`), but the probe is
-///   NOT run inside the callback: the root loop first finishes dispatching the
-///   current event batch, so a `preferred_scale` queued later in the same batch
-///   wins and cancels the request. Only if the scale is still unknown after the
-///   drain does the loop spawn the bounded off-thread probe (`Spawned`), which
-///   feeds a provisional scale (or the unit fallback) back through
-///   `window_state` and wakes the root thread to present. The authoritative
-///   `preferred_scale` corrects it after map.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ScaleDiscovery {
-    Idle,
-    Requested,
-    Spawned,
-}
-
 /// Upper bound on the fallback probe: it round-trips on a second display
 /// connection, which a wedged compositor can stall forever.
 const SCALE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -219,6 +196,52 @@ mod presentation {
         pub(super) size: Option<WindowSize>,
     }
 
+    /// Progress of the deferred first-configure scale fallback.
+    ///
+    /// Ordering, per compositor style:
+    /// - Normal compositors send `preferred_scale` before or alongside the
+    ///   first configure. The scale is known when the configure dispatches,
+    ///   `plan` never returns `DiscoverScale`, and this stays `Idle`.
+    /// - Hyprland-style compositors withhold `preferred_scale` until the
+    ///   window maps — which never happens while the first buffer waits on the
+    ///   scale. The configure handler then requests discovery (`Requested`),
+    ///   but the probe is NOT run inside the callback: the root loop first
+    ///   finishes dispatching the current event batch, so a `preferred_scale`
+    ///   queued later in the same batch wins and dissolves the request. Only
+    ///   if the scale is still unknown after the drain does the loop spawn the
+    ///   bounded off-thread probe (`Spawned`), which feeds a provisional scale
+    ///   (or the unit fallback) back through `window_state` and wakes the root
+    ///   thread to present. The authoritative `preferred_scale` corrects it
+    ///   after map.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(super) enum ScaleDiscovery {
+        Idle,
+        Requested,
+        Spawned,
+    }
+
+    impl ScaleDiscovery {
+        /// `plan` chose [`Step::DiscoverScale`] inside an event callback: only
+        /// note the request; never probe here.
+        pub(super) fn request(self) -> Self {
+            match self {
+                Self::Idle => Self::Requested,
+                other => other,
+            }
+        }
+
+        /// The event batch is drained: decide whether the probe must actually
+        /// run. A scale that arrived meanwhile dissolves the request; a spawned
+        /// probe is never re-spawned.
+        pub(super) fn after_batch_drained(self, scale_known: bool) -> (Self, bool) {
+            match self {
+                Self::Requested if scale_known => (Self::Idle, false),
+                Self::Requested => (Self::Spawned, true),
+                other => (other, false),
+            }
+        }
+    }
+
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(super) enum Step {
         /// Nothing presentable: no configure yet, or no resolvable size.
@@ -273,7 +296,7 @@ mod presentation {
         WindowSize::new(w, h)
     }
 }
-use presentation::resolve_logical_size;
+use presentation::{ScaleDiscovery, resolve_logical_size};
 
 impl RootState {
     fn resolve_logical(&self) -> Option<crate::window_state::WindowSize> {
@@ -299,9 +322,7 @@ impl RootState {
         match step {
             presentation::Step::Wait => {}
             presentation::Step::DiscoverScale => {
-                if self.scale_discovery == ScaleDiscovery::Idle {
-                    self.scale_discovery = ScaleDiscovery::Requested;
-                }
+                self.scale_discovery = self.scale_discovery.request();
             }
             presentation::Step::Present => self.execute_present(),
         }
@@ -312,14 +333,13 @@ impl RootState {
     /// request dissolves; otherwise spawn the bounded off-thread probe. See
     /// [`ScaleDiscovery`] for the full ordering contract.
     fn service_scale_discovery(&mut self) {
-        if self.scale_discovery != ScaleDiscovery::Requested {
+        let (next, spawn) = self
+            .scale_discovery
+            .after_batch_drained(crate::window_state::known_scale().is_some());
+        self.scale_discovery = next;
+        if !spawn {
             return;
         }
-        if crate::window_state::known_scale().is_some() {
-            self.scale_discovery = ScaleDiscovery::Idle;
-            return;
-        }
-        self.scale_discovery = ScaleDiscovery::Spawned;
         let spawned = thread::Builder::new()
             .name("wl-scale-fallback".into())
             .spawn(|| {
@@ -1413,11 +1433,287 @@ impl Dispatch<WlRegistry, GlobalListContents> for RootState {
 }
 
 #[cfg(test)]
+mod model_tests {
+    //! Model-driven suite for the root-window startup/scale state machine.
+    //! [`Model`] mirrors the effect layer exactly — every decision routes
+    //! through the same pure functions the live code uses (`plan`,
+    //! `ScaleDiscovery::{request, after_batch_drained}`, `scale_displaces`) —
+    //! while recording effects (acks, commits, probe spawns) for assertion.
+
+    use super::presentation::{Inputs, ScaleDiscovery, Step, plan};
+    use crate::window_state::{ScaleProvenance, WindowSize, scale_displaces};
+
+    struct Model {
+        mapped: bool,
+        pending_ack: bool,
+        scale: Option<ScaleProvenance>,
+        discovery: ScaleDiscovery,
+        acks: u32,
+        commits: u32,
+        probe_spawns: u32,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Ev {
+        /// xdg_surface.configure dispatches (toplevel size/states precede it).
+        Configure,
+        /// wp_fractional_scale.preferred_scale dispatches.
+        PreferredScale,
+        /// dispatch_pending returned: the current batch is fully drained.
+        BatchDrained,
+        /// The bounded fallback probe fed a provisional scale (probe result or
+        /// unit fallback — identical control flow).
+        ProbeCompletes,
+        /// Boot found no wp_fractional_scale_manager_v1.
+        BootUnitScale,
+    }
+
+    impl Model {
+        fn new() -> Self {
+            Self {
+                mapped: false,
+                pending_ack: false,
+                scale: None,
+                discovery: ScaleDiscovery::Idle,
+                acks: 0,
+                commits: 0,
+                probe_spawns: 0,
+            }
+        }
+
+        fn feed(&mut self, incoming: ScaleProvenance) {
+            if scale_displaces(self.scale, incoming) {
+                self.scale = Some(incoming);
+            }
+        }
+
+        /// Mirrors `RootState::try_present`.
+        fn drive(&mut self) {
+            let step = plan(Inputs {
+                mapped: self.mapped,
+                pending_ack: self.pending_ack,
+                scale_known: self.scale.is_some(),
+                // The boot floating size is always recorded, so a floating
+                // root always resolves; size-resolution corner cases are
+                // covered by the resolve_logical_size tests.
+                size: WindowSize::new(1280, 720),
+            });
+            match step {
+                Step::Wait => {}
+                Step::DiscoverScale => self.discovery = self.discovery.request(),
+                Step::Present => {
+                    // Protocol invariant: buffer operations only ever follow a
+                    // configure ack (fresh here, or the one that mapped us).
+                    assert!(
+                        self.pending_ack || self.mapped,
+                        "present without any acked configure"
+                    );
+                    if self.pending_ack {
+                        self.pending_ack = false;
+                        self.acks += 1;
+                        self.mapped = true;
+                    }
+                    // One latch raise = exactly one root commit per transaction.
+                    self.commits += 1;
+                }
+            }
+        }
+
+        fn ev(&mut self, e: Ev) {
+            match e {
+                Ev::Configure => {
+                    self.pending_ack = true;
+                    self.drive();
+                }
+                Ev::PreferredScale => {
+                    self.feed(ScaleProvenance::Authoritative);
+                    self.drive();
+                }
+                Ev::BatchDrained => {
+                    let (next, spawn) = self.discovery.after_batch_drained(self.scale.is_some());
+                    self.discovery = next;
+                    if spawn {
+                        self.probe_spawns += 1;
+                    }
+                }
+                Ev::ProbeCompletes => {
+                    self.feed(ScaleProvenance::Provisional);
+                    self.drive();
+                }
+                Ev::BootUnitScale => self.feed(ScaleProvenance::Provisional),
+            }
+        }
+
+        fn run(&mut self, evs: &[Ev]) {
+            for &e in evs {
+                self.ev(e);
+            }
+        }
+    }
+
+    #[test]
+    fn preferred_scale_before_configure() {
+        let mut m = Model::new();
+        m.run(&[Ev::PreferredScale]);
+        // Scale alone must not touch the surface before the first configure.
+        assert_eq!(m.commits, 0);
+        m.run(&[Ev::Configure, Ev::BatchDrained]);
+        assert_eq!((m.acks, m.commits, m.probe_spawns), (1, 1, 0));
+        assert_eq!(m.discovery, ScaleDiscovery::Idle);
+    }
+
+    #[test]
+    fn preferred_scale_later_in_same_batch_wins_without_probe() {
+        let mut m = Model::new();
+        m.run(&[Ev::Configure]);
+        // Mid-batch: the callback only requested discovery — it must not probe.
+        assert_eq!(m.discovery, ScaleDiscovery::Requested);
+        assert_eq!(m.commits, 0);
+        m.run(&[Ev::PreferredScale, Ev::BatchDrained]);
+        assert_eq!((m.acks, m.commits, m.probe_spawns), (1, 1, 0));
+        assert_eq!(m.discovery, ScaleDiscovery::Idle);
+    }
+
+    #[test]
+    fn withheld_scale_probes_after_drain_then_authoritative_corrects() {
+        let mut m = Model::new();
+        m.run(&[Ev::Configure, Ev::BatchDrained]);
+        // Hyprland style: nothing else in the batch, so exactly one probe.
+        assert_eq!(m.probe_spawns, 1);
+        assert_eq!(m.commits, 0);
+        m.run(&[Ev::ProbeCompletes]);
+        assert_eq!((m.acks, m.commits), (1, 1));
+        assert_eq!(m.scale, Some(ScaleProvenance::Provisional));
+        // The authoritative scale after map displaces the provisional one and
+        // re-presents without a new configure (and without a new ack).
+        m.run(&[Ev::PreferredScale]);
+        assert_eq!(m.scale, Some(ScaleProvenance::Authoritative));
+        assert_eq!((m.acks, m.commits), (1, 2));
+    }
+
+    #[test]
+    fn probe_failure_presents_with_unit_fallback() {
+        // A failed probe feeds the unit scale through the identical path, so
+        // startup still completes.
+        let mut m = Model::new();
+        m.run(&[Ev::Configure, Ev::BatchDrained, Ev::ProbeCompletes]);
+        assert_eq!((m.acks, m.commits), (1, 1));
+        assert_eq!(m.scale, Some(ScaleProvenance::Provisional));
+    }
+
+    #[test]
+    fn late_probe_result_never_clobbers_authoritative_scale() {
+        let mut m = Model::new();
+        m.run(&[
+            Ev::Configure,
+            Ev::BatchDrained,
+            Ev::PreferredScale,
+            Ev::ProbeCompletes,
+        ]);
+        assert_eq!(m.scale, Some(ScaleProvenance::Authoritative));
+    }
+
+    #[test]
+    fn no_fractional_scale_manager_uses_unit_scale_without_discovery() {
+        let mut m = Model::new();
+        m.run(&[Ev::BootUnitScale, Ev::Configure, Ev::BatchDrained]);
+        assert_eq!((m.acks, m.commits, m.probe_spawns), (1, 1, 0));
+        assert_eq!(m.discovery, ScaleDiscovery::Idle);
+    }
+
+    #[test]
+    fn repeated_unchanged_scales_re_present_without_new_ack_or_probe() {
+        let mut m = Model::new();
+        m.run(&[Ev::PreferredScale, Ev::Configure, Ev::BatchDrained]);
+        m.run(&[Ev::PreferredScale, Ev::PreferredScale, Ev::BatchDrained]);
+        assert_eq!((m.acks, m.commits, m.probe_spawns), (1, 3, 0));
+    }
+
+    #[test]
+    fn output_migration_scale_without_configure_re_presents() {
+        let mut m = Model::new();
+        m.run(&[Ev::PreferredScale, Ev::Configure, Ev::BatchDrained]);
+        // Moving to another output delivers only a new preferred_scale.
+        m.run(&[Ev::PreferredScale, Ev::BatchDrained]);
+        assert_eq!((m.acks, m.commits), (1, 2));
+    }
+
+    #[test]
+    fn bare_configure_ack_after_map() {
+        let mut m = Model::new();
+        m.run(&[Ev::PreferredScale, Ev::Configure, Ev::BatchDrained]);
+        // A size-less configure (states-only change) still acks and commits.
+        m.run(&[Ev::Configure, Ev::BatchDrained]);
+        assert_eq!((m.acks, m.commits), (2, 2));
+    }
+
+    #[test]
+    fn pending_fallback_never_respawns_and_never_blocks_shutdown() {
+        let mut m = Model::new();
+        m.run(&[Ev::Configure, Ev::BatchDrained]);
+        assert_eq!(m.probe_spawns, 1);
+        // The probe never completes (wedged compositor): further drains must
+        // not spawn again — the loop stays free to exit at shutdown, and the
+        // orphaned probe thread owns only its private connection.
+        m.run(&[Ev::BatchDrained, Ev::BatchDrained]);
+        assert_eq!(m.probe_spawns, 1);
+        assert_eq!(m.discovery, ScaleDiscovery::Spawned);
+        assert_eq!(m.commits, 0);
+    }
+
+    #[test]
+    fn callbacks_never_spawn_probes() {
+        // Spawning happens only on BatchDrained, whatever callbacks arrive.
+        let mut m = Model::new();
+        m.run(&[
+            Ev::Configure,
+            Ev::Configure,
+            Ev::PreferredScale,
+            Ev::Configure,
+        ]);
+        assert_eq!(m.probe_spawns, 0);
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::presentation::{Inputs, Step, plan};
+    use super::presentation::{Inputs, ScaleDiscovery, Step, plan};
     use super::resolve_logical_size;
     use crate::window_state::{WindowMode, WindowSize};
     use std::num::NonZeroI32;
+
+    #[test]
+    fn discovery_request_is_idempotent_and_never_downgrades() {
+        assert_eq!(ScaleDiscovery::Idle.request(), ScaleDiscovery::Requested);
+        assert_eq!(
+            ScaleDiscovery::Requested.request(),
+            ScaleDiscovery::Requested
+        );
+        // A spawned probe must not be re-requested by later configures.
+        assert_eq!(ScaleDiscovery::Spawned.request(), ScaleDiscovery::Spawned);
+    }
+
+    #[test]
+    fn discovery_batch_drain_transitions() {
+        assert_eq!(
+            ScaleDiscovery::Requested.after_batch_drained(true),
+            (ScaleDiscovery::Idle, false)
+        );
+        assert_eq!(
+            ScaleDiscovery::Requested.after_batch_drained(false),
+            (ScaleDiscovery::Spawned, true)
+        );
+        for known in [false, true] {
+            assert_eq!(
+                ScaleDiscovery::Idle.after_batch_drained(known),
+                (ScaleDiscovery::Idle, false)
+            );
+            assert_eq!(
+                ScaleDiscovery::Spawned.after_batch_drained(known),
+                (ScaleDiscovery::Spawned, false)
+            );
+        }
+    }
 
     fn inputs(mapped: bool, pending_ack: bool, scale_known: bool, size: bool) -> Inputs {
         Inputs {
