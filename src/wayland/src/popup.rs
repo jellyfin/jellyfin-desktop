@@ -23,7 +23,7 @@ use jfn_menu::MenuItem;
 use jfn_menu::interaction_fsm::{self, MenuEffect, MenuEvent, MenuState as FsmState};
 use jfn_menu::render::{self, Fonts, Layout};
 
-use crate::wl_state::{WlState, lock, try_state};
+use crate::wl_state::{WlState, lock, set_viewport_destination, set_viewport_source, try_state};
 
 static MENU_ACTIVE: AtomicBool = AtomicBool::new(false);
 // True from menu map (grab activation) until teardown. Our menu's xdg_popup
@@ -328,8 +328,8 @@ fn paint_placeholder_locked(st: &mut WlState) {
         return;
     };
     if let Some(vp) = st.menu_io.viewport.as_ref() {
-        vp.set_source(0.0, 0.0, 1.0, 1.0);
-        vp.set_destination(1, 1);
+        set_viewport_source(vp, "popup_placeholder", 0.0, 0.0, 1, 1);
+        set_viewport_destination(vp, "popup_placeholder", 1, 1);
     }
     buf.attach_to(&surface, 0, 0);
     crate::wl_state::damage_all(&surface);
@@ -584,9 +584,12 @@ fn paint_and_attach_locked(st: &mut WlState) {
     let Some(surface) = st.menu_io.surface.clone() else {
         return;
     };
+    // A zero/negative rect is a fatal wp_viewport protocol error (bad_value)
+    // that kills the whole shared Wayland connection, not just this surface —
+    // never forward an unvalidated source/destination rect.
     if let Some(vp) = st.menu_io.viewport.as_ref() {
-        vp.set_source(0.0, scroll as f64, pw as f64, view_ph as f64);
-        vp.set_destination(lw, lh);
+        set_viewport_source(vp, "popup_menu", 0.0, scroll as f64, pw, view_ph);
+        set_viewport_destination(vp, "popup_menu", lw, lh);
     }
     buf.attach_to(&surface, 0, 0);
     surface.damage_buffer(0, 0, pw, ph);

@@ -559,6 +559,60 @@ pub fn install_gpu_paint(ctx: Arc<GpuContext>) {
     st.use_gpu_paint = true;
 }
 
+/// Sends `wp_viewport.set_source`, dropping non-positive width/height.
+///
+/// A zero/negative source rect is a fatal, connection-terminating protocol
+/// error (`bad_value`) — and since one shared connection serves both the
+/// app's own surfaces and mpv's forwarded ones, sending it kills the whole
+/// app, not just this surface. This is the single choke point every call
+/// site should go through instead of calling `WpViewport::set_source`
+/// directly, so no future call site can reintroduce the crash.
+pub(crate) fn set_viewport_source(
+    viewport: &WpViewport,
+    tag: &str,
+    x: f64,
+    y: f64,
+    w: i32,
+    h: i32,
+) {
+    if w <= 0 || h <= 0 {
+        tracing::debug!(
+            target: "Wayland",
+            "{tag}: dropping invalid wp_viewport.set_source {x},{y} {w}x{h}"
+        );
+        return;
+    }
+    viewport.set_source(x, y, w as f64, h as f64);
+}
+
+/// Unsets `wp_viewport`'s source rect (the `-1, -1, -1, -1` sentinel), so the
+/// compositor uses the whole of whatever buffer is attached at commit time.
+///
+/// Use this for surfaces whose buffer is attached by a driver-managed
+/// presentation path we don't control the exact size/timing of (e.g. a
+/// Vulkan WSI swapchain owned by a background presenter thread) — computing
+/// a source rect ahead of time for such a buffer is inherently racy, since
+/// the size we assume it will be and the size it actually is at commit can
+/// differ, which is a fatal `bad_value`/"Box doesn't fit" protocol error.
+pub(crate) fn clear_viewport_source(viewport: &WpViewport, tag: &str) {
+    let unset = -1.0;
+    tracing::trace!(target: "Wayland", "{tag}: unsetting wp_viewport.set_source");
+    viewport.set_source(unset, unset, unset, unset);
+}
+
+/// Sends `wp_viewport.set_destination`, dropping non-positive width/height.
+/// See [`set_viewport_source`] for why this must never be skipped.
+pub(crate) fn set_viewport_destination(viewport: &WpViewport, tag: &str, w: i32, h: i32) {
+    if w <= 0 || h <= 0 {
+        tracing::debug!(
+            target: "Wayland",
+            "{tag}: dropping invalid wp_viewport.set_destination {w}x{h}"
+        );
+        return;
+    }
+    viewport.set_destination(w, h);
+}
+
 // Does an incoming frame's visible size match the authoritative physical window
 // size (within tolerance)? Reads the single source, not a per-layer copy.
 pub(crate) fn size_in_tolerance(vw: i32, vh: i32) -> bool {

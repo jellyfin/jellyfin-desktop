@@ -14,7 +14,7 @@ use crate::gpu_paint_worker::WaylandGpuPaintWorker;
 use crate::shm_paint_worker::{ViewportState, WaylandShmPaintWorker};
 use crate::wl_state::{
     PlatformSurface, WlState, create_dmabuf_buffer, create_shm_buffer, create_solid_color_buffer,
-    lock, size_in_tolerance,
+    lock, set_viewport_destination, set_viewport_source, size_in_tolerance,
 };
 
 // =====================================================================
@@ -195,7 +195,7 @@ pub(crate) fn surface_set_visible(
             }
             s.placeholder = true;
             if let Some(viewport) = s.viewport.as_ref() {
-                viewport.set_source(0.0, 0.0, 1.0, 1.0);
+                set_viewport_source(viewport, "placeholder", 0.0, 0.0, 1, 1);
             }
             // Stretch the 1×1 placeholder to the authoritative window extent.
             set_viewport_dest_locked(s);
@@ -235,11 +235,8 @@ pub(crate) fn popup_show(ptr: *mut PlatformSurface, x: i32, y: i32, lw: i32, lh:
         return;
     };
     sub.set_position(x, y);
-    if let Some(vp) = s.popup_viewport.as_ref()
-        && lw > 0
-        && lh > 0
-    {
-        vp.set_destination(lw, lh);
+    if let Some(vp) = s.popup_viewport.as_ref() {
+        set_viewport_destination(vp, "popup_show", lw, lh);
     }
     st.flush();
 }
@@ -424,7 +421,22 @@ pub(crate) fn surface_present_software(
 
     s.buffer_w = w;
     s.buffer_h = h;
-    set_viewport_for_buffer_locked(s, w, h);
+    // The actual attached buffer here is a Vulkan WSI swapchain image, owned
+    // and committed asynchronously by the GPU paint worker's presenter
+    // thread (mesa's WSI does the attach+commit internally) — sized to
+    // `painter_size` below, NOT to `w`/`h` (CEF's raw pixel buffer size).
+    // We have no way to know, from this thread, the exact buffer size that
+    // will be current at the moment that worker actually commits a given
+    // frame, so unlike the dmabuf/SHM paths we can't compute a source rect
+    // that's guaranteed to fit — doing so races the worker thread and can
+    // send a source rect for a not-yet-existent (or already-superseded)
+    // buffer size, which is a fatal wp_viewport bad_value ("Box doesn't
+    // fit") error. Leave source unset so the compositor just uses the whole
+    // buffer, and only manage the destination (scale-to-window) here.
+    if let Some(viewport) = s.viewport.as_ref() {
+        crate::wl_state::clear_viewport_source(viewport, "layer_source_gpu_paint");
+    }
+    set_viewport_dest_locked(s);
     let painter_size = crate::window_state::window_extent().map_or((w as u32, h as u32), |ext| {
         (ext.physical().w() as u32, ext.physical().h() as u32)
     });
@@ -468,13 +480,15 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
     }
     let w = frame.coded_w;
     let h = frame.coded_h;
+    // Clamp to the coded buffer size: a positive-but-larger-than-buffer visible
+    // rect is still a fatal wp_viewport `bad_value`/"Box doesn't fit" error.
     let vw = if frame.visible_w > 0 {
-        frame.visible_w
+        frame.visible_w.min(w)
     } else {
         w
     };
     let vh = if frame.visible_h > 0 {
-        frame.visible_h
+        frame.visible_h.min(h)
     } else {
         h
     };
@@ -486,8 +500,8 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
         crate::wl_state::retire_buffer(old);
     }
     if let Some(vp) = s.popup_viewport.as_ref() {
-        vp.set_source(0.0, 0.0, vw as f64, vh as f64);
-        vp.set_destination(lw, lh);
+        set_viewport_source(vp, "popup_present", 0.0, 0.0, vw, vh);
+        set_viewport_destination(vp, "popup_present", lw, lh);
     }
     let Some(popup) = s.popup_surface.as_ref() else {
         return;
@@ -527,8 +541,8 @@ pub(crate) fn popup_present_software(
         crate::wl_state::retire_buffer(old);
     }
     if let Some(vp) = s.popup_viewport.as_ref() {
-        vp.set_source(0.0, 0.0, pw as f64, ph as f64);
-        vp.set_destination(lw, lh);
+        set_viewport_source(vp, "popup_present_software", 0.0, 0.0, pw, ph);
+        set_viewport_destination(vp, "popup_present_software", lw, lh);
     }
     let Some(popup) = s.popup_surface.as_ref() else {
         return;
@@ -584,16 +598,30 @@ fn set_viewport_dest_locked(s: &PlatformSurface) {
         return;
     };
     if let Some(size) = crate::window_state::window_logical_size() {
-        viewport.set_destination(size.w(), size.h());
+        set_viewport_destination(viewport, "layer_dest", size.w(), size.h());
     }
 }
 
 fn set_viewport_for_buffer_locked(s: &PlatformSurface, vis_w: i32, vis_h: i32) {
-    if let Some(viewport) = s.viewport.as_ref()
-        && vis_w > 0
-        && vis_h > 0
-    {
-        viewport.set_source(0.0, 0.0, vis_w as f64, vis_h as f64);
+    if let Some(viewport) = s.viewport.as_ref() {
+        // `vis_w`/`vis_h` (CEF's reported "visible" rect) can momentarily exceed
+        // the actual attached buffer's coded size during rapid resize — a fully
+        // positive value that's still fatal, since the compositor rejects any
+        // wp_viewport source rectangle that doesn't fit inside the attached
+        // buffer (Hyprland: bad_value "Box doesn't fit"). Clamp to the buffer
+        // we're actually attaching (s.buffer_w/h, set by the caller just before
+        // this) so the source rect can never outgrow it.
+        let src_w = if s.buffer_w > 0 {
+            vis_w.min(s.buffer_w)
+        } else {
+            vis_w
+        };
+        let src_h = if s.buffer_h > 0 {
+            vis_h.min(s.buffer_h)
+        } else {
+            vis_h
+        };
+        set_viewport_source(viewport, "layer_source", 0.0, 0.0, src_w, src_h);
     }
     set_viewport_dest_locked(s);
 }

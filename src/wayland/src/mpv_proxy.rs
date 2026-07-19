@@ -31,6 +31,7 @@ use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::{
 use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
     WpFractionalScaleV1, WpFractionalScaleV1Handler,
 };
+use wl_proxy::protocols::linux_drm_syncobj_v1::wp_linux_drm_syncobj_manager_v1::WpLinuxDrmSyncobjManagerV1;
 use wl_proxy::protocols::viewporter::wp_viewport::{WpViewport, WpViewportHandler};
 use wl_proxy::protocols::viewporter::wp_viewporter::{WpViewporter, WpViewporterHandler};
 use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
@@ -567,6 +568,27 @@ impl WlRegistryHandler for AppRegistryH {
         }
         log_send("wl_registry.bind", slf.try_send_bind(name, id));
     }
+
+    fn handle_global(
+        &mut self,
+        slf: &Rc<WlRegistry>,
+        name: u32,
+        interface: ObjectInterface,
+        version: u32,
+    ) {
+        // Hide explicit-sync from the app's virtual registry as well. If the
+        // compositor advertises `wp_linux_drm_syncobj_manager_v1` to the app,
+        // the app's GPU paths (CEF / gpu_paint_worker) may bind it and trigger
+        // the same driver-level race. Preventing the app from ever seeing this
+        // global forces implicit sync for its surfaces too.
+        if interface == WpLinuxDrmSyncobjManagerV1::INTERFACE {
+            return;
+        }
+        log_send(
+            "wl_registry.global",
+            slf.try_send_global(name, interface, version),
+        );
+    }
 }
 
 struct MpvDisplayH;
@@ -587,6 +609,32 @@ impl WlDisplayHandler for MpvDisplayH {
 
 struct MpvRegistryH;
 impl WlRegistryHandler for MpvRegistryH {
+    fn handle_global(
+        &mut self,
+        slf: &Rc<WlRegistry>,
+        name: u32,
+        interface: ObjectInterface,
+        version: u32,
+    ) {
+        // Hide explicit-sync from mpv's virtual client entirely. mpv's Vulkan
+        // WSI (via libplacebo) recreates its swapchain on every xdg-driven
+        // resize with no coordination with the compositor's linux-drm-syncobj
+        // timeline bookkeeping; under a rapid resize burst this has been
+        // observed to race the compositor into a fatal "Missing buffer"
+        // protocol error (a commit landing without a buffer while a sync
+        // timeline point is still pending), which is fatal to the whole
+        // shared real connection. Never advertising this global to mpv means
+        // its WSI never requests it and falls back to implicit sync, which
+        // has no such race.
+        if interface == WpLinuxDrmSyncobjManagerV1::INTERFACE {
+            return;
+        }
+        log_send(
+            "wl_registry.global",
+            slf.try_send_global(name, interface, version),
+        );
+    }
+
     fn handle_bind(&mut self, slf: &Rc<WlRegistry>, name: u32, id: Rc<dyn Object>) {
         match id.interface() {
             XdgWmBase::INTERFACE => {
@@ -626,6 +674,31 @@ impl WpViewporterHandler for ClientViewporterH {
 
 struct ClientViewportH;
 impl WpViewportHandler for ClientViewportH {
+    fn handle_set_source(
+        &mut self,
+        slf: &Rc<WpViewport>,
+        x: wl_proxy::fixed::Fixed,
+        y: wl_proxy::fixed::Fixed,
+        width: wl_proxy::fixed::Fixed,
+        height: wl_proxy::fixed::Fixed,
+    ) {
+        // Mirrors handle_set_destination below: an invalid source rect is an
+        // instant, connection-fatal protocol error (bad_value), so it must be
+        // dropped rather than forwarded verbatim. The unset form is
+        // (-1, -1, -1, -1); any other non-positive width/height or negative
+        // x/y is invalid.
+        let neg_one = wl_proxy::fixed::Fixed::from_i32_saturating(-1);
+        let zero = wl_proxy::fixed::Fixed::ZERO;
+        let unset = x == neg_one && y == neg_one && width == neg_one && height == neg_one;
+        if !unset && (x < zero || y < zero || width <= zero || height <= zero) {
+            return;
+        }
+        log_send(
+            "wp_viewport.set_source",
+            slf.try_send_set_source(x, y, width, height),
+        );
+    }
+
     fn handle_set_destination(&mut self, slf: &Rc<WpViewport>, width: i32, height: i32) {
         // Virtualizing mpv's shell means it can size a viewport before it has a
         // real geometry, emitting a transient set_destination(0,0) — an instant

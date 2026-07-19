@@ -327,7 +327,7 @@ fn set_viewport_for_buffer(viewport: Option<&WpViewport>, state: ViewportState, 
     if w > 0 && h > 0 {
         let src_w = w.min(state.pw);
         let src_h = h.min(state.ph);
-        viewport.set_source(0.0, 0.0, src_w as f64, src_h as f64);
+        crate::wl_state::set_viewport_source(viewport, "shm_layer", 0.0, 0.0, src_w, src_h);
     }
-    viewport.set_destination(state.lw, state.lh);
+    crate::wl_state::set_viewport_destination(viewport, "shm_layer", state.lw, state.lh);
 }
