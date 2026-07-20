@@ -55,6 +55,7 @@ fn main() -> BuildResult<()> {
         // those through as Rust doc comments breaks `cargo test` doctests,
         // so strip comments from the generated bindings.
         .generate_comments(false)
+        .clang_arg(format!("--target={}", env::var("TARGET")?))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
     for dir in &include_dirs {
@@ -140,6 +141,7 @@ fn generate_avcodec_bindings() -> BuildResult<()> {
         .derive_debug(true)
         .layout_tests(false)
         .generate_comments(false)
+        .clang_arg(format!("--target={}", env::var("TARGET")?))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
     for dir in &include_dirs {
