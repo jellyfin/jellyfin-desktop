@@ -4,6 +4,7 @@
 mod linux_common 'linux_common.just'
 
 scale := '1'
+prefer_csd := '1'
 
 # Build the app
 [group('build')]
@@ -28,7 +29,7 @@ run-mpv *args: build
 [linux]
 [positional-arguments]
 run-niri *args:
-    env -u JUST_JUSTFILE -u JUST_WORKING_DIRECTORY '{{ source_directory() }}/niri-nested-run' just run "$@"
+    env -u JUST_JUSTFILE -u JUST_WORKING_DIRECTORY '{{ source_directory() }}/niri-nested-run' --prefer-csd '{{ prefer_csd }}' just run "$@"
 
 # Run the app inside a nested Hyprland session (stdio stays on this terminal)
 [group('run')]

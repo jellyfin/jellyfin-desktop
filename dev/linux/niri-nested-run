@@ -2,8 +2,14 @@
 # Run cmd under niri, keep its stdin/stdout/stderr on this terminal.
 set -eu
 
+PREFER_CSD=1
+if [ "${1:-}" = "--prefer-csd" ]; then
+    PREFER_CSD=$2
+    shift 2
+fi
+
 if [ "$#" -eq 0 ]; then
-    echo "usage: command [args...]" >&2
+    echo "usage: [--prefer-csd 0|1] command [args...]" >&2
     exit 1
 fi
 
@@ -19,4 +25,10 @@ shift 3
 exec "$@" <"$IN" >"$OUT" 2>"$ERR"
 '
 
-exec niri -c /dev/null -- sh -c "$SCRIPT" _ "$IN" "$OUT" "$ERR" "$@" >/dev/null 2>&1
+CONF=/dev/null
+if [ "$PREFER_CSD" = 0 ]; then
+    CONF="${TMPDIR:-/tmp}/niri-nested-run.kdl"
+    printf 'prefer-no-csd\n' > "$CONF"
+fi
+
+exec niri -c "$CONF" -- sh -c "$SCRIPT" _ "$IN" "$OUT" "$ERR" "$@" >/dev/null 2>&1
