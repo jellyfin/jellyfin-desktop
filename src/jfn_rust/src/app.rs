@@ -6,7 +6,7 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use clap::Parser;
-use jfn_cef::{APP_CEF_VERSION, APP_VERSION_FULL};
+use jfn_cef::{APP_VERSION_FULL, cef_version};
 use jfn_platform_abi::{IdleInhibitLevel, LogicalSize, Platform, WindowGeometry};
 
 use crate::cli;
@@ -54,7 +54,8 @@ fn normalize_passthrough(s: &str) -> String {
 fn print_version() {
     println!(
         "jellium-desktop {}\n\nCEF {}\n",
-        APP_VERSION_FULL, APP_CEF_VERSION
+        APP_VERSION_FULL,
+        cef_version()
     );
     use std::io::Write;
     let _ = std::io::stdout().flush();
@@ -76,7 +77,7 @@ fn init_logging(log_file: Option<String>, log_level: &str) {
     jfn_logging::jfn_log_init(&log_path, &filter);
 
     tracing::info!(target: "Main", "jellium-desktop {APP_VERSION_FULL}");
-    tracing::info!(target: "Main", "CEF {APP_CEF_VERSION}");
+    tracing::info!(target: "Main", "CEF {}", cef_version());
     if !log_path.is_empty() {
         tracing::info!(target: "Main", "Log file: {log_path}");
     }

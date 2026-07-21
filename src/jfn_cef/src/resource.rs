@@ -68,7 +68,7 @@ fn about_js_payload() -> Vec<u8> {
     let log_path = jfn_logging::active_path();
     let mut data = serde_json::Map::new();
     data.insert("app".into(), json!(crate::APP_VERSION_FULL));
-    data.insert("cef".into(), json!(crate::APP_CEF_VERSION));
+    data.insert("cef".into(), crate::cef_version().into());
     data.insert(
         "configDir".into(),
         json!(abs_path(&jfn_paths::config_dir().to_string_lossy())),
