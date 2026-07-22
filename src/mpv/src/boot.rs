@@ -255,6 +255,17 @@ fn apply_defaults(
     set("force-window", "yes")?;
     set("idle", "yes")?;
 
+    // Disable mpv's own default scripts-directory auto-load. Without this,
+    // mpv additionally scans its own config dir's `scripts/` subfolder and
+    // loads anything found there on top of `load_bundled_scripts` below —
+    // if a stray copy of a bundled script (e.g. dv-detect.lua, manually
+    // placed there during earlier testing) exists on a given machine, it
+    // runs a second time under an auto-suffixed name (e.g. `dv_detect2`),
+    // double-writing target-colorspace-hint around FILE_LOADED and
+    // corrupting fragile dual-layer DV/HEVC decode ("PPS changed between
+    // slices"). Bundled scripts are loaded explicitly below regardless.
+    set("load-scripts", "no")?;
+
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     load_bundled_scripts(handle)?;
 
