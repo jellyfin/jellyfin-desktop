@@ -38,6 +38,12 @@ run-niri *args:
 run-hyprland *args:
     env -u JUST_JUSTFILE -u JUST_WORKING_DIRECTORY '{{ source_directory() }}/hyprland-nested-run' --scale '{{ scale }}' just run "$@"
 
+# Run the app inside a cage kiosk session (stdio stays on this terminal)
+[group('run')]
+[linux]
+run-cage *args: build
+    cage -- build/jellium-desktop {{args}}
+
 [group('package')]
 mod appimage 'appimage/appimage.just'
 
