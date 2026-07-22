@@ -15,11 +15,8 @@ impl Inner {
         let w = self.width.load(Ordering::Acquire);
         let h = self.height.load(Ordering::Acquire);
         let pw = self.physical_w.load(Ordering::Acquire);
-        let scale = if pw > 0 && w > 0 {
-            pw as f32 / w as f32
-        } else {
-            1.0
-        };
+        let ph = self.physical_h.load(Ordering::Acquire);
+        let scale = surface_scale(w, h, pw, ph);
         (scale, w, h)
     }
 
@@ -73,5 +70,24 @@ impl Inner {
 
     fn should_present_paint(&self) -> bool {
         self.paint_scheduler.should_present_paint(self)
+    }
+}
+
+fn surface_scale(w: i32, h: i32, pw: i32, ph: i32) -> f32 {
+    if w <= 0 || h <= 0 || pw <= 0 || ph <= 0 {
+        return 1.0;
+    }
+    (pw as f32 / w as f32).max(ph as f32 / h as f32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::surface_scale;
+
+    #[test]
+    fn scale_covers_both_physical_axes() {
+        let scale = surface_scale(1536, 800, 3840, 1999);
+        assert!(1536.0 * scale >= 3840.0);
+        assert!(800.0 * scale >= 1999.0);
     }
 }

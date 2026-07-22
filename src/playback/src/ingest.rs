@@ -102,6 +102,12 @@ impl IngestState {
     pub fn window_extent(&self) -> Option<WindowExtent> {
         *self.extent.lock()
     }
+    /// Overwrite the extent cell from outside the mpv event stream (native
+    /// resize while the home page is idle). The caller wakes window
+    /// subscribers after the write.
+    pub fn set_extent(&self, extent: WindowExtent) {
+        *self.extent.lock() = Some(extent);
+    }
     pub fn display_scale(&self) -> f64 {
         f64::from_bits(self.display_scale_bits.load(Ordering::Relaxed))
     }
@@ -275,8 +281,10 @@ fn digest_osd_dims<C: IngestCtx>(
         let s = ctx.scale();
         if s > 0.0 { s } else { 1.0 }
     };
-    let mut lw = (pw as f32 / scale) as i32;
-    let mut lh = (ph as f32 / scale) as i32;
+    // The browser surface must cover the whole physical client area. Flooring
+    // here can leave a 1-2 px strip at fractional scales such as 250%.
+    let mut lw = (pw as f32 / scale).ceil() as i32;
+    let mut lh = (ph as f32 / scale).ceil() as i32;
     if let Some((qlw, qlh)) = ctx.macos_logical_size()
         && qlw > 0
         && qlh > 0
@@ -541,6 +549,25 @@ mod tests {
         };
         assert_eq!(extent.physical(), PhysicalSize { w: 1196, h: 636 });
         assert_eq!(extent.scale(), Scale(2.0));
+    }
+
+    #[test]
+    fn osd_dims_rounds_up_to_cover_fractional_scale() {
+        let state = IngestState::new();
+        let node = Node::Map(vec![
+            ("w".into(), Node::Int(3840)),
+            ("h".into(), Node::Int(1999)),
+        ]);
+        ingest(
+            &prop(observe_id::OSD_DIMS, PropertyValue::Node(node)),
+            &state,
+            &ctx(2.5),
+        );
+        let Some(extent) = state.window_extent() else {
+            panic!("expected extent");
+        };
+        assert_eq!(extent.physical(), PhysicalSize { w: 3840, h: 1999 });
+        assert_eq!(extent.logical(), LogicalSize { w: 1536, h: 800 });
     }
 
     #[test]

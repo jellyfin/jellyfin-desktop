@@ -19,6 +19,9 @@ use windows::Win32::System::SystemServices::{
     MK_RBUTTON, MK_SHIFT,
 };
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetFocus, VK_ADD, VK_BROWSER_BACK, VK_BROWSER_FORWARD, VK_CAPITAL, VK_CLEAR,
     VK_CONTROL, VK_DECIMAL, VK_DELETE, VK_DIVIDE, VK_DOWN, VK_END, VK_F4, VK_HOME, VK_INSERT,
@@ -63,6 +66,7 @@ use jfn_input::{
     jfn_input_dispatch_keyboard_focus, jfn_input_dispatch_mouse_button,
     jfn_input_dispatch_mouse_move, jfn_input_dispatch_scroll,
 };
+use jfn_playback::ingest_driver::jfn_playback_display_scale;
 use jfn_playback::shutdown::jfn_shutdown_initiate;
 
 // =====================================================================
@@ -279,6 +283,12 @@ fn is_button_down(msg: u32) -> bool {
     matches!(msg, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN)
 }
 
+fn to_logical(physical: i32) -> i32 {
+    let scale = jfn_playback_display_scale();
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    (physical as f64 / s) as i32
+}
+
 // =====================================================================
 // WndProc.
 // =====================================================================
@@ -299,8 +309,8 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 
         WM_MOUSEMOVE => {
             jfn_input_dispatch_mouse_move(
-                get_x_lparam(lp),
-                get_y_lparam(lp),
+                to_logical(get_x_lparam(lp)),
+                to_logical(get_y_lparam(lp)),
                 mouse_modifiers(wp),
                 0,
             );
@@ -321,8 +331,8 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             jfn_input_dispatch_mouse_button(
                 msg_to_button_code(msg),
                 if down { 1 } else { 0 },
-                get_x_lparam(lp),
-                get_y_lparam(lp),
+                to_logical(get_x_lparam(lp)),
+                to_logical(get_y_lparam(lp)),
                 mouse_modifiers(wp),
             );
             return LRESULT(0);
@@ -359,7 +369,13 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
             let delta = hiword_i16(wp.0 as u32) as i32;
-            jfn_input_dispatch_scroll(pt.x, pt.y, 0, delta, mouse_modifiers(wp));
+            jfn_input_dispatch_scroll(
+                to_logical(pt.x),
+                to_logical(pt.y),
+                0,
+                delta,
+                mouse_modifiers(wp),
+            );
             return LRESULT(0);
         }
 
@@ -372,7 +388,13 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
                 let _ = ScreenToClient(hwnd, &mut pt);
             }
             let delta = hiword_i16(wp.0 as u32) as i32;
-            jfn_input_dispatch_scroll(pt.x, pt.y, delta, 0, mouse_modifiers(wp));
+            jfn_input_dispatch_scroll(
+                to_logical(pt.x),
+                to_logical(pt.y),
+                delta,
+                0,
+                mouse_modifiers(wp),
+            );
             return LRESULT(0);
         }
 
@@ -437,6 +459,11 @@ unsafe extern "system" fn input_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
 const CLASS_NAME: PCWSTR = w!("JellyfinCefInput");
 
 pub fn jfn_input_windows_run_input_thread(mpv_hwnd: *mut std::ffi::c_void) {
+    // This child window receives physical-pixel Win32 mouse coordinates. Keep
+    // its thread in the same PMv2 context as mpv so its size and hit-testing
+    // do not get virtualized to 1536x802 on a 250% display.
+    let _ = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+
     let mpv = HWND(mpv_hwnd);
     let tid = unsafe { GetCurrentThreadId() };
 

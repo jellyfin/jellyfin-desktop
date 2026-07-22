@@ -75,6 +75,29 @@ pub fn jfn_playback_window_extent() -> Option<jfn_platform_abi::WindowExtent> {
     state().window_extent()
 }
 
+/// Publish a native client-area resize. The playback OSD-dimensions property
+/// is not emitted while the home page is idle, so the platform feeds settled
+/// native sizes here directly: the shared extent cell is rewritten and window
+/// subscribers (CEF window sync, geometry persistence) are woken, without
+/// synthesizing an OSD-dimensions playback event.
+pub fn jfn_playback_set_native_window_size(pw: i32, ph: i32, scale: f32) {
+    if pw <= 0 || ph <= 0 {
+        return;
+    }
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    // The browser surface must cover the whole physical client area, so round
+    // logical dimensions upward (fractional scales such as 250% otherwise
+    // leave a 1-2 px strip).
+    let lw = (pw as f32 / s).ceil() as i32;
+    let lh = (ph as f32 / s).ceil() as i32;
+    state().set_extent(jfn_platform_abi::WindowExtent::with_logical(
+        jfn_platform_abi::PhysicalSize { w: pw, h: ph },
+        jfn_platform_abi::Scale(s),
+        jfn_platform_abi::LogicalSize { w: lw, h: lh },
+    ));
+    jfn_platform_abi::notify_window_changed();
+}
+
 /// Returns flag bits — see [`INGEST_FLAG_SHUTDOWN`].
 pub fn jfn_playback_ingest_mpv_event_owned(
     event: &Event,

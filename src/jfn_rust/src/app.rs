@@ -383,6 +383,19 @@ fn start_playback_coordination() -> bool {
         let s = plat().get_scale();
         if s > 0.0 { s } else { 1.0 }
     });
+
+    // A WM_SIZE can arrive while CEF is starting, before the playback event
+    // thread is installed. Reconcile the browser with the settled native
+    // client area once all resize handlers are ready so an idle home page
+    // cannot retain a stale viewport until playback starts.
+    if let Some(extent) = plat().window_source().snapshot().extent {
+        let size = extent.physical();
+        jfn_playback::ingest_driver::jfn_playback_set_native_window_size(
+            size.w,
+            size.h,
+            plat().get_scale(),
+        );
+    }
     jfn_playback::ingest_driver::jfn_playback_set_fullscreen_handler(|fs| {
         plat().set_fullscreen(fs)
     });

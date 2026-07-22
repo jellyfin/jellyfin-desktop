@@ -10,13 +10,14 @@
 
 use parking_lot::Mutex;
 use std::ffi::{c_int, c_void};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
     D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice,
     ID3D11Device, ID3D11Device1, ID3D11DeviceContext, ID3D11Texture2D,
 };
@@ -35,6 +36,40 @@ use windows_core::Interface;
 use jfn_compositor_core::stack::SurfaceStack;
 use jfn_compositor_core::transition::{PresentDecision, TransitionGate};
 use jfn_platform_abi::JfnRect;
+
+static LOGGED_MAIN_FRAME_GEOMETRY: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy)]
+struct SourceRegion {
+    x: u32,
+    y: u32,
+    w: i32,
+    h: i32,
+}
+
+fn visible_source_region(
+    info: &cef::sys::_cef_accelerated_paint_info_t,
+    texture_w: u32,
+    texture_h: u32,
+) -> Option<SourceRegion> {
+    let visible = info.extra.visible_rect;
+    if visible.x < 0 || visible.y < 0 || visible.width <= 0 || visible.height <= 0 {
+        return None;
+    }
+    let x = visible.x as u32;
+    let y = visible.y as u32;
+    let w = visible.width as u32;
+    let h = visible.height as u32;
+    if x.checked_add(w)? > texture_w || y.checked_add(h)? > texture_h {
+        return None;
+    }
+    Some(SourceRegion {
+        x,
+        y,
+        w: visible.width,
+        h: visible.height,
+    })
+}
 
 // =====================================================================
 // Per-surface state. Stored as `Box<Surface>` and exposed across the C
@@ -330,11 +365,26 @@ fn ensure_swap_chain(
     }
 }
 
-fn present_to_swap_chain(devices: &CompositorDevices, sc: &IDXGISwapChain1, src: &ID3D11Texture2D) {
+fn present_to_swap_chain(
+    devices: &CompositorDevices,
+    sc: &IDXGISwapChain1,
+    src: &ID3D11Texture2D,
+    region: SourceRegion,
+) {
     unsafe {
         match sc.GetBuffer::<ID3D11Texture2D>(0) {
             Ok(bb) => {
-                devices.d3d_context.CopyResource(&bb, src);
+                let src_box = D3D11_BOX {
+                    left: region.x,
+                    top: region.y,
+                    front: 0,
+                    right: region.x + region.w as u32,
+                    bottom: region.y + region.h as u32,
+                    back: 1,
+                };
+                devices
+                    .d3d_context
+                    .CopySubresourceRegion(&bb, 0, 0, 0, 0, src, 0, Some(&src_box));
                 let _ = sc.Present(0, DXGI_PRESENT(0));
                 let _ = devices.dcomp_device.Commit();
             }
@@ -510,11 +560,38 @@ pub fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
     unsafe {
         src.GetDesc(&mut td);
     }
-    let w = td.Width as i32;
-    let h = td.Height as i32;
+    let Some(region) = visible_source_region(info, td.Width, td.Height) else {
+        tracing::error!(
+            target: "platform",
+            "invalid CEF visible rect=({},{} {}x{}) texture={}x{}",
+            info.extra.visible_rect.x,
+            info.extra.visible_rect.y,
+            info.extra.visible_rect.width,
+            info.extra.visible_rect.height,
+            td.Width,
+            td.Height,
+        );
+        return false;
+    };
+    let (w, h) = (region.w, region.h);
 
     let p = s as *mut Surface;
     let is_main = st.surfaces.is_main(p);
+
+    if is_main && !LOGGED_MAIN_FRAME_GEOMETRY.swap(true, Ordering::AcqRel) {
+        tracing::info!(
+            target: "platform",
+            "CEF frame texture={}x{} coded={}x{} visible=({},{} {}x{})",
+            td.Width,
+            td.Height,
+            info.extra.coded_size.width,
+            info.extra.coded_size.height,
+            region.x,
+            region.y,
+            region.w,
+            region.h,
+        );
+    }
 
     // Transition logic applies only to the bottom-most ("main") surface.
     if is_main {
@@ -560,7 +637,7 @@ pub fn win_surface_present(s: *mut c_void, raw_info: *const c_void) -> bool {
         Some(sc) => sc.clone(),
         None => return false,
     };
-    present_to_swap_chain(devices, &sc, &src);
+    present_to_swap_chain(devices, &sc, &src, region);
     true
 }
 
@@ -806,8 +883,10 @@ pub fn win_popup_present(s: *mut c_void, raw_info: *const c_void, _lw: c_int, _l
     unsafe {
         src.GetDesc(&mut td);
     }
-    let w = td.Width as i32;
-    let h = td.Height as i32;
+    let Some(region) = visible_source_region(info, td.Width, td.Height) else {
+        return;
+    };
+    let (w, h) = (region.w, region.h);
 
     let surf = unsafe { &mut *(s as *mut Surface) };
     if !surf.popup_visible {
@@ -830,7 +909,7 @@ pub fn win_popup_present(s: *mut c_void, raw_info: *const c_void, _lw: c_int, _l
         Some(sc) => sc.clone(),
         None => return,
     };
-    present_to_swap_chain(devices, &sc, &src);
+    present_to_swap_chain(devices, &sc, &src, region);
 }
 
 pub fn win_popup_present_software(
@@ -905,5 +984,15 @@ pub fn win_popup_present_software(
         Some(sc) => sc.clone(),
         None => return,
     };
-    present_to_swap_chain(devices, &sc, &src);
+    present_to_swap_chain(
+        devices,
+        &sc,
+        &src,
+        SourceRegion {
+            x: 0,
+            y: 0,
+            w: pw,
+            h: ph,
+        },
+    );
 }
