@@ -74,6 +74,8 @@
 
     // Saved settings from native (injected as placeholder, replaced at load time)
     const _savedSettings = JSON.parse('__SETTINGS_JSON__');
+    const _desktopStrings = window._desktopStrings || {};
+    const t = (key, fallback) => _desktopStrings[key] || fallback;
 
     // window.jmpInfo - settings and device info
     window.jmpInfo = {
@@ -83,10 +85,10 @@
         userAgent: navigator.userAgent,
         scriptPath: '',
         sections: [
-            { key: 'playback', order: 0 },
-            { key: 'audio', order: 1 },
-            { key: 'transcode', order: 2 },
-            { key: 'advanced', order: 3 }
+            { key: 'playback', title: t('settings.playback', 'Playback'), order: 0 },
+            { key: 'audio', title: t('settings.audio', 'Audio'), order: 1 },
+            { key: 'transcode', title: t('settings.transcode', 'Transcode'), order: 2 },
+            { key: 'advanced', title: t('settings.advanced', 'Advanced'), order: 3 }
         ],
         settings: {
             main: { enableMPV: true, fullscreen: false, userWebClient: '__SERVER_URL__' },
@@ -111,30 +113,30 @@
         },
         settingsDescriptions: {
             playback: [
-                { key: 'hwdec', displayName: 'Hardware Decoding', help: 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.', options: _savedSettings.hwdecOptions }
+                { key: 'hwdec', displayName: t('settings.hardwareDecoding', 'Hardware Decoding'), help: t('settings.hardwareDecodingHelp', 'Hardware video decoding mode. Use "auto" for automatic detection or "no" to disable.'), options: _savedSettings.hwdecOptions }
             ],
             audio: [
-                { key: 'audioPassthrough', displayName: 'Audio Passthrough', help: 'Comma-separated list of codecs to pass through to the audio device (e.g. ac3,eac3,dts-hd,truehd). Leave empty to disable.', inputType: 'textarea' },
-                { key: 'audioExclusive', displayName: 'Exclusive Audio Output', help: 'Take exclusive control of the audio device during playback. May reduce latency but prevents other apps from playing audio.' },
-                { key: 'audioChannels', displayName: 'Audio Channel Layout', help: 'Force a specific channel layout. Leave empty for auto-detection.', options: [
-                    { value: '', title: 'Auto' },
-                    { value: 'stereo', title: 'Stereo' },
-                    { value: '5.1', title: '5.1 Surround' },
-                    { value: '7.1', title: '7.1 Surround' }
+                { key: 'audioPassthrough', displayName: t('settings.audioPassthrough', 'Audio Passthrough'), help: t('settings.audioPassthroughHelp', 'Comma-separated list of codecs to pass through to the audio device (e.g. ac3,eac3,dts-hd,truehd). Leave empty to disable.'), inputType: 'textarea' },
+                { key: 'audioExclusive', displayName: t('settings.audioExclusive', 'Exclusive Audio Output'), help: t('settings.audioExclusiveHelp', 'Take exclusive control of the audio device during playback. May reduce latency but prevents other apps from playing audio.') },
+                { key: 'audioChannels', displayName: t('settings.audioChannelLayout', 'Audio Channel Layout'), help: t('settings.audioChannelLayoutHelp', 'Force a specific channel layout. Leave empty for auto-detection.'), options: [
+                    { value: '', title: t('settings.auto', 'Auto') },
+                    { value: 'stereo', title: t('settings.stereo', 'Stereo') },
+                    { value: '5.1', title: t('settings.5_1Surround', '5.1 Surround') },
+                    { value: '7.1', title: t('settings.7_1Surround', '7.1 Surround') }
                 ]}
             ],
             transcode: [
-                { key: 'forceTranscoding', displayName: 'Force Transcoding', help: 'Always request a transcoded stream from the server, even when direct play would work.' }
+                { key: 'forceTranscoding', displayName: t('settings.forceTranscoding', 'Force Transcoding'), help: t('settings.forceTranscodingHelp', 'Always request a transcoded stream from the server, even when direct play would work.') }
             ],
             advanced: [
-                { key: 'hideScrollbar', displayName: 'Hide Scrollbar', help: 'Hide scrollbars throughout the app. Scrolling with the wheel, trackpad, and keyboard still works. Requires restart.' },
-                { key: 'deviceName', displayName: 'Device Name', help: 'Identifies this machine to the server. Leave blank to use the system hostname.', inputType: 'text', maxLength: 64, placeholder: _savedSettings.deviceNameDefault },
-                { key: 'logLevel', displayName: 'Log Level', help: 'Set the application log verbosity level.', options: [
-                    { value: '', title: 'Default (Info)' },
-                    { value: 'verbose', title: 'Verbose' },
-                    { value: 'debug', title: 'Debug' },
-                    { value: 'warn', title: 'Warning' },
-                    { value: 'error', title: 'Error' }
+                { key: 'hideScrollbar', displayName: t('settings.hideScrollbar', 'Hide Scrollbar'), help: t('settings.hideScrollbarHelp', 'Hide scrollbars throughout the app. Scrolling with the wheel, trackpad, and keyboard still works. Requires restart.') },
+                { key: 'deviceName', displayName: t('settings.deviceName', 'Device Name'), help: t('settings.deviceNameHelp', 'Identifies this machine to the server. Leave blank to use the system hostname.'), inputType: 'text', maxLength: 64, placeholder: _savedSettings.deviceNameDefault },
+                { key: 'logLevel', displayName: t('settings.logLevel', 'Log Level'), help: t('settings.logLevelHelp', 'Set the application log verbosity level.'), options: [
+                    { value: '', title: t('settings.defaultInfo', 'Default (Info)') },
+                    { value: 'verbose', title: t('settings.verbose', 'Verbose') },
+                    { value: 'debug', title: t('settings.debug', 'Debug') },
+                    { value: 'warn', title: t('settings.warning', 'Warning') },
+                    { value: 'error', title: t('settings.error', 'Error') }
                 ]}
             ]
         },
@@ -146,24 +148,24 @@
     if (navigator.platform.startsWith('Mac')) {
         jmpInfo.settingsDescriptions.advanced.unshift({
             key: 'transparentTitlebar',
-            displayName: 'Transparent Titlebar',
-            help: 'Overlay traffic light buttons on the window content instead of a separate titlebar. Requires restart.'
+            displayName: t('settings.transparentTitlebar', 'Transparent Titlebar'),
+            help: t('settings.transparentTitlebarHelp', 'Overlay traffic light buttons on the window content instead of a separate titlebar. Requires restart.')
         });
     }
 
     const decorationValues = __WINDOW_DECORATION_OPTIONS__;
     if (decorationValues.length > 1) {
         const decorationTitles = {
-            csd: 'In-app (client-side)',
-            server: 'System (server-side)',
-            serverThemed: 'System, themed (KDE)'
+            csd: t('settings.inAppClientSide', 'In-app (client-side)'),
+            server: t('settings.systemServerSide', 'System (server-side)'),
+            serverThemed: t('settings.systemThemedKde', 'System, themed (KDE)')
         };
         jmpInfo.settingsDescriptions.advanced.unshift({
             key: 'windowDecorations',
-            displayName: 'Window Decorations',
-            help: 'How the window titlebar is drawn. Changing requires restart.',
+            displayName: t('settings.windowDecorations', 'Window Decorations'),
+            help: t('settings.windowDecorationsHelp', 'How the window titlebar is drawn. Changing requires restart.'),
             options: [
-                { value: null, title: 'Auto' },
+                { value: null, title: t('settings.auto', 'Auto') },
                 ...decorationValues.map((value) => ({ value, title: decorationTitles[value] || value }))
             ]
         });

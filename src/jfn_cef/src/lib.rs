@@ -12,6 +12,7 @@ pub mod client;
 mod client_impl;
 mod embedded_js;
 pub mod ffi;
+pub mod i18n;
 pub mod injection;
 mod ipc;
 mod menu_ownership;

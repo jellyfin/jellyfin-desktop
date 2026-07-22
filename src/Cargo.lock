@@ -2248,6 +2248,7 @@ dependencies = [
  "parking_lot",
  "serde_json",
  "slotmap",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
