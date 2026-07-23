@@ -18,6 +18,7 @@ pub type NativeDisplayType = *mut c_void;
 
 pub const TRUE: Boolean = 1;
 pub const NONE: Int = 0x3038;
+pub const VENDOR: Int = 0x3053;
 pub const WIDTH: Int = 0x3057;
 pub const HEIGHT: Int = 0x3056;
 pub const SURFACE_TYPE: Int = 0x3033;
@@ -43,6 +44,7 @@ pub type FnDestroySurface = unsafe extern "C" fn(EGLDisplay, EGLSurface) -> Bool
 pub type FnDestroyContext = unsafe extern "C" fn(EGLDisplay, EGLContext) -> Boolean;
 pub type FnGetProcAddress = unsafe extern "C" fn(*const c_char) -> Option<extern "system" fn()>;
 pub type FnGetError = unsafe extern "C" fn() -> Int;
+pub type FnQueryString = unsafe extern "C" fn(EGLDisplay, Int) -> *const c_char;
 
 pub struct Egl {
     _lib: Library,
@@ -58,6 +60,7 @@ pub struct Egl {
     pub destroy_context: FnDestroyContext,
     pub get_proc_address_raw: FnGetProcAddress,
     pub get_error: FnGetError,
+    pub query_string: FnQueryString,
 }
 
 impl Egl {
@@ -87,6 +90,7 @@ impl Egl {
                 destroy_context: get(&lib, b"eglDestroyContext\0")?,
                 get_proc_address_raw: get(&lib, b"eglGetProcAddress\0")?,
                 get_error: get(&lib, b"eglGetError\0")?,
+                query_string: get(&lib, b"eglQueryString\0")?,
                 _lib: lib,
             })
         }
