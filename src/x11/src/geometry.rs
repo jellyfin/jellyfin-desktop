@@ -61,28 +61,61 @@ pub fn request_resync() {
     }
 }
 
-/// The mpv fullscreen callback. It only *triggers* a reconcile; the authority
-/// for overlay fullscreen state is the parent's `_NET_WM_STATE`, read each pass.
+/// The mpv fullscreen callback. mpv's window is an unmanaged child, so mpv
+/// can't drive WM fullscreen itself — mirror the state onto the WM-managed
+/// top-level, then trigger a reconcile. Authority for overlay fullscreen is
+/// the top-level's `_NET_WM_STATE`, read each pass.
 pub fn set_parent_fullscreen(fs: bool) {
     {
         let mut g = MUT.lock();
         let Some(m) = g.as_mut() else { return };
         m.parent_fullscreen = fs;
     }
+    apply_toplevel_fullscreen(fs);
     request_resync();
 }
 
-pub fn start(parent: u32, root: u32) {
-    let conn = match RustConnection::connect(None) {
-        Ok((conn, _)) => Arc::new(conn),
-        Err(e) => {
-            eprintln!("[x11] geometry watcher failed to connect: {e:?}");
-            return;
-        }
+fn apply_toplevel_fullscreen(fs: bool) {
+    let Some(conn) = crate::x11_state::x11rb_conn() else {
+        return;
     };
+    let (toplevel, root, net_wm_state, fullscreen) = {
+        let g = MUT.lock();
+        let Some(m) = g.as_ref() else { return };
+        (
+            m.toplevel,
+            m.root,
+            m.atoms.net_wm_state,
+            m.atoms.net_wm_state_fullscreen,
+        )
+    };
+    if toplevel == 0 {
+        return;
+    }
+    // data: [action, prop1, prop2, source, 0]; action ADD=1 / REMOVE=0, source=app.
+    let ev = ClientMessageEvent::new(
+        32,
+        toplevel,
+        net_wm_state,
+        ClientMessageData::from([u32::from(fs), fullscreen, 0, 1, 0]),
+    );
+    let _ = conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+        ev,
+    );
+    let _ = conn.flush();
+}
+
+// `parent` is the WM-managed app top-level; `mpv_child` is mpv's window,
+// reparented under it. `conn` must be the connection that *created* `parent` —
+// the WM delivers its `WM_DELETE` only to the creating client, so this thread
+// must own that connection to see the close.
+pub fn start(conn: Arc<RustConnection>, parent: u32, mpv_child: u32, root: u32) {
     let join = match std::thread::Builder::new()
         .name("jfn-x11-geometry".into())
-        .spawn(move || geometry_thread_body(conn, parent, root))
+        .spawn(move || geometry_thread_body(conn, parent, mpv_child, root))
     {
         Ok(j) => j,
         Err(e) => {
@@ -261,6 +294,7 @@ fn activate_parent(conn: &RustConnection, root: Window, parent: Window) {
 fn reconcile(
     conn: &RustConnection,
     parent: Window,
+    mpv_child: Window,
     root: Window,
     parent_mapped: bool,
     reassert_stack: bool,
@@ -269,6 +303,17 @@ fn reconcile(
         return;
     };
     let parent_fs = read_parent_fullscreen(conn, parent, root, parent_geom);
+
+    // mpv's window is a child, so it fills the client area in local coords
+    // (0,0) — unlike the overlays below, which take the absolute origin.
+    if !crate::x11_state::is_none_window(mpv_child) {
+        let fill = ConfigureWindowAux::new()
+            .x(0)
+            .y(0)
+            .width(parent_geom.2.max(1) as u32)
+            .height(parent_geom.3.max(1) as u32);
+        let _ = conn.configure_window(mpv_child, &fill);
+    }
 
     let snaps = {
         let mut g = MUT.lock();
@@ -348,7 +393,12 @@ enum Trigger {
     ParentUnmap,
 }
 
-fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window) {
+fn geometry_thread_body(
+    conn: Arc<RustConnection>,
+    parent: Window,
+    mpv_child: Window,
+    root: Window,
+) {
     // A frame move emits no client ConfigureNotify but does emit one on the
     // frame, so watch the frame too; PROPERTY_CHANGE delivers `_NET_WM_STATE`.
     let watch_mask = EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE;
@@ -376,7 +426,7 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
     });
 
     let mut parent_mapped = true;
-    reconcile(&conn, parent, root, parent_mapped, true);
+    reconcile(&conn, parent, mpv_child, root, parent_mapped, true);
 
     loop {
         match poll(&mut fds, PollTimeout::NONE) {
@@ -390,6 +440,12 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
         };
 
         if revents(shutdown_idx).contains(PollFlags::POLLIN) {
+            // This thread's connection created the top-level; when it closes,
+            // the server destroys the top-level and its children. Reparent
+            // mpv's window back to root first so it survives for mpv's own
+            // teardown.
+            let _ = conn.reparent_window(mpv_child, root, 0, 0);
+            let _ = conn.flush();
             hide_overlays(&conn);
             break;
         }
@@ -437,7 +493,7 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
         }
 
         if wake {
-            reconcile(&conn, parent, root, parent_mapped, reassert);
+            reconcile(&conn, parent, mpv_child, root, parent_mapped, reassert);
             if activate {
                 // Re-mapping the transient overlays on top of the parent can
                 // displace the WM's active window off mpv, stalling the

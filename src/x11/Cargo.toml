@@ -23,14 +23,17 @@ jfn-linux-util = { path = "../linux_util" }
 jfn-menu = { path = "../menu" }
 jfn-mpris = { path = "../mpris" }
 jfn-mpv = { path = "../mpv" }
+jfn-paths = { path = "../paths" }
 jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
 jfn-wake-event = { path = "../wake_event" }
+gethostname.workspace = true
 libc.workspace = true
 nix.workspace = true
+tempfile.workspace = true
 tracing.workspace = true
 xcb = { version = "1.7", features = ["xkb", "as-raw-xcb-connection"] }
-x11rb = { version = "0.14", features = ["cursor", "resource_manager", "shape", "shm", "xfixes"] }
+x11rb = { version = "0.14", features = ["cursor", "request-parsing", "resource_manager", "shape", "shm", "xfixes"] }
 xkbcommon = { version = "0.9", default-features = false, features = ["x11"] }
 
 [lints]

@@ -3,10 +3,56 @@
 
 use x11rb::connection::Connection as X11rbConnection;
 use x11rb::protocol::shm::ConnectionExt as X11rbShmConnection;
-use x11rb::protocol::xproto::{ConnectionExt as X11rbXprotoConnection, Screen, VisualClass};
+use x11rb::protocol::xproto::{
+    AtomEnum, ConfigureWindowAux, ConnectionExt as X11rbXprotoConnection, CreateWindowAux,
+    EventMask, PropMode, Screen, VisualClass, WindowClass,
+};
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as X11rbWrapperConnection;
 
 use crate::x11_state::{Atoms, MUT, Mutable, X11RB_CONN, is_none_gc, is_none_window};
+
+/// Must match `StartupWMClass` in `net.nullsum.JelliumDesktop.desktop` so the
+/// DE resolves the window to that desktop file for the taskbar icon.
+const WM_CLASS_VALUE: &[u8] = b"net.nullsum.JelliumDesktop\0net.nullsum.JelliumDesktop\0";
+const APP_TITLE: &[u8] = b"Jellium Desktop";
+
+fn set_toplevel_identity(conn: &RustConnection, win: u32, atoms: &Atoms) {
+    let _ = conn.change_property8(
+        PropMode::REPLACE,
+        win,
+        u32::from(AtomEnum::WM_CLASS),
+        u32::from(AtomEnum::STRING),
+        WM_CLASS_VALUE,
+    );
+    let _ = conn.change_property8(
+        PropMode::REPLACE,
+        win,
+        u32::from(AtomEnum::WM_NAME),
+        u32::from(AtomEnum::STRING),
+        APP_TITLE,
+    );
+    let utf8 = intern_atom(conn, b"UTF8_STRING");
+    let net_wm_name = intern_atom(conn, b"_NET_WM_NAME");
+    if utf8 != 0 && net_wm_name != 0 {
+        let _ = conn.change_property8(PropMode::REPLACE, win, net_wm_name, utf8, APP_TITLE);
+    }
+    let _ = conn.change_property32(
+        PropMode::REPLACE,
+        win,
+        atoms.wm_protocols,
+        u32::from(AtomEnum::ATOM),
+        &[atoms.wm_delete_window],
+    );
+    let _ = conn.change_property32(
+        PropMode::REPLACE,
+        win,
+        atoms.net_wm_window_type,
+        u32::from(AtomEnum::ATOM),
+        &[atoms.net_wm_window_type_normal],
+    );
+    let _ = conn.flush();
+}
 
 use jfn_mpv::api::jfn_mpv_get_property_int;
 
@@ -156,6 +202,8 @@ pub fn hide_all_live_locked(m: &Mutable) {
 /// Platform init. Opens X11 connections, finds the ARGB visual,
 /// interns atoms, queries parent geometry, and starts the input thread.
 pub fn init() -> bool {
+    crate::mpv_proxy::restore_real_display();
+
     let mut wid: i64 = 0;
     let name = c"window-id";
     let rc = unsafe { jfn_mpv_get_property_int(name.as_ptr(), &mut wid) };
@@ -236,8 +284,64 @@ pub fn init() -> bool {
         return false;
     }
 
-    let (parent_x, parent_y, pw, ph) =
+    let (mpv_x, mpv_y, mpv_w, mpv_h) =
         query_parent_geometry_x11rb(&x11rb_conn, parent, root).unwrap_or((0, 0, 1, 1));
+    let init_w = mpv_w.max(1) as u16;
+    let init_h = mpv_h.max(1) as u16;
+
+    // The top-level is created on the connection the geometry thread owns and
+    // polls: the WM delivers `WM_DELETE` (empty-mask SendEvent) only to the
+    // creating client, so that client must be the one watching for the close.
+    let geo_conn = match RustConnection::connect(None) {
+        Ok((conn, _)) => std::sync::Arc::new(conn),
+        Err(e) => {
+            eprintln!("[x11] failed to connect top-level/geometry connection: {e:?}");
+            return false;
+        }
+    };
+    let Ok(toplevel) = geo_conn.generate_id() else {
+        eprintln!("[x11] failed to allocate top-level window id");
+        return false;
+    };
+    let win_aux = CreateWindowAux::new()
+        .background_pixel(screen.black_pixel)
+        .event_mask(EventMask::EXPOSURE);
+    if geo_conn
+        .create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            toplevel,
+            root,
+            mpv_x as i16,
+            mpv_y as i16,
+            init_w,
+            init_h,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            x11rb::COPY_FROM_PARENT,
+            &win_aux,
+        )
+        .is_err()
+    {
+        eprintln!("[x11] failed to create top-level window");
+        return false;
+    }
+    set_toplevel_identity(&geo_conn, toplevel, &atoms);
+
+    let _ = geo_conn.reparent_window(parent, toplevel, 0, 0);
+    let _ = geo_conn.configure_window(
+        parent,
+        &ConfigureWindowAux::new()
+            .x(0)
+            .y(0)
+            .width(u32::from(init_w))
+            .height(u32::from(init_h)),
+    );
+    let _ = geo_conn.map_window(parent);
+    let _ = geo_conn.map_window(toplevel);
+    let _ = geo_conn.flush();
+
+    let (parent_x, parent_y, pw, ph) = query_parent_geometry_x11rb(&geo_conn, toplevel, root)
+        .unwrap_or((mpv_x, mpv_y, mpv_w, mpv_h));
 
     // Resolve the paint preference down the dmabuf → gpu → shm chain, where
     // `--platform-paint` only picks the entry tier and an unusable tier degrades
@@ -301,6 +405,7 @@ pub fn init() -> bool {
             argb_visual,
             argb_depth,
             colormap,
+            toplevel,
             parent,
             parent_x,
             parent_y,
@@ -322,10 +427,10 @@ pub fn init() -> bool {
         return false;
     }
 
-    crate::input_lifecycle::start(parent);
-    crate::geometry::start(parent, root);
+    crate::input_lifecycle::start(toplevel);
+    crate::geometry::start(geo_conn, toplevel, parent, root);
 
-    eprintln!("[x11] platform initialized (parent=0x{:x})", parent);
+    eprintln!("[x11] platform initialized (toplevel=0x{toplevel:x} mpv=0x{parent:x})");
     true
 }
 
@@ -372,6 +477,8 @@ pub fn cleanup() {
         }
         let _ = conn.flush();
     }
+
+    crate::mpv_proxy::stop();
 }
 
 /// Clamp saved window geometry to the primary screen extent. Runs before

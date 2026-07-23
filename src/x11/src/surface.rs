@@ -65,14 +65,17 @@ fn create_overlay_window(
     );
 
     {
-        // Tie the overlay to mpv's window so the WM raises/lowers/covers it with
-        // the parent.
+        // Tie the overlay to the app top-level so the WM raises/lowers/covers
+        // them together. The overlay stays a separate top-level rather than a
+        // child of it: sibling child windows are not composited against each
+        // other on X11, so as a child its ARGB would not alpha-blend over the
+        // video.
         let _ = x11_conn.change_property32(
             PropMode::REPLACE,
             win_id,
             u32::from(AtomEnum::WM_TRANSIENT_FOR),
             u32::from(AtomEnum::WINDOW),
-            &[m.parent],
+            &[m.toplevel],
         );
 
         let _ = x11_conn.change_property32(
@@ -169,10 +172,10 @@ pub fn jfn_x11_alloc_surface() -> *mut PlatformSurface {
     }
     let _ = x11_conn.map_window(win);
     // An override_redirect overlay (born fullscreen) is not stacked by the WM;
-    // raise it above the parent ourselves.
+    // raise it above the app top-level ourselves.
     if m.parent_fullscreen {
         let aux = ConfigureWindowAux::new()
-            .sibling(m.parent)
+            .sibling(m.toplevel)
             .stack_mode(StackMode::ABOVE);
         let _ = x11_conn.configure_window(win, &aux);
     }
@@ -522,7 +525,7 @@ pub unsafe fn jfn_x11_surface_set_visible(s: *mut PlatformSurface, visible: bool
     let _ = x11_conn.flush();
 }
 
-/// Stack `ordered[0..n]` above the mpv parent, bottom to top.
+/// Stack `ordered[0..n]` above the app top-level, bottom to top.
 pub unsafe fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
     if n == 0 || ordered.is_null() {
         return;
@@ -534,7 +537,7 @@ pub unsafe fn jfn_x11_restack(ordered: *const *mut PlatformSurface, n: usize) {
     let Some(m) = g.as_ref() else { return };
 
     let slice = unsafe { std::slice::from_raw_parts(ordered, n) };
-    let mut prev = m.parent;
+    let mut prev = m.toplevel;
     for &s_ptr in slice {
         if s_ptr.is_null() {
             continue;

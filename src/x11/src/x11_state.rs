@@ -48,7 +48,7 @@ impl Default for ShmBuffer {
 }
 
 /// Per-CefLayer surface. Each is a top-level ARGB window positioned over
-/// mpv's parent window.
+/// the app top-level.
 pub struct PlatformSurface {
     pub window: u32,
     pub gc: u32,
@@ -106,7 +106,14 @@ pub struct Mutable {
     pub argb_visual: u32,
     pub argb_depth: u8,
     pub colormap: u32,
+    /// App-owned WM-managed top-level window; carries the identity/title and
+    /// owns fullscreen.
+    pub toplevel: u32,
+    /// mpv's video window, reparented as a child of [`Self::toplevel`] — not
+    /// the overlays' X11 parent despite the name.
     pub parent: u32,
+    /// [`Self::toplevel`]'s absolute origin and client size, not
+    /// [`Self::parent`]'s.
     pub parent_x: i32,
     pub parent_y: i32,
     pub pw: i32,

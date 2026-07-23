@@ -10,6 +10,8 @@ pub(crate) mod input_lifecycle;
 pub mod lifecycle;
 pub mod make_platform;
 pub(crate) mod menu;
+pub(crate) mod mpv_host;
+pub(crate) mod mpv_proxy;
 pub mod overlay_fsm;
 pub mod paint_override;
 pub(crate) mod scale;

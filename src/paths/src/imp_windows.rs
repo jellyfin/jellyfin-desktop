@@ -15,6 +15,10 @@ pub(super) fn cache_base() -> PathBuf {
     PathBuf::from(local_appdata())
 }
 
+pub(super) fn runtime_base() -> PathBuf {
+    cache_base()
+}
+
 pub(super) fn log_dir_path() -> PathBuf {
     PathBuf::from(local_appdata())
         .join(APP_DIR_NAME)

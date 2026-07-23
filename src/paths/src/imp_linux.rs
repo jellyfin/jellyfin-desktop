@@ -16,6 +16,13 @@ pub(super) fn cache_base() -> PathBuf {
     xdg_or_home("XDG_CACHE_HOME", "/.cache")
 }
 
+pub(super) fn runtime_base() -> PathBuf {
+    match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(v) if !v.is_empty() => PathBuf::from(v),
+        _ => cache_base(),
+    }
+}
+
 pub(super) fn log_dir_path() -> PathBuf {
     xdg_or_home("XDG_STATE_HOME", "/.local/state").join(APP_DIR_NAME)
 }

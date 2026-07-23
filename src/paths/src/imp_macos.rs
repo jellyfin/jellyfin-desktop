@@ -11,6 +11,10 @@ pub(super) fn cache_base() -> PathBuf {
     PathBuf::from(home()).join("Library/Caches")
 }
 
+pub(super) fn runtime_base() -> PathBuf {
+    cache_base()
+}
+
 pub(super) fn log_dir_path() -> PathBuf {
     PathBuf::from(home())
         .join("Library/Logs")

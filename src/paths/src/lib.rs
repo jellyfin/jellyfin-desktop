@@ -110,6 +110,10 @@ pub fn mpv_home() -> PathBuf {
     ensure(config_dir().join("mpv"))
 }
 
+pub fn runtime_dir() -> PathBuf {
+    ensure(imp::runtime_base().join(APP_DIR_NAME))
+}
+
 pub fn log_path() -> PathBuf {
     log_dir().join(LOG_FILE_NAME)
 }

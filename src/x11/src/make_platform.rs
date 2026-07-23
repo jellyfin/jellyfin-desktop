@@ -179,6 +179,10 @@ impl Platform for X11Platform {
         &jfn_mpris::MprisSink
     }
 
+    fn mpv_host(&self) -> &dyn jfn_platform_abi::MpvHost {
+        &crate::mpv_host::X11MpvHost
+    }
+
     fn cef_paths(&self) -> jfn_platform_abi::CefPaths {
         jfn_linux_util::cef_paths()
     }
@@ -267,7 +271,8 @@ impl Platform for X11Platform {
         let conn = crate::x11_state::x11rb_conn()?;
         let g = crate::x11_state::MUT.lock();
         let m = g.as_ref()?;
-        let (x, y, _, _) = crate::lifecycle::query_parent_geometry_x11rb(&conn, m.parent, m.root)?;
+        let (x, y, _, _) =
+            crate::lifecycle::query_parent_geometry_x11rb(&conn, m.toplevel, m.root)?;
         Some(WindowPos { x, y })
     }
 
