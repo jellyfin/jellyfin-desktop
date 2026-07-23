@@ -2480,6 +2480,7 @@ dependencies = [
  "memmap2",
  "parking_lot",
  "smithay-client-toolkit",
+ "thiserror",
  "tracing",
  "wayland-backend",
  "wayland-client",

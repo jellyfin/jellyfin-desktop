@@ -189,7 +189,11 @@ impl GpuPainter {
         self.visible = v;
     }
 
-    pub fn push_pixels(&mut self, frame: PixelFrame<'_>) -> Result<(), GpuPaintError> {
+    pub fn push_pixels(
+        &mut self,
+        frame: PixelFrame<'_>,
+        on_present: impl FnOnce(),
+    ) -> Result<(), GpuPaintError> {
         if frame.width == 0 || frame.height == 0 {
             return Err(GpuPaintError::BadDimensions(frame.width, frame.height));
         }
@@ -241,7 +245,7 @@ impl GpuPainter {
         }
 
         let bind_group = &upload.bind_group;
-        self.draw_and_present(bind_group, None)
+        self.draw_and_present(bind_group, None, on_present)
     }
 
     pub fn push_dmabuf(&mut self, frame: DmabufFrame) -> Result<(), GpuPaintError> {
@@ -284,7 +288,7 @@ impl GpuPainter {
                 ],
             });
 
-        self.draw_and_present(&bind_group, Some(image))
+        self.draw_and_present(&bind_group, Some(image), || {})
     }
 
     pub fn shutdown(self) {
@@ -344,6 +348,7 @@ impl GpuPainter {
         &self,
         bind_group: &wgpu::BindGroup,
         external_image: Option<u64>,
+        on_present: impl FnOnce(),
     ) -> Result<(), GpuPaintError> {
         use wgpu::CurrentSurfaceTexture::*;
         let frame = match self.surface.get_current_texture() {
@@ -406,6 +411,9 @@ impl GpuPainter {
             pass.draw(0..3, 0..1);
         }
         self.ctx.queue.submit(std::iter::once(encoder.finish()));
+        // Run after the early-return present failures above, so the closure's
+        // surface-state updates only latch on a frame that actually presents.
+        on_present();
         self.ctx.queue.present(frame);
         Ok(())
     }

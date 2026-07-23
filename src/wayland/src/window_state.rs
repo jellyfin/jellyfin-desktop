@@ -144,10 +144,6 @@ pub(crate) fn window_extent() -> Option<WindowExtentSnapshot> {
     extent().map(|e| WindowExtentSnapshot::from_extent(&e))
 }
 
-pub(crate) fn window_logical_size() -> Option<WindowSize> {
-    extent().map(|e| e.logical)
-}
-
 pub(crate) fn known_scale() -> Option<Scale120> {
     STATE.read().scale.map(|k| k.scale)
 }

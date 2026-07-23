@@ -20,13 +20,12 @@
 use parking_lot::{Mutex, MutexGuard};
 use std::ffi::c_void;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
-use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
 use jfn_gpu_paint::GpuContext;
 
-use crate::gpu_paint_worker::WaylandGpuPaintWorker;
-use crate::shm_paint_worker::WaylandShmPaintWorker;
+use crate::layer::SurfaceRef;
+use crate::layer_actor::LayerActor;
 
 use memmap2::MmapOptions;
 use wayland_backend::client::Backend;
@@ -144,23 +143,10 @@ pub(crate) struct DmabufBuf {
     pub buf: OwnedBuffer,
 }
 
-pub(crate) enum DmabufLease {
-    /// Present the buffer at pool index 0 by borrowing; ownership stays in the pool.
-    PooledFront,
-    /// A one-shot buffer (unpooled) owned by the caller.
-    OneShot(OwnedBuffer),
-}
-
 pub(crate) struct PlatformSurface {
-    pub surface: Option<WlSurface>,
+    pub surface: Option<SurfaceRef>,
     pub subsurface: Option<SyncSubsurface>,
-    pub viewport: Option<WpViewport>,
-    pub buffer: Option<OwnedBuffer>,
-    pub dmabuf_pool: Vec<DmabufBuf>,
-    pub buffer_w: i32,
-    pub buffer_h: i32,
     pub visible: bool,
-    pub placeholder: bool,
     pub null_attached: bool,
 
     pub popup_surface: Option<WlSurface>,
@@ -169,12 +155,7 @@ pub(crate) struct PlatformSurface {
     pub popup_buffer: Option<OwnedBuffer>,
     pub popup_visible: bool,
 
-    /// Vulkan-WSI presenter worker, lazily created on first software
-    /// present when `WlState::use_gpu_paint` is set. The worker owns the
-    /// per-surface GpuPainter/swapchain so CEF paint callbacks only copy
-    /// latest pixels and signal it.
-    pub gpu_paint_worker: Option<WaylandGpuPaintWorker>,
-    pub shm_paint_worker: Option<WaylandShmPaintWorker>,
+    pub layer_actor: Option<LayerActor>,
 }
 
 impl PlatformSurface {
@@ -182,21 +163,14 @@ impl PlatformSurface {
         Self {
             surface: None,
             subsurface: None,
-            viewport: None,
-            buffer: None,
-            dmabuf_pool: Vec::new(),
-            buffer_w: 0,
-            buffer_h: 0,
             visible: true,
-            placeholder: false,
             null_attached: false,
             popup_surface: None,
             popup_subsurface: None,
             popup_viewport: None,
             popup_buffer: None,
             popup_visible: false,
-            gpu_paint_worker: None,
-            shm_paint_worker: None,
+            layer_actor: None,
         }
     }
 }
@@ -228,9 +202,6 @@ pub(crate) struct WlState {
 
     pub was_fullscreen: bool,
 
-    /// Raw `wl_display*` — kept so `GpuPainter::new` can build
-    /// `VK_KHR_wayland_surface` handles for child surfaces.
-    pub display_ptr: NonNull<c_void>,
     pub gpu_ctx: Option<Arc<GpuContext>>,
     /// When true, `surface_present_software` routes through each
     /// surface's GPU paint worker (Vulkan WSI) instead of `wl_shm`.
@@ -455,9 +426,6 @@ pub(crate) unsafe fn init(display_ptr: *mut c_void) -> Result<(), String> {
         root_surface: None,
         stack: Vec::new(),
         was_fullscreen: false,
-        // SAFETY: caller guaranteed `display_ptr` is a live
-        // `*mut wl_display`.
-        display_ptr: NonNull::new(display_ptr).ok_or_else(|| "display_ptr is null".to_string())?,
         gpu_ctx: None,
         use_gpu_paint: false,
         scene: crate::scene::Scene::default(),
@@ -514,7 +482,7 @@ fn parent_layer_locked(st: &mut WlState, ptr: *mut PlatformSurface) {
     let Some(surface) = s.surface.as_ref() else {
         return;
     };
-    let sub = root.attach_child(&st.subcompositor, surface, &st.qh);
+    let sub = root.attach_child(&st.subcompositor, surface.as_arg(), &st.qh);
     sub.set_position(0, 0);
     s.subsurface = Some(sub);
 }
@@ -624,20 +592,6 @@ where
     })
 }
 
-/// Create a 1×1 ARGB8888 wl_buffer filled with `(r, g, b, 0xFF)`.
-pub(crate) fn create_solid_color_buffer(
-    state: &WlState,
-    r: u8,
-    g: u8,
-    b: u8,
-) -> Option<OwnedBuffer> {
-    build_argb8888_shm_buffer(&state.shm, &state.qh, "solid-color", 1, 1, |dst| {
-        // ARGB8888 little-endian byte order = [B, G, R, A].
-        dst.copy_from_slice(&[b, g, r, 0xFF]);
-        true
-    })
-}
-
 /// Create a wl_shm ARGB8888 buffer from a CPU pixel array.
 pub(crate) fn create_shm_buffer(
     state: &WlState,
@@ -650,15 +604,15 @@ pub(crate) fn create_shm_buffer(
 
 /// Create a dmabuf-backed wl_buffer from a single-plane fd.
 pub(crate) fn create_dmabuf_buffer(
-    state: &WlState,
+    dmabuf: &ZwpLinuxDmabufV1,
+    qh: &QueueHandle<DispatchState>,
     fd: BorrowedFd<'_>,
     stride: u32,
     modifier: u64,
     w: i32,
     h: i32,
 ) -> Option<OwnedBuffer> {
-    let dmabuf = state.dmabuf.as_ref()?;
-    let params: ZwpLinuxBufferParamsV1 = dmabuf.create_params(&state.qh, ());
+    let params: ZwpLinuxBufferParamsV1 = dmabuf.create_params(qh, ());
     params.add(
         fd,
         0,
@@ -667,80 +621,9 @@ pub(crate) fn create_dmabuf_buffer(
         (modifier >> 32) as u32,
         (modifier & 0xffff_ffff) as u32,
     );
-    let buf = params.create_immed(
-        w,
-        h,
-        DRM_FORMAT_ARGB8888,
-        DmabufFlags::empty(),
-        &state.qh,
-        (),
-    );
+    let buf = params.create_immed(w, h, DRM_FORMAT_ARGB8888, DmabufFlags::empty(), qh, ());
     params.destroy();
     Some(OwnedBuffer::adopt(buf))
-}
-
-const DMABUF_POOL_CAP: usize = 16;
-
-fn create_dmabuf_for_frame(
-    state: &WlState,
-    frame: &crate::wl_ops::JfnDmabufFrame,
-) -> Option<OwnedBuffer> {
-    create_dmabuf_buffer(
-        state,
-        frame.fd.as_fd(),
-        frame.stride,
-        frame.modifier,
-        frame.coded_w,
-        frame.coded_h,
-    )
-}
-
-pub(crate) fn get_or_create_dmabuf(
-    state: &WlState,
-    s: &mut PlatformSurface,
-    frame: &crate::wl_ops::JfnDmabufFrame,
-) -> Option<DmabufLease> {
-    let Some(id) = frame.id else {
-        return Some(DmabufLease::OneShot(create_dmabuf_for_frame(state, frame)?));
-    };
-
-    let hit = s.dmabuf_pool.iter().position(|e| {
-        e.id == id
-            && e.w == frame.coded_w
-            && e.h == frame.coded_h
-            && e.stride == frame.stride
-            && e.modifier == frame.modifier
-    });
-    if let Some(pos) = hit {
-        if buffer_is_idle(&s.dmabuf_pool[pos].buf) {
-            let entry = s.dmabuf_pool.remove(pos);
-            s.dmabuf_pool.insert(0, entry);
-            return Some(DmabufLease::PooledFront);
-        }
-        retire_buffer(s.dmabuf_pool.remove(pos).buf);
-    }
-    if let Some(stale) = s.dmabuf_pool.iter().position(|e| e.id == id) {
-        retire_buffer(s.dmabuf_pool.remove(stale).buf);
-    }
-
-    let buf = create_dmabuf_for_frame(state, frame)?;
-    s.dmabuf_pool.insert(
-        0,
-        DmabufBuf {
-            id,
-            w: frame.coded_w,
-            h: frame.coded_h,
-            stride: frame.stride,
-            modifier: frame.modifier,
-            buf,
-        },
-    );
-    while s.dmabuf_pool.len() > DMABUF_POOL_CAP {
-        if let Some(evicted) = s.dmabuf_pool.pop() {
-            retire_buffer(evicted.buf);
-        }
-    }
-    Some(DmabufLease::PooledFront)
 }
 
 /// Create a CLOEXEC anonymous memfd of the given size and truncate it.
