@@ -1,0 +1,74 @@
+name: Sync nix CEF version on PR open
+
+on:
+  pull_request:
+   types: [ opened ]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-nix-ver:
+    runs-on: ubuntu-latest
+    # Only fire on a Renovate update CEF PR
+    if: >-
+      github.event.pull_request.user.login == 'renovate[bot]' &&
+      startsWith(github.event.pull_request.title, 'Update Rust crate cef')
+    steps:
+      - name: Check out the PR
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Update nix cef-binary if needed
+        run: |
+          set -o pipefail
+          UPDATE_SCRIPT="$(nix-instantiate --eval -E '(builtins.getFlake (toString ./.)).packages.${builtins.currentSystem}.cef-binary.passthru.updateScript')"
+          "${UPDATE_SCRIPT}" 2>&1 | tee /tmp/script.log
+
+      - name: Build the PR body
+        run: |
+          {
+            echo 'Automated changes produced by `cef-binary` `updateScript`.'
+            echo
+            echo "<details><summary>Script output</summary>"
+            echo
+            echo '````'
+            cat /tmp/script.log
+            echo '````'
+            echo
+            echo "</details>"
+          } > /tmp/pr-body.md
+
+      - name: Commit any changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "Nothing to commit"
+            echo "EMPTY_COMMIT=1" >> "${GITHUB_ENV}"
+          else
+            VER="$(cat /tmp/pr-body.md | grep -e '^Target' | cut -d':' -f2 | tr -d ' ')"
+            git add -A
+            git commit -m "Updated nix cef-binary to match rust version v${VER}"
+            git push
+          fi
+
+      - name: Comment on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EMPTY_COMMIT" = 1 ]; then
+            gh pr comment "${PR_NUM}" \
+              --body 'Everything seems up to date on `nix` side.'
+          else
+            gh pr comment "${PR_NUM}" \
+              --body-file /tmp/pr-body.md
+          fi
