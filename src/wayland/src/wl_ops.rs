@@ -5,16 +5,15 @@
 //! before returning so commits land in compositor order matching the
 //! C++ original.
 
-use jfn_gpu_paint::DirtyRect;
 use jfn_platform_abi::JfnRect;
 use std::os::fd::{AsFd, OwnedFd};
-use wayland_client::Proxy;
+use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 
-use crate::gpu_paint_worker::WaylandGpuPaintWorker;
-use crate::shm_paint_worker::{ViewportState, WaylandShmPaintWorker};
+use crate::layer::{LayerSurface, Present, PresentError, SurfaceRef, ViewportState};
+use crate::layer_actor::{LayerActor, LayerBackend};
 use crate::wl_state::{
-    PlatformSurface, WlState, create_dmabuf_buffer, create_shm_buffer, create_solid_color_buffer,
-    lock, size_in_tolerance,
+    PlatformSurface, WlState, create_dmabuf_buffer, create_shm_buffer, lock, size_in_tolerance,
 };
 
 // =====================================================================
@@ -62,8 +61,8 @@ pub(crate) fn alloc_surface() -> *mut PlatformSurface {
     surface.commit();
     st.flush();
 
-    s.surface = Some(surface);
-    s.viewport = viewport;
+    s.layer_actor = Some(build_actor(&st, &surface, &viewport, s.visible));
+    s.surface = Some(SurfaceRef::new(surface, viewport));
     crate::wl_state::parent_layer(&mut st, ptr);
 
     crate::scene::dispatch(
@@ -80,17 +79,12 @@ pub(crate) fn free_surface(ptr: *mut PlatformSurface) {
         return;
     }
 
-    // Tear down the GPU paint worker outside the lock — Vulkan WSI swapchain
-    // destruction can roundtrip/dispatch Wayland events. Caller (CEF UI
-    // thread) owns this ptr exclusively; the worker field can be safely taken
-    // via a raw deref before grabbing the lock.
+    // Shut the actor down before taking the lock: Vulkan WSI swapchain teardown
+    // dispatches Wayland events, which would deadlock against the held lock.
     {
         let s = unsafe { surface_mut(ptr) };
-        if let Some(worker) = s.gpu_paint_worker.take() {
-            worker.shutdown();
-        }
-        if let Some(worker) = s.shm_paint_worker.take() {
-            worker.shutdown();
+        if let Some(actor) = s.layer_actor.take() {
+            actor.shutdown();
         }
     }
 
@@ -110,20 +104,11 @@ pub(crate) fn free_surface(ptr: *mut PlatformSurface) {
         // caller (C++) guarantees no concurrent use of `ptr`.
         let s = unsafe { surface_mut(ptr) };
         popup_destroy_locked(s);
-        if let Some(v) = s.viewport.take() {
-            v.destroy();
-        }
-        if let Some(b) = s.buffer.take() {
-            crate::wl_state::retire_buffer(b);
-        }
-        for entry in s.dmabuf_pool.drain(..) {
-            crate::wl_state::retire_buffer(entry.buf);
-        }
         if let Some(sub) = s.subsurface.take() {
             sub.destroy();
         }
-        if let Some(surf) = s.surface.take() {
-            surf.destroy();
+        if let Some(surface) = s.surface.take() {
+            surface.destroy();
         }
         st.flush();
     }
@@ -162,60 +147,20 @@ pub(crate) fn surface_set_visible(
         return;
     }
     s.visible = visible;
-    let Some(surface) = s.surface.clone() else {
-        return;
-    };
-
-    // Vulkan-WSI owns attach/commit on this surface — skip the placeholder
-    // and the null-attach. Notify the presenter worker without doing wgpu
-    // work on this callback.
-    if st.use_gpu_paint {
-        if let Some(worker) = s.gpu_paint_worker.as_ref() {
-            worker.set_visible(visible);
-        }
-        return;
-    }
-    if let Some(worker) = s.shm_paint_worker.as_ref() {
-        worker.set_visible(visible);
-        if !visible {
-            surface.attach(None, 0, 0);
-            surface.commit();
-            st.flush();
-            s.null_attached = true;
-        }
+    if s.surface.is_none() {
         return;
     }
 
-    if visible {
-        // Solid-color placeholder so the user sees the theme background
-        // before CEF's first paint lands.
-        if let Some(buf) = create_solid_color_buffer(&st, bg_r, bg_g, bg_b) {
-            if let Some(old) = s.buffer.take() {
-                crate::wl_state::retire_buffer(old);
-            }
-            s.placeholder = true;
-            if let Some(viewport) = s.viewport.as_ref() {
-                viewport.set_source(0.0, 0.0, 1.0, 1.0);
-            }
-            // Stretch the 1×1 placeholder to the authoritative window extent.
-            set_viewport_dest_locked(s);
-            buf.attach_to(&surface, 0, 0);
-            crate::wl_state::damage_all(&surface);
-            surface.commit();
-            st.flush();
-            s.buffer = Some(buf);
-            s.null_attached = false;
+    // Skip the placeholder in GPU mode: Vulkan-WSI owns this surface's buffers,
+    // so an shm placeholder would fight the swapchain.
+    let use_gpu_paint = st.use_gpu_paint;
+    if let Some(actor) = s.layer_actor.as_ref() {
+        actor.set_visible(visible);
+        if visible && !use_gpu_paint {
+            actor.request_placeholder(bg_r, bg_g, bg_b);
         }
-    } else {
-        surface.attach(None, 0, 0);
-        surface.commit();
-        st.flush();
-        if let Some(b) = s.buffer.take() {
-            crate::wl_state::retire_buffer(b);
-        }
-        s.placeholder = false;
-        s.null_attached = true;
     }
+    s.null_attached = !visible;
     crate::root_window::request_present();
 }
 
@@ -251,6 +196,13 @@ pub(crate) fn popup_hide(ptr: *mut PlatformSurface) {
     let st = lock();
     let s = unsafe { surface_mut(ptr) };
     s.popup_visible = false;
+    // Drain any popup commit the worker still owes before destroying the popup
+    // surface: committing the popup proxy after it is destroyed aborts the client.
+    // Holding the `wl_state` lock blocks any new popup enqueue, so once drained
+    // nothing more can be owed.
+    if let Some(actor) = s.layer_actor.as_ref() {
+        actor.drain_popup();
+    }
     popup_destroy_locked(s);
     st.flush();
 }
@@ -263,7 +215,8 @@ fn popup_create_locked(s: &mut PlatformSurface, st: &WlState) {
         return;
     }
     let surf = st.compositor.create_surface(&st.qh, ());
-    let sub = crate::wl_state::SyncSubsurface::create(&st.subcompositor, &surf, parent, &st.qh);
+    let sub =
+        crate::wl_state::SyncSubsurface::create(&st.subcompositor, &surf, parent.as_arg(), &st.qh);
     let empty = st.compositor.create_region(&st.qh, ());
     surf.set_input_region(Some(&empty));
     empty.destroy();
@@ -309,85 +262,68 @@ pub struct JfnDmabufFrame {
     pub visible_h: i32,
 }
 
-pub(crate) fn surface_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame) -> bool {
+fn build_actor(
+    st: &WlState,
+    surface: &WlSurface,
+    viewport: &Option<WpViewport>,
+    visible: bool,
+) -> LayerActor {
+    let backend = match (st.use_gpu_paint, st.gpu_ctx.clone()) {
+        (true, Some(ctx)) => LayerBackend::Gpu(ctx),
+        _ => LayerBackend::Shm,
+    };
+    let (lw, lh, pw, ph) = extent_or(0, 0);
+    let layer = LayerSurface::new(st.conn.clone(), surface.clone(), viewport.clone());
+    LayerActor::new(
+        backend,
+        st.qh.clone(),
+        st.shm.clone(),
+        st.dmabuf.clone(),
+        layer,
+        ViewportState { lw, lh, pw, ph },
+        visible,
+    )
+}
+
+fn extent_or(w: i32, h: i32) -> (i32, i32, i32, i32) {
+    crate::window_state::window_extent().map_or((w, h, w, h), |ext| {
+        (
+            ext.logical().w(),
+            ext.logical().h(),
+            ext.physical().w(),
+            ext.physical().h(),
+        )
+    })
+}
+
+pub(crate) fn surface_present(
+    ptr: *mut PlatformSurface,
+    frame: JfnDmabufFrame,
+) -> Result<Present, PresentError> {
     if ptr.is_null() {
-        return false;
+        return Ok(Present::Skipped);
     }
-    let w = frame.coded_w;
-    let h = frame.coded_h;
-    let vw = frame.visible_w;
-    let vh = frame.visible_h;
+    let (w, h) = (frame.coded_w, frame.coded_h);
+    let (vw, vh) = (frame.visible_w, frame.visible_h);
 
     let st = lock();
     let s = unsafe { surface_mut(ptr) };
     if s.surface.is_none() || !s.visible || st.dmabuf.is_none() {
-        return false;
+        return Ok(Present::Skipped);
     }
-
     if !size_in_tolerance(vw, vh) && !s.null_attached {
-        return false;
+        return Ok(Present::Skipped);
     }
 
-    let Some(lease) = crate::wl_state::get_or_create_dmabuf(&st, s, frame) else {
-        return false;
-    };
-    prep_layer_present_locked(s, w, h, vw, vh);
-    match lease {
-        crate::wl_state::DmabufLease::OneShot(buf) => {
-            commit_layer_buffer_locked(s, &buf, w, h);
-            s.buffer = Some(buf);
-        }
-        crate::wl_state::DmabufLease::PooledFront => {
-            commit_layer_buffer_locked(s, &s.dmabuf_pool[0].buf, w, h);
-        }
-    }
-    st.flush();
-
-    // The layer commit cached its buffer; the owner applies it atomically.
-    crate::root_window::request_present();
-    true
-}
-
-fn queue_shm_present(
-    s: &mut PlatformSurface,
-    st: &WlState,
-    dirty: &[JfnRect],
-    pixels: &[u8],
-    w: i32,
-    h: i32,
-) -> bool {
-    let Some(surface) = s.surface.as_ref() else {
-        return false;
-    };
-    // One snapshot so logical and physical can't span two extent generations.
-    let Some(ext) = crate::window_state::window_extent() else {
-        return false;
-    };
-    let (lw, lh) = (ext.logical().w(), ext.logical().h());
-    let (pw, ph) = (ext.physical().w(), ext.physical().h());
-    s.buffer_w = w;
-    s.buffer_h = h;
-    s.placeholder = false;
     s.null_attached = false;
+    let (lw, lh, pw, ph) = extent_or(w, h);
 
-    if s.shm_paint_worker.is_none() {
-        s.shm_paint_worker = Some(WaylandShmPaintWorker::new(
-            st.conn.clone(),
-            st.qh.clone(),
-            st.shm.clone(),
-            surface.clone(),
-            s.viewport.clone(),
-            ViewportState { lw, lh, pw, ph },
-            s.visible,
-        ));
-    }
-
-    let Some(worker) = s.shm_paint_worker.as_ref() else {
-        return false;
+    let Some(actor) = s.layer_actor.as_ref() else {
+        return Ok(Present::Skipped);
     };
-    worker.set_visible(s.visible);
-    worker.resize(lw, lh, pw, ph);
-    worker.submit_frame(pixels, w, h, dirty)
+    actor.set_visible(s.visible);
+    actor.resize(lw, lh, pw, ph);
+    actor.present_dmabuf(frame)
 }
 
 pub(crate) fn surface_present_software(
@@ -396,65 +332,26 @@ pub(crate) fn surface_present_software(
     pixels: &[u8],
     w: i32,
     h: i32,
-) -> bool {
+) -> Result<Present, PresentError> {
     if ptr.is_null() || w <= 0 || h <= 0 {
-        return false;
+        return Err(PresentError::BadDimensions(w, h));
     }
 
-    let st = lock();
+    let _st = lock();
     let s = unsafe { surface_mut(ptr) };
     if s.surface.is_none() || !s.visible {
-        return false;
-    }
-    if !st.use_gpu_paint {
-        return queue_shm_present(s, &st, dirty, pixels, w, h);
+        return Ok(Present::Skipped);
     }
 
-    let Some(ctx) = st.gpu_ctx.clone() else {
-        tracing::error!("use_gpu_paint set but gpu_ctx missing");
-        return false;
-    };
-    let Some(surface) = s.surface.as_ref() else {
-        return false;
-    };
-    let raw_surface = surface.id().as_ptr() as *mut std::ffi::c_void;
-    let Some(surface_ptr) = std::ptr::NonNull::new(raw_surface) else {
-        return false;
-    };
+    s.null_attached = false;
+    let (lw, lh, pw, ph) = extent_or(w, h);
 
-    s.buffer_w = w;
-    s.buffer_h = h;
-    set_viewport_for_buffer_locked(s, w, h);
-    let painter_size = crate::window_state::window_extent().map_or((w as u32, h as u32), |ext| {
-        (ext.physical().w() as u32, ext.physical().h() as u32)
-    });
-
-    if s.gpu_paint_worker.is_none() {
-        s.gpu_paint_worker = Some(WaylandGpuPaintWorker::new(
-            ctx,
-            st.display_ptr,
-            surface_ptr,
-            painter_size,
-            s.visible,
-        ));
-    }
-    let Some(worker) = s.gpu_paint_worker.as_ref() else {
-        return false;
+    let Some(actor) = s.layer_actor.as_ref() else {
+        return Ok(Present::Skipped);
     };
-    worker.set_visible(s.visible);
-    worker.resize(painter_size);
-    let dirty = dirty
-        .iter()
-        .map(|r| DirtyRect {
-            x: r.x,
-            y: r.y,
-            w: r.w,
-            h: r.h,
-        })
-        .collect();
-    worker.submit_frame(pixels, w as u32, h as u32, dirty);
-    st.flush();
-    true
+    actor.set_visible(s.visible);
+    actor.resize(lw, lh, pw, ph);
+    actor.present_software(pixels, w, h, dirty)
 }
 
 pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, lw: i32, lh: i32) {
@@ -478,8 +375,18 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
     } else {
         h
     };
-    let Some(buf) = create_dmabuf_buffer(&st, frame.fd.as_fd(), frame.stride, frame.modifier, w, h)
-    else {
+    let Some(dmabuf) = st.dmabuf.as_ref() else {
+        return;
+    };
+    let Some(buf) = create_dmabuf_buffer(
+        dmabuf,
+        &st.qh,
+        frame.fd.as_fd(),
+        frame.stride,
+        frame.modifier,
+        w,
+        h,
+    ) else {
         return;
     };
     if let Some(old) = s.popup_buffer.take() {
@@ -494,14 +401,8 @@ pub(crate) fn popup_present(ptr: *mut PlatformSurface, frame: &JfnDmabufFrame, l
     };
     buf.attach_to(popup, 0, 0);
     popup.damage_buffer(0, 0, vw, vh);
-    // Commit parent first so subsurface state lands in the same frame.
-    if let Some(parent) = s.surface.as_ref() {
-        parent.commit();
-    }
-    popup.commit();
-    st.flush();
+    commit_popup_via_actor(s, popup, &st);
     s.popup_buffer = Some(buf);
-    crate::root_window::request_present();
 }
 
 pub(crate) fn popup_present_software(
@@ -535,67 +436,21 @@ pub(crate) fn popup_present_software(
     };
     buf.attach_to(popup, 0, 0);
     popup.damage_buffer(0, 0, pw, ph);
-    if let Some(parent) = s.surface.as_ref() {
-        parent.commit();
-    }
-    popup.commit();
-    st.flush();
+    commit_popup_via_actor(s, popup, &st);
     s.popup_buffer = Some(buf);
-    crate::root_window::request_present();
 }
 
-// =====================================================================
-// Internal helpers
-// =====================================================================
-
-fn prep_layer_present_locked(
-    s: &mut PlatformSurface,
-    coded_w: i32,
-    coded_h: i32,
-    vis_w: i32,
-    vis_h: i32,
-) {
-    if let Some(old) = s.buffer.take() {
-        crate::wl_state::retire_buffer(old);
+/// Route the popup commit through the actor so it lands ordered after the
+/// layer's own commits; commit inline only when the surface has no actor.
+fn commit_popup_via_actor(s: &PlatformSurface, popup: &WlSurface, st: &WlState) {
+    match s.layer_actor.as_ref() {
+        Some(actor) => actor.commit_popup(popup.clone()),
+        None => {
+            popup.commit();
+            st.flush();
+            crate::root_window::request_present();
+        }
     }
-    s.buffer_w = coded_w;
-    s.buffer_h = coded_h;
-    s.placeholder = false;
-    s.null_attached = false;
-    set_viewport_for_buffer_locked(s, vis_w, vis_h);
-}
-
-fn commit_layer_buffer_locked(
-    s: &PlatformSurface,
-    buf: &crate::wl_state::OwnedBuffer,
-    coded_w: i32,
-    coded_h: i32,
-) {
-    let Some(surface) = s.surface.as_ref() else {
-        return;
-    };
-    buf.attach_to(surface, 0, 0);
-    surface.damage_buffer(0, 0, coded_w, coded_h);
-    surface.commit();
-}
-
-fn set_viewport_dest_locked(s: &PlatformSurface) {
-    let Some(viewport) = s.viewport.as_ref() else {
-        return;
-    };
-    if let Some(size) = crate::window_state::window_logical_size() {
-        viewport.set_destination(size.w(), size.h());
-    }
-}
-
-fn set_viewport_for_buffer_locked(s: &PlatformSurface, vis_w: i32, vis_h: i32) {
-    if let Some(viewport) = s.viewport.as_ref()
-        && vis_w > 0
-        && vis_h > 0
-    {
-        viewport.set_source(0.0, 0.0, vis_w as f64, vis_h as f64);
-    }
-    set_viewport_dest_locked(s);
 }
 
 pub(crate) fn on_configure(fullscreen: bool) {
@@ -611,22 +466,13 @@ pub(crate) fn on_configure(fullscreen: bool) {
 
     crate::wl_state::ensure_root_locked(&mut st);
 
-    let use_gpu_paint = st.use_gpu_paint;
     for &p in &st.stack {
         if p.is_null() {
             continue;
         }
         let s = unsafe { surface_mut(p) };
-        if use_gpu_paint {
-            if let Some(worker) = s.gpu_paint_worker.as_ref() {
-                worker.resize((pw.max(1) as u32, ph.max(1) as u32));
-            }
-        } else if let Some(worker) = s.shm_paint_worker.as_ref() {
-            worker.resize(lw, lh, pw, ph);
-        }
-        set_viewport_dest_locked(s);
-        if let Some(surface) = s.surface.as_ref() {
-            surface.commit();
+        if let Some(actor) = s.layer_actor.as_ref() {
+            actor.resize(lw, lh, pw, ph);
         }
     }
 

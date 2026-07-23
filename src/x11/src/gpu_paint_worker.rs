@@ -242,7 +242,7 @@ fn run_worker(
                     bgra: &pixels,
                     dirty: &dirty,
                 };
-                if let Err(e) = painter.push_pixels(pixel_frame) {
+                if let Err(e) = painter.push_pixels(pixel_frame, || {}) {
                     eprintln!("[x11] gpu_paint worker push_pixels failed: {e}; using SHM");
                     failed.store(true, Ordering::Release);
                     break;

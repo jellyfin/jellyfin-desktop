@@ -36,7 +36,7 @@ fn layer_surface(id: LayerId) -> Option<WlSurface> {
     // SAFETY: LayerId is a live PlatformSurface address (removed from the scene
     // before the box is freed), dereferenced only under the wl_state lock.
     let s = unsafe { &*p };
-    s.surface.clone()
+    s.surface.as_ref().map(|sr| sr.as_arg().clone())
 }
 
 pub struct WlSink;

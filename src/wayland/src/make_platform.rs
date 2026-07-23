@@ -15,6 +15,7 @@ use std::ffi::{c_int, c_void};
 use std::os::fd::FromRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::layer::{Present, PresentError};
 use crate::wl_ops::{self, JfnDmabufFrame};
 
 use jfn_platform_abi::cursor::CursorShape;
@@ -32,6 +33,17 @@ pub use jfn_platform_abi::{
 const BG_R: u8 = 0x10;
 const BG_G: u8 = 0x10;
 const BG_B: u8 = 0x10;
+
+/// A skip is not a failure: only a real error maps to `false`.
+fn present_ok(result: Result<Present, PresentError>) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!(error = %e, "wayland: present rejected");
+            false
+        }
+    }
+}
 
 pub(crate) unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFrame> {
     let info = info as *const cef::sys::_cef_accelerated_paint_info_t;
@@ -137,7 +149,10 @@ impl Platform for WaylandPlatform {
         let Some(frame) = (unsafe { to_dmabuf_frame(info) }) else {
             return false;
         };
-        wl_ops::surface_present(s as *mut crate::wl_state::PlatformSurface, &frame)
+        present_ok(wl_ops::surface_present(
+            s as *mut crate::wl_state::PlatformSurface,
+            frame,
+        ))
     }
 
     fn surface_present_software(
@@ -156,13 +171,13 @@ impl Platform for WaylandPlatform {
             .and_then(|n| n.checked_mul(4));
         let Some(len) = len else { return false };
         let pixels = unsafe { std::slice::from_raw_parts(buffer as *const u8, len) };
-        wl_ops::surface_present_software(
+        present_ok(wl_ops::surface_present_software(
             s as *mut crate::wl_state::PlatformSurface,
             dirty,
             pixels,
             w,
             h,
-        )
+        ))
     }
 
     fn surface_set_visible(&self, s: SurfaceHandle, visible: bool) {
