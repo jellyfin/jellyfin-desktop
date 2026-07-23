@@ -120,13 +120,16 @@ pub fn jfn_cef_initialize() -> bool {
     let settings_path = jfn_paths::config_dir().join("settings.json");
     jfn_config::settings_init(&settings_path);
 
+    let cef_locale = crate::i18n::cef_locale();
+    let accept_language_list = crate::i18n::cef_accept_language_list();
     let mut settings = Settings {
         no_sandbox: 1,
         windowless_rendering_enabled: 1,
         disable_signal_handlers: 1,
         log_severity: log_severity_from_int(cfg_severity),
         remote_debugging_port: cfg_port,
-        locale: CefString::from("en-US"),
+        locale: CefString::from(cef_locale.as_str()),
+        accept_language_list: CefString::from(accept_language_list.as_str()),
         user_agent: CefString::from(concat!(
             "Mozilla/5.0 jellium-desktop/",
             env!("JFN_APP_VERSION")

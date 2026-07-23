@@ -24,6 +24,9 @@ serde_json.workspace = true
 slotmap.workspace = true
 
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Globalization"] }
+
 [build-dependencies]
 gix = { workspace = true }
 

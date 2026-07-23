@@ -4,6 +4,11 @@
 // arrive before first paint.
 (function () {
     var data = window._aboutData || {};
+    var strings = data.strings || {};
+    function t(key, fallback) {
+        return strings[key] || fallback;
+    }
+    document.title = t('about', 'About');
 
     var host = document.createElement('div');
     host.id = '_jabout';
@@ -77,10 +82,10 @@
         box.appendChild(row);
     }
 
-    addRow('App version', data.app, false);
-    addRow('CEF version', data.cef, false);
-    if (data.configDir) addRow('Config directory', data.configDir, true);
-    if (data.logFile) addRow('Current log file', data.logFile, true);
+    addRow(t('about.appVersion', 'App version'), data.app, false);
+    addRow(t('about.cefVersion', 'CEF version'), data.cef, false);
+    if (data.configDir) addRow(t('about.configDir', 'Config directory'), data.configDir, true);
+    if (data.logFile) addRow(t('about.currentLogFile', 'Current log file'), data.logFile, true);
 
     var dismissed = false;
     function dismiss() {

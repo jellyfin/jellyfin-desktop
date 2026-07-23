@@ -8,6 +8,8 @@ use cef::rc::ConvertReturnValue;
 use cef::{ImplMenuModel, MenuModel, sys};
 use std::os::raw::{c_int, c_void};
 
+use crate::i18n::{StringKey, text};
+
 // Command IDs numbered from cef_menu_id_t::MENU_ID_USER_FIRST.
 const MENU_ID_USER_FIRST: c_int = sys::cef_menu_id_t::MENU_ID_USER_FIRST as c_int;
 pub const MENU_ID_TOGGLE_FULLSCREEN: c_int = MENU_ID_USER_FIRST;
@@ -27,10 +29,16 @@ pub fn build_closure() -> Box<crate::client::ContextBuilderFn> {
         let m: MenuModel = (raw as *mut sys::_cef_menu_model_t).wrap_result();
         m.add_item(
             MENU_ID_TOGGLE_FULLSCREEN,
-            Some(&cef::CefString::from("Toggle Fullscreen")),
+            Some(&cef::CefString::from(text(StringKey::ToggleFullscreen))),
         );
-        m.add_item(MENU_ID_ABOUT, Some(&cef::CefString::from("About")));
-        m.add_item(MENU_ID_EXIT, Some(&cef::CefString::from("Exit")));
+        m.add_item(
+            MENU_ID_ABOUT,
+            Some(&cef::CefString::from(text(StringKey::About))),
+        );
+        m.add_item(
+            MENU_ID_EXIT,
+            Some(&cef::CefString::from(text(StringKey::Exit))),
+        );
     })
 }
 

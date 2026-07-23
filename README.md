@@ -56,3 +56,11 @@ Available recipes:
     run *args     # Run the app
     run-mpv *args # Run the mpv CLI
 ```
+
+### Desktop Localization
+
+The embedded jellyfin-web UI uses Jellyfin's own translation catalogue. Desktop-owned surfaces use a small catalogue in `src/jfn_cef/src/i18n.rs`: the connect overlay follows `navigator.language`, and native/CEF shell strings use the OS locale when available. Unsupported or missing strings fall back to English.
+
+## LLM Development
+
+LLMs were used in the development of this project. LLM-assisted contributions are welcome.
