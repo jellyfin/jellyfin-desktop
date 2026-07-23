@@ -125,6 +125,13 @@ fn apply_defaults(
     // by language / default-flag / codec scoring.
     set("track-auto-selection", "no")?;
 
+    // Force stereo output by default so mono sources are duplicated to
+    // both speakers instead of left-only (the default mpv behavior is to
+    // pass mono straight through, which CoreAudio on macOS routes to the
+    // left channel only). Users with surround setups can override via the
+    // Audio Channel Layout setting; that override runs in apply_boot_options.
+    set("audio-channels", "stereo")?;
+
     // Input: we own all devices and route through CEF.
     set("input-default-bindings", "no")?;
     set("input-vo-keyboard", "no")?;
