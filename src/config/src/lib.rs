@@ -59,6 +59,7 @@ struct SettingsData {
     force_transcoding: bool,
     window_decorations: Option<WindowDecorations>,
     hide_scrollbar: bool,
+    custom_headers: Vec<(String, String)>,
 }
 
 impl Default for SettingsData {
@@ -77,6 +78,7 @@ impl Default for SettingsData {
             force_transcoding: false,
             window_decorations: None,
             hide_scrollbar: true,
+            custom_headers: Vec::new(),
         }
     }
 }
@@ -154,6 +156,17 @@ impl SettingsData {
         if let Some(b) = v.get("hideScrollbar").and_then(Value::as_bool) {
             self.hide_scrollbar = b;
         }
+        if let Some(arr) = v.get("customHeaders").and_then(Value::as_array) {
+            self.custom_headers = arr
+                .iter()
+                .filter_map(|entry| {
+                    let obj = entry.as_object()?;
+                    let key = obj.get("key")?.as_str()?.to_string();
+                    let value = obj.get("value")?.as_str()?.to_string();
+                    Some((key, value))
+                })
+                .collect();
+        }
     }
 
     fn to_json(&self) -> Value {
@@ -222,6 +235,19 @@ impl SettingsData {
         }
         if !self.device_name.is_empty() {
             o.insert("deviceName".into(), Value::String(self.device_name.clone()));
+        }
+        if !self.custom_headers.is_empty() {
+            let arr: Vec<Value> = self
+                .custom_headers
+                .iter()
+                .map(|(k, v)| {
+                    let mut entry = Map::new();
+                    entry.insert("key".into(), Value::String(k.clone()));
+                    entry.insert("value".into(), Value::String(v.clone()));
+                    Value::Object(entry)
+                })
+                .collect();
+            o.insert("customHeaders".into(), Value::Array(arr));
         }
         Value::Object(o)
     }
@@ -550,6 +576,14 @@ pub fn titlebar_theme_color() -> bool {
     window_decorations_mode() == WindowDecorations::ServerThemed
 }
 bool_accessors!(hide_scrollbar, set_hide_scrollbar, hide_scrollbar);
+
+pub fn custom_headers() -> Vec<(String, String)> {
+    state().lock().data.custom_headers.clone()
+}
+
+pub fn set_custom_headers(headers: Vec<(String, String)>) {
+    state().lock().data.custom_headers = headers;
+}
 
 pub fn window_geometry() -> JfnWindowGeometry {
     state().lock().data.window

@@ -161,7 +161,11 @@ const languages = [
     "Connect": "Connect",
     "HeaderConnectionFailure": "Connection Failure",
     "MessageUnableToConnectToServer": "We're unable to connect to the selected server right now. Please ensure it is running and try again.",
-    "ButtonGotIt": "Got It"
+    "ButtonGotIt": "Got It",
+    "LabelAdvanced": "Advanced",
+    "LabelAddHeader": "Add Header",
+    "HeaderKeyPlaceholder": "Header name",
+    "HeaderValuePlaceholder": "Value"
   },
   {
     "lang": "eo",
@@ -978,3 +982,11 @@ document.getElementById('address').placeholder = languageStrings.LabelServerHost
 document.getElementById('connect-button').innerText = connectText;
 document.getElementById('connect-button').setAttribute('data-original-text', connectText);
 window.cancelButtonText = 'Cancel';
+
+const advancedToggleText = languageStrings.LabelAdvanced || fallbackStrings.LabelAdvanced || 'Advanced';
+const addHeaderText = languageStrings.LabelAddHeader || fallbackStrings.LabelAddHeader || 'Add Header';
+const headerKeyPlaceholder = languageStrings.HeaderKeyPlaceholder || fallbackStrings.HeaderKeyPlaceholder || 'Header name';
+const headerValuePlaceholder = languageStrings.HeaderValuePlaceholder || fallbackStrings.HeaderValuePlaceholder || 'Value';
+
+document.getElementById('advanced-toggle').innerText = advancedToggleText;
+document.getElementById('add-header-btn').innerText = addHeaderText;

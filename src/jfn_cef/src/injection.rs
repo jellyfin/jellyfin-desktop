@@ -64,6 +64,8 @@ pub(crate) enum NativeFunction {
     CsdReady,
     MenuItemSelected,
     MenuDismissed,
+    GetCustomHeaders,
+    SetCustomHeaders,
 }
 
 impl NativeFunction {
@@ -114,6 +116,8 @@ impl NativeFunction {
             "csdReady" => Self::CsdReady,
             "menuItemSelected" => Self::MenuItemSelected,
             "menuDismissed" => Self::MenuDismissed,
+            "getCustomHeaders" => Self::GetCustomHeaders,
+            "setCustomHeaders" => Self::SetCustomHeaders,
             _ => return None,
         })
     }
@@ -165,6 +169,8 @@ impl NativeFunction {
             Self::CsdReady => "csdReady",
             Self::MenuItemSelected => "menuItemSelected",
             Self::MenuDismissed => "menuDismissed",
+            Self::GetCustomHeaders => "getCustomHeaders",
+            Self::SetCustomHeaders => "setCustomHeaders",
         }
     }
 }
@@ -273,6 +279,8 @@ const OVERLAY_FUNCTIONS: &[NativeFunction] = &[
     NativeFunction::DismissOverlay,
     NativeFunction::CheckServerConnectivity,
     NativeFunction::CancelServerConnectivity,
+    NativeFunction::GetCustomHeaders,
+    NativeFunction::SetCustomHeaders,
 ];
 
 const ABOUT_FUNCTIONS: &[NativeFunction] =

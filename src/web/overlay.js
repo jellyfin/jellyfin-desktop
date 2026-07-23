@@ -12,6 +12,71 @@ const savedServerUrlReady = new Promise((resolve) => {
 });
 window.jmpNative.getSavedServerUrl();
 
+// Custom request headers for reverse-proxy auth. Loaded from native config
+// at startup; saved whenever the user modifies them.
+let customHeaders = [];
+
+function buildHeaderRows() {
+    const list = document.getElementById('headers-list');
+    list.innerHTML = '';
+    customHeaders.forEach((h, i) => {
+        const row = document.createElement('div');
+        row.className = 'header-row';
+        const keyInput = document.createElement('input');
+        keyInput.type = 'text';
+        keyInput.placeholder = headerKeyPlaceholder;
+        keyInput.value = h.key;
+        keyInput.addEventListener('input', () => {
+            customHeaders[i].key = keyInput.value;
+            saveHeaders();
+        });
+        const valInput = document.createElement('input');
+        valInput.type = 'text';
+        valInput.placeholder = headerValuePlaceholder;
+        valInput.value = h.value;
+        valInput.addEventListener('input', () => {
+            customHeaders[i].value = valInput.value;
+            saveHeaders();
+        });
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'remove-header';
+        removeBtn.innerHTML = '&times;';
+        removeBtn.addEventListener('click', () => {
+            customHeaders.splice(i, 1);
+            buildHeaderRows();
+            saveHeaders();
+        });
+        row.appendChild(keyInput);
+        row.appendChild(valInput);
+        row.appendChild(removeBtn);
+        list.appendChild(row);
+    });
+}
+
+function saveHeaders() {
+    if (window.jmpNative && window.jmpNative.setCustomHeaders) {
+        window.jmpNative.setCustomHeaders(JSON.stringify(customHeaders));
+    }
+}
+
+// Load headers from native config
+window._onCustomHeaders = (json) => {
+    try {
+        customHeaders = JSON.parse(json) || [];
+    } catch (_) {
+        customHeaders = [];
+    }
+    buildHeaderRows();
+};
+window.jmpNative.getCustomHeaders();
+
+document.getElementById('add-header-btn').addEventListener('click', () => {
+    customHeaders.push({ key: '', value: '' });
+    buildHeaderRows();
+    saveHeaders();
+});
+
 // True whenever the main browser is loading the URL we currently care about.
 // Set by the auto-connect path once we know a saved URL exists (main.cpp
 // has already pre-loaded it), by navigateMain on user-initiated success,
