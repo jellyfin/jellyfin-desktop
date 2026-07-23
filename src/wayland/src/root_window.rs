@@ -1,6 +1,9 @@
 use std::ffi::c_void;
 use std::num::{NonZeroI32, NonZeroU64};
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
+
+use nix::errno::Errno;
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
@@ -1223,27 +1226,25 @@ fn root_loop(
             None => continue,
         };
         let mut pfds = [
-            libc::pollfd {
-                fd,
-                events: libc::POLLIN,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: wake_fd,
-                events: libc::POLLIN,
-                revents: 0,
-            },
+            PollFd::new(unsafe { BorrowedFd::borrow_raw(fd) }, PollFlags::POLLIN),
+            PollFd::new(
+                unsafe { BorrowedFd::borrow_raw(wake_fd) },
+                PollFlags::POLLIN,
+            ),
         ];
-        let r = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as _, -1) };
-        if r < 0 {
-            let err = std::io::Error::last_os_error();
-            drop(guard);
-            if err.kind() == std::io::ErrorKind::Interrupted {
+        match poll(&mut pfds, PollTimeout::NONE) {
+            Err(Errno::EINTR) => {
+                drop(guard);
                 continue;
             }
-            break;
+            Err(_) => {
+                drop(guard);
+                break;
+            }
+            Ok(_) => {}
         }
-        if pfds[0].revents & libc::POLLIN != 0 {
+        let revents = |i: usize| pfds[i].revents().unwrap_or(PollFlags::empty());
+        if revents(0).contains(PollFlags::POLLIN) {
             if guard.read().is_err() {
                 break;
             }
@@ -1255,10 +1256,10 @@ fn root_loop(
         } else {
             drop(guard);
         }
-        if pfds[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        if revents(0).intersects(PollFlags::POLLERR | PollFlags::POLLHUP | PollFlags::POLLNVAL) {
             break;
         }
-        if pfds[1].revents & libc::POLLIN != 0 {
+        if revents(1).contains(PollFlags::POLLIN) {
             wake.drain();
             if stop.load(Ordering::Relaxed) {
                 break;

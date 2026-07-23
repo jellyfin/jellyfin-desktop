@@ -5,9 +5,11 @@
 //! `STRUCTURE_NOTIFY | PROPERTY_CHANGE` on the parent and its frame, plus
 //! `STRUCTURE_NOTIFY` on each overlay so a WM clamp re-triggers a reconcile.
 
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::sync::Arc;
 
+use nix::errno::Errno;
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use parking_lot::Mutex;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
@@ -358,47 +360,42 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
     watch_compositor(&conn, root);
     let _ = conn.flush();
 
-    let x11_fd = conn.stream().as_raw_fd();
-    // -1 if waker allocation failed: poll ignores negative fds.
-    let shutdown_fd = x11_shutdown_waker().map_or(-1, WakeEvent::fd);
-    let resync_fd = x11_geometry_resync_waker().map_or(-1, WakeEvent::fd);
+    let x11_fd = unsafe { BorrowedFd::borrow_raw(conn.stream().as_raw_fd()) };
+    let shutdown_fd = x11_shutdown_waker().map(|ev| unsafe { BorrowedFd::borrow_raw(ev.fd()) });
+    let resync_fd =
+        x11_geometry_resync_waker().map(|ev| unsafe { BorrowedFd::borrow_raw(ev.fd()) });
 
-    let mut fds: [libc::pollfd; 3] = [
-        libc::pollfd {
-            fd: x11_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        },
-        libc::pollfd {
-            fd: shutdown_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        },
-        libc::pollfd {
-            fd: resync_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        },
-    ];
+    let mut fds = vec![PollFd::new(x11_fd, PollFlags::POLLIN)];
+    let shutdown_idx = shutdown_fd.map(|fd| {
+        fds.push(PollFd::new(fd, PollFlags::POLLIN));
+        fds.len() - 1
+    });
+    let resync_idx = resync_fd.map(|fd| {
+        fds.push(PollFd::new(fd, PollFlags::POLLIN));
+        fds.len() - 1
+    });
 
     let mut parent_mapped = true;
     reconcile(&conn, parent, root, parent_mapped, true);
 
     loop {
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 3, -1) };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::EINTR) {
-                continue;
-            }
-            break;
+        match poll(&mut fds, PollTimeout::NONE) {
+            Err(Errno::EINTR) => continue,
+            Err(_) => break,
+            Ok(_) => {}
         }
+        let revents = |idx: Option<usize>| {
+            idx.and_then(|i| fds[i].revents())
+                .unwrap_or(PollFlags::empty())
+        };
 
-        if fds[1].revents & libc::POLLIN != 0 {
+        if revents(shutdown_idx).contains(PollFlags::POLLIN) {
             hide_overlays(&conn);
             break;
         }
-        if fds[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        if revents(Some(0))
+            .intersects(PollFlags::POLLERR | PollFlags::POLLHUP | PollFlags::POLLNVAL)
+        {
             hide_overlays(&conn);
             break;
         }
@@ -406,7 +403,7 @@ fn geometry_thread_body(conn: Arc<RustConnection>, parent: Window, root: Window)
         let mut wake = false;
         let mut reassert = false;
         let mut activate = false;
-        if fds[2].revents & libc::POLLIN != 0 {
+        if revents(resync_idx).contains(PollFlags::POLLIN) {
             if let Some(ev) = x11_geometry_resync_waker() {
                 ev.drain();
             }

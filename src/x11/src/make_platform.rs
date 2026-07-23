@@ -6,7 +6,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::{c_int, c_void};
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::BorrowedFd;
 
 use jfn_gpu_paint::{DmabufFormat, DmabufFrame, DmabufPlane};
 
@@ -46,12 +46,9 @@ unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<DmabufFrame> {
     }
     let mut planes = Vec::with_capacity(n);
     for p in &info.planes[..n] {
-        let dup_fd = unsafe { libc::dup(p.fd) };
-        if dup_fd < 0 {
-            return None;
-        }
+        let fd = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(p.fd) }).ok()?;
         planes.push(DmabufPlane {
-            fd: unsafe { OwnedFd::from_raw_fd(dup_fd) },
+            fd,
             offset: p.offset,
             stride: p.stride,
         });

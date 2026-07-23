@@ -9,7 +9,7 @@ name = "jfn_wake_event"
 crate-type = ["rlib"]
 
 [target.'cfg(unix)'.dependencies]
-libc.workspace = true
+nix.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [

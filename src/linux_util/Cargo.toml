@@ -17,8 +17,8 @@ parking_lot.workspace = true
 clap = { version = "4", default-features = false, features = ["std", "derive"] }
 jfn-input = { path = "../input" }
 jfn-platform-abi = { path = "../platform_abi" }
-libc.workspace = true
 libloading = "0.9"
+nix.workspace = true
 tracing.workspace = true
 xkbcommon = "0.9"
 zbus.workspace = true

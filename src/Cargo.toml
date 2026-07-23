@@ -34,8 +34,10 @@ publish = false
 
 [workspace.dependencies]
 cef = { version = "=150.0.0", default-features = false }
+gethostname = "1"
 gix = { version = "0.85", default-features = false, features = ["status", "sha1"] }
 libc = "0.2"
+nix = { version = "0.30", features = ["event", "fs", "poll", "signal", "socket", "time", "user"] }
 objc2 = "0.6"
 parking_lot = "0.12"
 objc2-foundation = "0.3"

@@ -24,21 +24,17 @@ pub use imp::WakeEvent;
 /// lifetime the caller manages; owned events use [`WakeEvent`].
 #[cfg(unix)]
 pub fn drain_raw_fd(fd: std::ffi::c_int) {
+    let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
     let mut buf = [0u8; 64];
     loop {
-        let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
-        if n > 0 {
-            continue;
+        match nix::unistd::read(fd, &mut buf) {
+            Ok(0) => break,
+            Ok(_) => continue,
+            // Retry a signal-interrupted read; stop on would-block (drained)
+            // or any real error — the wake is best-effort, not worth escalating.
+            Err(nix::errno::Errno::EINTR) => continue,
+            Err(_) => break,
         }
-        if n == 0 {
-            break;
-        }
-        // n < 0: retry a signal-interrupted read; stop on would-block (drained)
-        // or any real error — the wake is best-effort, not worth escalating.
-        if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
-            continue;
-        }
-        break;
     }
 }
 
@@ -48,7 +44,6 @@ pub fn drain_raw_fd(fd: std::ffi::c_int) {
 #[cfg(unix)]
 pub fn signal_raw_fd(fd: std::ffi::c_int) {
     let val: u64 = 1;
-    unsafe {
-        libc::write(fd, (&raw const val).cast(), core::mem::size_of::<u64>());
-    }
+    let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
+    let _ = nix::unistd::write(fd, &val.to_ne_bytes());
 }

@@ -12,7 +12,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::{c_int, c_void};
-use std::os::fd::FromRawFd;
+use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::layer::{Present, PresentError};
@@ -52,19 +52,10 @@ pub(crate) unsafe fn to_dmabuf_frame(info: *const c_void) -> Option<JfnDmabufFra
     }
     let info = unsafe { &*info };
     let plane0 = &info.planes[0];
-    let dup_fd = unsafe { libc::dup(plane0.fd) };
-    if dup_fd < 0 {
-        return None;
-    }
-    let id = {
-        let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        if unsafe { libc::fstat(dup_fd, &mut st) } == 0 {
-            Some((st.st_dev as u64, st.st_ino as u64))
-        } else {
-            None
-        }
-    };
-    let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
+    let fd = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(plane0.fd) }).ok()?;
+    let id = nix::sys::stat::fstat(&fd)
+        .ok()
+        .map(|st| (st.st_dev, st.st_ino));
     Some(JfnDmabufFrame {
         fd,
         id,

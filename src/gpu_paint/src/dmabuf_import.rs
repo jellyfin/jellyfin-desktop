@@ -1,7 +1,7 @@
 //! Vulkan dmabuf import for CEF accelerated-paint frames.
 
 use std::ffi::CStr;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, BorrowedFd, IntoRawFd};
 
 use ash::vk::Handle;
 use ash::{ext, khr, vk};
@@ -388,25 +388,24 @@ unsafe fn import_memory(
     let mem_type_index = type_bits.trailing_zeros();
 
     // Vulkan takes ownership of the fd on a successful allocate; hand it a dup.
-    let import_fd = unsafe { libc::dup(fd) };
-    if import_fd < 0 {
-        return Err(GpuPaintError::DmabufImport("dup fd"));
-    }
+    let import_fd = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(fd) })
+        .map_err(|_| GpuPaintError::DmabufImport("dup fd"))?;
     let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
     let mut import_info = vk::ImportMemoryFdInfoKHR::default()
         .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-        .fd(import_fd);
+        .fd(import_fd.as_raw_fd());
     let alloc_info = vk::MemoryAllocateInfo::default()
         .allocation_size(size)
         .memory_type_index(mem_type_index)
         .push_next(&mut dedicated)
         .push_next(&mut import_info);
     match unsafe { ash_device.allocate_memory(&alloc_info, None) } {
-        Ok(memory) => Ok(memory),
-        Err(_) => {
-            // fd not consumed on failure — close our dup.
-            unsafe { libc::close(import_fd) };
-            Err(GpuPaintError::DmabufImport("vkAllocateMemory"))
+        Ok(memory) => {
+            // fd consumed by Vulkan — relinquish without closing.
+            let _ = import_fd.into_raw_fd();
+            Ok(memory)
         }
+        // fd not consumed on failure — dropping the dup closes it.
+        Err(_) => Err(GpuPaintError::DmabufImport("vkAllocateMemory")),
     }
 }

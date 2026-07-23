@@ -1,8 +1,10 @@
 //! X11 input thread.
 
+use nix::errno::Errno;
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use parking_lot::Mutex;
 use std::ffi::c_int;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -657,37 +659,32 @@ fn input_thread_body(mut st: State) {
     });
     let _ = st.conn.flush();
 
-    let xcb_fd = st.conn.as_raw_fd();
-    // -1 if waker allocation failed: poll ignores negative fds.
-    let shutdown_fd = x11_shutdown_waker().map_or(-1, WakeEvent::fd);
+    let xcb_fd = unsafe { BorrowedFd::borrow_raw(st.conn.as_raw_fd()) };
+    let shutdown_fd = x11_shutdown_waker().map(|ev| unsafe { BorrowedFd::borrow_raw(ev.fd()) });
 
-    let mut fds: [libc::pollfd; 2] = [
-        libc::pollfd {
-            fd: xcb_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        },
-        libc::pollfd {
-            fd: shutdown_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        },
-    ];
+    let mut fds = vec![PollFd::new(xcb_fd, PollFlags::POLLIN)];
+    let shutdown_idx = shutdown_fd.map(|fd| {
+        fds.push(PollFd::new(fd, PollFlags::POLLIN));
+        fds.len() - 1
+    });
 
     loop {
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::EINTR) {
-                continue;
-            }
-            break;
+        match poll(&mut fds, PollTimeout::NONE) {
+            Err(Errno::EINTR) => continue,
+            Err(_) => break,
+            Ok(_) => {}
         }
+        let revents = |idx: Option<usize>| {
+            idx.and_then(|i| fds[i].revents())
+                .unwrap_or(PollFlags::empty())
+        };
 
-        if fds[1].revents & libc::POLLIN != 0 {
+        if revents(shutdown_idx).contains(PollFlags::POLLIN) {
             break;
         }
-        if fds[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        if revents(Some(0))
+            .intersects(PollFlags::POLLERR | PollFlags::POLLHUP | PollFlags::POLLNVAL)
+        {
             break;
         }
         while let Ok(Some(ev)) = st.conn.poll_for_event() {
@@ -716,22 +713,28 @@ fn cursor_thread_body(screen_num: i32, window: u32, mailbox: Arc<CursorMailbox>)
         cursor_handle,
     };
 
-    let mut fds = [libc::pollfd {
-        fd: mailbox.wake.as_ref().map_or(-1, WakeEvent::fd),
-        events: libc::POLLIN,
-        revents: 0,
-    }];
+    let mut fds: Vec<PollFd> = mailbox
+        .wake
+        .as_ref()
+        .map(|w| {
+            vec![PollFd::new(
+                unsafe { BorrowedFd::borrow_raw(w.fd()) },
+                PollFlags::POLLIN,
+            )]
+        })
+        .unwrap_or_default();
 
     loop {
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::EINTR) {
-                continue;
-            }
-            break;
+        match poll(&mut fds, PollTimeout::NONE) {
+            Err(Errno::EINTR) => continue,
+            Err(_) => break,
+            Ok(_) => {}
         }
-        if fds[0].revents & libc::POLLIN == 0 {
+        if !fds
+            .first()
+            .and_then(PollFd::revents)
+            .is_some_and(|r| r.contains(PollFlags::POLLIN))
+        {
             continue;
         }
         if let Some(w) = &mailbox.wake {
@@ -745,22 +748,28 @@ fn cursor_thread_body(screen_num: i32, window: u32, mailbox: Arc<CursorMailbox>)
 }
 
 fn input_dispatch_thread_body(mailbox: Arc<InputMailbox>) {
-    let mut fds = [libc::pollfd {
-        fd: mailbox.wake.as_ref().map_or(-1, WakeEvent::fd),
-        events: libc::POLLIN,
-        revents: 0,
-    }];
+    let mut fds: Vec<PollFd> = mailbox
+        .wake
+        .as_ref()
+        .map(|w| {
+            vec![PollFd::new(
+                unsafe { BorrowedFd::borrow_raw(w.fd()) },
+                PollFlags::POLLIN,
+            )]
+        })
+        .unwrap_or_default();
 
     loop {
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::EINTR) {
-                continue;
-            }
-            break;
+        match poll(&mut fds, PollTimeout::NONE) {
+            Err(Errno::EINTR) => continue,
+            Err(_) => break,
+            Ok(_) => {}
         }
-        if fds[0].revents & libc::POLLIN == 0 {
+        if !fds
+            .first()
+            .and_then(PollFd::revents)
+            .is_some_and(|r| r.contains(PollFlags::POLLIN))
+        {
             continue;
         }
         if let Some(w) = &mailbox.wake {

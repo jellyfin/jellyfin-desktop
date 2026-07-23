@@ -6,12 +6,17 @@
 //! fd. Input events come back to C++ as primitives via JfnInputCallbacks so
 //! no CEF-typed structs cross the FFI boundary.
 
+use nix::errno::Errno;
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use nix::sys::time::TimeSpec;
+use nix::sys::timerfd::{ClockId, Expiration, TimerFd, TimerFlags, TimerSetTimeFlags};
 use parking_lot::Mutex;
 use std::ffi::{c_int, c_void};
-use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use memmap2::MmapOptions;
 use wayland_backend::client::Backend;
@@ -188,7 +193,7 @@ struct State {
 
     menu_focus: bool,
 
-    repeat_timer_fd: OwnedFd,
+    repeat_timer: TimerFd,
     repeat_rate: i32,
     repeat_delay: i32,
     repeat_key: Option<u32>,
@@ -245,43 +250,21 @@ impl State {
             return;
         }
         self.repeat_key = Some(key);
-        // A zero it_value disarms the timer outright regardless of
-        // it_interval, so a reported delay/rate of 0 must not reach 0ms.
+        // A zero start disarms the timer outright regardless of the
+        // interval, so a reported delay/rate of 0 must not reach 0ms.
         let period_ms = (1000u32 / self.repeat_rate as u32).max(1);
-        let spec = libc::itimerspec {
-            it_interval: ms_to_timespec(period_ms),
-            it_value: ms_to_timespec(self.repeat_delay.max(1) as u32),
-        };
-        unsafe {
-            libc::timerfd_settime(
-                self.repeat_timer_fd.as_raw_fd(),
-                0,
-                &spec,
-                std::ptr::null_mut(),
-            );
-        }
+        let expiration = Expiration::IntervalDelayed(
+            ms_to_timespec(self.repeat_delay.max(1) as u32),
+            ms_to_timespec(period_ms),
+        );
+        let _ = self
+            .repeat_timer
+            .set(expiration, TimerSetTimeFlags::empty());
     }
 
     fn disarm_repeat(&mut self) {
         self.repeat_key = None;
-        let spec = libc::itimerspec {
-            it_interval: libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            },
-            it_value: libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            },
-        };
-        unsafe {
-            libc::timerfd_settime(
-                self.repeat_timer_fd.as_raw_fd(),
-                0,
-                &spec,
-                std::ptr::null_mut(),
-            );
-        }
+        let _ = self.repeat_timer.unset();
     }
 
     fn send_key(&self, key: u32, kc: xkb::Keycode, sym: u32, pressed: bool) {
@@ -313,11 +296,8 @@ impl State {
     }
 }
 
-fn ms_to_timespec(ms: u32) -> libc::timespec {
-    libc::timespec {
-        tv_sec: (ms / 1000) as libc::time_t,
-        tv_nsec: ((ms % 1000) * 1_000_000) as i64,
-    }
+fn ms_to_timespec(ms: u32) -> TimeSpec {
+    TimeSpec::from_duration(Duration::from_millis(u64::from(ms)))
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
@@ -791,7 +771,7 @@ fn worker_loop(
 ) {
     let display_fd = conn.as_fd().as_raw_fd();
     let wake_fd = wake.fd();
-    let repeat_fd = state.repeat_timer_fd.as_raw_fd();
+    let repeat_fd = state.repeat_timer.as_fd().as_raw_fd();
     let qh = queue.handle();
     loop {
         // Apply any pending cursor change before we block.
@@ -812,43 +792,43 @@ fn worker_loop(
         };
 
         let mut pfds = [
-            libc::pollfd {
-                fd: display_fd,
-                events: libc::POLLIN,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: wake_fd,
-                events: libc::POLLIN,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: repeat_fd,
-                events: libc::POLLIN,
-                revents: 0,
-            },
+            PollFd::new(
+                unsafe { BorrowedFd::borrow_raw(display_fd) },
+                PollFlags::POLLIN,
+            ),
+            PollFd::new(
+                unsafe { BorrowedFd::borrow_raw(wake_fd) },
+                PollFlags::POLLIN,
+            ),
+            PollFd::new(
+                unsafe { BorrowedFd::borrow_raw(repeat_fd) },
+                PollFlags::POLLIN,
+            ),
         ];
-        let r = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as _, -1) };
-        if r < 0 {
-            let err = std::io::Error::last_os_error();
-            drop(read_guard);
-            if err.kind() == std::io::ErrorKind::Interrupted {
+        match poll(&mut pfds, PollTimeout::NONE) {
+            Err(Errno::EINTR) => {
+                drop(read_guard);
                 continue;
             }
-            break;
+            Err(_) => {
+                drop(read_guard);
+                break;
+            }
+            Ok(_) => {}
         }
+        let revents = |i: usize| pfds[i].revents().unwrap_or(PollFlags::empty());
 
-        if pfds[0].revents & libc::POLLIN != 0 {
+        if revents(0).contains(PollFlags::POLLIN) {
             if read_guard.read().is_err() {
                 break;
             }
         } else {
             drop(read_guard);
         }
-        if pfds[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        if revents(0).intersects(PollFlags::POLLERR | PollFlags::POLLHUP | PollFlags::POLLNVAL) {
             break;
         }
-        if pfds[1].revents & libc::POLLIN != 0 {
+        if revents(1).contains(PollFlags::POLLIN) {
             wake.drain();
             // Wake reasons: cursor change request, or cleanup.
             if stop.load(Ordering::Relaxed) {
@@ -861,13 +841,11 @@ fn worker_loop(
         // otherwise leave state.repeat_key stale for this check.
         let _ = queue.dispatch_pending(&mut state);
 
-        if pfds[2].revents & libc::POLLIN != 0 {
+        if revents(2).contains(PollFlags::POLLIN) {
             // Drain the expiration count so a level-triggered re-fire
             // doesn't spin the loop, then resend the held key.
             let mut buf = [0u8; 8];
-            unsafe {
-                libc::read(repeat_fd, buf.as_mut_ptr().cast(), buf.len());
-            }
+            let _ = nix::unistd::read(unsafe { BorrowedFd::borrow_raw(repeat_fd) }, &mut buf);
             state.fire_key_repeat();
         }
     }
@@ -880,17 +858,11 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<InputThread> {
         return None;
     }
     let wake = Arc::new(jfn_wake_event::WakeEvent::new()?);
-    let repeat_timer_fd = unsafe {
-        libc::timerfd_create(
-            libc::CLOCK_MONOTONIC,
-            libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
-        )
-    };
-    if repeat_timer_fd < 0 {
-        return None;
-    }
-    // Wrapped now so an early return below can't leak it.
-    let repeat_timer_fd = unsafe { OwnedFd::from_raw_fd(repeat_timer_fd) };
+    let repeat_timer = TimerFd::new(
+        ClockId::CLOCK_MONOTONIC,
+        TimerFlags::TFD_NONBLOCK | TimerFlags::TFD_CLOEXEC,
+    )
+    .ok()?;
     let backend = unsafe { Backend::from_foreign_display(display as *mut _) };
     let conn = Connection::from_backend(backend);
     let (globals, queue) = registry_queue_init::<State>(&conn).ok()?;
@@ -928,7 +900,7 @@ fn init_impl(display: *mut c_void, cb: Callbacks) -> Option<InputThread> {
         modifiers: 0,
         cursor_type: cursor_type.clone(),
         menu_focus: false,
-        repeat_timer_fd,
+        repeat_timer,
         repeat_rate: 0,
         repeat_delay: 0,
         repeat_key: None,
