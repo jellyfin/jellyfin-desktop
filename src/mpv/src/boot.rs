@@ -108,6 +108,101 @@ fn set_option_flag_or_skip(handle: &Handle, name: &str, value: bool) -> crate::e
     }
 }
 
+#[cfg(target_os = "windows")]
+fn bundled_scripts_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let scripts = exe.parent()?.join("mpv").join("scripts");
+    if scripts.exists() {
+        Some(scripts)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn bundled_scripts_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let scripts = exe.parent()?.join("mpv").join("scripts");
+    if scripts.exists() {
+        Some(scripts)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn bundled_scripts_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    // Bundle: .app/Contents/MacOS/ → .app/Contents/Resources/mpv/scripts/
+    if exe_dir.file_name()?.to_str()? == "MacOS" {
+        let scripts = exe_dir
+            .parent()?
+            .join("Resources")
+            .join("mpv")
+            .join("scripts");
+        if scripts.exists() {
+            return Some(scripts);
+        }
+    }
+    // Dev: build/ → build/mpv/scripts/
+    let scripts = exe_dir.join("mpv").join("scripts");
+    if scripts.exists() {
+        Some(scripts)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn load_bundled_scripts(handle: &Handle) -> crate::error::Result<()> {
+    let Some(dir) = bundled_scripts_dir() else {
+        return Ok(());
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(());
+    };
+    let mut paths: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension()?.to_str()? == "lua").then(|| p.to_str().map(String::from))?
+        })
+        .collect();
+    paths.sort();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    // Windows path lists use ';' (avoiding conflict with drive-letter colons).
+    let joined = paths.join(";");
+    tracing::info!(target: "mpv", "loading bundled scripts: {joined}");
+    set_option_or_skip(handle, "scripts", &joined)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn load_bundled_scripts(handle: &Handle) -> crate::error::Result<()> {
+    let Some(dir) = bundled_scripts_dir() else {
+        return Ok(());
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(());
+    };
+    let mut paths: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension()?.to_str()? == "lua").then(|| p.to_str().map(String::from))?
+        })
+        .collect();
+    paths.sort();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let joined = paths.join(":");
+    tracing::info!(target: "mpv", "loading bundled scripts: {joined}");
+    set_option_or_skip(handle, "scripts", &joined)
+}
+
 fn apply_defaults(
     handle: &Handle,
     display: DisplayBackend,
@@ -159,6 +254,20 @@ fn apply_defaults(
     // while the main thread is blocked in init.
     set("force-window", "yes")?;
     set("idle", "yes")?;
+
+    // Disable mpv's own default scripts-directory auto-load. Without this,
+    // mpv additionally scans its own config dir's `scripts/` subfolder and
+    // loads anything found there on top of `load_bundled_scripts` below —
+    // if a stray copy of a bundled script (e.g. dv-detect.lua, manually
+    // placed there during earlier testing) exists on a given machine, it
+    // runs a second time under an auto-suffixed name (e.g. `dv_detect2`),
+    // double-writing target-colorspace-hint around FILE_LOADED and
+    // corrupting fragile dual-layer DV/HEVC decode ("PPS changed between
+    // slices"). Bundled scripts are loaded explicitly below regardless.
+    set("load-scripts", "no")?;
+
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    load_bundled_scripts(handle)?;
 
     Ok(())
 }
