@@ -121,6 +121,7 @@ fn probe(ozone: &str, wayland_egl_dpy: *mut c_void) -> Result<bool, String> {
     let egl = egl::Egl::load_from(egl_lib).map_err(|e| format!("EGL load failed: {}", e))?;
 
     let (display, owns_display, _x11_state) = acquire_display(&egl, ozone, wayland_egl_dpy)?;
+    let nvidia = is_nvidia_vendor(&egl, display);
 
     let result = (|| -> Result<bool, String> {
         if unsafe { (egl.bind_api)(egl::OPENGL_ES_API) } != egl::TRUE {
@@ -185,7 +186,33 @@ fn probe(ozone: &str, wayland_egl_dpy: *mut c_void) -> Result<bool, String> {
         Ok(false) => tracing::warn!("dmabuf probe: ARGB8888 dmabuf import failed"),
         Err(e) => tracing::warn!("dmabuf probe: {}", e),
     }
+
+    // Even when the transport test passes on NVIDIA, CEF's OSR shared-texture
+    // path fails one layer up: Chromium can't wrap the imported buffer as a
+    // writable render target ("Unable to initialize SkSurface" in
+    // shared_image_representation.cc), leaving a blank window. Electron hits
+    // the same failure and closed it unfixed (electron/electron#49247), so
+    // stay on the software path regardless of the transport result.
+    if nvidia {
+        tracing::warn!(
+            "dmabuf probe: blocking shared textures on NVIDIA; CEF OSR path broken \
+             upstream (electron/electron#49247)"
+        );
+        return Ok(false);
+    }
     result
+}
+
+/// True if the EGL display's driver vendor string identifies NVIDIA's
+/// proprietary driver, which advertises `EGL_VENDOR` as "NVIDIA".
+fn is_nvidia_vendor(egl: &egl::Egl, display: egl::EGLDisplay) -> bool {
+    let vendor = unsafe { (egl.query_string)(display, egl::VENDOR) };
+    if vendor.is_null() {
+        return false;
+    }
+    unsafe { CStr::from_ptr(vendor) }
+        .to_str()
+        .is_ok_and(|s| s.contains("NVIDIA"))
 }
 
 struct X11Owned {
@@ -253,11 +280,10 @@ fn acquire_display(
     Ok((display, true, Some(owned)))
 }
 
-/// Modifiers the driver advertises for ARGB8888, filtered to ones usable as
-/// a plain sampled 2D texture (drops external-only entries, relevant mainly
-/// to planar/YUV formats but checked here for correctness). Empty when
-/// `EGL_EXT_image_dma_buf_import_modifiers` isn't available — callers should
-/// fall back to implicit-modifier import in that case.
+/// Modifiers the driver advertises for ARGB8888, dropping external-only
+/// entries (not usable as a plain sampled 2D texture). Empty when
+/// `EGL_EXT_image_dma_buf_import_modifiers` isn't available — callers fall
+/// back to implicit-modifier import in that case.
 fn query_argb8888_modifiers(egl: &egl::Egl, display: egl::EGLDisplay) -> Vec<u64> {
     let Ok(query) = get_gl::<FnEglQueryDmaBufModifiersExt>(egl, "eglQueryDmaBufModifiersEXT")
     else {
