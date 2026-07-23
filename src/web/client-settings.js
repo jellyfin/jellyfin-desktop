@@ -247,8 +247,9 @@
                         helpText.textContent = setting.help;
                         container.appendChild(helpText);
                     }
-                } else if (setting.inputType === 'text' || setting.inputType === 'textarea') {
+                } else if (setting.inputType === 'text' || setting.inputType === 'textarea' || setting.inputType === 'number') {
                     const isTextarea = setting.inputType === 'textarea';
+                    const isNumber = setting.inputType === 'number';
                     container.className = 'inputContainer';
                     const labelText = document.createElement('label');
                     labelText.className = 'inputLabel';
@@ -256,16 +257,38 @@
                     container.appendChild(labelText);
                     const control = document.createElement(isTextarea ? 'textarea' : 'input');
                     control.className = 'emby-input';
-                    control.value = values[setting.key] || '';
+                    control.value = values[setting.key] ?? '';
                     if (isTextarea) {
                         control.style.resize = 'none';
                         control.rows = 2;
+                    } else if (isNumber) {
+                        control.type = 'number';
+                        if (setting.placeholder !== undefined) control.placeholder = setting.placeholder;
+                        if (setting.min !== undefined) control.min = setting.min;
+                        if (setting.max !== undefined) control.max = setting.max;
+                        if (setting.step !== undefined) control.step = setting.step;
                     } else {
                         control.type = 'text';
                         if (setting.placeholder) control.placeholder = setting.placeholder;
                         if (setting.maxLength) control.maxLength = setting.maxLength;
                     }
                     control.addEventListener('change', () => {
+                        if (isNumber) {
+                            if (control.value.trim() === '') {
+                                control.value = jmpInfo.settings[section][setting.key] ?? '';
+                                return;
+                            }
+                            const parsed = Number(control.value);
+                            const belowMin = setting.min !== undefined && parsed < Number(setting.min);
+                            const aboveMax = setting.max !== undefined && parsed > Number(setting.max);
+                            if (!Number.isFinite(parsed) || belowMin || aboveMax) {
+                                control.value = jmpInfo.settings[section][setting.key] ?? '';
+                                return;
+                            }
+                            jmpInfo.settings[section][setting.key] = parsed;
+                            window.api.settings.setValue(section, setting.key, parsed);
+                            return;
+                        }
                         jmpInfo.settings[section][setting.key] = control.value;
                         window.api.settings.setValue(section, setting.key, control.value);
                     });
