@@ -12,6 +12,7 @@ crate-type = ["rlib"]
 jfn-paths = { path = "../paths" }
 jfn-platform-abi = { path = "../platform_abi" }
 parking_lot.workspace = true
+schemars = "1.2.1"
 serde_json = { workspace = true, features = ["preserve_order"] }
 
 [target.'cfg(unix)'.dependencies]

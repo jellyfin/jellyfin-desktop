@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SettingsData",
+  "type": "object",
+  "properties": {
+    "serverUrl": {
+      "description": "Server URL",
+      "type": "string",
+      "format": "uri",
+      "examples": [
+        "https://jellyfin.domain.tld"
+      ],
+      "default": ""
+    },
+    "hwdec": {
+      "description": "Hardware decoding mode (default: no)",
+      "type": "string",
+      "default": ""
+    },
+    "audioPassthrough": {
+      "description": "Audio passthrough codecs, e.g. ac3,dts-hd,eac3,truehd",
+      "type": "string",
+      "examples": [
+        "ac3,dts-hd"
+      ],
+      "default": ""
+    },
+    "audioChannels": {
+      "description": "Audio channel layout, e.g. stereo, 5.1, 7.1",
+      "type": "string",
+      "examples": [
+        "7.1"
+      ],
+      "default": ""
+    },
+    "logLevel": {
+      "description": "Log level",
+      "type": "string",
+      "examples": [
+        "debug"
+      ],
+      "default": ""
+    },
+    "deviceName": {
+      "description": "Device name",
+      "type": "string",
+      "examples": [
+        "MYHOST"
+      ],
+      "default": ""
+    },
+    "audioExclusive": {
+      "description": "Use exclusive audio output",
+      "type": "boolean",
+      "default": false
+    },
+    "disableGpuCompositing": {
+      "description": "Disable CEF GPU compositing",
+      "type": "boolean",
+      "default": false
+    },
+    "transparentTitlebar": {
+      "description": "Transparent title bar",
+      "type": "boolean",
+      "default": true
+    },
+    "forceTranscoding": {
+      "description": "Force transcoding",
+      "type": "boolean",
+      "default": false
+    },
+    "hideScrollbar": {
+      "description": "Enable hidden scrollbar",
+      "type": "boolean",
+      "default": true
+    }
+  }
+}

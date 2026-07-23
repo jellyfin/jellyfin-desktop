@@ -70,6 +70,10 @@ pub struct Cli {
     #[arg(long, action = ArgAction::SetTrue)]
     pub disable_gpu_compositing: bool,
 
+    /// Generate JSON settings schema
+    #[arg(long, hide = true, action = ArgAction::SetTrue)]
+    pub generate_settings_schema: bool,
+
     #[cfg(target_os = "linux")]
     #[command(flatten)]
     pub linux: jfn_linux_util::cli::LinuxArgs,
