@@ -33,8 +33,6 @@ jfn-paths = { path = "../paths" }
 jfn-playback = { path = "../playback" }
 jfn-wake-event = { path = "../wake_event" }
 
-[target.'cfg(unix)'.dependencies]
-libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 jfn-macos = { path = "../macos" }

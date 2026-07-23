@@ -1,24 +1,24 @@
-use libc::c_int;
+use std::ffi::c_int;
+use std::os::fd::BorrowedFd;
+
+use nix::errno::Errno;
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 
 /// Block until `fd` is readable. Level-triggered, so a signal that lands
 /// before the call returns immediately. Returns on any non-`EINTR`
 /// `poll` error rather than spinning.
 pub fn wait(fd: c_int) {
-    let mut pfd = libc::pollfd {
-        fd,
-        events: libc::POLLIN,
-        revents: 0,
-    };
+    let fd = unsafe { BorrowedFd::borrow_raw(fd) };
+    let mut fds = [PollFd::new(fd, PollFlags::POLLIN)];
     loop {
-        let r = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, -1) };
-        if r < 0 {
-            if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
-                continue;
+        match poll(&mut fds, PollTimeout::NONE) {
+            Err(Errno::EINTR) => continue,
+            Err(_) => return,
+            Ok(_) => {
+                if fds[0].revents().is_some_and(|r| !r.is_empty()) {
+                    return;
+                }
             }
-            return;
-        }
-        if pfd.revents != 0 {
-            return;
         }
     }
 }

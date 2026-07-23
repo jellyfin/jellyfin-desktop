@@ -9,8 +9,10 @@
 
 use crate::egl_dyn as egl;
 use libloading::Library;
+use nix::fcntl::{OFlag, open};
+use nix::sys::stat::Mode;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
-use std::os::fd::RawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::ptr;
 
 // ARGB8888 fourcc — pulled from drm_fourcc.h to avoid a libdrm dep.
@@ -259,38 +261,30 @@ fn run_gl_test(egl: &egl::Egl, display: egl::EGLDisplay) -> Result<bool, String>
         }
     };
 
-    let drm_fd = find_drm_node(egl, display)
-        .ok_or(())
-        .or_else(|_| open_legacy_node().ok_or(()));
-    let drm_fd = match drm_fd {
-        Ok(fd) => fd,
-        Err(_) => {
+    let drm_fd = match find_drm_node(egl, display).or_else(open_legacy_node) {
+        Some(fd) => fd,
+        None => {
             tracing::warn!("dmabuf probe: no DRM render node, assuming supported");
             return Ok(true);
         }
     };
 
-    let device = unsafe { (gbm.create_device)(drm_fd) };
+    let device = unsafe { (gbm.create_device)(drm_fd.as_raw_fd()) };
     if device.is_null() {
-        unsafe { libc::close(drm_fd) };
         return Err("gbm_create_device failed".into());
     }
 
     let bo = unsafe { (gbm.bo_create)(device, 64, 64, DRM_FORMAT_ARGB8888, GBM_BO_USE_RENDERING) };
     if bo.is_null() {
-        unsafe {
-            (gbm.device_destroy)(device);
-            libc::close(drm_fd);
-        }
+        unsafe { (gbm.device_destroy)(device) };
         return Err("gbm_bo_create ARGB8888 failed".into());
     }
 
-    let dmabuf_fd = unsafe { (gbm.bo_get_fd)(bo) };
+    let raw_dmabuf_fd = unsafe { (gbm.bo_get_fd)(bo) };
+    let dmabuf_fd = (raw_dmabuf_fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(raw_dmabuf_fd) });
     let stride = unsafe { (gbm.bo_get_stride)(bo) };
 
-    let result = if dmabuf_fd < 0 {
-        Err("gbm_bo_get_fd failed".to_string())
-    } else {
+    let result = if let Some(dmabuf_fd) = &dmabuf_fd {
         let img_attrs: [egl::Int; 13] = [
             egl::WIDTH,
             64,
@@ -299,7 +293,7 @@ fn run_gl_test(egl: &egl::Egl, display: egl::EGLDisplay) -> Result<bool, String>
             EGL_LINUX_DRM_FOURCC_EXT,
             DRM_FORMAT_ARGB8888 as egl::Int,
             EGL_DMA_BUF_PLANE0_FD_EXT,
-            dmabuf_fd as egl::Int,
+            dmabuf_fd.as_raw_fd() as egl::Int,
             EGL_DMA_BUF_PLANE0_OFFSET_EXT,
             0,
             EGL_DMA_BUF_PLANE0_PITCH_EXT,
@@ -339,15 +333,14 @@ fn run_gl_test(egl: &egl::Egl, display: egl::EGLDisplay) -> Result<bool, String>
                 Ok(ok)
             }
         }
+    } else {
+        Err("gbm_bo_get_fd failed".to_string())
     };
 
-    if dmabuf_fd >= 0 {
-        unsafe { libc::close(dmabuf_fd) };
-    }
+    drop(dmabuf_fd);
     unsafe {
         (gbm.bo_destroy)(bo);
         (gbm.device_destroy)(device);
-        libc::close(drm_fd);
     }
     result
 }
@@ -399,15 +392,16 @@ fn find_drm_node_path(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<CStrin
     Some(unsafe { CStr::from_ptr(node_ptr) }.to_owned())
 }
 
-fn find_drm_node(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<RawFd> {
+fn find_drm_node(egl: &egl::Egl, display: egl::EGLDisplay) -> Option<OwnedFd> {
     let node = find_drm_node_path(egl, display)?;
-    let fd = unsafe { libc::open(node.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
-    if fd >= 0 {
-        tracing::info!("dmabuf probe using render node: {}", node.to_string_lossy());
-        Some(fd)
-    } else {
-        None
-    }
+    let fd = open(
+        node.as_c_str(),
+        OFlag::O_RDWR | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .ok()?;
+    tracing::info!("dmabuf probe using render node: {}", node.to_string_lossy());
+    Some(fd)
 }
 
 /// # Safety
@@ -446,31 +440,22 @@ fn render_node(ozone: &str, wayland_egl_dpy: *mut c_void) -> Result<Option<(i64,
 }
 
 fn node_major_minor(path: &CStr) -> Option<(i64, i64)> {
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::stat(path.as_ptr(), &mut st) } != 0 {
-        return None;
-    }
-    // glibc dev_t encoding; the plain POSIX major/minor split decodes wrong.
-    let rdev = st.st_rdev as u64;
-    let major = ((rdev >> 8) & 0xfff) | ((rdev >> 32) & !0xfff_u64);
-    let minor = (rdev & 0xff) | ((rdev >> 12) & !0xff_u64);
+    let st = nix::sys::stat::stat(path).ok()?;
+    let major = nix::sys::stat::major(st.st_rdev);
+    let minor = nix::sys::stat::minor(st.st_rdev);
     Some((major as i64, minor as i64))
 }
 
-fn open_legacy_node() -> Option<RawFd> {
-    for i in 128..136 {
-        let path = format!("/dev/dri/renderD{}\0", i);
-        let fd = unsafe {
-            libc::open(
-                path.as_ptr() as *const c_char,
-                libc::O_RDWR | libc::O_CLOEXEC,
-            )
-        };
-        if fd >= 0 {
-            return Some(fd);
-        }
-    }
-    None
+fn open_legacy_node() -> Option<OwnedFd> {
+    (128..136).find_map(|i| {
+        let path = format!("/dev/dri/renderD{}", i);
+        open(
+            path.as_str(),
+            OFlag::O_RDWR | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .ok()
+    })
 }
 
 fn get_gl<T>(egl: &egl::Egl, name: &str) -> Result<T, String> {

@@ -19,6 +19,7 @@ jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
 cef.workspace = true
 libc.workspace = true
+nix.workspace = true
 objc2.workspace = true
 objc2-foundation.workspace = true
 tracing.workspace = true

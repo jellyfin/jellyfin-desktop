@@ -17,9 +17,10 @@
 //! path holds the lock during commit/flush, and finer-grained locking
 //! would risk null-attach vs. commit ordering races.
 
+use nix::sys::memfd::MFdFlags;
 use parking_lot::{Mutex, MutexGuard};
 use std::ffi::c_void;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::sync::{Arc, OnceLock};
 
 use jfn_gpu_paint::GpuContext;
@@ -629,13 +630,7 @@ pub(crate) fn create_dmabuf_buffer(
 /// Create a CLOEXEC anonymous memfd of the given size and truncate it.
 pub(crate) fn memfd_anon(name: &str, size: usize) -> Option<OwnedFd> {
     let c = std::ffi::CString::new(name).ok()?;
-    let raw = unsafe { libc::memfd_create(c.as_ptr(), libc::MFD_CLOEXEC) };
-    if raw < 0 {
-        return None;
-    }
-    let owned = unsafe { OwnedFd::from_raw_fd(raw) };
-    if unsafe { libc::ftruncate(owned.as_raw_fd(), size as libc::off_t) } < 0 {
-        return None;
-    }
+    let owned = nix::sys::memfd::memfd_create(c.as_c_str(), MFdFlags::MFD_CLOEXEC).ok()?;
+    nix::unistd::ftruncate(&owned, size as i64).ok()?;
     Some(owned)
 }

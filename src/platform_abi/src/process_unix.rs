@@ -7,7 +7,9 @@ use std::sync::OnceLock;
 // Shutdown signals
 // =====================================================================
 
-use libc::{SIGINT, SIGTERM, c_int, sigaction, sigemptyset};
+use std::ffi::c_int;
+
+use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 
 // Slot stays until process exit; the guard's Drop restores the original
 // dispositions.
@@ -25,22 +27,24 @@ pub fn install_shutdown(on_shutdown: fn()) {
 // Async-signal-safe by contract: reads an already-set OnceLock fn pointer and
 // calls it. The callback (jfn_shutdown_initiate) only wakes the manager; the
 // close/drain is orchestrated off-thread.
-unsafe extern "C" fn on_shutdown_signal(_sig: c_int) {
+extern "C" fn on_shutdown_signal(_sig: c_int) {
     if let Some(cb) = SHUTDOWN_CB.get() {
         cb();
     }
 }
 
 struct SignalGuard {
-    prev_int: sigaction,
-    prev_term: sigaction,
+    prev_int: Option<SigAction>,
+    prev_term: Option<SigAction>,
 }
 
 impl Drop for SignalGuard {
     fn drop(&mut self) {
-        unsafe {
-            libc::sigaction(SIGINT, &self.prev_int, std::ptr::null_mut());
-            libc::sigaction(SIGTERM, &self.prev_term, std::ptr::null_mut());
+        if let Some(prev) = &self.prev_int {
+            let _ = unsafe { sigaction(Signal::SIGINT, prev) };
+        }
+        if let Some(prev) = &self.prev_term {
+            let _ = unsafe { sigaction(Signal::SIGTERM, prev) };
         }
     }
 }
@@ -48,20 +52,15 @@ impl Drop for SignalGuard {
 /// # Safety
 /// `handler` must be async-signal-safe: it runs from inside a `sigaction`
 /// handler installed on SIGINT/SIGTERM.
-unsafe fn install_guard(handler: unsafe extern "C" fn(c_int)) -> SignalGuard {
-    let mut sa: sigaction = unsafe { std::mem::zeroed() };
-    sa.sa_sigaction = handler as usize;
-    unsafe { sigemptyset(&mut sa.sa_mask) };
-
-    let mut prev_int: sigaction = unsafe { std::mem::zeroed() };
-    let mut prev_term: sigaction = unsafe { std::mem::zeroed() };
-    unsafe {
-        libc::sigaction(SIGINT, &sa, &mut prev_int);
-        libc::sigaction(SIGTERM, &sa, &mut prev_term);
-    }
+unsafe fn install_guard(handler: extern "C" fn(c_int)) -> SignalGuard {
+    let sa = SigAction::new(
+        SigHandler::Handler(handler),
+        SaFlags::empty(),
+        SigSet::empty(),
+    );
     SignalGuard {
-        prev_int,
-        prev_term,
+        prev_int: unsafe { sigaction(Signal::SIGINT, &sa) }.ok(),
+        prev_term: unsafe { sigaction(Signal::SIGTERM, &sa) }.ok(),
     }
 }
 
@@ -70,13 +69,14 @@ unsafe fn install_guard(handler: unsafe extern "C" fn(c_int)) -> SignalGuard {
 // =====================================================================
 
 mod single_instance {
-    use libc::getuid;
-    use libc::{
-        AF_UNIX, ECONNREFUSED, ENOENT, POLLIN, SOCK_STREAM, c_char, c_int, c_void, close, pipe,
-        poll, pollfd, sockaddr_un,
+    use nix::errno::Errno;
+    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+    use nix::sys::socket::{
+        AddressFamily, Backlog, SockFlag, SockType, UnixAddr, accept, bind, connect, listen, socket,
     };
+    use nix::unistd::{close, getuid, pipe, read, unlink, write};
     use parking_lot::Mutex;
-    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
     use std::thread::{self, JoinHandle};
@@ -98,49 +98,28 @@ mod single_instance {
             p.push(file_name);
             return p;
         }
-        let uid = unsafe { getuid() };
+        let uid = getuid();
         PathBuf::from(format!("/tmp/jellium-desktop-{uid}-{instance_id}.sock"))
-    }
-
-    fn fill_sockaddr(path: &std::ffi::CStr) -> Option<sockaddr_un> {
-        let mut addr: sockaddr_un = unsafe { std::mem::zeroed() };
-        addr.sun_family = AF_UNIX as _;
-        let bytes = path.to_bytes_with_nul();
-        if bytes.len() > addr.sun_path.len() {
-            return None;
-        }
-        for (dst, src) in addr.sun_path.iter_mut().zip(bytes.iter()) {
-            *dst = *src as c_char;
-        }
-        Some(addr)
     }
 
     pub fn try_signal_existing(instance_id: &str) -> bool {
         let path = socket_path(instance_id);
-        let Ok(cpath) = CString::new(path.as_os_str().as_encoded_bytes()) else {
-            return false;
-        };
-        let Some(addr) = fill_sockaddr(&cpath) else {
+        let Ok(addr) = UnixAddr::new(&path) else {
             return false;
         };
 
-        let fd = unsafe { libc::socket(AF_UNIX, SOCK_STREAM, 0) };
-        if fd < 0 {
+        let Ok(fd) = socket(
+            AddressFamily::Unix,
+            SockType::Stream,
+            SockFlag::empty(),
+            None,
+        ) else {
             return false;
-        }
-        let rc = unsafe {
-            libc::connect(
-                fd,
-                &addr as *const _ as *const libc::sockaddr,
-                std::mem::size_of::<sockaddr_un>() as libc::socklen_t,
-            )
         };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            unsafe { close(fd) };
-            if err == ECONNREFUSED || err == ENOENT {
+        if let Err(err) = connect(fd.as_raw_fd(), &addr) {
+            if matches!(err, Errno::ECONNREFUSED | Errno::ENOENT) {
                 // Stale socket — remove so the new owner can bind.
-                unsafe { libc::unlink(cpath.as_ptr()) };
+                let _ = unlink(&path);
             }
             return false;
         }
@@ -153,52 +132,45 @@ mod single_instance {
             msg.push_str(&token);
         }
         msg.push('\n');
-        let bytes = msg.as_bytes();
-        unsafe {
-            libc::write(fd, bytes.as_ptr() as *const c_void, bytes.len());
-            close(fd);
-        }
+        let _ = write(&fd, msg.as_bytes());
         true
     }
 
     fn listener_loop(cb: Callback) {
         let listen_fd = LISTEN_FD.load(Ordering::Acquire);
         let wake_fd = WAKE_READ.load(Ordering::Acquire);
+        let listen_bfd = unsafe { BorrowedFd::borrow_raw(listen_fd) };
+        let wake_bfd = unsafe { BorrowedFd::borrow_raw(wake_fd) };
         let mut pfds = [
-            pollfd {
-                fd: listen_fd,
-                events: POLLIN,
-                revents: 0,
-            },
-            pollfd {
-                fd: wake_fd,
-                events: POLLIN,
-                revents: 0,
-            },
+            PollFd::new(listen_bfd, PollFlags::POLLIN),
+            PollFd::new(wake_bfd, PollFlags::POLLIN),
         ];
         while RUNNING.load(Ordering::Acquire) {
-            let n = unsafe { poll(pfds.as_mut_ptr(), 2, -1) };
-            if n < 0 {
+            if poll(&mut pfds, PollTimeout::NONE).is_err() {
                 break;
             }
-            if pfds[1].revents & POLLIN != 0 {
+            let readable =
+                |pfd: &PollFd| pfd.revents().is_some_and(|r| r.contains(PollFlags::POLLIN));
+            if readable(&pfds[1]) {
                 break;
             }
-            if pfds[0].revents & POLLIN == 0 {
+            if !readable(&pfds[0]) {
                 continue;
             }
-            let client =
-                unsafe { libc::accept(listen_fd, std::ptr::null_mut(), std::ptr::null_mut()) };
-            if client < 0 {
+            let Ok(client) = accept(listen_fd) else {
                 continue;
-            }
+            };
+            let client = unsafe { OwnedFd::from_raw_fd(client) };
             let mut buf = [0u8; 256];
-            let n = unsafe { libc::read(client, buf.as_mut_ptr() as *mut c_void, buf.len() - 1) };
-            unsafe { close(client) };
-            if n <= 0 {
+            let n = read(&client, &mut buf);
+            drop(client);
+            let Ok(n) = n else {
+                continue;
+            };
+            if n == 0 {
                 continue;
             }
-            let line = &buf[..n as usize];
+            let line = &buf[..n];
             if !line.starts_with(b"raise") {
                 continue;
             }
@@ -220,44 +192,35 @@ mod single_instance {
             return true;
         }
         let path = socket_path(instance_id);
-        let Ok(cpath) = CString::new(path.as_os_str().as_encoded_bytes()) else {
-            return false;
-        };
-        let Some(addr) = fill_sockaddr(&cpath) else {
+        let Ok(addr) = UnixAddr::new(&path) else {
             return false;
         };
 
-        let fd = unsafe { libc::socket(AF_UNIX, SOCK_STREAM, 0) };
-        if fd < 0 {
+        let Ok(fd) = socket(
+            AddressFamily::Unix,
+            SockType::Stream,
+            SockFlag::empty(),
+            None,
+        ) else {
             return false;
-        }
-        let rc = unsafe {
-            libc::bind(
-                fd,
-                &addr as *const _ as *const libc::sockaddr,
-                std::mem::size_of::<sockaddr_un>() as libc::socklen_t,
-            )
         };
-        if rc < 0 {
-            unsafe { close(fd) };
+        if bind(fd.as_raw_fd(), &addr).is_err() {
             return false;
         }
-        if unsafe { libc::listen(fd, 2) } < 0 {
-            unsafe { close(fd) };
-            unsafe { libc::unlink(cpath.as_ptr()) };
-            return false;
-        }
-
-        let mut pipefds: [c_int; 2] = [-1, -1];
-        if unsafe { pipe(pipefds.as_mut_ptr()) } < 0 {
-            unsafe { close(fd) };
-            unsafe { libc::unlink(cpath.as_ptr()) };
+        let backlog_ok = Backlog::new(2).is_ok_and(|b| listen(&fd, b).is_ok());
+        if !backlog_ok {
+            let _ = unlink(&path);
             return false;
         }
 
-        LISTEN_FD.store(fd, Ordering::Release);
-        WAKE_READ.store(pipefds[0], Ordering::Release);
-        WAKE_WRITE.store(pipefds[1], Ordering::Release);
+        let Ok((wake_read, wake_write)) = pipe() else {
+            let _ = unlink(&path);
+            return false;
+        };
+
+        LISTEN_FD.store(fd.into_raw_fd(), Ordering::Release);
+        WAKE_READ.store(wake_read.into_raw_fd(), Ordering::Release);
+        WAKE_WRITE.store(wake_write.into_raw_fd(), Ordering::Release);
         RUNNING.store(true, Ordering::Release);
 
         let handle = thread::spawn(move || listener_loop(cb));
@@ -271,30 +234,25 @@ mod single_instance {
         }
         let wake_write = WAKE_WRITE.swap(-1, Ordering::AcqRel);
         if wake_write >= 0 {
-            let buf = b"x";
-            unsafe {
-                libc::write(wake_write, buf.as_ptr() as *const c_void, 1);
-            }
+            let bfd = unsafe { BorrowedFd::borrow_raw(wake_write) };
+            let _ = write(bfd, b"x");
         }
         if let Some(h) = THREAD.lock().take()
             && let Err(e) = h.join()
         {
             eprintln!("[single-instance] listener thread panicked: {e:?}");
         }
-        let path = socket_path(instance_id);
-        if let Ok(cpath) = CString::new(path.as_os_str().as_encoded_bytes()) {
-            unsafe { libc::unlink(cpath.as_ptr()) };
-        }
+        let _ = unlink(&socket_path(instance_id));
         let listen = LISTEN_FD.swap(-1, Ordering::AcqRel);
         if listen >= 0 {
-            unsafe { close(listen) };
+            let _ = close(listen);
         }
         let r = WAKE_READ.swap(-1, Ordering::AcqRel);
         if r >= 0 {
-            unsafe { close(r) };
+            let _ = close(r);
         }
         if wake_write >= 0 {
-            unsafe { close(wake_write) };
+            let _ = close(wake_write);
         }
     }
 }

@@ -7,10 +7,12 @@
 //! managers. Mirrors mpv's clipboard-wayland.c: dedicated wl_display_connect,
 //! dedicated worker thread, no shared globals with the main display.
 
+use nix::errno::Errno;
+use nix::fcntl::OFlag;
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use parking_lot::Mutex;
 use std::io::{ErrorKind, Read};
-use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
-use std::os::raw::c_int;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -240,12 +242,7 @@ fn fire(pending: PendingCb, text: &[u8]) {
 fn start_receive(state: &mut State, conn: &Connection) -> Option<OwnedFd> {
     let (offer, mimes) = state.current_offer.as_ref()?;
     let mime = mimes.best()?;
-    let mut fds: [c_int; 2] = [-1, -1];
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } < 0 {
-        return None;
-    }
-    let read_end = unsafe { OwnedFd::from_raw_fd(fds[0]) };
-    let write_end = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+    let (read_end, write_end) = nix::unistd::pipe2(OFlag::O_CLOEXEC | OFlag::O_NONBLOCK).ok()?;
     offer.receive(mime.to_owned(), write_end.as_fd());
     let _ = conn.flush();
     drop(write_end);
@@ -276,47 +273,50 @@ fn worker_loop(
             None => continue,
         };
 
-        let mut pfds: Vec<libc::pollfd> = Vec::with_capacity(3);
-        pfds.push(libc::pollfd {
-            fd: display_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        });
-        pfds.push(libc::pollfd {
-            fd: wake_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        });
+        let mut pfds: Vec<PollFd> = Vec::with_capacity(3);
+        pfds.push(PollFd::new(
+            unsafe { BorrowedFd::borrow_raw(display_fd) },
+            PollFlags::POLLIN,
+        ));
+        pfds.push(PollFd::new(
+            unsafe { BorrowedFd::borrow_raw(wake_fd) },
+            PollFlags::POLLIN,
+        ));
         if let Some((fd, _, _)) = &active {
-            pfds.push(libc::pollfd {
-                fd: fd.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            });
+            pfds.push(PollFd::new(
+                unsafe { BorrowedFd::borrow_raw(fd.as_raw_fd()) },
+                PollFlags::POLLIN,
+            ));
         }
 
-        let r = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as _, -1) };
-        if r < 0 {
-            let err = std::io::Error::last_os_error();
-            drop(read_guard);
-            if err.kind() == ErrorKind::Interrupted {
+        match poll(&mut pfds, PollTimeout::NONE) {
+            Err(Errno::EINTR) => {
+                drop(read_guard);
                 continue;
             }
-            break;
+            Err(_) => {
+                drop(read_guard);
+                break;
+            }
+            Ok(_) => {}
         }
+        let revents_at =
+            |pfds: &[PollFd], i: usize| pfds[i].revents().unwrap_or(PollFlags::empty());
 
-        if pfds[0].revents & libc::POLLIN != 0 {
+        if revents_at(&pfds, 0).contains(PollFlags::POLLIN) {
             if read_guard.read().is_err() {
                 break;
             }
         } else {
             drop(read_guard);
         }
-        if pfds[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        if revents_at(&pfds, 0)
+            .intersects(PollFlags::POLLERR | PollFlags::POLLHUP | PollFlags::POLLNVAL)
+        {
             break;
         }
 
-        if pfds[1].revents & libc::POLLIN != 0 {
+        if revents_at(&pfds, 1).contains(PollFlags::POLLIN) {
             shared.wake.drain();
             let _ = queue.dispatch_pending(&mut state);
         }
@@ -325,9 +325,9 @@ fn worker_loop(
         if let Some((fd, _, buf)) = active.as_mut()
             && pfds.len() > 2
         {
-            let revents = pfds[2].revents;
+            let revents = revents_at(&pfds, 2);
             let mut done = false;
-            if revents & libc::POLLIN != 0 {
+            if revents.contains(PollFlags::POLLIN) {
                 let mut tmp = [0u8; 4096];
                 let mut file = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
                 loop {
@@ -348,7 +348,7 @@ fn worker_loop(
                 // Don't let File drop close the fd — it's owned by OwnedFd above.
                 let _ = file.into_raw_fd();
             }
-            if revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+            if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
                 done = true;
             }
             if done && let Some((_, cb, buf)) = active.take() {

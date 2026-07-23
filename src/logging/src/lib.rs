@@ -158,23 +158,25 @@ impl Write for RotatingFile {
 #[cfg(unix)]
 mod imp {
     use super::{CATEGORY_CEF, Level, emit};
+    use nix::errno::Errno;
+    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+    use nix::unistd::{dup, dup2_stderr, isatty, pipe, read, write};
     use std::io::{self, Write};
+    use std::os::fd::{AsFd, OwnedFd};
     use std::thread::{self, JoinHandle};
 
     // Holds a dup of the original stderr taken before StderrCapture's
     // dup2 redirect; writing via io::stderr() here would feed each log
     // line back into the capture pipe.
     pub(super) struct StderrWriter {
-        fd: libc::c_int,
+        fd: Option<OwnedFd>,
     }
 
     impl Write for StderrWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            let n = unsafe { libc::write(self.fd, buf.as_ptr() as *const _, buf.len()) };
-            if n < 0 {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(n as usize)
+            match &self.fd {
+                Some(fd) => Ok(write(fd, buf)?),
+                None => Err(Errno::EBADF.into()),
             }
         }
         fn flush(&mut self) -> io::Result<()> {
@@ -182,70 +184,34 @@ mod imp {
         }
     }
 
-    impl Drop for StderrWriter {
-        fn drop(&mut self) {
-            if self.fd >= 0 {
-                unsafe { libc::close(self.fd) };
-            }
-        }
-    }
-
     pub(super) fn make_console_writer() -> (StderrWriter, bool) {
-        let fd = unsafe { libc::dup(libc::STDERR_FILENO) };
-        let is_tty = fd >= 0 && unsafe { libc::isatty(fd) } == 1;
+        let fd = dup(io::stderr()).ok();
+        let is_tty = fd.as_ref().is_some_and(|fd| isatty(fd).unwrap_or(false));
         (StderrWriter { fd }, is_tty)
     }
 
     pub(super) struct StderrCapture {
-        original_fd: libc::c_int,
-        signal_write: libc::c_int,
+        original_fd: Option<OwnedFd>,
+        signal_write: Option<OwnedFd>,
         join: Option<JoinHandle<()>>,
     }
 
     impl StderrCapture {
         pub(super) fn start() -> Option<Self> {
-            unsafe {
-                let original = libc::dup(libc::STDERR_FILENO);
-                if original < 0 {
-                    return None;
-                }
+            let original = dup(io::stderr()).ok()?;
+            let (pipe_read, pipe_write) = pipe().ok()?;
+            let (signal_read, signal_write) = pipe().ok()?;
 
-                let mut pipe_fds = [0; 2];
-                if libc::pipe(pipe_fds.as_mut_ptr()) < 0 {
-                    libc::close(original);
-                    return None;
-                }
-                let pipe_read = pipe_fds[0];
-                let pipe_write = pipe_fds[1];
+            dup2_stderr(&pipe_write).ok()?;
+            drop(pipe_write);
 
-                let mut signal_fds = [0; 2];
-                if libc::pipe(signal_fds.as_mut_ptr()) < 0 {
-                    libc::close(original);
-                    libc::close(pipe_read);
-                    libc::close(pipe_write);
-                    return None;
-                }
-                let signal_read = signal_fds[0];
-                let signal_write = signal_fds[1];
+            let join = thread::spawn(move || capture_loop(&pipe_read, &signal_read));
 
-                if libc::dup2(pipe_write, libc::STDERR_FILENO) < 0 {
-                    libc::close(original);
-                    libc::close(pipe_read);
-                    libc::close(pipe_write);
-                    libc::close(signal_read);
-                    libc::close(signal_write);
-                    return None;
-                }
-                libc::close(pipe_write);
-
-                let join = thread::spawn(move || capture_loop(pipe_read, signal_read));
-
-                Some(StderrCapture {
-                    original_fd: original,
-                    signal_write,
-                    join: Some(join),
-                })
-            }
+            Some(StderrCapture {
+                original_fd: Some(original),
+                signal_write: Some(signal_write),
+                join: Some(join),
+            })
         }
 
         pub(super) fn stop(&mut self) {
@@ -254,68 +220,53 @@ mod imp {
             // signal pipe, THEN join, THEN close the signal write end. Joining
             // before closing signal_write avoids a window where the capture
             // thread races a close on its read end.
-            unsafe {
-                if self.original_fd >= 0 {
-                    libc::dup2(self.original_fd, libc::STDERR_FILENO);
-                    libc::close(self.original_fd);
-                    self.original_fd = -1;
-                }
-                let buf = b"x";
-                libc::write(self.signal_write, buf.as_ptr() as *const _, 1);
+            if let Some(original) = self.original_fd.take() {
+                let _ = dup2_stderr(&original);
+            }
+            if let Some(w) = &self.signal_write {
+                let _ = write(w, b"x");
             }
             if let Some(h) = self.join.take()
                 && let Err(e) = h.join()
             {
                 eprintln!("[logging] stderr capture thread panicked: {e:?}");
             }
-            unsafe {
-                libc::close(self.signal_write);
-            }
-            self.signal_write = -1;
+            self.signal_write = None;
         }
     }
 
-    fn capture_loop(pipe_read: libc::c_int, signal_read: libc::c_int) {
+    fn capture_loop(pipe_read: &OwnedFd, signal_read: &OwnedFd) {
         let mut buf = [0u8; 4096];
         let mut partial = Vec::<u8>::new();
-        unsafe {
-            loop {
-                let mut pfds = [
-                    libc::pollfd {
-                        fd: pipe_read,
-                        events: libc::POLLIN,
-                        revents: 0,
-                    },
-                    libc::pollfd {
-                        fd: signal_read,
-                        events: libc::POLLIN,
-                        revents: 0,
-                    },
-                ];
-                let rc = libc::poll(pfds.as_mut_ptr(), 2, -1);
-                if rc < 0 {
+        loop {
+            let mut pfds = [
+                PollFd::new(pipe_read.as_fd(), PollFlags::POLLIN),
+                PollFd::new(signal_read.as_fd(), PollFlags::POLLIN),
+            ];
+            if poll(&mut pfds, PollTimeout::NONE).is_err() {
+                break;
+            }
+            let readable =
+                |pfd: &PollFd| pfd.revents().is_some_and(|r| r.contains(PollFlags::POLLIN));
+            if readable(&pfds[1]) {
+                break;
+            }
+            if readable(&pfds[0]) {
+                let Ok(n) = read(pipe_read, &mut buf) else {
+                    break;
+                };
+                if n == 0 {
                     break;
                 }
-                if pfds[1].revents & libc::POLLIN != 0 {
-                    break;
-                }
-                if pfds[0].revents & libc::POLLIN != 0 {
-                    let n = libc::read(pipe_read, buf.as_mut_ptr() as *mut _, buf.len());
-                    if n <= 0 {
-                        break;
-                    }
-                    partial.extend_from_slice(&buf[..n as usize]);
-                    while let Some(pos) = partial.iter().position(|&b| b == b'\n') {
-                        let line: Vec<u8> = partial.drain(..=pos).take(pos).collect();
-                        if !line.is_empty() {
-                            let msg = String::from_utf8_lossy(&line).into_owned();
-                            emit(CATEGORY_CEF, Level::Debug, &msg);
-                        }
+                partial.extend_from_slice(&buf[..n]);
+                while let Some(pos) = partial.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = partial.drain(..=pos).take(pos).collect();
+                    if !line.is_empty() {
+                        let msg = String::from_utf8_lossy(&line).into_owned();
+                        emit(CATEGORY_CEF, Level::Debug, &msg);
                     }
                 }
             }
-            libc::close(pipe_read);
-            libc::close(signal_read);
         }
     }
 }

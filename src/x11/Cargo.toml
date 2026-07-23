@@ -27,6 +27,7 @@ jfn-platform-abi = { path = "../platform_abi" }
 jfn-playback = { path = "../playback" }
 jfn-wake-event = { path = "../wake_event" }
 libc.workspace = true
+nix.workspace = true
 tracing.workspace = true
 xcb = { version = "1.7", features = ["xkb", "as-raw-xcb-connection"] }
 x11rb = { version = "0.14", features = ["cursor", "resource_manager", "shape", "shm", "xfixes"] }

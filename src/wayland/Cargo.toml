@@ -31,6 +31,7 @@ cef.workspace = true
 error_reporter = "1.0.0"
 libc.workspace = true
 libloading = "0.9"
+nix.workspace = true
 wl-proxy = { version = "0.1.4", features = ["all-protocols"] }
 memmap2 = "0.9"
 tracing.workspace = true
