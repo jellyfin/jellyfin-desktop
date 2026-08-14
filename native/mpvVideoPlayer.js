@@ -6,9 +6,22 @@
         });
     }
 
-    function clampVolume(val) {
-        return Math.min(100, Math.max(0, Math.round(val)));
+    // --- volume-clamp:begin (pure; asserted by native/volumeClamp.test.mjs) ---
+    /**
+     * Clamp a volume to 0..maxVolume. Returns null if the input is not a number,
+     * matching the existing "ignore junk input" behaviour of setVolume.
+     *
+     * maxVolume comes from the audio.max_volume setting. A missing or bogus value
+     * can never clamp below the historical ceiling of 100.
+     */
+    function clampVolume(val, maxVolume) {
+        const num = Number(val);
+        if (isNaN(num)) return null;
+
+        // Round: fractional volumes make the server reject session reports (#1209).
+        return Math.min(Math.max(Math.round(num), 0), Math.max(100, Number(maxVolume) || 100));
     }
+    // --- volume-clamp:end ---
 
     class mpvVideoPlayer {
         constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm, dashboard }) {
@@ -144,6 +157,20 @@
             /**
              * @private
              */
+            this.onWheel = (e) => {
+                if (!this._videoDialog) return;
+                e.preventDefault();
+                if (e.deltaY < 0) {
+                    this.volumeUp();
+                } else {
+                    this.volumeDown();
+                }
+                this.showVolumeIndicator();
+            };
+
+            /**
+             * @private
+             */
             this.onTimeUpdate = (time) => {
                 if (time && !this._timeUpdated) {
                     this._timeUpdated = true;
@@ -162,7 +189,7 @@
 
                     this.loading.hide();
 
-                    const volume = clampVolume(this.getSavedVolume() * 100);
+                    const volume = clampVolume(this.getSavedVolume() * 100, window.jmpInfo?.settings?.audio?.max_volume);
                     this.setVolume(volume, false);
 
                     this.setPlaybackRate(this.getPlaybackRate());
@@ -494,6 +521,13 @@
 
             document.body.classList.remove('hide-scroll');
 
+            document.removeEventListener('wheel', this.onWheel);
+            clearTimeout(this._volumeIndicatorTimer);
+            if (this._volumeIndicator) {
+                this._volumeIndicator.remove();
+                this._volumeIndicator = null;
+            }
+
             const dlg = this._videoDialog;
             if (dlg) {
                 this.setTransparency(0); // TRANSPARENCY_LEVEL.None
@@ -561,6 +595,7 @@
                 document.body.insertBefore(dlg, document.body.firstChild);
                 this.setTransparency(2); // TRANSPARENCY_LEVEL.Full
                 this._videoDialog = dlg;
+                document.addEventListener('wheel', this.onWheel, { passive: false });
                 const player = window.api.player;
                 if (!this._hasConnection) {
                     this._hasConnection = true;
@@ -799,9 +834,8 @@
     }
 
     setVolume(val, save = true) {
-        val = Number(val);
-        if (!isNaN(val)) {
-            val = clampVolume(val);
+        val = clampVolume(val, window.jmpInfo?.settings?.audio?.max_volume);
+        if (val !== null) {
             this._volume = val;
             if (save) {
                 this.saveVolume(val / 100);
@@ -811,16 +845,41 @@
         }
     }
 
+    // jellyfin-web's player interface is contractually 0-100, and its volume OSD
+    // sizes a bar to whatever this returns — a boosted value overflows the widget.
+    // Keep the true level in _volume and only ever report a clamped one outwards.
     getVolume() {
         return clampVolume(this._volume ?? 100);
     }
 
     volumeUp() {
-        this.setVolume(Math.min(this.getVolume() + 2, 100));
+        this.setVolume(this._volume + 2);
     }
 
     volumeDown() {
-        this.setVolume(Math.max(this.getVolume() - 2, 0));
+        this.setVolume(this._volume - 2);
+    }
+
+    showVolumeIndicator() {
+        let el = this._volumeIndicator;
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'mpvVolumeIndicator';
+            Object.assign(el.style, {
+                position: 'fixed', top: '1.5em', right: '1.5em', zIndex: 9999,
+                padding: '0.4em 0.9em', borderRadius: '0.3em',
+                background: 'rgba(0,0,0,0.7)', color: '#fff',
+                fontSize: '1.5em', pointerEvents: 'none',
+                transition: 'opacity 0.3s'
+            });
+            document.body.appendChild(el);
+            this._volumeIndicator = el;
+        }
+
+        el.textContent = `${Math.round(this._volume)}%`;
+        el.style.opacity = '1';
+        clearTimeout(this._volumeIndicatorTimer);
+        this._volumeIndicatorTimer = setTimeout(() => { el.style.opacity = '0'; }, 1000);
     }
 
     setMute(mute, triggerEvent = true) {
