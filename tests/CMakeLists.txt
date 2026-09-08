@@ -39,3 +39,12 @@ target_link_libraries(test_displaymanager jmp_core Qt6::Test)
 target_include_directories(test_displaymanager PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(test_displaymanager PRIVATE ${TEST_COMPILE_DEFS})
 add_test(NAME test_displaymanager COMMAND test_displaymanager)
+
+find_package(Qt6 ${REQUIRED_QT_VERSION} REQUIRED COMPONENTS QuickTest WebEngineQuick)
+add_executable(test_inputplugin test_inputplugin_runner.cpp)
+target_link_libraries(test_inputplugin PRIVATE Qt6::QuickTest Qt6::WebEngineQuick)
+add_test(NAME test_inputplugin
+         COMMAND test_inputplugin -input ${CMAKE_CURRENT_SOURCE_DIR}/qml)
+set_tests_properties(test_inputplugin PROPERTIES
+  ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+  TIMEOUT 30)
