@@ -141,7 +141,7 @@
                     this._timeUpdated = true;
                 }
 
-                this._currentTime = time;
+                this._currentTime = time != null ? Math.round(time) : time;
                 this.events.trigger(this, 'timeupdate');
             };
 
@@ -154,7 +154,7 @@
 
                     this.loading.hide();
 
-                    const volume = this.getSavedVolume() * 100;
+                    const volume = Math.min(100, Math.max(0, Math.round(this.getSavedVolume() * 100)));
                     this.setVolume(volume, false);
 
                     this.setPlaybackRate(this.getPlaybackRate());
@@ -779,6 +779,7 @@
     setVolume(val, save = true) {
         val = Number(val);
         if (!isNaN(val)) {
+            val = Math.min(100, Math.max(0, Math.round(val)));
             this._volume = val;
             if (save) {
                 this.saveVolume(val / 100);
@@ -789,7 +790,7 @@
     }
 
     getVolume() {
-        return this._volume;
+        return Math.min(100, Math.max(0, Math.round(this._volume ?? 100)));
     }
 
     volumeUp() {
