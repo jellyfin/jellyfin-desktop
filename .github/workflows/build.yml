@@ -11,6 +11,12 @@ on:
 jobs:
   macos:
     uses: ./.github/workflows/build-macos.yml
+    secrets:
+      MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+      MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+      NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+      NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+      NOTARY_API_KEY_ISSUER: ${{ secrets.NOTARY_API_KEY_ISSUER }}
 
   windows:
     uses: ./.github/workflows/build-windows.yml
