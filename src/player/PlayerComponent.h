@@ -130,6 +130,8 @@ public:
 
   AlbumArtProvider* albumArtProvider() const { return m_albumArtProvider; }
 
+  Q_INVOKABLE bool isVideoPlaying() const { return m_isVideoPlaying; }
+
   void setMpvController(MpvController* controller) {
     if (!m_mpv)
       m_mpv = controller;
@@ -223,6 +225,8 @@ Q_SIGNALS:
   // Buffered ranges from demuxer-cache-state, as list of {start, end} in ticks
   void bufferedRangesUpdated(const QVariantList& ranges);
 
+  void videoPlayingChanged(bool isPlaying);
+
 private:
   // this is the function actually implemented in the backends. the variantmap contains
   // a few known keys:
@@ -235,6 +239,7 @@ private:
   void loadWithOptions(const QVariantMap& options);
   void setQtQuickWindow(QQuickWindow* window);
   void updatePlaybackState();
+  void updateVideoPlayingState();
   void handleMpvEvent(mpv_event *event);
   // Potentially switch the display refresh rate, and return true if the refresh rate
   // was actually changed.
@@ -252,6 +257,9 @@ private:
   bool m_playbackActive;
   bool m_windowVisible;
   bool m_videoPlaybackActive;
+  bool m_isVideoPlaying;
+  QString m_webPlaybackState;
+  QString m_currentMediaType;
   bool m_inPlayback;
   bool m_playbackCanceled;
   QString m_playbackError;

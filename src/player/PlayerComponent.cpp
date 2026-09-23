@@ -43,7 +43,9 @@ static void wakeup_cb(void *context)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 PlayerComponent::PlayerComponent(QObject* parent)
   : ComponentBase(parent), m_state(State::finished), m_paused(false), m_playbackActive(false),
-  m_windowVisible(false), m_videoPlaybackActive(false), m_inPlayback(false), m_playbackCanceled(false),
+  m_windowVisible(false), m_videoPlaybackActive(false), m_isVideoPlaying(false),
+  m_webPlaybackState(), m_currentMediaType(),
+  m_inPlayback(false), m_playbackCanceled(false),
   m_bufferingPercentage(100), m_lastBufferingPercentage(-1),
   m_lastPositionUpdate(0.0), m_playbackAudioDelay(0),
   m_window(nullptr), m_mediaFrameRate(0),
@@ -488,6 +490,8 @@ void PlayerComponent::updatePlaybackState()
     m_videoPlaybackActive = is_videoPlaybackActive;
     emit videoPlaybackActive(m_videoPlaybackActive);
   }
+
+  updateVideoPlayingState();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -769,8 +773,29 @@ void PlayerComponent::notifyQueueChange(bool canNext, bool canPrevious)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+void PlayerComponent::updateVideoPlayingState()
+{
+  bool playing = false;
+  if (m_webPlaybackState == "Paused" || m_webPlaybackState == "Stopped") {
+    playing = false;
+  } else if (m_videoPlaybackActive) {
+    playing = true;
+  } else if (m_webPlaybackState == "Playing" && m_currentMediaType == "Video") {
+    playing = true;
+  }
+
+  if (m_isVideoPlaying != playing) {
+    m_isVideoPlaying = playing;
+    emit videoPlayingChanged(m_isVideoPlaying);
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::notifyPlaybackStop(bool isNavigating)
 {
+  m_webPlaybackState = "Stopped";
+  m_currentMediaType.clear();
+  updateVideoPlayingState();
   emit playbackStopped(isNavigating);
 }
 
@@ -783,6 +808,8 @@ void PlayerComponent::notifyDurationChange(qint64 durationMs)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::notifyPlaybackState(const QString& state)
 {
+  m_webPlaybackState = state;
+  updateVideoPlayingState();
   emit playbackStateChanged(state);
 }
 
@@ -801,6 +828,10 @@ void PlayerComponent::notifySeek(qint64 positionMs)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::notifyMetadata(const QVariantMap& metadata)
 {
+  if (metadata.contains("MediaType")) {
+    m_currentMediaType = metadata.value("MediaType").toString();
+    updateVideoPlayingState();
+  }
   emit metadataChanged(metadata);
 }
 
@@ -813,6 +844,7 @@ void PlayerComponent::notifyVolumeChange(double volume)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::stop()
 {
+  updateVideoPlayingState();
   if (!m_mpv) {
     qWarning() << "PlayerComponent::stop: mpv not initialized yet";
     return;

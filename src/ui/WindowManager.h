@@ -46,8 +46,9 @@ public:
 
   // Cursor visibility
   Q_INVOKABLE void setCursorVisibility(bool visible);
+  Q_INVOKABLE void resetCursorIdleTimer();
 
-  // Event filter for cursor enter/leave tracking
+  // Event filter for cursor tracking
   bool eventFilter(QObject* watched, QEvent* event) override;
 
   // Window activation
@@ -72,8 +73,12 @@ private slots:
   void updateDebugInfo();
   void onShowDebugLayerChanged();
   void updateOpenGLInfo();
+  void onCursorHideTimeout();
+  void updateCursorIdleState();
 
 private:
+  void handleCursorActivity();
+
   // Geometry (separate size/position)
   void loadGeometry();
   QRect loadGeometryRect();
@@ -111,6 +116,7 @@ private:
   int m_ignoreFullscreenSettingsChange;
   bool m_cursorVisible;
   bool m_cursorInsideWindow;
+  QTimer* m_cursorHideTimer;
 
   // Window state
   QWindow::Visibility m_previousVisibility;  // State before fullscreen
