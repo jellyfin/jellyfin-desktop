@@ -17,6 +17,10 @@
 #include "win/DisplayManagerWin.h"
 #endif
 
+#ifdef USE_KDE_WAYLAND
+#include "kde/DisplayManagerKDE.h"
+#endif
+
 #include "dummy/DisplayManagerDummy.h"
 #include "input/InputComponent.h"
 
@@ -51,17 +55,33 @@ bool DisplayComponent::initializeDisplayManager()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 bool DisplayComponent::componentInitialize()
 {
-#if 0
-  m_displayManager = new DisplayManagerDummy(this);
-#elif defined(Q_OS_MAC)
-  m_displayManager = new DisplayManagerOSX(this);
-#elif defined(TARGET_RPI)
-  m_displayManager = new DisplayManagerRPI(this);
-#elif defined(USE_X11XRANDR)
-  m_displayManager = new DisplayManagerX11(this);
-#elif defined(Q_OS_WIN)
-  m_displayManager = new DisplayManagerWin(this);
+#ifdef USE_KDE_WAYLAND
+  // XRandR under Xwayland only sees emulated outputs, so use KWin's protocols when available.
+  if (QGuiApplication::platformName() == "wayland")
+  {
+    m_displayManager = new DisplayManagerKDE(this);
+    if (!m_displayManager->initialize())
+    {
+      delete m_displayManager;
+      m_displayManager = nullptr;
+    }
+  }
 #endif
+
+  if (!m_displayManager)
+  {
+#if 0
+    m_displayManager = new DisplayManagerDummy(this);
+#elif defined(Q_OS_MAC)
+    m_displayManager = new DisplayManagerOSX(this);
+#elif defined(TARGET_RPI)
+    m_displayManager = new DisplayManagerRPI(this);
+#elif defined(USE_X11XRANDR)
+    m_displayManager = new DisplayManagerX11(this);
+#elif defined(Q_OS_WIN)
+    m_displayManager = new DisplayManagerWin(this);
+#endif
+  }
 
   if (initializeDisplayManager())
   {
@@ -246,7 +266,7 @@ int DisplayComponent::getApplicationDisplay(bool silent)
       qInfo() << "Looking for a display at:" << activeWindow->geometry()
                    << "(center:" << activeWindow->geometry().center() << ")";
     }
-    display = m_displayManager->getDisplayFromPoint(activeWindow->geometry().center());
+    display = m_displayManager->getDisplayFromWindow(activeWindow);
   }
 
   if (!silent)
