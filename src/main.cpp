@@ -227,7 +227,6 @@ int main(int argc, char *argv[])
 #endif
     }
 
-    detectOpenGLEarly();
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
@@ -419,6 +418,10 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    // Before the QApplication exists, but after the command line handling above returned
+    // early and logging is up, so command line tools skip it and its results are logged
+    detectOpenGLEarly();
+
     QStringList chromiumFlags;
 #ifdef Q_OS_LINUX
     // Disable QtWebEngine's automatic MPRIS registration - we handle it ourselves
@@ -432,10 +435,12 @@ int main(int argc, char *argv[])
     if (parser.isSet("ignore-certificate-errors"))
       chromiumFlags << "--ignore-certificate-errors";
 
+    if (parser.isSet("disable-gpu"))
+      chromiumFlags << "--disable-gpu";
 #ifdef Q_OS_WIN
     // Without DX interop QtWebEngine crashes importing GPU frames. Keep the GPU process,
     // but composite in software.
-    if (!hasOpenGLDXInterop())
+    else if (!hasOpenGLDXInterop())
     {
       qWarning() << "OpenGL driver lacks WGL_NV_DX_interop, disabling QtWebEngine GPU compositing";
       chromiumFlags << "--disable-gpu-compositing";
@@ -443,7 +448,13 @@ int main(int argc, char *argv[])
 #endif
 
     if (!chromiumFlags.isEmpty())
+    {
+      // Keep flags the user set in the environment
+      QByteArray userFlags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+      if (!userFlags.isEmpty())
+        chromiumFlags.prepend(QString::fromUtf8(userFlags));
       qputenv("QTWEBENGINE_CHROMIUM_FLAGS", chromiumFlags.join(" ").toUtf8());
+    }
 
     if (parser.isSet("remote-debugging-port"))
       qputenv("QTWEBENGINE_REMOTE_DEBUGGING", parser.value("remote-debugging-port").toUtf8());

@@ -114,12 +114,14 @@ static bool probeDxInterop()
   // (such as Qt's software opengl32sw) is safer composited in software.
   const bool replacement = library.compare("opengl32", Qt::CaseInsensitive) != 0;
   bool supported = !replacement;
+  QByteArray renderer = "probe failed";
 
   HMODULE gl = LoadLibraryA(library.constData());
   auto createContext = resolveExport<decltype(&wglCreateContext)>(gl, "wglCreateContext");
   auto makeCurrent = resolveExport<decltype(&wglMakeCurrent)>(gl, "wglMakeCurrent");
   auto deleteContext = resolveExport<decltype(&wglDeleteContext)>(gl, "wglDeleteContext");
   auto getProcAddress = resolveExport<decltype(&wglGetProcAddress)>(gl, "wglGetProcAddress");
+  auto getString = resolveExport<decltype(&glGetString)>(gl, "glGetString");
   // Like Qt, a replacement library handles pixel formats itself
   auto choosePixelFormat = &ChoosePixelFormat;
   auto setPixelFormat = &SetPixelFormat;
@@ -128,7 +130,7 @@ static bool probeDxInterop()
     choosePixelFormat = resolveExport<decltype(&ChoosePixelFormat)>(gl, "wglChoosePixelFormat");
     setPixelFormat = resolveExport<decltype(&SetPixelFormat)>(gl, "wglSetPixelFormat");
   }
-  bool resolved = createContext && makeCurrent && deleteContext && getProcAddress &&
+  bool resolved = createContext && makeCurrent && deleteContext && getProcAddress && getString &&
                   choosePixelFormat && setPixelFormat;
 
   // STATIC is a predefined window class, so nothing needs registering
@@ -150,6 +152,7 @@ static bool probeDxInterop()
       HGLRC ctx = createContext(dc);
       if (ctx && makeCurrent(dc, ctx))
       {
+        renderer = reinterpret_cast<const char *>(getString(GL_RENDERER));
         supported = isValidProc(getProcAddress("wglDXOpenDeviceNV"));
         makeCurrent(nullptr, nullptr);
       }
@@ -160,6 +163,9 @@ static bool probeDxInterop()
   }
   if (hwnd)
     DestroyWindow(hwnd);
+
+  qInfo() << "OpenGL:" << library.constData() << "-" << renderer.constData()
+          << "- WGL_NV_DX_interop" << (supported ? "yes" : "no");
   return supported;
 }
 
