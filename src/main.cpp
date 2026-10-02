@@ -34,6 +34,10 @@
 #include "PFMoveApplication.h"
 #endif
 
+#ifdef Q_OS_WIN
+#include "player/DXInteropShim.h"
+#endif
+
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
 #include "SignalManager.h"
 #endif
@@ -438,9 +442,9 @@ int main(int argc, char *argv[])
     if (parser.isSet("disable-gpu"))
       chromiumFlags << "--disable-gpu";
 #ifdef Q_OS_WIN
-    // Without DX interop QtWebEngine crashes importing GPU frames. Keep the GPU process,
-    // but composite in software.
-    else if (!hasOpenGLDXInterop())
+    // Without DX interop QtWebEngine crashes importing GPU frames. If it can't be
+    // emulated either, keep the GPU process and only composite in software.
+    else if (openGLDXInterop() == DXInterop::Unsupported)
     {
       qWarning() << "OpenGL driver lacks WGL_NV_DX_interop, disabling QtWebEngine GPU compositing";
       chromiumFlags << "--disable-gpu-compositing";
@@ -461,6 +465,14 @@ int main(int argc, char *argv[])
 
     QtWebEngineQuick::initialize();
     QApplication app(newArgc, newArgv);
+
+#ifdef Q_OS_WIN
+    // Chromium reads its flags when the first profile is created below, so if the shim
+    // can't be installed it's not too late to fall back to software compositing
+    if (openGLDXInterop() == DXInterop::Emulated && !installDXInteropShim())
+      qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
+              qgetenv("QTWEBENGINE_CHROMIUM_FLAGS") + " --disable-gpu-compositing");
+#endif
 
 #if defined(Q_OS_WIN) 
     // Setting window icon on OSX will break user ability to change it

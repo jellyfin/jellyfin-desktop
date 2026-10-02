@@ -73,8 +73,11 @@ void detectOpenGLLate()
 #elif defined(Q_OS_WIN)
 
 #include <windows.h>
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <cstring>
 
-static bool g_dxInteropSupported = true;
+static DXInterop g_dxInterop = DXInterop::Native;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // The OpenGL library the qwindows platform plugin will load
@@ -102,18 +105,99 @@ static T resolveExport(HMODULE module, const char *name)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+template <typename T>
+static T resolveExtension(decltype(&wglGetProcAddress) getProcAddress, const char *name)
+{
+  PROC proc = getProcAddress(name);
+  return isValidProc(proc) ? reinterpret_cast<T>(proc) : nullptr;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Import a D3D11 texture shared with an NT handle into GL the way DXInteropShim does with
+// every frame, to know the driver supports it. Needs a current GL context.
+static bool canImportD3D11Texture(HMODULE gl, decltype(&wglGetProcAddress) getProcAddress)
+{
+  auto genTextures = resolveExport<decltype(&glGenTextures)>(gl, "glGenTextures");
+  auto deleteTextures = resolveExport<decltype(&glDeleteTextures)>(gl, "glDeleteTextures");
+  auto bindTexture = resolveExport<decltype(&glBindTexture)>(gl, "glBindTexture");
+  auto getError = resolveExport<decltype(&glGetError)>(gl, "glGetError");
+  auto createMemoryObjects =
+    resolveExtension<PFNGLCREATEMEMORYOBJECTSEXTPROC>(getProcAddress, "glCreateMemoryObjectsEXT");
+  auto deleteMemoryObjects =
+    resolveExtension<PFNGLDELETEMEMORYOBJECTSEXTPROC>(getProcAddress, "glDeleteMemoryObjectsEXT");
+  auto memoryObjectParameteriv = resolveExtension<PFNGLMEMORYOBJECTPARAMETERIVEXTPROC>(
+    getProcAddress, "glMemoryObjectParameterivEXT");
+  auto importMemoryWin32Handle = resolveExtension<PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC>(
+    getProcAddress, "glImportMemoryWin32HandleEXT");
+  auto texStorageMem2D =
+    resolveExtension<PFNGLTEXSTORAGEMEM2DEXTPROC>(getProcAddress, "glTexStorageMem2DEXT");
+  auto createDevice =
+    resolveExport<PFN_D3D11_CREATE_DEVICE>(LoadLibraryW(L"d3d11.dll"), "D3D11CreateDevice");
+  if (!genTextures || !deleteTextures || !bindTexture || !getError || !createMemoryObjects ||
+      !deleteMemoryObjects || !memoryObjectParameteriv || !importMemoryWin32Handle ||
+      !texStorageMem2D || !createDevice)
+    return false;
+
+  // Chromium hands over RGBA textures
+  D3D11_TEXTURE2D_DESC desc = {};
+  desc.Width = desc.Height = 16;
+  desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+  desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  desc.Usage = D3D11_USAGE_DEFAULT;
+  desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+
+  bool ok = false;
+  ID3D11Device *device = nullptr;
+  ID3D11Texture2D *texture = nullptr;
+  IDXGIResource1 *resource = nullptr;
+  HANDLE handle = nullptr;
+  const DWORD access = DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE;
+  if (SUCCEEDED(createDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
+                             D3D11_SDK_VERSION, &device, nullptr, nullptr)) &&
+      SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &texture)) &&
+      SUCCEEDED(texture->QueryInterface(IID_PPV_ARGS(&resource))) &&
+      SUCCEEDED(resource->CreateSharedHandle(nullptr, access, nullptr, &handle)))
+  {
+    const GLint dedicated = GL_TRUE;
+    GLuint memory = 0, glTexture = 0;
+    createMemoryObjects(1, &memory);
+    memoryObjectParameteriv(memory, GL_DEDICATED_MEMORY_OBJECT_EXT, &dedicated);
+    importMemoryWin32Handle(memory, 16 * 16 * 8, GL_HANDLE_TYPE_D3D11_IMAGE_EXT, handle);
+    genTextures(1, &glTexture);
+    bindTexture(GL_TEXTURE_2D, glTexture);
+    texStorageMem2D(GL_TEXTURE_2D, 1, GL_RGBA8, 16, 16, memory, 0);
+    ok = getError() == GL_NO_ERROR;
+    bindTexture(GL_TEXTURE_2D, 0);
+    deleteTextures(1, &glTexture);
+    deleteMemoryObjects(1, &memory);
+  }
+  if (handle)
+    CloseHandle(handle);
+  if (resource)
+    resource->Release();
+  if (texture)
+    texture->Release();
+  if (device)
+    device->Release();
+  return ok;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // QtWebEngine hands Chromium's D3D11 frames to the OpenGL scene graph through
 // WGL_NV_DX_interop, and calls wglDXOpenDeviceNV without checking it exists.
 // Some drivers don't provide it (e.g. Microsoft's OpenGLOn12 mapping layer, which is
 // what OpenGL runs on with Windows on ARM / Snapdragon GPUs), so startup crashes with
-// a call through a null pointer. Probe for it with a throwaway WGL context first.
-static bool probeDxInterop()
+// a call through a null pointer. Probe for it with a throwaway WGL context first, and
+// for D3D11 texture import through GL_EXT_memory_object_win32, which lets us emulate it
+// (see DXInteropShim).
+static DXInterop probeDxInterop()
 {
   const QByteArray library = qtOpenGLLibrary();
-  // Without a context we can't tell. Assume the system library has it, but a replacement
-  // (such as Qt's software opengl32sw) is safer composited in software.
+  // Without a context we can't tell. Keep the default for the system library, but a
+  // replacement (such as Qt's software opengl32sw) is safer composited in software.
   const bool replacement = library.compare("opengl32", Qt::CaseInsensitive) != 0;
-  bool supported = !replacement;
+  DXInterop result = replacement ? DXInterop::Unsupported : DXInterop::Native;
   QByteArray renderer = "probe failed";
 
   HMODULE gl = LoadLibraryA(library.constData());
@@ -153,7 +237,14 @@ static bool probeDxInterop()
       if (ctx && makeCurrent(dc, ctx))
       {
         renderer = reinterpret_cast<const char *>(getString(GL_RENDERER));
-        supported = isValidProc(getProcAddress("wglDXOpenDeviceNV"));
+        auto extensions = reinterpret_cast<const char *>(getString(GL_EXTENSIONS));
+        if (isValidProc(getProcAddress("wglDXOpenDeviceNV")))
+          result = DXInterop::Native;
+        else if (extensions && strstr(extensions, "GL_EXT_memory_object_win32") &&
+                 canImportD3D11Texture(gl, getProcAddress))
+          result = DXInterop::Emulated;
+        else
+          result = DXInterop::Unsupported;
         makeCurrent(nullptr, nullptr);
       }
       if (ctx)
@@ -164,21 +255,22 @@ static bool probeDxInterop()
   if (hwnd)
     DestroyWindow(hwnd);
 
+  static const char *const names[] = { "native", "emulated", "unsupported" };
   qInfo() << "OpenGL:" << library.constData() << "-" << renderer.constData()
-          << "- WGL_NV_DX_interop" << (supported ? "yes" : "no");
-  return supported;
+          << "- WGL_NV_DX_interop" << names[int(result)];
+  return result;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void detectOpenGLEarly()
 {
-  g_dxInteropSupported = probeDxInterop();
+  g_dxInterop = probeDxInterop();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-bool hasOpenGLDXInterop()
+DXInterop openGLDXInterop()
 {
-  return g_dxInteropSupported;
+  return g_dxInterop;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
