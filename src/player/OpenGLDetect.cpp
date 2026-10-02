@@ -72,10 +72,107 @@ void detectOpenGLLate()
 
 #elif defined(Q_OS_WIN)
 
+#include <windows.h>
+
+static bool g_dxInteropSupported = true;
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// The OpenGL library the qwindows platform plugin will load
+static QByteArray qtOpenGLLibrary()
+{
+  QByteArray library = qgetenv("QT_OPENGL_DLL");
+  if (library.isEmpty())
+    library = qgetenv("QT_OPENGL") == "software" ? "opengl32sw" : "opengl32";
+  return library;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Like Qt, treat the small values some drivers return for unknown functions as missing
+static bool isValidProc(PROC proc)
+{
+  auto value = reinterpret_cast<quintptr>(proc);
+  return value >= 4 && value != quintptr(-1);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+template <typename T>
+static T resolveExport(HMODULE module, const char *name)
+{
+  return module ? reinterpret_cast<T>(GetProcAddress(module, name)) : nullptr;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// QtWebEngine hands Chromium's D3D11 frames to the OpenGL scene graph through
+// WGL_NV_DX_interop, and calls wglDXOpenDeviceNV without checking it exists.
+// Some drivers don't provide it (e.g. Microsoft's OpenGLOn12 mapping layer, which is
+// what OpenGL runs on with Windows on ARM / Snapdragon GPUs), so startup crashes with
+// a call through a null pointer. Probe for it with a throwaway WGL context first.
+static bool probeDxInterop()
+{
+  const QByteArray library = qtOpenGLLibrary();
+  // Without a context we can't tell. Assume the system library has it, but a replacement
+  // (such as Qt's software opengl32sw) is safer composited in software.
+  const bool replacement = library.compare("opengl32", Qt::CaseInsensitive) != 0;
+  bool supported = !replacement;
+
+  HMODULE gl = LoadLibraryA(library.constData());
+  auto createContext = resolveExport<decltype(&wglCreateContext)>(gl, "wglCreateContext");
+  auto makeCurrent = resolveExport<decltype(&wglMakeCurrent)>(gl, "wglMakeCurrent");
+  auto deleteContext = resolveExport<decltype(&wglDeleteContext)>(gl, "wglDeleteContext");
+  auto getProcAddress = resolveExport<decltype(&wglGetProcAddress)>(gl, "wglGetProcAddress");
+  // Like Qt, a replacement library handles pixel formats itself
+  auto choosePixelFormat = &ChoosePixelFormat;
+  auto setPixelFormat = &SetPixelFormat;
+  if (replacement)
+  {
+    choosePixelFormat = resolveExport<decltype(&ChoosePixelFormat)>(gl, "wglChoosePixelFormat");
+    setPixelFormat = resolveExport<decltype(&SetPixelFormat)>(gl, "wglSetPixelFormat");
+  }
+  bool resolved = createContext && makeCurrent && deleteContext && getProcAddress &&
+                  choosePixelFormat && setPixelFormat;
+
+  // STATIC is a predefined window class, so nothing needs registering
+  HWND hwnd = resolved ? CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPEDWINDOW, 0, 0, 1, 1,
+                                         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr)
+                       : nullptr;
+  HDC dc = hwnd ? GetDC(hwnd) : nullptr;
+  if (dc)
+  {
+    PIXELFORMATDESCRIPTOR pfd = {};
+    pfd.nSize = sizeof(pfd);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    int format = choosePixelFormat(dc, &pfd);
+    if (format && setPixelFormat(dc, format, &pfd))
+    {
+      HGLRC ctx = createContext(dc);
+      if (ctx && makeCurrent(dc, ctx))
+      {
+        supported = isValidProc(getProcAddress("wglDXOpenDeviceNV"));
+        makeCurrent(nullptr, nullptr);
+      }
+      if (ctx)
+        deleteContext(ctx);
+    }
+    ReleaseDC(hwnd, dc);
+  }
+  if (hwnd)
+    DestroyWindow(hwnd);
+  return supported;
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void detectOpenGLEarly()
 {
+  g_dxInteropSupported = probeDxInterop();
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+bool hasOpenGLDXInterop()
+{
+  return g_dxInteropSupported;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
