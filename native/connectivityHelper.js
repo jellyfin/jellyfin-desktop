@@ -27,12 +27,21 @@ window.jmpCheckServerConnectivity = (() => {
                 if (handler) {
                     window.api.system.serverConnectivityResult.disconnect(handler);
                 }
+                window.api.system.serverConnectivityRetrying.disconnect(retryHandler);
                 reject(new Error('Connection cancelled'));
             });
+
+            // Reports why the check is being retried, for pages that want to show it
+            const retryHandler = (resultUrl, message) => {
+                if (resultUrl === url && !controller.signal.aborted) {
+                    document.dispatchEvent(new CustomEvent('jmpconnectivityretry', { detail: { url, message } }));
+                }
+            };
 
             let handler = (resultUrl, success, resolvedUrl) => {
                 if (resultUrl === url && !controller.signal.aborted) {
                     window.api.system.serverConnectivityResult.disconnect(handler);
+                    window.api.system.serverConnectivityRetrying.disconnect(retryHandler);
                     handler = null;
                     if (activeController === controller) {
                         activeController = null;
@@ -40,12 +49,14 @@ window.jmpCheckServerConnectivity = (() => {
                     if (success) {
                         resolve(resolvedUrl);
                     } else {
-                        reject(new Error('Connection failed'));
+                        // On failure (certificate problems) the last argument is the reason
+                        reject(new Error(resolvedUrl || 'Connection failed'));
                     }
                 }
             };
 
             window.api.system.serverConnectivityResult.connect(handler);
+            window.api.system.serverConnectivityRetrying.connect(retryHandler);
             window.api.system.checkServerConnectivity(url);
         });
     };
