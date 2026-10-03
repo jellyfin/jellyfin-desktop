@@ -8,6 +8,7 @@
 #include "display/DisplayComponent.h"
 #include "settings/SettingsComponent.h"
 #include "system/SystemComponent.h"
+#include "system/CertificateComponent.h"
 #include "utils/Utils.h"
 #include "utils/Log.h"
 #include "ComponentManager.h"
@@ -145,6 +146,7 @@ void PlayerComponent::initializeMpv()
       if (!certPath.isEmpty()) {
         m_mpv->setProperty("tls-ca-file", certPath);
         m_mpv->setProperty("tls-verify", QString("yes"));
+        m_defaultTlsCaFile = certPath;
       } else {
         throw FatalException(tr("Failed to locate CA bundle."));
       }
@@ -282,6 +284,20 @@ bool PlayerComponent::load(const QString& url, const QVariantMap& options, const
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+// Use the custom CA and client certificate stored for the media server, if any
+void PlayerComponent::applyTls(const QUrl& url)
+{
+  if (!m_mpv)
+    return;
+
+  CertificateComponent::CertPaths paths = CertificateComponent::Get().certPaths(url);
+  if (!SettingsComponent::Get().ignoreSSLErrors())
+    m_mpv->setProperty("tls-ca-file", paths.hasCa() ? paths.ca : m_defaultTlsCaFile);
+  m_mpv->setProperty("tls-cert-file", paths.hasClient() ? paths.cert : QString());
+  m_mpv->setProperty("tls-key-file", paths.hasClient() ? paths.key : QString());
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::queueMedia(const QString& url, const QVariantMap& options, const QVariantMap &metadata, const QVariant& audioStream, const QVariant& subtitleStream)
 {
   if (!m_mpv) {
@@ -298,6 +314,8 @@ void PlayerComponent::queueMedia(const QString& url, const QVariantMap& options,
 
   QUrl qurl = url;
   QString host = qurl.host();
+
+  applyTls(qurl);
 
   QStringList command;
   command << "loadfile" << qurl.toString(QUrl::FullyEncoded);

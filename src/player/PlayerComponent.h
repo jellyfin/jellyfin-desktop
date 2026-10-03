@@ -135,6 +135,7 @@ public:
       m_mpv = controller;
   }
   void initializeMpv();
+  void applyTls(const QUrl& url);
 
   virtual void setWindow(QQuickWindow* window);
 
@@ -255,6 +256,7 @@ private:
   bool m_inPlayback;
   bool m_playbackCanceled;
   QString m_playbackError;
+  QString m_defaultTlsCaFile;
   int m_bufferingPercentage;
   int m_lastBufferingPercentage;
   double m_lastPositionUpdate;
