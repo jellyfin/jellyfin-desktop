@@ -12,6 +12,7 @@
 #include <QRegularExpression>
 #include <QSslSocket>
 #include <QTimer>
+#include <QUrlQuery>
 
 #include <QtWebEngineCore/qwebenginecertificateerror.h>
 #include <QtWebEngineCore/qwebengineclientcertificatestore.h>
@@ -428,6 +429,31 @@ bool CertificateComponent::commit(const QString& url)
   refreshClientStore();
   qInfo() << "CertificateComponent: committed certificates to" << to.dir << (ok ? "" : "(with errors)");
   return ok;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+void CertificateComponent::openOverlay(const QString& mode, const QString& serverUrl, const QString& serverName)
+{
+  clearPending();
+
+  QUrlQuery query;
+  query.addQueryItem("mode", mode);
+  if (!serverUrl.isEmpty())
+    query.addQueryItem("server", serverUrl);
+  if (!serverName.isEmpty())
+    query.addQueryItem("name", serverName);
+
+  QUrl url("qrc:///web-client/extension/find-webclient.html");
+  url.setQuery(query);
+  emit overlayRequested(url.toString());
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+void CertificateComponent::closeOverlay(const QString& resultUrl)
+{
+  clearPending();
+  refreshClientStore();
+  emit overlayClosed(resultUrl);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////

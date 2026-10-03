@@ -47,6 +47,13 @@ public:
   // Move pending certificates to the directory of url. Only allowed for https.
   Q_INVOKABLE bool commit(const QString& url);
 
+  // Show find-webclient.html as an overlay over the web client (mode: "add" or "certs")
+  Q_INVOKABLE void openOverlay(const QString& mode, const QString& serverUrl = QString(),
+                               const QString& serverName = QString());
+  Q_INVOKABLE void closeOverlay(const QString& resultUrl = QString());
+  Q_SIGNAL void overlayRequested(const QString& url);
+  Q_SIGNAL void overlayClosed(const QString& resultUrl);
+
   // QtWebEngine integration (called from QML)
   Q_INVOKABLE void setProfile(QObject* profile);
   Q_INVOKABLE int matchClientCert(const QVariantList& certificates, const QString& host) const;
