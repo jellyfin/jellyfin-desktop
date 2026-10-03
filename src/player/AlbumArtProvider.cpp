@@ -54,7 +54,7 @@ void AlbumArtProvider::requestArtwork(const QVariantMap& metadata, const QUrl& b
   QNetworkRequest request;
   request.setUrl(QUrl(artUrl));
   request.setRawHeader("User-Agent", SystemComponent::Get().getUserAgent().toUtf8());
-  request.setSslConfiguration(SystemComponent::Get().getSSLConfiguration());
+  request.setSslConfiguration(SystemComponent::Get().getSSLConfiguration(QUrl(artUrl)));
 
   m_pendingReply = m_networkManager->get(request);
   if (SettingsComponent::Get().ignoreSSLErrors()) {

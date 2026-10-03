@@ -25,6 +25,7 @@
 
 #include "input/InputComponent.h"
 #include "SystemComponent.h"
+#include "CertificateComponent.h"
 #include "Version.h"
 #include "settings/SettingsComponent.h"
 #include "settings/SettingsSection.h"
@@ -252,7 +253,7 @@ QString SystemComponent::extractBaseUrl(const QString& url)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-QSslConfiguration SystemComponent::getSSLConfiguration()
+QSslConfiguration SystemComponent::getSSLConfiguration(const QUrl& url)
 {
   QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
   if (SettingsComponent::Get().ignoreSSLErrors()) {
@@ -266,6 +267,7 @@ QSslConfiguration SystemComponent::getSSLConfiguration()
       }
     }
   }
+  CertificateComponent::Get().applyTo(sslConfig, url);
   return sslConfig;
 }
 
@@ -293,7 +295,7 @@ void SystemComponent::resolveUrl(const QString& url, std::function<void(const QS
   QNetworkRequest request(url);
   request.setHeader(QNetworkRequest::UserAgentHeader, getUserAgent());
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-  request.setSslConfiguration(getSSLConfiguration());
+  request.setSslConfiguration(getSSLConfiguration(QUrl(url)));
 
   m_resolveUrlReply = m_networkManager->head(request);
 
@@ -342,6 +344,9 @@ void SystemComponent::checkServerConnectivity(QString url)
   // Store for retry
   m_pendingConnectivityUrl = url;
 
+  // Cached connections keep the TLS configuration (certificates) they were opened with
+  m_networkManager->clearConnectionCache();
+
   resolveUrl(url, [this, url](const QString& fullResolvedUrl) {
     QString baseUrl = extractBaseUrl(fullResolvedUrl);
 
@@ -351,19 +356,22 @@ void SystemComponent::checkServerConnectivity(QString url)
     request.setHeader(QNetworkRequest::UserAgentHeader, getUserAgent());
     request.setRawHeader("Cache-Control", "no-cache");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-    request.setSslConfiguration(getSSLConfiguration());
+    request.setSslConfiguration(getSSLConfiguration(QUrl(checkUrl)));
 
     m_connectivityCheckReply = m_networkManager->get(request);
 
     QNetworkReply* reply = m_connectivityCheckReply;
     setReplyTimeout(reply, NETWORK_REQUEST_TIMEOUT_MS);
 
+    auto sslErrors = std::make_shared<QList<QSslError>>();
     if (SettingsComponent::Get().ignoreSSLErrors()) {
       connect(reply, QOverload<const QList<QSslError>&>::of(&QNetworkReply::sslErrors),
               reply, QOverload<>::of(&QNetworkReply::ignoreSslErrors));
+    } else {
+      sslErrors = CertificateComponent::recordSslErrors(reply);
     }
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, url, fullResolvedUrl]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url, fullResolvedUrl, sslErrors]() {
       if (reply->error() == QNetworkReply::OperationCanceledError) {
         reply->deleteLater();
         if (m_connectivityCheckReply == reply) {
@@ -373,6 +381,7 @@ void SystemComponent::checkServerConnectivity(QString url)
       }
 
       bool success = false;
+      CertificateComponent::TlsFailure failure;
       if (reply->error() == QNetworkReply::NoError) {
         QByteArray data = reply->readAll();
         QJsonDocument doc = QJsonDocument::fromJson(data);
@@ -380,17 +389,26 @@ void SystemComponent::checkServerConnectivity(QString url)
           success = true;
         } else {
           qWarning() << "checkServerConnectivity: invalid response";
+          failure.message = tr("Not a Jellyfin server");
         }
       } else {
         qWarning() << "checkServerConnectivity: error:" << reply->errorString();
+        failure = CertificateComponent::describeFailure(reply, *sslErrors);
       }
 
       if (success) {
         m_connectivityRetryTimer->stop();
         m_pendingConnectivityUrl.clear();
+        // The pending certificates worked, store them for this server
+        CertificateComponent::Get().commit(fullResolvedUrl);
         emit serverConnectivityResult(url, success, fullResolvedUrl);
+      } else if (failure.certificateProblem) {
+        // Retrying cannot fix certificates. On failure the last argument is the reason.
+        m_pendingConnectivityUrl.clear();
+        emit serverConnectivityResult(url, false, failure.message);
       } else {
         m_connectivityRetryTimer->start(CONNECTIVITY_RETRY_INTERVAL_MS);
+        emit serverConnectivityRetrying(url, failure.message);
       }
 
       reply->deleteLater();
