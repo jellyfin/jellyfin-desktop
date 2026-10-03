@@ -303,7 +303,7 @@ window.initCompleted = new Promise(async (resolve) => {
         for (const mutation of mutations) {
             if (mutation.attributeName === 'class') {
                 const isIdle = document.body.classList.contains('mouseIdle');
-                window.api.window.setCursorVisibility(!isIdle);
+                window.api.window.setCursorVisibility(!isIdle || window.jmpOverlayOpen === true);
             }
         }
     });
