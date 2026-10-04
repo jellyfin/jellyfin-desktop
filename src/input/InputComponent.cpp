@@ -218,7 +218,7 @@ void InputComponent::remapInput(const QString &source, const QString &keycode, I
         queuedActions.append(map.value("short").toString());
       }
     }
-    else if (action.typeId() == QMetaType::QStringList)
+    else if (action.typeId() == QMetaType::QVariantList)
     {
       queuedActions.append(action.toStringList());
     }
