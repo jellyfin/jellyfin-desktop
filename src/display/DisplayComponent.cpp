@@ -465,6 +465,8 @@ void DisplayComponent::switchCommand(QString command)
 void DisplayComponent::componentPostInitialize()
 {
   InputComponent::Get().registerHostCommand("switch", this, "switchCommand");
+  // Quitting during playback: give the desktop its mode back before exiting.
+  connect(qApp, &QCoreApplication::aboutToQuit, this, &DisplayComponent::restorePreviousVideoMode);
 
 #ifdef TARGET_RPI
   if (m_displayManager)
