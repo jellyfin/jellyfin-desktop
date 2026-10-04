@@ -67,6 +67,7 @@ private slots:
   void testNoSuitableModeReturnsNegative();
   void testFindBestMode();
   void testMultipleRefreshRate();
+  void testFindDisplayByName();
 };
 
 // Helper function: Populates a DisplayManager with some typical display modes.
@@ -223,6 +224,15 @@ void TestDisplayManager::testMultipleRefreshRate()
   DMMatchMediaInfo match(23.976f, false);
   int best = mgr.findBestMatch(0, match);
   QCOMPARE(best, 0);
+}
+
+void TestDisplayManager::testFindDisplayByName()
+{
+  TestableDisplayManager mgr;
+  setupStandardModes(mgr);
+
+  QCOMPARE(mgr.findDisplayByName("TestDisplay"), 0);
+  QCOMPARE(mgr.findDisplayByName("HDMI-A-1"), -1);
 }
 
 QTEST_APPLESS_MAIN(TestDisplayManager)
