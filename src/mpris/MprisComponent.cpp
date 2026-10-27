@@ -189,7 +189,7 @@ bool MprisComponent::canPlay() const
 
 bool MprisComponent::canPause() const
 {
-  return m_playbackStatus == "Playing";
+  return m_playbackStatus != "Stopped";
 }
 
 bool MprisComponent::canSeek() const
