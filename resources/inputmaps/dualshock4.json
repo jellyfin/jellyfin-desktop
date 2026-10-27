@@ -1,6 +1,7 @@
 {
   "name": "Playstation Dual Shock 4",
-  "idmatcher": "Wireless Controller",
+  // Commenting this out until somebody can provide a more precise regex, otherwise we match on everything containing "Wireless Controller"
+  // "idmatcher": "Wireless Controller",
   "mapping": {
     // D-Pad
     "KEY_HAT_DOWN": "down",
