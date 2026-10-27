@@ -17,7 +17,11 @@ public:
     MpvController* controller() { return mpvController(); }
 
 private:
+    void initialize();
+
     PlayerComponent* m_player = nullptr;
+    bool m_initialized;
+    bool m_ready;
 };
 
 #endif // MPVVIDEOITEM_H
