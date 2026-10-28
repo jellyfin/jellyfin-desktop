@@ -460,6 +460,32 @@
           [ 3.5, "3.5x" ],
           [ 4.0, "4.0x" ]
         ]
+      },
+      {
+        "value": "skip_intro",
+        "display_name": "Auto Skip Intro",
+        "help": "Automatically skips intro segments reported by the server.\nRequires media segments (Jellyfin 10.10+ or the Intro Skipper plugin).",
+        "default": false
+      },
+      {
+        "value": "skip_outro",
+        "display_name": "Auto Skip Credits",
+        "help": "Automatically skips credits/outro segments reported by the server.",
+        "default": false
+      },
+      {
+        "value": "skip_outro_delay",
+        "display_name": "Auto Skip Credits Delay",
+        "help": "How long the credits play before they are skipped.",
+        "default": 5,
+        "possible_values": [
+          [ 0, "Immediately" ],
+          [ 3, "3 seconds" ],
+          [ 5, "5 seconds" ],
+          [ 10, "10 seconds" ],
+          [ 15, "15 seconds" ],
+          [ 30, "30 seconds" ]
+        ]
       }
     ]
   },

@@ -6,6 +6,33 @@
         });
     }
 
+    // --- segment-skip:begin (pure; asserted by native/segmentSkip.test.mjs) ---
+    /**
+     * Decide whether the current playback position falls inside a segment that should be
+     * auto-skipped. All times are milliseconds.
+     *
+     * @returns {{id: string, target: number}|null}
+     */
+    function pickSegmentSkip(segments, timeMs, durationMs, opts, skipped) {
+        for (const seg of segments) {
+            if (skipped.has(seg.id)) continue;
+
+            const isIntro = seg.type === 'Intro';
+            if (isIntro ? !opts.skipIntro : !opts.skipOutro) continue;
+
+            const from = seg.start + (isIntro ? 0 : opts.outroDelayMs);
+            // 1s headroom: skipping a segment that is nearly over is pointless
+            if (timeMs < from || timeMs >= seg.end - 1000) continue;
+
+            // land just before EOF so mpv reaches "finished" and jellyfin-web advances the episode
+            const target = durationMs ? Math.min(seg.end, durationMs - 500) : seg.end;
+            return { id: seg.id, target };
+        }
+
+        return null;
+    }
+    // --- segment-skip:end ---
+
     class mpvVideoPlayer {
         constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm, dashboard }) {
             this.events = events;
@@ -95,6 +122,15 @@
              */
             this._duration = undefined;
             /**
+             * Intro/outro segments for the current item, in milliseconds.
+             * @type {Array<{id: string, type: string, start: number, end: number}>}
+             */
+            this._segments = [];
+            /**
+             * @type {Set<string>}
+             */
+            this._skippedSegments = new Set();
+            /**
              * @type {boolean}
              */
             this._paused = false;
@@ -142,6 +178,7 @@
                 }
 
                 this._currentTime = time;
+                this.checkSegmentSkip(time);
                 this.events.trigger(this, 'timeupdate');
             };
 
@@ -246,6 +283,8 @@
             this._timeUpdated = false;
             this._currentTime = null;
             this._bufferedRanges = [];
+            this._segments = [];
+            this._skippedSegments = new Set();
 
             this.resetSubtitleOffset();
             if (options.fullscreen) {
@@ -311,6 +350,7 @@
                 // Convert to seconds
                 const ms = (options.playerStartPositionTicks || 0) / 10000;
                 this._currentPlayOptions = options;
+                this.loadMediaSegments(options);
                 this._subtitleTrackIndexToSetOnPlaying = options.mediaSource.DefaultSubtitleStreamIndex == null ? -1 : options.mediaSource.DefaultSubtitleStreamIndex;
                 this._audioTrackIndexToSetOnPlaying = options.mediaSource.DefaultAudioStreamIndex;
 
@@ -445,6 +485,65 @@
             window.api.player.setAudioStream(relIndex != null ? relIndex : -1);
         }
 
+        /**
+         * Fetch the intro/outro segments for the item being played. Fire and forget: a server
+         * without media segment support (pre-10.10) simply yields no segments.
+         *
+         * @private
+         */
+        async loadMediaSegments(options) {
+            const settings = window.jmpInfo.settings.video;
+            if (!settings.skip_intro && !settings.skip_outro) {
+                return;
+            }
+
+            const itemId = options.item?.Id;
+            const apiClient = window.ApiClient || window.ServerConnections?.currentApiClient?.();
+            if (!itemId || !apiClient) {
+                return;
+            }
+
+            try {
+                const result = await apiClient.getJSON(apiClient.getUrl(`MediaSegments/${itemId}`));
+
+                // Playback may have moved on while the request was in flight.
+                if (this._currentPlayOptions?.item?.Id !== itemId) {
+                    return;
+                }
+
+                this._segments = (result.Items || [])
+                    .filter((segment) => segment.Type === 'Intro' || segment.Type === 'Outro')
+                    .map((segment) => ({
+                        id: segment.Id,
+                        type: segment.Type,
+                        start: segment.StartTicks / 10000,
+                        end: segment.EndTicks / 10000
+                    }))
+                    .sort((a, b) => a.start - b.start);
+            } catch (e) {
+                console.debug(`[MPV] no media segments for ${itemId}: ${e}`);
+                this._segments = [];
+            }
+        }
+
+        /**
+         * @private
+         */
+        checkSegmentSkip(time) {
+            const settings = window.jmpInfo.settings.video;
+            const hit = pickSegmentSkip(this._segments, time, this._duration, {
+                skipIntro: settings.skip_intro === true,
+                skipOutro: settings.skip_outro === true,
+                outroDelayMs: (Number(settings.skip_outro_delay) || 0) * 1000
+            }, this._skippedSegments);
+
+            if (hit) {
+                // Mark before seeking: position updates keep arriving until the seek lands.
+                this._skippedSegments.add(hit.id);
+                window.api.player.seekTo(hit.target);
+            }
+        }
+
         onEndedInternal() {
             const stopInfo = {
                 src: this._currentSrc
@@ -455,6 +554,8 @@
             this._currentTime = null;
             this._currentSrc = null;
             this._currentPlayOptions = null;
+            this._segments = [];
+            this._skippedSegments = new Set();
         }
 
         stop(destroyPlayer) {
