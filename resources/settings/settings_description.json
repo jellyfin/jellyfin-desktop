@@ -231,6 +231,18 @@
         "default": true
       },
       {
+        "value": "max_volume",
+        "display_name": "Maximum Volume",
+        "help": "Allows raising the volume above 100%. Values above 100% amplify the audio digitally and can cause clipping and distortion, especially on already-loud content. The default is 100%.",
+        "default": 100,
+        "possible_values": [
+          [ 100, "100% (Default)" ],
+          [ 125, "125%" ],
+          [ 150, "150%" ],
+          [ 200, "200%" ]
+        ]
+      },
+      {
         "value": "exclusive",
         "display_name": "Exclusive",
         "help": "Takes exclusive control of audio device. The default is disabled.",

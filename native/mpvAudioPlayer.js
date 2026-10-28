@@ -1,4 +1,13 @@
 (function() {
+// Duplicated from mpvVideoPlayer.js: the two players are separate browser scripts
+// with no shared scope, and already duplicate all volume logic.
+function clampVolume(val, maxVolume) {
+    const num = Number(val);
+    if (isNaN(num)) return null;
+
+    return Math.min(Math.max(num, 0), Math.max(100, Number(maxVolume) || 100));
+}
+
 let fadeTimeout;
 function fade(instance, elem, startingVolume) {
     instance._isFadingOut = true;
@@ -315,6 +324,9 @@ class mpvAudioPlayer {
     }
 
     setVolume(val, save = true) {
+        val = clampVolume(val, window.jmpInfo?.settings?.audio?.max_volume);
+        if (val === null) return;
+
         this._volume = val;
         if (save) {
             this.saveVolume((val || 100) / 100);
@@ -323,16 +335,18 @@ class mpvAudioPlayer {
         window.api.player.setVolume(val);
     }
 
+    // See mpvVideoPlayer.js: jellyfin-web's volume UI assumes 0-100, so the
+    // boosted level stays internal to _volume and never leaks out through here.
     getVolume() {
-        return this._volume;
+        return Math.min(this._volume, 100);
     }
 
     volumeUp() {
-        this.setVolume(Math.min(this.getVolume() + 2, 100));
+        this.setVolume(this._volume + 2);
     }
 
     volumeDown() {
-        this.setVolume(Math.max(this.getVolume() - 2, 0));
+        this.setVolume(this._volume - 2);
     }
 
     setMute(mute, triggerEvent = true) {
