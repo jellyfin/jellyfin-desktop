@@ -10,6 +10,7 @@ namespace OSXUtils
   OSStatus SendAppleEventToSystemProcess(AEEventID eventToSendID);
 
   void SetCursorVisible(bool visible);
+  void SetupWindowMenu();
 };
 
 #endif /* OSXUTILS_H */
