@@ -2,6 +2,17 @@ name: build-macos
 
 on:
   workflow_call:
+    secrets:
+      MACOS_SIGNING_P12:
+        required: false
+      MACOS_SIGNING_P12_PASSWORD:
+        required: false
+      NOTARY_API_KEY_P8:
+        required: false
+      NOTARY_API_KEY_ID:
+        required: false
+      NOTARY_API_KEY_ISSUER:
+        required: false
   workflow_dispatch:
   push:
     branches:
@@ -38,30 +49,68 @@ jobs:
     - name: Release build
       run: |
         cmake -B build -G Ninja \
-          -DQTROOT=$QT_ROOT_DIR \
-          -DCMAKE_PREFIX_PATH=$QT_ROOT_DIR \
+          -DQTROOT="$QT_ROOT_DIR" \
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_INSTALL_PREFIX=build/output \
           -DCHECK_FOR_UPDATES=ON \
           -DUSE_STATIC_MPVQT=ON
-        cmake --build build --target install
-    - name: Sign and create dmg
+        cmake --build build
+    - name: Configure signing
+      env:
+        # Base64-encoded Developer ID Application certificate and password.
+        MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+        MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        # Base64-encoded App Store Connect API key, its key ID and issuer ID.
+        NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+        NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+        NOTARY_API_KEY_ISSUER: ${{ secrets.NOTARY_API_KEY_ISSUER }}
       run: |
-        codesign --force --deep -s - "./build/output/Jellyfin Desktop.app/"
+        if [ -z "${MACOS_SIGNING_P12}" ] && \
+          [ -z "${MACOS_SIGNING_P12_PASSWORD}" ] && \
+          [ -z "${NOTARY_API_KEY_P8}" ] && \
+          [ -z "${NOTARY_API_KEY_ID}" ] && \
+          [ -z "${NOTARY_API_KEY_ISSUER}" ]; then
+          exit 0
+        fi
+
+        : "${MACOS_SIGNING_P12:?MACOS_SIGNING_P12 is required}"
+        : "${MACOS_SIGNING_P12_PASSWORD:?MACOS_SIGNING_P12_PASSWORD is required}"
+        : "${NOTARY_API_KEY_P8:?NOTARY_API_KEY_P8 is required}"
+        : "${NOTARY_API_KEY_ID:?NOTARY_API_KEY_ID is required}"
+        : "${NOTARY_API_KEY_ISSUER:?NOTARY_API_KEY_ISSUER is required}"
+
+        P12_FILE="${RUNNER_TEMP}/signing.p12"
+        KEYCHAIN_FILE="${RUNNER_TEMP}/signing.keychain-db"
+        KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+
+        printf '%s' "${MACOS_SIGNING_P12}" | base64 -D > "${P12_FILE}"
+        security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_FILE}"
+        security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_FILE}"
+        security import "${P12_FILE}" -k "${KEYCHAIN_FILE}" \
+          -P "${MACOS_SIGNING_P12_PASSWORD}" -T /usr/bin/codesign
+        security set-key-partition-list -S apple-tool:,apple: \
+          -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_FILE}" > /dev/null
+        security list-keychains -d user -s "${KEYCHAIN_FILE}"
+
+        IDENTITY=$(security find-identity -v -p codesigning "${KEYCHAIN_FILE}" \
+          | awk '/Developer ID Application/ {print $2; exit}')
+        : "${IDENTITY:?Developer ID Application identity not found}"
+        echo "MACOS_SIGNING_IDENTITY=${IDENTITY}" >> "${GITHUB_ENV}"
+
+        API_KEY_FILE="${RUNNER_TEMP}/AuthKey_${NOTARY_API_KEY_ID}.p8"
+        printf '%s' "${NOTARY_API_KEY_P8}" | base64 -D > "${API_KEY_FILE}"
+        {
+          echo "NOTARY_API_KEY_FILE=${API_KEY_FILE}"
+          echo "NOTARY_API_KEY_ID=${NOTARY_API_KEY_ID}"
+          echo "NOTARY_API_KEY_ISSUER=${NOTARY_API_KEY_ISSUER}"
+        } >> "${GITHUB_ENV}"
+    - name: Create release artifact
+      run: |
         brew install create-dmg
-        VERSION=$(cat VERSION)
-        ARCH=$(uname -m)
-        DMG_NAME="JellyfinDesktop-${VERSION}-${ARCH}.dmg"
-        create-dmg \
-          --volname "Jellyfin Desktop v${VERSION}" \
-          --no-internet-enable \
-          --window-size 500 300 \
-          --icon-size 100 \
-          --icon "Jellyfin Desktop.app" 125 150 \
-          --app-drop-link 375 150 \
-          "${DMG_NAME}" "./build/output/Jellyfin Desktop.app"
+        dev/macos/bundle.sh
     - name: Archive production artifacts
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.artifact }}
-        path: ${{ github.workspace }}/JellyfinDesktop-*.dmg
+        path: ${{ github.workspace }}/build/JellyfinDesktop-*.dmg
