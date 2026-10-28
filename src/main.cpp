@@ -432,6 +432,16 @@ int main(int argc, char *argv[])
     if (parser.isSet("ignore-certificate-errors"))
       chromiumFlags << "--ignore-certificate-errors";
 
+#ifdef Q_OS_WIN
+    // Without DX interop QtWebEngine crashes importing GPU frames. Keep the GPU process,
+    // but composite in software.
+    if (!hasOpenGLDXInterop())
+    {
+      qWarning() << "OpenGL driver lacks WGL_NV_DX_interop, disabling QtWebEngine GPU compositing";
+      chromiumFlags << "--disable-gpu-compositing";
+    }
+#endif
+
     if (!chromiumFlags.isEmpty())
       qputenv("QTWEBENGINE_CHROMIUM_FLAGS", chromiumFlags.join(" ").toUtf8());
 
