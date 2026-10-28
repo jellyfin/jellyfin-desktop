@@ -156,7 +156,10 @@ public:
     Subtitle,
     Audio,
   };
-  
+
+  // True while the video output is up (stays true while paused).
+  bool isVideoWindowVisible() const { return m_windowVisible; }
+
 public Q_SLOTS:
   void updateAudioDeviceList();
   void setAudioConfiguration();

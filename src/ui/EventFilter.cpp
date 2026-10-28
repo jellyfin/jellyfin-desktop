@@ -5,6 +5,8 @@
 #include "EventFilter.h"
 #include "settings/SettingsComponent.h"
 #include "input/InputKeyboard.h"
+#include "player/PlayerComponent.h"
+#include "WindowManager.h"
 #include <QQuickWindow>
 #include <QQuickItem>
 
@@ -65,6 +67,22 @@ static QString keyEventToKeyString(QKeyEvent *kevent)
 bool EventFilter::eventFilter(QObject* watched, QEvent* event)
 {
   QQuickWindow* window = qobject_cast<QQuickWindow*>(parent());
+
+  // While video is playing fullscreen, Escape leaves fullscreen instead of
+  // stopping playback (web client) or acting as "back" (input mapping).
+  // ponytail: covers mpv playback only; HTML5 fullscreen is handled by QtWebEngine itself.
+  if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease ||
+       event->type() == QEvent::ShortcutOverride) &&
+      PlayerComponent::Get().isVideoWindowVisible() && WindowManager::Get().isFullScreen())
+  {
+    QKeyEvent* kevent = dynamic_cast<QKeyEvent*>(event);
+    if (kevent && kevent->key() == Qt::Key_Escape && kevent->modifiers() == Qt::NoModifier)
+    {
+      if (event->type() == QEvent::KeyPress && !kevent->isAutoRepeat())
+        WindowManager::Get().setFullScreen(false);
+      return true;
+    }
+  }
 
   if (window && window->property("webDesktopMode").toBool())
   {
