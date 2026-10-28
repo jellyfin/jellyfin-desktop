@@ -135,6 +135,14 @@ void PlayerComponent::initializeMpv()
   // Disable ytdl
   m_mpv->setProperty( "ytdl", false);
 
+  // By default libmpv asks for a redraw ahead of each frame and then blocks
+  // mpv_render_context_render() until the frame is due (see render.h). The
+  // render call runs on the Qt render thread, which is the GUI thread with the
+  // basic render loop (macOS/OpenGL): the whole UI was capped to the video
+  // frame rate and the GUI thread spent most of its time waiting. With 0, mpv
+  // requests the redraw when the frame is due and rendering never blocks.
+  m_mpv->setProperty( "video-timing-offset", 0);
+
   if (SettingsComponent::Get().ignoreSSLErrors()) {
     m_mpv->setProperty( "tls-ca-file", "");
     m_mpv->setProperty( "tls-verify", "no");
