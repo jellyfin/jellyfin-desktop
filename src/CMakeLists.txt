@@ -223,6 +223,20 @@ if(LINUX_DBUS)
   target_link_libraries(jmp_core Qt6::DBus)
 endif()
 
+if(KDEWAYLAND_FOUND)
+  qt6_generate_wayland_protocol_client_sources(jmp_core
+    PRIVATE_CODE
+    FILES
+      ${PLASMA_WAYLAND_PROTOCOLS_DIR}/kde-output-device-v2.xml
+      ${PLASMA_WAYLAND_PROTOCOLS_DIR}/kde-output-management-v2.xml
+  )
+  set_source_files_properties(
+    ${CMAKE_CURRENT_BINARY_DIR}/qwayland-kde-output-device-v2.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/qwayland-kde-output-management-v2.cpp
+    PROPERTIES COMPILE_OPTIONS -Wno-old-style-cast)
+  target_link_libraries(jmp_core Qt6::WaylandClient)
+endif()
+
 # Delay-load libmpv on Windows for runtime AVX2 fallback
 if(WIN32)
   target_link_libraries(jmp_core delayimp.lib)

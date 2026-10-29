@@ -8,6 +8,10 @@ elseif(WIN32)
   add_subdirectory(win)
 endif()
 
+if(KDEWAYLAND_FOUND)
+  add_subdirectory(kde)
+endif()
+
 add_subdirectory(dummy)
 
 find_all_sources(. SRC)
