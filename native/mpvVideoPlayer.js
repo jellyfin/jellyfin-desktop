@@ -99,6 +99,10 @@
              */
             this._paused = false;
             /**
+             * @type {boolean}
+             */
+            this._waiting = false;
+            /**
              * @type {int}
              */
             this._volume = 100;
@@ -178,6 +182,8 @@
                     window.api.player.setVideoRectangle(0, 0, 0, 0);
                 }
 
+                this._waiting = false;
+
                 if (this._paused) {
                     this._paused = false;
                     this.events.trigger(this, 'unpause');
@@ -190,13 +196,17 @@
              * @private
              */
             this.onPause = () => {
+                this._waiting = false;
                 this._paused = true;
                 // For Syncplay ready notification
                 this.events.trigger(this, 'pause');
             };
 
             this.onWaiting = () => {
-                this.events.trigger(this, 'waiting');
+                if (!this._waiting) {
+                    this._waiting = true;
+                    this.events.trigger(this, 'waiting');
+                }
             };
 
             /**
@@ -244,6 +254,7 @@
         async play(options) {
             this._started = false;
             this._timeUpdated = false;
+            this._waiting = false;
             this._currentTime = null;
             this._bufferedRanges = [];
 
@@ -493,6 +504,7 @@
 
             const player = window.api.player;
             this._hasConnection = false;
+            this._waiting = false;
             this._bufferedRanges = [];
             player.playing.disconnect(this.onPlaying);
             player.positionUpdate.disconnect(this.onTimeUpdate);
@@ -501,6 +513,7 @@
             player.updateDuration.disconnect(this.onDuration);
             player.error.disconnect(this.onError);
             player.paused.disconnect(this.onPause);
+            player.buffering.disconnect(this.onWaiting);
             player.bufferedRangesUpdated.disconnect(this.onBufferedRangesUpdated);
         }
 
@@ -549,6 +562,7 @@
                     player.updateDuration.connect(this.onDuration);
                     player.error.connect(this.onError);
                     player.paused.connect(this.onPause);
+                    player.buffering.connect(this.onWaiting);
                     player.bufferedRangesUpdated.connect(this.onBufferedRangesUpdated);
 
                     // Log all other signals

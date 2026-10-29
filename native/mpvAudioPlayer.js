@@ -47,6 +47,7 @@ class mpvAudioPlayer {
         self._duration = undefined;
         self._currentTime = undefined;
         self._paused = false;
+        self._waiting = false;
         self._volume = self.getSavedVolume() * 100;
         self._playRate = 1;
         self._hasConnection = false;
@@ -55,6 +56,7 @@ class mpvAudioPlayer {
         self.play = (options) => {
             self._started = false;
             self._timeUpdated = false;
+            self._waiting = false;
             self._currentTime = null;
             self._duration = undefined;
             self._bufferedRanges = [];
@@ -68,6 +70,7 @@ class mpvAudioPlayer {
                 player.updateDuration.connect(onDuration);
                 player.error.connect(onError);
                 player.paused.connect(onPause);
+                player.buffering.connect(onWaiting);
                 player.bufferedRangesUpdated.connect(onBufferedRangesUpdated);
             }
 
@@ -135,6 +138,7 @@ class mpvAudioPlayer {
 
             const player = window.api.player;
             self._hasConnection = false;
+            self._waiting = false;
             player.playing.disconnect(onPlaying);
             player.positionUpdate.disconnect(onTimeUpdate);
             player.finished.disconnect(onEnded);
@@ -142,6 +146,7 @@ class mpvAudioPlayer {
             player.updateDuration.disconnect(onDuration);
             player.error.disconnect(onError);
             player.paused.disconnect(onPause);
+            player.buffering.disconnect(onWaiting);
             player.bufferedRangesUpdated.disconnect(onBufferedRangesUpdated);
             self._bufferedRanges = [];
         };
@@ -172,6 +177,8 @@ class mpvAudioPlayer {
 
             self.setPlaybackRate(self.getPlaybackRate());
 
+            self._waiting = false;
+
             if (self._paused) {
                 self._paused = false;
                 self.events.trigger(self, 'unpause');
@@ -181,8 +188,16 @@ class mpvAudioPlayer {
         }
 
         function onPause() {
+            self._waiting = false;
             self._paused = true;
             self.events.trigger(self, 'pause');
+        }
+
+        function onWaiting() {
+            if (!self._waiting) {
+                self._waiting = true;
+                self.events.trigger(self, 'waiting');
+            }
         }
 
         function onBufferedRangesUpdated(ranges) {
