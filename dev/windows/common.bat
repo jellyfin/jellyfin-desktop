@@ -3,8 +3,8 @@ REM Jellyfin Desktop - Common variables
 REM Sourced by other scripts
 
 set QT_VERSION=6.9.3
-set MPV_RELEASE=20260223
-set MPV_VERSION=20260223-git-f439c7f
+REM Keep in sync with .github/workflows/build-windows.yml
+set MPV_VERSION=20261018-git-01e2533f31
 set SCRIPT_DIR=%~dp0
 for %%i in ("%SCRIPT_DIR%\..\..") do set "PROJECT_ROOT=%%~fi"
 set DEPS_DIR=%SCRIPT_DIR%deps

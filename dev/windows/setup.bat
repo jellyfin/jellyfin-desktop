@@ -64,7 +64,7 @@ if not exist "!DEPS_DIR!\mpv\libmpv-2.dll" (
     echo Downloading libmpv...
     if exist "!DEPS_DIR!\mpv" rmdir /s /q "!DEPS_DIR!\mpv"
     if exist "!DEPS_DIR!\mpv_tmp" rmdir /s /q "!DEPS_DIR!\mpv_tmp"
-    curl -L "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/!MPV_RELEASE!/mpv-dev-x86_64-v3-!MPV_VERSION!.7z" -o "!DEPS_DIR!\mpv.7z"
+    curl -L "https://sourceforge.net/projects/mpv-player-windows/files/libmpv/mpv-dev-x86_64-v3-!MPV_VERSION!.7z/download" -o "!DEPS_DIR!\mpv.7z"
     if errorlevel 1 (
         echo ERROR: Failed to download libmpv
     ) else (
@@ -103,7 +103,7 @@ if not exist "!DEPS_DIR!\mpv\libmpv-2.dll" (
 echo [10/14] Downloading libmpv fallback (non-AVX2)...
 if not exist "!DEPS_DIR!\mpv-fallback\libmpv-2.dll" (
     if exist "!DEPS_DIR!\mpv-fallback-tmp" rmdir /s /q "!DEPS_DIR!\mpv-fallback-tmp"
-    curl -L "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/!MPV_RELEASE!/mpv-dev-x86_64-!MPV_VERSION!.7z" -o "!DEPS_DIR!\mpv-fallback.7z"
+    curl -L "https://sourceforge.net/projects/mpv-player-windows/files/libmpv/mpv-dev-x86_64-!MPV_VERSION!.7z/download" -o "!DEPS_DIR!\mpv-fallback.7z"
     if errorlevel 1 (
         echo ERROR: Failed to download libmpv fallback
     ) else (
