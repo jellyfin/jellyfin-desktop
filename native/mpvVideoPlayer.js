@@ -1,5 +1,9 @@
 /* eslint-disable indent */
 (function() {
+    // A queue can recreate the player or its dialog between episodes.
+    // Keep the window state until playbackstop reports the end of video playback.
+    let fullscreenBeforePlayback;
+
     function getMediaStreamAudioTracks(mediaSource) {
         return mediaSource.MediaStreams.filter(function (s) {
             return s.Type === 'Audio';
@@ -234,6 +238,17 @@
 
             this.onDuration = (duration) => {
                 this._duration = duration;
+            };
+
+            this.onPlaybackStopped = (event, state) => {
+                if (state.NextMediaType === 'Video') {
+                    return;
+                }
+
+                if (fullscreenBeforePlayback === false && this.isFullscreen() && !window.jmpInfo.settings.main.forceAlwaysFS) {
+                    window.api.window.setFullScreen(false);
+                }
+                fullscreenBeforePlayback = undefined;
             };
         }
 
@@ -508,6 +523,12 @@
          * @private
          */
         createMediaElement(options) {
+            // inputPlugin removes player listeners when switching players.
+            this.events.off(this, 'playbackstop', this.onPlaybackStopped);
+            this.events.on(this, 'playbackstop', this.onPlaybackStopped);
+            if (fullscreenBeforePlayback === undefined) {
+                fullscreenBeforePlayback = this.isFullscreen();
+            }
             const dlg = document.querySelector('.videoPlayerContainer');
 
             if (!dlg) {
