@@ -6,7 +6,7 @@ RUN pacman -Syu --noconfirm && \
     base-devel cmake git ninja \
     qt6-webengine qt6-declarative \
     mpv mpvqt libcec sdl2 p8-platform protobuf qt6-serialport \
-    wget file patchelf desktop-file-utils imagemagick && \
+    wget file patchelf desktop-file-utils librsvg && \
     pacman -Scc --noconfirm
 
 # Download and extract appimagetool (no FUSE in Docker)
@@ -115,7 +115,7 @@ RUN find /AppDir/usr/lib /AppDir/usr/bin -type f \( -name '*.so*' -o -executable
 
 # Desktop integration files at AppDir root (required by AppImage spec)
 RUN cp /AppDir/usr/share/applications/org.jellyfin.JellyfinDesktop.desktop /AppDir/ && \
-    magick convert -resize 256x256 /AppDir/usr/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg /AppDir/.DirIcon
+    rsvg-convert -w 256 -h 256 '/AppDir/usr/share/icons/hicolor/scalable/apps/org.jellyfin.JellyfinDesktop.svg' -o '/AppDir/.DirIcon'
 
 # Build Wayland positioner fix (LD_PRELOAD library).
 # Prevents xdg_positioner.set_size(0,0) during popup reposition, which is
