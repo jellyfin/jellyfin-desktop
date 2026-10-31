@@ -2,7 +2,7 @@
 REM Jellyfin Desktop - Common variables
 REM Sourced by other scripts
 
-set QT_VERSION=6.10.1
+set QT_VERSION=6.11.3
 set MPV_RELEASE=20260223
 set MPV_VERSION=20260223-git-f439c7f
 set SCRIPT_DIR=%~dp0
