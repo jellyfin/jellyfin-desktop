@@ -20,8 +20,8 @@ private:
     void initialize();
 
     PlayerComponent* m_player = nullptr;
-    bool m_initialized;
-    bool m_ready;
+    bool m_initialized = false;
+    bool m_ready = false;
 };
 
 #endif // MPVVIDEOITEM_H
