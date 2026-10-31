@@ -25,10 +25,7 @@ jobs:
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
       with:
-        # using older version due to severe memory leak
-        # https://qt-project.atlassian.net/browse/QTBUG-141377https://qt-project.atlassian.net/browse/QTBUG-141377
-        #version: '6.10.1'
-        version: '6.9.3'
+        version: '6.11.3'
         arch: clang_64
         modules: 'qtwebengine qtwebchannel qtpositioning'
     - name: Install dependencies
