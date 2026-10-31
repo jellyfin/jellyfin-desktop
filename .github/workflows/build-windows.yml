@@ -1,7 +1,7 @@
 name: build-windows
 
 env:
-  MPV_VERSION: "20251214-git-f7be2ee"
+  MPV_VERSION: "20260223-git-f439c7f"
   # using older version due to severe memory leak
   # https://qt-project.atlassian.net/browse/QTBUG-141377
   QT_VERSION: "6.9.3"
