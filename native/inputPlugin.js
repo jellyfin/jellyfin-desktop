@@ -23,6 +23,32 @@ class inputPlugin {
         this.positionUpdateInterval = null;
         this.attachedPlayer = null;
 
+        // Handle desktop navigation after the page has had a chance to consume
+        // the key. Native window shortcuts would steal keys from HTML editors.
+        this.desktopNavigationKey = (event) => {
+            if (window.jmpInfo.settings.main.webMode !== 'desktop' ||
+                event.defaultPrevented || event.repeat || event.isComposing ||
+                event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+                (event.key !== 'Escape' && event.key !== 'Backspace')) {
+                return;
+            }
+
+            if (event.composedPath().some(element => element instanceof HTMLElement &&
+                (element.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName)))) {
+                return;
+            }
+
+            if (document.querySelector('dialog[open], .dialog.opened, [role="dialog"][aria-modal="true"]') ||
+                (event.key === 'Escape' &&
+                 (document.fullscreenElement || window.jmpInfo.settings.main.fullscreen))) {
+                return;
+            }
+
+            event.preventDefault();
+            inputManager.handleCommand('back', {});
+        };
+        window.addEventListener('keydown', this.desktopNavigationKey);
+
         (async () => {
             const api = await window.apiPromise;
 
@@ -323,6 +349,7 @@ class inputPlugin {
     }
 
     destroy() {
+        window.removeEventListener('keydown', this.desktopNavigationKey);
         if (this.durationCheckInterval) {
             clearInterval(this.durationCheckInterval);
             this.durationCheckInterval = null;
