@@ -15,8 +15,10 @@ jobs:
         include:
           - runner: macos-15
             artifact: macos-arm64
-          - runner: macos-15-intel
-            artifact: macos-x86_64
+          # disable intel macOS runner since HomeBrew doesn't have any x86_64 prebuilt binaries anymore
+          # and we're hitting the timeout while building mpv
+          # - runner: macos-15-intel
+          #   artifact: macos-x86_64
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v7
