@@ -47,7 +47,7 @@ class mpvAudioPlayer {
         self._duration = undefined;
         self._currentTime = undefined;
         self._paused = false;
-        self._volume = self.getSavedVolume() * 100;
+        self._volume = Math.min(100, Math.max(0, Math.round(self.getSavedVolume() * 100)));
         self._playRate = 1;
         self._hasConnection = false;
         self._bufferedRanges = [];
@@ -157,7 +157,7 @@ class mpvAudioPlayer {
         function onTimeUpdate(time) {
             // Don't trigger events after user stop
             if (!self._isFadingOut) {
-                self._currentTime = time;
+                self._currentTime = time != null ? Math.round(time) : time;
                 self.events.trigger(self, 'timeupdate');
             }
         }
@@ -166,7 +166,7 @@ class mpvAudioPlayer {
             if (!self._started) {
                 self._started = true;
 
-                const volume = self.getSavedVolume() * 100;
+                const volume = Math.min(100, Math.max(0, Math.round(self.getSavedVolume() * 100)));
                 self.setVolume(volume, volume != self._volume);
             }
 
@@ -315,16 +315,20 @@ class mpvAudioPlayer {
     }
 
     setVolume(val, save = true) {
-        this._volume = val;
-        if (save) {
-            this.saveVolume((val || 100) / 100);
-            this.events.trigger(this, 'volumechange');
+        val = Number(val);
+        if (!isNaN(val)) {
+            val = Math.min(100, Math.max(0, Math.round(val)));
+            this._volume = val;
+            if (save) {
+                this.saveVolume((val || 100) / 100);
+                this.events.trigger(this, 'volumechange');
+            }
+            window.api.player.setVolume(val);
         }
-        window.api.player.setVolume(val);
     }
 
     getVolume() {
-        return this._volume;
+        return Math.min(100, Math.max(0, Math.round(this._volume ?? 100)));
     }
 
     volumeUp() {
