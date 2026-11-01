@@ -259,6 +259,7 @@ Window
       console.log("WebEngineView size:", width, "x", height, "backgroundColor:", backgroundColor)
       forceActiveFocus()
       mainWindow.reloadWebClient.connect(reload)
+      components.certificates.setProfile(web.profile)
 
       // Handle CSP workaround from C++
       components.system.pageContentReady.connect(function(html, finalUrl, hadCSP) {
@@ -329,7 +330,57 @@ Window
       console.log(error.url + " :" + error.description + error.error)
       if (components.settings.ignoreSSLErrors()) {
         error.acceptCertificate()
+      } else {
+        components.certificates.handleCertificateError(error)
       }
+    }
+
+    onSelectClientCertificate: function(selection)
+    {
+      var index = components.certificates.matchClientCert(selection.certificates, "" + selection.host)
+      if (index >= 0) {
+        selection.select(selection.certificates[index])
+      } else {
+        selection.selectNone()
+      }
+    }
+  }
+
+  // find-webclient.html on top of the web client, to add servers and manage
+  // certificates without navigating the web client away. It only shows qrc pages,
+  // so it needs no TLS handlers.
+  WebEngineView
+  {
+    id: overlay
+    anchors.fill: parent
+    z: 200
+    visible: false
+    backgroundColor: "#101010"
+    profile: web.profile
+    webChannel: webChannelObject
+
+    Connections
+    {
+      target: components.certificates
+
+      function onOverlayRequested(url)
+      {
+        overlay.url = url
+        overlay.visible = true
+        overlay.forceActiveFocus()
+      }
+
+      function onOverlayClosed(resultUrl)
+      {
+        overlay.visible = false
+        overlay.url = "about:blank"
+        web.forceActiveFocus()
+      }
+    }
+
+    onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID)
+    {
+      components.system.jsLog(level, "[overlay] " + sourceID + ":" + lineNumber + " " + message);
     }
   }
 
