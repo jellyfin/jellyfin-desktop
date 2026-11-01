@@ -327,8 +327,10 @@
 
                 const streams = options.mediaSource?.MediaStreams || [];
 
-                // Handle audio
-                const audioRelIndex = this._audioTrackIndexToSetOnPlaying != null && this._audioTrackIndexToSetOnPlaying >= 0
+                // Handle audio. A server transcode carries only the selected
+                // audio stream, so it is always mpv track 1.
+                const isTranscode = options.playMethod === 'Transcode';
+                const audioRelIndex = !isTranscode && this._audioTrackIndexToSetOnPlaying != null && this._audioTrackIndexToSetOnPlaying >= 0
                     ? this.getRelativeIndexByType(streams, this._audioTrackIndexToSetOnPlaying, 'Audio')
                     : 1;
 
@@ -439,8 +441,10 @@
             console.log('[MPV] setAudioStreamIndex called with index:', index);
             this._audioTrackIndexToSetOnPlaying = index;
 
-            const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
-            const relIndex = index < 0 ? -1 : this.getRelativeIndexByType(streams, index, 'Audio');
+            const playOptions = this._currentPlayOptions;
+            const streams = playOptions?.mediaSource?.MediaStreams || [];
+            const isTranscode = playOptions?.playMethod === 'Transcode';
+            const relIndex = index < 0 ? -1 : (isTranscode ? 1 : this.getRelativeIndexByType(streams, index, 'Audio'));
             console.log('[MPV] Mapped audio index:', index, '->', relIndex);
             window.api.player.setAudioStream(relIndex != null ? relIndex : -1);
         }
