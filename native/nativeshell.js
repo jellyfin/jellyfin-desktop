@@ -298,16 +298,26 @@ window.initCompleted = new Promise(async (resolve) => {
         }
     );
 
-    // Sync cursor visibility with jellyfin-web's mouse idle state
+    // Sync cursor visibility with jellyfin-web's mouse idle state (for TV mode)
     const observer = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
             if (mutation.attributeName === 'class') {
-                const isIdle = document.body.classList.contains('mouseIdle');
-                window.api.window.setCursorVisibility(!isIdle);
+                if (document.body.classList.contains('mouseIdle')) {
+                    window.api.window.setCursorVisibility(false);
+                } else if (jmpInfo.mode === 'tv') {
+                    window.api.window.setCursorVisibility(true);
+                }
             }
         }
     });
     observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+    // Reset cursor idle timer on mouse movement
+    window.addEventListener('mousemove', () => {
+        if (window.api && window.api.window && window.api.window.resetCursorIdleTimer) {
+            window.api.window.resetCursorIdleTimer();
+        }
+    }, { passive: true });
 
     resolve();
 });
