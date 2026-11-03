@@ -19,6 +19,7 @@
 #include <QDebug>
 #include <QRegularExpression>
 #include <QPointer>
+#include <QVariant>
 #include <functional>
 
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
@@ -166,12 +167,12 @@ QVariantMap SystemComponent::systemInformation() const
   }
 #endif
 
-  
+
   info["build"] = build + "-" + arch;
   info["dist"] = dist;
   info["version"] = Version::GetVersionString();
   info["productid"] = productid;
-  
+
  qDebug() << QString(
                 "System Information : build(%1)-arch(%2).dist(%3).version(%4).productid(%5)")
                 .arg(build)
@@ -275,19 +276,24 @@ void SystemComponent::setReplyTimeout(QNetworkReply* reply, int ms)
   QPointer<QNetworkReply> replyPtr(reply);
   QTimer::singleShot(ms, this, [replyPtr]() {
     if (replyPtr && !replyPtr->isFinished()) {
+      // Mark timeout aborts so finished handlers can distinguish them from
+      // user cancellations. Both arrive as OperationCanceledError.
+      replyPtr->setProperty("requestTimedOut", true);
       replyPtr->abort();
     }
   });
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-void SystemComponent::resolveUrl(const QString& url, std::function<void(const QString&)> callback)
+void SystemComponent::resolveUrl(const QString& url, std::function<void(const QString&, const QString&)> callback)
 {
-  // Abort any pending resolve
+  // Abort any pending resolve. Clear the member first: abort() can emit
+  // finished() synchronously.
   if (m_resolveUrlReply) {
-    m_resolveUrlReply->abort();
-    m_resolveUrlReply->deleteLater();
+    QNetworkReply* pending = m_resolveUrlReply;
     m_resolveUrlReply = nullptr;
+    pending->abort();
+    pending->deleteLater();
   }
 
   QNetworkRequest request(url);
@@ -305,7 +311,9 @@ void SystemComponent::resolveUrl(const QString& url, std::function<void(const QS
             reply, QOverload<>::of(&QNetworkReply::ignoreSslErrors));
   }
   connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
-    if (reply->error() == QNetworkReply::OperationCanceledError) {
+    const bool timedOut = reply->property("requestTimedOut").toBool();
+
+    if (reply->error() == QNetworkReply::OperationCanceledError && !timedOut) {
       reply->deleteLater();
       if (m_resolveUrlReply == reply) {
         m_resolveUrlReply = nullptr;
@@ -313,11 +321,15 @@ void SystemComponent::resolveUrl(const QString& url, std::function<void(const QS
       return;
     }
 
-    if (reply->error() != QNetworkReply::NoError) {
+    QString error;
+    if (timedOut) {
+      error = QStringLiteral("Connection timed out");
+      qWarning() << "resolveUrl: timed out";
+    } else if (reply->error() != QNetworkReply::NoError) {
       qWarning() << "resolveUrl: error:" << reply->errorString();
     }
 
-    callback(reply->url().toString());
+    callback(reply->url().toString(), error);
     reply->deleteLater();
     if (m_resolveUrlReply == reply) {
       m_resolveUrlReply = nullptr;
@@ -328,21 +340,36 @@ void SystemComponent::resolveUrl(const QString& url, std::function<void(const QS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void SystemComponent::checkServerConnectivity(QString url)
 {
+  // A different URL starts a new attempt sequence with a fresh deadline.
+  if (url != m_pendingConnectivityUrl) {
+    m_connectivityDeadline.start();
+  }
+
   // Stop any pending retry
   if (m_connectivityRetryTimer->isActive()) {
     m_connectivityRetryTimer->stop();
   }
 
   if (m_connectivityCheckReply) {
-    m_connectivityCheckReply->abort();
-    m_connectivityCheckReply->deleteLater();
+    QNetworkReply* pending = m_connectivityCheckReply;
     m_connectivityCheckReply = nullptr;
+    pending->abort();
+    pending->deleteLater();
   }
 
   // Store for retry
   m_pendingConnectivityUrl = url;
 
-  resolveUrl(url, [this, url](const QString& fullResolvedUrl) {
+  resolveUrl(url, [this, url](const QString& fullResolvedUrl, const QString& resolveError) {
+    if (url != m_pendingConnectivityUrl) {
+      return;
+    }
+
+    if (!resolveError.isEmpty()) {
+      handleConnectivityFailure(url, resolveError);
+      return;
+    }
+
     QString baseUrl = extractBaseUrl(fullResolvedUrl);
 
     QString checkUrl = baseUrl + "/System/Info/Public";
@@ -364,7 +391,18 @@ void SystemComponent::checkServerConnectivity(QString url)
     }
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, url, fullResolvedUrl]() {
-      if (reply->error() == QNetworkReply::OperationCanceledError) {
+      if (url != m_pendingConnectivityUrl) {
+        reply->deleteLater();
+        if (m_connectivityCheckReply == reply) {
+          m_connectivityCheckReply = nullptr;
+        }
+
+        return;
+      }
+
+      const bool timedOut = reply->property("requestTimedOut").toBool();
+
+      if (reply->error() == QNetworkReply::OperationCanceledError && !timedOut) {
         reply->deleteLater();
         if (m_connectivityCheckReply == reply) {
           m_connectivityCheckReply = nullptr;
@@ -373,24 +411,31 @@ void SystemComponent::checkServerConnectivity(QString url)
       }
 
       bool success = false;
-      if (reply->error() == QNetworkReply::NoError) {
+      QString error;
+      if (timedOut) {
+        error = QStringLiteral("Connection timed out");
+        qWarning() << "checkServerConnectivity: timed out";
+      } else if (reply->error() == QNetworkReply::NoError) {
         QByteArray data = reply->readAll();
         QJsonDocument doc = QJsonDocument::fromJson(data);
         if (doc.isObject() && doc.object().contains("Id") && !doc.object()["Id"].toString().isEmpty()) {
           success = true;
         } else {
+          error = QStringLiteral("Received an invalid response from the server");
           qWarning() << "checkServerConnectivity: invalid response";
         }
       } else {
-        qWarning() << "checkServerConnectivity: error:" << reply->errorString();
+        error = reply->errorString();
+        qWarning() << "checkServerConnectivity: error:" << error;
       }
 
       if (success) {
         m_connectivityRetryTimer->stop();
         m_pendingConnectivityUrl.clear();
-        emit serverConnectivityResult(url, success, fullResolvedUrl);
+        m_connectivityDeadline.invalidate();
+        emit serverConnectivityResult(url, true, fullResolvedUrl);
       } else {
-        m_connectivityRetryTimer->start(CONNECTIVITY_RETRY_INTERVAL_MS);
+        handleConnectivityFailure(url, error);
       }
 
       reply->deleteLater();
@@ -399,6 +444,27 @@ void SystemComponent::checkServerConnectivity(QString url)
       }
     });
   });
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void SystemComponent::handleConnectivityFailure(const QString& url, const QString& error)
+{
+  if (url != m_pendingConnectivityUrl) {
+    return;
+  }
+
+  const qint64 elapsed = m_connectivityDeadline.isValid() ? m_connectivityDeadline.elapsed() : CONNECTIVITY_TIMEOUT_MS;
+  if (elapsed < CONNECTIVITY_TIMEOUT_MS) {
+    m_connectivityRetryTimer->start(CONNECTIVITY_RETRY_INTERVAL_MS);
+    return;
+  }
+
+  qWarning() << "checkServerConnectivity: giving up after" << elapsed << "ms:" << error;
+
+  m_connectivityRetryTimer->stop();
+  m_pendingConnectivityUrl.clear();
+  m_connectivityDeadline.invalidate();
+  emit serverConnectivityResult(url, false, error);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -425,6 +491,7 @@ void SystemComponent::cancelServerConnectivity()
   }
 
   m_pendingConnectivityUrl.clear();
+  m_connectivityDeadline.invalidate();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
