@@ -6,6 +6,10 @@
         });
     }
 
+    function clampVolume(val) {
+        return Math.min(100, Math.max(0, Math.round(val)));
+    }
+
     class mpvVideoPlayer {
         constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm, dashboard }) {
             this.events = events;
@@ -154,7 +158,7 @@
 
                     this.loading.hide();
 
-                    const volume = this.getSavedVolume() * 100;
+                    const volume = clampVolume(this.getSavedVolume() * 100);
                     this.setVolume(volume, false);
 
                     this.setPlaybackRate(this.getPlaybackRate());
@@ -783,6 +787,7 @@
     setVolume(val, save = true) {
         val = Number(val);
         if (!isNaN(val)) {
+            val = clampVolume(val);
             this._volume = val;
             if (save) {
                 this.saveVolume(val / 100);
@@ -793,7 +798,7 @@
     }
 
     getVolume() {
-        return this._volume;
+        return clampVolume(this._volume ?? 100);
     }
 
     volumeUp() {
