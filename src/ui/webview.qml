@@ -278,6 +278,25 @@ Window
       web.profile.userScripts.collection = [ nativeshell ];
     }
 
+    // The cross-origin navigation from the bundled find-webclient page to the server web
+    // client moves the view to a new renderer process. Like the user script above, the
+    // view's transparent background is not always applied to it (e.g. after connecting
+    // manually on first launch): the page is then painted opaque white over the mpv video.
+    // Changing the color forces Qt WebEngine to send it to the current renderer again.
+    // Chromium only accepts fully opaque or fully transparent background colors (anything
+    // else hits a CHECK), so go through opaque black, which is the window color anyway.
+    function reapplyTransparentBackground()
+    {
+      web.backgroundColor = "#000000";
+      web.backgroundColor = "transparent";
+    }
+
+    onRenderProcessPidChanged: function(pid)
+    {
+      console.log("Render process changed to", pid, "- re-applying transparent background");
+      Qt.callLater(reapplyTransparentBackground);
+    }
+
     onLoadingChanged: function(loadingInfo)
     {
       // we use a timer here to switch to the webview since
@@ -291,6 +310,7 @@ Window
       else if (loadingInfo.status == WebEngineView.LoadSucceededStatus)
       {
         console.log("WebEngineLoadRequest success: " + loadingInfo.url);
+        Qt.callLater(reapplyTransparentBackground);
       }
       else if (loadingInfo.status == WebEngineView.LoadFailedStatus)
       {
