@@ -3,6 +3,7 @@
 
 #include "ComponentManager.h"
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QNetworkReply>
 #include <QNetworkAccessManager>
 #include <QJSValue>
@@ -16,6 +17,7 @@
 // Network timeouts (milliseconds)
 constexpr int NETWORK_REQUEST_TIMEOUT_MS = 30000;
 constexpr int CONNECTIVITY_RETRY_INTERVAL_MS = 5000;
+constexpr int CONNECTIVITY_TIMEOUT_MS = 60000;
 
 class SystemComponent : public ComponentBase
 {
@@ -42,10 +44,11 @@ public:
 
   Q_INVOKABLE void checkServerConnectivity(QString url);
   Q_INVOKABLE void cancelServerConnectivity();
-  Q_SIGNAL void serverConnectivityResult(QString url, bool success, QString resolvedUrl);
+  Q_SIGNAL void serverConnectivityResult(QString url, bool success, QString result);
 
   static QString extractBaseUrl(const QString& url);
-  void resolveUrl(const QString& url, std::function<void(const QString&)> callback);
+  void resolveUrl(const QString& url, std::function<void(const QString&, const QString&)> callback);
+  void handleConnectivityFailure(const QString& url, const QString& error);
 
   Q_INVOKABLE QString getUserAgent();
 
@@ -140,6 +143,7 @@ private:
   QNetworkReply* m_resolveUrlReply;
   QTimer* m_connectivityRetryTimer;
   QString m_pendingConnectivityUrl;
+  QElapsedTimer m_connectivityDeadline;
 
 };
 

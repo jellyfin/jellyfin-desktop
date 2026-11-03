@@ -116,10 +116,7 @@ button:disabled {
     height: 80px;
     animation: spin 1s linear infinite;
     display: none;
-    position: absolute;
-    top: calc(1em + 1.5em + 1.25em);
-    left: 50%;
-    margin-left: -40px;
+    margin: 0 auto 1em;
 }
 #connect-button {
     max-width: 450px;
@@ -135,4 +132,18 @@ button:disabled {
 }
 #connect-button.cancel:hover:not(:disabled) {
     background: #d93134;
+}
+#status {
+    display: none;
+    width: 100%;
+    max-width: 450px;
+    margin-top: 0.75em;
+    text-align: center;
+    line-height: 1.5;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    color: rgba(255, 255, 255, 0.65);
+}
+#status.error {
+    color: #cb272a;
 }
