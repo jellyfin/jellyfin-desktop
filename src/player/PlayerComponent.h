@@ -171,6 +171,7 @@ public Q_SLOTS:
 private Q_SLOTS:
   void handleMpvEvents();
   void onRestoreDisplay();
+  void updatePausedInBackground();
   void onRefreshRateChange();
   void updateAudioDevice();
 
@@ -262,6 +263,9 @@ private:
   QQuickWindow* m_window;
   float m_mediaFrameRate;
   QTimer m_restoreDisplayTimer;
+  // Paused and the window not active: give the desktop its mode back.
+  QTimer m_pausedRestoreTimer;
+  bool m_displayRestoredWhilePaused = false;
   QTimer m_reloadAudioTimer;
   QSet<QString> m_audioDevices;
   bool m_streamSwitchImminent;
