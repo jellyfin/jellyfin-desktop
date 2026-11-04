@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<body id="page" tabindex="-1">
+  <input id="editor" value="abc">
+  <textarea id="textarea">abc</textarea>
+  <div id="contenteditable" contenteditable="true">abc</div>
+  <dialog id="modal">Modal</dialog>
+  <script src="../../native/inputPlugin.js"></script>
+  <script>
+    window.apiPromise = new Promise(() => {});
+    window.jmpInfo = { settings: { main: { webMode: 'desktop', fullscreen: false } } };
+    let commands = [];
+    let plugin;
+    let cancelKey = false;
+    document.addEventListener('keydown', event => {
+      if (cancelKey) event.preventDefault();
+    });
+    function resetFixture() {
+      if (plugin) plugin.destroy();
+      commands = [];
+      cancelKey = false;
+      jmpInfo.settings.main.webMode = 'desktop';
+      jmpInfo.settings.main.fullscreen = false;
+      document.getElementById('modal').close();
+      document.querySelectorAll('.dialogContainer').forEach(element => element.remove());
+      document.getElementById('editor').value = 'abc';
+      document.getElementById('textarea').value = 'abc';
+      document.getElementById('contenteditable').textContent = 'abc';
+      plugin = new window._inputPlugin({
+        inputManager: { handleCommand: command => commands.push(command) },
+        playbackManager: {}
+      });
+      document.body.focus();
+    }
+    function focusEditor(id) {
+      const editor = document.getElementById(id);
+      editor.focus();
+      if (editor.isContentEditable) {
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } else {
+        editor.setSelectionRange(3, 3);
+      }
+      return document.activeElement.id;
+    }
+  </script>
+</body>
+</html>
