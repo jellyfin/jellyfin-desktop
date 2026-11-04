@@ -32,6 +32,8 @@
 #include <interface/vmcs_host/vcgencmd.h>
 #endif
 
+static constexpr qint64 POSITION_UPDATE_INTERVAL_MS = 100;
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 static void wakeup_cb(void *context)
 {
@@ -45,7 +47,7 @@ PlayerComponent::PlayerComponent(QObject* parent)
   : ComponentBase(parent), m_state(State::finished), m_paused(false), m_playbackActive(false),
   m_windowVisible(false), m_videoPlaybackActive(false), m_inPlayback(false), m_playbackCanceled(false),
   m_bufferingPercentage(100), m_lastBufferingPercentage(-1),
-  m_lastPositionUpdate(0.0), m_playbackAudioDelay(0),
+  m_positionMs(0), m_durationMs(0), m_lastPositionUpdateMs(-1), m_playbackAudioDelay(0),
   m_window(nullptr), m_mediaFrameRate(0),
   m_restoreDisplayTimer(this), m_reloadAudioTimer(this),
   m_streamSwitchImminent(false), m_doAc3Transcoding(false),
@@ -556,12 +558,15 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
       }
       else if (strcmp(prop->name, "playback-time") == 0 && prop->format == MPV_FORMAT_DOUBLE)
       {
-        double pos = *static_cast<double*>(prop->data);
-        if (fabs(pos - m_lastPositionUpdate) > 0.015)
-        {
-          quint64 ms = static_cast<quint64>(qMax(pos * 1000.0, 0.0));
-          emit positionUpdate(ms);
-          m_lastPositionUpdate = pos;
+        const double pos = *static_cast<double*>(prop->data);
+        if (qIsFinite(pos)) {
+          m_positionMs = qMax<qint64>(qRound64(pos * 1000.0), 0);
+          if (m_lastPositionUpdateMs < 0 ||
+              qAbs(m_positionMs - m_lastPositionUpdateMs) >= POSITION_UPDATE_INTERVAL_MS)
+          {
+            emit positionUpdate(static_cast<quint64>(m_positionMs));
+            m_lastPositionUpdateMs = m_positionMs;
+          }
         }
       }
       else if (strcmp(prop->name, "vo-configured") == 0)
@@ -572,8 +577,11 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
       }
       else if (strcmp(prop->name, "duration") == 0)
       {
-        if (prop->format == MPV_FORMAT_DOUBLE)
-          emit updateDuration(*static_cast<double*>(prop->data) * 1000.0);
+        if (prop->format == MPV_FORMAT_DOUBLE) {
+          const double duration = *static_cast<double*>(prop->data);
+          m_durationMs = qIsFinite(duration) ? qMax<qint64>(qRound64(duration * 1000.0), 0) : 0;
+          emit updateDuration(m_durationMs);
+        }
       }
       else if (strcmp(prop->name, "audio-device-list") == 0)
       {
@@ -1119,27 +1127,13 @@ void PlayerComponent::setPlaybackRate(int rate)
 /////////////////////////////////////////////////////////////////////////////////////////
 qint64 PlayerComponent::getPosition()
 {
-  if (!m_mpv) {
-    qWarning() << "PlayerComponent::getPosition: mpv not initialized yet";
-    return 0;
-  }
-  QVariant time = m_mpv->getProperty( "playback-time");
-  if (time.canConvert<double>())
-    return static_cast<qint64>(time.toDouble() * 1000.0);
-  return 0;
+  return m_positionMs;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
 qint64 PlayerComponent::getDuration()
 {
-  if (!m_mpv) {
-    qWarning() << "PlayerComponent::getDuration: mpv not initialized yet";
-    return 0;
-  }
-  QVariant time = m_mpv->getProperty( "duration");
-  if (time.canConvert<double>())
-    return time.toDouble();
-  return 0;
+  return m_durationMs;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

@@ -137,14 +137,13 @@ void TaskbarComponentWin::setControlsVisible(bool value)
 /////////////////////////////////////////////////////////////////////////////////////////
 void TaskbarComponentWin::setProgress(quint64 value)
 {
-  if (m_button) {
-    qint64 duration = PlayerComponent::Get().getDuration();
-    int progress = 0;
-    if (duration != 0) {
-      progress = (int) (value / duration / 10);
-    }
-    m_button->progress()->setValue(progress);
-  }
+  if (!m_button) return;
+
+  const qint64 duration = PlayerComponent::Get().getDuration();
+  const qint64 progress = duration > 0
+      ? qBound<qint64>(0, static_cast<qint64>(value) * 100 / duration, 100)
+      : 0;
+  m_button->progress()->setValue(static_cast<int>(progress));
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -381,8 +380,6 @@ void TaskbarComponentWin::setThumbnail(const QVariantMap& meta, QUrl baseUrl)
     qDebug() << "No Primary image found. Do nothing";
     return;
   }
-
-  
 
   ComPtr<IRandomAccessStreamReferenceStatics> streamRefFactory;
   hr = GetActivationFactory(HStringReference(RuntimeClass_Windows_Storage_Streams_RandomAccessStreamReference).Get(),

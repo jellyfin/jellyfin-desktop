@@ -30,7 +30,7 @@ public:
   bool componentExport() override { return true; }
   bool componentInitialize() override;
   void componentPostInitialize() override;
-  
+
   explicit PlayerComponent(QObject* parent = nullptr);
   ~PlayerComponent() override;
 
@@ -96,7 +96,7 @@ public:
   Q_INVOKABLE virtual QVariant getAudioDeviceList();
   // Uses the "name" from the device list.
   Q_INVOKABLE virtual void setAudioDevice(const QString& name);
-  
+
   Q_INVOKABLE virtual void setAudioStream(const QVariant& audioStream);
   Q_INVOKABLE virtual void setSubtitleStream(const QVariant& subtitleStream);
 
@@ -119,7 +119,9 @@ public:
 
   Q_INVOKABLE void setPlaybackRate(int rate);
 
+  // Cached from the observed playback-time property, in milliseconds.
   Q_INVOKABLE qint64 getPosition();
+  // Cached from the observed duration property, in milliseconds.
   Q_INVOKABLE qint64 getDuration();
 
   Q_INVOKABLE QVariantList getWebPlaylist() const;
@@ -156,7 +158,7 @@ public:
     Subtitle,
     Audio,
   };
-  
+
 public Q_SLOTS:
   void updateAudioDeviceList();
   void setAudioConfiguration();
@@ -194,8 +196,8 @@ Q_SIGNALS:
   void updateDuration(qint64 milliseconds);
   void playbackRateChanged(double rate);
 
-  // current position in ms should be triggered 2 times a second
-  // when position updates
+  // Use getPosition() for the precise cached position
+  // when a resolution higher than the update interval is required
   void positionUpdate(quint64);
 
   void onVideoRecangleChanged();
@@ -257,7 +259,9 @@ private:
   QString m_playbackError;
   int m_bufferingPercentage;
   int m_lastBufferingPercentage;
-  double m_lastPositionUpdate;
+  qint64 m_durationMs;
+  qint64 m_positionMs;
+  qint64 m_lastPositionUpdateMs;
   qint64 m_playbackAudioDelay;
   QQuickWindow* m_window;
   float m_mediaFrameRate;
