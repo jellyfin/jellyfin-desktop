@@ -99,9 +99,6 @@ void PlayerComponent::initializeMpv()
 
   mpv_set_wakeup_callback(m_mpv->mpv(), wakeup_cb, this);
 
-  // Keep window open even when idle (no file loaded)
-  m_mpv->setProperty("force-window", true);
-
   // Disable native OSD if mpv_command_string() is used.
   m_mpv->setProperty("osd-level", "0");
 
