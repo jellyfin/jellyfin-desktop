@@ -30,7 +30,7 @@ public:
   bool componentExport() override { return true; }
   bool componentInitialize() override;
   void componentPostInitialize() override;
-  
+
   explicit PlayerComponent(QObject* parent = nullptr);
   ~PlayerComponent() override;
 
@@ -96,7 +96,7 @@ public:
   Q_INVOKABLE virtual QVariant getAudioDeviceList();
   // Uses the "name" from the device list.
   Q_INVOKABLE virtual void setAudioDevice(const QString& name);
-  
+
   Q_INVOKABLE virtual void setAudioStream(const QVariant& audioStream);
   Q_INVOKABLE virtual void setSubtitleStream(const QVariant& subtitleStream);
 
@@ -125,6 +125,9 @@ public:
   Q_INVOKABLE QVariantList getWebPlaylist() const;
   Q_INVOKABLE QString getCurrentWebPlaylistItemId() const;
   Q_INVOKABLE void setWebPlaylist(const QVariantList& playlist, const QString& currentItemId);
+
+  // True while the video output is up (stays true while paused).
+  Q_INVOKABLE bool isVideoWindowVisible() const { qInfo() << m_windowVisible; return m_windowVisible; }
 
   QRect videoRectangle() { return m_videoRectangle; }
 
@@ -156,7 +159,7 @@ public:
     Subtitle,
     Audio,
   };
-  
+
 public Q_SLOTS:
   void updateAudioDeviceList();
   void setAudioConfiguration();
