@@ -432,8 +432,31 @@ int main(int argc, char *argv[])
     if (parser.isSet("ignore-certificate-errors"))
       chromiumFlags << "--ignore-certificate-errors";
 
+#ifdef Q_OS_WIN
+    // Some OpenGL drivers leak each web frame QtWebEngine imports into the scene graph,
+    // composite in software on those
+    QString gpuCompositing = SettingsComponent::readPreinitValue(SETTINGS_SECTION_MAIN, "webGpuCompositing").toString();
+    if (gpuCompositing == "disabled")
+    {
+      qInfo() << "QtWebEngine GPU compositing disabled in settings";
+      chromiumFlags << "--disable-gpu-compositing";
+    }
+    else if (gpuCompositing != "enabled" &&
+             dxInteropLeaksTextures(ProfileManager::activeProfile().cacheDir("gpu-probe.ini")))
+    {
+      qInfo() << "OpenGL driver leaks DX interop textures, disabling QtWebEngine GPU compositing";
+      chromiumFlags << "--disable-gpu-compositing";
+    }
+#endif
+
     if (!chromiumFlags.isEmpty())
+    {
+      // Keep the user's own flags, after ours so they win
+      QByteArray userFlags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+      if (!userFlags.isEmpty())
+        chromiumFlags << QString::fromLocal8Bit(userFlags);
       qputenv("QTWEBENGINE_CHROMIUM_FLAGS", chromiumFlags.join(" ").toUtf8());
+    }
 
     if (parser.isSet("remote-debugging-port"))
       qputenv("QTWEBENGINE_REMOTE_DEBUGGING", parser.value("remote-debugging-port").toUtf8());
