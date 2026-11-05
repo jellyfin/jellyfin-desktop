@@ -98,6 +98,20 @@ Window
 
   Action
   {
+    enabled:
+    {
+      if (mainWindow.webDesktopMode
+          && mainWindow.visibility === Window.FullScreen
+          && components.player.isVideoWindowVisible())
+        return true;
+      return false;
+    }
+    shortcut: "Escape"
+    onTriggered: components.window.setFullScreen(false)
+  }
+
+  Action
+  {
     enabled: mainWindow.webDesktopMode
     shortcut: StandardKey.Close
     onTriggered: mainWindow.close()
