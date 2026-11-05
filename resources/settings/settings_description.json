@@ -180,6 +180,18 @@
         "display_name": "Allow Browser Zoom",
         "help": "Allows zooming the web interface using Ctrl+Plus/Minus, Ctrl+Scroll, or pinch-to-zoom. Changing this setting requires an application restart for pinch-to-zoom.",
         "default": true
+      },
+      {
+        "value": "webGpuCompositing",
+        "display_name": "Web Interface GPU Compositing",
+        "help": "Composites the web interface on the GPU. Auto turns it off on graphics drivers that leak memory with it (some AMD drivers). This setting requires an application restart to take effect.",
+        "default": "auto",
+        "possible_values": [
+          [ "auto", "Auto" ],
+          [ "enabled", "Enabled" ],
+          [ "disabled", "Disabled" ]
+        ],
+        "platforms": [ "windows" ]
       }
     ]
   },
