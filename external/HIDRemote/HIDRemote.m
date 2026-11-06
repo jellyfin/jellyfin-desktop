@@ -199,7 +199,7 @@ static HIDRemote *sHIDRemote = nil;
     io_service_t	matchingService = 0;
     BOOL isInstalled = NO;
 
-    kernResult = IOMasterPort(MACH_PORT_NULL, &masterPort);
+    kernResult = IOMainPort(MACH_PORT_NULL, &masterPort);
     if ((kernResult!=kIOReturnSuccess) || (masterPort==0)) { return(NO); }
 
     if ((matchingService = IOServiceGetMatchingService(masterPort, IOServiceMatching("IOSPIRITIRController"))) != 0)
@@ -325,7 +325,7 @@ static HIDRemote *sHIDRemote = nil;
         do
         {
             // Get IOKit master port
-            kernReturn = IOMasterPort(bootstrap_port, &_masterPort);
+            kernReturn = IOMainPort(bootstrap_port, &_masterPort);
             if ((kernReturn!=kIOReturnSuccess) || (_masterPort==0)) { break; }
 
             // Setup notification port
