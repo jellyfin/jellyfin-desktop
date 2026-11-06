@@ -47,7 +47,7 @@ PlayerComponent::PlayerComponent(QObject* parent)
   : ComponentBase(parent), m_state(State::finished), m_paused(false), m_playbackActive(false),
   m_windowVisible(false), m_videoPlaybackActive(false), m_inPlayback(false), m_playbackCanceled(false),
   m_bufferingPercentage(100), m_lastBufferingPercentage(-1),
-  m_positionMs(0), m_durationMs(0), m_lastPositionUpdateMs(-1), m_playbackAudioDelay(0),
+  m_durationMs(0), m_positionMs(0), m_lastPositionUpdateMs(-1), m_playbackAudioDelay(0),
   m_window(nullptr), m_mediaFrameRate(0),
   m_restoreDisplayTimer(this), m_reloadAudioTimer(this),
   m_streamSwitchImminent(false), m_doAc3Transcoding(false),
@@ -489,10 +489,10 @@ void PlayerComponent::updatePlaybackState()
     emit buffering(m_bufferingPercentage);
   m_lastBufferingPercentage = m_bufferingPercentage;
 
-  bool is_videoPlaybackActive = m_state == State::playing && m_windowVisible;
-  if (m_videoPlaybackActive != is_videoPlaybackActive)
+  bool isVideoPlaybackActive = m_state == State::playing && m_windowVisible;
+  if (m_videoPlaybackActive != isVideoPlaybackActive)
   {
-    m_videoPlaybackActive = is_videoPlaybackActive;
+    m_videoPlaybackActive = isVideoPlaybackActive;
     emit videoPlaybackActive(m_videoPlaybackActive);
   }
 }
@@ -577,8 +577,11 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
         if (prop->format == MPV_FORMAT_DOUBLE) {
           const double duration = *static_cast<double*>(prop->data);
           m_durationMs = qIsFinite(duration) ? qMax<qint64>(qRound64(duration * 1000.0), 0) : 0;
-          emit updateDuration(m_durationMs);
+        } else {
+          m_durationMs = 0;
         }
+
+        emit updateDuration(m_durationMs);
       }
       else if (strcmp(prop->name, "audio-device-list") == 0)
       {
