@@ -98,20 +98,6 @@ static void preinitQt()
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
-char** appendCommandLineArguments(int argc, char **argv, const QStringList& args)
-{
-  size_t newSize = static_cast<size_t>(argc + args.length() + 1) * sizeof(char*);
-  char** newArgv = static_cast<char**>(calloc(1, newSize));
-  memcpy(newArgv, argv, static_cast<size_t>(argc) * sizeof(char*));
-
-  int pos = argc;
-  for(const QString& str : args)
-    newArgv[pos++] = qstrdup(str.toUtf8().data());
-
-  return newArgv;
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////
 void ShowLicenseInfo()
 {
   QFile licenses(":/misc/licenses.txt");
@@ -125,9 +111,21 @@ void ShowLicenseInfo()
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
-QStringList g_qtFlags = {
+// Chromium switches Jellyfin always wants. Qt WebEngine (Qt 6) only reads Chromium switches
+// from QTWEBENGINE_CHROMIUM_FLAGS (or after --webEngineArgs), not from the application's
+// command line, so they are passed through that variable in main().
+QStringList g_chromiumFlags = {
   "--enable-gpu-rasterization",
-  "--disable-features=MediaSessionService"
+#ifdef Q_OS_LINUX
+  // Disable QtWebEngine's automatic MPRIS registration - we handle it ourselves
+  "--disable-features=MediaSessionService,HardwareMediaKeyHandling",
+#else
+  "--disable-features=MediaSessionService",
+#endif
+  // Let V8 run full garbage collections earlier. Without a limit V8 sizes the heap from the
+  // physical memory, and the web client's garbage grows to several hundred MB before the
+  // first full collection.
+  "--js-flags=--max-old-space-size=256",
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -195,9 +193,6 @@ int main(int argc, char *argv[])
     parser.addOption(deleteProfileOption);
     parser.addOption(createProfileOption);
 
-    char **newArgv = appendCommandLineArguments(argc, argv, g_qtFlags);
-    int newArgc = argc + static_cast<int>(g_qtFlags.size());
-
     preinitQt();
 
     QStringList arguments;
@@ -212,7 +207,7 @@ int main(int argc, char *argv[])
       // a small chicken-or-egg problem, which we "solve" by making
       // this temporary console app.
       //
-      QCoreApplication core(newArgc, newArgv);
+      QCoreApplication core(argc, argv);
 
       // Now parse the command line.
       parser.process(arguments);
@@ -227,7 +222,6 @@ int main(int argc, char *argv[])
 #endif
     }
 
-    detectOpenGLEarly();
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
@@ -419,27 +413,60 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    QStringList chromiumFlags;
-#ifdef Q_OS_LINUX
-    // Disable QtWebEngine's automatic MPRIS registration - we handle it ourselves
-    chromiumFlags << "--disable-features=MediaSessionService,HardwareMediaKeyHandling";
-#endif
+    // Before the QApplication exists, but after the command line handling above returned
+    // early and logging is up, so command line tools skip it and its results are logged
+    detectOpenGLEarly();
+
+    // Keep the switches the user already set in QTWEBENGINE_CHROMIUM_FLAGS (they win over ours)
+    // and add Jellyfin's
+    QStringList chromiumFlags = QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS")).split(' ', Qt::SkipEmptyParts);
+    auto addChromiumFlag = [&chromiumFlags](const QString& flag)
+    {
+      const QString name = flag.section('=', 0, 0);
+      for (const QString& existing : chromiumFlags)
+      {
+        if (existing.section('=', 0, 0) == name)
+          return;
+      }
+      chromiumFlags << flag;
+    };
+
+    if (parser.isSet("disable-gpu"))
+      addChromiumFlag("--disable-gpu");
+
+    for (const QString& flag : g_chromiumFlags)
+    {
+      if (flag == "--enable-gpu-rasterization" && chromiumFlags.contains("--disable-gpu"))
+        continue;
+      addChromiumFlag(flag);
+    }
+
     // Disable pinch-to-zoom if browser zoom is not allowed
     QVariant allowZoom = SettingsComponent::readPreinitValue(SETTINGS_SECTION_MAIN, "allowBrowserZoom");
     if (allowZoom.isValid() && !allowZoom.toBool())
-      chromiumFlags << "--disable-pinch";
+      addChromiumFlag("--disable-pinch");
 
     if (parser.isSet("ignore-certificate-errors"))
-      chromiumFlags << "--ignore-certificate-errors";
+      addChromiumFlag("--ignore-certificate-errors");
 
-    if (!chromiumFlags.isEmpty())
-      qputenv("QTWEBENGINE_CHROMIUM_FLAGS", chromiumFlags.join(" ").toUtf8());
+#ifdef Q_OS_WIN
+    // Without DX interop QtWebEngine crashes importing GPU frames. Keep the GPU process,
+    // but composite in software.
+    if (!chromiumFlags.contains("--disable-gpu") && !hasOpenGLDXInterop())
+    {
+      qWarning() << "OpenGL driver lacks WGL_NV_DX_interop, disabling QtWebEngine GPU compositing";
+      addChromiumFlag("--disable-gpu-compositing");
+    }
+#endif
+
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", chromiumFlags.join(" ").toUtf8());
+    qInfo() << "Chromium flags:" << chromiumFlags.join(" ");
 
     if (parser.isSet("remote-debugging-port"))
       qputenv("QTWEBENGINE_REMOTE_DEBUGGING", parser.value("remote-debugging-port").toUtf8());
 
     QtWebEngineQuick::initialize();
-    QApplication app(newArgc, newArgv);
+    QApplication app(argc, argv);
 
 #if defined(Q_OS_WIN) 
     // Setting window icon on OSX will break user ability to change it
