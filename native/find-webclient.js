@@ -1,5 +1,8 @@
 async function tryConnect(server) {
+    const certs = window.findWebClientCerts;
     try {
+        server = certs.prepareServer(server);
+        if (!server) return false;
         if (!server.startsWith("http")) {
             server = "http://" + server;
         }
@@ -9,6 +12,7 @@ async function tryConnect(server) {
         const resolvedUrl = await window.jmpCheckServerConnectivity(server);
         console.log("Server connectivity check passed");
         console.log("Resolved URL:", resolvedUrl);
+        if (certs.connected(server, resolvedUrl)) return true;
 
         // Save original URL but navigate to fully-resolved redirect
         window.jmpInfo.settings.main.userWebClient = server;
@@ -19,6 +23,7 @@ async function tryConnect(server) {
         return true;
     } catch (e) {
         console.error("Server connectivity check failed:", e);
+        certs.failed(server, e);
         return false;
     }
 }
@@ -48,6 +53,7 @@ const startConnecting = async () => {
     const button = document.getElementById('connect-button');
     const server = address.value;
 
+    if (!window.findWebClientCerts.beforeConnect()) return;
     isConnecting = true;
     title.textContent = '';
     title.style.visibility = 'hidden';
@@ -130,7 +136,8 @@ document.getElementById('address').addEventListener('input', updateButtonState);
 // Enter key handler
 document.addEventListener('keydown', (e) => {
     const address = document.getElementById('address');
-    if (e.key === 'Enter' && !isConnecting && !address.disabled && address.value.trim()) {
+    if (e.key === 'Enter' && !isConnecting && !address.disabled && address.value.trim() &&
+        !window.findWebClientCerts.dialogOpen()) {
         e.preventDefault();
         startConnecting();
     }
@@ -142,7 +149,7 @@ document.addEventListener('keydown', (e) => {
 
     await window.apiPromise;
 
-    const savedServer = window.jmpInfo.settings.main.userWebClient;
+    const savedServer = window.findWebClientCerts.mode ? '' : window.jmpInfo.settings.main.userWebClient;
     console.log('Auto-connect: savedServer =', savedServer);
 
     if (savedServer) {
