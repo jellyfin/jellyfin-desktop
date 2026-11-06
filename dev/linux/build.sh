@@ -34,6 +34,7 @@ fi
 
 echo "Configuring..."
 cmake -B "${BUILD_DIR}" -G Ninja \
+	-DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
 	-DCMAKE_BUILD_TYPE=Release \
 	-DUSE_STATIC_MPVQT=ON \
 	"${PROJECT_ROOT}"
