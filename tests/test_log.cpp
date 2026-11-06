@@ -13,6 +13,9 @@ private slots:
   // CensorAuthTokens tests
   void testCensorAuthTokens_data();
   void testCensorAuthTokens();
+
+  // Initialization and Rotation tests
+  void testLogInitAndRotate();
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -139,6 +142,24 @@ void TestLog::testCensorAuthTokens()
   QString msg = input;
   Log::CensorAuthTokens(msg);
   QCOMPARE(msg, expected);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Log Initialization and Rotation
+///////////////////////////////////////////////////////////////////////////////
+
+void TestLog::testLogInitAndRotate()
+{
+  Log::Init();
+
+  qInfo() << "Test log message before rotation";
+  qWarning() << "Test warning before rotation";
+
+  Log::RotateLog();
+
+  qInfo() << "Test log message after rotation";
+
+  Log::Cleanup();
 }
 
 QTEST_APPLESS_MAIN(TestLog)
