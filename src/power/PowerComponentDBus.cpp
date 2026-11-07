@@ -98,7 +98,7 @@ bool PowerComponentDBus::isPowerMethodAvailable(QString method)
 
 void PowerComponentDBus::doDisableScreensaver()
 {
-  if (screensaver_inhibit_cookie)
+  if (m_screensaverInhibitCookie)
   {
     qInfo() << "doDisableScreensaver : already disabled.";
     return;
@@ -113,7 +113,7 @@ void PowerComponentDBus::doDisableScreensaver()
 
       if (reply.isValid())
       {
-        screensaver_inhibit_cookie = reply.value();
+        m_screensaverInhibitCookie = reply.value();
       }
       else
       {
@@ -135,7 +135,7 @@ void PowerComponentDBus::doDisableScreensaver()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PowerComponentDBus::doEnableScreensaver()
 {
-  if (!screensaver_inhibit_cookie)
+  if (!m_screensaverInhibitCookie)
   {
     qInfo() << "doEnableScreensaver : already enabled.";
     return;
@@ -146,17 +146,17 @@ void PowerComponentDBus::doEnableScreensaver()
                          DBUS_SCREENSAVER_INTERFACE, QDBusConnection::sessionBus());
     if (iface.isValid())
     {
-      QDBusReply<void> reply = iface.call("UnInhibit", screensaver_inhibit_cookie);
+      QDBusReply<void> reply = iface.call("UnInhibit", m_screensaverInhibitCookie);
 
       if (reply.isValid())
       {
-        screensaver_inhibit_cookie = 0;
+        m_screensaverInhibitCookie = 0;
       }
       else
       {
         qCritical() << "doEnableScreensaver : Error while calling UnInhibit:"
                      << reply.error().message();
-      } 
+      }
     }
     else
     {
