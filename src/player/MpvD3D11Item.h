@@ -25,6 +25,7 @@ struct MpvD3D11RenderState
   QMutex mutex;
   mpv_handle* mpv = nullptr;
   mpv_render_context* ctx = nullptr;
+  bool createFailed = false; // do not retry every frame
   QQuickItem* item = nullptr; // target of mpv's update callback
 
   // Must be called with the mutex held.

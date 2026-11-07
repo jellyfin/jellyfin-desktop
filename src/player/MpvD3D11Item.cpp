@@ -109,7 +109,7 @@ protected:
     // render_d3d11.h: stages mpv does not set must be at ClearState() defaults.
     static_cast<ID3D11DeviceContext*>(handles->context)->ClearState();
 
-    if (!m_state->ctx)
+    if (!m_state->ctx && !m_state->createFailed)
       createContext(handles->dev);
 
     if (m_state->ctx)
@@ -138,12 +138,16 @@ private:
     int err = mpv_render_context_create(&m_state->ctx, m_state->mpv, params);
     if (err < 0)
     {
+      // No video output, but the application (UI, audio) keeps working.
       m_state->ctx = nullptr;
-      qFatal("MpvD3D11Item: failed to create the mpv D3D11 render context: %s", mpv_error_string(err));
+      m_state->createFailed = true;
+      qCritical() << "MpvD3D11Item: failed to create the mpv D3D11 render context:" << mpv_error_string(err);
     }
-
-    mpv_render_context_set_update_callback(m_state->ctx, onMpvRedraw, m_state->item);
-    qInfo() << "MpvD3D11Item: mpv renders through Direct3D 11";
+    else
+    {
+      mpv_render_context_set_update_callback(m_state->ctx, onMpvRedraw, m_state->item);
+      qInfo() << "MpvD3D11Item: mpv renders through Direct3D 11";
+    }
 
     QMetaObject::invokeMethod(m_state->item, "ready", Qt::QueuedConnection);
   }
