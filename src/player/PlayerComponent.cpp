@@ -1595,7 +1595,7 @@ QString PlayerComponent::videoInformation() const
   info << "\n";
   info << "Performance:\n";
   info << "A/V: " << MPV_PROPERTY("avsync") << "\n";
-  info << "Dropped frames: " << MPV_PROPERTY("vo-drop-frame-count") << "\n";
+  info << "Dropped frames: " << MPV_PROPERTY("frame-drop-count") << "/" << MPV_PROPERTY("decoder-frame-drop-count") << "\n";
   bool dispSync = MPV_PROPERTY_BOOL("display-sync-active");
   info << "Display Sync: ";
   if (!dispSync)
@@ -1615,7 +1615,6 @@ QString PlayerComponent::videoInformation() const
   info << "\n";
   info << "Cache:\n";
   info << "Seconds: " << MPV_PROPERTY("demuxer-cache-duration") << "\n";
-  info << "Extra readahead: " << MPV_PROPERTY("cache-used") << "\n";
   info << "Buffering: " << MPV_PROPERTY("cache-buffering-state") << "\n";
   info << "Speed: " << MPV_PROPERTY("cache-speed") << "\n";
   info << "\n";
