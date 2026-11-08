@@ -16,6 +16,22 @@ endif()
 # windeployqt may miss Qt6Xml.dll - copy explicitly
 file(INSTALL "${QTROOT}/bin/Qt6Xml.dll" DESTINATION "${CMAKE_INSTALL_PREFIX}")
 
+# windeployqt only deploys the QML modules that our own QML files import. Qt WebEngine
+# loads QtWebEngine.ControlsDelegates (tooltips, JS alert/confirm/prompt dialogs, the HTTP
+# authentication dialog, context menus, touch handles) at runtime by URI, so the import
+# scan never sees it and the package ends up with an empty qml/QtWebEngine/ControlsDelegates
+# folder ("Default ui delegate ToolTip.qml can not be found"). Copy the module explicitly.
+set(WEBENGINE_DELEGATES_DIR "${QTROOT}/qml/QtWebEngine/ControlsDelegates")
+if(IS_DIRECTORY "${WEBENGINE_DELEGATES_DIR}")
+  file(INSTALL "${WEBENGINE_DELEGATES_DIR}" DESTINATION "${CMAKE_INSTALL_PREFIX}/qml/QtWebEngine"
+       PATTERN "*d.dll" EXCLUDE
+       PATTERN "*.pdb" EXCLUDE
+       PATTERN "*.lib" EXCLUDE)
+  message(STATUS "Deployed QtWebEngine.ControlsDelegates")
+else()
+  message(WARNING "QtWebEngine.ControlsDelegates not found at ${WEBENGINE_DELEGATES_DIR}; web view tooltips and dialogs will not work")
+endif()
+
 # on windows windeployqt doesnt install non qt libraries, let cmake do that
 # include(BundleUtilities)
 
