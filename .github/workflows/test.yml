@@ -17,7 +17,7 @@ jobs:
     - name: Install build dependencies from debian/control
       run: |
         sudo apt-get update
-        sudo apt-get install --yes devscripts equivs ninja-build lcov
+        sudo apt-get install --yes devscripts equivs ninja-build lcov qml6-module-qttest qml6-module-qtwebengine qml6-module-qtwebchannel qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
         sudo mk-build-deps -i -r -t "apt-get --yes" debian/control
 
     - name: Configure
