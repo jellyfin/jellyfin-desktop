@@ -50,7 +50,7 @@ PlayerComponent::PlayerComponent(QObject* parent)
   m_durationMs(0), m_positionMs(0), m_lastPositionUpdateMs(-1), m_playbackAudioDelay(0),
   m_window(nullptr), m_mediaFrameRate(0),
   m_restoreDisplayTimer(this), m_reloadAudioTimer(this),
-  m_streamSwitchImminent(false), m_doAc3Transcoding(false),
+  m_streamSwitchImminent(false), m_doAc3Transcoding(false), m_ac3TranscodingActive(false),
   m_videoRectangle(-1, 0, 0, 0),
   m_albumArtProvider(new AlbumArtProvider(this))
 {
@@ -192,6 +192,7 @@ void PlayerComponent::initializeMpv()
   mpv_observe_property(m_mpv->mpv(), 0, "vo-configured", MPV_FORMAT_FLAG);
   mpv_observe_property(m_mpv->mpv(), 0, "duration", MPV_FORMAT_DOUBLE);
   mpv_observe_property(m_mpv->mpv(), 0, "audio-device-list", MPV_FORMAT_NODE);
+  mpv_observe_property(m_mpv->mpv(), 0, "audio-codec-name", MPV_FORMAT_STRING);
   mpv_observe_property(m_mpv->mpv(), 0, "video-dec-params", MPV_FORMAT_NODE);
   mpv_observe_property(m_mpv->mpv(), 0, "demuxer-cache-state", MPV_FORMAT_NODE);
 
@@ -586,6 +587,10 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
       else if (strcmp(prop->name, "audio-device-list") == 0)
       {
         updateAudioDeviceList();
+      }
+      else if (strcmp(prop->name, "audio-codec-name") == 0)
+      {
+        updateAc3TranscodingFilter();
       }
       else if (strcmp(prop->name, "demuxer-cache-state") == 0 && prop->format == MPV_FORMAT_NODE)
       {
@@ -1283,21 +1288,12 @@ void PlayerComponent::setAudioConfiguration()
   // if the user has indicated that PCM only works for stereo, and that
   // the receiver supports AC3, set this extra option that allows us to transcode
   // 5.1 audio into a usable format, note that we only support AC3
-  // here for now. We might need to add support for DTS transcoding
-  // if we see user requests for it.
-  //
-  bool wasAc3Transcoding = m_doAc3Transcoding;
+  // here for now.
   m_doAc3Transcoding =
   (deviceType == AUDIO_DEVICE_TYPE_SPDIF &&
    SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "passthrough.ac3").toBool());
-  if (m_doAc3Transcoding && !wasAc3Transcoding)
-  {
-    m_mpv->command( QStringList() << "af" << "add" << "@ac3:lavcac3enc");
-  }
-  else if (!m_doAc3Transcoding && wasAc3Transcoding)
-  {
-    m_mpv->command( QStringList() << "af" << "remove" << "@ac3");
-  }
+
+  updateAc3TranscodingFilter();
 
   QVariant device = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device");
 
@@ -1310,6 +1306,38 @@ void PlayerComponent::setAudioConfiguration()
                                                                    passthroughCodecs.isEmpty() ? "none" : passthroughCodecs,
                                                                    m_doAc3Transcoding ? "yes" : "no");
   qInfo() << qPrintable(audioConfig);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void PlayerComponent::updateAc3TranscodingFilter()
+{
+  if (!m_mpv)
+    return;
+
+  // Only inspect the codec when AC3 transcoding is actually enabled. The
+  // filter is used to encode 5.1 PCM (AAC, FLAC, PCM, ...) to AC3 so it can
+  // be sent over S/PDIF. It must not be inserted for codecs that are
+  // already passed through as a bitstream: lavcac3enc outputs spdif-ac3,
+  // and the output chain cannot convert that back to PCM.
+  QString codec;
+  if (m_doAc3Transcoding)
+    codec = m_mpv->getProperty("audio-codec-name").toString();
+
+  const bool needsFilter = m_doAc3Transcoding && !codec.isEmpty() &&
+                          !m_passthroughCodecs.contains(codec);
+
+  if (needsFilter == m_ac3TranscodingActive)
+    return;
+
+  if (needsFilter)
+    m_mpv->command(QStringList() << "af" << "add" << "@ac3:lavcac3enc");
+  else
+    m_mpv->command(QStringList() << "af" << "remove" << "@ac3");
+
+  m_ac3TranscodingActive = needsFilter;
+
+  qInfo() << "AC3 transcoding filter" << (needsFilter ? "enabled" : "disabled")
+          << "for audio codec" << (codec.isEmpty() ? "none" : codec);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
