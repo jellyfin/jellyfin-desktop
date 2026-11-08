@@ -39,3 +39,16 @@ target_link_libraries(test_displaymanager jmp_core Qt6::Test)
 target_include_directories(test_displaymanager PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(test_displaymanager PRIVATE ${TEST_COMPILE_DEFS})
 add_test(NAME test_displaymanager COMMAND test_displaymanager)
+
+add_executable(test_windowmanager test_windowmanager.cpp)
+target_link_libraries(test_windowmanager jmp_core Qt6::Test)
+target_include_directories(test_windowmanager PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(test_windowmanager PRIVATE ${TEST_COMPILE_DEFS})
+add_test(NAME test_windowmanager COMMAND test_windowmanager)
+set_tests_properties(test_windowmanager PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+find_program(NODE_EXECUTABLE NAMES node nodejs)
+if(NODE_EXECUTABLE)
+  add_test(NAME test_mpvVideoPlayer
+           COMMAND ${NODE_EXECUTABLE} --test ${CMAKE_CURRENT_SOURCE_DIR}/test_mpvVideoPlayer.js)
+endif()
