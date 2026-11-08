@@ -39,3 +39,10 @@ target_link_libraries(test_displaymanager jmp_core Qt6::Test)
 target_include_directories(test_displaymanager PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(test_displaymanager PRIVATE ${TEST_COMPILE_DEFS})
 add_test(NAME test_displaymanager COMMAND test_displaymanager)
+
+add_executable(test_cursor_idle test_cursor_idle.cpp)
+target_link_libraries(test_cursor_idle jmp_core Qt6::Test)
+target_include_directories(test_cursor_idle PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(test_cursor_idle PRIVATE ${TEST_COMPILE_DEFS})
+add_test(NAME test_cursor_idle COMMAND test_cursor_idle)
+
