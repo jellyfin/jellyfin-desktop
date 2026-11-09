@@ -193,6 +193,7 @@ void PlayerComponent::initializeMpv()
   mpv_observe_property(m_mpv->mpv(), 0, "duration", MPV_FORMAT_DOUBLE);
   mpv_observe_property(m_mpv->mpv(), 0, "audio-device-list", MPV_FORMAT_NODE);
   mpv_observe_property(m_mpv->mpv(), 0, "audio-codec-name", MPV_FORMAT_STRING);
+  mpv_observe_property(m_mpv->mpv(), 0, "audio-params", MPV_FORMAT_NODE);
   mpv_observe_property(m_mpv->mpv(), 0, "video-dec-params", MPV_FORMAT_NODE);
   mpv_observe_property(m_mpv->mpv(), 0, "demuxer-cache-state", MPV_FORMAT_NODE);
 
@@ -588,7 +589,8 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
       {
         updateAudioDeviceList();
       }
-      else if (strcmp(prop->name, "audio-codec-name") == 0)
+      else if (strcmp(prop->name, "audio-codec-name") == 0
+        || strcmp(prop->name, "audio-params") == 0)
       {
         updateAc3TranscodingFilter();
       }
@@ -1315,15 +1317,22 @@ void PlayerComponent::updateAc3TranscodingFilter()
     return;
 
   // Only inspect the codec when AC3 transcoding is actually enabled. The
-  // filter is used to encode 5.1 PCM (AAC, FLAC, PCM, ...) to AC3 so it can
-  // be sent over S/PDIF. It must not be inserted for codecs that are
+  // filter is used to encode multichannel PCM (AAC, FLAC, PCM, ...) to AC3 so
+  // it can be sent over S/PDIF. It must not be inserted for codecs that are
   // already passed through as a bitstream: lavcac3enc outputs spdif-ac3,
-  // and the output chain cannot convert that back to PCM.
+  // and the output chain cannot convert that back to PCM. It also must not be
+  // inserted for mono/stereo PCM, where it is unnecessary and can confuse the
+  // output format negotiation.
   QString codec;
+  int channels = 0;
   if (m_doAc3Transcoding)
+  {
     codec = m_mpv->getProperty("audio-codec-name").toString();
+    channels = m_mpv->getProperty("audio-params/channel-count").toInt();
+  }
 
   const bool needsFilter = m_doAc3Transcoding && !codec.isEmpty() &&
+                          channels > 2 &&
                           !m_passthroughCodecs.contains(codec);
 
   if (needsFilter == m_ac3TranscodingActive)
@@ -1337,7 +1346,8 @@ void PlayerComponent::updateAc3TranscodingFilter()
   m_ac3TranscodingActive = needsFilter;
 
   qInfo() << "AC3 transcoding filter" << (needsFilter ? "enabled" : "disabled")
-          << "for audio codec" << (codec.isEmpty() ? "none" : codec);
+          << "for audio codec" << (codec.isEmpty() ? "none" : codec)
+          << "with" << channels << "channels";
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
