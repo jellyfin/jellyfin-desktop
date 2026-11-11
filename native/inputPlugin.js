@@ -46,6 +46,10 @@ class inputPlugin {
                         } else if (currentPlayer) {
                             playbackManager.previousTrack(currentPlayer);
                         }
+                    } else if ((action === 'left' || action === 'right') && document.activeElement?.type === 'range') {
+                        // Sliders (seek bar, volume) only move on a key press, not on the left/right commands
+                        const code = action === 'left' ? 'ArrowLeft' : 'ArrowRight';
+                        document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: code, code, bubbles: true, cancelable: true }));
                     } else {
                         if (remap.hasOwnProperty(action)) {
                             action = remap[action];
