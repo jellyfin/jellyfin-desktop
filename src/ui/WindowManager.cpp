@@ -315,7 +315,9 @@ void WindowManager::raiseWindow()
   // Raise and request activation
   // Note: Wayland blocks requestActivate() for security (prevents focus stealing)
   // On Wayland, window will be raised but user must click to activate
-  m_window->show();
+  // show() on a visible window means showNormal() on desktop Linux and would leave fullscreen
+  if (!m_window->isVisible())
+    m_window->show();
   m_window->raise();
   m_window->requestActivate();
 }
