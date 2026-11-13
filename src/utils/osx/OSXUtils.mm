@@ -48,3 +48,32 @@ void OSXUtils::SetCursorVisible(bool visible)
   else
     [NSCursor hide];
 }
+
+/////////////////////////////////////////////////////////////////////////////////////////
+void OSXUtils::SetupWindowMenu()
+{
+  NSMenu *mainMenu = [NSApp mainMenu];
+  if (!mainMenu)
+  {
+    mainMenu = [[NSMenu alloc] init];
+    [NSApp setMainMenu:mainMenu];
+  }
+
+  for (NSMenuItem *item in [mainMenu itemArray])
+  {
+    if ([[item title] isEqualToString:@"Window"])
+      return;
+  }
+
+  NSMenuItem *windowMenuItem = [[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
+  NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+  [windowMenuItem setSubmenu:windowMenu];
+
+  [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
+  [windowMenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
+  [windowMenu addItem:[NSMenuItem separatorItem]];
+  [windowMenu addItemWithTitle:@"Bring All to Front" action:@selector(arrangeInFront:) keyEquivalent:@""];
+
+  [mainMenu addItem:windowMenuItem];
+  [NSApp setWindowsMenu:windowMenu];
+}

@@ -65,6 +65,10 @@ void WindowManager::initializeWindow(QQuickWindow* window)
     return;
   }
 
+#ifdef Q_OS_MAC
+  OSXUtils::SetupWindowMenu();
+#endif
+
   // Initialize components that need window reference
   PlayerComponent::Get().setWindow(m_window);
   DisplayComponent::Get().setApplicationWindow(m_window);
