@@ -171,18 +171,23 @@ class inputPlugin {
                 if (!player) return;
 
                 const state = playbackManager.getPlayerState();
-                if (state && state.NowPlayingItem) {
-                    api.player.notifyMetadata(state.NowPlayingItem);
+                const item = state?.NowPlayingItem;
+                if (item?.Id) {
+                    try {
+                        api.player.notifyMetadata(item);
 
-                    const initialPos = playbackManager.currentTime();
-                    if (initialPos !== undefined && initialPos !== null) {
-                        api.player.notifyPosition(Math.floor(initialPos));
-                        lastReportedPosition = initialPos;
-                    }
+                        const initialPos = playbackManager.currentTime();
+                        if (initialPos !== undefined && initialPos !== null) {
+                            api.player.notifyPosition(Math.floor(initialPos));
+                            lastReportedPosition = initialPos;
+                        }
 
-                    if (player && typeof player.getVolume === 'function') {
-                        const volume = player.getVolume();
-                        api.player.notifyVolumeChange(volume / 100.0);
+                        if (typeof player.getVolume === 'function') {
+                            const volume = player.getVolume();
+                            api.player.notifyVolumeChange(volume / 100.0);
+                        }
+                    } catch (err) {
+                        console.error('PlayerMedia: failed to update media metadata', err);
                     }
                 }
 
@@ -211,81 +216,81 @@ class inputPlugin {
                     this.attachedPlayer = player;
 
                     window.Events.on(player, 'shufflequeuemodechange', () => {
-                    const mode = playbackManager.getQueueShuffleMode();
-                    const enabled = (mode === 'Shuffle');
-                    api.player.notifyShuffleChange(enabled);
-                });
+                        const mode = playbackManager.getQueueShuffleMode();
+                        const enabled = (mode === 'Shuffle');
+                        api.player.notifyShuffleChange(enabled);
+                    });
 
-                window.Events.on(player, 'repeatmodechange', () => {
-                    const mode = playbackManager.getRepeatMode();
-                    api.player.notifyRepeatChange(mode);
-                });
+                    window.Events.on(player, 'repeatmodechange', () => {
+                        const mode = playbackManager.getRepeatMode();
+                        api.player.notifyRepeatChange(mode);
+                    });
 
-                window.Events.on(player, 'playing', () => {
-                    api.player.notifyPlaybackState('Playing');
+                    window.Events.on(player, 'playing', () => {
+                        api.player.notifyPlaybackState('Playing');
 
-                    updateQueueState();
+                        updateQueueState();
 
-                    api.player.notifyRateChange(1.0);
+                        api.player.notifyRateChange(1.0);
 
-                    if (this.durationCheckInterval) {
-                        clearInterval(this.durationCheckInterval);
-                    }
-                    checkDuration();
-                    this.durationCheckInterval = setInterval(checkDuration, 1000);
-
-                    const initialPos = playbackManager.currentTime();
-                    if (initialPos !== undefined && initialPos !== null) {
-                        api.player.notifyPosition(Math.floor(initialPos));
-                    }
-
-                    if (this.positionUpdateInterval) {
-                        clearInterval(this.positionUpdateInterval);
-                    }
-                    this.positionUpdateInterval = setInterval(() => {
-                        const positionMs = playbackManager.currentTime();
-                        if (positionMs !== undefined && positionMs !== null) {
-                            const positionDiff = Math.abs(positionMs - lastReportedPosition);
-                            if (lastReportedPosition > 0 && positionDiff > 2000) {
-                                api.player.notifyRateChange(0.0);
-                                api.player.notifySeek(Math.floor(positionMs));
-                            } else {
-                                api.player.notifyPosition(Math.floor(positionMs));
-                            }
-                            lastReportedPosition = positionMs;
+                        if (this.durationCheckInterval) {
+                            clearInterval(this.durationCheckInterval);
                         }
-                    }, 500);
-                });
+                        checkDuration();
+                        this.durationCheckInterval = setInterval(checkDuration, 1000);
 
-                window.Events.on(player, 'pause', () => {
-                    api.player.notifyPlaybackState('Paused');
-                    api.player.notifyRateChange(0.0);
+                        const initialPos = playbackManager.currentTime();
+                        if (initialPos !== undefined && initialPos !== null) {
+                            api.player.notifyPosition(Math.floor(initialPos));
+                        }
 
-                    if (this.durationCheckInterval) {
-                        clearInterval(this.durationCheckInterval);
-                        this.durationCheckInterval = null;
-                    }
+                        if (this.positionUpdateInterval) {
+                            clearInterval(this.positionUpdateInterval);
+                        }
+                        this.positionUpdateInterval = setInterval(() => {
+                            const positionMs = playbackManager.currentTime();
+                            if (positionMs !== undefined && positionMs !== null) {
+                                const positionDiff = Math.abs(positionMs - lastReportedPosition);
+                                if (lastReportedPosition > 0 && positionDiff > 2000) {
+                                    api.player.notifyRateChange(0.0);
+                                    api.player.notifySeek(Math.floor(positionMs));
+                                } else {
+                                    api.player.notifyPosition(Math.floor(positionMs));
+                                }
+                                lastReportedPosition = positionMs;
+                            }
+                        }, 500);
+                    });
 
-                    const currentPos = playbackManager.currentTime();
-                    if (currentPos !== undefined && currentPos !== null) {
-                        lastReportedPosition = currentPos;
-                    }
-                });
+                    window.Events.on(player, 'pause', () => {
+                        api.player.notifyPlaybackState('Paused');
+                        api.player.notifyRateChange(0.0);
 
-                window.Events.on(player, 'playbackstop', () => {
-                    if (this.durationCheckInterval) {
-                        clearInterval(this.durationCheckInterval);
-                        this.durationCheckInterval = null;
-                    }
+                        if (this.durationCheckInterval) {
+                            clearInterval(this.durationCheckInterval);
+                            this.durationCheckInterval = null;
+                        }
 
-                    if (this.positionUpdateInterval) {
-                        clearInterval(this.positionUpdateInterval);
-                        this.positionUpdateInterval = null;
-                    }
+                        const currentPos = playbackManager.currentTime();
+                        if (currentPos !== undefined && currentPos !== null) {
+                            lastReportedPosition = currentPos;
+                        }
+                    });
 
-                    lastDuration = 0;
-                    lastReportedPosition = 0;
-                });
+                    window.Events.on(player, 'playbackstop', () => {
+                        if (this.durationCheckInterval) {
+                            clearInterval(this.durationCheckInterval);
+                            this.durationCheckInterval = null;
+                        }
+
+                        if (this.positionUpdateInterval) {
+                            clearInterval(this.positionUpdateInterval);
+                            this.positionUpdateInterval = null;
+                        }
+
+                        lastDuration = 0;
+                        lastReportedPosition = 0;
+                    });
 
                     window.Events.on(player, 'volumechange', () => {
                         if (player && typeof player.getVolume === 'function') {
