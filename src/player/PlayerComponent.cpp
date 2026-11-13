@@ -1143,7 +1143,10 @@ qint64 PlayerComponent::getDuration()
 // force the player and/or the OS to move audio output back to the user-selected device.
 void PlayerComponent::checkCurrentAudioDevice(const QSet<QString>& old_devs, const QSet<QString>& new_devs)
 {
-  QString userDevice = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device").toString();
+  QVariant userDeviceValue = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device");
+  QString userDevice = userDeviceValue.typeId() == QMetaType::QString
+      ? userDeviceValue.toString()
+      : QString("auto");
 
   QSet<QString> removed = old_devs - new_devs;
   QSet<QString> added = new_devs - old_devs;
@@ -1167,7 +1170,10 @@ void PlayerComponent::checkCurrentAudioDevice(const QSet<QString>& old_devs, con
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::updateAudioDeviceList()
 {
-  QString userDevice = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device").toString();
+  QVariant userDeviceValue = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device");
+  QString userDevice = userDeviceValue.typeId() == QMetaType::QString
+      ? userDeviceValue.toString()
+      : QString("auto");
   bool userDeviceFound = false;
 
   QVariantList settingList;
@@ -1211,9 +1217,19 @@ void PlayerComponent::updateAudioDeviceList()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::updateAudioDevice()
 {
-  QString device = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device").toString();
+  QVariant deviceValue = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device");
 
-  if (!m_audioDevices.contains(device))
+  // Repair invalid configuration
+  if (deviceValue.typeId() != QMetaType::QString)
+  {
+    qWarning() << "Invalid audio device setting" << deviceValue << "- resetting to auto";
+    deviceValue = QString("auto");
+    SettingsComponent::Get().setValue(SETTINGS_SECTION_AUDIO, "device", deviceValue);
+  }
+
+  QString device = deviceValue.toString();
+
+  if (device != "auto" && !m_audioDevices.contains(device))
   {
     qWarning() << "Not using audio device" << device << "because it's not present.";
     device = "auto";
