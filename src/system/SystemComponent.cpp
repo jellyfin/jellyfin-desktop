@@ -675,33 +675,58 @@ void SystemComponent::fetchPageForCSPWorkaround(QString url)
 void SystemComponent::checkForUpdates()
 {
 #ifndef DISABLE_UPDATE_CHECK
-  if (SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "checkForUpdates").toBool()) {
-#if !defined(Q_OS_WIN) && !defined(Q_OS_MAC)
-    QNetworkAccessManager *manager = new QNetworkAccessManager(this);
-    QString checkUrl = "https://github.com/jellyfin/jellyfin-desktop/releases/latest";
-    QUrl qCheckUrl = QUrl(checkUrl);
-    qDebug() << QString("Checking URL for updates: %1").arg(checkUrl);
-    QNetworkRequest req(qCheckUrl);
-    req.setHeader(QNetworkRequest::UserAgentHeader, getUserAgent());
+  if (!SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "checkForUpdates").toBool())
+    return;
 
-    connect(manager, &QNetworkAccessManager::finished, this, &SystemComponent::updateInfoHandler);
-    manager->get(req);
-#else
-    emit updateInfoEmitted("SSL_UNAVAILABLE");
-#endif
+  // Qt 6 ships a TLS backend on every platform we build for (Schannel on Windows,
+  // SecureTransport on macOS, OpenSSL elsewhere), so the check can be done natively
+  // everywhere. The old in-page fallback could never work: a fetch to github.com from
+  // the web client's origin is blocked by CORS.
+  if (!QSslSocket::supportsSsl())
+  {
+    qWarning() << "Update check skipped: no TLS backend available";
+    return;
   }
+
+  QNetworkAccessManager *manager = new QNetworkAccessManager(this);
+  // Qt 6 follows redirects on its own by default. We need to see the 302 from
+  // /releases/latest to /releases/tag/vX.Y.Z ourselves, so handle redirects manually.
+  manager->setRedirectPolicy(QNetworkRequest::ManualRedirectPolicy);
+
+  QUrl checkUrl("https://github.com/jellyfin/jellyfin-desktop/releases/latest");
+  qDebug() << QString("Checking URL for updates: %1").arg(checkUrl.toString());
+  QNetworkRequest req(checkUrl);
+  req.setHeader(QNetworkRequest::UserAgentHeader, getUserAgent());
+
+  connect(manager, &QNetworkAccessManager::finished, this, &SystemComponent::updateInfoHandler);
+  connect(manager, &QNetworkAccessManager::finished, manager, &QObject::deleteLater);
+  manager->get(req);
 #endif
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
 void SystemComponent::updateInfoHandler(QNetworkReply* reply)
 {
-  if (reply->error() == QNetworkReply::NoError) {
-    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if(statusCode == 302) {
-      QUrl redirectUrl = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).toUrl();
-      emit updateInfoEmitted(redirectUrl.toString());
-    }
+  reply->deleteLater();
+
+  if (reply->error() != QNetworkReply::NoError)
+  {
+    qWarning() << "Update check failed:" << reply->errorString();
+    return;
+  }
+
+  int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+  QUrl redirectUrl = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).toUrl();
+  if (statusCode >= 300 && statusCode < 400 && redirectUrl.isValid())
+  {
+    // The Location header may be relative.
+    redirectUrl = reply->url().resolved(redirectUrl);
+    qDebug() << "Update check: latest release is" << redirectUrl.toString();
+    emit updateInfoEmitted(redirectUrl.toString());
+  }
+  else
+  {
+    qWarning() << "Update check: unexpected response" << statusCode << "from" << reply->url().toString();
   }
 }
 
