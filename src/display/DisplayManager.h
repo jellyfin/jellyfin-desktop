@@ -15,6 +15,8 @@
 #include <QString>
 #include <QSharedPointer>
 
+class QWindow;
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Video Modes
 class DMVideoMode
@@ -115,6 +117,8 @@ public:
 
   // extra functions that can be implemented
   virtual void resetRendering() {}
+  // Display showing the window. Defaults to the display under the window center.
+  virtual int getDisplayFromWindow(QWindow* window);
 
   // other classes functions
   int findBestMatch(int display, DMMatchMediaInfo& matchInfo);
@@ -125,6 +129,7 @@ public:
   bool isValidDisplay(int display);
   bool isValidDisplayMode(int display, int mode);
   int getDisplayFromPoint(const QPoint& pt);
+  int findDisplayByName(const QString& name);
 
 private:
   bool isRateMultipleOf(float refresh, float multiple, bool exact = true);
