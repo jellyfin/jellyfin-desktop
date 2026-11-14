@@ -441,7 +441,7 @@ int main(int argc, char *argv[])
     QtWebEngineQuick::initialize();
     QApplication app(newArgc, newArgv);
 
-#if defined(Q_OS_WIN) 
+#if defined(Q_OS_WIN)
     // Setting window icon on OSX will break user ability to change it
     app.setWindowIcon(QIcon(":/images/icon.png"));
 #endif
@@ -535,13 +535,14 @@ int main(int argc, char *argv[])
           if (event->type() == QEvent::Show) {
             Qt::WindowFlags flags = win->flags();
 
-            // Only fix WebEngineView dropdowns (Tool + FramelessWindowHint + WindowStaysOnTopHint)
+            // Only fix legacy QT (< 6.11.1) WebEngineView dropdowns (Tool + FramelessWindowHint + WindowStaysOnTopHint)
             // Don't touch other windows (e.g., MPV-related)
-            bool isWebEnginePopup = (flags & Qt::Tool) &&
-                                     (flags & Qt::FramelessWindowHint) &&
-                                     (flags & Qt::WindowStaysOnTopHint);
+            const auto windowType = flags & Qt::WindowType_Mask;
+            bool isLegacyWebEnginePopup = windowType == Qt::Tool &&
+                                          (flags & Qt::FramelessWindowHint) &&
+                                          (flags & Qt::WindowStaysOnTopHint);
 
-            if (!isWebEnginePopup) {
+            if (!isLegacyWebEnginePopup) {
               return QObject::eventFilter(obj, event);
             }
 
