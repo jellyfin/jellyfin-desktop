@@ -85,9 +85,7 @@ void detectOpenGLEarly()
 /////////////////////////////////////////////////////////////////////////////////////////
 void detectOpenGLLate()
 {
-  // Qt 6 does not support AA_UseOpenGLES - it uses desktop OpenGL by default
-  // No need to force GLES version, let Qt use the native OpenGL
-  qInfo() << "Using native desktop OpenGL (Qt 6)";
+  // The scene graph uses Direct3D 11 on Windows, see MpvD3D11Item.
 }
 
 #else

@@ -172,6 +172,7 @@ public Q_SLOTS:
   void updateSubtitleConfiguration();
   void updateVideoConfiguration();
   void updateConfiguration();
+  void updateSuperResolution();
 
 private Q_SLOTS:
   void handleMpvEvents();
@@ -270,6 +271,9 @@ private:
   float m_mediaFrameRate;
   QTimer m_restoreDisplayTimer;
   QTimer m_reloadAudioTimer;
+  QTimer m_superResolutionTimer;
+  QString m_superResolutionFilter;
+  QString m_superResolutionReason;
   QSet<QString> m_audioDevices;
   bool m_streamSwitchImminent;
   bool m_doAc3Transcoding;
