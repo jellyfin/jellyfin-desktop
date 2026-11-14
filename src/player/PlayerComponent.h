@@ -241,6 +241,9 @@ private:
   void setQtQuickWindow(QQuickWindow* window);
   void updatePlaybackState();
   void handleMpvEvent(mpv_event *event);
+  // Add or remove the lavcac3enc filter depending on the current audio codec.
+  // The filter must not be used for codecs that are already passed through.
+  void updateAc3TranscodingFilter();
   // Potentially switch the display refresh rate, and return true if the refresh rate
   // was actually changed.
   bool switchDisplayFrameRate();
@@ -273,6 +276,7 @@ private:
   QSet<QString> m_audioDevices;
   bool m_streamSwitchImminent;
   bool m_doAc3Transcoding;
+  bool m_ac3TranscodingActive;
   QStringList m_passthroughCodecs;
   QVariantMap m_serverMediaInfo;
   QVariant m_currentSubtitleStream;
