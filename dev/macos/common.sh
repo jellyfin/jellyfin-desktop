@@ -2,7 +2,7 @@
 # Jellyfin Desktop - Common variables
 # Sourced by other scripts
 
-QT_VERSION=6.10.1
+QT_VERSION=6.11.3
 
 SCRIPT_DIR="$(cd "$(dirname "${0}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"

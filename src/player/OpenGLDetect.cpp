@@ -41,6 +41,10 @@ void detectOpenGLLate()
 // but quite effective and without having to duplicate too much GLX/EGL code.
 static QString probeHwdecInterop()
 {
+  // Qt sets the locale, but libmpv requires the LC_NUMERIC category to be set to "C",
+  // so change it back.
+  std::setlocale(LC_NUMERIC, "C");
+
   auto mpv = mpv::qt::Handle::FromRawHandle(mpv_create());
   if (!mpv)
     return "";

@@ -65,14 +65,13 @@ QVariantList CachedRegexMatcher::match(const QString& input)
     }
   }
 
-  qDebug() << "No match for:" << input;
-
   if (!matches.isEmpty())
   {
     m_matcherCache.insert(input, matches);
     return matches;
   }
 
+  qDebug() << "No match for:" << input;
   return QVariantList();
 }
 

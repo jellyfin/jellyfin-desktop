@@ -6,6 +6,10 @@
         });
     }
 
+    function clampVolume(val) {
+        return Math.min(100, Math.max(0, Math.round(val)));
+    }
+
     class mpvVideoPlayer {
         constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm, dashboard }) {
             this.events = events;
@@ -158,7 +162,7 @@
 
                     this.loading.hide();
 
-                    const volume = this.getSavedVolume() * 100;
+                    const volume = clampVolume(this.getSavedVolume() * 100);
                     this.setVolume(volume, false);
 
                     this.setPlaybackRate(this.getPlaybackRate());
@@ -338,8 +342,10 @@
 
                 const streams = options.mediaSource?.MediaStreams || [];
 
-                // Handle audio
-                const audioRelIndex = this._audioTrackIndexToSetOnPlaying != null && this._audioTrackIndexToSetOnPlaying >= 0
+                // Handle audio. A server transcode carries only the selected
+                // audio stream, so it is always mpv track 1.
+                const isTranscode = options.playMethod === 'Transcode';
+                const audioRelIndex = !isTranscode && this._audioTrackIndexToSetOnPlaying != null && this._audioTrackIndexToSetOnPlaying >= 0
                     ? this.getRelativeIndexByType(streams, this._audioTrackIndexToSetOnPlaying, 'Audio')
                     : 1;
 
@@ -450,8 +456,10 @@
             console.log('[MPV] setAudioStreamIndex called with index:', index);
             this._audioTrackIndexToSetOnPlaying = index;
 
-            const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
-            const relIndex = index < 0 ? -1 : this.getRelativeIndexByType(streams, index, 'Audio');
+            const playOptions = this._currentPlayOptions;
+            const streams = playOptions?.mediaSource?.MediaStreams || [];
+            const isTranscode = playOptions?.playMethod === 'Transcode';
+            const relIndex = index < 0 ? -1 : (isTranscode ? 1 : this.getRelativeIndexByType(streams, index, 'Audio'));
             console.log('[MPV] Mapped audio index:', index, '->', relIndex);
             window.api.player.setAudioStream(relIndex != null ? relIndex : -1);
         }
@@ -793,6 +801,7 @@
     setVolume(val, save = true) {
         val = Number(val);
         if (!isNaN(val)) {
+            val = clampVolume(val);
             this._volume = val;
             if (save) {
                 this.saveVolume(val / 100);
@@ -803,7 +812,7 @@
     }
 
     getVolume() {
-        return this._volume;
+        return clampVolume(this._volume ?? 100);
     }
 
     volumeUp() {

@@ -32,6 +32,8 @@
 #include <interface/vmcs_host/vcgencmd.h>
 #endif
 
+static constexpr qint64 POSITION_UPDATE_INTERVAL_MS = 100;
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 static void wakeup_cb(void *context)
 {
@@ -45,7 +47,7 @@ PlayerComponent::PlayerComponent(QObject* parent)
   : ComponentBase(parent), m_state(State::finished), m_paused(false), m_playbackActive(false),
   m_windowVisible(false), m_videoPlaybackActive(false), m_inPlayback(false), m_playbackCanceled(false),
   m_bufferingPercentage(100), m_lastBufferingPercentage(-1),
-  m_lastPositionUpdate(0.0), m_playbackAudioDelay(0),
+  m_durationMs(0), m_positionMs(0), m_lastPositionUpdateMs(-1), m_playbackAudioDelay(0),
   m_window(nullptr), m_mediaFrameRate(0),
   m_restoreDisplayTimer(this), m_reloadAudioTimer(this),
   m_streamSwitchImminent(false), m_doAc3Transcoding(false),
@@ -99,9 +101,6 @@ void PlayerComponent::initializeMpv()
 
   mpv_set_wakeup_callback(m_mpv->mpv(), wakeup_cb, this);
 
-  // Keep window open even when idle (no file loaded)
-  m_mpv->setProperty("force-window", true);
-
   // Disable native OSD if mpv_command_string() is used.
   m_mpv->setProperty("osd-level", "0");
 
@@ -134,6 +133,14 @@ void PlayerComponent::initializeMpv()
 
   // Disable ytdl
   m_mpv->setProperty( "ytdl", false);
+
+  // By default libmpv asks for a redraw ahead of each frame and then blocks
+  // mpv_render_context_render() until the frame is due (see render.h). The
+  // render call runs on the Qt render thread, which is the GUI thread with the
+  // basic render loop (macOS/OpenGL): the whole UI was capped to the video
+  // frame rate and the GUI thread spent most of its time waiting. With 0, mpv
+  // requests the redraw when the frame is due and rendering never blocks.
+  m_mpv->setProperty( "video-timing-offset", 0);
 
   if (SettingsComponent::Get().ignoreSSLErrors()) {
     m_mpv->setProperty( "tls-ca-file", "");
@@ -482,10 +489,10 @@ void PlayerComponent::updatePlaybackState()
     emit buffering(m_bufferingPercentage);
   m_lastBufferingPercentage = m_bufferingPercentage;
 
-  bool is_videoPlaybackActive = m_state == State::playing && m_windowVisible;
-  if (m_videoPlaybackActive != is_videoPlaybackActive)
+  bool isVideoPlaybackActive = m_state == State::playing && m_windowVisible;
+  if (m_videoPlaybackActive != isVideoPlaybackActive)
   {
-    m_videoPlaybackActive = is_videoPlaybackActive;
+    m_videoPlaybackActive = isVideoPlaybackActive;
     emit videoPlaybackActive(m_videoPlaybackActive);
   }
 }
@@ -548,12 +555,15 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
       }
       else if (strcmp(prop->name, "playback-time") == 0 && prop->format == MPV_FORMAT_DOUBLE)
       {
-        double pos = *static_cast<double*>(prop->data);
-        if (fabs(pos - m_lastPositionUpdate) > 0.015)
-        {
-          quint64 ms = static_cast<quint64>(qMax(pos * 1000.0, 0.0));
-          emit positionUpdate(ms);
-          m_lastPositionUpdate = pos;
+        const double pos = *static_cast<double*>(prop->data);
+        if (qIsFinite(pos)) {
+          m_positionMs = qMax<qint64>(qRound64(pos * 1000.0), 0);
+          if (m_lastPositionUpdateMs < 0 ||
+              qAbs(m_positionMs - m_lastPositionUpdateMs) >= POSITION_UPDATE_INTERVAL_MS)
+          {
+            emit positionUpdate(static_cast<quint64>(m_positionMs));
+            m_lastPositionUpdateMs = m_positionMs;
+          }
         }
       }
       else if (strcmp(prop->name, "vo-configured") == 0)
@@ -564,8 +574,14 @@ void PlayerComponent::handleMpvEvent(mpv_event *event)
       }
       else if (strcmp(prop->name, "duration") == 0)
       {
-        if (prop->format == MPV_FORMAT_DOUBLE)
-          emit updateDuration(*static_cast<double*>(prop->data) * 1000.0);
+        if (prop->format == MPV_FORMAT_DOUBLE) {
+          const double duration = *static_cast<double*>(prop->data);
+          m_durationMs = qIsFinite(duration) ? qMax<qint64>(qRound64(duration * 1000.0), 0) : 0;
+        } else {
+          m_durationMs = 0;
+        }
+
+        emit updateDuration(m_durationMs);
       }
       else if (strcmp(prop->name, "audio-device-list") == 0)
       {
@@ -1111,27 +1127,13 @@ void PlayerComponent::setPlaybackRate(int rate)
 /////////////////////////////////////////////////////////////////////////////////////////
 qint64 PlayerComponent::getPosition()
 {
-  if (!m_mpv) {
-    qWarning() << "PlayerComponent::getPosition: mpv not initialized yet";
-    return 0;
-  }
-  QVariant time = m_mpv->getProperty( "playback-time");
-  if (time.canConvert<double>())
-    return time.toDouble();
-  return 0;
+  return m_positionMs;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
 qint64 PlayerComponent::getDuration()
 {
-  if (!m_mpv) {
-    qWarning() << "PlayerComponent::getDuration: mpv not initialized yet";
-    return 0;
-  }
-  QVariant time = m_mpv->getProperty( "duration");
-  if (time.canConvert<double>())
-    return time.toDouble();
-  return 0;
+  return m_durationMs;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1141,7 +1143,10 @@ qint64 PlayerComponent::getDuration()
 // force the player and/or the OS to move audio output back to the user-selected device.
 void PlayerComponent::checkCurrentAudioDevice(const QSet<QString>& old_devs, const QSet<QString>& new_devs)
 {
-  QString userDevice = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device").toString();
+  QVariant userDeviceValue = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device");
+  QString userDevice = userDeviceValue.typeId() == QMetaType::QString
+      ? userDeviceValue.toString()
+      : QString("auto");
 
   QSet<QString> removed = old_devs - new_devs;
   QSet<QString> added = new_devs - old_devs;
@@ -1165,7 +1170,10 @@ void PlayerComponent::checkCurrentAudioDevice(const QSet<QString>& old_devs, con
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::updateAudioDeviceList()
 {
-  QString userDevice = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device").toString();
+  QVariant userDeviceValue = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device");
+  QString userDevice = userDeviceValue.typeId() == QMetaType::QString
+      ? userDeviceValue.toString()
+      : QString("auto");
   bool userDeviceFound = false;
 
   QVariantList settingList;
@@ -1209,9 +1217,19 @@ void PlayerComponent::updateAudioDeviceList()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PlayerComponent::updateAudioDevice()
 {
-  QString device = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device").toString();
+  QVariant deviceValue = SettingsComponent::Get().value(SETTINGS_SECTION_AUDIO, "device");
 
-  if (!m_audioDevices.contains(device))
+  // Repair invalid configuration
+  if (deviceValue.typeId() != QMetaType::QString)
+  {
+    qWarning() << "Invalid audio device setting" << deviceValue << "- resetting to auto";
+    deviceValue = QString("auto");
+    SettingsComponent::Get().setValue(SETTINGS_SECTION_AUDIO, "device", deviceValue);
+  }
+
+  QString device = deviceValue.toString();
+
+  if (device != "auto" && !m_audioDevices.contains(device))
   {
     qWarning() << "Not using audio device" << device << "because it's not present.";
     device = "auto";
@@ -1593,7 +1611,7 @@ QString PlayerComponent::videoInformation() const
   info << "\n";
   info << "Performance:\n";
   info << "A/V: " << MPV_PROPERTY("avsync") << "\n";
-  info << "Dropped frames: " << MPV_PROPERTY("vo-drop-frame-count") << "\n";
+  info << "Dropped frames: " << MPV_PROPERTY("frame-drop-count") << "/" << MPV_PROPERTY("decoder-frame-drop-count") << "\n";
   bool dispSync = MPV_PROPERTY_BOOL("display-sync-active");
   info << "Display Sync: ";
   if (!dispSync)
@@ -1613,7 +1631,6 @@ QString PlayerComponent::videoInformation() const
   info << "\n";
   info << "Cache:\n";
   info << "Seconds: " << MPV_PROPERTY("demuxer-cache-duration") << "\n";
-  info << "Extra readahead: " << MPV_PROPERTY("cache-used") << "\n";
   info << "Buffering: " << MPV_PROPERTY("cache-buffering-state") << "\n";
   info << "Speed: " << MPV_PROPERTY("cache-speed") << "\n";
   info << "\n";
