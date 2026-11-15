@@ -21,36 +21,42 @@ jobs:
       matrix:
         include:
           - artifact: windows-x64
+            runner: windows-latest
+            arch: x64
+            build_dir: build
             qt_arch: win64_msvc2022_64
             mpv_arch: x86_64-v3
             mpv_arch_fallback: x86_64
             vc_redist_arch: x64
             vcvars: vcvars64.bat
             machine: X64
-          # ARM64 disabled - requires qt webengine builds
-          # - artifact: windows-arm64
-          #   qt_arch: win64_msvc2022_arm64
-          #   mpv_arch: aarch64
-          #   mpv_arch_fallback: ""
-          #   vc_redist_arch: arm64
-          #   vcvars: vcvarsamd64_arm64.bat
-          #   machine: ARM64
-    runs-on: windows-latest
+          - artifact: windows-arm64
+            runner: windows-11-arm
+            arch: arm64
+            build_dir: build\arm64
+    runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v7
       with:
         submodules: recursive
     - name: Install Qt 6
+      if: matrix.arch == 'x64'
       uses: jurplel/install-qt-action@v4
       with:
         version: "${{ env.QT_VERSION }}"
         arch: "${{ matrix.qt_arch }}"
         modules: "qtwebengine qtwebchannel qtpositioning"
     - name: Install Inno Setup
+      if: matrix.arch == 'x64'
       run: |
         choco install innosetup -y
       shell: powershell
+    - name: Install Inno Setup 6 for ARM64 packaging
+      if: matrix.arch == 'arm64'
+      run: choco install innosetup --version=6.6.1 -y --allow-downgrade
+      shell: powershell
     - name: Install dependencies
+      if: matrix.arch == 'x64'
       run: |
         mkdir build
         curl -L https://sourceforge.net/projects/mpv-player-windows/files/libmpv/mpv-dev-${{ matrix.mpv_arch }}-${{ env.MPV_VERSION }}.7z/download > mpv.7z
@@ -70,6 +76,7 @@ jobs:
         fi
       shell: bash
     - name: Bundle VC runtime DLLs
+      if: matrix.arch == 'x64'
       run: |
         mkdir deps
         mkdir deps/vcruntime
@@ -87,6 +94,7 @@ jobs:
         Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile deps/vc_redist.x64.exe
       shell: powershell
     - name: Build
+      if: matrix.arch == 'x64'
       run: |
         set "VS_PATH="
         for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath 2^>nul') do set "VS_PATH=%%i"
@@ -106,13 +114,31 @@ jobs:
         ninja
         ninja windows_all
       shell: cmd
+    - name: Set up native ARM64 Python
+      if: matrix.arch == 'arm64'
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.13"
+        architecture: arm64
+    - name: Build and test native ARM64
+      if: matrix.arch == 'arm64'
+      run: |
+        call dev\windows\setup.bat || exit /b 1
+        call dev\windows\build.bat || exit /b 1
+        set QSG_RHI_PREFER_SOFTWARE_RENDERER=1
+        call dev\windows\test.bat || exit /b 1
+        set QSG_RHI_PREFER_SOFTWARE_RENDERER=
+        call dev\windows\bundle.bat || exit /b 1
+      shell: cmd
     - name: Archive installer
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.artifact }}-installer
-        path: ${{ github.workspace }}/build/JellyfinDesktop-*.exe
+        path: ${{ github.workspace }}\${{ matrix.build_dir }}\JellyfinDesktop-*.exe
+        if-no-files-found: error
     - name: Archive portable ZIP
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.artifact }}-portable
-        path: ${{ github.workspace }}/build/JellyfinDesktop-*.zip
+        path: ${{ github.workspace }}\${{ matrix.build_dir }}\JellyfinDesktop-*.zip
+        if-no-files-found: error

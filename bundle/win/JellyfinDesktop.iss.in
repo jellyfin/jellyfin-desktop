@@ -27,14 +27,13 @@ AppComments=Jellyfin desktop client
 AppContact={#MyAppPublisher}
 DefaultDirName={autopf}\Jellyfin Desktop
 DisableProgramGroupPage=yes
-; Require Windows 10 1903 or newer
-MinVersion=10.0.18362
-ArchitecturesInstallIn64BitMode=x64compatible
-ArchitecturesAllowed=x64compatible
+MinVersion=@INSTALLER_MIN_VERSION@
+ArchitecturesInstallIn64BitMode=@INSTALLER_ALLOWED_ARCH@
+ArchitecturesAllowed=@INSTALLER_ALLOWED_ARCH@
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=.
-OutputBaseFilename=JellyfinDesktop-{#MyAppVersion}-windows-x64
+OutputBaseFilename=JellyfinDesktop-{#MyAppVersion}-windows-@INSTALLER_ARCH_STR@
 SetupIconFile=@PROJECT_SOURCE_DIR@/bundle/win/jellyfin.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
@@ -57,11 +56,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; Main application files (exclude redist folder - handled separately)
-Source: "{#DeployPath}/*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "redist,redist/*,vc_redist.x64.exe"
+Source: "{#DeployPath}/*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "redist,redist/*,vc_redist.@WINDOWS_ARCH@.exe"
 ; Bundled VC runtime DLLs - only copied if needed (see Code section)
 Source: "{#DeployPath}/redist/*.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: NeedsBundledRuntime
 ; Bundled VCRedist installer - extracted to temp for potential system-wide install
-Source: "{#DeployPath}/vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall; Check: ShouldExtractVCRedist
+Source: "{#DeployPath}/vc_redist.@WINDOWS_ARCH@.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall; Check: ShouldExtractVCRedist
 
 [Icons]
 Name: "{autoprograms}\Jellyfin Desktop"; Filename: "{app}\{#MyAppExeName}"; Comment: "Jellyfin desktop client"; WorkingDir: "{app}"
@@ -69,7 +68,7 @@ Name: "{autodesktop}\Jellyfin Desktop"; Filename: "{app}\{#MyAppExeName}"; Comme
 
 [Run]
 ; Install VCRedist if downloaded
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /passive /norestart"; StatusMsg: "Installing Visual C++ Redistributable..."; Flags: waituntilterminated; Check: ShouldInstallVCRedist
+Filename: "{tmp}\vc_redist.@WINDOWS_ARCH@.exe"; Parameters: "/install /passive /norestart"; StatusMsg: "Installing Visual C++ Redistributable..."; Flags: waituntilterminated; Check: ShouldInstallVCRedist
 ; Launch app after install
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Jellyfin Desktop"; Flags: nowait postinstall skipifsilent
 

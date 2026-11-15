@@ -53,6 +53,7 @@ QMap<SystemComponent::PlatformArch, QString> g_platformArchNames = {
   { SystemComponent::platformArchX86_32, "i386" },
   { SystemComponent::platformArchX86_64, "x86_64" },
   { SystemComponent::platformArchRpi2, "rpi2" },
+  { SystemComponent::platformArchArm64, "arm64" },
   { SystemComponent::platformArchUnknown, "unknown" }
 };
 
@@ -89,6 +90,8 @@ SystemComponent::SystemComponent(QObject* parent) : ComponentBase(parent), m_pla
   m_platformArch = platformArchX86_32;
 #elif defined(Q_PROCESSOR_X86_64)
   m_platformArch = platformArchX86_64;
+#elif defined(Q_PROCESSOR_ARM_64)
+  m_platformArch = platformArchArm64;
 #endif
 
   if (auto* s = SettingsComponent::Get().getSection(SETTINGS_SECTION_AUDIO))
@@ -144,7 +147,7 @@ QVariantMap SystemComponent::systemInformation() const
   int productid = KONVERGO_PRODUCTID_DEFAULT;
 
 #ifdef Q_OS_WIN
-  arch = (sizeof(void *) == 8) ? "x86_64" : "i386";
+  arch = QSysInfo::buildCpuArchitecture();
 #else
   arch = QSysInfo::currentCpuArchitecture();
 #endif

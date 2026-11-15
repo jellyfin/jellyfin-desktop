@@ -3,7 +3,7 @@ REM Jellyfin Desktop - Windows bundling script
 REM Run build.bat first
 
 setlocal enabledelayedexpansion
-call "%~dp0common.bat"
+call "%~dp0common.bat" || exit /b 1
 
 REM === Check build exists ===
 if not exist "%BUILD_DIR%\src\%EXE_NAME%" (
@@ -13,7 +13,7 @@ if not exist "%BUILD_DIR%\src\%EXE_NAME%" (
 
 REM === Check Visual Studio ===
 if not defined VCVARS (
-    echo ERROR: vcvars64.bat not found
+    echo ERROR: %VCVARS_NAME% not found
     exit /b 1
 )
 echo Using: %VCVARS%

@@ -4,9 +4,9 @@
 #include <QDebug>
 
 MpvVideoItem::MpvVideoItem(QQuickItem *parent)
-    : MpvAbstractItem(parent)
+    : MpvVideoItemBase(parent)
 {
-    connect(this, &MpvAbstractItem::ready, this, [this]() {
+    connect(this, &MpvVideoItemBase::ready, this, [this]() {
         qDebug() << "MpvVideoItem ready() signal fired!";
         m_ready = true;
         initialize();
@@ -16,7 +16,7 @@ MpvVideoItem::MpvVideoItem(QQuickItem *parent)
     // Critical: Set vo=libmpv for Qt integration
     Q_EMIT setProperty("vo", "libmpv");
 
-#ifdef Q_OS_WIN32
+#if defined(Q_OS_WIN32) && !defined(USE_MPV_D3D11)
     // Force desktop OpenGL and disable advanced features for compatibility with older GPUs
     Q_EMIT setProperty("gpu-api", "opengl");
     Q_EMIT setProperty("opengl-es", "no");

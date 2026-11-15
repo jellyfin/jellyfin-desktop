@@ -8,6 +8,9 @@ class TestSystemComponent : public QObject
 private slots:
   void testExtractBaseUrl_data();
   void testExtractBaseUrl();
+#if defined(Q_OS_WIN) || defined(Q_PROCESSOR_ARM_64)
+  void testBuildArchitecture();
+#endif
 };
 
 void TestSystemComponent::testExtractBaseUrl_data()
@@ -145,6 +148,20 @@ void TestSystemComponent::testExtractBaseUrl()
 
   QCOMPARE(result, expected);
 }
+
+#if defined(Q_OS_WIN) || defined(Q_PROCESSOR_ARM_64)
+void TestSystemComponent::testBuildArchitecture()
+{
+  auto& system = SystemComponent::Get();
+#ifdef Q_OS_WIN
+  QCOMPARE(system.systemInformation().value("build").toString(),
+           QString("windows-") + QSysInfo::buildCpuArchitecture());
+#endif
+#ifdef Q_PROCESSOR_ARM_64
+  QVERIFY(system.getUserAgent().contains("arm64"));
+#endif
+}
+#endif
 
 QTEST_APPLESS_MAIN(TestSystemComponent)
 #include "test_systemcomponent.moc"

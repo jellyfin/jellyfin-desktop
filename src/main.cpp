@@ -227,9 +227,13 @@ int main(int argc, char *argv[])
 #endif
     }
 
+#ifdef USE_MPV_D3D11
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
+#else
     detectOpenGLEarly();
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+#endif
 
     if (parser.isSet("help"))
     {
@@ -485,7 +489,11 @@ int main(int argc, char *argv[])
     Q_UNUSED(signalManager);
 #endif
 
+#ifdef USE_MPV_D3D11
+    qInfo() << "Using native Direct3D 11 for Qt Quick and mpv";
+#else
     detectOpenGLLate();
+#endif
 
     // Initialize all the components. This needs to be done
     // early since most everything else relies on it

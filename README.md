@@ -17,6 +17,8 @@ Built from the latest commit on `master`.
 #### Windows
 - [x64 Installer](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-windows/master/windows-x64-installer.zip)
 - [x64 Portable](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-windows/master/windows-x64-portable.zip)
+- [ARM64 Installer](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-windows/master/windows-arm64-installer.zip)
+- [ARM64 Portable](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-windows/master/windows-arm64-portable.zip)
 
 #### Linux
 - [AppImage (x86_64)](https://nightly.link/jellyfin/jellyfin-desktop/workflows/build-appimage/master/linux-appimage-x86_64.zip)
