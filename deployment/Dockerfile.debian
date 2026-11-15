@@ -17,7 +17,7 @@ RUN . /etc/os-release \
  && if [ "${ID}:${VERSION_CODENAME}" = "ubuntu:oracular" ]; then \
       for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do \
         if [ -f "${source}" ]; then \
-          sed -i -E 's|https?://(archive|security).ubuntu.com/ubuntu|http://old-releases.ubuntu.com/ubuntu|g' "${source}"; \
+          sed -i -E 's#https?://(archive|security)\.ubuntu\.com/ubuntu#http://old-releases.ubuntu.com/ubuntu#g' "${source}"; \
         fi; \
       done; \
     fi \
