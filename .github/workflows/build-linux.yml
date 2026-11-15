@@ -29,18 +29,22 @@ jobs:
         name: ubuntu-${{ matrix.tag }}
         path: ${{ github.workspace }}/deployment/dist/*
     - name: Import repository signing GPG key
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       run: |
         echo -n "${{ secrets.DEBIAN_SIGNING_KEY }}" | base64 --decode | gpg --batch --yes --import
     - name: Sign Debian package and source files
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       run: |
         for file in deployment/dist/*.deb; do
             debsigs --sign=origin --default-key=${{ secrets.DEBIAN_SIGNING_KEY_ID }} ${file}
         done
         debsign -k ${{ secrets.DEBIAN_SIGNING_KEY_ID }} deployment/dist/*.changes
     - name: Remove repository signing GPG key
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       run: |
         gpg --batch --yes --delete-secret-keys ${{ secrets.DEBIAN_SIGNING_KEY_ID }}
     - name: Upload artifacts to repository server
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
       with:
         host: "${{ secrets.REPO_HOST }}"
@@ -50,6 +54,7 @@ jobs:
         strip_components: 2
         target: "/srv/incoming/client/jellyfin-desktop/ubuntu/${{ matrix.tag }}"
     - name: Import artifactsinto reprepro
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: "${{ secrets.REPO_HOST }}"
@@ -63,6 +68,7 @@ jobs:
           sudo reprepro --waitforlock 30 --basedir /srv/ubuntu --component ${COMPONENT} includedeb ${{ matrix.tag }} /srv/incoming/client/jellyfin-desktop/ubuntu/${{ matrix.tag }}/*.deb || exit 1
           sudo reprepro --waitforlock 30 --basedir /srv/ubuntu --component ${COMPONENT} includedsc ${{ matrix.tag }} /srv/incoming/client/jellyfin-desktop/ubuntu/${{ matrix.tag }}/*.dsc || exit 1
     - name: Move artifacts into repository
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: "${{ secrets.REPO_HOST }}"
@@ -102,18 +108,22 @@ jobs:
         name: debian-${{ matrix.tag }}
         path: ${{ github.workspace }}/deployment/dist/*
     - name: Import repository signing GPG key
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       run: |
         echo -n "${{ secrets.DEBIAN_SIGNING_KEY }}" | base64 --decode | gpg --batch --yes --import
     - name: Sign Debian package and source files
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       run: |
         for file in deployment/dist/*.deb; do
             debsigs --sign=origin --default-key=${{ secrets.DEBIAN_SIGNING_KEY_ID }} ${file}
         done
         debsign -k ${{ secrets.DEBIAN_SIGNING_KEY_ID }} deployment/dist/*.changes
     - name: Remove repository signing GPG key
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       run: |
         gpg --batch --yes --delete-secret-keys ${{ secrets.DEBIAN_SIGNING_KEY_ID }}
     - name: Upload artifacts to repository server
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
       with:
         host: "${{ secrets.REPO_HOST }}"
@@ -123,6 +133,7 @@ jobs:
         strip_components: 2
         target: "/srv/incoming/client/jellyfin-desktop/debian/${{ matrix.tag }}"
     - name: Import artifactsinto reprepro
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: "${{ secrets.REPO_HOST }}"
@@ -136,6 +147,7 @@ jobs:
           sudo reprepro --waitforlock 30 --basedir /srv/debian --component ${COMPONENT} includedeb ${{ matrix.tag }} /srv/incoming/client/jellyfin-desktop/debian/${{ matrix.tag }}/*.deb || exit 1
           sudo reprepro --waitforlock 30 --basedir /srv/debian --component ${COMPONENT} includedsc ${{ matrix.tag }} /srv/incoming/client/jellyfin-desktop/debian/${{ matrix.tag }}/*.dsc || exit 1
     - name: Move artifacts into repository
+      if: github.repository == 'jellyfin/jellyfin-desktop'
       uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: "${{ secrets.REPO_HOST }}"

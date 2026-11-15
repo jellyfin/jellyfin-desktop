@@ -34,6 +34,12 @@ runtime paths. Windows ARM64 builds also run `test_mpvd3d11`, which opens a test
 window and checks video pixels, orientation, resizing and renderer recreation.
 It requires a working Direct3D 11 device (hardware or WARP).
 
+### Fork CI
+
+The `build` and `test` workflows can be dispatched manually on a fork branch.
+Fork builds upload package artifacts but skip upstream package signing and
+repository deployment.
+
 ### Writing Tests
 
 Tests are located in the `tests/` directory. To add a new test:
