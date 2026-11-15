@@ -248,6 +248,37 @@ jmpInfo.settingsUpdate = [];
 window.apiPromise = createApi();
 window.initCompleted = new Promise(async (resolve) => {
     window.api = await window.apiPromise;
+
+    // Refresh settings and descriptions from the native side. The native shell
+    // script may have been generated before mpv discovered the audio devices
+    // (which populates the device dropdown), and sessionStorage can contain
+    // stale values from an older run.
+    const [nativeSettings, nativeDescriptions, nativeSections] = await Promise.all([
+        new Promise(resolve => window.api.settings.allValues("", resolve)),
+        new Promise(resolve => window.api.settings.settingDescriptions(resolve)),
+        new Promise(resolve => window.api.settings.orderedSections(resolve))
+    ]);
+
+    if (nativeSettings && Object.keys(nativeSettings).length > 0) {
+        rawSettings = nativeSettings;
+    }
+
+    if (Array.isArray(nativeDescriptions)) {
+        const descriptions = {};
+        for (const section of nativeDescriptions) {
+            descriptions[section.key] = section.settings;
+        }
+
+        jmpInfo.settingsDescriptions = descriptions;
+    }
+
+    if (Array.isArray(nativeSections)) {
+        jmpInfo.sections = nativeSections;
+    }
+
+    window.sessionStorage.setItem("settings", JSON.stringify(rawSettings));
+    window.sessionStorage.setItem("settingsDescriptions", JSON.stringify(jmpInfo.settingsDescriptions));
+
     const settingUpdate = (section, key) => (
         (data) => new Promise(resolve => {
             rawSettings[section][key] = data;
