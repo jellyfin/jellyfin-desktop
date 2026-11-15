@@ -8,6 +8,15 @@
   </developer>
   <project_license>GPL-2.0</project_license>
   <metadata_license>CC0-1.0</metadata_license>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+    <control>gamepad</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
   <url type="homepage">https://github.com/jellyfin/jellyfin-desktop</url>
   <url type="help">https://github.com/jellyfin/jellyfin-desktop/blob/master/README.md</url>
   <url type="bugtracker">https://github.com/jellyfin/jellyfin-desktop/issues</url>
