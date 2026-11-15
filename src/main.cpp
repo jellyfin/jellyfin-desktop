@@ -434,12 +434,13 @@ int main(int argc, char *argv[])
 
     if (!chromiumFlags.isEmpty())
     {
-      // Append to whatever the user already put in QTWEBENGINE_CHROMIUM_FLAGS instead of
+      // Keep whatever the user already put in QTWEBENGINE_CHROMIUM_FLAGS instead of
       // replacing it, so flags set in the environment as a workaround for driver bugs
-      // (for example --disable-gpu, see #1091) survive when we add our own.
+      // (for example --disable-gpu, see #1091) survive when we add our own. The user's
+      // flags go last: Chromium lets the last occurrence of a switch win.
       const QByteArray existing = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS").trimmed();
       const QByteArray ours = chromiumFlags.join(" ").toUtf8();
-      qputenv("QTWEBENGINE_CHROMIUM_FLAGS", existing.isEmpty() ? ours : existing + " " + ours);
+      qputenv("QTWEBENGINE_CHROMIUM_FLAGS", existing.isEmpty() ? ours : ours + " " + existing);
     }
 
     if (parser.isSet("remote-debugging-port"))
