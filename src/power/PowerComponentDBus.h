@@ -11,7 +11,7 @@ class PowerComponentDBus : public PowerComponent
 
   public Q_SLOTS:
 
-  virtual int getPowerCapabilities() override
+  int getPowerCapabilities() override
   {
     int flags = 0;
     if (isPowerMethodAvailable("CanPowerOff"))
@@ -23,19 +23,19 @@ class PowerComponentDBus : public PowerComponent
     return flags;
   }
 
-    virtual bool PowerOff();
-    virtual bool Reboot();
-    virtual bool Suspend() { return callPowerMethod("Suspend"); }
+  bool PowerOff() override;
+  bool Reboot() override;
+  bool Suspend() override { return callPowerMethod("Suspend"); }
 
   private:
     bool callPowerMethod(QString method);
     bool isPowerMethodAvailable(QString method);
 
-    unsigned int screensaver_inhibit_cookie = 0;
-  
+    unsigned int m_screensaverInhibitCookie = 0;
+
   protected:
-    virtual void doDisableScreensaver();
-    virtual void doEnableScreensaver();
+    void doDisableScreensaver() override;
+    void doEnableScreensaver() override;
 };
 
 #endif // POWERCOMPONENTDBUS_H

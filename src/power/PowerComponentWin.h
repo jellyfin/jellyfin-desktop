@@ -8,10 +8,8 @@ class PowerComponentWin : public PowerComponent
 {
 public:
   PowerComponentWin();
-  virtual void doDisableScreensaver();
-  virtual void doEnableScreensaver();
 
-  virtual int getPowerCapabilities() override
+  int getPowerCapabilities() override
   {
     int flags = CAP_SUSPEND;
     if (m_hasPrivileges)
@@ -19,9 +17,13 @@ public:
     return flags;
   }
 
-  virtual bool PowerOff() override;
-  virtual bool Reboot() override;
-  virtual bool Suspend() override;
+  bool PowerOff() override;
+  bool Reboot() override;
+  bool Suspend() override;
+
+protected:
+  void doDisableScreensaver() override;
+  void doEnableScreensaver() override;
 
 private:
   bool m_hasPrivileges;

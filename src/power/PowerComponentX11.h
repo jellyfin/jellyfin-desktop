@@ -14,8 +14,8 @@ public:
   PowerComponentX11();
 
 protected:
-  virtual void doDisableScreensaver();
-  virtual void doEnableScreensaver();
+  void doDisableScreensaver() override;
+  void doEnableScreensaver() override;
 
 private slots:
   void onTimer();
