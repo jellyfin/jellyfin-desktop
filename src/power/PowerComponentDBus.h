@@ -1,6 +1,8 @@
 #ifndef POWERCOMPONENTDBUS_H
 #define POWERCOMPONENTDBUS_H
 
+#include <QString>
+
 #include "PowerComponent.h"
 
 class PowerComponentDBus : public PowerComponent
@@ -31,7 +33,7 @@ class PowerComponentDBus : public PowerComponent
     bool callPowerMethod(QString method);
     bool isPowerMethodAvailable(QString method);
 
-    unsigned int m_screensaverInhibitCookie = 0;
+    QString m_inhibitHandle;
 
   protected:
     void doDisableScreensaver() override;
