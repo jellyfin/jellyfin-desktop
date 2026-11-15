@@ -34,10 +34,10 @@ const getPlugins = () => {
     return basePlugins;
 };
 
-const plugins = getPlugins();
+const jellyfinDesktopPlugins = getPlugins();
 
 // Plugins are bundled, return class directly
-for (const plugin of plugins) {
+for (const plugin of jellyfinDesktopPlugins) {
     window[plugin] = () => {
         return window["_" + plugin];
     };
@@ -57,7 +57,7 @@ window.NativeShell = {
     },
 
     getPlugins() {
-        return plugins;
+        return jellyfinDesktopPlugins;
     }
 };
 
