@@ -59,6 +59,9 @@ the exact Qt build used for compilation. CMake enables `USE_MPV_D3D11` by defaul
 only for Windows ARM64; other platforms retain the existing MpvQt/OpenGL path.
 The ARM64 test suite additionally checks rendered video pixels, orientation,
 resize and renderer destruction/recreation.
+Recovery tests retain the same mpv core through scene-graph/graphics recreation,
+including playing/paused video-only streams, audio/video, and moving between
+windows. They do not force a system-wide GPU reset.
 
 For packaging, install Inno Setup 6 and run:
 
