@@ -43,6 +43,7 @@ public:
   Q_INVOKABLE void checkServerConnectivity(QString url);
   Q_INVOKABLE void cancelServerConnectivity();
   Q_SIGNAL void serverConnectivityResult(QString url, bool success, QString resolvedUrl);
+  Q_SIGNAL void serverConnectivityRetrying(QString url, QString message);
 
   static QString extractBaseUrl(const QString& url);
   void resolveUrl(const QString& url, std::function<void(const QString&)> callback);
@@ -108,7 +109,7 @@ public:
 
   void updateScale(qreal scale);
 
-  QSslConfiguration getSSLConfiguration();
+  QSslConfiguration getSSLConfiguration(const QUrl& url = QUrl());
 
 private Q_SLOTS:
   void updateInfoHandler(QNetworkReply* reply);

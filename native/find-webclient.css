@@ -136,3 +136,117 @@ button:disabled {
 #connect-button.cancel:hover:not(:disabled) {
     background: #d93134;
 }
+.error {
+    max-width: 450px;
+    width: 100%;
+    margin-top: 0.75em;
+    color: #ff6b6b;
+    font-size: 0.9em;
+    word-break: break-word;
+}
+.error[hidden] {
+    display: none;
+}
+#certificates,
+#close-button {
+    visibility: hidden;
+    max-width: 450px;
+    width: 100%;
+    margin-top: 1em;
+}
+/* find-webclient.js marks a running connection attempt with #address.connecting */
+body.certs-ready #certificates {
+    visibility: visible;
+}
+body.certs-ready #address.connecting ~ #certificates {
+    visibility: hidden;
+}
+/* Cancel while connecting; the overlay also closes with it otherwise */
+#address.connecting ~ #close-button,
+body.overlay #close-button {
+    visibility: visible;
+}
+button.link,
+button.secondary,
+.cert-row button {
+    width: auto;
+    background: none;
+    color: inherit;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+}
+button.link {
+    padding: 0.25em 0;
+    opacity: 0.8;
+}
+button.secondary {
+    width: 100%;
+    background: #292929;
+}
+button.link:hover:not(:disabled) {
+    background: none;
+    opacity: 1;
+}
+button.secondary:hover:not(:disabled) {
+    background: #333;
+}
+.cert-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0.5em 0;
+    border-bottom: 1px solid #292929;
+}
+.cert-label {
+    flex: 0 0 9em;
+}
+.cert-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.8;
+}
+.cert-row button {
+    padding: 0.4em 0.6em;
+    background: #292929;
+}
+.cert-row button:hover:not(:disabled) {
+    background: #333;
+}
+.cert-row .cert-remove,
+.cert-row .cert-remove:hover:not(:disabled) {
+    background: none;
+}
+dialog {
+    background: #202020;
+    color: inherit;
+    border: none;
+    border-radius: 0.3em;
+    padding: 1.5em;
+    width: 90%;
+    max-width: 400px;
+}
+dialog::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+dialog input[type=password] {
+    display: block;
+    width: 100%;
+    font-size: 1em;
+    color: inherit;
+    background: #292929;
+    border: 0.16em solid #292929;
+    border-radius: 0.2em;
+    padding: 0.6em 0.8em;
+}
+dialog input[type=password]:focus {
+    border-color: #00a4dc;
+    outline: none;
+}
+.dialog-buttons {
+    display: flex;
+    gap: 0.5em;
+    margin-top: 1em;
+}

@@ -13,8 +13,41 @@
             <div id="spinner"></div>
             <input type="text" id="address" autofocus>
             <button id="connect-button" type="submit"></button>
+            <div id="connect-error" class="error" hidden></div>
+            <div id="certificates">
+                <button type="button" id="advanced-toggle" class="link">Advanced &#9656;</button>
+                <div id="advanced" hidden>
+                    <div class="cert-row" data-kind="ca">
+                        <span class="cert-label">CA certificate</span>
+                        <span class="cert-name"></span>
+                        <button type="button" class="cert-remove" title="Remove">&#10005;</button>
+                        <button type="button" class="cert-pick">Choose file&hellip;</button>
+                        <input type="file" accept=".pem,.crt,.cer,.der,.p12,.pfx" hidden>
+                    </div>
+                    <div class="cert-row" data-kind="client">
+                        <span class="cert-label">Client certificate</span>
+                        <span class="cert-name"></span>
+                        <button type="button" class="cert-remove" title="Remove">&#10005;</button>
+                        <button type="button" class="cert-pick">Choose file&hellip;</button>
+                        <input type="file" accept=".p12,.pfx" hidden>
+                    </div>
+                    <div id="cert-message" class="error" hidden></div>
+                </div>
+            </div>
+            <button type="button" id="close-button" class="secondary" hidden>Cancel</button>
         </form>
     </div>
+    <dialog id="password-dialog">
+        <form method="dialog">
+            <p id="password-text"></p>
+            <input type="password" id="password" autocomplete="off">
+            <div class="dialog-buttons">
+                <button value="cancel" class="secondary" formnovalidate>Cancel</button>
+                <button value="ok" id="password-ok">OK</button>
+            </div>
+        </form>
+    </dialog>
     <script src="find-webclient.lang.js"></script>
+    <script src="find-webclient.certs.js"></script>
     <script src="find-webclient.js"></script>
 </html>
