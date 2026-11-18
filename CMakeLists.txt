@@ -5,6 +5,10 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/toolchain.cmake")
   set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/toolchain.cmake")
 endif()
 
+# Qt 6 requires macOS 12. Must be set before project() to apply to the toolchain checks;
+# ignored on other platforms. Can be overridden with -DCMAKE_OSX_DEPLOYMENT_TARGET.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
+
 project(JellyfinDesktop CXX C)
 
 # we want this to be able to run clang-tidy
