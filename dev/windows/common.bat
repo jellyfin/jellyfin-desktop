@@ -4,7 +4,7 @@ REM Sourced by other scripts
 
 set QT_VERSION=6.9.3
 REM Keep in sync with .github/workflows/build-windows.yml
-set MPV_VERSION=20261018-git-01e2533f31
+set MPV_VERSION=20261108-git-55d3feb45c
 set SCRIPT_DIR=%~dp0
 for %%i in ("%SCRIPT_DIR%\..\..") do set "PROJECT_ROOT=%%~fi"
 set DEPS_DIR=%SCRIPT_DIR%deps
