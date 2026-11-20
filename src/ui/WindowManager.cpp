@@ -511,6 +511,11 @@ void WindowManager::loadGeometry()
   QRect rect = loadGeometryRect();
   qDebug() << "loadGeometry: loadGeometryRect returned" << rect;
 
+  // Remember whether we are restoring a size the user saved, or falling back to the
+  // default. saveWindowSize() only drops the saved keys when the window is still at
+  // the untouched default size, so a restored size must never count as "unchanged".
+  const bool restoredSavedSize = rect.isValid() && fitsInScreens(rect);
+
   // Validate geometry fits in available screens
   if (!fitsInScreens(rect))
   {
@@ -555,8 +560,10 @@ void WindowManager::loadGeometry()
   m_window->resize(rect.size());
   m_windowedGeometry = rect;
 
-  // Store initial size for tracking if user changed it
-  m_initialSize = rect.size();
+  // Store the default size so saveWindowSize() can tell whether the user ever changed
+  // it. When a saved size was restored there is no "untouched default" to compare
+  // against, so leave it invalid; the saved size then always stays saved.
+  m_initialSize = restoredSavedSize ? QSize() : rect.size();
   QScreen* primary = QGuiApplication::primaryScreen();
   if (primary)
     m_initialScreenSize = primary->geometry().size();
@@ -631,10 +638,11 @@ void WindowManager::saveWindowSize()
     QSize size = m_window->size();
     m_windowedGeometry.setSize(size);
 
-    // Check if size changed from initial (revert if unchanged)
+    // Revert to default only if the window still has the untouched default size it was
+    // created with (m_initialSize is invalid when a saved size was restored instead).
     QScreen* primary = QGuiApplication::primaryScreen();
     QSize currentScreenSize = primary ? primary->geometry().size() : QSize();
-    bool sizeUnchanged = (size == m_initialSize && currentScreenSize == m_initialScreenSize);
+    bool sizeUnchanged = (m_initialSize.isValid() && size == m_initialSize && currentScreenSize == m_initialScreenSize);
 
     qDebug() << "saveWindowSize: NOT maximized, saving size=" << size
              << "sizeUnchanged=" << sizeUnchanged
