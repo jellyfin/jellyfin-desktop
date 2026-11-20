@@ -1,5 +1,8 @@
 add_sources(PlayerComponent.cpp PlayerComponent.h)
 add_sources(AlbumArtProvider.cpp AlbumArtProvider.h)
 add_sources(MpvVideoItem.cpp MpvVideoItem.h)
+if(WIN32)
+  add_sources(MpvD3D11Item.cpp MpvD3D11Item.h)
+endif()
 add_sources(OpenGLDetect.cpp OpenGLDetect.h)
 add_sources(QtHelper.h)

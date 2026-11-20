@@ -228,7 +228,13 @@ int main(int argc, char *argv[])
     }
 
     detectOpenGLEarly();
+#ifdef Q_OS_WIN
+    // Direct3D 11 lets mpv decode with d3d11va zero-copy and run the d3d11vpp
+    // filter (RTX / Intel Video Super Resolution). See MpvD3D11Item.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
+#else
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+#endif
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     if (parser.isSet("help"))
