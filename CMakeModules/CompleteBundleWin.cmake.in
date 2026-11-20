@@ -33,6 +33,9 @@ list(APPEND SEARCHDIRS ${CEC_DIR})
 # Install MPV DLL (MPV_LIBRARY points to .lib, we need the .dll)
 get_filename_component(MPV_DIR "@MPV_LIBRARY@" DIRECTORY)
 file(INSTALL "${MPV_DIR}/libmpv-2.dll" DESTINATION "${CMAKE_INSTALL_PREFIX}")
+if(EXISTS "${MPV_DIR}/LICENSE.GPL")
+  file(INSTALL "${MPV_DIR}/LICENSE.GPL" DESTINATION "${CMAKE_INSTALL_PREFIX}/licenses" RENAME "libmpv-LICENSE.GPL")
+endif()
 
 # Install fallback libmpv if present
 get_filename_component(MPV_FALLBACK_DIR "${MPV_DIR}/../mpv-fallback" ABSOLUTE)
@@ -48,9 +51,9 @@ else()
   message(STATUS "Not using separate ANGLE deps")
 endif()
 
-# Bundle MSVC runtime DLLs (pre-extracted by setup-windows.bat)
-set(VCRUNTIME_DIR "@PROJECT_SOURCE_DIR@/deps/vcruntime")
-set(VCREDIST_EXE "@PROJECT_SOURCE_DIR@/deps/vc_redist.x64.exe")
+# Bundle MSVC runtime DLLs from the matching architecture's dependencies.
+set(VCRUNTIME_DIR "@WINDOWS_DEPENDENCY_DIR@/vcruntime")
+set(VCREDIST_EXE "@WINDOWS_DEPENDENCY_DIR@/vc_redist.@WINDOWS_ARCH@.exe")
 
 if(EXISTS "${VCRUNTIME_DIR}" AND EXISTS "${VCREDIST_EXE}")
   # Copy runtime DLLs to redist subfolder
@@ -64,9 +67,9 @@ if(EXISTS "${VCRUNTIME_DIR}" AND EXISTS "${VCREDIST_EXE}")
 
   # Copy VCRedist installer for bundling
   file(INSTALL "${VCREDIST_EXE}" DESTINATION "${CMAKE_INSTALL_PREFIX}")
-  message(STATUS "Bundled VCRedist installer: vc_redist.x64.exe")
+  message(STATUS "Bundled VCRedist installer: vc_redist.@WINDOWS_ARCH@.exe")
 else()
-  message(WARNING "VCRuntime DLLs not found. Run setup-windows.bat first.")
+  message(WARNING "VCRuntime DLLs or installer not found in @WINDOWS_DEPENDENCY_DIR@.")
 endif()
 
 if(@DO_SIGN@)

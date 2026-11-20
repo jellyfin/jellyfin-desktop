@@ -13,7 +13,15 @@ ENV DEB_BUILD_OPTIONS=noddebs
 ENV IS_DOCKER=YES
 
 # Prepare Debian build environment
-RUN apt-get update \
+RUN . /etc/os-release \
+ && if [ "${ID}:${VERSION_CODENAME}" = "ubuntu:oracular" ]; then \
+      for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do \
+        if [ -f "${source}" ]; then \
+          sed -i -E 's#https?://(archive|security)\.ubuntu\.com/ubuntu#http://old-releases.ubuntu.com/ubuntu#g' "${source}"; \
+        fi; \
+      done; \
+    fi \
+ && apt-get update \
  && DEBIAN_FRONTEND="noninteractive" TZ="America/New_York" \
     apt-get install --no-install-recommends -y \
     debhelper mmv git curl devscripts equivs

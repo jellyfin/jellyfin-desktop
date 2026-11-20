@@ -223,6 +223,10 @@ if(LINUX_DBUS)
   target_link_libraries(jmp_core Qt6::DBus)
 endif()
 
+if(USE_MPV_D3D11)
+  target_link_libraries(jmp_core Qt6::GuiPrivate d3d11)
+endif()
+
 # Delay-load libmpv on Windows for runtime AVX2 fallback
 if(WIN32)
   target_link_libraries(jmp_core delayimp.lib)

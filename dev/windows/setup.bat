@@ -3,7 +3,17 @@ REM Jellyfin Desktop - Windows dependency installer
 REM Run once to install all build dependencies
 
 setlocal EnableDelayedExpansion
-call "%~dp0common.bat"
+call "%~dp0common.bat" || exit /b 1
+
+if /i "%JELLYFIN_ARCH%"=="arm64" (
+    if not defined VCVARS (
+        echo ERROR: Install Visual Studio C++ build tools with the ARM64 compiler and Windows SDK.
+        exit /b 1
+    )
+    call "!VCVARS!" || exit /b 1
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup-arm64.ps1"
+    exit /b !errorlevel!
+)
 
 set "SEVENZIP=C:\Program Files\7-Zip\7z.exe"
 if not exist "!SEVENZIP!" (

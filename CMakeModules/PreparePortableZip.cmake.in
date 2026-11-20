@@ -13,7 +13,7 @@ file(MAKE_DIRECTORY "${ZIP_DIR}")
 file(GLOB_RECURSE ALL_FILES RELATIVE "${SOURCE_DIR}" "${SOURCE_DIR}/*")
 foreach(f ${ALL_FILES})
   # Skip redist folder and VCRedist installer
-  if(f MATCHES "^redist/" OR f STREQUAL "vc_redist.x64.exe")
+  if(f MATCHES "^redist/" OR f MATCHES "^vc_redist\\..*\\.exe$")
     continue()
   endif()
 
@@ -25,7 +25,7 @@ foreach(f ${ALL_FILES})
 endforeach()
 
 # Copy runtime DLLs to root (for portable use)
-set(VCRUNTIME_DIR "${PROJECT_SOURCE_DIR}/deps/vcruntime")
+set(VCRUNTIME_DIR "@WINDOWS_DEPENDENCY_DIR@/vcruntime")
 if(EXISTS "${VCRUNTIME_DIR}")
   file(GLOB RUNTIME_DLLS "${VCRUNTIME_DIR}/*.dll")
   foreach(dll ${RUNTIME_DLLS})

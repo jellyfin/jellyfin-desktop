@@ -4,4 +4,4 @@
 	dh $@
 
 override_dh_auto_configure:
-	dh_auto_configure -- -DCHECK_FOR_UPDATES=ON
+	dh_auto_configure -- -DCHECK_FOR_UPDATES=ON -DUSE_STATIC_MPVQT=ON

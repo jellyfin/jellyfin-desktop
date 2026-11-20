@@ -93,7 +93,8 @@ public:
     platformArchUnknown,
     platformArchX86_32,
     platformArchX86_64,
-    platformArchRpi2
+    platformArchRpi2,
+    platformArchArm64
   };
 
   inline PlatformType getPlatformType() { return m_platformType; }
