@@ -441,16 +441,14 @@ int main(int argc, char *argv[])
     // jellyfin-web then hides the scroll buttons of horizontal rows and disables mouse
     // dragging. Tell Blink what Windows itself reports. Values are Blink's PointerType
     // bits: 2 = coarse (touch), 4 = fine (mouse).
+    const bool hasMouse = GetSystemMetrics(SM_MOUSEPRESENT) != 0;
+    const bool hasTouch = GetSystemMetrics(SM_MAXIMUMTOUCHES) > 0;
+    const int available = (hasMouse ? 4 : 0) | (hasTouch ? 2 : 0);
+    if (available != 0)
     {
-      const bool hasMouse = GetSystemMetrics(SM_MOUSEPRESENT) != 0;
-      const bool hasTouch = GetSystemMetrics(SM_MAXIMUMTOUCHES) > 0;
-      const int available = (hasMouse ? 4 : 0) | (hasTouch ? 2 : 0);
-      if (available != 0)
-      {
-        const int primary = hasMouse ? 4 : 2;
-        chromiumFlags << QString("--blink-settings=primaryPointerType=%1,availablePointerTypes=%2")
-                           .arg(primary).arg(available);
-      }
+      const int primary = hasMouse ? 4 : 2;
+      chromiumFlags << QString("--blink-settings=primaryPointerType=%1,availablePointerTypes=%2")
+                         .arg(primary).arg(available);
     }
 #endif
 
