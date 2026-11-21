@@ -13,10 +13,6 @@
 #include <QDebug>
 #include <QSettings>
 
-#ifdef Q_OS_WIN
-#include <windows.h>
-#endif
-
 #include "shared/Names.h"
 #include "system/SystemComponent.h"
 #include "Paths.h"
@@ -42,8 +38,11 @@
 #include "SignalManager.h"
 #endif
 
-#if defined(Q_OS_WIN) && defined(_M_X64)
+#ifdef Q_OS_WIN
 #include <windows.h>
+#endif
+
+#if defined(Q_OS_WIN) && defined(_M_X64)
 #include <cstdio>
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -442,7 +441,6 @@ int main(int argc, char *argv[])
     // jellyfin-web then hides the scroll buttons of horizontal rows and disables mouse
     // dragging. Tell Blink what Windows itself reports. Values are Blink's PointerType
     // bits: 2 = coarse (touch), 4 = fine (mouse).
-    if (!qgetenv("QTWEBENGINE_CHROMIUM_FLAGS").contains("--blink-settings"))
     {
       const bool hasMouse = GetSystemMetrics(SM_MOUSEPRESENT) != 0;
       const bool hasTouch = GetSystemMetrics(SM_MAXIMUMTOUCHES) > 0;
