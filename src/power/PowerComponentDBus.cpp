@@ -1,6 +1,9 @@
 #include <QDBusConnection>
 #include <QDBusInterface>
+#include <QDBusMessage>
+#include <QDBusObjectPath>
 #include <QDBusReply>
+#include <QVariantMap>
 
 #include "PowerComponentDBus.h"
 
@@ -8,9 +11,10 @@
 #define DBUS_SERVICE_PATH "/org/freedesktop/login1"
 #define DBUS_INTERFACE "org.freedesktop.login1.Manager"
 
-#define DBUS_SCREENSAVER_SERVICE_NAME "org.freedesktop.ScreenSaver"
-#define DBUS_SCREENSAVER_SERVICE_PATH "/org/freedesktop/ScreenSaver"
-#define DBUS_SCREENSAVER_INTERFACE "org.freedesktop.ScreenSaver"
+#define DBUS_PORTAL_INHIBIT_INTERFACE "org.freedesktop.portal.Inhibit"
+#define DBUS_PORTAL_REQUEST_INTERFACE "org.freedesktop.portal.Request"
+#define DBUS_PORTAL_SERVICE_NAME "org.freedesktop.portal.Desktop"
+#define DBUS_PORTAL_SERVICE_PATH "/org/freedesktop/portal/desktop"
 
 /////////////////////////////////////////////////////////////////////////////////////////
 bool PowerComponentDBus::PowerOff()
@@ -98,32 +102,22 @@ bool PowerComponentDBus::isPowerMethodAvailable(QString method)
 
 void PowerComponentDBus::doDisableScreensaver()
 {
-  if (m_screensaverInhibitCookie)
+  if (!m_inhibitHandle.isEmpty())
   {
     qInfo() << "doDisableScreensaver : already disabled.";
     return;
   }
+
   if (QDBusConnection::sessionBus().isConnected())
   {
-    QDBusInterface iface(DBUS_SCREENSAVER_SERVICE_NAME, DBUS_SCREENSAVER_SERVICE_PATH,
-                         DBUS_SCREENSAVER_INTERFACE, QDBusConnection::sessionBus());
-    if (iface.isValid())
-    {
-      QDBusReply<unsigned int> reply = iface.call("Inhibit", "jellyfin-desktop", "playing");
-
-      if (reply.isValid())
-      {
-        m_screensaverInhibitCookie = reply.value();
-      }
-      else
-      {
-        qCritical() << "doDisableScreensaver : Error while calling UnInhibit:"
-                     << reply.error().message();
-      }
-    }
+    QDBusMessage msg = QDBusMessage::createMethodCall(DBUS_PORTAL_SERVICE_NAME, DBUS_PORTAL_SERVICE_PATH, DBUS_PORTAL_INHIBIT_INTERFACE, "Inhibit");
+    msg << QString() << 8u << QVariantMap{};
+    QDBusReply<QDBusObjectPath> reply = QDBusConnection::sessionBus().call(msg);
+    if (reply.isValid())
+      m_inhibitHandle = reply.value().path();
     else
     {
-      qCritical() << "doDisableScreensaver : failed to retrieve interface.";
+      qCritical() << "doDisableScreensaver : error while calling portal inhibit:" << reply.error().message();
     }
   }
   else
@@ -135,32 +129,20 @@ void PowerComponentDBus::doDisableScreensaver()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void PowerComponentDBus::doEnableScreensaver()
 {
-  if (!m_screensaverInhibitCookie)
+  if (m_inhibitHandle.isEmpty())
   {
     qInfo() << "doEnableScreensaver : already enabled.";
     return;
   }
   if (QDBusConnection::sessionBus().isConnected())
   {
-    QDBusInterface iface(DBUS_SCREENSAVER_SERVICE_NAME, DBUS_SCREENSAVER_SERVICE_PATH,
-                         DBUS_SCREENSAVER_INTERFACE, QDBusConnection::sessionBus());
-    if (iface.isValid())
-    {
-      QDBusReply<void> reply = iface.call("UnInhibit", m_screensaverInhibitCookie);
-
-      if (reply.isValid())
-      {
-        m_screensaverInhibitCookie = 0;
-      }
-      else
-      {
-        qCritical() << "doEnableScreensaver : Error while calling UnInhibit:"
-                     << reply.error().message();
-      }
-    }
+    QDBusMessage msg = QDBusMessage::createMethodCall(DBUS_PORTAL_SERVICE_NAME, m_inhibitHandle, DBUS_PORTAL_REQUEST_INTERFACE, "Close");
+    QDBusReply<void> reply = QDBusConnection::sessionBus().call(msg);
+    if (reply.isValid())
+      m_inhibitHandle.clear();
     else
     {
-      qCritical() << "doEnableScreensaver : failed to retrieve interface.";
+      qCritical() << "doEnableScreensaver : error while closing portal request:" << reply.error().message();
     }
   }
   else
