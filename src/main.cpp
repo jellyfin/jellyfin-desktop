@@ -38,8 +38,11 @@
 #include "SignalManager.h"
 #endif
 
-#if defined(Q_OS_WIN) && defined(_M_X64)
+#ifdef Q_OS_WIN
 #include <windows.h>
+#endif
+
+#if defined(Q_OS_WIN) && defined(_M_X64)
 #include <cstdio>
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -431,6 +434,25 @@ int main(int argc, char *argv[])
 
     if (parser.isSet("ignore-certificate-errors"))
       chromiumFlags << "--ignore-certificate-errors";
+
+#ifdef Q_OS_WIN
+    // On Windows QtWebEngine can report no pointer device at all to the page
+    // ("(pointer: fine)" and "(any-pointer: fine)" are both false with a mouse attached).
+    // jellyfin-web then hides the scroll buttons of horizontal rows and disables mouse
+    // dragging. Tell Blink what Windows itself reports. Values are Blink's PointerType
+    // bits: 2 = coarse (touch), 4 = fine (mouse).
+    {
+      const bool hasMouse = GetSystemMetrics(SM_MOUSEPRESENT) != 0;
+      const bool hasTouch = GetSystemMetrics(SM_MAXIMUMTOUCHES) > 0;
+      const int available = (hasMouse ? 4 : 0) | (hasTouch ? 2 : 0);
+      if (available != 0)
+      {
+        const int primary = hasMouse ? 4 : 2;
+        chromiumFlags << QString("--blink-settings=primaryPointerType=%1,availablePointerTypes=%2")
+                           .arg(primary).arg(available);
+      }
+    }
+#endif
 
     if (!chromiumFlags.isEmpty())
     {
