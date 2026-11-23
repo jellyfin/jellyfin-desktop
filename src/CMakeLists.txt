@@ -223,6 +223,14 @@ if(LINUX_DBUS)
   target_link_libraries(jmp_core Qt6::DBus)
 endif()
 
+if(WIN32)
+  # MpvD3D11Item uses QRhi (rhi/qrhi.h), which Qt ships with GuiPrivate.
+  if(NOT TARGET Qt6::GuiPrivate)
+    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+  endif()
+  target_link_libraries(jmp_core Qt6::GuiPrivate)
+endif()
+
 # Delay-load libmpv on Windows for runtime AVX2 fallback
 if(WIN32)
   target_link_libraries(jmp_core delayimp.lib)

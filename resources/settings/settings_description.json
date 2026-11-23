@@ -319,6 +319,18 @@
         "platforms_excluded": "oe_rpi"
       },
       {
+        "value": "super_resolution",
+        "display_name": "Video Super Resolution",
+        "help": "Lets the graphics driver upscale SDR video to the window size.\n\n- NVIDIA RTX Video: needs an RTX GPU and \"RTX Video Enhancement - Super Resolution\" on in the NVIDIA app or control panel.\n- Intel VSR: Intel Arc / Iris Xe graphics.\n\nForces full hardware decoding (d3d11va) while on. HDR video is left alone.",
+        "default": "disabled",
+        "possible_values": [
+          [ "disabled", "Disabled" ],
+          [ "nvidia", "NVIDIA RTX Video" ],
+          [ "intel", "Intel VSR" ]
+        ],
+        "platforms": [ "windows" ]
+      },
+      {
         "value": "prefer_transcode_to_h265",
         "display_name": "Prefer Transcode to H.265",
         "default": false
