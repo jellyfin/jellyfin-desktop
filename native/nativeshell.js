@@ -355,7 +355,13 @@ window.NativeShell.AppHost = {
         return jmpInfo.mode;
     },
     supports(command) {
-        return features.includes(command.toLowerCase());
+        const feature = command.toLowerCase();
+        // In the TV layout, Back on a start page should leave the app, as on
+        // other TV clients; remote/gamepad users have no other way out.
+        if (feature === "exit") {
+            return document.documentElement.classList.contains("layout-tv");
+        }
+        return features.includes(feature);
     },
     getDeviceProfile,
     getSyncProfile: getDeviceProfile,
