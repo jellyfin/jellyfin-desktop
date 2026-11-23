@@ -36,16 +36,23 @@ WindowManager::WindowManager(QObject* parent)
     m_ignoreFullscreenSettingsChange(0),
     m_cursorVisible(true),
     m_cursorInsideWindow(true),
+    m_cursorHideTimer(nullptr),
     m_previousVisibility(QWindow::Windowed),
     m_geometrySaveTimer(nullptr),
     m_initialSize(),
     m_initialScreenSize()
 {
+  m_cursorHideTimer = new QTimer(this);
+  m_cursorHideTimer->setSingleShot(true);
+  m_cursorHideTimer->setInterval(3000);
+  connect(m_cursorHideTimer, &QTimer::timeout, this, &WindowManager::onCursorHideTimeout);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 WindowManager::~WindowManager()
 {
+  if (!m_cursorVisible)
+    setCursorVisibility(true);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -70,8 +77,15 @@ void WindowManager::initializeWindow(QQuickWindow* window)
   DisplayComponent::Get().setApplicationWindow(m_window);
   TaskbarComponent::Get().setWindow(m_window);
 
-  // Install event filter to track cursor enter/leave
+  // Install event filter to track cursor enter/leave and mouse activity
   m_window->installEventFilter(this);
+  qApp->installEventFilter(this);
+
+  // Connect to video playback and fullscreen state changes for cursor auto-hide
+  connect(&PlayerComponent::Get(), &PlayerComponent::videoPlayingChanged,
+          this, &WindowManager::updateCursorIdleState);
+  connect(this, &WindowManager::fullScreenSwitched,
+          this, &WindowManager::updateCursorIdleState);
 
   // Register host command for fullscreen toggle
   InputComponent::Get().registerHostCommand("fullscreen", this, "toggleFullscreen");
@@ -270,33 +284,89 @@ void WindowManager::setCursorVisibility(bool visible)
     qApp->setOverrideCursor(QCursor(Qt::BlankCursor));
 
 #ifdef Q_OS_MAC
-  // Only apply macOS global cursor hiding when cursor is inside window
-  if (m_cursorInsideWindow)
+  if (m_cursorInsideWindow || visible)
     OSXUtils::SetCursorVisible(visible);
 #endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::resetCursorIdleTimer()
+{
+  handleCursorActivity();
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::handleCursorActivity()
+{
+  if (!m_cursorVisible)
+    setCursorVisibility(true);
+
+  if (isFullScreen() && PlayerComponent::Get().isVideoPlaying() && m_cursorInsideWindow)
+  {
+    m_cursorHideTimer->start(3000);
+  }
+  else
+  {
+    m_cursorHideTimer->stop();
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::onCursorHideTimeout()
+{
+  if (isFullScreen() && PlayerComponent::Get().isVideoPlaying() && m_cursorInsideWindow)
+  {
+    setCursorVisibility(false);
+  }
+  else
+  {
+    setCursorVisibility(true);
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+void WindowManager::updateCursorIdleState()
+{
+  if (isFullScreen() && PlayerComponent::Get().isVideoPlaying() && m_cursorInsideWindow)
+  {
+    if (!m_cursorHideTimer->isActive() && m_cursorVisible)
+      m_cursorHideTimer->start(3000);
+  }
+  else
+  {
+    m_cursorHideTimer->stop();
+    setCursorVisibility(true);
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 bool WindowManager::eventFilter(QObject* watched, QEvent* event)
 {
+  switch (event->type())
+  {
+    case QEvent::MouseMove:
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::Wheel:
+      handleCursorActivity();
+      break;
+    default:
+      break;
+  }
+
   if (watched == m_window)
   {
     if (event->type() == QEvent::Enter)
     {
       m_cursorInsideWindow = true;
-#ifdef Q_OS_MAC
-      // Re-hide cursor if it should be hidden
-      if (!m_cursorVisible)
-        OSXUtils::SetCursorVisible(false);
-#endif
+      handleCursorActivity();
     }
     else if (event->type() == QEvent::Leave)
     {
       m_cursorInsideWindow = false;
-#ifdef Q_OS_MAC
-      // Always show cursor when leaving window
-      OSXUtils::SetCursorVisible(true);
-#endif
+      m_cursorHideTimer->stop();
+      setCursorVisibility(true);
     }
   }
   return ComponentBase::eventFilter(watched, event);
