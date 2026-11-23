@@ -375,6 +375,11 @@ window.NativeShell.AppHost = {
         return jmpInfo.deviceName;
     },
     exit() {
+        const tvLayout = document.documentElement.classList.contains("layout-tv");
+        if (tvLayout && window._confirmAppExit) {
+            window._confirmAppExit().then(() => window.api.system.exit(), () => {});
+            return;
+        }
         window.api.system.exit();
     }
 };

@@ -14,10 +14,18 @@ const remap = {
 }
 
 class inputPlugin {
-    constructor({ inputManager, playbackManager }) {
+    constructor({ inputManager, playbackManager, confirm, globalize }) {
         this.name = 'Input Plugin';
         this.type = 'input';
         this.id = 'inputPlugin';
+
+        // Lets NativeShell.AppHost.exit() ask before leaving the TV layout,
+        // using the web client's own (translated, remote-friendly) dialog.
+        window._confirmAppExit = () => confirm({
+            text: globalize.translate('MessageConfirmAppExit'),
+            confirmText: globalize.translate('Yes'),
+            cancelText: globalize.translate('No')
+        });
 
         this.durationCheckInterval = null;
         this.positionUpdateInterval = null;
