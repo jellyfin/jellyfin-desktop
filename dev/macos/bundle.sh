@@ -21,7 +21,7 @@ ninja install
 APP_BUNDLE="${BUILD_DIR}/output/${APP_NAME}"
 
 echo "Signing app bundle..."
-codesign --force --deep -s - "${APP_BUNDLE}"
+"${SCRIPT_DIR}/sign.sh" "${APP_BUNDLE}"
 
 echo "Creating DMG..."
 VERSION="$(cat "${PROJECT_ROOT}/VERSION")"
@@ -37,6 +37,17 @@ create-dmg \
     --app-drop-link 375 150 \
     "${DMG_NAME}" "${APP_BUNDLE}"
 
+DMG_PATH="${BUILD_DIR}/${DMG_NAME}"
+if [ -n "${MACOS_SIGNING_IDENTITY:-}" ]; then
+    TIMESTAMP="--timestamp"
+    if [ "${MACOS_CODESIGN_TIMESTAMP:-}" = "none" ]; then
+        TIMESTAMP="--timestamp=none"
+    fi
+    codesign --force "${TIMESTAMP}" --sign "${MACOS_SIGNING_IDENTITY}" "${DMG_PATH}"
+fi
+
+"${SCRIPT_DIR}/notarize.sh" "${DMG_PATH}"
+
 echo ""
 echo "Bundle complete!"
-echo "DMG: ${BUILD_DIR}/${DMG_NAME}"
+echo "DMG: ${DMG_PATH}"
