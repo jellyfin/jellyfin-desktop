@@ -3,6 +3,7 @@
 ## Running Tests
 
 Jellyfin Desktop uses Qt Test for unit testing.
+JavaScript player tests also run through CTest when Node.js 18 or newer is available.
 
 ### Building Tests
 
@@ -27,6 +28,12 @@ Or run individual test executables directly:
 ```sh
 cd build
 ./tests/test_systemcomponent
+```
+
+Run the JavaScript player tests directly from the repository root:
+
+```sh
+node --test tests/test_mpvVideoPlayer.js
 ```
 
 ### Writing Tests
