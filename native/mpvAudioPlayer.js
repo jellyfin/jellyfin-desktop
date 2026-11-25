@@ -30,8 +30,13 @@ function cancelFadeTimeout() {
     }
 }
 
-function clampVolume(val) {
-    return Math.min(100, Math.max(0, Math.round(val)));
+// Duplicated from mpvVideoPlayer.js: the two players are separate browser scripts
+// with no shared scope, and already duplicate all volume logic.
+function clampVolume(val, maxVolume) {
+    const num = Number(val);
+    if (isNaN(num)) return null;
+
+    return Math.min(Math.max(Math.round(num), 0), Math.max(100, Number(maxVolume) || 100));
 }
 
 class mpvAudioPlayer {
@@ -52,7 +57,7 @@ class mpvAudioPlayer {
         self._currentTime = undefined;
         self._paused = false;
         self._waiting = false;
-        self._volume = clampVolume(self.getSavedVolume() * 100);
+        self._volume = clampVolume(self.getSavedVolume() * 100, window.jmpInfo?.settings?.audio?.max_volume);
         self._playRate = 1;
         self._hasConnection = false;
         self._bufferedRanges = [];
@@ -175,7 +180,7 @@ class mpvAudioPlayer {
             if (!self._started) {
                 self._started = true;
 
-                const volume = clampVolume(self.getSavedVolume() * 100);
+                const volume = clampVolume(self.getSavedVolume() * 100, window.jmpInfo?.settings?.audio?.max_volume);
                 self.setVolume(volume, volume != self._volume);
             }
 
@@ -334,9 +339,8 @@ class mpvAudioPlayer {
     }
 
     setVolume(val, save = true) {
-        val = Number(val);
-        if (!isNaN(val)) {
-            val = clampVolume(val);
+        val = clampVolume(val, window.jmpInfo?.settings?.audio?.max_volume);
+        if (val !== null) {
             this._volume = val;
             if (save) {
                 this.saveVolume((val || 100) / 100);
@@ -346,16 +350,18 @@ class mpvAudioPlayer {
         }
     }
 
+    // See mpvVideoPlayer.js: jellyfin-web's volume UI assumes 0-100, so the
+    // boosted level stays internal to _volume and never leaks out through here.
     getVolume() {
         return clampVolume(this._volume ?? 100);
     }
 
     volumeUp() {
-        this.setVolume(Math.min(this.getVolume() + 2, 100));
+        this.setVolume(this._volume + 2);
     }
 
     volumeDown() {
-        this.setVolume(Math.max(this.getVolume() - 2, 0));
+        this.setVolume(this._volume - 2);
     }
 
     setMute(mute, triggerEvent = true) {
