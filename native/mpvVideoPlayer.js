@@ -188,6 +188,10 @@
 
                 this._waiting = false;
 
+                // The web client's video OSD shows its loading overlay on
+                // 'waiting' and only hides it on 'canplay'.
+                this.events.trigger(this, 'canplay');
+
                 if (this._paused) {
                     this._paused = false;
                     this.events.trigger(this, 'unpause');
@@ -201,6 +205,7 @@
              */
             this.onPause = () => {
                 this._waiting = false;
+                this.events.trigger(this, 'canplay');
                 this._paused = true;
                 // For Syncplay ready notification
                 this.events.trigger(this, 'pause');
@@ -259,6 +264,7 @@
             this._started = false;
             this._timeUpdated = false;
             this._waiting = false;
+            this.events.trigger(this, 'canplay');
             this._currentTime = null;
             this._bufferedRanges = [];
 
@@ -513,6 +519,7 @@
             const player = window.api.player;
             this._hasConnection = false;
             this._waiting = false;
+            this.events.trigger(this, 'canplay');
             this._bufferedRanges = [];
             player.playing.disconnect(this.onPlaying);
             player.positionUpdate.disconnect(this.onTimeUpdate);
