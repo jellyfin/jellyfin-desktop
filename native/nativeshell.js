@@ -178,7 +178,12 @@ function getDeviceProfile() {
                 'Type': 'Video',
                 'Protocol': 'hls',
                 'AudioCodec': 'aac,mp3,ac3,opus,vorbis',
-                'VideoCodec': jmpInfo.settings.video.allow_transcode_to_hevc
+                // force_transcode_hevc blocks HEVC with a 'Width Equals 0'
+                // codec profile. If HEVC were also a transcode target, the
+                // server would apply that profile to the transcode and set
+                // MaxWidth=0, disabling scaling (force_transcode_4k ignored).
+                'VideoCodec': jmpInfo.settings.video.allow_transcode_to_hevc &&
+                    !jmpInfo.settings.video.force_transcode_hevc
                     ? (
                         jmpInfo.settings.video.prefer_transcode_to_h265
                             ? 'h265,hevc,h264,mpeg4,mpeg2video'
