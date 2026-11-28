@@ -432,6 +432,16 @@ int main(int argc, char *argv[])
     if (parser.isSet("ignore-certificate-errors"))
       chromiumFlags << "--ignore-certificate-errors";
 
+    // Without a limit V8 sizes the JavaScript heap from the physical memory and may let
+    // garbage pile up to hundreds of MB before collecting it. 0 means no limit.
+    // A missing setting reads as JSON null, which is not a number, so it gets the default.
+    bool jsHeapLimitSet = false;
+    int jsHeapLimitMB = SettingsComponent::readPreinitValue(SETTINGS_SECTION_MAIN, "jsHeapLimit").toInt(&jsHeapLimitSet);
+    if (!jsHeapLimitSet)
+      jsHeapLimitMB = 128;
+    if (jsHeapLimitMB > 0)
+      chromiumFlags << QString("--js-flags=--max-old-space-size=%1").arg(jsHeapLimitMB);
+
     if (!chromiumFlags.isEmpty())
     {
       // Keep whatever the user already put in QTWEBENGINE_CHROMIUM_FLAGS instead of
