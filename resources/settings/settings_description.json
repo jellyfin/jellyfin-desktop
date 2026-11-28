@@ -180,6 +180,29 @@
         "display_name": "Allow Browser Zoom",
         "help": "Allows zooming the web interface using Ctrl+Plus/Minus, Ctrl+Scroll, or pinch-to-zoom. Changing this setting requires an application restart for pinch-to-zoom.",
         "default": true
+      },
+      {
+        "value": "webGpuAcceleration",
+        "display_name": "Web Interface GPU Acceleration",
+        "help": "Lets the web interface use the graphics card. Turn it off if the web interface shows graphics problems or uses too much memory with your graphics driver. Video playback is not affected. This setting requires an application restart to take effect.",
+        "default": true
+      },
+      {
+        "value": "webGpuCompositing",
+        "display_name": "Web Interface GPU Compositing",
+        "help": "Puts the web interface together on the graphics card. Turn it off if the web interface uses too much memory with your graphics driver; the graphics card still draws it. This setting requires an application restart to take effect.",
+        "default": true
+      },
+      {
+        "value": "webGpuRasterization",
+        "display_name": "Web Interface GPU Rasterization",
+        "help": "Draws the web interface's text and images on the graphics card. Default lets the web engine decide. This setting requires an application restart to take effect.",
+        "default": "default",
+        "possible_values": [
+          [ "default", "Default" ],
+          [ "enabled", "On" ],
+          [ "disabled", "Off" ]
+        ]
       }
     ]
   },

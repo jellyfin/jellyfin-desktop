@@ -432,6 +432,27 @@ int main(int argc, char *argv[])
     if (parser.isSet("ignore-certificate-errors"))
       chromiumFlags << "--ignore-certificate-errors";
 
+    // GPU use of the web interface. Settings that were never saved read as JSON null,
+    // so they get their default here.
+    auto readGpuSetting = [](const char* key, const QString& defaultValue)
+    {
+      QVariant value = SettingsComponent::readPreinitValue(SETTINGS_SECTION_MAIN, key);
+      return value.canConvert<QString>() && !value.toString().isEmpty() ? value.toString() : defaultValue;
+    };
+
+    bool webGpu = readGpuSetting("webGpuAcceleration", "true") != "false" && !parser.isSet("disable-gpu");
+    if (!webGpu)
+      chromiumFlags << "--disable-gpu";
+
+    QString gpuRasterization = readGpuSetting("webGpuRasterization", "default");
+    if (webGpu && gpuRasterization == "enabled")
+      chromiumFlags << "--enable-gpu-rasterization";
+    else if (webGpu && gpuRasterization == "disabled")
+      chromiumFlags << "--disable-gpu-rasterization";
+
+    if (webGpu && readGpuSetting("webGpuCompositing", "true") == "false")
+      chromiumFlags << "--disable-gpu-compositing";
+
     if (!chromiumFlags.isEmpty())
     {
       // Keep whatever the user already put in QTWEBENGINE_CHROMIUM_FLAGS instead of
